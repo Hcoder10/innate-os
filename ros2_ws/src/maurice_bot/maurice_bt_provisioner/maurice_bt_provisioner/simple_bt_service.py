@@ -4,13 +4,14 @@ import json
 import signal
 import sys
 import subprocess
+import threading
 import time
 import os
 
+from gi.repository import GLib
 from bluezero import adapter
 from bluezero import peripheral
 
-# Import NetworkManager utilities
 from nmcli_utils import (
     nmcli_get_wifi_connections,
     nmcli_add_or_modify_connection,
@@ -19,7 +20,8 @@ from nmcli_utils import (
     nmcli_connect,
     nmcli_get_active_wifi_ssid,
     nmcli_get_active_ipv4_address,
-    nmcli_scan_for_visible_ssids
+    nmcli_scan_for_visible_ssids,
+    nmcli_set_autoconnect,
 )
 
 # IMPORTANT NOTES
@@ -58,8 +60,9 @@ class BleProvisionerServer:
         self.adapter = adapter_obj
         self._ble_characteristic = None
         self.peripheral = None
-        self._connected_device = None  # Track connected device for disconnect
-        self._current_ip_address = nmcli_get_active_ipv4_address() # Store initial IP
+        self._connected_device = None
+        self._connection_lock = threading.Lock()
+        self._current_ip_address = nmcli_get_active_ipv4_address()
         logger.info(f"Initial IPv4 address: {self._current_ip_address}")
 
     # --- Helper to Trigger Service Restart ---
@@ -94,6 +97,63 @@ class BleProvisionerServer:
                  logger.error(f"An unexpected error occurred during restart script execution: {e}", exc_info=True)
         else:
             logger.info("IP address unchanged. No service restart needed.")
+
+    # --- Thread-safe BLE helpers ---
+
+    def _send_notification_threadsafe(self, response):
+        """Schedule a BLE notification on the GLib main loop (safe from any thread)."""
+        def _do_send():
+            if self._ble_characteristic and self._ble_characteristic.is_notifying:
+                try:
+                    response_bytes = bytes(json.dumps(response), 'utf-8')
+                    self._ble_characteristic.set_value(list(response_bytes))
+                    logger.info(f"Async notification sent: {response}")
+                except Exception as e:
+                    logger.error(f"Error sending async notification: {e}")
+            else:
+                logger.warning(f"Cannot send notification (client not subscribed): {response}")
+            return False  # one-shot; do not repeat
+        GLib.idle_add(_do_send)
+
+    def _background_connect(self, command, ssid, enable_autoconnect_on_success=True):
+        """Scan + connect in a daemon thread; notify the BLE client when done."""
+        try:
+            with self._connection_lock:
+                self._current_ip_address = nmcli_get_active_ipv4_address()
+
+                success_scan, visible, err_scan = nmcli_scan_for_ssid(ssid)
+                if not success_scan:
+                    logger.warning(f"Pre-connect scan failed: {err_scan}")
+                elif not visible:
+                    logger.warning(f"Network '{ssid}' not visible in scan, attempting connect anyway")
+
+                success, msg_or_err = nmcli_connect(ssid)
+
+                if success:
+                    if enable_autoconnect_on_success:
+                        nmcli_set_autoconnect(ssid, True)
+                    logger.info(f"Background connect to '{ssid}' succeeded, waiting for stabilisation…")
+                    time.sleep(5)
+                    self._trigger_service_restart()
+                    self._send_notification_threadsafe({
+                        "command": command,
+                        "status": "success",
+                        "message": f"Connected to {ssid}",
+                    })
+                else:
+                    logger.error(f"Background connect to '{ssid}' failed: {msg_or_err}")
+                    self._send_notification_threadsafe({
+                        "command": command,
+                        "status": "error",
+                        "message": f"Connection failed for {ssid}: {msg_or_err}",
+                    })
+        except Exception as e:
+            logger.error(f"Background connect error: {e}", exc_info=True)
+            self._send_notification_threadsafe({
+                "command": command,
+                "status": "error",
+                "message": f"Connection error: {str(e)}",
+            })
 
     # --- Command Handlers ---
     def handle_get_status(self, data):
@@ -133,53 +193,35 @@ class BleProvisionerServer:
              }
 
     def handle_update_network(self, data):
-        """Handle update_network command."""
+        """Handle update_network command.
+
+        Saves the connection profile with autoconnect disabled (~1-2 s), then
+        dispatches scan+connect to a background thread so the BLE callback
+        returns quickly.  The background thread sends a follow-up notification
+        with the final result.
+        """
         command = data.get('command')
         logger.info(f"Handling {command} command")
         network_data = data.get('data', {})
         ssid = network_data.get('ssid')
-        password = network_data.get('password') # Get password if provided
-        priority = network_data.get('priority', 10) # Default priority
+        password = network_data.get('password')
+        priority = network_data.get('priority', 10)
 
         if not ssid:
             return {"command": command, "status": "error", "message": "SSID required"}
 
-        # --- Store current IP before attempting changes --- 
-        self._current_ip_address = nmcli_get_active_ipv4_address() 
-        logger.info(f"IP before update/connect attempt: {self._current_ip_address}")
+        success, err = nmcli_add_or_modify_connection(ssid, password, priority, autoconnect=False)
+        if not success:
+            return {"command": command, "status": "error", "message": err}
 
-        # Step 1: Add or Modify the connection profile
-        success_update, err_update = nmcli_add_or_modify_connection(ssid, password, priority)
-        if not success_update:
-            return {"command": command, "status": "error", "message": err_update}
-        
-        logger.info(f"Network profile '{ssid}' updated successfully.")
+        threading.Thread(
+            target=self._background_connect,
+            args=(command, ssid),
+            kwargs={"enable_autoconnect_on_success": True},
+            daemon=True,
+        ).start()
 
-        # Step 2: Scan for the network
-        success_scan, visible, err_scan = nmcli_scan_for_ssid(ssid)
-        if not success_scan:
-            # Report as warning: profile saved, but scan failed
-            return {"command": command, "status": "warning", "message": f"Network {ssid} updated, but scan failed: {err_scan}"}
-
-        if not visible:
-             logger.info(f"Target network '{ssid}' not visible after scan. Profile saved.")
-             # Even if not visible now, the profile is saved. Don't trigger restart yet.
-             return {"command": command, "status": "success", "message": f"Network {ssid} updated. Network not currently visible for connection."}
-
-        # Step 3: Attempt connection if visible
-        logger.info(f"Target network '{ssid}' is visible. Attempting connection...")
-        success_connect, connect_msg_or_err = nmcli_connect(ssid)
-        
-        # --- Check IP and restart services AFTER connection attempt --- 
-        if success_connect:
-            logger.info(f"Connection initiated for {ssid}. Waiting briefly for network stabilization...")
-            time.sleep(5) # Give the network/DHCP some time
-            self._trigger_service_restart() # Check IP and restart if needed
-            return {"command": command, "status": "success", "message": f"Network {ssid} updated and connection initiated."}
-        else:
-            logger.error(f"Connection attempt failed for {ssid}: {connect_msg_or_err}")
-            # Don't trigger restart if connection failed
-            return {"command": command, "status": "warning", "message": f"Network {ssid} updated, but connection attempt failed: {connect_msg_or_err}"}
+        return {"command": command, "status": "in_progress", "message": f"Connecting to {ssid}…"}
 
     def handle_remove_network(self, data):
         """Handle remove_network command."""
@@ -222,7 +264,12 @@ class BleProvisionerServer:
         return {"command": command or "unknown", "status": "error", "message": "Unknown command"}
 
     def handle_connect_network(self, data):
-        """Handle connect_network command."""
+        """Handle connect_network command.
+
+        Returns an immediate ``in_progress`` response and dispatches the slow
+        scan+connect to a background thread.  The profile already exists so
+        autoconnect is left as-is.
+        """
         command = data.get('command')
         logger.info(f"Handling {command} command")
         ssid = data.get('data', {}).get('ssid')
@@ -230,33 +277,14 @@ class BleProvisionerServer:
         if not ssid:
             return {"command": command, "status": "error", "message": "SSID required for connection"}
 
-        logger.info(f"Attempting to connect to network: {ssid}")
-        
-        # --- Store current IP before attempting changes --- 
-        self._current_ip_address = nmcli_get_active_ipv4_address() 
-        logger.info(f"IP before connect attempt: {self._current_ip_address}")
+        threading.Thread(
+            target=self._background_connect,
+            args=(command, ssid),
+            kwargs={"enable_autoconnect_on_success": False},
+            daemon=True,
+        ).start()
 
-        # Check if the network is visible (optional but good practice)
-        success_scan, visible, err_scan = nmcli_scan_for_ssid(ssid)
-        if not success_scan:
-            logger.warning(f"Scan for '{ssid}' failed before connection attempt: {err_scan}")
-        elif not visible:
-            logger.warning(f"Network '{ssid}' not visible, connection attempt might fail.")
-            # Allow connection attempt anyway
-
-        # Attempt connection
-        success_connect, connect_msg_or_err = nmcli_connect(ssid)
-
-        # --- Check IP and restart services AFTER connection attempt --- 
-        if success_connect:
-            logger.info(f"Connection initiated for {ssid}. Waiting briefly for network stabilization...")
-            time.sleep(5) # Give the network/DHCP some time
-            self._trigger_service_restart() # Check IP and restart if needed
-            return {"command": command, "status": "success", "message": f"Connection initiated for {ssid}"}
-        else:
-            logger.error(f"Connection attempt failed for {ssid}: {connect_msg_or_err}")
-            # Don't trigger restart if connection failed
-            return {"command": command, "status": "error", "message": f"Connection attempt failed for {ssid}: {connect_msg_or_err}"}
+        return {"command": command, "status": "in_progress", "message": f"Connecting to {ssid}…"}
 
     # --- BLE Callbacks ---
     def write_callback(self, value, options=None):
@@ -378,39 +406,50 @@ class BleProvisionerServer:
         except Exception as e:
             logger.warning(f"Failed to set adapter alias: {e}")
         
-        # Check current discoverable state
-        is_discoverable = self.adapter.discoverable
-        logger.info(f"Adapter properties: Discoverable={is_discoverable}, Powered={self.adapter.powered}, Pairable={self.adapter.pairable}")
-        
-        # If already discoverable, temporarily disable to avoid Busy error when AdvertisingManager tries to set it
-        if is_discoverable:
-            logger.info("Adapter is already discoverable, temporarily disabling to avoid conflict...")
+        logger.info(f"Adapter properties: Discoverable={self.adapter.discoverable}, Powered={self.adapter.powered}, Pairable={self.adapter.pairable}")
+
+        # If already discoverable, disable it so bluezero's LE AdvertisingManager
+        # doesn't hit a "Busy" error competing with legacy discoverable mode.
+        # publish() will re-enable advertising via the LE path.
+        if self.adapter.discoverable:
+            logger.info("Adapter is already discoverable, temporarily disabling to avoid Busy conflict with LE advertising...")
             try:
                 self.adapter.discoverable = False
-                time.sleep(0.5)  # Brief pause to let the state change
-                logger.info("Temporarily disabled discoverable state")
+                time.sleep(1)
+                logger.info(f"Discoverable disabled. Current state: Discoverable={self.adapter.discoverable}")
             except Exception as e:
                 logger.warning(f"Could not disable discoverable state: {e}")
 
         try:
             # Create Peripheral - AdvertisingManager will set discoverable=True internally
+            logger.info(f"Creating BLE peripheral with local_name='{ROBOT_NAME}'...")
             self.peripheral = peripheral.Peripheral(adapter_address,
                                                  local_name=ROBOT_NAME,
                                                  appearance=192) # 192: Generic Computer
+            logger.info("Peripheral created successfully.")
 
             # Set connection callbacks
             if hasattr(self.peripheral, 'on_connect'):
                 self.peripheral.on_connect = self.on_connect
+                logger.info("on_connect callback registered.")
+            else:
+                logger.warning("Peripheral has no on_connect attribute — connection events won't be tracked.")
+
             if hasattr(self.peripheral, 'on_disconnect'):
                 self.peripheral.on_disconnect = self.on_disconnect
-            
+                logger.info("on_disconnect callback registered.")
+            else:
+                logger.warning("Peripheral has no on_disconnect attribute — disconnect events won't be tracked.")
+
             # Add service
+            logger.info(f"Adding GATT service {SERVICE_UUID}...")
             self.peripheral.add_service(srv_id=1, uuid=SERVICE_UUID, primary=True)
-            
+
             # Add characteristic
+            logger.info(f"Adding GATT characteristic {CHARACTERISTIC_UUID}...")
             self.peripheral.add_characteristic(
-                srv_id=1, 
-                chr_id=1, 
+                srv_id=1,
+                chr_id=1,
                 uuid=CHARACTERISTIC_UUID,
                 value=[], # Initial value is empty
                 notifying=False,
@@ -419,28 +458,48 @@ class BleProvisionerServer:
                 write_callback=self.write_callback,
                 notify_callback=self.notify_callback
             )
-            
+
             logger.info(f"Service {SERVICE_UUID} and Characteristic {CHARACTERISTIC_UUID} added.")
-            
+
             # Set up signal handler for graceful shutdown
-            # Define inside start() to capture self
             def signal_handler(sig, frame):
-                logger.info("SIGINT received, stopping BLE service...")
+                logger.info(f"Signal {sig} received, stopping BLE service...")
                 self.stop()
 
             signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler) # Handle termination signal too
-            
+            signal.signal(signal.SIGTERM, signal_handler)
+
+            # Patch bluezero's registration callbacks to use our logger
+            # (upstream ad callbacks use bare print(), GATT error just warns)
+            import bluezero.advertisement as _adv
+            import bluezero.GATT as _gatt
+            _adv_adapter = self.adapter
+
+            _adv.register_ad_cb = lambda: logger.info("BLE advertisement registered successfully.")
+
+            def _on_ad_error(error):
+                logger.error(f"BLE advertisement registration FAILED: {error}")
+                # Fallback: re-enable legacy discoverable so the device name
+                # is still visible even if LE advertising failed
+                try:
+                    _adv_adapter.discoverable = True
+                    logger.warning("Fell back to legacy discoverable mode.")
+                except Exception as e:
+                    logger.error(f"Failed to enable legacy discoverable fallback: {e}")
+
+            _adv.register_ad_error_cb = _on_ad_error
+            _gatt.register_app_cb = lambda: logger.info("GATT application registered successfully.")
+            _gatt.register_app_error_cb = lambda error: logger.error(f"GATT application registration FAILED: {error}")
+
             # Start advertising
-            logger.info("Starting BLE advertisement...")
+            logger.info("Calling peripheral.publish() to register GATT app and start advertisement...")
             self.peripheral.publish()
-            # Note: discoverable is already set to True by AdvertisingManager inside Peripheral
-            # No need to set it again here (removed redundant line)
             logger.info("BLE Server is running. Press Ctrl+C to stop.")
-        
+
         except Exception as e:
             logger.critical(f"Failed to initialize or start BLE service: {e}", exc_info=True)
-            self.stop() # Attempt cleanup even on startup failure
+            logger.critical(f"Adapter state at failure: Discoverable={self.adapter.discoverable}, Powered={self.adapter.powered}")
+            self.stop()
 
     def stop(self):
         """Stop the BLE server gracefully."""

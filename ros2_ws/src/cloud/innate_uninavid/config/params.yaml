@@ -1,9 +1,10 @@
 uninavid_node:
   ros__parameters:
     # ── Connection ────────────────────────────────────────────────────────
-    # ws_url, service_key, and auth_issuer_url default from env vars;
-    # override here if needed.
-    # ws_url: "wss://office.servers.innatebotstatus.com:9000"
+    # ws_url defaults from config/os.toml [uninavid].ws_url,
+    # deprecated env UNINAVID_WS_URL, or the built-in default.
+    # service_key and auth_issuer_url still default from env vars.
+    # ws_url: "wss://nav-v1.innate.bot"
     # service_key: ""
     # auth_issuer_url: "https://auth-v1.innate.bot"
 

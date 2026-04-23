@@ -4,9 +4,9 @@ This directory holds the implementation of the local `innate` CLI. User-facing c
 
 The local workflow uses:
 
-- [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env) for secrets only
-- [`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) for optional non-secret OS overrides
-- [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) for optional non-secret simulator overrides
+- [`.env.template`](../../.env.template) copied to `.env` for secrets only
+- [`config/os.toml.template`](../../config/os.toml.template) copied to `config/os.toml` for optional non-secret OS overrides
+- [`sim/config.toml.template`](../../sim/config.toml.template) copied to `sim/config.toml` for optional non-secret simulator overrides
 
 The CLI brings up:
 
@@ -71,13 +71,14 @@ To inspect the current state:
 
 ## Config Files
 
-[`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) is for optional non-secret OS overrides such as:
+[`config/os.toml.template`](../../config/os.toml.template) is for optional non-secret OS overrides such as:
 
 - brain websocket URI
 - telemetry URL
 - Cartesia voice id
+- Uninavid websocket URL
 
-[`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) is for optional non-secret simulator overrides such as:
+[`sim/config.toml.template`](../../sim/config.toml.template) is for optional non-secret simulator overrides such as:
 
 - native viewer on/off
 - hosted vs local cloud-agent mode

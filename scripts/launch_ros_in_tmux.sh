@@ -92,15 +92,26 @@ done
 
 tmux select-window -t $SESSION_NAME:"${WINDOW_NAMES[1]}"
 
-echo "✓ ROS nodes launched in tmux session '$SESSION_NAME'"
-echo "  Attach: tmux attach -t $SESSION_NAME"
+SESSION_FMT=$(printf "%-29s" "$SESSION_NAME")
+WINDOWS_FMT=$(printf "%-29s" "${#WINDOW_NAMES[@]}")
+ATTACH_FMT=$(printf "%-29s" "tmux attach -t $SESSION_NAME")
+
+echo ""
+echo "  ╔═════════════════════════════════════════╗     ____"
+echo "  ║  All systems launched ✅                ║    [O  O]"
+echo "  ║                                         ║     _||_"
+echo "  ║  Session:  ${SESSION_FMT}║   |      |"
+echo "  ║  Windows:  ${WINDOWS_FMT}║   |______|"
+echo "  ║  Attach:   ${ATTACH_FMT}║     o  o"
+echo "  ║                                         ║"
+echo "  ║  Run 'innate view' to monitor nodes 👀  ║"
+echo "  ╚═════════════════════════════════════════╝"
 echo ""
 
-# Wait for processes to initialize then play startup sound
-(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/sounds/turnon.mp3" 2>/dev/null) &
+# Play startup sound after processes initialize (backgrounded, detached from terminal)
+(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/sounds/turnon.mp3" >/dev/null 2>&1) &
+disown
 
-while tmux has-session -t $SESSION_NAME 2>/dev/null; do
-    sleep 5
-done
-
-echo "Tmux session ended." 
+# Keep the script alive so systemd (Type=simple) considers the service running.
+# When systemctl stop is called, SIGTERM kills this sleep, then ExecStop cleans up tmux.
+exec sleep infinity

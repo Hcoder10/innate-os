@@ -3,8 +3,7 @@
 # This script runs after update/install to configure system components
 # Requires root privileges via sudo
 #
-# Usage: sudo ./post_update.sh [--first-install]
-#   --first-install  Skip dependency installation (used on fresh install, already done by install.sh)
+# Usage: sudo ./post_update.sh
 #
 # This script handles:
 #   1. Systemd service files
@@ -12,7 +11,7 @@
 #   3. Udev rules
 #   4. Bluetooth configuration
 #   4b. Arducam microphone setup (ALSA)
-#   5. Apt/pip dependencies (skipped on first-install)
+#   5. Apt/pip dependencies
 #   6. Rebuild ROS2 workspace
 #   7. Zsh configuration
 #   8. DDS setup
@@ -30,13 +29,13 @@ else
     SCRIPT_PATH="$0"
 fi
 
+
 # Parse arguments
-FIRST_INSTALL=false
+SKIP_ROS_CLEAN=false
 for arg in "$@"; do
     case $arg in
-        --first-install)
-            FIRST_INSTALL=true
-            shift
+        --skip-ros-clean)
+            SKIP_ROS_CLEAN=true
             ;;
     esac
 done
@@ -101,11 +100,7 @@ ensure_log_ownership() {
 }
 
 log "========================================"
-if [ "$FIRST_INSTALL" = true ]; then
-    log "Starting post-install script (first install mode)"
-else
-    log "Starting post-update script"
-fi
+log "Starting post-update script"
 log "Repository: $REPO_DIR"
 log "User: $ACTUAL_USER"
 log "========================================"
@@ -155,6 +150,14 @@ log "Configuring git fsync settings..."
 sudo -u "$ACTUAL_USER" git config --global core.fsync added,reference
 sudo -u "$ACTUAL_USER" git config --global core.fsyncMethod fsync
 log "Git fsync settings configured"
+
+# Migrate git remote from old release repo to main repo
+CURRENT_REMOTE=$(sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
+if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ]; then
+    log "Migrating git remote from innate-os-release to innate-os..."
+    sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote set-url origin https://github.com/innate-inc/innate-os.git
+    log "Git remote updated to https://github.com/innate-inc/innate-os.git"
+fi
 
 # -----------------------------------------------------------------------------
 # 0. Migrate .env file (comment out deprecated URLs)
@@ -259,6 +262,23 @@ if [ -d "$REPO_DIR/scripts" ]; then
         ln -s "$REPO_DIR/scripts/update/innate-update" /usr/local/bin/innate-update
     fi
 
+    # Symlink innate dev CLI
+    if [ -f "$REPO_DIR/scripts/innate" ]; then
+        log "  Symlinking innate"
+        rm -f /usr/local/bin/innate
+        ln -s "$REPO_DIR/scripts/innate" /usr/local/bin/innate
+    fi
+
+    # Regenerate zsh completions from the Click command tree
+    if [ -f "$REPO_DIR/scripts/innate" ]; then
+        log "  Generating zsh completions"
+        # Clean up stale completions from old path (was root-owned, blocks colcon rebuild)
+        rm -rf "$REPO_DIR/ros2_ws/build/completions"
+        mkdir -p "$REPO_DIR/scripts/build/completions"
+        chown -R "$ACTUAL_USER:$ACTUAL_USER" "$REPO_DIR/scripts/build"
+        sudo -u "$ACTUAL_USER" "$REPO_DIR/scripts/innate" completions > "$REPO_DIR/scripts/build/completions/_innate"
+    fi
+
     # Symlink restart script if it exists
     if [ -f "$REPO_DIR/scripts/restart_robot_networking.sh" ]; then
         log "  Symlinking restart_robot_networking.sh"
@@ -334,11 +354,8 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 6. Install/update dependencies (skip on first install)
+# 6. Install/update dependencies
 # -----------------------------------------------------------------------------
-if [ "$FIRST_INSTALL" = true ]; then
-    log "Skipping dependencies (already installed during first install)"
-else
     # Apt dependencies
     log "Checking apt dependencies..."
     
@@ -414,6 +431,14 @@ else
         add-apt-repository -y ppa:git-core/ppa
     fi
 
+    # Add NodeSource repo for Node.js 20 LTS (used to build Training Manager frontend)
+    if ! dpkg -l | grep -q "^ii.*nodejs"; then
+        if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
+            log "  Adding NodeSource repository for Node.js 20..."
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        fi
+    fi
+
     apt-get update
 
     # Install all apt dependencies (common + hardware-specific) in one go
@@ -471,10 +496,28 @@ else
         sudo -u "$ACTUAL_USER" pip3 install -r "$PIP_DEPS_FILE" --upgrade-strategy only-if-needed
         log "  Pip dependencies installed"
     fi
+
+# -----------------------------------------------------------------------------
+# 6a. Build Training Manager frontend (Node.js / npm)
+# -----------------------------------------------------------------------------
+TRAINING_MANAGER_FRONTEND="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/frontend"
+TRAINING_MANAGER_STATIC="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/training_manager/static"
+
+if [ -d "$TRAINING_MANAGER_FRONTEND" ]; then
+    log "Building Training Manager frontend..."
+    log "  Node.js $(node --version)"
+
+    sudo -u "$ACTUAL_USER" bash -c "cd \"$TRAINING_MANAGER_FRONTEND\" && npm install && npm run build"
+
+    if [ -f "$TRAINING_MANAGER_STATIC/index.html" ]; then
+        log "  Training Manager frontend built successfully"
+    else
+        log "  WARNING: Training Manager frontend build may have failed"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
-# 6. Rebuild ROS2 workspace if needed
+# 6b. Rebuild ROS2 workspace if needed
 # -----------------------------------------------------------------------------
 log "Checking ROS2 workspace..."
 if [ -d "$REPO_DIR/ros2_ws/src" ]; then
@@ -482,7 +525,12 @@ if [ -d "$REPO_DIR/ros2_ws/src" ]; then
     cd "$REPO_DIR/ros2_ws"
 
     # Run as the actual user, not root
-    sudo -u "$ACTUAL_USER" bash -c "cd $REPO_DIR/ros2_ws && source /opt/ros/humble/setup.bash && rm -rf build/ install/ log/ && colcon build"
+    if [ "$SKIP_ROS_CLEAN" = true ]; then
+        log "  Skipping clean build (--skip-ros-clean)"
+        sudo -u "$ACTUAL_USER" bash -c "cd $REPO_DIR/ros2_ws && source /opt/ros/humble/setup.bash && colcon build"
+    else
+        sudo -u "$ACTUAL_USER" bash -c "cd $REPO_DIR/ros2_ws && source /opt/ros/humble/setup.bash && rm -rf build/ install/ log/ && colcon build"
+    fi
 
     if [ $? -eq 0 ]; then
         log "ROS2 workspace rebuilt successfully"
@@ -556,10 +604,10 @@ if [ "$(getent passwd $ACTUAL_USER | cut -d: -f7)" != "/bin/zsh" ] && [ -x /bin/
     chsh -s /bin/zsh "$ACTUAL_USER" || true
 fi
 
-# Add user to dialout group for serial port access
-if ! groups "$ACTUAL_USER" | grep -q "\bdialout\b"; then
-    log "  Adding $ACTUAL_USER to dialout group for serial port access"
-    usermod -aG dialout "$ACTUAL_USER" || true
+# Add user to dialout and i2c groups for serial port and I2C access
+if ! groups "$ACTUAL_USER" | grep -q "\bdialout\b" || ! groups "$ACTUAL_USER" | grep -q "\bi2c\b"; then
+    log "  Adding $ACTUAL_USER to dialout and i2c groups for serial port and I2C access"
+    usermod -aG dialout,i2c "$ACTUAL_USER" || true
     log "  Note: User may need to log out and back in for group changes to take effect"
 fi
 
@@ -605,6 +653,11 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/update/post_update.sh
 # NetworkManager CLI (called by BLE provisioner for WiFi configuration)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /bin/nmcli
+
+# systemctl for ROS node management (called by innate CLI)
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ros-app.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ros-app.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ros-app.service
 EOF
 chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"
@@ -646,6 +699,21 @@ if [ -d "$DIRECTIVES_DIR" ]; then
         log "  Removed empty directives directory"
     fi
 fi
+
+# -----------------------------------------------------------------------------
+# 11b. Download skill assets from metadata.json
+# -----------------------------------------------------------------------------
+for meta_file in "$REPO_DIR"/skills/*/metadata.json; do
+    [ -f "$meta_file" ] || continue
+    jq -r '.downloads // {} | to_entries[] | "\(.key)\t\(.value)"' "$meta_file" 2>/dev/null | \
+    while IFS=$'\t' read -r fname url; do
+        dest="$(dirname "$meta_file")/$fname"
+        [ -f "$dest" ] && continue
+        log "  Downloading $dest"
+        sudo -u "$ACTUAL_USER" curl -fsSL -o "$dest.tmp" "$url"
+        mv "$dest.tmp" "$dest"
+    done
+done
 
 # -----------------------------------------------------------------------------
 # 12. Enable and restart services

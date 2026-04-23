@@ -6,7 +6,10 @@
 # websocket_uri = "wss://agent-v1.innate.bot"
 
 [telemetry]
-# url = "https://logs.innate.bot"
+# url = "https://logs-v1.innate.bot"
 
 [voice]
-# cartesia_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+# cartesia_voice_id = "9fdaae0b-f885-4813-b589-3c07cf9d5fea"
+
+[uninavid]
+# ws_url = "wss://nav-v1.innate.bot"

@@ -16,7 +16,11 @@ import time
 import rclpy.logging
 from innate_cloud_msgs.msg import TransferProgress
 
-from training_client.src.skill_manager import SkillManager
+from training_client.src.skill_manager import (
+    SkillManager,
+    read_local_episode_count,
+    write_uploaded_episode_count,
+)
 from training_client.src.types import ProgressStage, ProgressUpdate
 
 from .job_store import JobStore
@@ -158,24 +162,18 @@ def do_upload(
     skill_id: str,
     skill_dir: str,
 ) -> None:
-    """Compress + upload data files for *skill_id*."""
+    """Upload data files for *skill_id*."""
     sid = skill_id[:8]
     prev_stage: str | None = None
+    prev_msg: str | None = None
     try:
         for update in manager.upload_files(skill_id, skill_dir):
             store.update_transfer(TransferProgress.UPLOAD, skill_id, -1, update)
-            # Log stage transitions
             stage = update.stage.value
-            if stage != prev_stage:
+            if stage != prev_stage or update.message != prev_msg:
                 _ros.info(f"Upload {sid}: {stage} — {update.message}")
                 prev_stage = stage
-            # Log per-file progress when a new file starts
-            fp = update.file_progress
-            if fp and fp.bytes_done == 0 and not fp.done:
-                _ros.debug(
-                    f"Upload {sid}: file [{fp.index}/{fp.total}] {fp.filename}"
-                    f" ({fp.bytes_total} bytes)"
-                )
+                prev_msg = update.message
         _ros.info(f"Upload finished for {sid} from {skill_dir}")
     except Exception as e:
         _ros.error(f"Upload failed for {sid}: {e}")
@@ -191,6 +189,15 @@ def do_upload(
             ),
         )
         return
+
+    # Persist the episode count at the time of this successful upload.
+    try:
+        ep_count = read_local_episode_count(skill_dir)
+        write_uploaded_episode_count(skill_dir, ep_count)
+        store.set_uploaded_ep_count(skill_id, ep_count)
+        _ros.info(f"Persisted uploaded_episode_count={ep_count} for {sid}")
+    except Exception as e:
+        _ros.warning(f"Failed to persist uploaded_episode_count for {sid}: {e}")
 
     store.update_transfer(
         TransferProgress.UPLOAD,

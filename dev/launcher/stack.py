@@ -69,6 +69,7 @@ ENV_KEYS_MOVED_TO_OS_CONFIG = {
     "BRAIN_WEBSOCKET_URI",
     "TELEMETRY_URL",
     "CARTESIA_VOICE_ID",
+    "UNINAVID_WS_URL",
 }
 LOG_TARGETS = {
     "bootstrap": BOOTSTRAP_LOG_PATH,
@@ -625,6 +626,8 @@ def build_os_config_env(os_config: dict[str, object]) -> dict[str, str]:
         env["TELEMETRY_URL"] = telemetry_url
     if cartesia_voice_id := get_nested_str(os_config, "voice", "cartesia_voice_id"):
         env["CARTESIA_VOICE_ID"] = cartesia_voice_id
+    if uninavid_ws_url := get_nested_str(os_config, "uninavid", "ws_url"):
+        env["UNINAVID_WS_URL"] = uninavid_ws_url
     return env
 
 

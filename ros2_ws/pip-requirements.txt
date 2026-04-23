@@ -42,6 +42,10 @@ requests
 click
 zstandard
 
+# Training manager web UI
+fastapi
+uvicorn[standard]
+
 # Other AI
 inspireface
 
@@ -60,3 +64,6 @@ cupy-cuda12x
 
 # Debugging
 ros-mcp
+
+# Benchmarking / profiling (recorder_benchmark.py)
+psutil

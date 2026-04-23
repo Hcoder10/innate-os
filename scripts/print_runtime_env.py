@@ -15,6 +15,7 @@ ENV_KEYS_MOVED_TO_OS_CONFIG = {
     "BRAIN_WEBSOCKET_URI",
     "TELEMETRY_URL",
     "CARTESIA_VOICE_ID",
+    "UNINAVID_WS_URL",
 }
 
 
@@ -125,10 +126,12 @@ def parse_os_config(path: Path) -> dict[str, str]:
     brain = data.get("brain", {}) if isinstance(data, dict) else {}
     telemetry = data.get("telemetry", {}) if isinstance(data, dict) else {}
     voice = data.get("voice", {}) if isinstance(data, dict) else {}
+    uninavid = data.get("uninavid", {}) if isinstance(data, dict) else {}
 
     websocket_uri = brain.get("websocket_uri") if isinstance(brain, dict) else None
     telemetry_url = telemetry.get("url") if isinstance(telemetry, dict) else None
     cartesia_voice_id = voice.get("cartesia_voice_id") if isinstance(voice, dict) else None
+    uninavid_ws_url = uninavid.get("ws_url") if isinstance(uninavid, dict) else None
 
     if isinstance(websocket_uri, str) and websocket_uri.strip():
         env["BRAIN_WEBSOCKET_URI"] = websocket_uri.strip()
@@ -136,6 +139,8 @@ def parse_os_config(path: Path) -> dict[str, str]:
         env["TELEMETRY_URL"] = telemetry_url.strip()
     if isinstance(cartesia_voice_id, str) and cartesia_voice_id.strip():
         env["CARTESIA_VOICE_ID"] = cartesia_voice_id.strip()
+    if isinstance(uninavid_ws_url, str) and uninavid_ws_url.strip():
+        env["UNINAVID_WS_URL"] = uninavid_ws_url.strip()
     return env
 
 

@@ -25,9 +25,13 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from innate_cloud_msgs.msg import TrainingJobList, TrainingParams, TransferProgress
-from innate_cloud_msgs.srv import CreateRun, DownloadResults, SubmitSkill
+from innate_cloud_msgs.srv import CreateRun, DownloadResults, GetTrainingStatus, SubmitSkill
 
-from training_client.src.skill_manager import SkillManager, read_skill_id
+from training_client.src.skill_manager import (
+    SkillManager,
+    read_skill_id,
+    read_uploaded_episode_count as _read_ep_count_from_disk,
+)
 from training_client.src.types import (
     ClientConfig,
     DEFAULT_AUTH_ISSUER_URL,
@@ -67,7 +71,13 @@ def _build_training_params(
     if msg.preset:
         params["preset"] = msg.preset
     if msg.env:
-        params["env"] = list(msg.env)
+        env_dict: dict[str, str] = {}
+        for entry in msg.env:
+            key, _, value = entry.partition("=")
+            if key:
+                env_dict[key] = value
+        if env_dict:
+            params["env"] = env_dict
     return (params or None), None
 
 
@@ -84,15 +94,13 @@ def _require_absolute(skill_dir: str) -> str | None:
 
 
 class _RosHandler(logging.Handler):
-    """Forward stdlib log records to a ROS logger."""
+    """Forward stdlib log records to a ROS logger.
 
-    _LEVEL_MAP = {
-        logging.DEBUG: "debug",
-        logging.INFO: "info",
-        logging.WARNING: "warn",
-        logging.ERROR: "error",
-        logging.CRITICAL: "fatal",
-    }
+    rclpy (Humble) caches severity per call-site ``(file, line, function)``
+    and rejects changes with ``"Logger severity cannot be changed between
+    calls"``.  Dispatch each severity from its own source line so the
+    caller_id differs per level.
+    """
 
     def __init__(self, ros_logger) -> None:
         super().__init__()
@@ -100,8 +108,17 @@ class _RosHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        fn = self._LEVEL_MAP.get(record.levelno, "info")
-        getattr(self._ros, fn)(msg)
+        level = record.levelno
+        if level >= logging.CRITICAL:
+            self._ros.fatal(msg)
+        elif level >= logging.ERROR:
+            self._ros.error(msg)
+        elif level >= logging.WARNING:
+            self._ros.warn(msg)
+        elif level >= logging.INFO:
+            self._ros.info(msg)
+        else:
+            self._ros.debug(msg)
 
 
 class TrainingNode(Node):
@@ -110,10 +127,19 @@ class TrainingNode(Node):
     def __init__(self) -> None:
         super().__init__("innate_training")
 
-        # Bridge stdlib logs from training_client → ROS logger
-        _lib_logger = logging.getLogger("training_client")
-        _lib_logger.setLevel(logging.DEBUG)
-        _lib_logger.addHandler(_RosHandler(self.get_logger()))
+        # Bridge stdlib logs from training_client + auth_client → ROS logger.
+        # auth_client emits its cold-boot retry progress here via wait_for_token.
+        # Python's stdlib loggers are module-global singletons, so if
+        # TrainingNode is constructed more than once in the same process
+        # (tests, composable-node containers) we must evict any handlers
+        # installed by a prior instance to avoid duplicate emission.
+        _ros_handler = _RosHandler(self.get_logger())
+        for _name in ("training_client", "auth_client"):
+            _lib_logger = logging.getLogger(_name)
+            for _stale in [h for h in _lib_logger.handlers if isinstance(h, _RosHandler)]:
+                _lib_logger.removeHandler(_stale)
+            _lib_logger.setLevel(logging.DEBUG)
+            _lib_logger.addHandler(_ros_handler)
 
         env_path = find_dotenv(usecwd=True)
         if env_path:
@@ -155,6 +181,9 @@ class TrainingNode(Node):
             auth_issuer_url=auth_issuer,
             poll_interval_seconds=poll_sec,
         )
+        # OrchestratorClient uses AuthProvider.wait_for_token() internally
+        # so cold-boot auth failures (DNS not ready, no RTC → TLS notBefore)
+        # are retried with exponential backoff instead of crashing init.
         self._mgr: SkillManager = SkillManager(config)
         self._store: JobStore = JobStore()
 
@@ -172,6 +201,7 @@ class TrainingNode(Node):
         self.create_service(SubmitSkill, "~/submit_skill", self._on_submit)
         self.create_service(CreateRun, "~/create_run", self._on_create_run)
         self.create_service(DownloadResults, "~/download_results", self._on_download)
+        self.create_service(GetTrainingStatus, "~/get_training_status", self._on_get_training_status)
 
         # ── Timer + poller ──────────────────────────────────────────
         self.create_timer(pub_sec, self._publish)
@@ -188,25 +218,25 @@ class TrainingNode(Node):
 
     # ── Periodic publish ────────────────────────────────────────────
 
-    def _publish(self) -> None:
-        jobs, skills, transfers, completed, dir_map = self._store.snapshot()
-        msg = TrainingJobList()
-        msg.stamp = self.get_clock().now().to_msg()
+    def _build_skill_statuses(self) -> list:
+        """Build the current list of TrainingSkillStatus from the store."""
+        jobs, skills, transfers, completed, dir_map, ep_counts = self._store.snapshot()
 
-        # Group runs by skill_id.
         runs_by_skill: dict[str, list] = defaultdict(list)
         for run in jobs:
             runs_by_skill[run.skill_id].append(run)
 
-        # Collect all skill_ids (some skills may have no runs yet).
         all_skill_ids = set(runs_by_skill.keys()) | set(skills.keys())
+        result = []
 
         for sid in sorted(all_skill_ids):
-            # Skill-level upload transfer (run_id == -1).
             upload_xfer = transfers.get((TransferProgress.UPLOAD, sid, -1))
-            upload_done = (TransferProgress.UPLOAD, sid, -1) in completed
+            # upload_done: in-memory completed set OR persisted ep count exists
+            upload_done = (
+                (TransferProgress.UPLOAD, sid, -1) in completed
+                or ep_counts.get(sid, -1) >= 0
+            )
 
-            # Per-run download transfers.
             dl_xfers: dict[int, TransferProgress] = {}
             dl_done: set[int] = set()
             for run in runs_by_skill.get(sid, []):
@@ -217,7 +247,7 @@ class TrainingNode(Node):
                 if key in completed:
                     dl_done.add(run.run_id)
 
-            msg.skills.append(
+            result.append(
                 build_skill_status(
                     sid,
                     skills.get(sid),
@@ -227,10 +257,44 @@ class TrainingNode(Node):
                     dl_xfers,
                     dl_done,
                     skill_dir=dir_map.get(sid, ""),
+                    uploaded_episode_count=ep_counts.get(sid, -1),
                 )
             )
+        return result
 
+    def _publish(self) -> None:
+        msg = TrainingJobList()
+        msg.stamp = self.get_clock().now().to_msg()
+        msg.skills = self._build_skill_statuses()
         self._pub.publish(msg)
+
+    # ── Service: get_training_status ────────────────────────────────
+
+    def _on_get_training_status(
+        self, req: GetTrainingStatus.Request, res: GetTrainingStatus.Response
+    ) -> GetTrainingStatus.Response:
+        # Resolve skill_dir → skill_id from local metadata.json so we can
+        # match even when the dir_map hasn't been populated by a prior
+        # submit/create/download call.
+        lookup_skill_id: str | None = None
+        if req.skill_dir and os.path.isdir(req.skill_dir):
+            lookup_skill_id = read_skill_id(req.skill_dir)
+            if lookup_skill_id:
+                self._store.register_dir(lookup_skill_id, req.skill_dir)
+                if self._store.get_uploaded_ep_count(lookup_skill_id) < 0:
+                    self._store.set_uploaded_ep_count(
+                        lookup_skill_id,
+                        _read_ep_count_from_disk(req.skill_dir),
+                    )
+
+        res.found = False
+        for skill in self._build_skill_statuses():
+            if (lookup_skill_id and skill.training_skill_id == lookup_skill_id) or \
+               (req.skill_name and skill.skill_name == req.skill_name):
+                res.found = True
+                res.skill_status = skill
+                break
+        return res
 
     # ── Service: submit_skill ───────────────────────────────────────
 
