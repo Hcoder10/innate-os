@@ -191,7 +191,7 @@ def get_available_agents(request: Request):
     """
     Returns the list of available agents/directives from the robot brain.
     Each agent includes: id, display_name, display_icon, prompt, skills.
-    Also returns the current and startup agent IDs.
+    Also returns the current agent ID.
     """
     shared_queues = request.app.state.SHARED_QUEUES
 
@@ -200,13 +200,12 @@ def get_available_agents(request: Request):
             {
                 "agents": [],
                 "current_agent_id": None,
-                "startup_agent_id": None,
                 "error": "Simulation not initialized",
             },
             status_code=200,
         )
 
-    agents, current_agent_id, startup_agent_id = shared_queues.get_available_agents()
+    agents, current_agent_id = shared_queues.get_available_agents()
 
     # Convert AgentInfo namedtuples to dicts for JSON serialization
     agents_data = [
@@ -224,6 +223,5 @@ def get_available_agents(request: Request):
         {
             "agents": agents_data,
             "current_agent_id": current_agent_id,
-            "startup_agent_id": startup_agent_id,
         }
     )

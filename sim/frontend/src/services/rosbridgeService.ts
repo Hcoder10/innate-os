@@ -9,14 +9,12 @@ export interface RobotAgent {
 export interface AvailableAgentsResponse {
   agents: RobotAgent[];
   current_agent_id: string | null;
-  startup_agent_id: string | null;
   error?: string;
 }
 
 interface GetAvailableDirectivesValues {
   directives?: unknown;
   current_directive?: string | null;
-  startup_directive?: string | null;
 }
 
 interface RosbridgeServiceResponse<T> {
@@ -216,7 +214,6 @@ export async function getAvailableAgentsDirect(
   return {
     agents,
     current_agent_id: values.current_directive ?? null,
-    startup_agent_id: values.startup_directive ?? null,
   };
 }
 

@@ -72,7 +72,6 @@ class SharedQueues:
         # Store available agents/directives from the robot
         self.available_agents: List[AgentInfo] = []
         self.current_agent_id: Optional[str] = None
-        self.startup_agent_id: Optional[str] = None
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
         # One-shot status map for /set_environment request/response.
@@ -146,23 +145,20 @@ class SharedQueues:
         self,
         agents: List[AgentInfo],
         current_agent_id: Optional[str] = None,
-        startup_agent_id: Optional[str] = None,
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
             self.available_agents = agents
             self.current_agent_id = current_agent_id
-            self.startup_agent_id = startup_agent_id
 
     def get_available_agents(
         self,
-    ) -> Tuple[List[AgentInfo], Optional[str], Optional[str]]:
-        """Thread-safe method to get available agents, current agent, and startup agent"""
+    ) -> Tuple[List[AgentInfo], Optional[str]]:
+        """Thread-safe method to get available agents and the current agent"""
         with self.agents_lock:
             return (
                 self.available_agents.copy(),
                 self.current_agent_id,
-                self.startup_agent_id,
             )
 
     def set_environment_apply_result(

@@ -214,8 +214,7 @@ Returns the list of available agents/directives configured in the robot brain.
       "skills": ["patrol", "surveillance", "alert"]
     }
   ],
-  "current_agent_id": "security_patrol",
-  "startup_agent_id": "default_agent"
+  "current_agent_id": "security_patrol"
 }
 ```
 
