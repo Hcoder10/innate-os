@@ -714,6 +714,10 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
     env["ROSBRIDGE_URI"] = raw_env.get("ROSBRIDGE_URI", "ws://localhost:9090")
     env["SIMULATOR_PORT"] = raw_env.get("SIMULATOR_PORT", "8000")
     env["SIM_LOG_MODE"] = str(config.get("sim_log_mode", "quiet"))
+    if config.get("sim_render_fps") is not None:
+        env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
+    if config.get("sim_scene_dt") is not None:
+        env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
 
     sim_args = shlex.split(str(config["sim_args"]))
     if config.get("sim_visualization") and "--vis" not in sim_args and "-v" not in sim_args:

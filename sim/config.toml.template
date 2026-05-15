@@ -4,6 +4,11 @@
 
 [display]
 # visualization = true
+# Target rendered camera FPS for the web feed. Default: 25.
+# This cannot exceed 1 / scene_dt unless scene_dt is lowered too.
+# render_fps = 25
+# Genesis simulation timestep in seconds. Default: 0.04 (25 Hz).
+# scene_dt = 0.04
 
 [simulator]
 # Seconds to wait for the simulator HTTP endpoint on first scene load.

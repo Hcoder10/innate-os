@@ -68,6 +68,21 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        print(f"[SimulationNode] Invalid {name}={value!r}; using {default}.")
+        return default
+    if parsed <= 0:
+        print(f"[SimulationNode] Invalid {name}={value!r}; using {default}.")
+        return default
+    return parsed
+
+
 def xyzw_to_wxyz(xyzw):
     return (xyzw[3], xyzw[0], xyzw[1], xyzw[2])
 
@@ -106,9 +121,22 @@ class SimulationNode:
             {}
         )  # entity_name -> {position: [x, y, z], hitbox_type: "manual"/"aabb"}
 
-        # Add timing variables for real-time simulation
+        # Add timing variables for real-time simulation.
         self.last_render_time = 0
-        self.render_interval = 1 / 10  # Render at 15 FPS
+        self.scene_dt = _env_float("SIM_SCENE_DT", 0.04)
+        requested_render_fps = _env_float("SIM_RENDER_FPS", 25.0)
+        max_render_fps = 1.0 / self.scene_dt
+        if requested_render_fps > max_render_fps:
+            print(
+                f"[SimulationNode] SIM_RENDER_FPS={requested_render_fps:g} exceeds "
+                f"the SIM_SCENE_DT={self.scene_dt:g}s limit ({max_render_fps:g} FPS); "
+                f"clamping to {max_render_fps:g} FPS."
+            )
+            self.render_fps = max_render_fps
+        else:
+            self.render_fps = requested_render_fps
+        self.render_interval = 1 / self.render_fps
+        print(f"[SimulationNode] Target camera render FPS: {self.render_fps:g}")
 
         # Store commanded velocities for odometry
         self.commanded_lin_vel = np.zeros(3)  # [vx, vy, vz]
@@ -250,7 +278,12 @@ class SimulationNode:
 
     def _init_scene(self):
         """Initialize the main simulation scene"""
+        scene_dt = self.scene_dt
         substeps = _env_int("SIM_SCENE_SUBSTEPS", 4)
+        print(
+            f"[SimulationNode] Simulation timestep: {scene_dt:g}s "
+            f"({1 / scene_dt:g} Hz), substeps={substeps}"
+        )
         scene_kwargs = {}
         if not self.physics_collision_enabled:
             print("[SimulationNode] Physics collisions disabled.")
@@ -270,7 +303,7 @@ class SimulationNode:
                 ls_iterations=10,
             )
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=0.05, substeps=substeps),
+            sim_options=gs.options.SimOptions(dt=scene_dt, substeps=substeps),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(3.5, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
@@ -1954,7 +1987,7 @@ class SimulationNode:
             # Check if enough time has passed since last render
             if (
                 self.cameras_enabled
-                and sim_time - self.last_render_time >= self.render_interval
+                and sim_time - self.last_render_time >= self.render_interval - 1e-9
             ):
                 camera_link = self.robot.get_link("head_camera_link")
                 camera_pos = camera_link.get_pos()

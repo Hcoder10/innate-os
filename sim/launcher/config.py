@@ -294,6 +294,22 @@ def get_nested_str(data: dict[str, object], *keys: str) -> str | None:
     return None
 
 
+def get_nested_float(data: dict[str, object], *keys: str) -> float | None:
+    value = get_nested_value(data, *keys)
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def resolve_sim_startup_timeout_seconds(
     sim_config: dict[str, object],
     *,
@@ -515,6 +531,8 @@ def get_config() -> dict[str, object]:
         "sim_visualization": get_nested_bool(sim_config, "display", "visualization")
         if get_nested_bool(sim_config, "display", "visualization") is not None
         else False,
+        "sim_render_fps": get_nested_float(sim_config, "display", "render_fps"),
+        "sim_scene_dt": get_nested_float(sim_config, "display", "scene_dt"),
         "sim_log_mode": "quiet",
         "sim_args": "--log-everything",
         "sim_startup_timeout_seconds": resolve_sim_startup_timeout_seconds(
