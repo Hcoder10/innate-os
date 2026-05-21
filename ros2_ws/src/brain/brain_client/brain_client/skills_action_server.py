@@ -12,6 +12,7 @@ import inspect
 import json
 import math  # For yaw calculation
 import os
+import queue
 import threading
 import time
 import types
@@ -40,6 +41,7 @@ from brain_client.head_interface import HeadInterface
 from brain_client.hot_reload_watcher import HotReloadWatcher
 from brain_client.manipulation_interface import ManipulationInterface
 from brain_client.mobility_interface import MobilityInterface
+from brain_client.skill_cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
     InterfaceType,
@@ -148,6 +150,10 @@ class SkillsActionServer(Node):
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
         )
+
+        self._cli_skill_tasks = queue.Queue()
+        self._cli_skill_guard = self.create_guard_condition(self._drain_cli_skill_tasks)
+        self._skill_cli_bridge = SkillCliBridge(self.get_logger(), self._submit_cli_skill)
 
         # Create unified latched topic for broadcasting available skills
         self._skills_qos = QoSProfile(
@@ -891,6 +897,36 @@ class SkillsActionServer(Node):
 
         return CancelResponse.ACCEPT
 
+    def _submit_cli_skill(self, task):
+        goal_handle = SkillCliGoalHandle(task)
+        task.set_cancel_handler(lambda: self.cancel_callback(goal_handle))
+        self._cli_skill_tasks.put((task, goal_handle))
+        self._cli_skill_guard.trigger()
+
+    def _drain_cli_skill_tasks(self):
+        while True:
+            try:
+                task, goal_handle = self._cli_skill_tasks.get_nowait()
+            except queue.Empty:
+                return
+
+            task.mark_started()
+            if task.cancel_event.is_set():
+                task.set_error("Skill execution was cancelled before start")
+                continue
+
+            try:
+                result = self.execute_callback(goal_handle)
+            except Exception as e:
+                self.get_logger().error(f"Unexpected error executing CLI skill '{task.skill_type}': {e}")
+                task.set_error(f"Skill execution failed: {e}")
+                continue
+
+            if result is None:
+                task.set_error("Skill execution returned no result")
+            else:
+                task.set_result(result)
+
     def execute_callback(self, goal_handle):
         # Trace entry into the execute callback for debugging
         self.get_logger().debug(f"[SAS] execute_callback ENTER for skill: '{goal_handle.request.skill_type}'")
@@ -1290,6 +1326,10 @@ class SkillsActionServer(Node):
     def destroy(self):
         if hasattr(self, "_hot_reload_watcher"):
             self._hot_reload_watcher.stop()
+        if hasattr(self, "_skill_cli_bridge"):
+            self._skill_cli_bridge.stop()
+        if hasattr(self, "_cli_skill_guard"):
+            self.destroy_guard_condition(self._cli_skill_guard)
         self._camera_node.shutdown()
         self._action_server.destroy()
         super().destroy_node()

@@ -78,9 +78,8 @@ contracts to `/tmp/innate_skill_contracts.json` (override with
 `INNATE_SKILL_CACHE`). `innate skill type` reads that cache before falling back
 to ROS; completion uses the cache directly so tab suggestions stay fast.
 `innate skill run` first tries the local `/tmp/innate_skill_cli.sock` bridge
-(override with `INNATE_SKILL_SOCKET`) so the long-running ROS process can keep
-the ExecuteSkill action client warm, then falls back to direct ROS if the bridge
-is unavailable.
+(override with `INNATE_SKILL_SOCKET`) hosted by `skills_action_server`, then
+falls back to direct ROS if the bridge is unavailable.
 
 ### Daemon Mode (internal)
 

@@ -213,12 +213,6 @@ def generate_launch_description():
                     }
                 ],
             ),
-            Node(
-                package="brain_client",
-                executable="skill_cli_server.py",
-                name="skill_cli_server",
-                output="screen",
-            ),
             # NOTE: InputManagerNode is launched separately via input_manager.launch.py
         ]
     )
