@@ -1,0 +1,21 @@
+[Unit]
+Description=Innate Training Manager Web UI
+Documentation=https://github.com/innate-inc/innate-os
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson1
+Environment="INNATE_OS_ROOT=/home/jetson1/innate-os" "SKILLS_DIR=/home/jetson1/skills" "PORT=8080"
+WorkingDirectory=/home/jetson1/innate-os
+ExecStartPre=/bin/mkdir -p /home/jetson1/skills
+ExecStart=/bin/bash -c 'source "$INNATE_OS_ROOT/ros2_ws/install/setup.bash" && eval "$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell)" && exec python3 -m training_client.cli ui --skills-dir "$SKILLS_DIR" --port "$PORT"'
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

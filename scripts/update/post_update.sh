@@ -202,7 +202,7 @@ fi
 log "Stopping services to begin update..."
 
 # Stop systemd services first (if they exist)
-for service in jetson-perf.service zenoh-router.service ros-app.service ble-provisioner.service speaker-keepalive.service; do
+for service in jetson-perf.service zenoh-router.service ros-app.service training-manager.service ble-provisioner.service speaker-keepalive.service; do
     if systemctl is-active --quiet "$service" 2>/dev/null; then
         log "Stopping $service"
         systemctl stop "$service"
@@ -721,7 +721,7 @@ done
 log "Enabling and starting services..."
 
 # List of services to enable/start
-SERVICES=("jetson-perf.service" "zenoh-router.service" "ros-app.service")
+SERVICES=("jetson-perf.service" "zenoh-router.service" "ros-app.service" "training-manager.service")
 
 # Add ble-provisioner if the service file exists
 if [ -f "/etc/systemd/system/ble-provisioner.service" ]; then
@@ -798,5 +798,4 @@ fi
 ensure_log_ownership
 
 exit 0
-
 
