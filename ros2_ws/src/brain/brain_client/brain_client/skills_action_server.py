@@ -141,6 +141,10 @@ class SkillsActionServer(Node):
 
         # Create action client to delegate physical skills to behavior_server
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
+        self._behavior_goal_lock = threading.Lock()
+        self._behavior_goal_handles = {}
+        self._behavior_goal_cancel_requested = set()
+        self._behavior_goal_cancel_sent = set()
 
         self._action_server = ActionServer(
             self,
@@ -881,6 +885,7 @@ class SkillsActionServer(Node):
                 instance.cancel()
             elif is_physical:
                 self.get_logger().debug(f"Canceling physical skill: {skill_type}")
+                self._request_behavior_goal_cancel(goal_handle, skill_type)
             else:
                 self.get_logger().warning(f"Unknown skill type: {skill_type}")
         except Exception as e:
@@ -898,6 +903,61 @@ class SkillsActionServer(Node):
                     self.get_logger().error(err_msg)
 
         return CancelResponse.ACCEPT
+
+    def _skill_goal_key(self, goal_handle) -> int:
+        return id(goal_handle)
+
+    def _skill_goal_cancel_requested(self, goal_handle) -> bool:
+        try:
+            return bool(goal_handle.is_cancel_requested)
+        except Exception:
+            return False
+
+    def _register_behavior_goal_handle(self, skill_goal_handle, behavior_goal_handle, skill_type: str) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_handles[key] = behavior_goal_handle
+            cancel_requested = key in self._behavior_goal_cancel_requested
+
+        if cancel_requested or self._skill_goal_cancel_requested(skill_goal_handle):
+            self.get_logger().info(f"Cancel was already requested for physical skill '{skill_type}'")
+            self._request_behavior_goal_cancel(skill_goal_handle, skill_type)
+
+    def _unregister_behavior_goal_handle(self, skill_goal_handle) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_handles.pop(key, None)
+            self._behavior_goal_cancel_requested.discard(key)
+            self._behavior_goal_cancel_sent.discard(key)
+
+    def _request_behavior_goal_cancel(self, skill_goal_handle, skill_type: str) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_cancel_requested.add(key)
+            behavior_goal_handle = self._behavior_goal_handles.get(key)
+            if behavior_goal_handle is None:
+                return
+            if key in self._behavior_goal_cancel_sent:
+                return
+            self._behavior_goal_cancel_sent.add(key)
+
+        try:
+            self.get_logger().info(f"Requesting behavior_server cancel for physical skill '{skill_type}'")
+            behavior_goal_handle.cancel_goal_async()
+        except Exception as e:
+            self.get_logger().error(f"Failed to cancel behavior goal for '{skill_type}': {e}")
+
+    def _cancel_behavior_goal_when_ready(self, send_goal_future, skill_type: str) -> None:
+        def _cancel_when_ready(future):
+            try:
+                behavior_goal_handle = future.result()
+                if behavior_goal_handle is not None and behavior_goal_handle.accepted:
+                    self.get_logger().info(f"Canceling late-accepted behavior goal for physical skill '{skill_type}'")
+                    behavior_goal_handle.cancel_goal_async()
+            except Exception as e:
+                self.get_logger().error(f"Failed to cancel late behavior goal for '{skill_type}': {e}")
+
+        send_goal_future.add_done_callback(_cancel_when_ready)
 
     def _submit_cli_skill(self, task):
         goal_handle = SkillCliGoalHandle(task)
@@ -1267,6 +1327,7 @@ class SkillsActionServer(Node):
 
             if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
+                self._cancel_behavior_goal_when_ready(send_goal_future, skill_type)
                 goal_handle.abort()
                 return ExecuteSkill.Result(
                     success=False,
@@ -1286,6 +1347,7 @@ class SkillsActionServer(Node):
                     success_type=SkillResult.FAILURE.value,
                 )
 
+            self._register_behavior_goal_handle(goal_handle, behavior_goal_handle, skill_type)
             self.get_logger().info("Behavior goal accepted, waiting for result...")
 
             # Wait for result
@@ -1296,6 +1358,16 @@ class SkillsActionServer(Node):
                 self._wait_for_cli_future(result_future)
             else:
                 rclpy.spin_until_future_complete(self, result_future)
+
+            if not result_future.done():
+                self.get_logger().info(f"Physical skill '{skill_type}' cancelled before behavior result was ready")
+                goal_handle.canceled()
+                return ExecuteSkill.Result(
+                    success=True,
+                    message="Physical skill cancelled",
+                    skill_type=skill_type,
+                    success_type=SkillResult.CANCELLED.value,
+                )
 
             behavior_result = result_future.result().result
 
@@ -1346,6 +1418,7 @@ class SkillsActionServer(Node):
                 success_type=SkillResult.FAILURE.value,
             )
         finally:
+            self._unregister_behavior_goal_handle(goal_handle)
             self._stop_state_subscriptions()
 
     def destroy(self):

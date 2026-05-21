@@ -93,7 +93,7 @@ class SkillCliBridge:
 
             server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             server_socket.bind(str(self._socket_path))
-            os.chmod(self._socket_path, 0o666)
+            os.chmod(self._socket_path, 0o600)
             server_socket.listen(8)
             server_socket.settimeout(0.2)
             self._server_socket = server_socket
