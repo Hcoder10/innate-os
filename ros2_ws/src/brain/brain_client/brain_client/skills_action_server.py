@@ -996,14 +996,38 @@ class SkillsActionServer(Node):
             finally:
                 self._unregister_behavior_goal_handle(goal_handle)
 
-    def _wait_for_cli_future(self, future, timeout_sec=None):
+    def _behavior_server_ready(self) -> bool:
+        try:
+            checker = getattr(self._behavior_client, "server_is_ready", None)
+            if checker is not None:
+                return bool(checker())
+            return bool(self._behavior_client.wait_for_server(timeout_sec=0.0))
+        except Exception as e:
+            self.get_logger().error(f"Could not check behavior_server readiness: {e}")
+            return False
+
+    def _wait_for_cli_future(self, future, timeout_sec=None, server_ready_check=None):
         """Wait for a ROS future while the node executor spins in the main thread."""
         if future.done():
-            return True
+            return "done"
 
         done_event = threading.Event()
         future.add_done_callback(lambda _future: done_event.set())
-        return done_event.wait(timeout=timeout_sec)
+
+        deadline = time.monotonic() + timeout_sec if timeout_sec is not None else None
+        while True:
+            wait_timeout = 0.2
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                wait_timeout = min(wait_timeout, remaining)
+
+            if done_event.wait(timeout=wait_timeout):
+                return "done"
+
+            if server_ready_check is not None and not server_ready_check():
+                return "server_unavailable"
 
     def execute_callback(self, goal_handle):
         # Trace entry into the execute callback for debugging
@@ -1323,7 +1347,8 @@ class SkillsActionServer(Node):
             # response; recursive spinning from that worker can race the main
             # executor and falsely time out while the behavior still starts.
             if isinstance(goal_handle, SkillCliGoalHandle):
-                goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0)
+                goal_wait_state = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0)
+                goal_ready = goal_wait_state == "done"
             else:
                 rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
                 goal_ready = send_goal_future.done()
@@ -1358,9 +1383,23 @@ class SkillsActionServer(Node):
 
             # Spin until complete - this blocks but that's okay in an action callback
             if isinstance(goal_handle, SkillCliGoalHandle):
-                self._wait_for_cli_future(result_future)
+                result_wait_state = self._wait_for_cli_future(
+                    result_future,
+                    server_ready_check=self._behavior_server_ready,
+                )
             else:
                 rclpy.spin_until_future_complete(self, result_future)
+                result_wait_state = "done" if result_future.done() else "pending"
+
+            if result_wait_state == "server_unavailable":
+                self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
+                goal_handle.abort()
+                return ExecuteSkill.Result(
+                    success=False,
+                    message="Behavior server became unavailable while waiting for result",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
 
             if not result_future.done():
                 self.get_logger().info(f"Physical skill '{skill_type}' cancelled before behavior result was ready")
