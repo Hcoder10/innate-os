@@ -152,7 +152,9 @@ class SkillsActionServer(Node):
         )
 
         self._cli_skill_tasks = queue.Queue()
-        self._cli_skill_guard = self.create_guard_condition(self._drain_cli_skill_tasks)
+        self._cli_skill_worker_stop = threading.Event()
+        self._cli_skill_worker = threading.Thread(target=self._run_cli_skill_worker, daemon=True)
+        self._cli_skill_worker.start()
         self._skill_cli_bridge = SkillCliBridge(self.get_logger(), self._submit_cli_skill)
 
         # Create unified latched topic for broadcasting available skills
@@ -901,14 +903,18 @@ class SkillsActionServer(Node):
         goal_handle = SkillCliGoalHandle(task)
         task.set_cancel_handler(lambda: self.cancel_callback(goal_handle))
         self._cli_skill_tasks.put((task, goal_handle))
-        self._cli_skill_guard.trigger()
 
-    def _drain_cli_skill_tasks(self):
-        while True:
+    def _run_cli_skill_worker(self):
+        while not self._cli_skill_worker_stop.is_set():
             try:
-                task, goal_handle = self._cli_skill_tasks.get_nowait()
+                item = self._cli_skill_tasks.get(timeout=0.2)
             except queue.Empty:
+                continue
+
+            if item is None:
                 return
+
+            task, goal_handle = item
 
             task.mark_started()
             if task.cancel_event.is_set():
@@ -926,6 +932,15 @@ class SkillsActionServer(Node):
                 task.set_error("Skill execution returned no result")
             else:
                 task.set_result(result)
+
+    def _wait_for_cli_future(self, future, timeout_sec=None):
+        """Wait for a ROS future while the node executor spins in the main thread."""
+        if future.done():
+            return True
+
+        done_event = threading.Event()
+        future.add_done_callback(lambda _future: done_event.set())
+        return done_event.wait(timeout=timeout_sec)
 
     def execute_callback(self, goal_handle):
         # Trace entry into the execute callback for debugging
@@ -1240,10 +1255,17 @@ class SkillsActionServer(Node):
             self.get_logger().info(f"Sending behavior goal to behavior_server: {skill_type}")
             send_goal_future = self._behavior_client.send_goal_async(behavior_goal)
 
-            # Wait for goal acceptance
-            rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
+            # Wait for goal acceptance. CLI requests run on a background worker
+            # so the node's main spin loop can service the behavior action
+            # response; recursive spinning from that worker can race the main
+            # executor and falsely time out while the behavior still starts.
+            if isinstance(goal_handle, SkillCliGoalHandle):
+                goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0)
+            else:
+                rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
+                goal_ready = send_goal_future.done()
 
-            if not send_goal_future.done():
+            if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
                 goal_handle.abort()
                 return ExecuteSkill.Result(
@@ -1270,7 +1292,10 @@ class SkillsActionServer(Node):
             result_future = behavior_goal_handle.get_result_async()
 
             # Spin until complete - this blocks but that's okay in an action callback
-            rclpy.spin_until_future_complete(self, result_future)
+            if isinstance(goal_handle, SkillCliGoalHandle):
+                self._wait_for_cli_future(result_future)
+            else:
+                rclpy.spin_until_future_complete(self, result_future)
 
             behavior_result = result_future.result().result
 
@@ -1328,8 +1353,12 @@ class SkillsActionServer(Node):
             self._hot_reload_watcher.stop()
         if hasattr(self, "_skill_cli_bridge"):
             self._skill_cli_bridge.stop()
-        if hasattr(self, "_cli_skill_guard"):
-            self.destroy_guard_condition(self._cli_skill_guard)
+        if hasattr(self, "_cli_skill_worker_stop"):
+            self._cli_skill_worker_stop.set()
+        if hasattr(self, "_cli_skill_tasks"):
+            self._cli_skill_tasks.put(None)
+        if hasattr(self, "_cli_skill_worker"):
+            self._cli_skill_worker.join(timeout=1.0)
         self._camera_node.shutdown()
         self._action_server.destroy()
         super().destroy_node()
