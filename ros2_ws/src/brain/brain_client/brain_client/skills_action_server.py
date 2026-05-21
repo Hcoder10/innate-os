@@ -976,22 +976,25 @@ class SkillsActionServer(Node):
 
             task, goal_handle = item
 
-            task.mark_started()
-            if task.cancel_event.is_set():
-                task.set_error("Skill execution was cancelled before start")
-                continue
-
             try:
-                result = self.execute_callback(goal_handle)
-            except Exception as e:
-                self.get_logger().error(f"Unexpected error executing CLI skill '{task.skill_type}': {e}")
-                task.set_error(f"Skill execution failed: {e}")
-                continue
+                task.mark_started()
+                if task.cancel_event.is_set():
+                    task.set_error("Skill execution was cancelled before start")
+                    continue
 
-            if result is None:
-                task.set_error("Skill execution returned no result")
-            else:
-                task.set_result(result)
+                try:
+                    result = self.execute_callback(goal_handle)
+                except Exception as e:
+                    self.get_logger().error(f"Unexpected error executing CLI skill '{task.skill_type}': {e}")
+                    task.set_error(f"Skill execution failed: {e}")
+                    continue
+
+                if result is None:
+                    task.set_error("Skill execution returned no result")
+                else:
+                    task.set_result(result)
+            finally:
+                self._unregister_behavior_goal_handle(goal_handle)
 
     def _wait_for_cli_future(self, future, timeout_sec=None):
         """Wait for a ROS future while the node executor spins in the main thread."""
