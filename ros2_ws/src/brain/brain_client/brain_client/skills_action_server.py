@@ -35,11 +35,11 @@ from std_srvs.srv import Trigger
 
 from brain_client.camera_provider import CameraProvider
 from brain_client.head_interface import HeadInterface
-from brain_client.manipulation_interface import ManipulationInterface
-from brain_client.mobility_interface import MobilityInterface
 
 # Import skill loader and types
 from brain_client.hot_reload_watcher import HotReloadWatcher
+from brain_client.manipulation_interface import ManipulationInterface
+from brain_client.mobility_interface import MobilityInterface
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
     InterfaceType,
@@ -155,9 +155,7 @@ class SkillsActionServer(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             reliability=QoSReliabilityPolicy.RELIABLE,
         )
-        self._skills_publisher = self.create_publisher(
-            AvailableSkills, "/brain/available_skills", self._skills_qos
-        )
+        self._skills_publisher = self.create_publisher(AvailableSkills, "/brain/available_skills", self._skills_qos)
 
         # Create service for reloading skills
         self._reload_srv = self.create_service(Trigger, "/brain/reload_primitives", self._handle_reload_skills)
@@ -171,14 +169,13 @@ class SkillsActionServer(Node):
 
         # Create service for selective skill reload (PEAS-only, called by brain_client)
         from brain_messages.srv import ReloadSkillsAgents
+
         self._reload_skills_srv = self.create_service(
             ReloadSkillsAgents, "/brain/reload_skills", self._handle_reload_skills_agents
         )
 
         self.get_logger().debug("Skills Action Server has started.")
-        self.get_logger().info(
-            f"Total skills available: {len(self._code_skills) + len(self._physical_skills)}"
-        )
+        self.get_logger().info(f"Total skills available: {len(self._code_skills) + len(self._physical_skills)}")
 
         # Publish initial skills list on the latched topic
         self._publish_skills_list()
@@ -195,7 +192,7 @@ class SkillsActionServer(Node):
 
     def _on_skills_file_changed(self, skill_names: list, _agent_names: list):
         """Called by HotReloadWatcher when skill files change.
-        
+
         Note: skill_names here are file stems from the watcher, not IDs.
         """
         self.get_logger().info(f"Hot reload triggered for skills: {skill_names}")
@@ -216,10 +213,18 @@ class SkillsActionServer(Node):
         else:
             self._reload_skills()
 
-    def _build_skill_info(self, skill_id: str, name: str, skill_type: str, guidelines: str,
-                          guidelines_when_running: str, inputs_json: str,
-                          in_training: bool = False, episode_count: int = 0,
-                          directory: str = "") -> SkillInfo:
+    def _build_skill_info(
+        self,
+        skill_id: str,
+        name: str,
+        skill_type: str,
+        guidelines: str,
+        guidelines_when_running: str,
+        inputs_json: str,
+        in_training: bool = False,
+        episode_count: int = 0,
+        directory: str = "",
+    ) -> SkillInfo:
         """Create a SkillInfo message from skill data."""
         msg = SkillInfo()
         msg.id = skill_id or ""
@@ -246,9 +251,7 @@ class SkillsActionServer(Node):
         try:
             signature = inspect.signature(skill_instance.execute)
         except (TypeError, ValueError) as e:
-            self.get_logger().warn(
-                f"Could not inspect execute() signature for '{skill_id}': {e}"
-            )
+            self.get_logger().warn(f"Could not inspect execute() signature for '{skill_id}': {e}")
             return {}
 
         inputs: dict = {}
@@ -270,9 +273,7 @@ class SkillsActionServer(Node):
                         param_type = str(param.annotation)
                     param_type = param_type.replace("typing.", "")
             except Exception as e:
-                self.get_logger().warn(
-                    f"Could not stringify annotation for '{skill_id}.{param_name}': {e}"
-                )
+                self.get_logger().warn(f"Could not stringify annotation for '{skill_id}.{param_name}': {e}")
                 param_type = "any"
             inputs[param_name] = param_type
         return inputs
@@ -290,15 +291,11 @@ class SkillsActionServer(Node):
         try:
             value = getattr(skill_instance, attr)()
         except Exception as e:
-            self.get_logger().warn(
-                f"Skill '{skill_id}'.{attr}() raised: {e}; defaulting to empty string"
-            )
+            self.get_logger().warn(f"Skill '{skill_id}'.{attr}() raised: {e}; defaulting to empty string")
             return ""
         return str(value) if value is not None else ""
 
-    def _build_physical_skill_info(
-        self, skill_id: str, physical_data: dict, *, in_training: bool
-    ) -> SkillInfo | None:
+    def _build_physical_skill_info(self, skill_id: str, physical_data: dict, *, in_training: bool) -> SkillInfo | None:
         """Build a SkillInfo for a physical / in-training skill.
 
         Returns ``None`` if the entry is malformed enough that it can't
@@ -309,8 +306,7 @@ class SkillsActionServer(Node):
         metadata = physical_data.get("metadata")
         if not isinstance(metadata, dict):
             self.get_logger().error(
-                f"Physical skill '{skill_id}' has malformed metadata "
-                f"(type={type(metadata).__name__}); skipping"
+                f"Physical skill '{skill_id}' has malformed metadata (type={type(metadata).__name__}); skipping"
             )
             return None
 
@@ -318,9 +314,7 @@ class SkillsActionServer(Node):
         try:
             episode_count = self.skill_loader._get_episode_count(directory)
         except Exception as e:
-            self.get_logger().warn(
-                f"Could not read episode count for '{skill_id}': {e}; defaulting to 0"
-            )
+            self.get_logger().warn(f"Could not read episode count for '{skill_id}': {e}; defaulting to 0")
             episode_count = 0
 
         try:
@@ -400,12 +394,8 @@ class SkillsActionServer(Node):
         for skill_id, (display_name, skill_instance) in code_skills_snapshot.items():
             try:
                 inputs = self._inspect_skill_inputs(skill_id, skill_instance)
-                guidelines = self._safe_skill_string(
-                    skill_id, skill_instance, "guidelines"
-                )
-                guidelines_when_running = self._safe_skill_string(
-                    skill_id, skill_instance, "guidelines_when_running"
-                )
+                guidelines = self._safe_skill_string(skill_id, skill_instance, "guidelines")
+                guidelines_when_running = self._safe_skill_string(skill_id, skill_instance, "guidelines_when_running")
 
                 try:
                     inputs_json = json.dumps(inputs)
@@ -415,46 +405,38 @@ class SkillsActionServer(Node):
                     )
                     inputs_json = "{}"
 
-                skills.append(self._build_skill_info(
-                    skill_id=skill_id,
-                    name=display_name,
-                    skill_type="code",
-                    guidelines=guidelines,
-                    guidelines_when_running=guidelines_when_running,
-                    inputs_json=inputs_json,
-                ))
-            except Exception as e:
-                self.get_logger().error(
-                    f"Skipping code skill '{skill_id}' in available_skills: {e}"
+                skills.append(
+                    self._build_skill_info(
+                        skill_id=skill_id,
+                        name=display_name,
+                        skill_type="code",
+                        guidelines=guidelines,
+                        guidelines_when_running=guidelines_when_running,
+                        inputs_json=inputs_json,
+                    )
                 )
+            except Exception as e:
+                self.get_logger().error(f"Skipping code skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Add physical skills (ready) — dict is {id: skill_data}
         for skill_id, physical_data in physical_skills_snapshot.items():
             try:
-                skill_info = self._build_physical_skill_info(
-                    skill_id, physical_data, in_training=False
-                )
+                skill_info = self._build_physical_skill_info(skill_id, physical_data, in_training=False)
                 if skill_info is not None:
                     skills.append(skill_info)
             except Exception as e:
-                self.get_logger().error(
-                    f"Skipping physical skill '{skill_id}' in available_skills: {e}"
-                )
+                self.get_logger().error(f"Skipping physical skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Add in-training skills — dict is {id: skill_data}
         for skill_id, physical_data in in_training_skills_snapshot.items():
             try:
-                skill_info = self._build_physical_skill_info(
-                    skill_id, physical_data, in_training=True
-                )
+                skill_info = self._build_physical_skill_info(skill_id, physical_data, in_training=True)
                 if skill_info is not None:
                     skills.append(skill_info)
             except Exception as e:
-                self.get_logger().error(
-                    f"Skipping in-training skill '{skill_id}' in available_skills: {e}"
-                )
+                self.get_logger().error(f"Skipping in-training skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Enforce unique display names (LLM can't disambiguate duplicates)
@@ -474,13 +456,9 @@ class SkillsActionServer(Node):
         try:
             self._skills_publisher.publish(msg)
             self._write_skill_cache(filtered_skills)
-            self.get_logger().info(
-                f"Published {len(filtered_skills)} skills on /brain/available_skills"
-            )
+            self.get_logger().info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
-            self.get_logger().error(
-                f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}"
-            )
+            self.get_logger().error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
 
     def _reload_skills(self):
         """Reload all skills from disk."""
@@ -522,16 +500,12 @@ class SkillsActionServer(Node):
             self._physical_skills = new_physical
             self._in_training_skills = new_in_training
 
-        self.get_logger().info(
-            f"Reloaded {len(new_code_skills)} code + {len(new_physical)} physical skills"
-        )
+        self.get_logger().info(f"Reloaded {len(new_code_skills)} code + {len(new_physical)} physical skills")
         self._publish_skills_list()
 
     def _resolve_skills_directories(self) -> list[str]:
         """Build the ordered list of skill directories to scan."""
-        maurice_root = os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
+        maurice_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
         self._innate_os_skills_dir = os.path.join(maurice_root, "skills")
         user_skills_directory = os.path.join(os.path.expanduser("~"), "skills")
 
@@ -579,9 +553,7 @@ class SkillsActionServer(Node):
         try:
             self._reload_skills()
             response.success = True
-            response.message = (
-                f"Reloaded {len(self._code_skills)} code, {len(self._physical_skills)} physical skills"
-            )
+            response.message = f"Reloaded {len(self._code_skills)} code, {len(self._physical_skills)} physical skills"
         except Exception as e:
             response.success = False
             response.message = f"Failed to reload skills: {e}"
@@ -604,8 +576,9 @@ class SkillsActionServer(Node):
 
             # Convert display name to kebab-case directory name
             import re
-            dir_name = re.sub(r'[^a-zA-Z0-9\s-]', '', display_name)
-            dir_name = re.sub(r'\s+', '-', dir_name).strip('-').lower()
+
+            dir_name = re.sub(r"[^a-zA-Z0-9\s-]", "", display_name)
+            dir_name = re.sub(r"\s+", "-", dir_name).strip("-").lower()
             if not dir_name:
                 response.success = False
                 response.message = f"Cannot derive valid directory name from '{display_name}'."
@@ -618,7 +591,9 @@ class SkillsActionServer(Node):
             skill_dir = os.path.join(user_skills_dir, dir_name)
 
             if os.path.exists(os.path.join(skill_dir, "metadata.json")):
-                self.get_logger().info(f"Skill '{display_name}' already exists at {skill_dir}. Returning existing directory.")
+                self.get_logger().info(
+                    f"Skill '{display_name}' already exists at {skill_dir}. Returning existing directory."
+                )
                 response.success = True
                 response.message = f"Skill already exists at {skill_dir}."
                 response.skill_directory = skill_dir
@@ -767,16 +742,16 @@ class SkillsActionServer(Node):
         for skills_directory in self._skills_directories:
             skill_path = os.path.join(skills_directory, basename)
             metadata_path = os.path.join(skill_path, "metadata.json")
-            
+
             if os.path.exists(metadata_path):
                 try:
                     with open(metadata_path) as f:
                         metadata = json.load(f)
-                    
+
                     is_valid, is_in_training, episode_count = self.skill_loader.validate_physical_skill(
                         skill_path, metadata
                     )
-                    
+
                     if is_valid:
                         skill_data = {
                             "metadata": metadata,
@@ -784,7 +759,7 @@ class SkillsActionServer(Node):
                             "in_training": is_in_training,
                             "episode_count": episode_count,
                         }
-                        
+
                         with self._skills_lock:
                             if is_in_training:
                                 self._in_training_skills[skill_id] = skill_data
@@ -792,12 +767,12 @@ class SkillsActionServer(Node):
                             else:
                                 self._physical_skills[skill_id] = skill_data
                                 self._in_training_skills.pop(skill_id, None)
-                        
+
                         self.get_logger().info(f"Reloaded physical skill: {skill_id}")
                         return True
                 except Exception as e:
                     self.get_logger().error(f"Error reloading physical skill {skill_id}: {e}")
-        
+
         return False
 
     def _load_physical_skills(self, skills_directories):
@@ -836,8 +811,7 @@ class SkillsActionServer(Node):
 
                     if not isinstance(metadata, dict):
                         self.get_logger().warn(
-                            f"Skipped {metadata_path}: top-level JSON is "
-                            f"{type(metadata).__name__}, expected object"
+                            f"Skipped {metadata_path}: top-level JSON is {type(metadata).__name__}, expected object"
                         )
                         continue
 
@@ -869,17 +843,11 @@ class SkillsActionServer(Node):
                             f"Loaded physical skill: {skill_id} (type: {metadata.get('type', 'unknown')})"
                         )
                 except json.JSONDecodeError as e:
-                    self.get_logger().error(
-                        f"Skipped {metadata_path}: invalid JSON ({e})"
-                    )
+                    self.get_logger().error(f"Skipped {metadata_path}: invalid JSON ({e})")
                 except OSError as e:
-                    self.get_logger().error(
-                        f"Skipped {metadata_path}: read failed ({e})"
-                    )
+                    self.get_logger().error(f"Skipped {metadata_path}: read failed ({e})")
                 except Exception as e:
-                    self.get_logger().error(
-                        f"Skipped physical skill at {item_path}: {e}"
-                    )
+                    self.get_logger().error(f"Skipped physical skill at {item_path}: {e}")
 
         return physical_skills, in_training_skills
 
@@ -1305,15 +1273,11 @@ class SkillsActionServer(Node):
             # behavior server disconnection, executor exceptions) abort the
             # goal cleanly instead of bubbling into the action executor and
             # leaving the goal in an undefined state.
-            self.get_logger().error(
-                f"Unexpected error executing physical skill '{skill_type}': {e}"
-            )
+            self.get_logger().error(f"Unexpected error executing physical skill '{skill_type}': {e}")
             try:
                 goal_handle.abort()
             except Exception as abort_err:
-                self.get_logger().error(
-                    f"Also failed to abort goal for '{skill_type}': {abort_err}"
-                )
+                self.get_logger().error(f"Also failed to abort goal for '{skill_type}': {abort_err}")
             return ExecuteSkill.Result(
                 success=False,
                 message=f"Unexpected error executing physical skill: {e}",
@@ -1324,7 +1288,7 @@ class SkillsActionServer(Node):
             self._stop_state_subscriptions()
 
     def destroy(self):
-        if hasattr(self, '_hot_reload_watcher'):
+        if hasattr(self, "_hot_reload_watcher"):
             self._hot_reload_watcher.stop()
         self._camera_node.shutdown()
         self._action_server.destroy()
