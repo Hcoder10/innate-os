@@ -168,6 +168,8 @@ def _parse_skill_run_tokens(args):
         parsed_server_timeout = float(server_timeout)
     except ValueError as exc:
         return None, str(exc)
+    if parsed_timeout is not None and parsed_timeout <= 0:
+        parsed_timeout = None
 
     return (
         skill_ref,
@@ -2438,7 +2440,7 @@ def skill_run(args):
 
     \b
     Options:
-      --timeout SECONDS          Wait for the skill result. Default waits indefinitely.
+      --timeout SECONDS          Wait for the skill result. 0/default waits indefinitely.
       --server-timeout SECONDS   Wait for the ExecuteSkill action server. Default: 5.
       --inputs                   Marker for completing @param=value skill inputs.
 
