@@ -24,6 +24,10 @@ from collections import deque
 import tempfile
 import os
 
+INPUT_MANAGER_WAIT_TIMEOUT_SEC = 5.0
+READY_FOR_CONNECTION_COUNT = 10
+READY_FOR_CONNECTION_INTERVAL_SEC = 1.0
+
 # TF2 imports
 # import tf2_ros # Reverted by user, then identified as unused by linter
 from tf2_ros import TransformException
@@ -156,6 +160,8 @@ class BrainClientNode(Node):
         # --- New: Simulator mode parameter ---
         self.declare_parameter("simulator_mode", False)
         self.simulator_mode = self.get_parameter("simulator_mode").value
+        self.declare_parameter("use_input_manager", True)
+        self.use_input_manager = self.get_parameter("use_input_manager").value
 
         # --- Proxy service configuration ---
         # Credentials (INNATE_PROXY_URL, INNATE_SERVICE_KEY) come from env vars
@@ -375,23 +381,21 @@ class BrainClientNode(Node):
 
         self.chat_history = []
 
-        # Wait for input_manager to be ready (optional but recommended)
-        self._wait_for_input_manager()
-
         self.chat_in_sub = self.create_subscription(
             String, "/brain/chat_in", self.chat_in_callback, 10
         )
-        # Subscribe to custom input from input_manager
-        self.custom_input_sub = self.create_subscription(
-            String, "/input_manager/custom", self.custom_input_callback, 10
-        )
-        # Publisher to tell input_manager which inputs should be active
-        self.active_inputs_pub = self.create_publisher(
-            String, "/input_manager/active_inputs", 10
-        )
-        # Ensure all inputs (STT, etc.) are off on startup; they'll be activated
-        # when the brain activates via activate_directive_inputs().
-        self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+        if self.use_input_manager:
+            self._wait_for_input_manager(timeout_sec=INPUT_MANAGER_WAIT_TIMEOUT_SEC)
+            self.custom_input_sub = self.create_subscription(
+                String, "/input_manager/custom", self.custom_input_callback, 10
+            )
+            self.active_inputs_pub = self.create_publisher(
+                String, "/input_manager/active_inputs", 10
+            )
+            self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+        else:
+            self.custom_input_sub = None
+            self.active_inputs_pub = None
 
         self.chat_out_pub = self.create_publisher(String, "/brain/chat_out", 10)
         self.task_status_pub = self.create_publisher(
@@ -504,11 +508,8 @@ class BrainClientNode(Node):
             MessageOutType.MEMORY_POSITIONS, self._handle_memory_positions
         )
 
-        for _ in range(10):
-            self.ws_bridge.send_message(
-                InternalMessage(type=InternalMessageType.READY_FOR_CONNECTION)
-            )
-            time.sleep(1.0)
+        self._ready_for_connection_timer = None
+        self._start_ready_for_connection_broadcast()
 
         # Initialise early — _on_available_skills reads this during the spin wait below
         self.primitive_running = None
@@ -558,6 +559,9 @@ class BrainClientNode(Node):
         self.directive_sub = self.create_subscription(
             String, "/brain/set_directive", self.set_directive_callback, 10
         )
+        self.backend_config_sub = self.create_subscription(
+            String, "/brain/backend_config", self.backend_config_callback, 10
+        )
 
         # Create service to get available directives
         self.get_directives_srv = self.create_service(
@@ -593,10 +597,80 @@ class BrainClientNode(Node):
         )
         self._hot_reload_watcher.start()
         self._hot_reload_timer = self.create_timer(0.5, self._process_hot_reload_queue)
+        self._backend_reregister_timer = None
+        self._backend_reregister_remaining = 0
 
         self.get_logger().info(
             "\033[1;92m[BrainClient] BrainClientNode initialized\033[0m"
         )
+
+    def _start_ready_for_connection_broadcast(self):
+        if self._ready_for_connection_timer is not None:
+            self._ready_for_connection_timer.cancel()
+        self._ready_for_connection_remaining = READY_FOR_CONNECTION_COUNT
+        self._ready_for_connection_timer = self.create_timer(
+            READY_FOR_CONNECTION_INTERVAL_SEC,
+            self._send_ready_for_connection,
+        )
+        self._send_ready_for_connection()
+
+    def _send_ready_for_connection(self):
+        if getattr(self, "_ready_for_connection_remaining", 0) <= 0:
+            timer = getattr(self, "_ready_for_connection_timer", None)
+            if timer is not None:
+                timer.cancel()
+                self._ready_for_connection_timer = None
+            return
+        self.ws_bridge.send_message(
+            InternalMessage(type=InternalMessageType.READY_FOR_CONNECTION)
+        )
+        self._ready_for_connection_remaining -= 1
+
+    def _start_backend_reregistration(self):
+        self.primitives_registered = False
+        self._start_ready_for_connection_broadcast()
+        self._backend_reregister_remaining = READY_FOR_CONNECTION_COUNT
+        if self._backend_reregister_timer is not None:
+            self._backend_reregister_timer.cancel()
+        self._backend_reregister_timer = self.create_timer(
+            READY_FOR_CONNECTION_INTERVAL_SEC,
+            self._try_backend_reregistration,
+        )
+
+    def _try_backend_reregistration(self):
+        if self._backend_reregister_remaining <= 0:
+            if self._backend_reregister_timer is not None:
+                self._backend_reregister_timer.cancel()
+                self._backend_reregister_timer = None
+            return
+        self._backend_reregister_remaining -= 1
+        self.register_primitives_and_directive()
+
+    def backend_config_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().error("Invalid /brain/backend_config payload JSON.")
+            return
+        if not isinstance(payload, dict):
+            self.get_logger().error("/brain/backend_config payload must be an object.")
+            return
+
+        new_uri = str(payload.get("websocket_uri") or self.ws_uri).strip()
+        new_token = str(
+            payload.get("service_key") or payload.get("token") or self.token
+        ).strip()
+        if new_uri == self.ws_uri and new_token == self.token:
+            self.get_logger().info("[BrainClient] Backend config unchanged.")
+            return
+
+        self.ws_uri = new_uri
+        self.token = new_token
+        self.get_logger().info(
+            "[BrainClient] Applied backend config update "
+            f"(uri={self.ws_uri}, service_key={'provided' if self.token else 'empty'})."
+        )
+        self._start_backend_reregistration()
 
     def _on_available_skills(self, msg: AvailableSkills):
         """Callback for /brain/available_skills topic (latched, transient_local)."""
@@ -1110,6 +1184,9 @@ class BrainClientNode(Node):
             return
 
         if not self.is_brain_active:
+            return
+
+        if not self.use_input_manager:
             return
 
         try:
@@ -2782,9 +2859,9 @@ class BrainClientNode(Node):
         # Stop gaze tracker
         self._stop_gaze_tracker()
 
-        # Deactivate all input devices (stops transcription, saves resources)
-        self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
-        self.get_logger().info("🔌 Deactivated all inputs")
+        if self.use_input_manager and self.active_inputs_pub is not None:
+            self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+            self.get_logger().info("🔌 Deactivated all inputs")
 
         # Stop robot motion
         stop_cmd = Twist()

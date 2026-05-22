@@ -41,7 +41,7 @@ http://localhost:8080/vnc.html
 ### Tmux Commands
 - Switch windows: `Ctrl+b` then `n`/`p` or `0-4`
 - Detach: `Ctrl+b d`
-- Reattach: `tmux attach-session -t mars`
+- Reattach: `tmux attach-session -t stack`
 
 ## Switching Modes
 
@@ -91,7 +91,7 @@ docker build --build-arg MODE=hardware -t innate-os .
 
 ## Dependency Files
 
-See `../ros2_ws/DEPENDENCIES_GUIDE.md` for details on:
+See `ros2_ws/DEPENDENCIES_GUIDE.md` for details on:
 - `apt-dependencies.common.txt` - Shared dependencies
 - `apt-dependencies.hardware.txt` - Jetson-only dependencies
 
@@ -114,6 +114,7 @@ error connecting to /tmp/tmux-*/default (No such file or directory)
 
 ## Related Documentation
 
+- [dev/launcher/README.md](../dev/launcher/README.md) - Local simulator CLI
+- [ros2_ws/DEPENDENCIES_GUIDE.md](../ros2_ws/DEPENDENCIES_GUIDE.md) - ROS system dependencies
+- [SYSTEM_SETUP.md](SYSTEM_SETUP.md) - Full robot system setup
 - [README.md](../README.md) - Main project documentation
-- [DEPENDENCIES_GUIDE.md](../ros2_ws/DEPENDENCIES_GUIDE.md) - Dependency file details
-- [SYSTEM_SETUP.md](SYSTEM_SETUP.md) - Full system setup guide
