@@ -17,6 +17,7 @@ import threading
 import time
 import types
 from pathlib import Path
+from typing import Literal, get_args, get_origin
 
 import numpy as np  # For map data
 import rclpy
@@ -253,9 +254,11 @@ class SkillsActionServer(Node):
     def _inspect_skill_inputs(self, skill_id: str, skill_instance) -> dict:
         """Best-effort introspection of a code skill's execute() signature.
 
-        Returns ``{param_name: type_str}``. Any failure (no execute method,
-        unsupported signature, weird annotations) is logged and an empty
-        dict is returned so the skill can still be published.
+        Returns ``{param_name: type_str}`` for ordinary annotations and a
+        richer ``{"type": type_str, "enum": [...]}`` schema for Literal
+        annotations. Any failure (no execute method, unsupported signature,
+        weird annotations) is logged and an empty dict is returned so the
+        skill can still be published.
         """
         if not hasattr(skill_instance, "execute"):
             return {}
@@ -270,24 +273,33 @@ class SkillsActionServer(Node):
         for param_name, param in signature.parameters.items():
             if param_name == "self":
                 continue
-            param_type = "any"
+            param_schema = "any"
             try:
                 if param.annotation != inspect.Parameter.empty:
-                    if (
+                    origin = get_origin(param.annotation)
+                    if origin is Literal:
+                        values = list(get_args(param.annotation))
+                        value_type_names = {"None" if value is None else type(value).__name__ for value in values}
+                        param_schema = {
+                            "type": value_type_names.pop() if len(value_type_names) == 1 else "literal",
+                            "enum": values,
+                        }
+                    elif (
                         isinstance(param.annotation, (types.UnionType, types.GenericAlias))
                         or hasattr(param.annotation, "_name")
                         and param.annotation._name in ["List", "Optional", "Dict", "Tuple", "Union"]
                     ):
-                        param_type = str(param.annotation)
+                        param_schema = str(param.annotation)
                     elif hasattr(param.annotation, "__name__"):
-                        param_type = param.annotation.__name__
+                        param_schema = param.annotation.__name__
                     else:
-                        param_type = str(param.annotation)
-                    param_type = param_type.replace("typing.", "")
+                        param_schema = str(param.annotation)
+                    if isinstance(param_schema, str):
+                        param_schema = param_schema.replace("typing.", "")
             except Exception as e:
                 self.get_logger().warn(f"Could not stringify annotation for '{skill_id}.{param_name}': {e}")
-                param_type = "any"
-            inputs[param_name] = param_type
+                param_schema = "any"
+            inputs[param_name] = param_schema
         return inputs
 
     def _safe_skill_string(self, skill_id: str, skill_instance, attr: str) -> str:

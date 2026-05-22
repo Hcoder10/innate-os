@@ -76,52 +76,44 @@ def _fast_find_skill_contract(contracts, skill_id: str):
     return None
 
 
+def _skill_param_type_display(param_schema) -> str:
+    if not isinstance(param_schema, dict):
+        return str(param_schema)
+
+    type_name = str(param_schema.get("type") or "any")
+    enum_values = param_schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        values = "|".join(str(value) for value in enum_values)
+        return f"{type_name} enum({values})"
+    return type_name
+
+
 def _format_skill_param_completions(inputs: dict):
     lines = []
-    for name, type_name in inputs.items():
-        desc = str(type_name).replace(":", "\\:")
+    for name, param_schema in inputs.items():
+        desc = _skill_param_type_display(param_schema).replace(":", "\\:")
         lines.append(f"@{name}=:{desc}")
     return lines
 
 
 def _format_skill_value_completions(contract: dict, param_name: str):
     inputs = contract.get("inputs", {})
-    if param_name not in inputs:
+    param_schema = inputs.get(param_name)
+    if not isinstance(param_schema, dict):
         return []
 
-    guidelines = "\n".join(
-        part
-        for part in [
-            contract.get("guidelines") or "",
-            contract.get("guidelines_when_running") or "",
-        ]
-        if part
-    )
-    if not guidelines:
+    enum_values = param_schema.get("enum")
+    if not isinstance(enum_values, list) or not enum_values:
         return []
 
-    quoted_values = []
-    seen = set()
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", guidelines):
-        if param_name not in sentence:
-            continue
-        for value in re.findall(r"'([^']+)'|\"([^\"]+)\"", sentence):
-            value = next(part for part in value if part)
-            if value == param_name or value in seen:
-                continue
-            seen.add(value)
-            quoted_values.append(value)
-
+    descriptions = param_schema.get("enum_descriptions", {})
+    if not isinstance(descriptions, dict):
+        descriptions = {}
     lines = []
-    for value in quoted_values:
-        description = ""
-        for sentence in re.split(r"(?<=[.!?])\s+|\n+", guidelines):
-            sentence = sentence.strip()
-            if sentence.startswith(value) or sentence.startswith(f"'{value}'") or sentence.startswith(f'"{value}"'):
-                description = sentence
-                break
-        description = description.replace(":", "\\:")
-        lines.append(f"{value}:{description}" if description else value)
+    for value in enum_values:
+        value_text = str(value)
+        description = str(descriptions.get(value_text, "")).replace(":", "\\:")
+        lines.append(f"{value_text}:{description}" if description else value_text)
     return lines
 
 
@@ -231,15 +223,15 @@ def _fast_format_skill_contract(contract: dict) -> str:
 
     inputs = contract["inputs"]
     if inputs:
-        for name, type_name in inputs.items():
-            lines.append(f"  {name}: {type_name}")
+        for name, param_schema in inputs.items():
+            lines.append(f"  {name}: {_skill_param_type_display(param_schema)}")
     else:
         lines.append("  none")
 
     lines.extend(["", "Run parameters:"])
     if inputs:
-        for name, type_name in inputs.items():
-            lines.append(f"  @{name}=<{type_name}>")
+        for name, param_schema in inputs.items():
+            lines.append(f"  @{name}=<{_skill_param_type_display(param_schema)}>")
     else:
         lines.append("  none")
 
@@ -483,11 +475,13 @@ def _try_fast_skill_cli():
         skill_ref, param_name = parsed
         contract = _fast_find_skill_contract(_fast_cached_skill_contracts(), skill_ref)
         if contract is None:
-            return 1
+            return None
         lines = _format_skill_value_completions(contract, param_name)
+        if not lines:
+            return None
         for line in lines:
             print(line)
-        return 0 if lines else 1
+        return 0
 
     if command == "type":
         parsed = _fast_parse_skill_type_args(command_args)
@@ -1267,15 +1261,15 @@ def _format_skill_contract(contract: dict) -> str:
 
     inputs = contract["inputs"]
     if inputs:
-        for name, type_name in inputs.items():
-            lines.append(f"  {name}: {type_name}")
+        for name, param_schema in inputs.items():
+            lines.append(f"  {name}: {_skill_param_type_display(param_schema)}")
     else:
         lines.append("  none")
 
     lines.extend(["", "Run parameters:"])
     if inputs:
-        for name, type_name in inputs.items():
-            lines.append(f"  @{name}=<{type_name}>")
+        for name, param_schema in inputs.items():
+            lines.append(f"  @{name}=<{_skill_param_type_display(param_schema)}>")
     else:
         lines.append("  none")
 

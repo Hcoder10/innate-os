@@ -3,10 +3,12 @@
 Arm Utils Skill - Torque on, torque off, or reboot the arm servos.
 """
 
-from brain_client.skill_types import Skill, SkillResult, Interface, InterfaceType
+from typing import Literal
 
+from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
 
 VALID_COMMANDS = ("torque_on", "torque_off", "reboot_arm")
+ArmCommand = Literal["torque_on", "torque_off", "reboot_arm"]
 
 
 class ArmUtils(Skill):
@@ -30,7 +32,7 @@ class ArmUtils(Skill):
             "reboot_arm reboots all Dynamixel servos to clear hardware errors."
         )
 
-    def execute(self, command: str):
+    def execute(self, command: ArmCommand):
         """
         Execute an arm utility command.
 
