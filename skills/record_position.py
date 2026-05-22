@@ -7,11 +7,14 @@ import base64
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from brain_client.skill_types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CORNER_CAPTURES_DIR = Path("/home/jetson1/innate-os/captures/corners")
+BoardCorner = Literal["top_left", "top_right", "bottom_right", "bottom_left"]
+VALID_CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
 
 
 class RecordPosition(Skill):
@@ -34,7 +37,7 @@ class RecordPosition(Skill):
             "Saves to calibration file and returns coordinates."
         )
 
-    def execute(self, corner: str):
+    def execute(self, corner: BoardCorner):
         """
         Record and save current FK position for a corner.
 
@@ -44,10 +47,9 @@ class RecordPosition(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        valid_corners = ["top_left", "top_right", "bottom_right", "bottom_left"]
         corner = corner.lower().replace("-", "_").replace(" ", "_")
-        if corner not in valid_corners:
-            return f"Invalid corner '{corner}'. Must be one of: {valid_corners}", SkillResult.FAILURE
+        if corner not in VALID_CORNERS:
+            return f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}", SkillResult.FAILURE
 
         fk_pose = self.manipulation.get_current_end_effector_pose()
 

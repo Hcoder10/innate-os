@@ -5,15 +5,15 @@ Reset Chess Game Skill - Resets the board state to the starting position.
 
 import json
 from pathlib import Path
-
-import chess
+from typing import Literal
 
 from brain_client.skill_types import Skill, SkillResult
-
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 REQUIRED_CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
+ROBOT_COLORS = ("white", "black")
+RobotColor = Literal["white", "black"]
 
 # Handicap: White starts without the a1 rook (no queenside castling)
 HANDICAP_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/1NBQKBNR w Kkq - 0 1"
@@ -63,7 +63,7 @@ class ResetChessGame(Skill):
 
         return True
 
-    def execute(self, robot_color: str = "white"):
+    def execute(self, robot_color: RobotColor = "white"):
         """
         Reset game state to starting position.
 
@@ -71,12 +71,10 @@ class ResetChessGame(Skill):
             robot_color: Which side the robot plays ('white' or 'black').
         """
         robot_color = robot_color.strip().lower()
-        if robot_color not in ("white", "black"):
+        if robot_color not in ROBOT_COLORS:
             return f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.", SkillResult.FAILURE
         if not self._is_calibrated():
-            msg = (
-                "Board is not calibrated. Run board calibration first, then reset the chess game."
-            )
+            msg = "Board is not calibrated. Run board calibration first, then reset the chess game."
             self.logger.warning(f"[ResetChessGame] {msg}")
             self._send_feedback(msg)
             return msg, SkillResult.FAILURE

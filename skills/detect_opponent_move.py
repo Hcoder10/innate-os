@@ -12,6 +12,7 @@ import base64
 import json
 import time
 from pathlib import Path
+from typing import Literal
 
 import chess
 from google import genai
@@ -33,6 +34,8 @@ GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 HANDICAP_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/1NBQKBNR w Kkq - 0 1"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 DATA_DIR = Path.home() / "innate-os/data/detect_move"
+ROBOT_COLORS = ("white", "black")
+RobotColor = Literal["white", "black"]
 
 
 def _load_env_file(env_path: Path) -> dict:
@@ -108,19 +111,14 @@ class DetectOpponentMove(Skill):
         try:
             if CALIBRATION_FILE.exists():
                 cal = json.loads(CALIBRATION_FILE.read_text())
-                corners = [cal["top_left"], cal["top_right"],
-                           cal["bottom_left"], cal["bottom_right"]]
+                corners = [cal["top_left"], cal["top_right"], cal["bottom_left"], cal["bottom_right"]]
                 self.obs_x = sum(c["x"] for c in corners) / 4.0
                 self.obs_y = sum(c["y"] for c in corners) / 4.0
                 self.logger.info(
-                    f"[DetectOpponentMove] Board center from calibration: "
-                    f"x={self.obs_x:.4f}, y={self.obs_y:.4f}"
+                    f"[DetectOpponentMove] Board center from calibration: x={self.obs_x:.4f}, y={self.obs_y:.4f}"
                 )
             else:
-                self.logger.error(
-                    "[DetectOpponentMove] board_calibration.json not found — "
-                    "run board calibration first"
-                )
+                self.logger.error("[DetectOpponentMove] board_calibration.json not found — run board calibration first")
         except Exception as e:
             self.logger.error(f"[DetectOpponentMove] Failed to load calibration: {e}")
 
@@ -277,9 +275,7 @@ class DetectOpponentMove(Skill):
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             ts = int(time.time())
-            (DATA_DIR / f"{label}_response_{ts}.json").write_text(
-                json.dumps(result, indent=2)
-            )
+            (DATA_DIR / f"{label}_response_{ts}.json").write_text(json.dumps(result, indent=2))
         except Exception as e:
             self.logger.warning(f"[DetectOpponentMove] Failed to save {label} response: {e}")
 
@@ -371,7 +367,7 @@ class DetectOpponentMove(Skill):
 
     # ── Main execute ──────────────────────────────────────────────────
 
-    def execute(self, robot_color: str = "white"):
+    def execute(self, robot_color: RobotColor = "white"):
         """
         Detect the opponent's last move.
 
@@ -380,6 +376,9 @@ class DetectOpponentMove(Skill):
                          On first call, initialises the game state.
         """
         self._cancelled = False
+        robot_color = robot_color.strip().lower()
+        if robot_color not in ROBOT_COLORS:
+            return f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.", SkillResult.FAILURE
 
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
@@ -393,7 +392,6 @@ class DetectOpponentMove(Skill):
             state = self._init_game_state(robot_color)
 
         fen = state["fen"]
-        move_history = list(state.get("move_history", []))
         robot_color = state.get("robot_color", robot_color)
 
         self.logger.info(f"[DetectOpponentMove] Current FEN: {fen}")
@@ -463,8 +461,7 @@ class DetectOpponentMove(Skill):
         if move_uci not in legal_moves:
             self._go_to_safe_pose()
             return (
-                f"Detected move {move_uci} is not legal. "
-                f"Legal moves: {legal_moves}",
+                f"Detected move {move_uci} is not legal. Legal moves: {legal_moves}",
                 SkillResult.FAILURE,
             )
 
@@ -476,7 +473,7 @@ class DetectOpponentMove(Skill):
         msg = (
             f"Detected opponent move: {san} ({move_uci}). "
             f"Confidence: {confidence:.0%}. {reasoning}. "
-            f"Call update_chess_state(move_uci=\"{move_uci}\") to apply it."
+            f'Call update_chess_state(move_uci="{move_uci}") to apply it.'
         )
         self._send_feedback(msg)
         return msg, SkillResult.SUCCESS
