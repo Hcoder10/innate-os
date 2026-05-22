@@ -66,7 +66,6 @@ innate skill type innate-os/wave --json               # Print the raw contract a
 innate skill run innate-os/wave                       # Trigger a skill by ID
 innate skill run innate-os/arm_utils @command=torque_on
 innate skill run local/my-skill @x=1 @name=alice      # Pass typed params
-innate skill run local/my-skill --inputs '{"x": 1}'   # Legacy JSON inputs
 ```
 
 `innate skill run` calls the high-level `/execute_skill` action and defaults
@@ -74,9 +73,9 @@ inputs to `{}`. Pass the skill ID exactly as published by the robot, such as
 `innate-os/wave`. Use `innate skill type SKILL` to inspect a readable input
 contract with the input type schema and guidelines advertised on
 `/brain/available_skills` before calling `run`. Skill parameters use
-`@name=value`; values that look like JSON, booleans, or numbers are decoded
-before being sent, while other values are sent as strings. The legacy
-`--inputs '{"name": "value"}'` JSON object remains supported. The zsh
+`@name=value`; booleans and numbers are sent with those types, while other
+values are sent as strings. `--inputs` is only a completion marker for
+discovering the selected skill's params, not a JSON input flag. The zsh
 completion script suggests published skill IDs for `innate skill type` and
 `innate skill run`, then suggests the selected skill's `@param=` entries.
 For low-latency shell usage, the skills server mirrors the latest advertised

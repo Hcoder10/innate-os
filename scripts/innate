@@ -90,16 +90,16 @@ def _coerce_skill_param_value(raw_value: str):
         return ""
 
     lower = value.lower()
-    should_try_json = (
-        value[0] in '{["'
-        or lower in {"true", "false", "null"}
-        or re.fullmatch(r"-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?", value) is not None
-    )
-    if should_try_json:
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            pass
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if lower == "null":
+        return None
+    if re.fullmatch(r"-?(0|[1-9]\d*)", value) is not None:
+        return int(value)
+    if re.fullmatch(r"-?(0|[1-9]\d*)\.\d+([eE][+-]?\d+)?|-?(0|[1-9]\d*)[eE][+-]?\d+", value) is not None:
+        return float(value)
     return raw_value
 
 
@@ -111,11 +111,9 @@ def _parse_skill_param_token(token: str):
     name = name.strip()
     if not name:
         return None, "Skill parameter name cannot be empty"
+    if raw_value.lstrip().startswith(("{", "[")):
+        return None, "JSON input values are not supported; use scalar @name=value parameters"
     return (name, _coerce_skill_param_value(raw_value)), None
-
-
-def _looks_like_json_object(value: str) -> bool:
-    return value.lstrip().startswith("{")
 
 
 def _parse_skill_run_tokens(args):
@@ -131,27 +129,9 @@ def _parse_skill_run_tokens(args):
             return None, None
 
         if arg == "--inputs":
-            next_arg = args[i + 1] if i + 1 < len(args) else None
-            if next_arg is not None and not next_arg.startswith("-") and not next_arg.startswith("@"):
-                if not _looks_like_json_object(next_arg):
-                    return None, "--inputs expects a JSON object; skill parameters use @name=value"
-                try:
-                    parsed_inputs = json.loads(next_arg)
-                except json.JSONDecodeError as exc:
-                    return None, f"Invalid JSON for --inputs: {exc}"
-                if not isinstance(parsed_inputs, dict):
-                    return None, "--inputs must decode to a JSON object"
-                inputs.update(parsed_inputs)
-                i += 1
+            pass
         elif arg.startswith("--inputs="):
-            raw_inputs = arg.split("=", 1)[1]
-            try:
-                parsed_inputs = json.loads(raw_inputs)
-            except json.JSONDecodeError as exc:
-                return None, f"Invalid JSON for --inputs: {exc}"
-            if not isinstance(parsed_inputs, dict):
-                return None, "--inputs must decode to a JSON object"
-            inputs.update(parsed_inputs)
+            return None, "--inputs no longer accepts JSON; use @name=value parameters"
         elif arg in {"--timeout", "--server-timeout"}:
             i += 1
             if i >= len(args):
@@ -170,6 +150,8 @@ def _parse_skill_run_tokens(args):
                 return None, error
             name, value = parsed_param
             inputs[name] = value
+        elif arg.lstrip().startswith(("{", "[")):
+            return None, "JSON inputs are not supported; use @name=value parameters"
         elif arg.startswith("-"):
             return None, f"Unknown option: {arg}"
         elif skill_ref is None:
@@ -217,10 +199,6 @@ def _fast_format_skill_contract(contract: dict) -> str:
             lines.append(f"  @{name}=<{type_name}>")
     else:
         lines.append("  none")
-
-    lines.extend(["", "Legacy JSON --inputs shape:"])
-    example_inputs = {name: f"<{type_name}>" for name, type_name in inputs.items()}
-    lines.extend(textwrap.indent(json.dumps(example_inputs, indent=2), "  ").splitlines())
 
     lines.extend(["", "Guidelines:"])
     guidelines = contract["guidelines"].strip()
@@ -1053,16 +1031,6 @@ def _load_skill_ros_modules():
     }
 
 
-def _validate_inputs_json(inputs: str) -> str:
-    try:
-        parsed = json.loads(inputs)
-    except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Invalid JSON for --inputs: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise click.ClickException("--inputs must decode to a JSON object")
-    return json.dumps(parsed, separators=(",", ":"))
-
-
 def _spin_until_future(rclpy, node, future, timeout_sec: float | None):
     rclpy.spin_until_future_complete(node, future, timeout_sec=timeout_sec)
     return future.done()
@@ -1228,10 +1196,6 @@ def _format_skill_contract(contract: dict) -> str:
             lines.append(f"  @{name}=<{type_name}>")
     else:
         lines.append("  none")
-
-    lines.extend(["", "Legacy JSON --inputs shape:"])
-    example_inputs = {name: f"<{type_name}>" for name, type_name in inputs.items()}
-    lines.extend(textwrap.indent(json.dumps(example_inputs, indent=2), "  ").splitlines())
 
     lines.extend(["", "Guidelines:"])
     guidelines = contract["guidelines"].strip()
@@ -2476,17 +2440,16 @@ def skill_run(args):
     Options:
       --timeout SECONDS          Wait for the skill result. Default waits indefinitely.
       --server-timeout SECONDS   Wait for the ExecuteSkill action server. Default: 5.
-      --inputs [JSON]            Legacy JSON inputs, or a marker before @param=value.
+      --inputs                   Marker for completing @param=value skill inputs.
 
     Skill params use @name=value and may appear before or after CLI options.
-    Values are JSON-decoded when they look like JSON/booleans/numbers.
+    Boolean and numeric values are sent with those types; other values are strings.
 
     \b
     Examples:
       innate skill run innate-os/wave
       innate skill run innate-os/arm_utils @command=torque_on --timeout 0
       innate skill run local/my-skill @x=1 @name=alice
-      innate skill run local/my-skill --inputs '{"x": 1}'
     """
     parsed, error = _parse_skill_run_tokens(list(args))
     if error:
@@ -2708,7 +2671,7 @@ def _zsh_completions():
     w("  _arguments -C \\")
     w("    '--timeout[Seconds to wait for the skill result]:seconds:' \\")
     w("    '--server-timeout[Seconds to wait for ExecuteSkill action server]:seconds:' \\")
-    w("    '--inputs[Legacy JSON inputs, or marker before @param=value]::JSON or parameter:_innate_skill_params' \\")
+    w("    '--inputs[Complete skill parameters as @param=value]' \\")
     w("    '1:skill id:_innate_skill_ids' \\")
     w("    '*:skill parameter:_innate_skill_params'")
     w("}")
