@@ -2822,7 +2822,7 @@ def _zsh_completions():
     w("  done")
     w("  (( ${#params[@]} )) || return 1")
     w("  (( ${#completions[@]} )) || return 1")
-    w('  compadd -Q -S "" -d descriptions -- "${completions[@]}"')
+    w('  compadd -Q -S "" -l -d descriptions -- "${completions[@]}"')
     w("}")
     w("")
     w("_innate_skill_param_value() {")
