@@ -56,14 +56,16 @@ def _fast_cached_skill_contracts():
         if not skill_id:
             continue
         inputs = raw.get("inputs", {})
-        contracts.append({
-            "id": skill_id,
-            "name": raw.get("name") or skill_id,
-            "type": raw.get("type") or "",
-            "inputs": inputs if isinstance(inputs, dict) else {},
-            "guidelines": raw.get("guidelines") or "",
-            "guidelines_when_running": raw.get("guidelines_when_running") or "",
-        })
+        contracts.append(
+            {
+                "id": skill_id,
+                "name": raw.get("name") or skill_id,
+                "type": raw.get("type") or "",
+                "inputs": inputs if isinstance(inputs, dict) else {},
+                "guidelines": raw.get("guidelines") or "",
+                "guidelines_when_running": raw.get("guidelines_when_running") or "",
+            }
+        )
     return contracts
 
 
@@ -72,6 +74,125 @@ def _fast_find_skill_contract(contracts, skill_id: str):
         if contract.get("id") == skill_id:
             return contract
     return None
+
+
+def _format_skill_param_completions(inputs: dict):
+    lines = []
+    for name, type_name in inputs.items():
+        desc = str(type_name).replace(":", "\\:")
+        lines.append(f"@{name}=:{desc}")
+    return lines
+
+
+def _coerce_skill_param_value(raw_value: str):
+    value = raw_value.strip()
+    if value == "":
+        return ""
+
+    lower = value.lower()
+    should_try_json = (
+        value[0] in '{["'
+        or lower in {"true", "false", "null"}
+        or re.fullmatch(r"-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?", value) is not None
+    )
+    if should_try_json:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return raw_value
+
+
+def _parse_skill_param_token(token: str):
+    if not token.startswith("@") or "=" not in token[1:]:
+        return None, "Skill parameters use @name=value syntax"
+
+    name, raw_value = token[1:].split("=", 1)
+    name = name.strip()
+    if not name:
+        return None, "Skill parameter name cannot be empty"
+    return (name, _coerce_skill_param_value(raw_value)), None
+
+
+def _looks_like_json_object(value: str) -> bool:
+    return value.lstrip().startswith("{")
+
+
+def _parse_skill_run_tokens(args):
+    inputs = {}
+    timeout = None
+    server_timeout = 5.0
+    skill_ref = None
+    i = 0
+
+    while i < len(args):
+        arg = args[i]
+        if arg == "--help":
+            return None, None
+
+        if arg == "--inputs":
+            next_arg = args[i + 1] if i + 1 < len(args) else None
+            if next_arg is not None and not next_arg.startswith("-") and not next_arg.startswith("@"):
+                if not _looks_like_json_object(next_arg):
+                    return None, "--inputs expects a JSON object; skill parameters use @name=value"
+                try:
+                    parsed_inputs = json.loads(next_arg)
+                except json.JSONDecodeError as exc:
+                    return None, f"Invalid JSON for --inputs: {exc}"
+                if not isinstance(parsed_inputs, dict):
+                    return None, "--inputs must decode to a JSON object"
+                inputs.update(parsed_inputs)
+                i += 1
+        elif arg.startswith("--inputs="):
+            raw_inputs = arg.split("=", 1)[1]
+            try:
+                parsed_inputs = json.loads(raw_inputs)
+            except json.JSONDecodeError as exc:
+                return None, f"Invalid JSON for --inputs: {exc}"
+            if not isinstance(parsed_inputs, dict):
+                return None, "--inputs must decode to a JSON object"
+            inputs.update(parsed_inputs)
+        elif arg in {"--timeout", "--server-timeout"}:
+            i += 1
+            if i >= len(args):
+                return None, f"{arg} requires a value"
+            if arg == "--timeout":
+                timeout = args[i]
+            else:
+                server_timeout = args[i]
+        elif arg.startswith("--timeout="):
+            timeout = arg.split("=", 1)[1]
+        elif arg.startswith("--server-timeout="):
+            server_timeout = arg.split("=", 1)[1]
+        elif arg.startswith("@"):
+            parsed_param, error = _parse_skill_param_token(arg)
+            if error:
+                return None, error
+            name, value = parsed_param
+            inputs[name] = value
+        elif arg.startswith("-"):
+            return None, f"Unknown option: {arg}"
+        elif skill_ref is None:
+            skill_ref = arg
+        else:
+            return None, f"Unexpected argument: {arg}. Skill parameters use @name=value"
+        i += 1
+
+    if not skill_ref:
+        return None, "Missing skill ID"
+
+    try:
+        parsed_timeout = float(timeout) if timeout is not None else None
+        parsed_server_timeout = float(server_timeout)
+    except ValueError as exc:
+        return None, str(exc)
+
+    return (
+        skill_ref,
+        json.dumps(inputs, separators=(",", ":")),
+        parsed_timeout,
+        parsed_server_timeout,
+    ), None
 
 
 def _fast_format_skill_contract(contract: dict) -> str:
@@ -90,16 +211,21 @@ def _fast_format_skill_contract(contract: dict) -> str:
     else:
         lines.append("  none")
 
-    lines.extend(["", "Expected --inputs shape:"])
+    lines.extend(["", "Run parameters:"])
+    if inputs:
+        for name, type_name in inputs.items():
+            lines.append(f"  @{name}=<{type_name}>")
+    else:
+        lines.append("  none")
+
+    lines.extend(["", "Legacy JSON --inputs shape:"])
     example_inputs = {name: f"<{type_name}>" for name, type_name in inputs.items()}
     lines.extend(textwrap.indent(json.dumps(example_inputs, indent=2), "  ").splitlines())
 
     lines.extend(["", "Guidelines:"])
     guidelines = contract["guidelines"].strip()
     lines.append(
-        textwrap.fill(guidelines, width=88, initial_indent="  ", subsequent_indent="  ")
-        if guidelines
-        else "  none"
+        textwrap.fill(guidelines, width=88, initial_indent="  ", subsequent_indent="  ") if guidelines else "  none"
     )
 
     lines.extend(["", "Guidelines while running:"])
@@ -158,33 +284,19 @@ def _fast_parse_skill_ids_args(args):
     return True
 
 
-def _fast_parse_skill_run_args(args):
-    inputs = "{}"
-    timeout = None
-    server_timeout = 5.0
+def _fast_parse_skill_params_args(args):
     skill_ref = None
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == "--help":
             return None
-        if arg in {"--inputs", "--timeout", "--server-timeout"}:
+        if arg == "--timeout":
             i += 1
             if i >= len(args):
                 return None
-            value = args[i]
-            if arg == "--inputs":
-                inputs = value
-            elif arg == "--timeout":
-                timeout = value
-            else:
-                server_timeout = value
-        elif arg.startswith("--inputs="):
-            inputs = arg.split("=", 1)[1]
         elif arg.startswith("--timeout="):
-            timeout = arg.split("=", 1)[1]
-        elif arg.startswith("--server-timeout="):
-            server_timeout = arg.split("=", 1)[1]
+            pass
         elif arg.startswith("-"):
             return None
         elif skill_ref is None:
@@ -192,32 +304,15 @@ def _fast_parse_skill_run_args(args):
         else:
             return None
         i += 1
+    return skill_ref
 
-    if not skill_ref:
-        return None
 
-    try:
-        parsed_inputs = json.loads(inputs)
-    except json.JSONDecodeError as exc:
-        _fast_fail(f"Invalid JSON for --inputs: {exc}")
+def _fast_parse_skill_run_args(args):
+    parsed, error = _parse_skill_run_tokens(args)
+    if error:
+        _fast_fail(error)
         return 1
-    if not isinstance(parsed_inputs, dict):
-        _fast_fail("--inputs must decode to a JSON object")
-        return 1
-
-    try:
-        parsed_timeout = float(timeout) if timeout is not None else None
-        parsed_server_timeout = float(server_timeout)
-    except ValueError as exc:
-        _fast_fail(str(exc))
-        return 1
-
-    return (
-        skill_ref,
-        json.dumps(parsed_inputs, separators=(",", ":")),
-        parsed_timeout,
-        parsed_server_timeout,
-    )
+    return parsed
 
 
 def _fast_read_skill_socket_events(sock: socket.socket, skill_ref: str, timeout: float | None):
@@ -236,7 +331,7 @@ def _fast_read_skill_socket_events(sock: socket.socket, skill_ref: str, timeout:
 
         try:
             chunk = sock.recv(4096)
-        except socket.timeout:
+        except TimeoutError:
             _fast_fail("Timed out waiting for skill CLI bridge")
             return 1
         except OSError as exc:
@@ -275,8 +370,7 @@ def _fast_read_skill_socket_events(sock: socket.socket, skill_ref: str, timeout:
                 return 1
 
 
-def _fast_skill_run_via_socket(skill_ref: str, inputs_json: str, timeout: float | None,
-                               server_timeout: float):
+def _fast_skill_run_via_socket(skill_ref: str, inputs_json: str, timeout: float | None, server_timeout: float):
     socket_path = _fast_skill_socket_path()
     if not socket_path.exists():
         return None
@@ -324,6 +418,17 @@ def _try_fast_skill_cli():
             print(contract["id"])
         return 0
 
+    if command == "_params":
+        skill_ref = _fast_parse_skill_params_args(command_args)
+        if not skill_ref:
+            return None
+        contract = _fast_find_skill_contract(_fast_cached_skill_contracts(), skill_ref)
+        if contract is None:
+            return 1
+        for line in _format_skill_param_completions(contract["inputs"]):
+            print(line)
+        return 0
+
     if command == "type":
         parsed = _fast_parse_skill_type_args(command_args)
         if parsed is None:
@@ -355,7 +460,7 @@ _FAST_SKILL_RC = _try_fast_skill_cli()
 if _FAST_SKILL_RC is not None:
     sys.exit(_FAST_SKILL_RC)
 
-import click
+import click  # noqa: E402,I001
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +815,7 @@ def _get_current_volume():
     if r.returncode != 0:
         return None
     import re
+
     m = re.search(r"\[(\d+)%\]", r.stdout)
     return int(m.group(1)) if m else None
 
@@ -723,11 +829,7 @@ def _set_volume_via_ros2(level):
     if ws_setup.exists():
         source_chain += f" && source {ws_setup}"
 
-    cmd = (
-        f"{source_chain} && "
-        f"ros2 service call /set_volume maurice_msgs/srv/SetVolume "
-        f'"{{volume_percent: {level}}}"'
-    )
+    cmd = f'{source_chain} && ros2 service call /set_volume maurice_msgs/srv/SetVolume "{{volume_percent: {level}}}"'
     r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=15)
     return r.returncode == 0 and "success=True" in r.stdout
 
@@ -886,7 +988,7 @@ def _reexec_with_ros_environment_if_needed():
     source_cmd = " && ".join(f"source {shlex.quote(str(p))}" for p in setup_scripts)
     script = shlex.quote(str(Path(__file__).resolve()))
     python = shlex.quote(sys.executable)
-    cmd = f"{source_cmd} && export INNATE_CLI_ROS_ENV_READY=1 && exec {python} {script} \"$@\""
+    cmd = f'{source_cmd} && export INNATE_CLI_ROS_ENV_READY=1 && exec {python} {script} "$@"'
     os.execvpe(shell, [shell, "-c", cmd, shell, *sys.argv[1:]], os.environ)
 
 
@@ -1036,14 +1138,16 @@ def _cached_skill_contracts():
         inputs = raw.get("inputs", {})
         if not isinstance(inputs, dict):
             inputs = {}
-        contracts.append({
-            "id": skill_id,
-            "name": raw.get("name") or skill_id,
-            "type": raw.get("type") or "",
-            "inputs": inputs,
-            "guidelines": raw.get("guidelines") or "",
-            "guidelines_when_running": raw.get("guidelines_when_running") or "",
-        })
+        contracts.append(
+            {
+                "id": skill_id,
+                "name": raw.get("name") or skill_id,
+                "type": raw.get("type") or "",
+                "inputs": inputs,
+                "guidelines": raw.get("guidelines") or "",
+                "guidelines_when_running": raw.get("guidelines_when_running") or "",
+            }
+        )
     return contracts
 
 
@@ -1118,7 +1222,14 @@ def _format_skill_contract(contract: dict) -> str:
     else:
         lines.append("  none")
 
-    lines.extend(["", "Expected --inputs shape:"])
+    lines.extend(["", "Run parameters:"])
+    if inputs:
+        for name, type_name in inputs.items():
+            lines.append(f"  @{name}=<{type_name}>")
+    else:
+        lines.append("  none")
+
+    lines.extend(["", "Legacy JSON --inputs shape:"])
     example_inputs = {name: f"<{type_name}>" for name, type_name in inputs.items()}
     lines.extend(textwrap.indent(json.dumps(example_inputs, indent=2), "  ").splitlines())
 
@@ -1177,6 +1288,31 @@ def _skill_ids(timeout: float):
     return 0 if skill_ids else 1
 
 
+def _skill_params(skill_ref: str, timeout: float):
+    cached_contract = _find_skill_contract_by_id(_cached_skill_contracts(), skill_ref)
+    if cached_contract is not None:
+        for line in _format_skill_param_completions(cached_contract["inputs"]):
+            print(line)
+        return 0
+
+    if not _ensure_skill_ros_nodes_running():
+        return 1
+
+    modules = _load_skill_ros_modules()
+    with _suppress_process_output():
+        node = _create_skill_node(modules)
+        try:
+            skills = _wait_for_available_skills(modules, node, timeout)
+            skill_info = _find_skill_by_id(skills, skill_ref)
+            if skill_info is None:
+                return 1
+            for line in _format_skill_param_completions(_parse_skill_inputs(skill_info)):
+                print(line)
+            return 0
+        finally:
+            _shutdown_skill_node(modules, node)
+
+
 def _skill_type(skill_ref: str, timeout: float, json_output: bool):
     cached_contract = _find_skill_contract_by_id(_cached_skill_contracts(), skill_ref)
     if cached_contract is not None:
@@ -1212,8 +1348,7 @@ def _skill_type(skill_ref: str, timeout: float, json_output: bool):
         _shutdown_skill_node(modules, node)
 
 
-def _skill_run_via_socket(skill_ref: str, inputs_json: str, timeout: float | None,
-                          server_timeout: float):
+def _skill_run_via_socket(skill_ref: str, inputs_json: str, timeout: float | None, server_timeout: float):
     if not SKILL_SOCKET_PATH.exists():
         return None
 
@@ -1257,7 +1392,7 @@ def _read_skill_socket_events(sock: socket.socket, skill_ref: str, timeout: floa
 
         try:
             chunk = sock.recv(4096)
-        except socket.timeout:
+        except TimeoutError:
             fail("Timed out waiting for skill CLI bridge")
             return 1
         except OSError as exc:
@@ -1296,8 +1431,7 @@ def _read_skill_socket_events(sock: socket.socket, skill_ref: str, timeout: floa
                 return 1
 
 
-def _skill_run(skill_ref: str, inputs: str, timeout: float | None, server_timeout: float):
-    inputs_json = _validate_inputs_json(inputs)
+def _skill_run(skill_ref: str, inputs_json: str, timeout: float | None, server_timeout: float):
     if not _ensure_skill_ros_nodes_running():
         return 1
 
@@ -1674,7 +1808,15 @@ class _GitRepo:
 class _UpdateManager:
     """Core update logic: check, apply, status, daemon."""
 
-    def __init__(self, config: _UpdateConfig, logger: _UpdateLogger, dev_mode: bool = False, yes: bool = False, target: str = None, skip_ros_clean: bool = False):
+    def __init__(
+        self,
+        config: _UpdateConfig,
+        logger: _UpdateLogger,
+        dev_mode: bool = False,
+        yes: bool = False,
+        target: str = None,
+        skip_ros_clean: bool = False,
+    ):
         self.config = config
         self.logger = logger
         self.dev_mode = dev_mode
@@ -1738,9 +1880,7 @@ class _UpdateManager:
         """Print available dev targets (tags + main branch if ahead)."""
         newer_tags = self.git.get_tags_newer_than("HEAD")
         on_main = self.git.current_branch() == self.config.branch
-        commits_behind = self.git.commits_between(
-            "HEAD", f"origin/{self.config.branch}"
-        ) if on_main else 0
+        commits_behind = self.git.commits_between("HEAD", f"origin/{self.config.branch}") if on_main else 0
 
         print("Available targets:")
         if newer_tags:
@@ -1873,7 +2013,9 @@ class _UpdateManager:
             self._show_commits("HEAD", remote_ref, commits_behind, max_show=20)
 
             return self._do_git_update(
-                self.config.branch, f"latest on {self.config.branch}", current,
+                self.config.branch,
+                f"latest on {self.config.branch}",
+                current,
                 track_remote=remote_ref,
             )
 
@@ -1897,7 +2039,10 @@ class _UpdateManager:
             self._show_commits("HEAD", target, commits, max_show=20)
 
         return self._do_git_update(
-            self.config.branch, target, current, track_remote=target,
+            self.config.branch,
+            target,
+            current,
+            track_remote=target,
         )
 
     def _apply_tag_mode(self, current: str) -> int:
@@ -1928,7 +2073,10 @@ class _UpdateManager:
         self._show_commits("HEAD", latest_tag, commits_behind, max_show=20)
 
         return self._do_git_update(
-            self.config.branch, latest_tag, current, track_remote=latest_tag,
+            self.config.branch,
+            latest_tag,
+            current,
+            track_remote=latest_tag,
         )
 
     def _do_git_update(self, target_ref, target_display, old_commit, skip_confirm=False, track_remote=None):
@@ -1975,9 +2123,7 @@ class _UpdateManager:
             if result.returncode == 0:
                 self.logger.success("Post-update script completed")
             else:
-                self.logger.error(
-                    f"Post-update script failed. Check logs: {self.config.log_dir}/post_update.log"
-                )
+                self.logger.error(f"Post-update script failed. Check logs: {self.config.log_dir}/post_update.log")
                 self._remove_update_lock()
                 return 1
         else:
@@ -2286,6 +2432,14 @@ def skill_ids(timeout):
     sys.exit(_skill_ids(timeout))
 
 
+@skill_cli.command("_params", hidden=True)
+@click.argument("skill_ref", metavar="SKILL")
+@click.option("--timeout", type=float, default=1.0)
+def skill_params(skill_ref, timeout):
+    """Print @param= completions for a skill."""
+    sys.exit(_skill_params(skill_ref, timeout))
+
+
 @skill_cli.command("type")
 @click.argument("skill_ref", metavar="SKILL")
 @click.option(
@@ -2307,36 +2461,41 @@ def skill_type(skill_ref, timeout, json_output):
     sys.exit(_skill_type(skill_ref, timeout, json_output))
 
 
-@skill_cli.command("run")
-@click.argument("skill_ref", metavar="SKILL")
-@click.option(
-    "--inputs",
-    default="{}",
-    show_default=True,
-    help="JSON object passed to the skill.",
+@skill_cli.command(
+    "run",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    },
 )
-@click.option(
-    "--timeout",
-    type=float,
-    default=None,
-    help="Seconds to wait for the skill result. Default waits indefinitely.",
-)
-@click.option(
-    "--server-timeout",
-    type=float,
-    default=5.0,
-    show_default=True,
-    help="Seconds to wait for the ExecuteSkill action server.",
-)
-def skill_run(skill_ref, inputs, timeout, server_timeout):
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def skill_run(args):
     """Run a skill by ID.
+
+    \b
+    Options:
+      --timeout SECONDS          Wait for the skill result. Default waits indefinitely.
+      --server-timeout SECONDS   Wait for the ExecuteSkill action server. Default: 5.
+      --inputs [JSON]            Legacy JSON inputs, or a marker before @param=value.
+
+    Skill params use @name=value and may appear before or after CLI options.
+    Values are JSON-decoded when they look like JSON/booleans/numbers.
 
     \b
     Examples:
       innate skill run innate-os/wave
-      innate skill run local/my-skill --inputs '{"foo":"bar"}'
+      innate skill run innate-os/arm_utils @command=torque_on --timeout 0
+      innate skill run local/my-skill @x=1 @name=alice
+      innate skill run local/my-skill --inputs '{"x": 1}'
     """
-    sys.exit(_skill_run(skill_ref, inputs, timeout, server_timeout))
+    parsed, error = _parse_skill_run_tokens(list(args))
+    if error:
+        raise click.ClickException(error)
+    if parsed is None:
+        raise click.UsageError("Missing skill ID")
+
+    skill_ref, inputs_json, timeout, server_timeout = parsed
+    sys.exit(_skill_run(skill_ref, inputs_json, timeout, server_timeout))
 
 
 # -- update -------------------------------------------------------------------
@@ -2482,7 +2641,9 @@ def _zsh_completions():
     w("  local -a pkgs")
     w('  local src_dir="${INNATE_OS_ROOT:-$HOME/innate-os}/ros2_ws/src"')
     w('  if [[ -d "$src_dir" ]]; then')
-    w("    pkgs=( ${(f)\"$(find \"$src_dir\" -name package.xml -exec dirname {} \\; 2>/dev/null | xargs -I{} basename {})\"} )")
+    w(
+        '    pkgs=( ${(f)"$(find "$src_dir" -name package.xml -exec dirname {} \\; 2>/dev/null | xargs -I{} basename {})"} )'
+    )
     w("    _describe 'ROS2 package' pkgs")
     w("  fi")
     w("}")
@@ -2492,6 +2653,64 @@ def _zsh_completions():
     w('  local cmd="${commands[innate]:-${INNATE_OS_ROOT:-$HOME/innate-os}/scripts/innate}"')
     w('  skills=( ${(f)"$("$cmd" skill _ids --timeout 1 2>/dev/null)"} )')
     w("  _describe 'skill id' skills")
+    w("}")
+    w("")
+    w("_innate_skill_params() {")
+    w("  local -a params skills")
+    w("  local cmd skill word known idx seen_run")
+    w('  cmd="${commands[innate]:-${INNATE_OS_ROOT:-$HOME/innate-os}/scripts/innate}"')
+    w("  skill=''")
+    w("  seen_run=0")
+    w('  skills=( ${(f)"$("$cmd" skill _ids --timeout 1 2>/dev/null)"} )')
+    w("  for (( idx=1; idx <= $#words; idx++ )); do")
+    w('    word="${words[idx]}"')
+    w('    if [[ "$word" == run ]]; then')
+    w("      seen_run=1")
+    w("      continue")
+    w("    fi")
+    w("    if (( seen_run )); then")
+    w('      for known in "${skills[@]}"; do')
+    w('        if [[ "$word" == "$known" ]]; then')
+    w('          skill="$word"')
+    w("          break 2")
+    w("        fi")
+    w("      done")
+    w("    fi")
+    w("  done")
+    w('  if [[ -z "$skill" ]]; then')
+    w("    seen_run=0")
+    w("    for (( idx=1; idx <= $#words; idx++ )); do")
+    w('      word="${words[idx]}"')
+    w('      if [[ "$word" == run ]]; then')
+    w("        seen_run=1")
+    w("        continue")
+    w("      fi")
+    w("      if (( seen_run )); then")
+    w('        case "$word" in')
+    w("          ''|--*|-*|@*|*=*) ;;")
+    w('          *) skill="$word"; break ;;')
+    w("        esac")
+    w("      fi")
+    w("    done")
+    w("  fi")
+    w('  [[ -z "$skill" ]] && return 1')
+    w('  params=( ${(f)"$("$cmd" skill _params "$skill" --timeout 1 2>/dev/null)"} )')
+    w("  _describe -S '' 'skill parameter' params")
+    w("}")
+    w("")
+    w("_innate_skill_run_args() {")
+    w('  if [[ ${CURRENT} -gt 1 && "${words[CURRENT-1]}" == --inputs ]]; then')
+    w("    _innate_skill_params && return")
+    w("  fi")
+    w('  if [[ "$PREFIX" == @* ]]; then')
+    w("    _innate_skill_params && return")
+    w("  fi")
+    w("  _arguments -C \\")
+    w("    '--timeout[Seconds to wait for the skill result]:seconds:' \\")
+    w("    '--server-timeout[Seconds to wait for ExecuteSkill action server]:seconds:' \\")
+    w("    '--inputs[Legacy JSON inputs, or marker before @param=value]::JSON or parameter:_innate_skill_params' \\")
+    w("    '1:skill id:_innate_skill_ids' \\")
+    w("    '*:skill parameter:_innate_skill_params'")
     w("}")
     w("")
     w("_innate() {")
@@ -2535,7 +2754,7 @@ def _zsh_completions():
                 sub_cmd = cmd.get_command(None, sub_name)
                 if sub_cmd and not sub_cmd.hidden:
                     opts = fmt_options(sub_cmd)
-                    if opts:
+                    if opts or (name == "skill" and sub_name == "run"):
                         subs_with_opts[sub_name] = opts
 
             if subs_with_opts:
@@ -2543,13 +2762,16 @@ def _zsh_completions():
                 w("              case $words[1] in")
                 for sub_name, opts in sorted(subs_with_opts.items()):
                     w(f"                {sub_name})")
-                    skill_arg = name == "skill" and sub_name in {"run", "type"}
-                    arg_specs = ["'1:skill id:_innate_skill_ids'"] if skill_arg else []
-                    w("                  _arguments \\")
-                    specs = opts + arg_specs
-                    for i, opt_s in enumerate(specs):
-                        trail = " \\" if i < len(specs) - 1 else ""
-                        w(f"                    {opt_s}{trail}")
+                    if name == "skill" and sub_name == "run":
+                        w("                  _innate_skill_run_args")
+                    else:
+                        skill_arg = name == "skill" and sub_name == "type"
+                        arg_specs = ["'1:skill id:_innate_skill_ids'"] if skill_arg else []
+                        w("                  _arguments \\")
+                        specs = opts + arg_specs
+                        for i, opt_s in enumerate(specs):
+                            trail = " \\" if i < len(specs) - 1 else ""
+                            w(f"                    {opt_s}{trail}")
                     w("                  ;;")
                 w("              esac")
                 w("              ;;")
