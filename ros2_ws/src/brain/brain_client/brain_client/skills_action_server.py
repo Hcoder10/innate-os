@@ -254,11 +254,12 @@ class SkillsActionServer(Node):
     def _inspect_skill_inputs(self, skill_id: str, skill_instance) -> dict:
         """Best-effort introspection of a code skill's execute() signature.
 
-        Returns ``{param_name: type_str}`` for ordinary annotations and a
-        richer ``{"type": type_str, "enum": [...]}`` schema for Literal
-        annotations. Any failure (no execute method, unsupported signature,
-        weird annotations) is logged and an empty dict is returned so the
-        skill can still be published.
+        Returns ``{param_name: {"type": type_str, ...}}`` schemas. Literal
+        annotations include an ``enum`` list, parameters without defaults are
+        marked ``required``, and JSON-serializable defaults are included.
+        Any failure (no execute method, unsupported signature, weird
+        annotations) is logged and an empty dict is returned so the skill can
+        still be published.
         """
         if not hasattr(skill_instance, "execute"):
             return {}
@@ -273,32 +274,44 @@ class SkillsActionServer(Node):
         for param_name, param in signature.parameters.items():
             if param_name == "self":
                 continue
-            param_schema = "any"
+            param_type = "any"
+            enum_values = None
             try:
                 if param.annotation != inspect.Parameter.empty:
                     origin = get_origin(param.annotation)
                     if origin is Literal:
                         values = list(get_args(param.annotation))
                         value_type_names = {"None" if value is None else type(value).__name__ for value in values}
-                        param_schema = {
-                            "type": value_type_names.pop() if len(value_type_names) == 1 else "literal",
-                            "enum": values,
-                        }
+                        param_type = value_type_names.pop() if len(value_type_names) == 1 else "literal"
+                        enum_values = values
                     elif (
                         isinstance(param.annotation, (types.UnionType, types.GenericAlias))
                         or hasattr(param.annotation, "_name")
                         and param.annotation._name in ["List", "Optional", "Dict", "Tuple", "Union"]
                     ):
-                        param_schema = str(param.annotation)
+                        param_type = str(param.annotation)
                     elif hasattr(param.annotation, "__name__"):
-                        param_schema = param.annotation.__name__
+                        param_type = param.annotation.__name__
                     else:
-                        param_schema = str(param.annotation)
-                    if isinstance(param_schema, str):
-                        param_schema = param_schema.replace("typing.", "")
+                        param_type = str(param.annotation)
+                    if isinstance(param_type, str):
+                        param_type = param_type.replace("typing.", "")
             except Exception as e:
                 self.get_logger().warn(f"Could not stringify annotation for '{skill_id}.{param_name}': {e}")
-                param_schema = "any"
+                param_type = "any"
+
+            param_schema = {
+                "type": param_type,
+                "required": param.default == inspect.Parameter.empty,
+            }
+            if enum_values is not None:
+                param_schema["enum"] = enum_values
+            if param.default != inspect.Parameter.empty:
+                try:
+                    json.dumps(param.default)
+                    param_schema["default"] = param.default
+                except (TypeError, ValueError):
+                    pass
             inputs[param_name] = param_schema
         return inputs
 

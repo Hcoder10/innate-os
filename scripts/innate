@@ -132,6 +132,10 @@ def _format_skill_param_name_list(param_names) -> str:
     return ", ".join(f"@{name}" for name in param_names)
 
 
+def _format_skill_value_list(values) -> str:
+    return ", ".join(str(value) for value in values)
+
+
 def _unknown_skill_param_error(skill_ref: str, param_name: str, valid_names) -> str:
     message = f"Unknown parameter @{param_name} for {skill_ref}."
     suggestion = get_close_matches(param_name, list(valid_names), n=1)
@@ -142,16 +146,84 @@ def _unknown_skill_param_error(skill_ref: str, param_name: str, valid_names) -> 
     return f"{message} This skill does not accept parameters."
 
 
-def _validate_skill_run_inputs(skill_ref: str, inputs: dict) -> str | None:
+def _skill_param_schema_type(param_schema) -> str:
+    if isinstance(param_schema, dict):
+        return str(param_schema.get("type") or "any").replace("typing.", "")
+    return str(param_schema or "any").replace("typing.", "")
+
+
+def _skill_param_schema_enum(param_schema) -> list:
+    if not isinstance(param_schema, dict):
+        return []
+    enum_values = param_schema.get("enum")
+    return enum_values if isinstance(enum_values, list) else []
+
+
+def _skill_param_schema_required(param_schema) -> bool:
+    return isinstance(param_schema, dict) and param_schema.get("required") is True
+
+
+def _coerce_skill_param_value_for_schema(param_name: str, raw_value: str, param_schema):
+    enum_values = _skill_param_schema_enum(param_schema)
+    if enum_values:
+        for enum_value in enum_values:
+            if raw_value == str(enum_value):
+                return enum_value, None
+        return None, f"Invalid value for @{param_name}. Expected one of: {_format_skill_value_list(enum_values)}"
+
+    type_name = _skill_param_schema_type(param_schema)
+    if type_name in {"any", "Any", "inspect._empty"}:
+        return _coerce_skill_param_value(raw_value), None
+    if type_name in {"str", "string"}:
+        return raw_value, None
+    if type_name in {"int", "integer"}:
+        value = raw_value.strip()
+        if re.fullmatch(r"-?(0|[1-9]\d*)", value) is None:
+            return None, f"Invalid value for @{param_name}. Expected an int."
+        return int(value), None
+    if type_name in {"float", "number"}:
+        value = raw_value.strip()
+        if (
+            re.fullmatch(
+                r"-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?",
+                value,
+            )
+            is None
+        ):
+            return None, f"Invalid value for @{param_name}. Expected a float."
+        return float(value), None
+    if type_name in {"bool", "boolean"}:
+        value = raw_value.strip().lower()
+        if value == "true":
+            return True, None
+        if value == "false":
+            return False, None
+        return None, f"Invalid value for @{param_name}. Expected true or false."
+
+    return _coerce_skill_param_value(raw_value), None
+
+
+def _validate_skill_run_inputs(skill_ref: str, inputs: dict):
     contract = _fast_find_skill_contract(_fast_cached_skill_contracts(), skill_ref)
     if contract is None:
-        return None
+        return {name: _coerce_skill_param_value(value) for name, value in inputs.items()}, None
 
-    valid_names = tuple(contract.get("inputs", {}).keys())
+    input_schemas = contract.get("inputs", {})
+    valid_names = tuple(input_schemas.keys())
+    normalized_inputs = {}
     for name in inputs:
         if name not in valid_names:
-            return _unknown_skill_param_error(skill_ref, name, valid_names)
-    return None
+            return None, _unknown_skill_param_error(skill_ref, name, valid_names)
+        value, error = _coerce_skill_param_value_for_schema(name, inputs[name], input_schemas[name])
+        if error:
+            return None, error
+        normalized_inputs[name] = value
+    missing_names = [
+        name for name, schema in input_schemas.items() if name not in inputs and _skill_param_schema_required(schema)
+    ]
+    if missing_names:
+        return None, f"Missing required parameter(s): {_format_skill_param_name_list(missing_names)}"
+    return normalized_inputs, None
 
 
 def _coerce_skill_param_value(raw_value: str):
@@ -185,7 +257,7 @@ def _parse_skill_param_token(token: str):
         return None, f"Missing value for @{name}"
     if raw_value.lstrip().startswith(("{", "[")):
         return None, "JSON input values are not supported; use scalar @name=value parameters"
-    return (name, _coerce_skill_param_value(raw_value)), None
+    return (name, raw_value), None
 
 
 def _parse_skill_run_tokens(args):
@@ -237,7 +309,7 @@ def _parse_skill_run_tokens(args):
     if not skill_ref:
         return None, "Missing skill ID"
 
-    validation_error = _validate_skill_run_inputs(skill_ref, inputs)
+    inputs, validation_error = _validate_skill_run_inputs(skill_ref, inputs)
     if validation_error:
         return None, validation_error
 
@@ -2891,7 +2963,7 @@ def _zsh_completions():
     w('      str|string) value_hint="enter a string here" ;;')
     w('      list|list\\[*\\]) value_hint="enter a list here" ;;')
     w('      *) value_hint="enter a ${type} value here" ;;')
-    w('    esac')
+    w("    esac")
     w('    _message "@${param_name} value: ${value_hint}"')
     w("  else")
     w('    _message "@${param_name} value: enter a value here"')
