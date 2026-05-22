@@ -84,6 +84,47 @@ def _format_skill_param_completions(inputs: dict):
     return lines
 
 
+def _format_skill_value_completions(contract: dict, param_name: str):
+    inputs = contract.get("inputs", {})
+    if param_name not in inputs:
+        return []
+
+    guidelines = "\n".join(
+        part
+        for part in [
+            contract.get("guidelines") or "",
+            contract.get("guidelines_when_running") or "",
+        ]
+        if part
+    )
+    if not guidelines:
+        return []
+
+    quoted_values = []
+    seen = set()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", guidelines):
+        if param_name not in sentence:
+            continue
+        for value in re.findall(r"'([^']+)'|\"([^\"]+)\"", sentence):
+            value = next(part for part in value if part)
+            if value == param_name or value in seen:
+                continue
+            seen.add(value)
+            quoted_values.append(value)
+
+    lines = []
+    for value in quoted_values:
+        description = ""
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", guidelines):
+            sentence = sentence.strip()
+            if sentence.startswith(value) or sentence.startswith(f"'{value}'") or sentence.startswith(f'"{value}"'):
+                description = sentence
+                break
+        description = description.replace(":", "\\:")
+        lines.append(f"{value}:{description}" if description else value)
+    return lines
+
+
 def _coerce_skill_param_value(raw_value: str):
     value = raw_value.strip()
     if value == "":
@@ -287,6 +328,32 @@ def _fast_parse_skill_params_args(args):
     return skill_ref
 
 
+def _fast_parse_skill_values_args(args):
+    skill_ref = None
+    param_name = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--help":
+            return None
+        if arg == "--timeout":
+            i += 1
+            if i >= len(args):
+                return None
+        elif arg.startswith("--timeout="):
+            pass
+        elif arg.startswith("-"):
+            return None
+        elif skill_ref is None:
+            skill_ref = arg
+        elif param_name is None:
+            param_name = arg
+        else:
+            return None
+        i += 1
+    return (skill_ref, param_name) if skill_ref and param_name else None
+
+
 def _fast_parse_skill_run_args(args):
     parsed, error = _parse_skill_run_tokens(args)
     if error:
@@ -408,6 +475,19 @@ def _try_fast_skill_cli():
         for line in _format_skill_param_completions(contract["inputs"]):
             print(line)
         return 0
+
+    if command == "_values":
+        parsed = _fast_parse_skill_values_args(command_args)
+        if not parsed:
+            return None
+        skill_ref, param_name = parsed
+        contract = _fast_find_skill_contract(_fast_cached_skill_contracts(), skill_ref)
+        if contract is None:
+            return 1
+        lines = _format_skill_value_completions(contract, param_name)
+        for line in lines:
+            print(line)
+        return 0 if lines else 1
 
     if command == "type":
         parsed = _fast_parse_skill_type_args(command_args)
@@ -1275,6 +1355,33 @@ def _skill_params(skill_ref: str, timeout: float):
             for line in _format_skill_param_completions(_parse_skill_inputs(skill_info)):
                 print(line)
             return 0
+        finally:
+            _shutdown_skill_node(modules, node)
+
+
+def _skill_values(skill_ref: str, param_name: str, timeout: float):
+    cached_contract = _find_skill_contract_by_id(_cached_skill_contracts(), skill_ref)
+    if cached_contract is not None:
+        lines = _format_skill_value_completions(cached_contract, param_name)
+        for line in lines:
+            print(line)
+        return 0 if lines else 1
+
+    if not _ensure_skill_ros_nodes_running():
+        return 1
+
+    modules = _load_skill_ros_modules()
+    with _suppress_process_output():
+        node = _create_skill_node(modules)
+        try:
+            skills = _wait_for_available_skills(modules, node, timeout)
+            skill_info = _find_skill_by_id(skills, skill_ref)
+            if skill_info is None:
+                return 1
+            lines = _format_skill_value_completions(_skill_type_contract(skill_info), param_name)
+            for line in lines:
+                print(line)
+            return 0 if lines else 1
         finally:
             _shutdown_skill_node(modules, node)
 
@@ -2406,6 +2513,15 @@ def skill_params(skill_ref, timeout):
     sys.exit(_skill_params(skill_ref, timeout))
 
 
+@skill_cli.command("_values", hidden=True)
+@click.argument("skill_ref", metavar="SKILL")
+@click.argument("param_name", metavar="PARAM")
+@click.option("--timeout", type=float, default=1.0)
+def skill_values(skill_ref, param_name, timeout):
+    """Print value completions for a skill parameter."""
+    sys.exit(_skill_values(skill_ref, param_name, timeout))
+
+
 @skill_cli.command("type")
 @click.argument("skill_ref", metavar="SKILL")
 @click.option(
@@ -2677,7 +2793,7 @@ def _zsh_completions():
     w("}")
     w("")
     w("_innate_skill_param_value() {")
-    w("  local -a params")
+    w("  local -a params values")
     w("  local cmd skill param_expr param_name line type")
     w('  cmd="${commands[innate]:-${INNATE_OS_ROOT:-$HOME/innate-os}/scripts/innate}"')
     w('  skill="$(_innate_current_skill)" || return 1')
@@ -2686,6 +2802,12 @@ def _zsh_completions():
     w('  param_name="${param_expr%%=*}"')
     w('  param_name="${param_name#@}"')
     w('  [[ -z "$param_name" ]] && return 1')
+    w('  values=( ${(f)"$("$cmd" skill _values "$skill" "$param_name" --timeout 1 2>/dev/null)"} )')
+    w("  if (( ${#values[@]} )); then")
+    w('    compset -P "@${param_name}="')
+    w('    _describe "${param_name} value" values')
+    w("    return")
+    w("  fi")
     w('  params=( ${(f)"$("$cmd" skill _params "$skill" --timeout 1 2>/dev/null)"} )')
     w('  for line in "${params[@]}"; do')
     w('    if [[ "$line" == "@${param_name}=:"* ]]; then')
