@@ -88,10 +88,20 @@ def _skill_param_type_display(param_schema) -> str:
     return type_name
 
 
+def _skill_param_completion_type_display(param_schema) -> str:
+    if not isinstance(param_schema, dict):
+        return str(param_schema)
+
+    enum_values = param_schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return "enum"
+    return str(param_schema.get("type") or "any")
+
+
 def _format_skill_param_completions(inputs: dict):
     lines = []
     for name, param_schema in inputs.items():
-        desc = _skill_param_type_display(param_schema).replace(":", "\\:")
+        desc = _skill_param_completion_type_display(param_schema).replace(":", "\\:")
         lines.append(f"@{name}=:{desc}")
     return lines
 
@@ -2804,7 +2814,11 @@ def _zsh_completions():
     w("    done")
     w("    (( already_used )) && continue")
     w('    completions+=("$completion")')
-    w('    descriptions+=("$description")')
+    w('    if [[ -n "$description" ]]; then')
+    w('      descriptions+=("${completion} (${description})")')
+    w("    else")
+    w('      descriptions+=("$completion")')
+    w("    fi")
     w("  done")
     w("  (( ${#params[@]} )) || return 1")
     w("  (( ${#completions[@]} )) || return 1")
