@@ -28,6 +28,10 @@ innate service start    # Start ROS services
 innate service stop     # Stop ROS services
 innate restart          # Restart ROS services
 innate view             # Attach to tmux session
+
+# List and trigger robot skills
+innate skill list
+innate skill run innate-os/wave
 ```
 
 ---
@@ -52,6 +56,35 @@ innate service stop           # Stop ROS services
 innate restart                # Restart ROS services
 innate view                   # Attach to tmux session (Ctrl+b d to detach)
 ```
+
+### Skill Commands
+
+```bash
+innate skill list                                      # List available robot skills
+innate skill type innate-os/wave                      # Print inputs and guidelines
+innate skill type innate-os/wave --json               # Print the raw contract as JSON
+innate skill run innate-os/wave                       # Trigger a skill by ID
+innate skill run innate-os/arm_utils @command=torque_on
+innate skill run local/my-skill @x=1 @name=alice      # Pass typed params
+```
+
+`innate skill run` calls the high-level `/execute_skill` action and defaults
+inputs to `{}`. Pass the skill ID exactly as published by the robot, such as
+`innate-os/wave`. Use `innate skill type SKILL` to inspect a readable input
+contract with the input type schema and guidelines advertised on
+`/brain/available_skills` before calling `run`. Skill parameters use
+`@name=value`; booleans and numbers are sent with those types, while other
+values are sent as strings. `--inputs` is only a completion marker for
+discovering the selected skill's params, not a JSON input flag. The zsh
+completion script suggests published skill IDs for `innate skill type` and
+`innate skill run`, then suggests the selected skill's `@param=` entries.
+For low-latency shell usage, the skills server mirrors the latest advertised
+contracts to `/tmp/innate_skill_contracts.json` (override with
+`INNATE_SKILL_CACHE`). `innate skill type` reads that cache before falling back
+to ROS; completion uses the cache directly so tab suggestions stay fast.
+`innate skill run` first tries the local `/tmp/innate_skill_cli.sock` bridge
+(override with `INNATE_SKILL_SOCKET`) hosted by `skills_action_server`, then
+falls back to direct ROS if the bridge is unavailable.
 
 ### Daemon Mode (internal)
 

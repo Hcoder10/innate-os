@@ -12,9 +12,12 @@ import inspect
 import json
 import math  # For yaw calculation
 import os
+import queue
 import threading
+import time
 import types
 from pathlib import Path
+from typing import Literal, get_args, get_origin
 
 import numpy as np  # For map data
 import rclpy
@@ -34,11 +37,12 @@ from std_srvs.srv import Trigger
 
 from brain_client.camera_provider import CameraProvider
 from brain_client.head_interface import HeadInterface
-from brain_client.manipulation_interface import ManipulationInterface
-from brain_client.mobility_interface import MobilityInterface
 
 # Import skill loader and types
 from brain_client.hot_reload_watcher import HotReloadWatcher
+from brain_client.manipulation_interface import ManipulationInterface
+from brain_client.mobility_interface import MobilityInterface
+from brain_client.skill_cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
     InterfaceType,
@@ -138,6 +142,10 @@ class SkillsActionServer(Node):
 
         # Create action client to delegate physical skills to behavior_server
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
+        self._behavior_goal_lock = threading.Lock()
+        self._behavior_goal_handles = {}
+        self._behavior_goal_cancel_requested = set()
+        self._behavior_goal_cancel_sent = set()
 
         self._action_server = ActionServer(
             self,
@@ -148,15 +156,19 @@ class SkillsActionServer(Node):
             cancel_callback=self.cancel_callback,
         )
 
+        self._cli_skill_tasks = queue.Queue()
+        self._cli_skill_worker_stop = threading.Event()
+        self._cli_skill_worker = threading.Thread(target=self._run_cli_skill_worker, daemon=True)
+        self._cli_skill_worker.start()
+        self._skill_cli_bridge = SkillCliBridge(self.get_logger(), self._submit_cli_skill)
+
         # Create unified latched topic for broadcasting available skills
         self._skills_qos = QoSProfile(
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             reliability=QoSReliabilityPolicy.RELIABLE,
         )
-        self._skills_publisher = self.create_publisher(
-            AvailableSkills, "/brain/available_skills", self._skills_qos
-        )
+        self._skills_publisher = self.create_publisher(AvailableSkills, "/brain/available_skills", self._skills_qos)
 
         # Create service for reloading skills
         self._reload_srv = self.create_service(Trigger, "/brain/reload_primitives", self._handle_reload_skills)
@@ -170,14 +182,13 @@ class SkillsActionServer(Node):
 
         # Create service for selective skill reload (PEAS-only, called by brain_client)
         from brain_messages.srv import ReloadSkillsAgents
+
         self._reload_skills_srv = self.create_service(
             ReloadSkillsAgents, "/brain/reload_skills", self._handle_reload_skills_agents
         )
 
         self.get_logger().debug("Skills Action Server has started.")
-        self.get_logger().info(
-            f"Total skills available: {len(self._code_skills) + len(self._physical_skills)}"
-        )
+        self.get_logger().info(f"Total skills available: {len(self._code_skills) + len(self._physical_skills)}")
 
         # Publish initial skills list on the latched topic
         self._publish_skills_list()
@@ -194,7 +205,7 @@ class SkillsActionServer(Node):
 
     def _on_skills_file_changed(self, skill_names: list, _agent_names: list):
         """Called by HotReloadWatcher when skill files change.
-        
+
         Note: skill_names here are file stems from the watcher, not IDs.
         """
         self.get_logger().info(f"Hot reload triggered for skills: {skill_names}")
@@ -215,10 +226,18 @@ class SkillsActionServer(Node):
         else:
             self._reload_skills()
 
-    def _build_skill_info(self, skill_id: str, name: str, skill_type: str, guidelines: str,
-                          guidelines_when_running: str, inputs_json: str,
-                          in_training: bool = False, episode_count: int = 0,
-                          directory: str = "") -> SkillInfo:
+    def _build_skill_info(
+        self,
+        skill_id: str,
+        name: str,
+        skill_type: str,
+        guidelines: str,
+        guidelines_when_running: str,
+        inputs_json: str,
+        in_training: bool = False,
+        episode_count: int = 0,
+        directory: str = "",
+    ) -> SkillInfo:
         """Create a SkillInfo message from skill data."""
         msg = SkillInfo()
         msg.id = skill_id or ""
@@ -235,9 +254,12 @@ class SkillsActionServer(Node):
     def _inspect_skill_inputs(self, skill_id: str, skill_instance) -> dict:
         """Best-effort introspection of a code skill's execute() signature.
 
-        Returns ``{param_name: type_str}``. Any failure (no execute method,
-        unsupported signature, weird annotations) is logged and an empty
-        dict is returned so the skill can still be published.
+        Returns ``{param_name: {"type": type_str, ...}}`` schemas. Literal
+        annotations include an ``enum`` list, parameters without defaults are
+        marked ``required``, and JSON-serializable defaults are included.
+        Any failure (no execute method, unsupported signature, weird
+        annotations) is logged and an empty dict is returned so the skill can
+        still be published.
         """
         if not hasattr(skill_instance, "execute"):
             return {}
@@ -245,9 +267,7 @@ class SkillsActionServer(Node):
         try:
             signature = inspect.signature(skill_instance.execute)
         except (TypeError, ValueError) as e:
-            self.get_logger().warn(
-                f"Could not inspect execute() signature for '{skill_id}': {e}"
-            )
+            self.get_logger().warn(f"Could not inspect execute() signature for '{skill_id}': {e}")
             return {}
 
         inputs: dict = {}
@@ -255,9 +275,16 @@ class SkillsActionServer(Node):
             if param_name == "self":
                 continue
             param_type = "any"
+            enum_values = None
             try:
                 if param.annotation != inspect.Parameter.empty:
-                    if (
+                    origin = get_origin(param.annotation)
+                    if origin is Literal:
+                        values = list(get_args(param.annotation))
+                        value_type_names = {"None" if value is None else type(value).__name__ for value in values}
+                        param_type = value_type_names.pop() if len(value_type_names) == 1 else "literal"
+                        enum_values = values
+                    elif (
                         isinstance(param.annotation, (types.UnionType, types.GenericAlias))
                         or hasattr(param.annotation, "_name")
                         and param.annotation._name in ["List", "Optional", "Dict", "Tuple", "Union"]
@@ -267,13 +294,25 @@ class SkillsActionServer(Node):
                         param_type = param.annotation.__name__
                     else:
                         param_type = str(param.annotation)
-                    param_type = param_type.replace("typing.", "")
+                    if isinstance(param_type, str):
+                        param_type = param_type.replace("typing.", "")
             except Exception as e:
-                self.get_logger().warn(
-                    f"Could not stringify annotation for '{skill_id}.{param_name}': {e}"
-                )
+                self.get_logger().warn(f"Could not stringify annotation for '{skill_id}.{param_name}': {e}")
                 param_type = "any"
-            inputs[param_name] = param_type
+
+            param_schema = {
+                "type": param_type,
+                "required": param.default == inspect.Parameter.empty,
+            }
+            if enum_values is not None:
+                param_schema["enum"] = enum_values
+            if param.default != inspect.Parameter.empty:
+                try:
+                    json.dumps(param.default)
+                    param_schema["default"] = param.default
+                except (TypeError, ValueError):
+                    pass
+            inputs[param_name] = param_schema
         return inputs
 
     def _safe_skill_string(self, skill_id: str, skill_instance, attr: str) -> str:
@@ -289,15 +328,11 @@ class SkillsActionServer(Node):
         try:
             value = getattr(skill_instance, attr)()
         except Exception as e:
-            self.get_logger().warn(
-                f"Skill '{skill_id}'.{attr}() raised: {e}; defaulting to empty string"
-            )
+            self.get_logger().warn(f"Skill '{skill_id}'.{attr}() raised: {e}; defaulting to empty string")
             return ""
         return str(value) if value is not None else ""
 
-    def _build_physical_skill_info(
-        self, skill_id: str, physical_data: dict, *, in_training: bool
-    ) -> SkillInfo | None:
+    def _build_physical_skill_info(self, skill_id: str, physical_data: dict, *, in_training: bool) -> SkillInfo | None:
         """Build a SkillInfo for a physical / in-training skill.
 
         Returns ``None`` if the entry is malformed enough that it can't
@@ -308,8 +343,7 @@ class SkillsActionServer(Node):
         metadata = physical_data.get("metadata")
         if not isinstance(metadata, dict):
             self.get_logger().error(
-                f"Physical skill '{skill_id}' has malformed metadata "
-                f"(type={type(metadata).__name__}); skipping"
+                f"Physical skill '{skill_id}' has malformed metadata (type={type(metadata).__name__}); skipping"
             )
             return None
 
@@ -317,9 +351,7 @@ class SkillsActionServer(Node):
         try:
             episode_count = self.skill_loader._get_episode_count(directory)
         except Exception as e:
-            self.get_logger().warn(
-                f"Could not read episode count for '{skill_id}': {e}; defaulting to 0"
-            )
+            self.get_logger().warn(f"Could not read episode count for '{skill_id}': {e}; defaulting to 0")
             episode_count = 0
 
         try:
@@ -342,6 +374,45 @@ class SkillsActionServer(Node):
             directory=directory,
         )
 
+    def _skill_cache_path(self) -> Path:
+        return Path(os.environ.get("INNATE_SKILL_CACHE", "/tmp/innate_skill_contracts.json"))
+
+    def _skill_info_to_cache_dict(self, skill: SkillInfo) -> dict:
+        try:
+            inputs = json.loads(skill.inputs_json or "{}")
+        except json.JSONDecodeError:
+            inputs = {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+
+        return {
+            "id": skill.id,
+            "name": skill.name,
+            "type": skill.type,
+            "inputs": inputs,
+            "guidelines": skill.guidelines,
+            "guidelines_when_running": skill.guidelines_when_running,
+            "in_training": skill.in_training,
+            "episode_count": skill.episode_count,
+            "directory": skill.directory,
+        }
+
+    def _write_skill_cache(self, skills: list[SkillInfo]) -> None:
+        cache_path = self._skill_cache_path()
+        payload = {
+            "version": 1,
+            "updated_at": time.time(),
+            "skills": [self._skill_info_to_cache_dict(skill) for skill in skills],
+        }
+
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+            tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+            tmp_path.replace(cache_path)
+        except OSError as exc:
+            self.get_logger().warning(f"Failed to write skill cache {cache_path}: {exc}")
+
     def _publish_skills_list(self):
         """Build and publish the full AvailableSkills message on the latched topic."""
         msg = AvailableSkills()
@@ -360,12 +431,8 @@ class SkillsActionServer(Node):
         for skill_id, (display_name, skill_instance) in code_skills_snapshot.items():
             try:
                 inputs = self._inspect_skill_inputs(skill_id, skill_instance)
-                guidelines = self._safe_skill_string(
-                    skill_id, skill_instance, "guidelines"
-                )
-                guidelines_when_running = self._safe_skill_string(
-                    skill_id, skill_instance, "guidelines_when_running"
-                )
+                guidelines = self._safe_skill_string(skill_id, skill_instance, "guidelines")
+                guidelines_when_running = self._safe_skill_string(skill_id, skill_instance, "guidelines_when_running")
 
                 try:
                     inputs_json = json.dumps(inputs)
@@ -375,46 +442,38 @@ class SkillsActionServer(Node):
                     )
                     inputs_json = "{}"
 
-                skills.append(self._build_skill_info(
-                    skill_id=skill_id,
-                    name=display_name,
-                    skill_type="code",
-                    guidelines=guidelines,
-                    guidelines_when_running=guidelines_when_running,
-                    inputs_json=inputs_json,
-                ))
-            except Exception as e:
-                self.get_logger().error(
-                    f"Skipping code skill '{skill_id}' in available_skills: {e}"
+                skills.append(
+                    self._build_skill_info(
+                        skill_id=skill_id,
+                        name=display_name,
+                        skill_type="code",
+                        guidelines=guidelines,
+                        guidelines_when_running=guidelines_when_running,
+                        inputs_json=inputs_json,
+                    )
                 )
+            except Exception as e:
+                self.get_logger().error(f"Skipping code skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Add physical skills (ready) — dict is {id: skill_data}
         for skill_id, physical_data in physical_skills_snapshot.items():
             try:
-                skill_info = self._build_physical_skill_info(
-                    skill_id, physical_data, in_training=False
-                )
+                skill_info = self._build_physical_skill_info(skill_id, physical_data, in_training=False)
                 if skill_info is not None:
                     skills.append(skill_info)
             except Exception as e:
-                self.get_logger().error(
-                    f"Skipping physical skill '{skill_id}' in available_skills: {e}"
-                )
+                self.get_logger().error(f"Skipping physical skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Add in-training skills — dict is {id: skill_data}
         for skill_id, physical_data in in_training_skills_snapshot.items():
             try:
-                skill_info = self._build_physical_skill_info(
-                    skill_id, physical_data, in_training=True
-                )
+                skill_info = self._build_physical_skill_info(skill_id, physical_data, in_training=True)
                 if skill_info is not None:
                     skills.append(skill_info)
             except Exception as e:
-                self.get_logger().error(
-                    f"Skipping in-training skill '{skill_id}' in available_skills: {e}"
-                )
+                self.get_logger().error(f"Skipping in-training skill '{skill_id}' in available_skills: {e}")
                 continue
 
         # Enforce unique display names (LLM can't disambiguate duplicates)
@@ -433,13 +492,10 @@ class SkillsActionServer(Node):
         msg.skills = filtered_skills
         try:
             self._skills_publisher.publish(msg)
-            self.get_logger().info(
-                f"Published {len(filtered_skills)} skills on /brain/available_skills"
-            )
+            self._write_skill_cache(filtered_skills)
+            self.get_logger().info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
-            self.get_logger().error(
-                f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}"
-            )
+            self.get_logger().error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
 
     def _reload_skills(self):
         """Reload all skills from disk."""
@@ -481,16 +537,12 @@ class SkillsActionServer(Node):
             self._physical_skills = new_physical
             self._in_training_skills = new_in_training
 
-        self.get_logger().info(
-            f"Reloaded {len(new_code_skills)} code + {len(new_physical)} physical skills"
-        )
+        self.get_logger().info(f"Reloaded {len(new_code_skills)} code + {len(new_physical)} physical skills")
         self._publish_skills_list()
 
     def _resolve_skills_directories(self) -> list[str]:
         """Build the ordered list of skill directories to scan."""
-        maurice_root = os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
+        maurice_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
         self._innate_os_skills_dir = os.path.join(maurice_root, "skills")
         user_skills_directory = os.path.join(os.path.expanduser("~"), "skills")
 
@@ -538,9 +590,7 @@ class SkillsActionServer(Node):
         try:
             self._reload_skills()
             response.success = True
-            response.message = (
-                f"Reloaded {len(self._code_skills)} code, {len(self._physical_skills)} physical skills"
-            )
+            response.message = f"Reloaded {len(self._code_skills)} code, {len(self._physical_skills)} physical skills"
         except Exception as e:
             response.success = False
             response.message = f"Failed to reload skills: {e}"
@@ -563,8 +613,9 @@ class SkillsActionServer(Node):
 
             # Convert display name to kebab-case directory name
             import re
-            dir_name = re.sub(r'[^a-zA-Z0-9\s-]', '', display_name)
-            dir_name = re.sub(r'\s+', '-', dir_name).strip('-').lower()
+
+            dir_name = re.sub(r"[^a-zA-Z0-9\s-]", "", display_name)
+            dir_name = re.sub(r"\s+", "-", dir_name).strip("-").lower()
             if not dir_name:
                 response.success = False
                 response.message = f"Cannot derive valid directory name from '{display_name}'."
@@ -577,7 +628,9 @@ class SkillsActionServer(Node):
             skill_dir = os.path.join(user_skills_dir, dir_name)
 
             if os.path.exists(os.path.join(skill_dir, "metadata.json")):
-                self.get_logger().info(f"Skill '{display_name}' already exists at {skill_dir}. Returning existing directory.")
+                self.get_logger().info(
+                    f"Skill '{display_name}' already exists at {skill_dir}. Returning existing directory."
+                )
                 response.success = True
                 response.message = f"Skill already exists at {skill_dir}."
                 response.skill_directory = skill_dir
@@ -726,16 +779,16 @@ class SkillsActionServer(Node):
         for skills_directory in self._skills_directories:
             skill_path = os.path.join(skills_directory, basename)
             metadata_path = os.path.join(skill_path, "metadata.json")
-            
+
             if os.path.exists(metadata_path):
                 try:
                     with open(metadata_path) as f:
                         metadata = json.load(f)
-                    
+
                     is_valid, is_in_training, episode_count = self.skill_loader.validate_physical_skill(
                         skill_path, metadata
                     )
-                    
+
                     if is_valid:
                         skill_data = {
                             "metadata": metadata,
@@ -743,7 +796,7 @@ class SkillsActionServer(Node):
                             "in_training": is_in_training,
                             "episode_count": episode_count,
                         }
-                        
+
                         with self._skills_lock:
                             if is_in_training:
                                 self._in_training_skills[skill_id] = skill_data
@@ -751,12 +804,12 @@ class SkillsActionServer(Node):
                             else:
                                 self._physical_skills[skill_id] = skill_data
                                 self._in_training_skills.pop(skill_id, None)
-                        
+
                         self.get_logger().info(f"Reloaded physical skill: {skill_id}")
                         return True
                 except Exception as e:
                     self.get_logger().error(f"Error reloading physical skill {skill_id}: {e}")
-        
+
         return False
 
     def _load_physical_skills(self, skills_directories):
@@ -795,8 +848,7 @@ class SkillsActionServer(Node):
 
                     if not isinstance(metadata, dict):
                         self.get_logger().warn(
-                            f"Skipped {metadata_path}: top-level JSON is "
-                            f"{type(metadata).__name__}, expected object"
+                            f"Skipped {metadata_path}: top-level JSON is {type(metadata).__name__}, expected object"
                         )
                         continue
 
@@ -828,17 +880,11 @@ class SkillsActionServer(Node):
                             f"Loaded physical skill: {skill_id} (type: {metadata.get('type', 'unknown')})"
                         )
                 except json.JSONDecodeError as e:
-                    self.get_logger().error(
-                        f"Skipped {metadata_path}: invalid JSON ({e})"
-                    )
+                    self.get_logger().error(f"Skipped {metadata_path}: invalid JSON ({e})")
                 except OSError as e:
-                    self.get_logger().error(
-                        f"Skipped {metadata_path}: read failed ({e})"
-                    )
+                    self.get_logger().error(f"Skipped {metadata_path}: read failed ({e})")
                 except Exception as e:
-                    self.get_logger().error(
-                        f"Skipped physical skill at {item_path}: {e}"
-                    )
+                    self.get_logger().error(f"Skipped physical skill at {item_path}: {e}")
 
         return physical_skills, in_training_skills
 
@@ -864,6 +910,7 @@ class SkillsActionServer(Node):
                 instance.cancel()
             elif is_physical:
                 self.get_logger().debug(f"Canceling physical skill: {skill_type}")
+                self._request_behavior_goal_cancel(goal_handle, skill_type)
             else:
                 self.get_logger().warning(f"Unknown skill type: {skill_type}")
         except Exception as e:
@@ -881,6 +928,131 @@ class SkillsActionServer(Node):
                     self.get_logger().error(err_msg)
 
         return CancelResponse.ACCEPT
+
+    def _skill_goal_key(self, goal_handle) -> int:
+        return id(goal_handle)
+
+    def _skill_goal_cancel_requested(self, goal_handle) -> bool:
+        try:
+            return bool(goal_handle.is_cancel_requested)
+        except Exception:
+            return False
+
+    def _register_behavior_goal_handle(self, skill_goal_handle, behavior_goal_handle, skill_type: str) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_handles[key] = behavior_goal_handle
+            cancel_requested = key in self._behavior_goal_cancel_requested
+
+        if cancel_requested or self._skill_goal_cancel_requested(skill_goal_handle):
+            self.get_logger().info(f"Cancel was already requested for physical skill '{skill_type}'")
+            self._request_behavior_goal_cancel(skill_goal_handle, skill_type)
+
+    def _unregister_behavior_goal_handle(self, skill_goal_handle) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_handles.pop(key, None)
+            self._behavior_goal_cancel_requested.discard(key)
+            self._behavior_goal_cancel_sent.discard(key)
+
+    def _request_behavior_goal_cancel(self, skill_goal_handle, skill_type: str) -> None:
+        key = self._skill_goal_key(skill_goal_handle)
+        with self._behavior_goal_lock:
+            self._behavior_goal_cancel_requested.add(key)
+            behavior_goal_handle = self._behavior_goal_handles.get(key)
+            if behavior_goal_handle is None:
+                return
+            if key in self._behavior_goal_cancel_sent:
+                return
+            self._behavior_goal_cancel_sent.add(key)
+
+        try:
+            self.get_logger().info(f"Requesting behavior_server cancel for physical skill '{skill_type}'")
+            behavior_goal_handle.cancel_goal_async()
+        except Exception as e:
+            self.get_logger().error(f"Failed to cancel behavior goal for '{skill_type}': {e}")
+
+    def _cancel_behavior_goal_when_ready(self, send_goal_future, skill_type: str) -> None:
+        def _cancel_when_ready(future):
+            try:
+                behavior_goal_handle = future.result()
+                if behavior_goal_handle is not None and behavior_goal_handle.accepted:
+                    self.get_logger().info(f"Canceling late-accepted behavior goal for physical skill '{skill_type}'")
+                    behavior_goal_handle.cancel_goal_async()
+            except Exception as e:
+                self.get_logger().error(f"Failed to cancel late behavior goal for '{skill_type}': {e}")
+
+        send_goal_future.add_done_callback(_cancel_when_ready)
+
+    def _submit_cli_skill(self, task):
+        goal_handle = SkillCliGoalHandle(task)
+        task.set_cancel_handler(lambda: self.cancel_callback(goal_handle))
+        self._cli_skill_tasks.put((task, goal_handle))
+
+    def _run_cli_skill_worker(self):
+        while not self._cli_skill_worker_stop.is_set():
+            try:
+                item = self._cli_skill_tasks.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            if item is None:
+                return
+
+            task, goal_handle = item
+
+            try:
+                task.mark_started()
+                if task.cancel_event.is_set():
+                    task.set_error("Skill execution was cancelled before start")
+                    continue
+
+                try:
+                    result = self.execute_callback(goal_handle)
+                except Exception as e:
+                    self.get_logger().error(f"Unexpected error executing CLI skill '{task.skill_type}': {e}")
+                    task.set_error(f"Skill execution failed: {e}")
+                    continue
+
+                if result is None:
+                    task.set_error("Skill execution returned no result")
+                else:
+                    task.set_result(result)
+            finally:
+                self._unregister_behavior_goal_handle(goal_handle)
+
+    def _behavior_server_ready(self) -> bool:
+        try:
+            checker = getattr(self._behavior_client, "server_is_ready", None)
+            if checker is not None:
+                return bool(checker())
+            return bool(self._behavior_client.wait_for_server(timeout_sec=0.0))
+        except Exception as e:
+            self.get_logger().error(f"Could not check behavior_server readiness: {e}")
+            return False
+
+    def _wait_for_cli_future(self, future, timeout_sec=None, server_ready_check=None):
+        """Wait for a ROS future while the node executor spins in the main thread."""
+        if future.done():
+            return "done"
+
+        done_event = threading.Event()
+        future.add_done_callback(lambda _future: done_event.set())
+
+        deadline = time.monotonic() + timeout_sec if timeout_sec is not None else None
+        while True:
+            wait_timeout = 0.2
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                wait_timeout = min(wait_timeout, remaining)
+
+            if done_event.wait(timeout=wait_timeout):
+                return "done"
+
+            if server_ready_check is not None and not server_ready_check():
+                return "server_unavailable"
 
     def execute_callback(self, goal_handle):
         # Trace entry into the execute callback for debugging
@@ -1195,11 +1367,20 @@ class SkillsActionServer(Node):
             self.get_logger().info(f"Sending behavior goal to behavior_server: {skill_type}")
             send_goal_future = self._behavior_client.send_goal_async(behavior_goal)
 
-            # Wait for goal acceptance
-            rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
+            # Wait for goal acceptance. CLI requests run on a background worker
+            # so the node's main spin loop can service the behavior action
+            # response; recursive spinning from that worker can race the main
+            # executor and falsely time out while the behavior still starts.
+            if isinstance(goal_handle, SkillCliGoalHandle):
+                goal_wait_state = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0)
+                goal_ready = goal_wait_state == "done"
+            else:
+                rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
+                goal_ready = send_goal_future.done()
 
-            if not send_goal_future.done():
+            if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
+                self._cancel_behavior_goal_when_ready(send_goal_future, skill_type)
                 goal_handle.abort()
                 return ExecuteSkill.Result(
                     success=False,
@@ -1219,13 +1400,41 @@ class SkillsActionServer(Node):
                     success_type=SkillResult.FAILURE.value,
                 )
 
+            self._register_behavior_goal_handle(goal_handle, behavior_goal_handle, skill_type)
             self.get_logger().info("Behavior goal accepted, waiting for result...")
 
             # Wait for result
             result_future = behavior_goal_handle.get_result_async()
 
             # Spin until complete - this blocks but that's okay in an action callback
-            rclpy.spin_until_future_complete(self, result_future)
+            if isinstance(goal_handle, SkillCliGoalHandle):
+                result_wait_state = self._wait_for_cli_future(
+                    result_future,
+                    server_ready_check=self._behavior_server_ready,
+                )
+            else:
+                rclpy.spin_until_future_complete(self, result_future)
+                result_wait_state = "done" if result_future.done() else "pending"
+
+            if result_wait_state == "server_unavailable":
+                self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
+                goal_handle.abort()
+                return ExecuteSkill.Result(
+                    success=False,
+                    message="Behavior server became unavailable while waiting for result",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
+
+            if not result_future.done():
+                self.get_logger().info(f"Physical skill '{skill_type}' cancelled before behavior result was ready")
+                goal_handle.canceled()
+                return ExecuteSkill.Result(
+                    success=True,
+                    message="Physical skill cancelled",
+                    skill_type=skill_type,
+                    success_type=SkillResult.CANCELLED.value,
+                )
 
             behavior_result = result_future.result().result
 
@@ -1264,15 +1473,11 @@ class SkillsActionServer(Node):
             # behavior server disconnection, executor exceptions) abort the
             # goal cleanly instead of bubbling into the action executor and
             # leaving the goal in an undefined state.
-            self.get_logger().error(
-                f"Unexpected error executing physical skill '{skill_type}': {e}"
-            )
+            self.get_logger().error(f"Unexpected error executing physical skill '{skill_type}': {e}")
             try:
                 goal_handle.abort()
             except Exception as abort_err:
-                self.get_logger().error(
-                    f"Also failed to abort goal for '{skill_type}': {abort_err}"
-                )
+                self.get_logger().error(f"Also failed to abort goal for '{skill_type}': {abort_err}")
             return ExecuteSkill.Result(
                 success=False,
                 message=f"Unexpected error executing physical skill: {e}",
@@ -1280,11 +1485,20 @@ class SkillsActionServer(Node):
                 success_type=SkillResult.FAILURE.value,
             )
         finally:
+            self._unregister_behavior_goal_handle(goal_handle)
             self._stop_state_subscriptions()
 
     def destroy(self):
-        if hasattr(self, '_hot_reload_watcher'):
+        if hasattr(self, "_hot_reload_watcher"):
             self._hot_reload_watcher.stop()
+        if hasattr(self, "_skill_cli_bridge"):
+            self._skill_cli_bridge.stop()
+        if hasattr(self, "_cli_skill_worker_stop"):
+            self._cli_skill_worker_stop.set()
+        if hasattr(self, "_cli_skill_tasks"):
+            self._cli_skill_tasks.put(None)
+        if hasattr(self, "_cli_skill_worker"):
+            self._cli_skill_worker.join(timeout=1.0)
         self._camera_node.shutdown()
         self._action_server.destroy()
         super().destroy_node()

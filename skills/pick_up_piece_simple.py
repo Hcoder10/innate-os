@@ -16,10 +16,12 @@ orientation, skipping the relay handoff.
 import json
 import time
 from pathlib import Path
+from typing import Literal
 
 from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
+PieceType = Literal["king", "queen", "rook", "bishop", "knight", "pawn"]
 
 
 class PickUpPieceSimple(Skill):
@@ -119,7 +121,12 @@ class PickUpPieceSimple(Skill):
 
         x = (1 - u) * (1 - v) * bl["x"] + u * (1 - v) * br["x"] + (1 - u) * v * tl["x"] + u * v * tr["x"]
         y = (1 - u) * (1 - v) * bl["y"] + u * (1 - v) * br["y"] + (1 - u) * v * tl["y"] + u * v * tr["y"]
-        z = (1 - u) * (1 - v) * bl.get("z", 0) + u * (1 - v) * br.get("z", 0) + (1 - u) * v * tl.get("z", 0) + u * v * tr.get("z", 0)
+        z = (
+            (1 - u) * (1 - v) * bl.get("z", 0)
+            + u * (1 - v) * br.get("z", 0)
+            + (1 - u) * v * tl.get("z", 0)
+            + u * v * tr.get("z", 0)
+        )
         return x, y, z
 
     def _orientation_for_square(self, square):
@@ -156,7 +163,9 @@ class PickUpPieceSimple(Skill):
 
     def _move_arm(self, x, y, z, pitch, yaw, duration, blocking=True, gripper_position=None):
         """Move arm to pose and optionally wait. Returns True on success."""
-        kwargs = dict(x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), blocking=blocking)
+        kwargs = dict(
+            x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), blocking=blocking
+        )
         if gripper_position is not None:
             kwargs["gripper_position"] = gripper_position
         success = self.manipulation.move_to_cartesian_pose(**kwargs)
@@ -387,9 +396,7 @@ class PickUpPieceSimple(Skill):
 
         # Move above destination at safe height (FAST – in the air)
         self._send_feedback(f"Moving above {dst_label}...")
-        if not self._move_arm(
-            dst_x, dst_y, safe_height, dst_pitch, dst_yaw, air_dur, gripper_position=grip_position
-        ):
+        if not self._move_arm(dst_x, dst_y, safe_height, dst_pitch, dst_yaw, air_dur, gripper_position=grip_position):
             return f"Failed to move above {dst_label}"
         if self._cancelled:
             return "Cancelled"
@@ -421,7 +428,14 @@ class PickUpPieceSimple(Skill):
 
     TALL_PIECES = {"king", "queen"}
 
-    def execute(self, square: str, place_square: str, piece: str = "pawn", is_capture: bool = False, speed: float = 1.0):
+    def execute(
+        self,
+        square: str,
+        place_square: str,
+        piece: PieceType = "pawn",
+        is_capture: bool = False,
+        speed: float = 1.0,
+    ):
         """
         Pick up a piece from square and place it on place_square.
 
@@ -532,7 +546,9 @@ class PickUpPieceSimple(Skill):
             relay_x, relay_y, relay_board_z = relay_pos
             relay_pick_height = base_pick_height + relay_board_z
 
-            self.logger.info(f"[PickUpPieceSimple] Relay through {relay_sq} ({relay_x:.4f},{relay_y:.4f},z={relay_board_z:.4f})")
+            self.logger.info(
+                f"[PickUpPieceSimple] Relay through {relay_sq} ({relay_x:.4f},{relay_y:.4f},z={relay_board_z:.4f})"
+            )
 
             # Leg 1: pick from source, place at relay (keep source orientation)
             # Tilted caution if source is rank 7-8
@@ -564,7 +580,6 @@ class PickUpPieceSimple(Skill):
             # Leg 2: pick from relay, place at destination (destination orientation)
             # Tilted caution if destination is rank 7-8
             leg2_tilted = dst_rank >= 7
-            dst_pick_height = base_pick_height + dst_board_z
             self._send_feedback(f"Relay leg 2: {relay_sq} -> {place_square}")
             err = self._do_pick_place(
                 relay_x,
@@ -591,9 +606,7 @@ class PickUpPieceSimple(Skill):
             if cross_56_78:
                 src_pitch, src_yaw = self.PITCH_TILTED, self.YAW_CENTER
                 dst_pitch, dst_yaw = self.PITCH_TILTED, self.YAW_CENTER
-                self.logger.info(
-                    f"[PickUpPieceSimple] Rank {src_rank}->{dst_rank}: direct tilted (no relay)"
-                )
+                self.logger.info(f"[PickUpPieceSimple] Rank {src_rank}->{dst_rank}: direct tilted (no relay)")
             any_tilted = src_rank >= 7 or dst_rank >= 7 or cross_56_78
             pick_height = base_pick_height + src_board_z
             err = self._do_pick_place(

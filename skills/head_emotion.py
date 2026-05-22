@@ -4,9 +4,9 @@ Head Emotion Skill - Express emotions through vertical head (tilt) movements.
 """
 
 import time
+from typing import Literal
 
-from brain_client.skill_types import Skill, SkillResult, Interface, InterfaceType
-
+from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
 
 # Each pose is (angle_degrees, duration_seconds). Duration is the time to
 # interpolate from the previous pose to this one.
@@ -45,7 +45,18 @@ EMOTIONS = {
     },
     "sleepy": {
         "description": "Gradual droop with small recovery bobs",
-        "sequence": [(0, 0.4), (-5, 0.5), (-3, 0.3), (-10, 0.5), (-8, 0.3), (-15, 0.5), (-12, 0.3), (-20, 0.5), (-25, 0.6), (-25, 0.4)],
+        "sequence": [
+            (0, 0.4),
+            (-5, 0.5),
+            (-3, 0.3),
+            (-10, 0.5),
+            (-8, 0.3),
+            (-15, 0.5),
+            (-12, 0.3),
+            (-20, 0.5),
+            (-25, 0.6),
+            (-25, 0.4),
+        ],
     },
     "proud": {
         "description": "Slow confident rise and hold high",
@@ -60,6 +71,20 @@ EMOTIONS = {
         "sequence": [(-5, 0.18), (5, 0.18), (-8, 0.2), (8, 0.2), (-5, 0.18), (5, 0.18), (0, 0.2)],
     },
 }
+EmotionName = Literal[
+    "happy",
+    "sad",
+    "excited",
+    "thinking",
+    "disappointed",
+    "surprised",
+    "confused",
+    "angry",
+    "sleepy",
+    "proud",
+    "agreeing",
+    "disagreeing",
+]
 
 
 class HeadEmotion(Skill):
@@ -83,7 +108,7 @@ class HeadEmotion(Skill):
             "Optionally pass 'repeat' (int, default 1) to loop the animation."
         )
 
-    def execute(self, emotion: str, repeat: int = 1):
+    def execute(self, emotion: EmotionName, repeat: int = 1):
         """
         Play a head-tilt animation for the given emotion.
 

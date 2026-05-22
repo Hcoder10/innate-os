@@ -10,11 +10,13 @@ import json
 import math
 from datetime import datetime
 from pathlib import Path
-from brain_client.skill_types import Skill, SkillResult, Interface, InterfaceType, RobotState, RobotStateType
+from typing import Literal
 
+from brain_client.skill_types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CAPTURES_DIR = Path.home() / "innate-os/captures/corners"
+CalibrationCorner = Literal["A8", "H8"]
 
 
 class RecalibrateManual(Skill):
@@ -72,15 +74,15 @@ class RecalibrateManual(Skill):
         h1_y = new_h8[1] + down_y
 
         updated = {
-            "top_left":     {"x": new_a8[0], "y": new_a8[1], "z": z},
-            "top_right":    {"x": new_h8[0], "y": new_h8[1], "z": z},
-            "bottom_left":  {"x": a1_x, "y": a1_y, "z": z},
+            "top_left": {"x": new_a8[0], "y": new_a8[1], "z": z},
+            "top_right": {"x": new_h8[0], "y": new_h8[1], "z": z},
+            "bottom_left": {"x": a1_x, "y": a1_y, "z": z},
             "bottom_right": {"x": h1_x, "y": h1_y, "z": z},
         }
 
         side_len = math.sqrt(side_x**2 + side_y**2)
         self.logger.info(
-            f"[RecalibrateManual] Square geometry: side={side_len*100:.1f}cm "
+            f"[RecalibrateManual] Square geometry: side={side_len * 100:.1f}cm "
             f"A8=({new_a8[0]:.4f},{new_a8[1]:.4f}) H8=({new_h8[0]:.4f},{new_h8[1]:.4f}) "
             f"A1=({a1_x:.4f},{a1_y:.4f}) H1=({h1_x:.4f},{h1_y:.4f})"
         )
@@ -100,7 +102,7 @@ class RecalibrateManual(Skill):
         except Exception as e:
             self.logger.warning(f"[RecalibrateManual] Failed to save corner image: {e}")
 
-    def execute(self, corner: str):
+    def execute(self, corner: CalibrationCorner):
         """
         Record current arm FK position as a top corner and recompute full board.
 
@@ -192,7 +194,7 @@ class RecalibrateManual(Skill):
         msg = (
             f"Recorded {corner} at {position_str}. "
             f"Recomputed full board from {corner} (new) + {other_name} (fixed). "
-            f"Board side={side_len*100:.1f}cm."
+            f"Board side={side_len * 100:.1f}cm."
         )
         self.logger.info(f"[RecalibrateManual] {msg}")
         self._send_feedback(msg)
