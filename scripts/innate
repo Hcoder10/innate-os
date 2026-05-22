@@ -154,6 +154,8 @@ def _parse_skill_param_token(token: str):
     name = name.strip()
     if not name:
         return None, "Skill parameter name cannot be empty"
+    if raw_value.strip() == "":
+        return None, f"Missing value for @{name}"
     if raw_value.lstrip().startswith(("{", "[")):
         return None, "JSON input values are not supported; use scalar @name=value parameters"
     return (name, _coerce_skill_param_value(raw_value)), None
