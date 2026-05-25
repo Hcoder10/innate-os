@@ -126,7 +126,10 @@ def cmd_up(
 
         simulator_port = config_simulator_port(config)
         log("Waiting for the simulator HTTP endpoint...")
-        wait_for_simulator_http(simulator_port)
+        wait_for_simulator_http(
+            simulator_port,
+            timeout_seconds=float(config["sim_startup_timeout_seconds"]),
+        )
         log("Waiting for ROS bridge and brain client...")
         if not wait_for_os_runtime_ready(config):
             print_startup_checks(

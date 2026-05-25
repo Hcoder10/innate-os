@@ -5,6 +5,12 @@
 [display]
 # visualization = true
 
+[simulator]
+# Seconds to wait for the simulator HTTP endpoint on first scene load.
+# First boot on Apple Silicon can take several minutes while Genesis builds
+# collision meshes. Default: 600.
+# startup_timeout_seconds = 600
+
 [os]
 # Optional prebuilt Innate OS image. By default, the launcher tries a
 # content-addressed prebuilt image matching this checkout, then falls back to

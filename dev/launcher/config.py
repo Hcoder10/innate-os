@@ -44,6 +44,8 @@ ROS_INSTALL_STATE_PATH = STATE_DIR / "ros-install.inputs.sha256"
 SIM_STARTUP_CHECK_DELAY_SECONDS = 0.25
 SIM_HTTP_POLL_SECONDS = 0.25
 SIM_HTTP_REQUEST_TIMEOUT_SECONDS = 0.5
+SIM_HTTP_STARTUP_TIMEOUT_SECONDS = 600.0
+SIM_HTTP_STARTUP_HEARTBEAT_SECONDS = 15.0
 OS_SESSION_READY_POLL_SECONDS = 0.25
 GENERATED_OS_ENV_PATH = STATE_DIR / "innate-os.env"
 GENERATED_CLOUD_ENV_PATH = STATE_DIR / "cloud-agent.env"
@@ -292,6 +294,24 @@ def get_nested_str(data: dict[str, object], *keys: str) -> str | None:
     return None
 
 
+def resolve_sim_startup_timeout_seconds(
+    sim_config: dict[str, object],
+    *,
+    raw_env: dict[str, str] | None = None,
+) -> float:
+    env_val = os.environ.get("INNATE_SIM_STARTUP_TIMEOUT_SECONDS", "").strip()
+    if not env_val and raw_env:
+        env_val = raw_env.get("INNATE_SIM_STARTUP_TIMEOUT_SECONDS", "").strip()
+    if env_val:
+        return float(env_val)
+
+    config_val = get_nested_value(sim_config, "simulator", "startup_timeout_seconds")
+    if config_val is not None:
+        return float(config_val)
+
+    return SIM_HTTP_STARTUP_TIMEOUT_SECONDS
+
+
 def get_nested_bool(data: dict[str, object], *keys: str) -> bool | None:
     value = get_nested_value(data, *keys)
     if isinstance(value, bool):
@@ -497,6 +517,10 @@ def get_config() -> dict[str, object]:
         else False,
         "sim_log_mode": "quiet",
         "sim_args": "--log-everything",
+        "sim_startup_timeout_seconds": resolve_sim_startup_timeout_seconds(
+            sim_config,
+            raw_env=merged_env,
+        ),
         "os_image": os_image,
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,

@@ -34,6 +34,8 @@ from config import (
     SIM_DATASET_REPOS,
     SIM_HTTP_POLL_SECONDS,
     SIM_HTTP_REQUEST_TIMEOUT_SECONDS,
+    SIM_HTTP_STARTUP_HEARTBEAT_SECONDS,
+    SIM_HTTP_STARTUP_TIMEOUT_SECONDS,
     SIM_LOG_PATH,
     SIM_PID_PATH,
     SIM_REQUIRED_DATA_PATHS,
@@ -1213,8 +1215,13 @@ def sim_post_json(
     )
 
 
-def wait_for_simulator_http(port: str, timeout_seconds: float = 90.0) -> None:
+def wait_for_simulator_http(
+    port: str,
+    *,
+    timeout_seconds: float = SIM_HTTP_STARTUP_TIMEOUT_SECONDS,
+) -> None:
     deadline = time.time() + timeout_seconds
+    next_heartbeat = time.monotonic() + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
     while time.time() < deadline:
         if read_sim_pid() is None:
             tail = tail_file(SIM_LOG_PATH, limit=80)
@@ -1232,11 +1239,30 @@ def wait_for_simulator_http(port: str, timeout_seconds: float = 90.0) -> None:
         )
         if payload.get("ready"):
             return
+
+        now = time.monotonic()
+        if now >= next_heartbeat:
+            remaining = max(0, int(deadline - time.time()))
+            latest = latest_log_line(SIM_LOG_PATH)
+            if latest:
+                log(
+                    "Simulator is still loading the scene "
+                    f"({remaining}s remaining). Latest log: {latest}"
+                )
+            else:
+                log(
+                    f"Waiting for the simulator HTTP endpoint ({remaining}s remaining)..."
+                )
+            next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
+
         time.sleep(SIM_HTTP_POLL_SECONDS)
     tail = tail_file(SIM_LOG_PATH, limit=80)
     raise StackError(
         "Timed out waiting for the simulator HTTP endpoint.\n"
-        f"Recent log output:\n{tail}"
+        f"Recent log output:\n{tail}\n"
+        "Hint: first scene load can take several minutes on Apple Silicon. "
+        "Increase simulator.startup_timeout_seconds in sim/config.toml or set "
+        "INNATE_SIM_STARTUP_TIMEOUT_SECONDS."
     )
 
 
