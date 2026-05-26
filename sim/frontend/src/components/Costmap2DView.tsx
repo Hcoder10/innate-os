@@ -372,7 +372,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
 
       const msg = {
         op: "publish",
-        topic: "/sim_navigation/goal_pose",
+        topic: "/goal_pose",
         msg: {
           header: {
             stamp: {
@@ -844,7 +844,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
       ws.send(
         JSON.stringify({
           op: "advertise",
-          topic: "/sim_navigation/goal_pose",
+          topic: "/goal_pose",
           type: "geometry_msgs/msg/PoseStamped",
         }),
       );
@@ -869,16 +869,8 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
       ws.send(
         JSON.stringify({
           op: "subscribe",
-          topic: "/sim_navigation/global_plan",
+          topic: "/plan",
           type: "nav_msgs/msg/Path",
-          queue_length: 1,
-        }),
-      );
-      ws.send(
-        JSON.stringify({
-          op: "subscribe",
-          topic: "/sim_navigation/status",
-          type: "std_msgs/msg/String",
           queue_length: 1,
         }),
       );
@@ -912,7 +904,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
         return;
       }
 
-      if (message.topic === "/sim_navigation/global_plan") {
+      if (message.topic === "/plan") {
         const pathMsg = message.msg as {
           poses?: Array<{ pose?: { position?: { x?: number; y?: number } } }>;
         };
@@ -921,22 +913,6 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
           setStatus("Following planned route");
         }
         return;
-      }
-
-      if (message.topic === "/sim_navigation/status") {
-        const statusMsg = message.msg as { data?: string };
-        const navStatus = statusMsg.data ?? "";
-        if (
-          navStatus === "SUCCEEDED" ||
-          navStatus === "FAILED" ||
-          navStatus === "CANCELED"
-        ) {
-          clearPlanPath();
-        } else if (navStatus === "PLANNING") {
-          setStatus("Planning route");
-        } else if (navStatus === "ACTIVE") {
-          setStatus("Following planned route");
-        }
       }
     };
 
@@ -970,19 +946,13 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
         ws.send(
           JSON.stringify({
             op: "unsubscribe",
-            topic: "/sim_navigation/global_plan",
-          }),
-        );
-        ws.send(
-          JSON.stringify({
-            op: "unsubscribe",
-            topic: "/sim_navigation/status",
+            topic: "/plan",
           }),
         );
         ws.send(
           JSON.stringify({
             op: "unadvertise",
-            topic: "/sim_navigation/goal_pose",
+            topic: "/goal_pose",
           }),
         );
       }

@@ -53,14 +53,6 @@ def generate_launch_description():
         parameters=[config_file],
     )
 
-    # Turns simulator UI goals into Nav2 global plans consumed by the sim follower.
-    sim_goal_planner_node = Node(
-        package="maurice_nav",
-        executable="sim_goal_planner.py",
-        name="sim_goal_planner",
-        output="screen",
-    )
-
     # Create the controller node
     controller_node = Node(
         package="nav2_controller",
@@ -114,7 +106,6 @@ def generate_launch_description():
             odom_to_tf_node,
             static_tf_footprint_to_base,
             planner_node,
-            sim_goal_planner_node,
             controller_node,
             bt_navigator_node,
             behavior_server_node,
