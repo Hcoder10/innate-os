@@ -1,0 +1,9 @@
+# External datasets downloaded by `./innate sim setup`.
+/ReplicaCAD_baked_lighting/
+/ReplicaCAD_dataset/
+
+# Innate simulator asset pack extracted by `./innate sim setup`.
+/assets/*
+!/assets/.gitignore
+/replica_scene.stl
+/urdf/

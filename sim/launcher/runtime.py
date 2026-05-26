@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from assets import ensure_sim_assets
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 from config import (
     BOOTSTRAP_LOG_PATH,
@@ -30,6 +31,7 @@ from config import (
     OS_CONTAINER_TMUX_CMD,
     OS_SESSION_READY_POLL_SECONDS,
     OS_SESSION_LOG_PATH,
+    REPO_ROOT,
     ROS_INSTALL_STATE_PATH,
     SIM_DATASET_REPOS,
     SIM_HTTP_POLL_SECONDS,
@@ -1106,6 +1108,8 @@ def missing_sim_data_paths(sim_repo: Path) -> list[tuple[str, Path]]:
 
 def ensure_sim_data(config: dict[str, object], *, allow_fetch: bool) -> None:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    ensure_sim_assets(config, allow_fetch=allow_fetch)
+
     missing_before = missing_sim_data_paths(sim_repo)
     if not missing_before:
         return

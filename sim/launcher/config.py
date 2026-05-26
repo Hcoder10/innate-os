@@ -20,8 +20,8 @@ except ModuleNotFoundError:
 
 SCRIPT_PATH = Path(__file__).resolve()
 LAUNCHER_DIR = SCRIPT_PATH.parent
-DEV_DIR = LAUNCHER_DIR.parent
-REPO_ROOT = DEV_DIR.parent
+SIM_DIR = LAUNCHER_DIR.parent
+REPO_ROOT = SIM_DIR.parent
 WORKSPACE_ROOT = REPO_ROOT.parent
 ENV_PATH = REPO_ROOT / ".env"
 ENV_TEMPLATE_PATH = REPO_ROOT / ".env.template"
