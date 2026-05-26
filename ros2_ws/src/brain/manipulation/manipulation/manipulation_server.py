@@ -282,10 +282,10 @@ class ManipulationServer(Node):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
             
             # Wait for sensor data to arrive after subscription creation
-            sensor_wait_deadline = time.time() + 5.0
+            sensor_wait_deadline = time.time() + 2.0
             while not self._check_sensor_availability():
                 if time.time() > sensor_wait_deadline:
-                    self.get_logger().error("Required sensors not available after 5s. Cannot execute learned behavior.")
+                    self.get_logger().error("Required sensors not available after 2s. Cannot execute learned behavior.")
                     return "FAILURE", "Required sensors not available (cameras or joint state)"
                 time.sleep(0.1)
             self.get_logger().info("All sensors available")
