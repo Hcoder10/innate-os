@@ -69,6 +69,7 @@ FRONTEND_BUILD_INPUT_FILES = (
 )
 FRONTEND_BUILD_INPUT_DIRS = ("public", "src")
 FRONTEND_DEPENDENCY_INPUT_FILES = ("package.json", "yarn.lock")
+DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
 
 
 def run_logged(
@@ -155,6 +156,44 @@ def run_logged_with_heartbeat(
 def ensure_dependency(command: str, label: str | None = None) -> None:
     if shutil.which(command) is None:
         raise StackError(f"Missing dependency: {label or command}")
+
+
+def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
+    if shutil.which("docker") is None:
+        raise StackError(
+            "Docker is not installed or is not available on PATH.\n"
+            f"Install Docker Desktop or Docker Engine: {DOCKER_INSTALL_URL}\n"
+            f"Start Docker, then rerun `{command_hint}`."
+        )
+
+    result = subprocess.run(
+        ["docker", "info", "--format", "{{.ServerVersion}}"],
+        text=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+
+    detail = " ".join((result.stderr or result.stdout or "").split())
+    detail_lower = detail.lower()
+    daemon_unreachable = (
+        "daemon" in detail_lower
+        or "docker desktop" in detail_lower
+        or "failed to connect" in detail_lower
+    )
+    message = (
+        "Docker is installed, but the Docker daemon is not running or not reachable."
+        if daemon_unreachable
+        else "Docker is installed, but the Docker daemon check failed."
+    )
+    raise StackError(
+        f"{message}\n"
+        f"Start Docker Desktop or your Docker daemon, wait until it finishes starting, then rerun `{command_hint}`.\n"
+        f"Install/start guide: {DOCKER_INSTALL_URL}"
+    )
 
 
 def python_import_succeeds(python_path: Path, module: str) -> bool:
@@ -523,7 +562,7 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
         log("Cloud agent mode is hosted. Skipping local cloud-agent startup.")
         return
 
-    ensure_dependency("docker")
+    ensure_docker_available(command_hint=f"{CLI_SIM} up")
 
     base_env = {
         "STACK_CLOUD_AGENT_PORT": str(config["cloud_port"]),
@@ -675,6 +714,10 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
     env["ROSBRIDGE_URI"] = raw_env.get("ROSBRIDGE_URI", "ws://localhost:9090")
     env["SIMULATOR_PORT"] = raw_env.get("SIMULATOR_PORT", "8000")
     env["SIM_LOG_MODE"] = str(config.get("sim_log_mode", "quiet"))
+    if config.get("sim_render_fps") is not None:
+        env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
+    if config.get("sim_scene_dt") is not None:
+        env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
 
     sim_args = shlex.split(str(config["sim_args"]))
     if config.get("sim_visualization") and "--vis" not in sim_args and "-v" not in sim_args:

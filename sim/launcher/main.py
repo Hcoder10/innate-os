@@ -47,7 +47,7 @@ from runtime import (
     capture_simulator_logs,
     collect_status_snapshot,
     config_simulator_port,
-    ensure_dependency,
+    ensure_docker_available,
     ensure_os_container,
     ensure_sim_data,
     ensure_sim_setup,
@@ -108,8 +108,8 @@ def cmd_up(
     try:
         if sim_visualization_override is not None:
             config = {**config, "sim_visualization": sim_visualization_override}
+        ensure_docker_available(command_hint=f"{CLI_SIM} up")
         print_banner()
-        ensure_dependency("docker")
         if runtime_already_running(config):
             log("Innate sim runtime is already running. Opening dashboard...")
             show_runtime_dashboard(config, watch=watch)
@@ -201,8 +201,8 @@ def cmd_logs(target: str) -> None:
 
 
 def cmd_setup(config: dict[str, object]) -> None:
+    ensure_docker_available(command_hint=f"{CLI_ROOT} setup")
     print_banner()
-    ensure_dependency("docker")
     configure_hosted_service_key(config)
     sim_python = ensure_sim_setup(config, allow_setup=True)
     ensure_sim_data(config, allow_fetch=True)
@@ -219,9 +219,12 @@ def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
         pack_assets(sim_repo, image=args.image, write_lock=args.write_lock)
         return
     if args.assets_command == "publish":
+        ensure_docker_available(command_hint=f"{CLI_SIM} assets publish")
         publish_assets(sim_repo, image=args.image)
         return
     if args.assets_command == "validate":
+        if args.ci:
+            ensure_docker_available(command_hint=f"{CLI_SIM} assets validate --ci")
         validate_assets(
             sim_repo,
             mode="ci" if args.ci else "local",
