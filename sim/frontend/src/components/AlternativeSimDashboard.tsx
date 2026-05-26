@@ -1,0 +1,892 @@
+import { IoMic, IoMicOff, IoRefresh } from "react-icons/io5";
+import type { Dispatch, SetStateAction } from "react";
+import styled from "styled-components";
+import { RobotAgent } from "../services/rosbridgeService";
+import { Chat } from "./Chat";
+import { ImageDisplay } from "./ImageDisplay";
+
+type ViewMode = "frontFocus" | "map";
+type BackendDisplayLevel = "healthy" | "warning" | "error";
+
+type AgentWarning = {
+  title: string;
+  detail: string;
+} | null;
+
+type AlternativeSimDashboardProps = {
+  agents: RobotAgent[];
+  activeAgent: string | null;
+  agentWarning: AgentWarning;
+  backendLabel: string;
+  backendLevel: BackendDisplayLevel;
+  isLoadingAgents: boolean;
+  viewMode: ViewMode;
+  setViewMode: Dispatch<SetStateAction<ViewMode>>;
+  isVoiceActive: boolean;
+  voiceStatus: string;
+  audioLevels: number[];
+  sensitivity: number;
+  setSensitivity: (value: number) => void;
+  onReloadAgents: () => void;
+  onResetBrain: () => void;
+  onResetPosition: () => void;
+  onSelectAgent: (agentId: string) => void;
+  onToggleVoiceRecognition: () => void;
+};
+
+const Shell = styled.div`
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+  background: #050505;
+  color: #d1d5db;
+  font-family: ${({ theme }) => theme.fonts.mono};
+  overflow: hidden;
+  user-select: none;
+`;
+
+const Layout = styled.div`
+  height: 100%;
+  display: grid;
+  grid-template-columns: 280px minmax(420px, 1fr) 340px;
+  grid-template-rows: 56px minmax(0, 1fr);
+  min-width: 1040px;
+
+  @media (max-width: 1120px) {
+    min-width: 0;
+    grid-template-columns: 260px minmax(360px, 1fr) 320px;
+  }
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px 42px minmax(360px, 45vh) auto 48px minmax(
+        360px,
+        1fr
+      );
+    overflow-y: auto;
+  }
+`;
+
+const HeaderCell = styled.div`
+  border-right: 1px solid #1f2937;
+  border-bottom: 1px solid #1f2937;
+  background: #000;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+`;
+
+const Brand = styled(HeaderCell)`
+  padding: 0 20px;
+  color: #fff;
+  font-family: ${({ theme }) => theme.fonts.display};
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+
+  @media (max-width: 900px) {
+    grid-row: 1;
+    border-right: 0;
+  }
+`;
+
+const FeedTabs = styled(HeaderCell)`
+  padding: 0;
+
+  @media (max-width: 900px) {
+    grid-row: 2;
+    border-right: 0;
+  }
+`;
+
+const TabButton = styled.button<{ $active: boolean }>`
+  height: 100%;
+  padding: 0 34px;
+  border: 0;
+  border-right: 1px solid #1f2937;
+  border-radius: 0;
+  background: ${({ $active }) => ($active ? "#f8fafc" : "#000")};
+  color: ${({ $active }) => ($active ? "#050505" : "#9ca3af")};
+  font-size: 11px;
+  font-weight: ${({ $active }) => ($active ? 800 : 600)};
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+
+  &:hover {
+    background: ${({ $active }) => ($active ? "#f8fafc" : "#111827")};
+    color: ${({ $active }) => ($active ? "#050505" : "#fff")};
+  }
+`;
+
+const LogHeader = styled(HeaderCell)`
+  border-right: 0;
+  justify-content: space-between;
+  padding: 0 18px;
+
+  @media (max-width: 900px) {
+    grid-row: 5;
+  }
+`;
+
+const HeaderLabel = styled.div`
+  color: #9ca3af;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+`;
+
+const StatusPill = styled.div<{ $level: BackendDisplayLevel }>`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid
+    ${({ $level }) =>
+      $level === "healthy"
+        ? "rgba(34, 197, 94, 0.45)"
+        : $level === "error"
+          ? "rgba(239, 68, 68, 0.5)"
+          : "rgba(245, 158, 11, 0.48)"};
+  background: ${({ $level }) =>
+    $level === "healthy"
+      ? "rgba(20, 83, 45, 0.2)"
+      : $level === "error"
+        ? "rgba(127, 29, 29, 0.22)"
+        : "rgba(113, 63, 18, 0.2)"};
+  color: ${({ $level }) =>
+    $level === "healthy"
+      ? "#4ade80"
+      : $level === "error"
+        ? "#f87171"
+        : "#fbbf24"};
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+`;
+
+const StatusDot = styled.span<{ $level: BackendDisplayLevel }>`
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: ${({ $level }) =>
+    $level === "healthy"
+      ? "#22c55e"
+      : $level === "error"
+        ? "#ef4444"
+        : "#f59e0b"};
+  box-shadow: 0 0 8px currentColor;
+`;
+
+const LeftPanel = styled.aside`
+  border-right: 1px solid #1f2937;
+  background: #050505;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+
+  @media (max-width: 900px) {
+    grid-row: 4;
+    border-right: 0;
+    min-height: 420px;
+  }
+`;
+
+const CenterPanel = styled.main`
+  position: relative;
+  border-right: 1px solid #1f2937;
+  background: #000;
+  overflow: hidden;
+  min-width: 0;
+
+  @media (max-width: 900px) {
+    grid-row: 3;
+    border-right: 0;
+  }
+`;
+
+const RightPanel = styled.aside`
+  background: #050505;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+
+  @media (max-width: 900px) {
+    grid-row: 6;
+  }
+`;
+
+const Section = styled.section`
+  border-bottom: 1px solid #1f2937;
+`;
+
+const SectionPad = styled(Section)`
+  padding: 18px;
+`;
+
+const Eyebrow = styled.div`
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+`;
+
+const UnitName = styled.div`
+  color: #fff;
+  font-family: ${({ theme }) => theme.fonts.display};
+  font-size: 42px;
+  font-weight: 300;
+  letter-spacing: 0;
+  line-height: 0.95;
+`;
+
+const UnitMeta = styled.div`
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 10px;
+`;
+
+const BackendCard = styled.div<{ $level: BackendDisplayLevel }>`
+  border: 1px solid
+    ${({ $level }) =>
+      $level === "healthy" ? "#166534" : $level === "error" ? "#7f1d1d" : "#854d0e"};
+  background: ${({ $level }) =>
+    $level === "healthy"
+      ? "rgba(20, 83, 45, 0.16)"
+      : $level === "error"
+        ? "rgba(127, 29, 29, 0.18)"
+        : "rgba(113, 63, 18, 0.16)"};
+  padding: 14px;
+`;
+
+const BackendTitle = styled.div<{ $level: BackendDisplayLevel }>`
+  color: ${({ $level }) =>
+    $level === "healthy" ? "#4ade80" : $level === "error" ? "#f87171" : "#fbbf24"};
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+`;
+
+const BackendDetail = styled.div`
+  color: #a3a3a3;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+`;
+
+const SectionTitleBar = styled.div`
+  align-items: center;
+  background: rgba(17, 24, 39, 0.45);
+  border-bottom: 1px solid #1f2937;
+  color: #fff;
+  display: flex;
+  font-size: 10px;
+  font-weight: 800;
+  justify-content: space-between;
+  letter-spacing: 0.16em;
+  padding: 12px 18px;
+  text-transform: uppercase;
+`;
+
+const IconButton = styled.button<{ $spinning?: boolean }>`
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #374151;
+  border-radius: 0;
+  background: #080808;
+  color: #9ca3af;
+
+  svg {
+    animation: ${({ $spinning }) => ($spinning ? "spin 0.8s linear infinite" : "none")};
+  }
+
+  &:hover:not(:disabled) {
+    color: #050505;
+    background: #fff;
+    border-color: #fff;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+`;
+
+const AgentList = styled.div`
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+`;
+
+const AgentButton = styled.button<{ $active: boolean }>`
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(31, 41, 55, 0.8);
+  border-radius: 0;
+  background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "transparent")};
+  color: ${({ $active }) => ($active ? "#fff" : "#9ca3af")};
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  text-align: left;
+
+  &:hover {
+    background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.3)" : "#0f172a")};
+    color: #fff;
+  }
+`;
+
+const AgentRow = styled.div`
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+`;
+
+const AgentName = styled.span`
+  font-size: 13px;
+  line-height: 1.25;
+`;
+
+const AgentState = styled.span<{ $active: boolean }>`
+  color: ${({ $active }) => ($active ? "#4ade80" : "#4b5563")};
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+`;
+
+const ToggleRail = styled.span<{ $active: boolean }>`
+  border: 1px solid ${({ $active }) => ($active ? "rgba(34, 197, 94, 0.5)" : "#374151")};
+  background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "#030712")};
+  display: inline-flex;
+  height: 16px;
+  padding: 1px;
+  width: 36px;
+`;
+
+const ToggleThumb = styled.span<{ $active: boolean }>`
+  background: ${({ $active }) => ($active ? "#4ade80" : "#6b7280")};
+  display: block;
+  height: 12px;
+  transform: translateX(${({ $active }) => ($active ? "18px" : "0")});
+  transition: transform 0.2s ease;
+  width: 14px;
+`;
+
+const EmptyAgentState = styled.div`
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 18px;
+`;
+
+const DangerButton = styled.button`
+  width: 100%;
+  border: 1px solid rgba(127, 29, 29, 0.8);
+  border-radius: 0;
+  background: #000;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  padding: 13px 16px;
+  text-transform: uppercase;
+
+  &:hover {
+    background: rgba(127, 29, 29, 0.4);
+    border-color: #ef4444;
+    color: #fecaca;
+  }
+`;
+
+const FeedGrid = styled.div`
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, #111827 1px, transparent 1px),
+    linear-gradient(to bottom, #111827 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.55;
+`;
+
+const FeedFrame = styled.div`
+  position: absolute;
+  inset: 44px 44px 96px;
+  border: 1px solid #1f2937;
+  background: #0a0a0a;
+  box-shadow: 0 22px 42px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+
+  & > div {
+    aspect-ratio: auto;
+    max-width: none;
+  }
+
+  & > div > div:first-child {
+    display: none;
+  }
+
+  @media (max-width: 900px) {
+    inset: 32px 18px 88px;
+  }
+`;
+
+const FeedBadge = styled.div`
+  position: absolute;
+  z-index: 3;
+  top: 58px;
+  left: 58px;
+  background: #fff;
+  color: #050505;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  padding: 6px 9px;
+  text-transform: uppercase;
+`;
+
+const MiniMap = styled.div`
+  position: absolute;
+  right: 58px;
+  bottom: 116px;
+  z-index: 3;
+  width: 152px;
+  height: 152px;
+  border: 1px solid #4b5563;
+  background:
+    linear-gradient(to right, #1f2937 1px, transparent 1px),
+    linear-gradient(to bottom, #1f2937 1px, transparent 1px),
+    #050505;
+  background-size: 12px 12px;
+  box-shadow: 0 20px 34px rgba(0, 0, 0, 0.5);
+
+  @media (max-width: 900px) {
+    display: none;
+  }
+`;
+
+const MapHeader = styled.div`
+  background: rgba(17, 24, 39, 0.9);
+  border-bottom: 1px solid #4b5563;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  padding: 5px 8px;
+  text-transform: uppercase;
+`;
+
+const MapBlob = styled.div<{ $top: number; $left: number; $width: number; $height: number }>`
+  position: absolute;
+  top: ${({ $top }) => $top}px;
+  left: ${({ $left }) => $left}px;
+  width: ${({ $width }) => $width}px;
+  height: ${({ $height }) => $height}px;
+  background: rgba(255, 255, 255, 0.85);
+`;
+
+const MapPoint = styled.div<{ $top: number; $left: number; $color: string }>`
+  position: absolute;
+  top: ${({ $top }) => $top}px;
+  left: ${({ $left }) => $left}px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: ${({ $color }) => $color};
+  box-shadow: 0 0 9px ${({ $color }) => $color};
+`;
+
+const CoordinateBadge = styled.div`
+  position: absolute;
+  left: 58px;
+  bottom: 116px;
+  z-index: 3;
+  background: #fff;
+  color: #050505;
+  border: 1px solid #d1d5db;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 8px 10px;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.45);
+
+  @media (max-width: 900px) {
+    display: none;
+  }
+`;
+
+const FeedFooter = styled.div`
+  position: absolute;
+  inset: auto 0 0;
+  height: 72px;
+  border-top: 1px solid #1f2937;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 34px;
+`;
+
+const FeedAction = styled.button`
+  border: 1px solid rgba(127, 29, 29, 0.8);
+  border-radius: 0;
+  background: #000;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  padding: 11px 18px;
+  text-transform: uppercase;
+
+  &:hover {
+    background: rgba(127, 29, 29, 0.45);
+    color: #fecaca;
+  }
+`;
+
+const ChatWrap = styled.div`
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid #1f2937;
+
+  & > div {
+    background: #050505;
+  }
+`;
+
+const AgentSelectWrap = styled.div`
+  border-bottom: 1px solid #1f2937;
+  padding: 16px 18px;
+`;
+
+const SelectHeader = styled.div`
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+`;
+
+const Select = styled.select`
+  width: 100%;
+  border: 1px solid #374151;
+  border-radius: 0;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  min-height: 42px;
+  padding: 0 12px;
+
+  &:focus {
+    border-color: #9ca3af;
+  }
+`;
+
+const VoicePanel = styled.div`
+  padding: 16px 18px 22px;
+  display: grid;
+  gap: 14px;
+`;
+
+const VoiceTopRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+const RoundButton = styled.button<{ $active: boolean }>`
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid ${({ $active }) => ($active ? "#2563eb" : "#374151")};
+  border-radius: 999px;
+  background: ${({ $active }) => ($active ? "rgba(37, 99, 235, 0.22)" : "#0a0a0a")};
+  color: ${({ $active }) => ($active ? "#93c5fd" : "#9ca3af")};
+
+  &:hover {
+    background: #fff;
+    border-color: #fff;
+    color: #050505;
+  }
+`;
+
+const VoiceText = styled.div`
+  color: #9ca3af;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+`;
+
+const Bars = styled.div`
+  align-items: end;
+  display: flex;
+  gap: 3px;
+  height: 32px;
+`;
+
+const Bar = styled.div<{ $height: number; $active: boolean }>`
+  width: 4px;
+  min-height: 3px;
+  height: ${({ $height }) => Math.max(3, Math.min($height, 32))}px;
+  background: ${({ $active }) => ($active ? "#2563eb" : "#374151")};
+  box-shadow: ${({ $active }) => ($active ? "0 0 8px rgba(37, 99, 235, 0.65)" : "none")};
+  transition: height 0.07s ease-out;
+`;
+
+const SensitivityGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+`;
+
+const Slider = styled.input`
+  width: 100%;
+  appearance: none;
+  height: 4px;
+  background: #1f2937;
+  border: 0;
+
+  &::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    background: #2563eb;
+    cursor: pointer;
+  }
+`;
+
+const FineLabel = styled.div`
+  color: #4b5563;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+`;
+
+export function AlternativeSimDashboard({
+  agents,
+  activeAgent,
+  agentWarning,
+  backendLabel,
+  backendLevel,
+  isLoadingAgents,
+  viewMode,
+  setViewMode,
+  isVoiceActive,
+  voiceStatus,
+  audioLevels,
+  sensitivity,
+  setSensitivity,
+  onReloadAgents,
+  onResetBrain,
+  onResetPosition,
+  onSelectAgent,
+  onToggleVoiceRecognition,
+}: AlternativeSimDashboardProps) {
+  const selectedAgent = activeAgent ?? "";
+  const currentAgent = agents.find((agent) => agent.id === activeAgent);
+  const backendDetail =
+    agentWarning?.detail ||
+    (backendLevel === "healthy"
+      ? "Brain backend connection is stable."
+      : "Waiting for a stable brain backend connection.");
+
+  return (
+    <Shell>
+      <Layout>
+        <Brand>Innate Sim</Brand>
+        <FeedTabs>
+          <TabButton
+            $active={viewMode === "frontFocus"}
+            onClick={() => setViewMode("frontFocus")}
+          >
+            Front Focus
+          </TabButton>
+          <TabButton $active={viewMode === "map"} onClick={() => setViewMode("map")}>
+            Map
+          </TabButton>
+        </FeedTabs>
+        <LogHeader>
+          <HeaderLabel>Interaction Log</HeaderLabel>
+          <StatusPill $level={backendLevel}>
+            <StatusDot $level={backendLevel} />
+            {backendLabel}
+          </StatusPill>
+        </LogHeader>
+
+        <LeftPanel>
+          <SectionPad>
+            <Eyebrow>Unit Identifier</Eyebrow>
+            <UnitName>MARS</UnitName>
+            <UnitMeta>Model Type: R7</UnitMeta>
+          </SectionPad>
+
+          <SectionPad>
+            <BackendCard $level={backendLevel}>
+              <BackendTitle $level={backendLevel}>Brain Backend</BackendTitle>
+              <BackendDetail>{backendDetail}</BackendDetail>
+            </BackendCard>
+          </SectionPad>
+
+          <SectionTitleBar>
+            <span>Agents</span>
+            <IconButton
+              type="button"
+              onClick={onReloadAgents}
+              disabled={isLoadingAgents}
+              $spinning={isLoadingAgents}
+              title="Reload agents"
+              aria-label="Reload agents"
+            >
+              <IoRefresh size={15} />
+            </IconButton>
+          </SectionTitleBar>
+
+          <AgentList>
+            {agents.length > 0 ? (
+              agents.map((agent) => {
+                const isActive = agent.id === activeAgent;
+                return (
+                  <AgentButton
+                    key={agent.id}
+                    type="button"
+                    $active={isActive}
+                    onClick={() => onSelectAgent(agent.id)}
+                  >
+                    <AgentRow>
+                      <AgentName>{agent.display_name}</AgentName>
+                      <ToggleRail $active={isActive}>
+                        <ToggleThumb $active={isActive} />
+                      </ToggleRail>
+                    </AgentRow>
+                    <AgentState $active={isActive}>
+                      {isActive ? "Active" : "Standby"}
+                    </AgentState>
+                  </AgentButton>
+                );
+              })
+            ) : (
+              <EmptyAgentState>
+                {isLoadingAgents
+                  ? "Loading available agents..."
+                  : agentWarning?.title || "Waiting for robot connection"}
+              </EmptyAgentState>
+            )}
+          </AgentList>
+
+          <SectionPad>
+            <DangerButton type="button" onClick={onResetBrain}>
+              Reset Brain
+            </DangerButton>
+          </SectionPad>
+        </LeftPanel>
+
+        <CenterPanel>
+          <FeedGrid />
+          <FeedBadge>Live Feed</FeedBadge>
+          <FeedFrame>
+            <ImageDisplay
+              viewMode={viewMode}
+              setViewMode={setViewMode}
+              onResetRobot={onResetBrain}
+              onSetDirective={onSelectAgent}
+            />
+          </FeedFrame>
+          <CoordinateBadge>X: 45.2 | Y: 12.0 | Z: 0.4</CoordinateBadge>
+          <MiniMap>
+            <MapHeader>Map</MapHeader>
+            <MapBlob $top={34} $left={26} $width={58} $height={84} />
+            <MapBlob $top={64} $left={88} $width={42} $height={48} />
+            <MapBlob $top={110} $left={46} $width={28} $height={24} />
+            <MapPoint $top={58} $left={58} $color="#3b82f6" />
+            <MapPoint $top={92} $left={106} $color="#ef4444" />
+          </MiniMap>
+          <FeedFooter>
+            <FeedAction type="button" onClick={onResetPosition}>
+              Reset Position
+            </FeedAction>
+          </FeedFooter>
+        </CenterPanel>
+
+        <RightPanel>
+          <ChatWrap>
+            <Chat />
+          </ChatWrap>
+
+          <AgentSelectWrap>
+            <SelectHeader>
+              <Eyebrow style={{ marginBottom: 0 }}>Active Agent</Eyebrow>
+              <AgentState $active={!!currentAgent}>
+                {currentAgent ? "Running" : "None"}
+              </AgentState>
+            </SelectHeader>
+            <Select
+              value={selectedAgent}
+              onChange={(event) => {
+                if (event.target.value) {
+                  onSelectAgent(event.target.value);
+                }
+              }}
+              aria-label="Active agent"
+            >
+              <option value="">No agent selected</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.display_name}
+                </option>
+              ))}
+            </Select>
+          </AgentSelectWrap>
+
+          <VoicePanel>
+            <VoiceTopRow>
+              <RoundButton
+                type="button"
+                $active={isVoiceActive}
+                onClick={onToggleVoiceRecognition}
+                title={isVoiceActive ? "Stop listening" : "Start listening"}
+                aria-label={isVoiceActive ? "Stop listening" : "Start listening"}
+              >
+                {isVoiceActive ? <IoMic size={19} /> : <IoMicOff size={19} />}
+              </RoundButton>
+              <VoiceText>{voiceStatus}</VoiceText>
+            </VoiceTopRow>
+            <Bars aria-hidden="true">
+              {audioLevels.map((level, index) => (
+                <Bar key={index} $height={level} $active={isVoiceActive} />
+              ))}
+            </Bars>
+            <SensitivityGrid>
+              <Slider
+                type="range"
+                min="0.005"
+                max="0.08"
+                step="0.005"
+                value={sensitivity}
+                onChange={(event) => setSensitivity(parseFloat(event.target.value))}
+              />
+              <FineLabel>Sensitivity</FineLabel>
+            </SensitivityGrid>
+          </VoicePanel>
+        </RightPanel>
+      </Layout>
+    </Shell>
+  );
+}

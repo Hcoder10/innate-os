@@ -4,6 +4,7 @@ import styled from "styled-components";
 import "./App.css";
 import { ImageDisplay } from "./components/ImageDisplay";
 import { Chat } from "./components/Chat";
+import { AlternativeSimDashboard } from "./components/AlternativeSimDashboard";
 import {
   AvailableAgentsResponse,
   BrainBackendStatus,
@@ -721,6 +722,8 @@ const SensitivityLabel = styled.div`
 `;
 
 export default function App() {
+  const useAlternativeUi =
+    new URLSearchParams(window.location.search).get("ui") === "alt";
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [agents, setAgents] = useState<RobotAgent[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
@@ -1348,6 +1351,11 @@ export default function App() {
     }
   }
 
+  function handleAgentSelect(agentId: string) {
+    setActiveAgent(agentId);
+    void handleSetDirective(agentId);
+  }
+
   const backendStatusIsWarning = isBackendWarningStatus(
     brainBackendStatus,
     backendWarmupTimedOut || agentLoadTimedOut,
@@ -1372,6 +1380,31 @@ export default function App() {
           detail: agentAvailabilityWarning,
         }
       : null;
+
+  if (useAlternativeUi) {
+    return (
+      <AlternativeSimDashboard
+        agents={agents}
+        activeAgent={activeAgent}
+        agentWarning={agentWarning}
+        backendLabel={backendLabel}
+        backendLevel={backendLevel}
+        isLoadingAgents={isLoadingAgents}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        isVoiceActive={isVoiceActive}
+        voiceStatus={voiceStatus}
+        audioLevels={audioLevels}
+        sensitivity={sensitivity}
+        setSensitivity={setSensitivity}
+        onReloadAgents={handleReloadAgents}
+        onResetBrain={() => void handleResetBrain()}
+        onResetPosition={() => void handleResetPosition()}
+        onSelectAgent={handleAgentSelect}
+        onToggleVoiceRecognition={toggleVoiceRecognition}
+      />
+    );
+  }
 
   return (
     <AppContainer>
@@ -1479,10 +1512,7 @@ export default function App() {
                   <AgentItem
                     key={agent.id}
                     $isActive={agent.id === activeAgent}
-                    onClick={() => {
-                      setActiveAgent(agent.id);
-                      handleSetDirective(agent.id);
-                    }}
+                    onClick={() => handleAgentSelect(agent.id)}
                   >
                     <AgentName>{agent.display_name}</AgentName>
                     <AgentCheck $isActive={agent.id === activeAgent}>
@@ -1512,7 +1542,7 @@ export default function App() {
             viewMode={viewMode}
             setViewMode={setViewMode}
             onResetRobot={handleResetBrain}
-            onSetDirective={handleSetDirective}
+            onSetDirective={handleAgentSelect}
           />
         </MainContent>
 
