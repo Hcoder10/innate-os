@@ -7,19 +7,22 @@
 build/
 install/
 log/
-dev/launcher/.state/
+sim/launcher/.state/
 sim/.venv/
 
 **
 !Dockerfile
-!Dockerfile.ros-prebuilt
 !.dockerignore
-!Dockerfile.ros-prebuilt.dockerignore
 !.github/
 !.github/cloudbuild.sim-images.yaml
+!sim/
+!sim/Dockerfile.ros-prebuilt
+!sim/Dockerfile.ros-prebuilt.dockerignore
+!sim/apt-dependencies.txt
 !ros2_ws/
 !ros2_ws/apt-dependencies.common.txt
 !ros2_ws/apt-dependencies.hardware.txt
-!ros2_ws/apt-dependencies.simulation.txt
 !ros2_ws/src/
 !ros2_ws/src/**
+__pycache__/
+*.pyc

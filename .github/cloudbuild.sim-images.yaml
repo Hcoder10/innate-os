@@ -86,7 +86,7 @@ steps:
           --label "org.opencontainers.image.source=https://github.com/innate-inc/innate-os" \
           --label "org.opencontainers.image.revision=${_COMMIT_SHA}" \
           --tag "$ros_image:${_IMAGE_TAG}" \
-          --file Dockerfile.ros-prebuilt \
+          --file sim/Dockerfile.ros-prebuilt \
           .
 
         ros_tags=("${_IMAGE_TAG}" "$sha_tag" "$inputs_tag" "buildcache")

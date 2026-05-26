@@ -8,8 +8,9 @@ on:
       - .gcloudignore
       - .github/cloudbuild.sim-images.yaml
       - Dockerfile
-      - Dockerfile.ros-prebuilt
-      - Dockerfile.ros-prebuilt.dockerignore
+      - sim/Dockerfile.ros-prebuilt
+      - sim/Dockerfile.ros-prebuilt.dockerignore
+      - sim/apt-dependencies.txt
       - ros2_ws/apt-dependencies*.txt
       - ros2_ws/src/**
   workflow_dispatch:
@@ -53,11 +54,11 @@ jobs:
           static_paths = (
               ".dockerignore",
               "Dockerfile",
-              "Dockerfile.ros-prebuilt",
-              "Dockerfile.ros-prebuilt.dockerignore",
+              "sim/Dockerfile.ros-prebuilt",
+              "sim/Dockerfile.ros-prebuilt.dockerignore",
+              "sim/apt-dependencies.txt",
               "ros2_ws/apt-dependencies.common.txt",
               "ros2_ws/apt-dependencies.hardware.txt",
-              "ros2_ws/apt-dependencies.simulation.txt",
           )
           paths = [Path(path) for path in static_paths if (root / path).is_file()]
           src_root = root / "ros2_ws" / "src"

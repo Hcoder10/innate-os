@@ -60,11 +60,11 @@ DEFAULT_SIM_OS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-ros"
 SIM_IMAGE_INPUT_FILES = (
     ".dockerignore",
     "Dockerfile",
-    "Dockerfile.ros-prebuilt",
-    "Dockerfile.ros-prebuilt.dockerignore",
+    "sim/Dockerfile.ros-prebuilt",
+    "sim/Dockerfile.ros-prebuilt.dockerignore",
+    "sim/apt-dependencies.txt",
     "ros2_ws/apt-dependencies.common.txt",
     "ros2_ws/apt-dependencies.hardware.txt",
-    "ros2_ws/apt-dependencies.simulation.txt",
 )
 ROS_INSTALL_VALIDATION_INPUT_FILES = (
     "scripts/validate_sim_ros_install.zsh",

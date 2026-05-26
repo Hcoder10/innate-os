@@ -41,7 +41,7 @@ RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
 
 # 3. Copy and install mode-specific apt dependencies.
 COPY ros2_ws/apt-dependencies.common.txt /tmp/apt-dependencies.common.txt
-COPY ros2_ws/apt-dependencies.simulation.txt /tmp/apt-dependencies.simulation.txt
+COPY sim/apt-dependencies.txt /tmp/apt-dependencies.simulation.txt
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
