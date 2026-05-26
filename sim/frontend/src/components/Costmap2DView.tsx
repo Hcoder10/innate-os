@@ -372,7 +372,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
 
       const msg = {
         op: "publish",
-        topic: "/sim_navigation/global_plan",
+        topic: "/sim_navigation/goal_pose",
         msg: {
           header: {
             stamp: {
@@ -381,30 +381,21 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
             },
             frame_id: "map",
           },
-          poses: [
-            {
-              header: {
-                stamp: {
-                  sec: Math.floor(now / 1000),
-                  nanosec: (now % 1000) * 1_000_000,
-                },
-                frame_id: "map",
-              },
-              pose: {
-                position: { x, y, z: 0.0 },
-                orientation: { x: 0.0, y: 0.0, z: qz, w: qw },
-              },
-            },
-          ],
+          pose: {
+            position: { x, y, z: 0.0 },
+            orientation: { x: 0.0, y: 0.0, z: qz, w: qw },
+          },
         },
       };
 
       ws.send(JSON.stringify(msg));
+      clearPlanPath();
+      setStatus("Planning route");
       console.log(
         `[Costmap2DView] Published nav goal: (${x.toFixed(2)}, ${y.toFixed(2)}), yaw=${((yaw * 180) / Math.PI).toFixed(1)}°`,
       );
     },
-    [],
+    [clearPlanPath],
   );
 
   const handlePointerDown = useCallback(
@@ -468,16 +459,6 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
 
       publishNavigationGoal(start.x, start.y, yaw);
 
-      // Draw plan line from robot position to goal immediately
-      // (rosbridge doesn't echo back our own published messages)
-      const robotPos = robotPointRef.current?.position;
-      if (robotPos) {
-        drawPlanPath([
-          { pose: { position: { x: robotPos.x, y: robotPos.y } } },
-          { pose: { position: { x: start.x, y: start.y } } },
-        ]);
-      }
-
       // Clear arrow after a short delay so user sees feedback
       setTimeout(() => {
         clearGoalArrow();
@@ -488,7 +469,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
 
       setIsGoToMode(false);
     },
-    [screenToWorld, publishNavigationGoal, clearGoalArrow, drawPlanPath],
+    [screenToWorld, publishNavigationGoal, clearGoalArrow],
   );
 
   // Attach/detach pointer events for Go To mode
@@ -863,8 +844,8 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
       ws.send(
         JSON.stringify({
           op: "advertise",
-          topic: "/sim_navigation/global_plan",
-          type: "nav_msgs/msg/Path",
+          topic: "/sim_navigation/goal_pose",
+          type: "geometry_msgs/msg/PoseStamped",
         }),
       );
       ws.send(
@@ -937,6 +918,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
         };
         if (pathMsg.poses && Array.isArray(pathMsg.poses)) {
           drawPlanPath(pathMsg.poses);
+          setStatus("Following planned route");
         }
         return;
       }
@@ -950,6 +932,10 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
           navStatus === "CANCELED"
         ) {
           clearPlanPath();
+        } else if (navStatus === "PLANNING") {
+          setStatus("Planning route");
+        } else if (navStatus === "ACTIVE") {
+          setStatus("Following planned route");
         }
       }
     };
@@ -996,7 +982,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
         ws.send(
           JSON.stringify({
             op: "unadvertise",
-            topic: "/sim_navigation/global_plan",
+            topic: "/sim_navigation/goal_pose",
           }),
         );
       }
