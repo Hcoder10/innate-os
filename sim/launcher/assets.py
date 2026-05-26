@@ -131,8 +131,18 @@ def assert_public_ghcr_pullable(image_ref: str) -> None:
 
     def read_url(url: str, headers: dict[str, str] | None = None) -> bytes:
         request = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return response.read()
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return response.read()
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            raise StackError(
+                f"Could not reach GHCR to verify simulator asset image: {image_ref}\n"
+                f"Network error: {reason}\n"
+                "Check your network connection and retry."
+            ) from exc
 
     try:
         read_url(manifest_url, manifest_headers)
