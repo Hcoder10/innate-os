@@ -31,6 +31,9 @@ type AlternativeSimDashboardProps = {
   onResetBrain: () => void;
   onResetPosition: () => void;
   onSelectAgent: (agentId: string) => void;
+  activeAgentSkills: string[];
+  activeSkillIds: string[];
+  onToggleActiveSkill: (skillId: string) => void;
   onToggleVoiceRecognition: () => void;
 };
 
@@ -680,6 +683,14 @@ const FineLabel = styled.div`
   text-transform: uppercase;
 `;
 
+function formatSkillName(skillId: string) {
+  return skillId
+    .split("/")
+    .pop()
+    ?.replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase()) ?? skillId;
+}
+
 export function AlternativeSimDashboard({
   agents,
   activeAgent,
@@ -698,6 +709,9 @@ export function AlternativeSimDashboard({
   onResetBrain,
   onResetPosition,
   onSelectAgent,
+  activeAgentSkills,
+  activeSkillIds,
+  onToggleActiveSkill,
   onToggleVoiceRecognition,
 }: AlternativeSimDashboardProps) {
   const selectedAgent = activeAgent ?? "";
@@ -746,38 +760,38 @@ export function AlternativeSimDashboard({
           </SectionPad>
 
           <SectionTitleBar>
-            <span>Agents</span>
+            <span>Skills</span>
             <IconButton
               type="button"
               onClick={onReloadAgents}
               disabled={isLoadingAgents}
               $spinning={isLoadingAgents}
-              title="Reload agents"
-              aria-label="Reload agents"
+              title="Reload skills"
+              aria-label="Reload skills"
             >
               <IoRefresh size={15} />
             </IconButton>
           </SectionTitleBar>
 
           <AgentList>
-            {agents.length > 0 ? (
-              agents.map((agent) => {
-                const isActive = agent.id === activeAgent;
+            {activeAgentSkills.length > 0 ? (
+              activeAgentSkills.map((skillId) => {
+                const isActive = activeSkillIds.includes(skillId);
                 return (
                   <AgentButton
-                    key={agent.id}
+                    key={skillId}
                     type="button"
                     $active={isActive}
-                    onClick={() => onSelectAgent(agent.id)}
+                    onClick={() => onToggleActiveSkill(skillId)}
                   >
                     <AgentRow>
-                      <AgentName>{agent.display_name}</AgentName>
+                      <AgentName>{formatSkillName(skillId)}</AgentName>
                       <ToggleRail $active={isActive}>
                         <ToggleThumb $active={isActive} />
                       </ToggleRail>
                     </AgentRow>
                     <AgentState $active={isActive}>
-                      {isActive ? "Active" : "Standby"}
+                      {isActive ? "Enabled" : "Disabled"}
                     </AgentState>
                   </AgentButton>
                 );
@@ -785,8 +799,10 @@ export function AlternativeSimDashboard({
             ) : (
               <EmptyAgentState>
                 {isLoadingAgents
-                  ? "Loading available agents..."
-                  : agentWarning?.title || "Waiting for robot connection"}
+                  ? "Loading available skills..."
+                  : currentAgent
+                    ? "Selected agent has no declared skills."
+                    : "Select an agent to edit its active skills."}
               </EmptyAgentState>
             )}
           </AgentList>

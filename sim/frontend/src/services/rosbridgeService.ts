@@ -248,6 +248,16 @@ export async function setDirectiveDirect(
   });
 }
 
+export async function setActiveSkillsDirect(
+  wsUrl: string,
+  agentId: string | null,
+  skills: string[],
+): Promise<void> {
+  await publishRosbridgeTopic(wsUrl, "/brain/set_active_skills", {
+    data: JSON.stringify({ agent_id: agentId, skills }),
+  });
+}
+
 export async function setBrainActiveDirect(
   wsUrl: string,
   active: boolean,

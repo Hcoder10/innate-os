@@ -12,6 +12,7 @@ import {
   StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
+  setActiveSkillsDirect,
   setBrainActiveDirect,
   setBrainBackendConfigDirect,
   setDirectiveDirect,
@@ -725,6 +726,7 @@ export default function App() {
   const useAlternativeUi =
     new URLSearchParams(window.location.search).get("ui") === "alt";
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [activeSkillIds, setActiveSkillIds] = useState<string[]>([]);
   const [agents, setAgents] = useState<RobotAgent[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
   const [agentAvailabilityWarning, setAgentAvailabilityWarning] = useState<
@@ -783,6 +785,7 @@ export default function App() {
     agentsLoadStartedAtRef.current = Date.now();
     setAgents([]);
     setActiveAgent(null);
+    setActiveSkillIds([]);
     setIsLoadingAgents(true);
     setAgentAvailabilityWarning(null);
     setBackendWarmupTimedOut(false);
@@ -939,14 +942,20 @@ export default function App() {
           setAgents(data.agents);
           setAgentAvailabilityWarning(null);
           setAgentLoadTimedOut(false);
+          const currentAgentId =
+            data.current_agent_id &&
+            data.agents.some((agent) => agent.id === data.current_agent_id)
+              ? data.current_agent_id
+              : null;
           setActiveAgent((previousAgentId) =>
             previousAgentId &&
             data.agents.some((agent) => agent.id === previousAgentId)
               ? previousAgentId
-              : null,
+              : currentAgentId,
           );
         } else {
           setAgents([]);
+          setActiveSkillIds([]);
           setAgentLoadTimedOut(backendWarnsNow);
           if (backendWarnsNow) {
             setAgentAvailabilityWarning(
@@ -976,6 +985,13 @@ export default function App() {
   useEffect(() => {
     void fetchAgents();
   }, [fetchAgents]);
+
+  const activeAgentRecord =
+    agents.find((agent) => agent.id === activeAgent) ?? null;
+
+  useEffect(() => {
+    setActiveSkillIds(activeAgentRecord?.skills ?? []);
+  }, [activeAgentRecord]);
 
   useEffect(() => {
     if (useDirectRobot) {
@@ -1351,9 +1367,47 @@ export default function App() {
     }
   }
 
+  async function handleSetActiveSkills(agentId: string | null, skills: string[]) {
+    try {
+      if (useDirectRobot) {
+        await setActiveSkillsDirect(robotWsUrl, agentId, skills);
+        return;
+      }
+
+      const response = await fetch(`${simBaseUrl}/set_active_skills`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId, skills }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.error("Error setting active skills:", error);
+    }
+  }
+
   function handleAgentSelect(agentId: string) {
+    const selectedAgent = agents.find((agent) => agent.id === agentId) ?? null;
     setActiveAgent(agentId);
+    setActiveSkillIds(selectedAgent?.skills ?? []);
     void handleSetDirective(agentId);
+  }
+
+  function handleToggleActiveSkill(skillId: string) {
+    if (!activeAgentRecord) {
+      return;
+    }
+
+    const nextSkillIds = activeSkillIds.includes(skillId)
+      ? activeSkillIds.filter((id) => id !== skillId)
+      : activeAgentRecord.skills.filter(
+          (id) => id === skillId || activeSkillIds.includes(id),
+        );
+
+    setActiveSkillIds(nextSkillIds);
+    void handleSetActiveSkills(activeAgentRecord.id, nextSkillIds);
   }
 
   const backendStatusIsWarning = isBackendWarningStatus(
@@ -1401,6 +1455,9 @@ export default function App() {
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
         onSelectAgent={handleAgentSelect}
+        activeAgentSkills={activeAgentRecord?.skills ?? []}
+        activeSkillIds={activeSkillIds}
+        onToggleActiveSkill={handleToggleActiveSkill}
         onToggleVoiceRecognition={toggleVoiceRecognition}
       />
     );

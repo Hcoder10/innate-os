@@ -21,6 +21,7 @@ from src.agent.types import (
     ArmGotoCmd,
     ArmStateMsg,
     DirectiveCmd,
+    ActiveSkillsCmd,
     ResetRobotCmd,
     BrainActiveCmd,
     RefreshAgentsCmd,
@@ -470,6 +471,9 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     adv_set_directive = rosbridge_advertise(
         "/brain/set_directive", "std_msgs/msg/String"
     )
+    adv_set_active_skills = rosbridge_advertise(
+        "/brain/set_active_skills", "std_msgs/msg/String"
+    )
     adv_brain_backend_config = rosbridge_advertise(
         "/brain/backend_config", "std_msgs/msg/String"
     )
@@ -499,6 +503,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_map))
     await ws.send(json.dumps(adv_chat_in))
     await ws.send(json.dumps(adv_set_directive))
+    await ws.send(json.dumps(adv_set_active_skills))
     await ws.send(json.dumps(adv_brain_backend_config))
     await ws.send(json.dumps(adv_logging_config))
     await ws.send(json.dumps(adv_clock))
@@ -638,6 +643,20 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 outbound = rosbridge_publish("/brain/set_directive", directive_msg)
                 await ws.send(json.dumps(outbound))
                 print(f"[ROSBridge] Published directive: {msg.directive}")
+            elif isinstance(msg, ActiveSkillsCmd):
+                active_skills_msg = {
+                    "data": json.dumps(
+                        {"agent_id": msg.agent_id, "skills": msg.skills}
+                    )
+                }
+                outbound = rosbridge_publish(
+                    "/brain/set_active_skills", active_skills_msg
+                )
+                await ws.send(json.dumps(outbound))
+                print(
+                    "[ROSBridge] Published active skills "
+                    f"for {msg.agent_id or 'current directive'}: {len(msg.skills)}"
+                )
             elif isinstance(msg, ResetRobotCmd):
                 reset_srv = rosbridge_call_service(
                     "/brain/reset_brain", "brain_messages/srv/ResetBrain"

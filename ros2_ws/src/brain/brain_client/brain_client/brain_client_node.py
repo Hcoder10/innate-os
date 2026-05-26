@@ -561,6 +561,9 @@ class BrainClientNode(Node):
         self.directives, self.current_directive = initialize_agents(
             self.get_logger(), self.primitives_dict
         )
+        self.current_skill_ids = (
+            list(self.current_directive.get_skills()) if self.current_directive else []
+        )
 
         # Activate input devices required by the current directive
         if self.current_directive:
@@ -573,6 +576,9 @@ class BrainClientNode(Node):
         # Add a subscription to change directive
         self.directive_sub = self.create_subscription(
             String, "/brain/set_directive", self.set_directive_callback, 10
+        )
+        self.active_skills_sub = self.create_subscription(
+            String, "/brain/set_active_skills", self.set_active_skills_callback, 10
         )
         # Mirror backend credentials so registration payloads use the current
         # token after a live swap. ws_client_node owns the actual reconnection;
@@ -2328,6 +2334,9 @@ class BrainClientNode(Node):
         for registration.
         """
         if self.current_directive is None:
+            self.get_logger().warn(
+                "No current directive selected; skipping primitive registration"
+            )
             return
 
         self.get_logger().info(
@@ -2388,23 +2397,35 @@ class BrainClientNode(Node):
                         }
                     )
 
-        included_primitives = [
-            p for p in primitives if p["id"] in self.current_directive.get_skills()
-        ]
+        active_skill_ids = set(self._active_skill_ids_for_registration())
+        included_primitives = [p for p in primitives if p["id"] in active_skill_ids]
 
         # Create and send the registration message
         reg_msg = MessageIn(
             type=MessageInType.REGISTER_PRIMITIVES_AND_DIRECTIVE,
             payload={
-                "primitives": included_primitives if included_primitives else None,
+                "primitives": included_primitives,
                 "directive": self.current_directive.get_prompt(),
                 "token": self.token,
             },
         )
         self.get_logger().info(
-            f"Registering {len(primitives)} primitives and directive '{self.current_directive.id}' with server"
+            f"Registering {len(included_primitives)}/{len(primitives)} primitives and directive '{self.current_directive.id}' with server"
         )
         self.ws_bridge.send_message(reg_msg)
+
+    def _active_skill_ids_for_registration(self):
+        if self.current_directive is None:
+            return []
+
+        directive_skill_ids = list(self.current_directive.get_skills())
+        current_skill_ids = getattr(self, "current_skill_ids", directive_skill_ids)
+        current_skill_set = set(current_skill_ids)
+        return [
+            skill_id
+            for skill_id in directive_skill_ids
+            if skill_id in current_skill_set
+        ]
 
     def set_directive_callback(self, msg: String):
         """
@@ -2416,6 +2437,7 @@ class BrainClientNode(Node):
 
         if directive_name in self.directives:
             self.current_directive = self.directives[directive_name]
+            self.current_skill_ids = list(self.current_directive.get_skills())
             self.get_logger().info(f"Activated directive: {directive_name}")
 
             # Clear local chat history when changing agent
@@ -2456,6 +2478,66 @@ class BrainClientNode(Node):
             self.chat_history.append(error_msg)
             out_msg = String(data=json.dumps(error_msg))
             self.chat_out_pub.publish(out_msg)
+
+    def set_active_skills_callback(self, msg: String):
+        """
+        Callback for changing which skills are registered for the current directive.
+        This keeps the directive/agent active while updating its available primitives.
+        """
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().error("Invalid /brain/set_active_skills payload JSON")
+            return
+
+        if not isinstance(payload, dict):
+            self.get_logger().error("/brain/set_active_skills payload must be an object")
+            return
+
+        if self.current_directive is None:
+            self.get_logger().warn("No directive selected; ignoring active skills update")
+            return
+
+        requested_agent_id = payload.get("agent_id")
+        if (
+            requested_agent_id
+            and requested_agent_id != self.current_directive.id
+        ):
+            self.get_logger().warn(
+                "Ignoring active skills update for stale directive "
+                f"'{requested_agent_id}'; current is '{self.current_directive.id}'"
+            )
+            return
+
+        requested_skills = payload.get("skills")
+        if not isinstance(requested_skills, list) or not all(
+            isinstance(skill, str) for skill in requested_skills
+        ):
+            self.get_logger().error(
+                "/brain/set_active_skills skills must be a list of strings"
+            )
+            return
+
+        directive_skill_ids = list(self.current_directive.get_skills())
+        directive_skill_set = set(directive_skill_ids)
+        requested_skill_set = set(requested_skills)
+        unknown_skills = sorted(requested_skill_set - directive_skill_set)
+        if unknown_skills:
+            self.get_logger().warn(
+                f"Ignoring skills not available on directive "
+                f"'{self.current_directive.id}': {unknown_skills}"
+            )
+
+        self.current_skill_ids = [
+            skill_id
+            for skill_id in directive_skill_ids
+            if skill_id in requested_skill_set
+        ]
+        self.get_logger().info(
+            f"Active skills for directive '{self.current_directive.id}': "
+            f"{self.current_skill_ids}"
+        )
+        self.register_primitives_and_directive()
 
     def handle_get_available_directives(self, request, response):
         """
@@ -2739,6 +2821,14 @@ class BrainClientNode(Node):
                     # If this is the current directive, update it
                     if self.current_directive and self.current_directive.id == agent_name:
                         self.current_directive = agent_instance
+                        previous_skill_ids = set(
+                            getattr(self, "current_skill_ids", agent_instance.get_skills())
+                        )
+                        self.current_skill_ids = [
+                            skill_id
+                            for skill_id in agent_instance.get_skills()
+                            if skill_id in previous_skill_ids
+                        ]
                         self.get_logger().info(f"Updated current directive: {agent_name}")
 
                     self.get_logger().info(
@@ -2759,6 +2849,7 @@ class BrainClientNode(Node):
             self.directives = {}
             self.primitives_dict = {}
             self.current_directive = None
+            self.current_skill_ids = []
 
             # Call PEAS to reload primitives (synchronous via helper node)
             if self._reload_primitives_client.wait_for_service(timeout_sec=10.0):
@@ -2797,6 +2888,11 @@ class BrainClientNode(Node):
             # Reload directives locally
             self.directives, self.current_directive = initialize_agents(
                 self.get_logger(), self.primitives_dict
+            )
+            self.current_skill_ids = (
+                list(self.current_directive.get_skills())
+                if self.current_directive
+                else []
             )
 
             # Re-register with server

@@ -6,7 +6,12 @@ import cv2
 from typing import Optional
 from pydantic import BaseModel
 
-from src.agent.types import DirectiveCmd, BrainActiveCmd, RefreshAgentsCmd
+from src.agent.types import (
+    ActiveSkillsCmd,
+    DirectiveCmd,
+    BrainActiveCmd,
+    RefreshAgentsCmd,
+)
 
 router = APIRouter()
 AGENT_REFRESH_TIMEOUT_SECONDS = 5.0
@@ -23,6 +28,11 @@ class ResetRobotRequest(BaseModel):
 # Create a model for the brain activation request
 class SetBrainActiveRequest(BaseModel):
     active: bool
+
+
+class SetActiveSkillsRequest(BaseModel):
+    agent_id: Optional[str] = None
+    skills: list[str]
 
 
 def available_agents_payload(shared_queues, error: str | None = None) -> dict:
@@ -243,6 +253,27 @@ async def set_directive(request: Request, directive: dict):
         except Exception:
             return {"status": "queue_full"}
         return {"status": "directive_enqueued"}
+    else:
+        return {"status": "no_shared_queues"}
+
+
+@router.post("/set_active_skills")
+async def set_active_skills(request: Request, skills_request: SetActiveSkillsRequest):
+    """
+    Enqueues an active-skills command for the current robot directive.
+    """
+    shared_queues = request.app.state.SHARED_QUEUES
+    if shared_queues is not None:
+        try:
+            shared_queues.sim_to_agent.put_nowait(
+                ActiveSkillsCmd(
+                    agent_id=skills_request.agent_id,
+                    skills=skills_request.skills,
+                )
+            )
+        except Exception:
+            return {"status": "queue_full"}
+        return {"status": "active_skills_enqueued"}
     else:
         return {"status": "no_shared_queues"}
 
