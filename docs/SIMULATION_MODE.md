@@ -114,7 +114,7 @@ error connecting to /tmp/tmux-*/default (No such file or directory)
 
 ## Related Documentation
 
-- [dev/launcher/README.md](../dev/launcher/README.md) - Local simulator CLI
+- [sim/launcher/README.md](../sim/launcher/README.md) - Local simulator CLI
 - [ros2_ws/DEPENDENCIES_GUIDE.md](../ros2_ws/DEPENDENCIES_GUIDE.md) - ROS system dependencies
 - [SYSTEM_SETUP.md](SYSTEM_SETUP.md) - Full robot system setup
 - [README.md](../README.md) - Main project documentation

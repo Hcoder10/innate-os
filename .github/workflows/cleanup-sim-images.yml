@@ -28,6 +28,7 @@ jobs:
       ORG: innate-inc
       KEEP_SHA_TAGS: "20"
       KEEP_INPUTS_TAGS: "20"
+      KEEP_ASSET_TAGS: "20"
       KEEP_MANUAL_TAGS: "5"
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,6 +39,7 @@ jobs:
         package:
           - innate-os-sim-deps
           - innate-os-sim-ros
+          - innate-os-sim-assets
 
     steps:
       - name: Cleanup old GHCR versions
@@ -73,6 +75,18 @@ jobs:
             [
               .[]
               | select((.metadata.container.tags // []) | any(startswith("inputs-")))
+              | {id, updated_at}
+            ]
+            | sort_by(.updated_at)
+            | reverse
+            | .[:$keep][]
+            | .id
+          ' "${versions_file}" >> "${keep_file}"
+
+          jq -r --argjson keep "${KEEP_ASSET_TAGS}" '
+            [
+              .[]
+              | select((.metadata.container.tags // []) | any(startswith("assets-")))
               | {id, updated_at}
             ]
             | sort_by(.updated_at)

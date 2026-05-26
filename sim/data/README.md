@@ -1,6 +1,9 @@
 # Data Requirements
 
-This directory contains scene data and assets required by the simulator.
+This directory contains scene data and assets required by the simulator. Most
+large local files are intentionally not committed to Git; `./innate sim setup`
+downloads them from pinned sources and verifies the Innate asset pack against
+`../assets.lock.json`.
 
 ## Required Datasets
 
@@ -57,6 +60,7 @@ Or download manually from [Hugging Face](https://huggingface.co/datasets/ai-habi
 
 ## Other Data
 
-- `assets/` - Robot URDFs and other simulation assets
+- `assets/` - Dynamic-object assets extracted from the locked Innate simulator asset pack
 - `environments/` - Environment configuration JSON files
-- `urdf/` - Robot description files
+- `urdf/` - Robot description files extracted from the locked Innate simulator asset pack
+- `replica_scene.stl` - Occupancy source mesh extracted from the locked Innate simulator asset pack

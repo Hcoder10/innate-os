@@ -1696,12 +1696,6 @@ class SimulationNode:
                 "scale": [1.0, 1.0, 1.0],
                 "hitbox": {"width": 0.6, "height": 0.6},
             },
-            {
-                "name": "casualty_1",
-                "asset_path": "data/assets/lying_man/Lying_man_0127.obj",
-                "scale": [0.010, 0.010, 0.010],
-                "hitbox": {"width": 0.6, "height": 2.0},
-            },
         ]
 
         self.default_entity_catalog = {

@@ -1,0 +1,23 @@
+{
+  "container_path": "/sim-data",
+  "content_sha256": "2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "image": "ghcr.io/innate-inc/innate-os-sim-assets",
+  "image_ref": "ghcr.io/innate-inc/innate-os-sim-assets:assets-2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "required_files": [
+    "data/assets/walking_man/man.jpg",
+    "data/assets/walking_man/man.mtl",
+    "data/assets/walking_man/man.obj",
+    "data/replica_scene.stl",
+    "data/urdf/maurice.urdf",
+    "data/urdf/meshes/base.STL",
+    "data/urdf/meshes/link1.STL",
+    "data/urdf/meshes/link2.STL",
+    "data/urdf/meshes/link3.STL",
+    "data/urdf/meshes/link4.STL",
+    "data/urdf/meshes/link5.STL",
+    "data/urdf/meshes/link61.STL",
+    "data/urdf/meshes/link62.STL"
+  ],
+  "tag": "assets-2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "version": 1
+}

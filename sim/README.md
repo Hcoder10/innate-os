@@ -208,7 +208,7 @@ The backend exposes several API endpoints for controlling the simulation and int
         curl -X POST http://localhost:8000/set_environment \
         -H "Content-Type: application/json" \
         -d '{
-          "config_name": "lying_man_corner"
+          "config_name": "walking_man_origin"
         }'
         ```
     *   **Example (using `config` object):**

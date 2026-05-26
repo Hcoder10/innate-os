@@ -1,0 +1,29 @@
+name: Simulator Assets
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/sim-assets.yml
+      - sim/launcher/assets.py
+      - sim/launcher/main.py
+      - sim/launcher/runtime.py
+      - sim/assets.lock.json
+      - sim/data/**
+      - sim/src/simulation/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  validate-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Validate simulator assets
+        run: ./innate sim assets validate --ci

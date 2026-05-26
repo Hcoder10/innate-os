@@ -61,7 +61,11 @@ sim/config.toml
 .venv/
 ENV/
 deploy-keys/
+sim/launcher/.state/
+# Ignore stale local launcher state from older sim branches.
 dev/launcher/.state/
+
+# Ignore stale local hook dirs from older setup flows or local tooling.
 .githooks/
 
 # PyTorch model weights and checkpoints
@@ -78,6 +82,8 @@ ros2_ws/src/brain/manipulation/ckpts/*
 
 # training data
 data/
+!sim/data/
+!sim/data/.gitignore
 
 # Primitives directory - ignore checkpoints and data symlinks, keep metadata
 skills/**/data

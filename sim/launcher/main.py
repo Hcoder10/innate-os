@@ -10,6 +10,7 @@ if sys.version_info < (3, 10):
     print("Error: the Innate launcher requires Python 3.10 or newer.", file=sys.stderr)
     raise SystemExit(1)
 
+from assets import pack_assets, publish_assets, validate_assets
 from dashboard import (
     BOLD,
     NC,
@@ -201,6 +202,7 @@ def cmd_logs(target: str) -> None:
 
 def cmd_setup(config: dict[str, object]) -> None:
     print_banner()
+    ensure_dependency("docker")
     configure_hosted_service_key(config)
     sim_python = ensure_sim_setup(config, allow_setup=True)
     ensure_sim_data(config, allow_fetch=True)
@@ -209,6 +211,24 @@ def cmd_setup(config: dict[str, object]) -> None:
     print(f"OS config: {OS_CONFIG_PATH}")
     print(f"Sim config: {SIM_CONFIG_PATH}")
     print(f"Simulator Python: {sim_python}")
+
+
+def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
+    sim_repo = config["sim_repo"]  # type: ignore[assignment]
+    if args.assets_command == "pack":
+        pack_assets(sim_repo, image=args.image, write_lock=args.write_lock)
+        return
+    if args.assets_command == "publish":
+        publish_assets(sim_repo, image=args.image)
+        return
+    if args.assets_command == "validate":
+        validate_assets(
+            sim_repo,
+            mode="ci" if args.ci else "local",
+            staged_only=args.staged_only,
+        )
+        return
+    raise StackError(f"Unknown assets command: {args.assets_command}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -277,6 +297,49 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["startup", "bootstrap", "frontend", "compose", "cloud-agent", "os-build", "os-session", "simulator", "brain", "down"],
         help="Which log stream to show",
     )
+    assets_parser = sim_subparsers.add_parser(
+        "assets",
+        prog=f"{CLI_SIM} assets",
+        help="Manage simulator asset packs",
+    )
+    assets_subparsers = assets_parser.add_subparsers(dest="assets_command", required=True)
+    pack_parser = assets_subparsers.add_parser(
+        "pack",
+        prog=f"{CLI_SIM} assets pack",
+        help="Compute the simulator asset pack lock from local asset files",
+    )
+    pack_parser.add_argument("--image", default="ghcr.io/innate-inc/innate-os-sim-assets")
+    pack_parser.add_argument(
+        "--write-lock",
+        action="store_true",
+        help="Write sim/assets.lock.json after computing the asset hash",
+    )
+    publish_parser = assets_subparsers.add_parser(
+        "publish",
+        prog=f"{CLI_SIM} assets publish",
+        help="Build and push the simulator asset image to GHCR",
+    )
+    publish_parser.add_argument("--image", default="ghcr.io/innate-inc/innate-os-sim-assets")
+    validate_parser = assets_subparsers.add_parser(
+        "validate",
+        prog=f"{CLI_SIM} assets validate",
+        help="Validate simulator asset references and locked content",
+    )
+    validate_parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="Pull the locked asset image and verify it in an isolated directory",
+    )
+    validate_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Validate local files only (default)",
+    )
+    validate_parser.add_argument(
+        "--staged-only",
+        action="store_true",
+        help="Skip validation unless staged files touch simulator asset references",
+    )
     return parser
 
 
@@ -313,6 +376,8 @@ def main() -> int:
             )
         elif args.sim_command == "logs":
             cmd_logs(args.target)
+        elif args.sim_command == "assets":
+            cmd_assets(args, config)
         else:
             parser.error(f"Unknown sim command: {args.sim_command}")
     except StackError as exc:
