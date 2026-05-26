@@ -156,7 +156,6 @@ docker buildx version
 | Workflow | File | Trigger | Description |
 |----------|------|---------|-------------|
 | Build Release | `build-release.yml` | Push to main, tags, PRs, manual | Builds ROS2 workspace, creates release archives |
-| Docker Build | `docker-build.yml` | Push to main, tags, PRs, manual | Builds Docker image, pushes to ghcr.io |
 | Test Pose Image | `test-pose-image.yml` | Changes to brain_client | Runs Python tests |
 
 ### Manually Triggering a Workflow
@@ -169,7 +168,6 @@ docker buildx version
 Or via CLI:
 ```bash
 gh workflow run build-release.yml --ref main
-gh workflow run docker-build.yml --ref main
 ```
 
 ### Viewing Workflow Logs

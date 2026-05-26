@@ -130,20 +130,20 @@ Skill IDs follow the pattern: `<user>/<skill_name>` matching `[a-z0-9_-]+/[a-z0-
 | User | Disk location | Description |
 |------|--------------|-------------|
 | `local` | `~/skills/<skill_name>/` | User-created skills (recording, custom code) |
-| `innate-os` | `$INNATE_OS_ROOT/skills/<skill_name>/` | Built-in skills shipped with innate-os |
+| `innate-os` | `$INNATE_OS_ROOT/extensions/skills/<skill_name>/` | Built-in skills shipped with innate-os |
 
 No other users are valid yet. Future: cloud-synced skills from other users.
 
 ### ID ↔ Path resolution
 
 ```
-innate-os/<skill_name>  →  $INNATE_OS_ROOT/skills/<skill_name>/
+innate-os/<skill_name>  →  $INNATE_OS_ROOT/extensions/skills/<skill_name>/
 local/<skill_name>   →  ~/skills/<skill_name>/
 ```
 
 For code skills, the "directory" is the parent directory containing the `.py` file:
 ```
-innate-os/navigate_to_position  →  $INNATE_OS_ROOT/skills/navigate_to_position.py
+innate-os/navigate_to_position  →  $INNATE_OS_ROOT/extensions/skills/navigate_to_position.py
 local/my-custom-skill        →  ~/skills/my-custom-skill.py
 ```
 
@@ -152,8 +152,8 @@ local/my-custom-skill        →  ~/skills/my-custom-skill.py
 | ID | Display Name | Path |
 |----|-------------|------|
 | `local/pick-socks` | Pick Socks | `~/skills/pick-socks/` |
-| `innate-os/wave` | wave | `$INNATE_OS_ROOT/skills/wave/` |
-| `innate-os/navigate_to_position` | navigate_to_position | `$INNATE_OS_ROOT/skills/navigate_to_position.py` |
+| `innate-os/wave` | wave | `$INNATE_OS_ROOT/extensions/skills/wave/` |
+| `innate-os/navigate_to_position` | navigate_to_position | `$INNATE_OS_ROOT/extensions/skills/navigate_to_position.py` |
 | `local/arm-circle` | Arm Circle | `~/skills/arm-circle/` |
 
 ---

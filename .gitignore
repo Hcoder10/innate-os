@@ -62,8 +62,6 @@ sim/config.toml
 ENV/
 deploy-keys/
 sim/launcher/.state/
-# Ignore stale local launcher state from older sim branches.
-dev/launcher/.state/
 
 # Ignore stale local hook dirs from older setup flows or local tooling.
 .githooks/

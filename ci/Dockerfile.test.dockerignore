@@ -1,0 +1,10 @@
+# CI test image bakes in workspace source, config, and extensions at build
+# time (no bind mounts in CI). Allow what Dockerfile.test COPYs from.
+**
+
+!ros2_ws/
+!ros2_ws/**
+!config/
+!config/**
+!extensions/
+!extensions/**

@@ -3,7 +3,7 @@
 
 SESSION_NAME="ros_nodes"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
-DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/dds/setup_dds.zsh"
+DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 
 # ROS launch commands grouped into windows (pipe-delimited for 2 panes)
@@ -109,7 +109,7 @@ echo "  ╚═══════════════════════
 echo ""
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
-(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/sounds/turnon.mp3" >/dev/null 2>&1) &
+(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
 disown
 
 # Keep the script alive so systemd (Type=simple) considers the service running.

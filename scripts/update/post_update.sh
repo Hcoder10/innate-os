@@ -232,8 +232,8 @@ log "Services stopped (app.cpp still running)."
 # 1. Update systemd service files
 # -----------------------------------------------------------------------------
 log "Installing systemd service files..."
-if [ -d "$REPO_DIR/systemd" ]; then
-    for service_file in "$REPO_DIR/systemd"/*.service; do
+if [ -d "$REPO_DIR/config/systemd" ]; then
+    for service_file in "$REPO_DIR/config/systemd"/*.service; do
         if [ -f "$service_file" ]; then
             service_name=$(basename "$service_file")
             log "  Installing $service_name"
@@ -305,8 +305,8 @@ fi
 # 3. Update udev rules
 # -----------------------------------------------------------------------------
 log "Installing udev rules..."
-if [ -d "$REPO_DIR/udev" ]; then
-    for rule_file in "$REPO_DIR/udev"/*.rules; do
+if [ -d "$REPO_DIR/config/udev" ]; then
+    for rule_file in "$REPO_DIR/config/udev"/*.rules; do
         if [ -f "$rule_file" ]; then
             rule_name=$(basename "$rule_file")
             log "  Installing $rule_name"
@@ -566,22 +566,22 @@ if [ -f "$ACTUAL_HOME/.zshrc" ]; then
 fi
 
 # Copy our zsh configuration files
-if [ -d "$REPO_DIR/zshrcs" ]; then
+if [ -d "$REPO_DIR/config/zsh" ]; then
     log "  Installing Innate zsh configuration"
 
     # Copy .zshrc.pre-oh-my-zsh (contains ROS2/DDS setup)
-    if [ -f "$REPO_DIR/zshrcs/.zshrc.pre-oh-my-zsh" ]; then
+    if [ -f "$REPO_DIR/config/zsh/.zshrc.pre-oh-my-zsh" ]; then
         # Update paths in the file
         sed -e "s|/home/jetson1|$ACTUAL_HOME|g" \
-            "$REPO_DIR/zshrcs/.zshrc.pre-oh-my-zsh" > "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
+            "$REPO_DIR/config/zsh/.zshrc.pre-oh-my-zsh" > "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
     fi
 
     # Copy main .zshrc
-    if [ -f "$REPO_DIR/zshrcs/.zshrc" ]; then
+    if [ -f "$REPO_DIR/config/zsh/.zshrc" ]; then
         # Update paths in the file
         sed -e "s|/home/jetson1|$ACTUAL_HOME|g" \
-            "$REPO_DIR/zshrcs/.zshrc" > "$ACTUAL_HOME/.zshrc"
+            "$REPO_DIR/config/zsh/.zshrc" > "$ACTUAL_HOME/.zshrc"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc"
     fi
 fi
@@ -623,13 +623,13 @@ fi
 # 9. Setup DDS configuration
 # -----------------------------------------------------------------------------
 log "Setting up DDS configuration..."
-if [ -d "$REPO_DIR/dds" ]; then
+if [ -d "$REPO_DIR/config/dds" ]; then
     # Ensure DDS scripts are executable
-    chmod +x "$REPO_DIR/dds"/*.zsh 2>/dev/null || true
+    chmod +x "$REPO_DIR/config/dds"/*.zsh 2>/dev/null || true
 
     # Generate initial DDS config (will be regenerated on shell login)
-    if [ -f "$REPO_DIR/dds/setup_dds.zsh" ]; then
-        log "  DDS setup script ready at $REPO_DIR/dds/setup_dds.zsh"
+    if [ -f "$REPO_DIR/config/dds/setup_dds.zsh" ]; then
+        log "  DDS setup script ready at $REPO_DIR/config/dds/setup_dds.zsh"
     fi
 fi
 

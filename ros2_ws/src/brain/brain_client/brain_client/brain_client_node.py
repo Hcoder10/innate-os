@@ -160,8 +160,6 @@ class BrainClientNode(Node):
         # --- New: Simulator mode parameter ---
         self.declare_parameter("simulator_mode", False)
         self.simulator_mode = self.get_parameter("simulator_mode").value
-        self.declare_parameter("use_input_manager", True)
-        self.use_input_manager = self.get_parameter("use_input_manager").value
 
         # --- Proxy service configuration ---
         # Credentials (INNATE_PROXY_URL, INNATE_SERVICE_KEY) come from env vars
@@ -384,18 +382,24 @@ class BrainClientNode(Node):
         self.chat_in_sub = self.create_subscription(
             String, "/brain/chat_in", self.chat_in_callback, 10
         )
-        if self.use_input_manager:
-            self._wait_for_input_manager(timeout_sec=INPUT_MANAGER_WAIT_TIMEOUT_SEC)
-            self.custom_input_sub = self.create_subscription(
-                String, "/input_manager/custom", self.custom_input_callback, 10
-            )
-            self.active_inputs_pub = self.create_publisher(
-                String, "/input_manager/active_inputs", 10
-            )
-            self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
-        else:
-            self.custom_input_sub = None
-            self.active_inputs_pub = None
+        # Always wire the input_manager topics. If no input_manager comes up
+        # (e.g. simulator without microphone), the pub/sub simply have no peer.
+        self.custom_input_sub = self.create_subscription(
+            String, "/input_manager/custom", self.custom_input_callback, 10
+        )
+        self.active_inputs_pub = self.create_publisher(
+            String, "/input_manager/active_inputs", 10
+        )
+        # Initial "no active inputs" publish is deferred so startup doesn't block
+        # on DDS discovery — _try_initial_active_inputs_publish retries until a
+        # subscriber appears or the timeout elapses.
+        self._initial_active_inputs_remaining = int(
+            INPUT_MANAGER_WAIT_TIMEOUT_SEC / READY_FOR_CONNECTION_INTERVAL_SEC
+        )
+        self._initial_active_inputs_timer = self.create_timer(
+            READY_FOR_CONNECTION_INTERVAL_SEC,
+            self._try_initial_active_inputs_publish,
+        )
 
         self.chat_out_pub = self.create_publisher(String, "/brain/chat_out", 10)
         self.task_status_pub = self.create_publisher(
@@ -511,6 +515,11 @@ class BrainClientNode(Node):
         self._ready_for_connection_timer = None
         self._start_ready_for_connection_broadcast()
 
+        self._ws_connected = False
+        self.ws_status_sub = self.create_subscription(
+            String, "/brain/websocket_status", self._on_ws_status, 10
+        )
+
         # Initialise early — _on_available_skills reads this during the spin wait below
         self.primitive_running = None
         self._pending_reregistration = False
@@ -559,8 +568,11 @@ class BrainClientNode(Node):
         self.directive_sub = self.create_subscription(
             String, "/brain/set_directive", self.set_directive_callback, 10
         )
+        # Mirror backend credentials so registration payloads use the current
+        # token after a live swap. ws_client_node owns the actual reconnection;
+        # we only refresh self.ws_uri/self.token for outgoing message payloads.
         self.backend_config_sub = self.create_subscription(
-            String, "/brain/backend_config", self.backend_config_callback, 10
+            String, "/brain/backend_config", self._on_backend_config, 10
         )
 
         # Create service to get available directives
@@ -589,7 +601,7 @@ class BrainClientNode(Node):
             logger=self.get_logger(),
             skills_directories=[],  # Skills hot reload is handled by SAS
             agents_directories=[
-                os.path.join(innate_root, "agents"),
+                os.path.join(innate_root, "extensions", "agents"),
                 os.path.join(os.path.expanduser("~"), "agents"),
             ],
             on_reload=self._queue_hot_reload,
@@ -597,8 +609,6 @@ class BrainClientNode(Node):
         )
         self._hot_reload_watcher.start()
         self._hot_reload_timer = self.create_timer(0.5, self._process_hot_reload_queue)
-        self._backend_reregister_timer = None
-        self._backend_reregister_remaining = 0
 
         self.get_logger().info(
             "\033[1;92m[BrainClient] BrainClientNode initialized\033[0m"
@@ -626,51 +636,50 @@ class BrainClientNode(Node):
         )
         self._ready_for_connection_remaining -= 1
 
-    def _start_backend_reregistration(self):
-        self.primitives_registered = False
-        self._start_ready_for_connection_broadcast()
-        self._backend_reregister_remaining = READY_FOR_CONNECTION_COUNT
-        if self._backend_reregister_timer is not None:
-            self._backend_reregister_timer.cancel()
-        self._backend_reregister_timer = self.create_timer(
-            READY_FOR_CONNECTION_INTERVAL_SEC,
-            self._try_backend_reregistration,
-        )
+    def _on_ws_status(self, msg: String):
+        """React to ws_client_node connection-state transitions.
 
-    def _try_backend_reregistration(self):
-        if self._backend_reregister_remaining <= 0:
-            if self._backend_reregister_timer is not None:
-                self._backend_reregister_timer.cancel()
-                self._backend_reregister_timer = None
+        We only care about disconnected→connected edges: each fresh connection
+        (including reconnects after a /brain/backend_config swap) needs the
+        primitives re-registered with the new backend session.
+        """
+        try:
+            status = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
             return
-        self._backend_reregister_remaining -= 1
-        self.register_primitives_and_directive()
+        connected = bool(status.get("connected"))
+        if connected and not self._ws_connected:
+            self.get_logger().info(
+                "[BrainClient] WebSocket connected; re-registering primitives."
+            )
+            self.primitives_registered = False
+            self.register_primitives_and_directive()
+        self._ws_connected = connected
 
-    def backend_config_callback(self, msg: String):
+    def _on_backend_config(self, msg: String):
+        """Mirror /brain/backend_config updates into local ws_uri/token state.
+
+        The reconnection itself is owned by ws_client_node; this handler only
+        keeps brain_client's copy of the credentials current so the next
+        registration payload uses the right token.
+        """
         try:
             payload = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self.get_logger().error("Invalid /brain/backend_config payload JSON.")
+        except (json.JSONDecodeError, TypeError):
             return
         if not isinstance(payload, dict):
-            self.get_logger().error("/brain/backend_config payload must be an object.")
             return
-
         new_uri = str(payload.get("websocket_uri") or self.ws_uri).strip()
         new_token = str(
             payload.get("service_key") or payload.get("token") or self.token
         ).strip()
         if new_uri == self.ws_uri and new_token == self.token:
-            self.get_logger().info("[BrainClient] Backend config unchanged.")
             return
-
         self.ws_uri = new_uri
         self.token = new_token
         self.get_logger().info(
-            "[BrainClient] Applied backend config update "
-            f"(uri={self.ws_uri}, service_key={'provided' if self.token else 'empty'})."
+            f"[BrainClient] Mirrored backend config update (uri={self.ws_uri})."
         )
-        self._start_backend_reregistration()
 
     def _on_available_skills(self, msg: AvailableSkills):
         """Callback for /brain/available_skills topic (latched, transient_local)."""
@@ -733,24 +742,17 @@ class BrainClientNode(Node):
                 self.get_logger().info("Draining deferred primitives re-registration")
                 self.register_primitives_and_directive()
 
-    def _wait_for_input_manager(self, timeout_sec=5.0):
-        """
-        Wait for input_manager_node to be available.
-        This ensures proper startup ordering when launched separately.
-        """
-        self.get_logger().info("⏳ Waiting for input_manager_node...")
-        start_time = self.get_clock().now()
-
-        while (self.get_clock().now() - start_time).nanoseconds / 1e9 < timeout_sec:
-            # Check if input_manager_node exists in the node graph
-            node_names = self.get_node_names()
-            if "input_manager_node" in node_names:
-                self.get_logger().info("✅ input_manager_node is ready")
-                return True
-            time.sleep(0.1)
-
-        self.get_logger().warning("⚠️ input_manager_node not found - continuing anyway")
-        return False
+    def _try_initial_active_inputs_publish(self):
+        """Publish the initial empty active-inputs message once a subscriber is
+        present, or give up after the timeout. Runs on a ROS timer so node init
+        never blocks on DDS discovery."""
+        has_peer = self.count_subscribers("/input_manager/active_inputs") > 0
+        if has_peer or self._initial_active_inputs_remaining <= 0:
+            self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+            self._initial_active_inputs_timer.cancel()
+            self._initial_active_inputs_timer = None
+            return
+        self._initial_active_inputs_remaining -= 1
 
     def _encode_current_image(self) -> str | None:
         """Encode the current camera image as base64 JPEG. Returns None on failure."""
@@ -1184,9 +1186,6 @@ class BrainClientNode(Node):
             return
 
         if not self.is_brain_active:
-            return
-
-        if not self.use_input_manager:
             return
 
         try:
@@ -2709,7 +2708,7 @@ class BrainClientNode(Node):
             "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
         )
         agents_directories = [
-            os.path.join(innate_root, "agents"),
+            os.path.join(innate_root, "extensions", "agents"),
             os.path.join(os.path.expanduser("~"), "agents"),
         ]
         
@@ -2859,9 +2858,8 @@ class BrainClientNode(Node):
         # Stop gaze tracker
         self._stop_gaze_tracker()
 
-        if self.use_input_manager and self.active_inputs_pub is not None:
-            self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
-            self.get_logger().info("🔌 Deactivated all inputs")
+        self.active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+        self.get_logger().info("🔌 Deactivated all inputs")
 
         # Stop robot motion
         stop_cmd = Twist()

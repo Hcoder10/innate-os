@@ -59,7 +59,7 @@ LOCAL_OS_IMAGE = "local"
 DEFAULT_SIM_OS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-ros"
 SIM_IMAGE_INPUT_FILES = (
     ".dockerignore",
-    "Dockerfile",
+    "sim/Dockerfile",
     "sim/Dockerfile.ros-prebuilt",
     "sim/Dockerfile.ros-prebuilt.dockerignore",
     "sim/apt-dependencies.txt",

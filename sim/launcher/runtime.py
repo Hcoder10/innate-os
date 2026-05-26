@@ -386,7 +386,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     if container_was_running:
         log("Innate OS dev container already running.")
     else:
-        up_cmd = ["docker", "compose", "-f", "docker-compose.dev.yml", "up", "-d"]
+        up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
         if os_image:
             try:
                 ensure_os_image_available(
@@ -506,7 +506,7 @@ def down_os(config: dict[str, object]) -> None:
     ensure_state_dir()
     with DOWN_LOG_PATH.open("a", encoding="utf-8") as log_file:
         subprocess.run(
-            ["docker", "compose", "-f", "docker-compose.dev.yml", "down"],
+            ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"],
             cwd=os_repo,
             env=compose_env,
             text=True,
@@ -712,7 +712,7 @@ def tail_file(path: Path, limit: int = 40) -> str:
 
 
 def docker_compose_cmd(*parts: str) -> list[str]:
-    return ["docker", "compose", "-f", "docker-compose.dev.yml", *parts]
+    return ["docker", "compose", "-f", "sim/docker-compose.dev.yml", *parts]
 
 
 def os_compose_exec_cmd(*parts: str) -> list[str]:
