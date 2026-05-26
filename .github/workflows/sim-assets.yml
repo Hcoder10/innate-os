@@ -14,16 +14,12 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   validate-assets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Log in to GHCR
-        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Validate simulator assets
         run: ./innate sim assets validate --ci

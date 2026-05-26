@@ -7,6 +7,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +80,114 @@ def run_checked(cmd: list[str], *, cwd: Path, failure_message: str) -> str:
             output = output[-4000:]
         raise StackError(f"{failure_message}\n{output}")
     return result.stdout or ""
+
+
+def ghcr_manifest_url(image_ref: str) -> str | None:
+    if not image_ref.startswith("ghcr.io/"):
+        return None
+    image_path = image_ref.removeprefix("ghcr.io/")
+    if "@" in image_path:
+        repository, reference = image_path.split("@", 1)
+    else:
+        last_slash = image_path.rfind("/")
+        tag_separator = image_path.rfind(":")
+        if tag_separator > last_slash:
+            repository = image_path[:tag_separator]
+            reference = image_path[tag_separator + 1 :]
+        else:
+            repository = image_path
+            reference = "latest"
+    if not repository or not reference:
+        return None
+    quoted_reference = urllib.parse.quote(reference, safe=":")
+    return f"https://ghcr.io/v2/{repository}/manifests/{quoted_reference}"
+
+
+def bearer_token_url(authenticate_header: str) -> str | None:
+    match = re.search(
+        r'Bearer realm="([^"]+)",service="([^"]+)",scope="([^"]+)"',
+        authenticate_header,
+    )
+    if not match:
+        return None
+    realm, service, scope = match.groups()
+    query = urllib.parse.urlencode({"service": service, "scope": scope})
+    return f"{realm}?{query}"
+
+
+def assert_public_ghcr_pullable(image_ref: str) -> None:
+    manifest_url = ghcr_manifest_url(image_ref)
+    if manifest_url is None:
+        return
+
+    manifest_headers = {
+        "Accept": (
+            "application/vnd.oci.image.index.v1+json,"
+            "application/vnd.oci.image.manifest.v1+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json,"
+            "application/vnd.docker.distribution.manifest.v2+json"
+        )
+    }
+
+    def read_url(url: str, headers: dict[str, str] | None = None) -> bytes:
+        request = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read()
+
+    try:
+        read_url(manifest_url, manifest_headers)
+        return
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            raise StackError(
+                f"Simulator asset image is not available from GHCR: {image_ref}\n"
+                f"GHCR returned HTTP {exc.code}."
+            ) from exc
+        token_url = bearer_token_url(exc.headers.get("www-authenticate", ""))
+        if token_url is None:
+            raise StackError(
+                f"Simulator asset image is not publicly pullable: {image_ref}\n"
+                "GHCR did not return an anonymous pull token challenge."
+            ) from exc
+
+    try:
+        token_payload = json.loads(read_url(token_url).decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise StackError(
+                f"Simulator asset image is not publicly pullable: {image_ref}\n"
+                "Make the GHCR package public so fresh simulator setup works without "
+                "docker login."
+            ) from exc
+        raise StackError(
+            f"Could not verify public GHCR access for simulator asset image: {image_ref}\n"
+            f"GHCR token endpoint returned HTTP {exc.code}."
+        ) from exc
+
+    token = token_payload.get("token") or token_payload.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise StackError(
+            f"Could not verify public GHCR access for simulator asset image: {image_ref}\n"
+            "GHCR did not return an anonymous pull token."
+        )
+
+    try:
+        read_url(manifest_url, {**manifest_headers, "Authorization": f"Bearer {token}"})
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise StackError(
+                f"Simulator asset image is not publicly pullable: {image_ref}\n"
+                "Make the GHCR package public so fresh simulator setup works without "
+                "docker login."
+            ) from exc
+        if exc.code == 404:
+            raise StackError(
+                f"Simulator asset image tag does not exist on GHCR: {image_ref}"
+            ) from exc
+        raise StackError(
+            f"Could not verify public GHCR access for simulator asset image: {image_ref}\n"
+            f"GHCR returned HTTP {exc.code}."
+        ) from exc
 
 
 def load_asset_lock() -> dict[str, Any]:
@@ -190,6 +301,7 @@ def pull_asset_image(lock: dict[str, Any], sim_repo: Path, *, target_repo: Path 
     image_ref = str(lock["image_ref"])
     target = target_repo or sim_repo
     log(f"Pulling simulator asset pack {image_ref}...")
+    assert_public_ghcr_pullable(image_ref)
     run_checked(
         ["docker", "pull", image_ref],
         cwd=REPO_ROOT,
