@@ -63,6 +63,9 @@ current_source_hash() {
 record_local_install_marker() {
     mkdir -p install
     current_source_hash > install/.innate-local-source.sha256
+    if [[ -n "${INNATE_OS_HOST_REPO_ID:-}" ]]; then
+        print -r -- "$INNATE_OS_HOST_REPO_ID" > install/.innate-local-repo-id
+    fi
 }
 
 seed_prebuilt_install() {
@@ -104,10 +107,29 @@ install_is_stale() {
     [[ ! -f install/setup.zsh ]] && return 0
     find install -xtype l -print -quit | grep -q . && return 0
 
+    if [[ -n "${INNATE_OS_HOST_REPO_ID:-}" ]]; then
+        local installed_repo_id
+        installed_repo_id="$(cat install/.innate-local-repo-id 2>/dev/null || true)"
+        [[ "$installed_repo_id" != "$INNATE_OS_HOST_REPO_ID" ]] && return 0
+    fi
+
     local installed_source_hash
     installed_source_hash="$(cat install/.innate-local-source.sha256 2>/dev/null || true)"
     [[ -z "$installed_source_hash" ]] && return 0
     [[ "$(current_source_hash)" != "$installed_source_hash" ]] && return 0
+
+    return 1
+}
+
+install_needs_clean_rebuild() {
+    [[ ! -f install/setup.zsh ]] && return 0
+    find install -xtype l -print -quit | grep -q . && return 0
+
+    if [[ -n "${INNATE_OS_HOST_REPO_ID:-}" ]]; then
+        local installed_repo_id
+        installed_repo_id="$(cat install/.innate-local-repo-id 2>/dev/null || true)"
+        [[ "$installed_repo_id" != "$INNATE_OS_HOST_REPO_ID" ]] && return 0
+    fi
 
     return 1
 }
@@ -117,8 +139,8 @@ if [[ "${INNATE_OS_ALWAYS_BUILD:-0}" == "1" ]]; then
 elif seed_prebuilt_install; then
     :
 elif install_is_stale; then
-    if [[ -d install ]] && find install -xtype l -print -quit | grep -q .; then
-        echo "Removing unusable ROS install before rebuild."
+    if install_needs_clean_rebuild; then
+        echo "Removing stale ROS build/install/log volumes before rebuild."
         clean_ros_build_artifacts
     fi
     colcon_build_with_retry

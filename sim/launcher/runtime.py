@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -468,9 +469,13 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
+    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[
+        :16
+    ]
 
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
+        f"INNATE_OS_HOST_REPO_ID={shlex.quote(host_repo_id)} "
         "~/innate-os/scripts/validate_sim_ros_install.zsh"
     )
 
