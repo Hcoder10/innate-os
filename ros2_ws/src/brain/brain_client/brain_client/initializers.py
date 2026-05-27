@@ -35,7 +35,7 @@ def initialize_agents(
         "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
     )
     agents_directories = [
-        os.path.join(innate_root, "extensions", "agents"),
+        os.path.join(innate_root, "workspace", "agents"),
         os.path.join(os.path.expanduser("~"), "agents"),
     ]
 

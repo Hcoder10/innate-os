@@ -62,7 +62,7 @@ jobs:
         # Copy all files
         cp -r ros2_ws release-package/innate-os/
         cp -r config release-package/innate-os/
-        cp -r extensions release-package/innate-os/
+        cp -r workspace release-package/innate-os/
         cp -r scripts release-package/innate-os/
         cp -r docs release-package/innate-os/
 

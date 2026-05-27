@@ -78,7 +78,7 @@ class InputManagerNode(Node):
                                         os.path.join(os.path.expanduser('~'), 'innate-os'))
         
         input_directories = [
-            os.path.join(innate_os_root, 'extensions', 'inputs'),
+            os.path.join(innate_os_root, 'workspace', 'inputs'),
         ]
         
         # Pass proxy to loader - it will inject into each input device

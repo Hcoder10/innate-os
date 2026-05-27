@@ -85,7 +85,7 @@ COPY ros2_ws /root/innate-os/ros2_ws
 
 # Copy additional directories needed at runtime
 COPY config /root/innate-os/config
-COPY extensions /root/innate-os/extensions
+COPY workspace /root/innate-os/workspace
 
 # Import external dependencies using vcs
 RUN cd /root/innate-os/ros2_ws/src && \

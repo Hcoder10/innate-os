@@ -543,7 +543,7 @@ class SkillsActionServer(Node):
     def _resolve_skills_directories(self) -> list[str]:
         """Build the ordered list of skill directories to scan."""
         maurice_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-        self._innate_os_skills_dir = os.path.join(maurice_root, "extensions", "skills")
+        self._innate_os_skills_dir = os.path.join(maurice_root, "workspace", "skills")
         user_skills_directory = os.path.join(os.path.expanduser("~"), "skills")
 
         if not os.path.exists(self._innate_os_skills_dir):
@@ -575,7 +575,7 @@ class SkillsActionServer(Node):
     def _compute_skill_id(self, path: str | Path) -> str:
         """Compute a deterministic skill ID from a file or directory path.
 
-        Returns 'innate-os/<basename>' for paths under $INNATE_OS_ROOT/extensions/skills,
+        Returns 'innate-os/<basename>' for paths under $INNATE_OS_ROOT/workspace/skills,
         'local/<basename>' for paths under ~/skills.
         """
         path = str(Path(path).resolve())

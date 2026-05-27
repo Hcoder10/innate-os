@@ -94,7 +94,7 @@ RUN mkdir -p \
         /root/innate-os/ros2_ws \
         /root/innate-os/scripts \
         /root/innate-os/config \
-        /root/innate-os/extensions
+        /root/innate-os/workspace
 
 # Patch root .zshrc to source ROS, the workspace, and DDS only when present.
 RUN cat >> /root/.zshrc <<'EOF'

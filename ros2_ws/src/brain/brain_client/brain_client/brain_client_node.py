@@ -601,7 +601,7 @@ class BrainClientNode(Node):
             logger=self.get_logger(),
             skills_directories=[],  # Skills hot reload is handled by SAS
             agents_directories=[
-                os.path.join(innate_root, "extensions", "agents"),
+                os.path.join(innate_root, "workspace", "agents"),
                 os.path.join(os.path.expanduser("~"), "agents"),
             ],
             on_reload=self._queue_hot_reload,
@@ -2714,10 +2714,10 @@ class BrainClientNode(Node):
             "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
         )
         agents_directories = [
-            os.path.join(innate_root, "extensions", "agents"),
+            os.path.join(innate_root, "workspace", "agents"),
             os.path.join(os.path.expanduser("~"), "agents"),
         ]
-        
+
         reloaded = []
         for agent_name in agent_names:
             agent_class = agent_loader.reload_agent_by_name(agent_name, agents_directories)
