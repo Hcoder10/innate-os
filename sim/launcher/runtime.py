@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -444,6 +445,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
                     f"Pull details are in {COMPOSE_LOG_PATH}."
                 )
                 os_image = ""
+                up_cmd.append("--build")
             else:
                 up_cmd.append("--no-build")
 
@@ -467,9 +469,13 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
+    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[
+        :16
+    ]
 
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
+        f"INNATE_OS_HOST_REPO_ID={shlex.quote(host_repo_id)} "
         "~/innate-os/scripts/validate_sim_ros_install.zsh"
     )
 
@@ -820,8 +826,8 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
         os_compose_zsh_cmd(
             f"tmux has-session -t {shlex.quote(TMUX_SESSION_NAME)} >/dev/null 2>&1; "
             "echo tmux=$?; "
-            "pgrep -f rws_server >/dev/null; echo rosbridge=$?; "
-            "pgrep -f brain_client_node.py >/dev/null; echo brain=$?"
+            "pgrep -f '[r]ws_server' >/dev/null; echo rosbridge=$?; "
+            "pgrep -f '[b]rain_client_node.py' >/dev/null; echo brain=$?"
         ),
         cwd=os_repo,
         env=compose_env,

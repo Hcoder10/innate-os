@@ -313,7 +313,7 @@ class SimulationNode:
             vis_options=gs.options.VisOptions(
                 ambient_light=(0.5, 0.5, 0.5),
             ),
-            show_FPS=False,
+            profiling_options=gs.options.ProfilingOptions(show_FPS=False),
             show_viewer=self.enable_vis,
             **scene_kwargs,
         )
@@ -391,7 +391,7 @@ class SimulationNode:
                 pos=(0, 0, 0),
                 convexify=False,
                 collision=False,
-                file_meshes_are_zup=False,  # genesis 0.4.x defaults to True for GLB; preserve manual euler
+                file_meshes_are_zup=False,  # Preserve explicit Y-up GLB handling.
             )
         )
 
@@ -407,7 +407,7 @@ class SimulationNode:
             )
         elif collision_stage_config:
             # ReplicaCAD stage metadata remains in the original Y-up-authored frame
-            # even though Genesis 0.4.x now auto-converts the visible GLB to Z-up.
+            # while Genesis handles the visible GLB as Y-up.
             self._add_collision_from_stage_config(
                 self._resolve_project_path(collision_stage_config),
                 scene_euler=(90, 0, 0),
@@ -514,7 +514,7 @@ class SimulationNode:
                                 visualization=False,  # Invisible collision only
                                 collision=True,
                                 convexify=True,  # Individual objects can be safely convexified
-                                file_meshes_are_zup=False,  # genesis 0.4.x: preserve pre-0.4 rotation behavior
+                                file_meshes_are_zup=False,  # Preserve explicit Y-up GLB handling.
                             )
                         )
 
@@ -1312,7 +1312,7 @@ class SimulationNode:
                     scale=normalized_scale,
                     collision=False,
                     convexify=False,
-                    file_meshes_are_zup=False,  # genesis 0.4.x: preserve pre-0.4 rotation behavior
+                    file_meshes_are_zup=False,  # Preserve explicit Y-up GLB handling.
                 )
             )
             self.managed_entities[name] = entity_obj
