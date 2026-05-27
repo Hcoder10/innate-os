@@ -160,7 +160,7 @@ if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ]; th
 fi
 
 # -----------------------------------------------------------------------------
-# 0. Migrate .env file (comment out deprecated URLs)
+# 0. Migrate .env file (replace deprecated URLs with new endpoints)
 # -----------------------------------------------------------------------------
 ENV_FILE="$REPO_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -174,17 +174,17 @@ if [ -f "$ENV_FILE" ]; then
     fi
 
     if [ "$NEEDS_ENV_MIGRATION" = true ]; then
-        log "Migrating .env file (commenting out deprecated URLs)..."
+        log "Migrating .env file (updating deprecated URLs to new endpoints)..."
 
         # Backup .env
         cp "$ENV_FILE" "$ACTUAL_HOME/.env.backup"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.env.backup"
         log "  Backed up .env to $ACTUAL_HOME/.env.backup"
 
-        # Comment out deprecated values
-        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot|# INNATE_PROXY_URL=https://robot-services.innate.bot|' "$ENV_FILE"
-        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot|# BRAIN_WEBSOCKET_URI=wss://brain.innate.bot|' "$ENV_FILE"
-        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot|# TELEMETRY_URL=https://logs.innate.bot|' "$ENV_FILE"
+        # Replace deprecated URLs with their new equivalents in-place
+        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot.*|INNATE_PROXY_URL=https://proxy-v1.innate.bot|' "$ENV_FILE"
+        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot.*|BRAIN_WEBSOCKET_URI=wss://agent-v1.innate.bot|' "$ENV_FILE"
+        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot.*|TELEMETRY_URL=https://logs-v1.innate.bot|' "$ENV_FILE"
 
         # Add reference comment at the bottom of .env
         if ! grep -q 'Refer to .env.template for examples' "$ENV_FILE"; then
@@ -193,8 +193,10 @@ if [ -f "$ENV_FILE" ]; then
         fi
 
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ENV_FILE"
-        log "  Deprecated URLs commented out in .env"
-        log "  Variables unset from environment"
+        log "  Deprecated URLs replaced with new endpoints in .env"
+        log "    robot-services.innate.bot → proxy-v1.innate.bot"
+        log "    brain.innate.bot          → agent-v1.innate.bot"
+        log "    logs.innate.bot           → logs-v1.innate.bot"
     fi
 fi
 
