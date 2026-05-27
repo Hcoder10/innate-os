@@ -666,8 +666,14 @@ class BrainClientNode(Node):
         try:
             payload = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError):
+            self.get_logger().warn(
+                "[BrainClient] Ignoring /brain/backend_config: invalid JSON payload."
+            )
             return
         if not isinstance(payload, dict):
+            self.get_logger().warn(
+                "[BrainClient] Ignoring /brain/backend_config: payload must be an object."
+            )
             return
         new_uri = str(payload.get("websocket_uri") or self.ws_uri).strip()
         new_token = str(
