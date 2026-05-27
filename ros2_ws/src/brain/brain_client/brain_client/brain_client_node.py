@@ -379,6 +379,11 @@ class BrainClientNode(Node):
 
         self.chat_history = []
 
+        # Initialize before any timers so callbacks that fire during init
+        # (e.g. agent_timer at 0.1s) never see a missing attribute.
+        self.current_directive = None
+        self.directives = {}
+
         self.chat_in_sub = self.create_subscription(
             String, "/brain/chat_in", self.chat_in_callback, 10
         )
@@ -2327,6 +2332,9 @@ class BrainClientNode(Node):
         Collects information about available primitives and directive and sends it to the server
         for registration.
         """
+        if self.current_directive is None:
+            return
+
         self.get_logger().info(
             "Collecting primitive and directive definitions for registration..."
         )
