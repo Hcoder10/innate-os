@@ -393,8 +393,6 @@ async def inbound_service_loop(ws, shared_queues):
                 startup_directive = values.get("startup_directive", "")
 
                 agents = []
-                skills = []
-                active_skill_ids = []
 
                 try:
                     if isinstance(directives_raw, list) and len(directives_raw) > 0:
@@ -404,14 +402,7 @@ async def inbound_service_loop(ws, shared_queues):
                     else:
                         json_string = "[]"
 
-                    payload = json.loads(json_string)
-                    if isinstance(payload, dict):
-                        agents_list = payload.get("agents", [])
-                        skills_list = payload.get("skills", [])
-                        active_skill_ids = payload.get("active_skills", [])
-                    else:
-                        agents_list = payload
-                        skills_list = []
+                    agents_list = json.loads(json_string)
 
                     for directive in agents_list:
                         if isinstance(directive, dict):
@@ -428,7 +419,32 @@ async def inbound_service_loop(ws, shared_queues):
                             print(
                                 f"[ROSBridge] Parsed agent: {agent.id} - {agent.display_name}"
                             )
-                    for skill in skills_list:
+                except json.JSONDecodeError as e:
+                    print(f"[ROSBridge] Failed to parse directives JSON: {e}")
+                except Exception as e:
+                    print(f"[ROSBridge] Error processing directives: {e}")
+
+                shared_queues.update_available_agents(
+                    agents=agents,
+                    current_agent_id=current_directive,
+                    startup_agent_id=startup_directive,
+                )
+                print(f"[ROSBridge] Loaded {len(agents)} available agents from brain")
+
+            elif service_name == "/brain/get_available_skills":
+                if not inbound_data.get("result", False):
+                    print(
+                        "[ROSBridge] get_available_skills service call failed or brain not ready"
+                    )
+                    continue
+
+                values = inbound_data.get("values", {})
+                skills_raw = values.get("skills", [])
+                active_skills_raw = values.get("active_skills", [])
+                skills = []
+
+                if isinstance(skills_raw, list):
+                    for skill in skills_raw:
                         if isinstance(skill, dict):
                             skills.append(
                                 SkillInfo(
@@ -438,28 +454,21 @@ async def inbound_service_loop(ws, shared_queues):
                                     in_training=bool(skill.get("in_training", False)),
                                 )
                             )
-                    if not isinstance(active_skill_ids, list):
-                        active_skill_ids = []
-                except json.JSONDecodeError as e:
-                    print(f"[ROSBridge] Failed to parse directives JSON: {e}")
-                except Exception as e:
-                    print(f"[ROSBridge] Error processing directives: {e}")
 
-                shared_queues.update_available_agents(
-                    agents=agents,
-                    skills=skills,
-                    current_agent_id=current_directive,
-                    startup_agent_id=startup_directive,
-                    active_skill_ids=[
+                active_skill_ids = (
+                    [
                         skill_id
-                        for skill_id in active_skill_ids
+                        for skill_id in active_skills_raw
                         if isinstance(skill_id, str)
-                    ],
+                    ]
+                    if isinstance(active_skills_raw, list)
+                    else []
                 )
-                print(
-                    f"[ROSBridge] Loaded {len(agents)} available agents and "
-                    f"{len(skills)} skills from brain"
+                shared_queues.update_available_skills(
+                    skills=skills,
+                    active_skill_ids=active_skill_ids,
                 )
+                print(f"[ROSBridge] Loaded {len(skills)} available skills from brain")
 
         await asyncio.sleep(0.0001)
 
@@ -719,8 +728,13 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                     "/brain/get_available_directives",
                     "brain_messages/srv/GetAvailableDirectives",
                 )
-                print("[ROSBridge] Refreshing available brain directives")
+                refresh_skills_srv = rosbridge_call_service(
+                    "/brain/get_available_skills",
+                    "brain_messages/srv/GetAvailableSkills",
+                )
+                print("[ROSBridge] Refreshing available brain directives and skills")
                 await service_call_queue.put(refresh_agents_srv)
+                await service_call_queue.put(refresh_skills_srv)
 
             elif isinstance(msg, BrainBackendConfigCmd):
                 config_payload = {}
@@ -790,6 +804,11 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
     )
     await ws.send(json.dumps(srv_get_agents))
     print("[ROSBridge] [service] Called /brain/get_available_directives")
+    srv_get_skills = rosbridge_call_service(
+        "/brain/get_available_skills", "brain_messages/srv/GetAvailableSkills"
+    )
+    await ws.send(json.dumps(srv_get_skills))
+    print("[ROSBridge] [service] Called /brain/get_available_skills")
     last_agents_refresh_at = time.time()
     agents_retry_interval = 5.0
 
@@ -809,8 +828,16 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
                     "brain_messages/srv/GetAvailableDirectives",
                 )
                 await ws.send(json.dumps(retry_get_agents))
+                retry_get_skills = rosbridge_call_service(
+                    "/brain/get_available_skills",
+                    "brain_messages/srv/GetAvailableSkills",
+                )
+                await ws.send(json.dumps(retry_get_skills))
                 last_agents_refresh_at = now
-                print("[ROSBridge] [service] Retrying /brain/get_available_directives")
+                print(
+                    "[ROSBridge] [service] Retrying /brain/get_available_directives "
+                    "and /brain/get_available_skills"
+                )
             continue
         except websockets.exceptions.ConnectionClosed:
             print("[ROSBridge] Service connection closed in outbound_service_loop.")

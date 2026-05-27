@@ -46,6 +46,11 @@ interface GetAvailableDirectivesValues {
   startup_directive?: string | null;
 }
 
+interface GetAvailableSkillsValues {
+  skills?: unknown;
+  active_skills?: unknown;
+}
+
 interface RosbridgeServiceResponse<T> {
   op?: string;
   id?: string;
@@ -195,6 +200,55 @@ export function publishRosbridgeTopic(
   });
 }
 
+function parseRobotAgents(rawAgents: unknown): RobotAgent[] {
+  return Array.isArray(rawAgents)
+    ? rawAgents
+        .filter(
+          (entry): entry is Record<string, unknown> =>
+            !!entry && typeof entry === "object",
+        )
+        .map((entry) => ({
+          id: String(entry.id ?? ""),
+          display_name: String(entry.display_name ?? entry.id ?? ""),
+          display_icon:
+            typeof entry.display_icon === "string" || entry.display_icon === null
+              ? entry.display_icon
+              : null,
+          prompt: String(entry.prompt ?? ""),
+          skills: Array.isArray(entry.skills)
+            ? entry.skills
+                .filter((skill): skill is string => typeof skill === "string")
+                .map((skill) => skill)
+            : [],
+          source: entry.source === "shipped" ? "shipped" : "user",
+        }))
+    : [];
+}
+
+function parseRobotSkills(rawSkills: unknown): RobotSkill[] {
+  return Array.isArray(rawSkills)
+    ? rawSkills
+        .filter(
+          (entry): entry is Record<string, unknown> =>
+            !!entry && typeof entry === "object",
+        )
+        .map((entry) => ({
+          id: String(entry.id ?? ""),
+          name: String(entry.name ?? entry.id ?? ""),
+          type: String(entry.type ?? ""),
+          in_training: Boolean(entry.in_training ?? false),
+        }))
+    : [];
+}
+
+function parseSkillIds(rawSkillIds: unknown): string[] {
+  return Array.isArray(rawSkillIds)
+    ? rawSkillIds.filter(
+        (skillId): skillId is string => typeof skillId === "string",
+      )
+    : [];
+}
+
 export async function getAvailableAgentsDirect(
   wsUrl: string,
 ): Promise<AvailableAgentsResponse> {
@@ -223,48 +277,21 @@ export async function getAvailableAgentsDirect(
       ? (parsedDirectives as Record<string, unknown>)
       : null;
   const parsedAgents = parsedPayload?.agents ?? parsedDirectives;
-  const parsedSkills = parsedPayload?.skills ?? [];
-  const activeSkillIds = Array.isArray(parsedPayload?.active_skills)
-    ? parsedPayload.active_skills.filter(
-        (skillId): skillId is string => typeof skillId === "string",
-      )
-    : [];
+  const agents = parseRobotAgents(parsedAgents);
 
-  const agents: RobotAgent[] = Array.isArray(parsedAgents)
-    ? parsedAgents
-        .filter(
-          (entry): entry is Record<string, unknown> =>
-            !!entry && typeof entry === "object",
-        )
-        .map((entry) => ({
-          id: String(entry.id ?? ""),
-          display_name: String(entry.display_name ?? entry.id ?? ""),
-          display_icon:
-            typeof entry.display_icon === "string" || entry.display_icon === null
-              ? entry.display_icon
-              : null,
-          prompt: String(entry.prompt ?? ""),
-          skills: Array.isArray(entry.skills)
-            ? entry.skills
-                .filter((skill): skill is string => typeof skill === "string")
-                .map((skill) => skill)
-            : [],
-          source: entry.source === "shipped" ? "shipped" : "user",
-        }))
-    : [];
-  const skills: RobotSkill[] = Array.isArray(parsedSkills)
-    ? parsedSkills
-        .filter(
-          (entry): entry is Record<string, unknown> =>
-            !!entry && typeof entry === "object",
-        )
-        .map((entry) => ({
-          id: String(entry.id ?? ""),
-          name: String(entry.name ?? entry.id ?? ""),
-          type: String(entry.type ?? ""),
-          in_training: Boolean(entry.in_training ?? false),
-        }))
-    : [];
+  let skills = parseRobotSkills(parsedPayload?.skills);
+  let activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
+  try {
+    const skillValues = await callRosbridgeService<GetAvailableSkillsValues>(
+      wsUrl,
+      "/brain/get_available_skills",
+      {},
+    );
+    skills = parseRobotSkills(skillValues.skills);
+    activeSkillIds = parseSkillIds(skillValues.active_skills);
+  } catch (error) {
+    console.warn("Unable to load available skills directly:", error);
+  }
 
   return {
     agents,

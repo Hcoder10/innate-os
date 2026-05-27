@@ -168,7 +168,6 @@ class SharedQueues:
     def update_available_agents(
         self,
         agents: List[AgentInfo],
-        skills: List[SkillInfo],
         current_agent_id: Optional[str] = None,
         startup_agent_id: Optional[str] = None,
         active_skill_ids: Optional[List[str]] = None,
@@ -176,10 +175,21 @@ class SharedQueues:
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
             self.available_agents = agents
-            self.available_skills = skills
             self.current_agent_id = current_agent_id
             self.startup_agent_id = startup_agent_id
             self.active_skill_ids = active_skill_ids or []
+            self.available_agents_updated_at = time.time()
+
+    def update_available_skills(
+        self,
+        skills: List[SkillInfo],
+        active_skill_ids: Optional[List[str]] = None,
+    ):
+        """Thread-safe method to update available skills from the robot."""
+        with self.agents_lock:
+            self.available_skills = skills
+            if active_skill_ids is not None:
+                self.active_skill_ids = active_skill_ids
             self.available_agents_updated_at = time.time()
 
     def get_available_agents(

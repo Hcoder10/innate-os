@@ -1,0 +1,5 @@
+# Request (empty - no parameters needed to get the available skills)
+---
+# Response
+SkillInfo[] skills      # Full available skill catalog
+string[] active_skills  # Skill IDs currently active for the selected directive
