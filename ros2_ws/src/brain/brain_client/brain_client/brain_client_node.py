@@ -58,9 +58,8 @@ from geometry_msgs.msg import PoseWithCovariance, PoseWithCovarianceStamped
 from brain_messages.srv import GetChatHistory
 from brain_messages.action import ExecuteSkill
 from brain_messages.srv import GetAvailableDirectives
-from brain_messages.srv import GetAvailableSkills
 from brain_messages.srv import ResetBrain
-from brain_messages.msg import AvailableSkills, SkillInfo
+from brain_messages.msg import AvailableSkills
 from brain_messages.srv import ReloadSkillsAgents
 from std_srvs.srv import SetBool, Trigger
 
@@ -593,11 +592,6 @@ class BrainClientNode(Node):
             GetAvailableDirectives,
             "/brain/get_available_directives",
             self.handle_get_available_directives,
-        )
-        self.get_skills_srv = self.create_service(
-            GetAvailableSkills,
-            "/brain/get_available_skills",
-            self.handle_get_available_skills,
         )
 
         # Create the primitive execution action client once in the init.
@@ -2444,48 +2438,6 @@ class BrainClientNode(Node):
             ]
         return list(self.primitives_dict.keys())
 
-    def _available_skill_messages(self):
-        if self.primitives_metadata_list:
-            skill_messages = []
-            for skill in self.primitives_metadata_list:
-                skill_id = skill.get("id")
-                if not isinstance(skill_id, str):
-                    continue
-                skill_message = SkillInfo()
-                skill_message.id = skill_id
-                skill_message.name = skill.get("name") or skill_id
-                skill_message.type = skill.get("type") or ""
-                skill_message.guidelines = skill.get("guidelines") or ""
-                skill_message.guidelines_when_running = (
-                    skill.get("guidelines_when_running") or ""
-                )
-                skill_message.inputs_json = json.dumps(skill.get("inputs") or {})
-                skill_message.in_training = bool(skill.get("in_training", False))
-                skill_message.episode_count = int(skill.get("episode_count", 0) or 0)
-                skill_message.directory = skill.get("directory") or ""
-                skill_messages.append(skill_message)
-            return skill_messages
-
-        skill_messages = []
-        for skill_id, primitive in self.primitives_dict.items():
-            metadata = getattr(primitive, "metadata", {})
-            skill_message = SkillInfo()
-            skill_message.id = skill_id
-            skill_message.name = metadata.get("name") or self._id_to_name.get(
-                skill_id, skill_id
-            )
-            skill_message.type = metadata.get("type") or ""
-            skill_message.guidelines = metadata.get("guidelines") or ""
-            skill_message.guidelines_when_running = (
-                metadata.get("guidelines_when_running") or ""
-            )
-            skill_message.inputs_json = json.dumps(metadata.get("inputs") or {})
-            skill_message.in_training = bool(metadata.get("in_training", False))
-            skill_message.episode_count = int(metadata.get("episode_count", 0) or 0)
-            skill_message.directory = metadata.get("directory") or ""
-            skill_messages.append(skill_message)
-        return skill_messages
-
     def set_directive_callback(self, msg: String):
         """
         Callback for changing the AI's directive.
@@ -2623,13 +2575,6 @@ class BrainClientNode(Node):
             self.current_directive.id if self.current_directive else ""
         )
 
-        return response
-
-    def handle_get_available_skills(self, request, response):
-        """Service handler that returns the full available skill catalog."""
-        self.get_logger().info("Received request for available skills")
-        response.skills = self._available_skill_messages()
-        response.active_skills = self._active_skill_ids_for_registration()
         return response
 
     def _unregister_primitives(self):

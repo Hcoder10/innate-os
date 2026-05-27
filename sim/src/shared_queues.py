@@ -174,10 +174,20 @@ class SharedQueues:
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
+            previous_agent_id = self.current_agent_id
             self.available_agents = agents
             self.current_agent_id = current_agent_id
             self.startup_agent_id = startup_agent_id
-            self.active_skill_ids = active_skill_ids or []
+            if active_skill_ids is not None:
+                self.active_skill_ids = active_skill_ids
+            elif current_agent_id and (
+                current_agent_id != previous_agent_id or not self.active_skill_ids
+            ):
+                current_agent = next(
+                    (agent for agent in agents if agent.id == current_agent_id),
+                    None,
+                )
+                self.active_skill_ids = current_agent.skills.copy() if current_agent else []
             self.available_agents_updated_at = time.time()
 
     def update_available_skills(
@@ -190,6 +200,23 @@ class SharedQueues:
             self.available_skills = skills
             if active_skill_ids is not None:
                 self.active_skill_ids = active_skill_ids
+            self.available_agents_updated_at = time.time()
+
+    def set_current_agent(self, agent_id: str):
+        """Track the selected agent locally for API responses."""
+        with self.agents_lock:
+            self.current_agent_id = agent_id
+            current_agent = next(
+                (agent for agent in self.available_agents if agent.id == agent_id),
+                None,
+            )
+            self.active_skill_ids = current_agent.skills.copy() if current_agent else []
+            self.available_agents_updated_at = time.time()
+
+    def update_active_skill_ids(self, skill_ids: List[str]):
+        """Track the active skill subset locally for API responses."""
+        with self.agents_lock:
+            self.active_skill_ids = skill_ids.copy()
             self.available_agents_updated_at = time.time()
 
     def get_available_agents(

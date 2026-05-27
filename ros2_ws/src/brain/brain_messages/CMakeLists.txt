@@ -17,7 +17,6 @@ set(srv_files
   "srv/GetChatHistory.srv"
   "srv/GetTaskMetadataList.srv"
   "srv/GetAvailableDirectives.srv"
-  "srv/GetAvailableSkills.srv"
   "srv/GetTaskMetadata.srv"
   "srv/UpdateTaskMetadata.srv"
   "srv/ResetBrain.srv"

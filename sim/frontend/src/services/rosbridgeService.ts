@@ -46,11 +46,6 @@ interface GetAvailableDirectivesValues {
   startup_directive?: string | null;
 }
 
-interface GetAvailableSkillsValues {
-  skills?: unknown;
-  active_skills?: unknown;
-}
-
 interface RosbridgeServiceResponse<T> {
   op?: string;
   id?: string;
@@ -249,6 +244,71 @@ function parseSkillIds(rawSkillIds: unknown): string[] {
     : [];
 }
 
+function getAvailableSkillsFromTopicDirect(
+  wsUrl: string,
+  timeoutMs = 1200,
+): Promise<RobotSkill[]> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+    let timeoutHandle: number | null = null;
+
+    const finish = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      fn();
+    };
+
+    timeoutHandle = window.setTimeout(() => {
+      finish(() => reject(new Error("Timed out waiting for /brain/available_skills")));
+    }, timeoutMs);
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          op: "subscribe",
+          topic: "/brain/available_skills",
+          type: "brain_messages/msg/AvailableSkills",
+        }),
+      );
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data as string) as {
+          op?: string;
+          topic?: string;
+          msg?: { skills?: unknown };
+        };
+        if (
+          message.op !== "publish" ||
+          message.topic !== "/brain/available_skills"
+        ) {
+          return;
+        }
+        finish(() => resolve(parseRobotSkills(message.msg?.skills)));
+      } catch {
+        // Ignore non-JSON/unrelated messages.
+      }
+    };
+
+    ws.onerror = () => {
+      finish(() => reject(new Error(`Failed to subscribe via ${wsUrl}`)));
+    };
+  });
+}
+
 export async function getAvailableAgentsDirect(
   wsUrl: string,
 ): Promise<AvailableAgentsResponse> {
@@ -280,25 +340,22 @@ export async function getAvailableAgentsDirect(
   const agents = parseRobotAgents(parsedAgents);
 
   let skills = parseRobotSkills(parsedPayload?.skills);
-  let activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
+  const currentAgentId = values.current_directive ?? null;
+  const currentAgent = agents.find((agent) => agent.id === currentAgentId);
+  const activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
   try {
-    const skillValues = await callRosbridgeService<GetAvailableSkillsValues>(
-      wsUrl,
-      "/brain/get_available_skills",
-      {},
-    );
-    skills = parseRobotSkills(skillValues.skills);
-    activeSkillIds = parseSkillIds(skillValues.active_skills);
+    skills = await getAvailableSkillsFromTopicDirect(wsUrl);
   } catch (error) {
-    console.warn("Unable to load available skills directly:", error);
+    console.warn("Unable to load available skills topic directly:", error);
   }
 
   return {
     agents,
     skills,
-    current_agent_id: values.current_directive ?? null,
+    current_agent_id: currentAgentId,
     startup_agent_id: values.startup_directive ?? null,
-    active_skill_ids: activeSkillIds,
+    active_skill_ids:
+      activeSkillIds.length > 0 ? activeSkillIds : currentAgent?.skills ?? [],
   };
 }
 
