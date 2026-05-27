@@ -2415,17 +2415,59 @@ class BrainClientNode(Node):
         self.ws_bridge.send_message(reg_msg)
 
     def _active_skill_ids_for_registration(self):
-        if self.current_directive is None:
-            return []
+        current_skill_ids = getattr(self, "current_skill_ids", None)
+        if current_skill_ids is None:
+            if self.current_directive is None:
+                return []
+            current_skill_ids = list(self.current_directive.get_skills())
 
-        directive_skill_ids = list(self.current_directive.get_skills())
-        current_skill_ids = getattr(self, "current_skill_ids", directive_skill_ids)
+        available_skill_ids = self._available_skill_ids_in_order()
         current_skill_set = set(current_skill_ids)
         return [
             skill_id
-            for skill_id in directive_skill_ids
+            for skill_id in available_skill_ids
             if skill_id in current_skill_set
         ]
+
+    def _available_skill_ids_in_order(self):
+        if self.primitives_metadata_list:
+            return [
+                skill["id"]
+                for skill in self.primitives_metadata_list
+                if isinstance(skill.get("id"), str)
+            ]
+        return list(self.primitives_dict.keys())
+
+    def _available_skill_details_for_ui(self):
+        if self.primitives_metadata_list:
+            skill_details = []
+            for skill in self.primitives_metadata_list:
+                skill_id = skill.get("id")
+                if not isinstance(skill_id, str):
+                    continue
+                skill_details.append(
+                    {
+                        "id": skill_id,
+                        "name": skill.get("name") or skill_id,
+                        "type": skill.get("type") or "",
+                        "in_training": bool(skill.get("in_training", False)),
+                    }
+                )
+            return skill_details
+
+        skill_details = []
+        for skill_id, primitive in self.primitives_dict.items():
+            metadata = getattr(primitive, "metadata", {})
+            skill_details.append(
+                {
+                    "id": skill_id,
+                    "name": metadata.get("name")
+                    or self._id_to_name.get(skill_id, skill_id),
+                    "type": metadata.get("type") or "",
+                    "in_training": bool(metadata.get("in_training", False)),
+                }
+            )
+        return skill_details
 
     def set_directive_callback(self, msg: String):
         """
@@ -2518,19 +2560,19 @@ class BrainClientNode(Node):
             )
             return
 
-        directive_skill_ids = list(self.current_directive.get_skills())
-        directive_skill_set = set(directive_skill_ids)
+        available_skill_ids = self._available_skill_ids_in_order()
+        available_skill_set = set(available_skill_ids)
         requested_skill_set = set(requested_skills)
-        unknown_skills = sorted(requested_skill_set - directive_skill_set)
+        unknown_skills = sorted(requested_skill_set - available_skill_set)
         if unknown_skills:
             self.get_logger().warn(
-                f"Ignoring skills not available on directive "
+                f"Ignoring unavailable skills for directive "
                 f"'{self.current_directive.id}': {unknown_skills}"
             )
 
         self.current_skill_ids = [
             skill_id
-            for skill_id in directive_skill_ids
+            for skill_id in available_skill_ids
             if skill_id in requested_skill_set
         ]
         self.get_logger().info(
@@ -2558,9 +2600,19 @@ class BrainClientNode(Node):
             }
             directive_details.append(directive_info)
 
-        # Convert the detailed info to JSON string for the directives field
-        response.directives = [json.dumps(directive_details)]
-        response.current_directive = self.current_directive.id
+        # Keep this in the existing string[] field to avoid a ROS interface bump.
+        response.directives = [
+            json.dumps(
+                {
+                    "agents": directive_details,
+                    "skills": self._available_skill_details_for_ui(),
+                    "active_skills": self._active_skill_ids_for_registration(),
+                }
+            )
+        ]
+        response.current_directive = (
+            self.current_directive.id if self.current_directive else ""
+        )
 
         return response
 

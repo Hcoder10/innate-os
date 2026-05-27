@@ -36,7 +36,13 @@ class SetActiveSkillsRequest(BaseModel):
 
 
 def available_agents_payload(shared_queues, error: str | None = None) -> dict:
-    agents, current_agent_id, startup_agent_id = shared_queues.get_available_agents()
+    (
+        agents,
+        skills,
+        current_agent_id,
+        startup_agent_id,
+        active_skill_ids,
+    ) = shared_queues.get_available_agents()
     brain_backend_status = shared_queues.get_brain_backend_status()
 
     agents_data = [
@@ -49,11 +55,22 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
         }
         for agent in agents
     ]
+    skills_data = [
+        {
+            "id": skill.id,
+            "name": skill.name,
+            "type": skill.type,
+            "in_training": skill.in_training,
+        }
+        for skill in skills
+    ]
 
     payload = {
         "agents": agents_data,
+        "skills": skills_data,
         "current_agent_id": current_agent_id,
         "startup_agent_id": startup_agent_id,
+        "active_skill_ids": active_skill_ids,
         "brain_backend_status": brain_backend_status,
     }
     if error:
@@ -159,8 +176,10 @@ def available_agents(request: Request):
         return JSONResponse(
             {
                 "agents": [],
+                "skills": [],
                 "current_agent_id": None,
                 "startup_agent_id": None,
+                "active_skill_ids": [],
                 "error": "Simulation not initialized",
                 "brain_backend_status": {
                     "state": "sim_not_initialized",

@@ -9,6 +9,7 @@ import {
   AvailableAgentsResponse,
   BrainBackendStatus,
   RobotAgent,
+  RobotSkill,
   StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
@@ -99,6 +100,26 @@ function backendDisplayLabel(status: BrainBackendStatus | null) {
     return "connecting";
   }
   return formatBackendState(state);
+}
+
+function skillsFromAgentDeclarations(agents: RobotAgent[]): RobotSkill[] {
+  const seen = new Set<string>();
+  const skills: RobotSkill[] = [];
+  for (const agent of agents) {
+    for (const skillId of agent.skills) {
+      if (seen.has(skillId)) {
+        continue;
+      }
+      seen.add(skillId);
+      skills.push({
+        id: skillId,
+        name: skillId,
+        type: "",
+        in_training: false,
+      });
+    }
+  }
+  return skills;
 }
 
 function firstUrlParam(params: URLSearchParams, names: string[]) {
@@ -728,6 +749,7 @@ export default function App() {
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [activeSkillIds, setActiveSkillIds] = useState<string[]>([]);
   const [agents, setAgents] = useState<RobotAgent[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<RobotSkill[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
   const [agentAvailabilityWarning, setAgentAvailabilityWarning] = useState<
     string | null
@@ -739,6 +761,7 @@ export default function App() {
   const isFetchingAgentsRef = useRef(false);
   const agentsLoadStartedAtRef = useRef(Date.now());
   const backendOverrideAppliedRef = useRef(false);
+  const activeAgentRef = useRef<string | null>(null);
   const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
   const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
   const simBaseUrl = import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
@@ -772,6 +795,10 @@ export default function App() {
   }, [sensitivity]);
 
   useEffect(() => {
+    activeAgentRef.current = activeAgent;
+  }, [activeAgent]);
+
+  useEffect(() => {
     if (backendOverrideAppliedRef.current) {
       return;
     }
@@ -784,6 +811,7 @@ export default function App() {
     stripBackendParamsFromUrl();
     agentsLoadStartedAtRef.current = Date.now();
     setAgents([]);
+    setAvailableSkills([]);
     setActiveAgent(null);
     setActiveSkillIds([]);
     setIsLoadingAgents(true);
@@ -940,6 +968,11 @@ export default function App() {
 
         if (data.agents && data.agents.length > 0) {
           setAgents(data.agents);
+          const nextAvailableSkills =
+            data.skills && data.skills.length > 0
+              ? data.skills
+              : skillsFromAgentDeclarations(data.agents);
+          setAvailableSkills(nextAvailableSkills);
           setAgentAvailabilityWarning(null);
           setAgentLoadTimedOut(false);
           const currentAgentId =
@@ -947,14 +980,22 @@ export default function App() {
             data.agents.some((agent) => agent.id === data.current_agent_id)
               ? data.current_agent_id
               : null;
-          setActiveAgent((previousAgentId) =>
+          const previousAgentId = activeAgentRef.current;
+          const nextAgentId =
             previousAgentId &&
             data.agents.some((agent) => agent.id === previousAgentId)
               ? previousAgentId
-              : currentAgentId,
+              : currentAgentId;
+          const nextAgent = data.agents.find((agent) => agent.id === nextAgentId);
+          setActiveAgent(nextAgentId);
+          setActiveSkillIds(
+            Array.isArray(data.active_skill_ids)
+              ? data.active_skill_ids
+              : nextAgent?.skills ?? [],
           );
         } else {
           setAgents([]);
+          setAvailableSkills(data.skills ?? []);
           setActiveSkillIds([]);
           setAgentLoadTimedOut(backendWarnsNow);
           if (backendWarnsNow) {
@@ -988,10 +1029,6 @@ export default function App() {
 
   const activeAgentRecord =
     agents.find((agent) => agent.id === activeAgent) ?? null;
-
-  useEffect(() => {
-    setActiveSkillIds(activeAgentRecord?.skills ?? []);
-  }, [activeAgentRecord]);
 
   useEffect(() => {
     if (useDirectRobot) {
@@ -1400,9 +1437,13 @@ export default function App() {
       return;
     }
 
+    const skillOrder =
+      availableSkills.length > 0
+        ? availableSkills.map((skill) => skill.id)
+        : activeAgentRecord.skills;
     const nextSkillIds = activeSkillIds.includes(skillId)
       ? activeSkillIds.filter((id) => id !== skillId)
-      : activeAgentRecord.skills.filter(
+      : skillOrder.filter(
           (id) => id === skillId || activeSkillIds.includes(id),
         );
 
@@ -1455,7 +1496,7 @@ export default function App() {
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
         onSelectAgent={handleAgentSelect}
-        activeAgentSkills={activeAgentRecord?.skills ?? []}
+        availableSkills={availableSkills}
         activeSkillIds={activeSkillIds}
         onToggleActiveSkill={handleToggleActiveSkill}
         onToggleVoiceRecognition={toggleVoiceRecognition}

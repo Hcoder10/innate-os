@@ -31,6 +31,15 @@ class AgentInfo(NamedTuple):
     skills: List[str]
 
 
+class SkillInfo(NamedTuple):
+    """Information about an available skill/primitive."""
+
+    id: str
+    name: str
+    type: str
+    in_training: bool
+
+
 class SharedQueues:
     """
     Minimal message broker:
@@ -71,8 +80,10 @@ class SharedQueues:
 
         # Store available agents/directives from the robot
         self.available_agents: List[AgentInfo] = []
+        self.available_skills: List[SkillInfo] = []
         self.current_agent_id: Optional[str] = None
         self.startup_agent_id: Optional[str] = None
+        self.active_skill_ids: List[str] = []
         self.available_agents_updated_at: float = 0.0
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
@@ -157,25 +168,37 @@ class SharedQueues:
     def update_available_agents(
         self,
         agents: List[AgentInfo],
+        skills: List[SkillInfo],
         current_agent_id: Optional[str] = None,
         startup_agent_id: Optional[str] = None,
+        active_skill_ids: Optional[List[str]] = None,
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
             self.available_agents = agents
+            self.available_skills = skills
             self.current_agent_id = current_agent_id
             self.startup_agent_id = startup_agent_id
+            self.active_skill_ids = active_skill_ids or []
             self.available_agents_updated_at = time.time()
 
     def get_available_agents(
         self,
-    ) -> Tuple[List[AgentInfo], Optional[str], Optional[str]]:
-        """Thread-safe method to get available agents, current agent, and startup agent"""
+    ) -> Tuple[
+        List[AgentInfo],
+        List[SkillInfo],
+        Optional[str],
+        Optional[str],
+        List[str],
+    ]:
+        """Thread-safe method to get available agents, skills, and active IDs."""
         with self.agents_lock:
             return (
                 self.available_agents.copy(),
+                self.available_skills.copy(),
                 self.current_agent_id,
                 self.startup_agent_id,
+                self.active_skill_ids.copy(),
             )
 
     def get_available_agents_updated_at(self) -> float:

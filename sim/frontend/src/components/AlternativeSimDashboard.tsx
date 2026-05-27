@@ -1,7 +1,7 @@
 import { IoMic, IoMicOff, IoRefresh } from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
-import { RobotAgent } from "../services/rosbridgeService";
+import { RobotAgent, RobotSkill } from "../services/rosbridgeService";
 import { Chat } from "./Chat";
 import { ImageDisplay } from "./ImageDisplay";
 
@@ -31,7 +31,7 @@ type AlternativeSimDashboardProps = {
   onResetBrain: () => void;
   onResetPosition: () => void;
   onSelectAgent: (agentId: string) => void;
-  activeAgentSkills: string[];
+  availableSkills: RobotSkill[];
   activeSkillIds: string[];
   onToggleActiveSkill: (skillId: string) => void;
   onToggleVoiceRecognition: () => void;
@@ -348,6 +348,16 @@ const AgentButton = styled.button<{ $active: boolean }>`
   &:hover {
     background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.3)" : "#0f172a")};
     color: #fff;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  &:disabled:hover {
+    background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "transparent")};
+    color: ${({ $active }) => ($active ? "#fff" : "#9ca3af")};
   }
 `;
 
@@ -683,12 +693,13 @@ const FineLabel = styled.div`
   text-transform: uppercase;
 `;
 
-function formatSkillName(skillId: string) {
-  return skillId
+function formatSkillName(skill: RobotSkill) {
+  const label = skill.name || skill.id;
+  return label
     .split("/")
     .pop()
     ?.replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase()) ?? skillId;
+    .replace(/\b\w/g, (letter) => letter.toUpperCase()) ?? skill.id;
 }
 
 export function AlternativeSimDashboard({
@@ -709,7 +720,7 @@ export function AlternativeSimDashboard({
   onResetBrain,
   onResetPosition,
   onSelectAgent,
-  activeAgentSkills,
+  availableSkills,
   activeSkillIds,
   onToggleActiveSkill,
   onToggleVoiceRecognition,
@@ -774,24 +785,29 @@ export function AlternativeSimDashboard({
           </SectionTitleBar>
 
           <AgentList>
-            {activeAgentSkills.length > 0 ? (
-              activeAgentSkills.map((skillId) => {
-                const isActive = activeSkillIds.includes(skillId);
+            {availableSkills.length > 0 ? (
+              availableSkills.map((skill) => {
+                const isActive = activeSkillIds.includes(skill.id);
                 return (
                   <AgentButton
-                    key={skillId}
+                    key={skill.id}
                     type="button"
                     $active={isActive}
-                    onClick={() => onToggleActiveSkill(skillId)}
+                    disabled={!currentAgent}
+                    onClick={() => onToggleActiveSkill(skill.id)}
                   >
                     <AgentRow>
-                      <AgentName>{formatSkillName(skillId)}</AgentName>
+                      <AgentName>{formatSkillName(skill)}</AgentName>
                       <ToggleRail $active={isActive}>
                         <ToggleThumb $active={isActive} />
                       </ToggleRail>
                     </AgentRow>
                     <AgentState $active={isActive}>
-                      {isActive ? "Enabled" : "Disabled"}
+                      {currentAgent
+                        ? isActive
+                          ? "Enabled"
+                          : "Disabled"
+                        : "Select agent"}
                     </AgentState>
                   </AgentButton>
                 );
@@ -801,7 +817,7 @@ export function AlternativeSimDashboard({
                 {isLoadingAgents
                   ? "Loading available skills..."
                   : currentAgent
-                    ? "Selected agent has no declared skills."
+                    ? "No skills are available from the brain yet."
                     : "Select an agent to edit its active skills."}
               </EmptyAgentState>
             )}

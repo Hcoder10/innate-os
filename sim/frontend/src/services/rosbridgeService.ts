@@ -9,6 +9,13 @@ export interface RobotAgent {
   source: AgentSource;
 }
 
+export interface RobotSkill {
+  id: string;
+  name: string;
+  type: string;
+  in_training: boolean;
+}
+
 export interface BrainBackendStatus {
   state: string;
   connected: boolean;
@@ -21,8 +28,10 @@ export interface BrainBackendStatus {
 
 export interface AvailableAgentsResponse {
   agents: RobotAgent[];
+  skills?: RobotSkill[];
   current_agent_id: string | null;
   startup_agent_id: string | null;
+  active_skill_ids?: string[];
   brain_backend_status?: BrainBackendStatus;
   error?: string;
 }
@@ -209,8 +218,20 @@ export async function getAvailableAgentsDirect(
     parsedDirectives = [];
   }
 
-  const agents: RobotAgent[] = Array.isArray(parsedDirectives)
-    ? parsedDirectives
+  const parsedPayload =
+    parsedDirectives && typeof parsedDirectives === "object" && !Array.isArray(parsedDirectives)
+      ? (parsedDirectives as Record<string, unknown>)
+      : null;
+  const parsedAgents = parsedPayload?.agents ?? parsedDirectives;
+  const parsedSkills = parsedPayload?.skills ?? [];
+  const activeSkillIds = Array.isArray(parsedPayload?.active_skills)
+    ? parsedPayload.active_skills.filter(
+        (skillId): skillId is string => typeof skillId === "string",
+      )
+    : [];
+
+  const agents: RobotAgent[] = Array.isArray(parsedAgents)
+    ? parsedAgents
         .filter(
           (entry): entry is Record<string, unknown> =>
             !!entry && typeof entry === "object",
@@ -231,11 +252,26 @@ export async function getAvailableAgentsDirect(
           source: entry.source === "shipped" ? "shipped" : "user",
         }))
     : [];
+  const skills: RobotSkill[] = Array.isArray(parsedSkills)
+    ? parsedSkills
+        .filter(
+          (entry): entry is Record<string, unknown> =>
+            !!entry && typeof entry === "object",
+        )
+        .map((entry) => ({
+          id: String(entry.id ?? ""),
+          name: String(entry.name ?? entry.id ?? ""),
+          type: String(entry.type ?? ""),
+          in_training: Boolean(entry.in_training ?? false),
+        }))
+    : [];
 
   return {
     agents,
+    skills,
     current_agent_id: values.current_directive ?? null,
     startup_agent_id: values.startup_directive ?? null,
+    active_skill_ids: activeSkillIds,
   };
 }
 
