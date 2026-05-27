@@ -369,8 +369,10 @@ def main() -> int:
                 sim_visualization_override=True if args.vis else None,
             )
         elif args.sim_command == "down":
+            ensure_docker_available(command_hint=f"{CLI_SIM} down")
             cmd_down(config)
         elif args.sim_command == "status":
+            ensure_docker_available(command_hint=f"{CLI_SIM} status")
             print_status(
                 config,
                 dashboard_callbacks(),
