@@ -1,4 +1,4 @@
-import { IoMic, IoMicOff, IoRefresh } from "react-icons/io5";
+import { IoRefresh } from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
 import { RobotAgent, RobotSkill } from "../services/rosbridgeService";
@@ -22,19 +22,13 @@ type AlternativeSimDashboardProps = {
   isLoadingAgents: boolean;
   viewMode: ViewMode;
   setViewMode: Dispatch<SetStateAction<ViewMode>>;
-  isVoiceActive: boolean;
-  voiceStatus: string;
-  audioLevels: number[];
-  sensitivity: number;
-  setSensitivity: (value: number) => void;
   onReloadAgents: () => void;
   onResetBrain: () => void;
   onResetPosition: () => void;
-  onSelectAgent: (agentId: string) => void;
+  onSelectAgent: (agentId: string | null) => void;
   availableSkills: RobotSkill[];
   activeSkillIds: string[];
   onToggleActiveSkill: (skillId: string) => void;
-  onToggleVoiceRecognition: () => void;
 };
 
 const Shell = styled.div`
@@ -540,36 +534,6 @@ const CoordinateBadge = styled.div`
   }
 `;
 
-const FeedFooter = styled.div`
-  position: absolute;
-  inset: auto 0 0;
-  height: 72px;
-  border-top: 1px solid #1f2937;
-  background: rgba(0, 0, 0, 0.92);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 14px;
-  padding: 0 34px;
-`;
-
-const FeedAction = styled.button`
-  border: 1px solid rgba(127, 29, 29, 0.8);
-  border-radius: 0;
-  background: #000;
-  color: #f87171;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  padding: 11px 18px;
-  text-transform: uppercase;
-
-  &:hover {
-    background: rgba(127, 29, 29, 0.45);
-    color: #fecaca;
-  }
-`;
-
 const ChatWrap = styled.div`
   flex: 1;
   min-height: 0;
@@ -608,89 +572,9 @@ const Select = styled.select`
   }
 `;
 
-const VoicePanel = styled.div`
-  padding: 16px 18px 22px;
+const ResetActions = styled(SectionPad)`
   display: grid;
-  gap: 14px;
-`;
-
-const VoiceTopRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const RoundButton = styled.button<{ $active: boolean }>`
-  width: 42px;
-  height: 42px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid ${({ $active }) => ($active ? "#2563eb" : "#374151")};
-  border-radius: 999px;
-  background: ${({ $active }) => ($active ? "rgba(37, 99, 235, 0.22)" : "#0a0a0a")};
-  color: ${({ $active }) => ($active ? "#93c5fd" : "#9ca3af")};
-
-  &:hover {
-    background: #fff;
-    border-color: #fff;
-    color: #050505;
-  }
-`;
-
-const VoiceText = styled.div`
-  color: #9ca3af;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-`;
-
-const Bars = styled.div`
-  align-items: end;
-  display: flex;
-  gap: 3px;
-  height: 32px;
-`;
-
-const Bar = styled.div<{ $height: number; $active: boolean }>`
-  width: 4px;
-  min-height: 3px;
-  height: ${({ $height }) => Math.max(3, Math.min($height, 32))}px;
-  background: ${({ $active }) => ($active ? "#2563eb" : "#374151")};
-  box-shadow: ${({ $active }) => ($active ? "0 0 8px rgba(37, 99, 235, 0.65)" : "none")};
-  transition: height 0.07s ease-out;
-`;
-
-const SensitivityGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: center;
-`;
-
-const Slider = styled.input`
-  width: 100%;
-  appearance: none;
-  height: 4px;
-  background: #1f2937;
-  border: 0;
-
-  &::-webkit-slider-thumb {
-    appearance: none;
-    width: 10px;
-    height: 10px;
-    background: #2563eb;
-    cursor: pointer;
-  }
-`;
-
-const FineLabel = styled.div`
-  color: #4b5563;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  gap: 10px;
 `;
 
 function formatSkillName(skill: RobotSkill) {
@@ -711,11 +595,6 @@ export function AlternativeSimDashboard({
   isLoadingAgents,
   viewMode,
   setViewMode,
-  isVoiceActive,
-  voiceStatus,
-  audioLevels,
-  sensitivity,
-  setSensitivity,
   onReloadAgents,
   onResetBrain,
   onResetPosition,
@@ -723,7 +602,6 @@ export function AlternativeSimDashboard({
   availableSkills,
   activeSkillIds,
   onToggleActiveSkill,
-  onToggleVoiceRecognition,
 }: AlternativeSimDashboardProps) {
   const selectedAgent = activeAgent ?? "";
   const currentAgent = agents.find((agent) => agent.id === activeAgent);
@@ -823,11 +701,14 @@ export function AlternativeSimDashboard({
             )}
           </AgentList>
 
-          <SectionPad>
+          <ResetActions>
             <DangerButton type="button" onClick={onResetBrain}>
               Reset Brain
             </DangerButton>
-          </SectionPad>
+            <DangerButton type="button" onClick={onResetPosition}>
+              Reset Position
+            </DangerButton>
+          </ResetActions>
         </LeftPanel>
 
         <CenterPanel>
@@ -850,11 +731,6 @@ export function AlternativeSimDashboard({
             <MapPoint $top={58} $left={58} $color="#3b82f6" />
             <MapPoint $top={92} $left={106} $color="#ef4444" />
           </MiniMap>
-          <FeedFooter>
-            <FeedAction type="button" onClick={onResetPosition}>
-              Reset Position
-            </FeedAction>
-          </FeedFooter>
         </CenterPanel>
 
         <RightPanel>
@@ -872,13 +748,11 @@ export function AlternativeSimDashboard({
             <Select
               value={selectedAgent}
               onChange={(event) => {
-                if (event.target.value) {
-                  onSelectAgent(event.target.value);
-                }
+                onSelectAgent(event.target.value || null);
               }}
               aria-label="Active agent"
             >
-              <option value="">No agent selected</option>
+              <option value="">No prompt</option>
               {agents.map((agent) => (
                 <option key={agent.id} value={agent.id}>
                   {agent.display_name}
@@ -886,37 +760,6 @@ export function AlternativeSimDashboard({
               ))}
             </Select>
           </AgentSelectWrap>
-
-          <VoicePanel>
-            <VoiceTopRow>
-              <RoundButton
-                type="button"
-                $active={isVoiceActive}
-                onClick={onToggleVoiceRecognition}
-                title={isVoiceActive ? "Stop listening" : "Start listening"}
-                aria-label={isVoiceActive ? "Stop listening" : "Start listening"}
-              >
-                {isVoiceActive ? <IoMic size={19} /> : <IoMicOff size={19} />}
-              </RoundButton>
-              <VoiceText>{voiceStatus}</VoiceText>
-            </VoiceTopRow>
-            <Bars aria-hidden="true">
-              {audioLevels.map((level, index) => (
-                <Bar key={index} $height={level} $active={isVoiceActive} />
-              ))}
-            </Bars>
-            <SensitivityGrid>
-              <Slider
-                type="range"
-                min="0.005"
-                max="0.08"
-                step="0.005"
-                value={sensitivity}
-                onChange={(event) => setSensitivity(parseFloat(event.target.value))}
-              />
-              <FineLabel>Sensitivity</FineLabel>
-            </SensitivityGrid>
-          </VoicePanel>
         </RightPanel>
       </Layout>
     </Shell>

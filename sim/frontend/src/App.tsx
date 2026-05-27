@@ -975,7 +975,7 @@ export default function App() {
           setAvailableSkills(nextAvailableSkills);
           setAgentAvailabilityWarning(null);
           setAgentLoadTimedOut(false);
-          const currentAgentId =
+          const backendCurrentAgentId =
             data.current_agent_id &&
             data.agents.some((agent) => agent.id === data.current_agent_id)
               ? data.current_agent_id
@@ -985,11 +985,13 @@ export default function App() {
             previousAgentId &&
             data.agents.some((agent) => agent.id === previousAgentId)
               ? previousAgentId
-              : currentAgentId;
+              : useAlternativeUi
+                ? null
+                : backendCurrentAgentId;
           const nextAgent = data.agents.find((agent) => agent.id === nextAgentId);
           setActiveAgent(nextAgentId);
           setActiveSkillIds(
-            Array.isArray(data.active_skill_ids)
+            nextAgentId && Array.isArray(data.active_skill_ids)
               ? data.active_skill_ids
               : nextAgent?.skills ?? [],
           );
@@ -1020,7 +1022,7 @@ export default function App() {
         isFetchingAgentsRef.current = false;
       }
     },
-    [robotWsUrl, simBaseUrl, useDirectRobot],
+    [robotWsUrl, simBaseUrl, useAlternativeUi, useDirectRobot],
   );
 
   useEffect(() => {
@@ -1366,23 +1368,41 @@ export default function App() {
     }
   }
 
+  async function handleSetBrainActive(active: boolean) {
+    try {
+      if (useDirectRobot) {
+        await setBrainActiveDirect(robotWsUrl, active);
+        return;
+      }
+
+      const response = await fetch(`${simBaseUrl}/set_brain_active`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.error("Error setting brain active state:", error);
+    }
+  }
+
   async function handleSetDirective(directive: string) {
     try {
       if (useDirectRobot) {
         await setDirectiveDirect(robotWsUrl, directive);
-        await setBrainActiveDirect(robotWsUrl, true);
+        await handleSetBrainActive(true);
         return;
       }
-
-      const baseUrl =
-        import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
 
       // Set the directive
-      const response = await fetch(`${baseUrl}/set_directive`, {
+      const response = await fetch(`${simBaseUrl}/set_directive`, {
         method: "POST",
         headers,
         body: JSON.stringify({ text: directive }),
@@ -1391,14 +1411,7 @@ export default function App() {
       const data = await response.json();
       console.log("Directive response:", data);
 
-      // Also activate the brain when selecting an agent
-      const brainResponse = await fetch(`${baseUrl}/set_brain_active`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ active: true }),
-      });
-      const brainData = await brainResponse.json();
-      console.log("Brain activation response:", brainData);
+      await handleSetBrainActive(true);
     } catch (error) {
       console.error("Error setting directive:", error);
     }
@@ -1425,7 +1438,15 @@ export default function App() {
     }
   }
 
-  function handleAgentSelect(agentId: string) {
+  function handleAgentSelect(agentId: string | null) {
+    if (!agentId) {
+      setActiveAgent(null);
+      setActiveSkillIds([]);
+      void handleSetActiveSkills(null, []);
+      void handleSetBrainActive(false);
+      return;
+    }
+
     const selectedAgent = agents.find((agent) => agent.id === agentId) ?? null;
     setActiveAgent(agentId);
     setActiveSkillIds(selectedAgent?.skills ?? []);
@@ -1487,11 +1508,6 @@ export default function App() {
         isLoadingAgents={isLoadingAgents}
         viewMode={viewMode}
         setViewMode={setViewMode}
-        isVoiceActive={isVoiceActive}
-        voiceStatus={voiceStatus}
-        audioLevels={audioLevels}
-        sensitivity={sensitivity}
-        setSensitivity={setSensitivity}
         onReloadAgents={handleReloadAgents}
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
@@ -1499,7 +1515,6 @@ export default function App() {
         availableSkills={availableSkills}
         activeSkillIds={activeSkillIds}
         onToggleActiveSkill={handleToggleActiveSkill}
-        onToggleVoiceRecognition={toggleVoiceRecognition}
       />
     );
   }
