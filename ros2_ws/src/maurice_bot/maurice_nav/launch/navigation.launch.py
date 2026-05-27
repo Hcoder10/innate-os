@@ -42,7 +42,7 @@ def generate_launch_description():
 
     # Use the map file - construct path from environment variable or HOME
     maurice_root = os.environ.get('INNATE_OS_ROOT', os.path.join(os.path.expanduser('~'), 'innate-os'))
-    default_map_path = os.path.join(maurice_root, 'maps', 'home.yaml')
+    default_map_path = os.path.join(maurice_root, 'data', 'maps', 'home.yaml')
     
     # Declare launch arguments so that these paths can be overridden if needed
   
