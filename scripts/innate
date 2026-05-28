@@ -1851,10 +1851,10 @@ class _GitRepo:
         )
         return result.returncode == 0
 
-    def is_remote_branch(self, name: str) -> bool:
-        """Return True if `name` is a branch on origin."""
-        result = self._run(["ls-remote", "--heads", "origin", name], check=False)
-        return result.returncode == 0 and bool(result.stdout.strip())
+    def is_tag(self, name: str) -> bool:
+        """Return True if `name` is a local tag (tags are fetched up front)."""
+        result = self._run(["show-ref", "--verify", "--quiet", f"refs/tags/{name}"], check=False)
+        return result.returncode == 0
 
     def prune_stale_local_tags(self) -> list[str]:
         """Delete local tags that no longer exist on the remote.
@@ -2195,10 +2195,10 @@ class _UpdateManager:
         """Apply updates to a specific target (tag or branch)."""
         target = self.target
 
-        # If target is a branch on the remote, track it (covers main + feature branches)
-        if self.git.is_remote_branch(target):
+        # Tags are fetched up front; treat any non-tag target as a branch to track.
+        if not self.git.is_tag(target):
             if not self.git.fetch_branch(target):
-                self.logger.error(f"Failed to fetch branch '{target}' from remote")
+                self.logger.error(f"Unknown target: {target}")
                 self._remove_update_lock()
                 return 1
 
@@ -2221,13 +2221,8 @@ class _UpdateManager:
                 track_remote=remote_ref,
             )
 
-        # Target is a tag — verify it exists
+        # Target is a tag
         tag_commit = self.git.resolve_ref(target)
-        if tag_commit == "unknown":
-            self.logger.error(f"Unknown target: {target}")
-            self._remove_update_lock()
-            return 1
-
         if tag_commit == current:
             self.logger.success(f"Already at {target}")
             self._remove_update_lock()
