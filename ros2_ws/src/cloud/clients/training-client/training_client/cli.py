@@ -499,13 +499,20 @@ def activate(ctx: click.Context, skill_dir: str, run_id: int) -> None:
 # ── Web UI ──────────────────────────────────────────────────────────
 
 
+_DEFAULT_SKILLS_DIR = os.path.join(
+    os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os")),
+    "workspace",
+    "custom_skills",
+)
+
+
 @cli.command("ui")
 @click.option("--port", type=int, default=8080, help="HTTP port")
 @click.option(
     "--skills-dir",
     type=click.Path(exists=True, file_okay=False),
-    default=os.path.expanduser("~/skills"),
-    help="Root skills directory (default: ~/skills)",
+    default=_DEFAULT_SKILLS_DIR,
+    help=f"Root skills directory (default: {_DEFAULT_SKILLS_DIR})",
 )
 @click.pass_context
 def launch_ui(ctx: click.Context, port: int, skills_dir: str) -> None:

@@ -457,7 +457,7 @@ class TestReplayExecCfg:
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
-_WAVE_METADATA = _REPO_ROOT / "skills" / "wave" / "metadata.json"
+_WAVE_METADATA = _REPO_ROOT / "workspace" / "skills" / "wave" / "metadata.json"
 
 
 @pytest.mark.skipif(

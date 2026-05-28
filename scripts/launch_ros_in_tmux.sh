@@ -3,7 +3,8 @@
 
 SESSION_NAME="ros_nodes"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
-DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/dds/setup_dds.zsh"
+DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
+RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 
 # ROS launch commands grouped into windows (pipe-delimited for 2 panes)
 ROS_COMMAND_GROUPS=(
@@ -28,6 +29,7 @@ WINDOW_NAMES=(
 
 DDS_SOURCE_CMD="source $DDS_SETUP_SCRIPT"
 ROS_SOURCE_CMD="source $ROS_WS_PATH/install/setup.zsh"
+RUNTIME_ENV_CMD="${RUNTIME_ENV_EXPORTS:-true}"
 
 echo "Launching ROS nodes in tmux session '$SESSION_NAME'..."
 
@@ -63,12 +65,12 @@ process_command_group() {
     sleep 0.1
     
     local first_cmd="${commands[1]}"
-    local first_cmd_full="$DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $first_cmd"
+    local first_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $first_cmd"
     tmux send-keys -t $SESSION_NAME:"$window_name".0 "$first_cmd_full" C-m || return 1
     
     if [ ${#commands[@]} -gt 1 ]; then
         local second_cmd="${commands[2]}"
-        local second_cmd_full="$DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $second_cmd"
+        local second_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $second_cmd"
         
         tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" || return 1
         sleep 0.1
@@ -107,7 +109,7 @@ echo "  ╚═══════════════════════
 echo ""
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
-(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/sounds/turnon.mp3" >/dev/null 2>&1) &
+(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
 disown
 
 # Keep the script alive so systemd (Type=simple) considers the service running.

@@ -21,7 +21,7 @@ class HelloWorld(Directive):
 ### 2. Create an Input Device (Pure Python!)
 
 ```python
-# inputs/my_sensor_input.py
+# workspace/inputs/my_sensor_input.py
 
 from brain_client.input_types import InputDevice
 import threading
@@ -208,15 +208,16 @@ Node(
 
 ```
 innate-os/
-├── inputs/                           # Put input devices here
-│   └── micro_input.py               # Example: microphone
-├── directives/
-│   └── hello_world_directive.py     # Uses get_inputs()
+├── workspace/
+│   ├── inputs/                       # Put input devices here
+│   │   └── micro_input.py            # Example: microphone
+│   └── agents/
+│       └── hello_world_directive.py  # Uses get_inputs()
 └── ros2_ws/src/brain/brain_client/
     └── brain_client/
-        ├── input_types.py           # Base class
-        ├── input_loader.py          # Auto-discovery
-        └── input_manager_node.py    # ROS bridge
+        ├── input_types.py            # Base class
+        ├── input_loader.py           # Auto-discovery
+        └── input_manager_node.py     # ROS bridge
 ```
 
 ## Summary
@@ -224,6 +225,6 @@ innate-os/
 1. **Directives** specify inputs via `get_inputs()` → `["micro", "camera"]`
 2. **Input devices** are pure Python → NO ROS, just `on_open()`/`on_close()`/`send_data()`
 3. **InputManagerNode** handles ROS → Only place with ROS code
-4. **Automatic loading** → Drop `*_input.py` file in `inputs/`, it's loaded
+4. **Automatic loading** → Drop `*_input.py` file in `workspace/inputs/`, it's loaded
 5. **Active lifecycle** → Devices start/stop based on directive needs
 

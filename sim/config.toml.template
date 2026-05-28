@@ -1,0 +1,37 @@
+# Optional non-secret simulator overrides for `./innate sim`.
+# Copy to sim/config.toml or let `./innate sim setup` create it automatically.
+# Leave values commented to use the built-in defaults.
+
+[display]
+# visualization = true
+# Target rendered camera FPS for the web feed. Default: 25.
+# This cannot exceed 1 / scene_dt unless scene_dt is lowered too.
+# render_fps = 25
+# Genesis simulation timestep in seconds. Default: 0.04 (25 Hz).
+# scene_dt = 0.04
+
+[simulator]
+# Seconds to wait for the simulator HTTP endpoint on first scene load.
+# First boot on Apple Silicon can take several minutes while Genesis builds
+# collision meshes. Default: 600.
+# startup_timeout_seconds = 600
+
+[os]
+# Optional prebuilt Innate OS image. By default, the launcher tries a
+# content-addressed prebuilt image matching this checkout, then falls back to
+# the local Docker build if no matching image is available.
+# image = "auto"
+#
+# Other options:
+# image = "local"
+# image = "ghcr.io/innate-inc/innate-os-sim-ros:main"
+# pull_image = true
+
+# Run `colcon build` on every startup. Leave false for incremental startup:
+# the launcher rebuilds only when ros2_ws/src is newer than install/setup.zsh.
+# always_build = false
+
+[cloud_agent]
+# mode = "hosted"
+# image = "ghcr.io/your-org/innate-cloud-agent:latest"
+# source_dir = "../innate-cloud-agent"

@@ -1,0 +1,71 @@
+name: innate-os
+
+services:
+  novnc:
+    image: theasp/novnc:latest
+    environment:
+      # Adjust to your desired screen resolution:
+      - DISPLAY_WIDTH=1600
+      - DISPLAY_HEIGHT=968
+      - RUN_XTERM=no
+    ports:
+      - "8080:8080"
+    networks:
+      - x11
+
+  innate:
+    image: ${INNATE_OS_IMAGE:-innate-os-sim-clean-innate:latest}
+    build:
+      context: ..
+      dockerfile: sim/Dockerfile
+      target: dev-runtime
+    container_name: innate-dev
+    # Use host networking if you need direct access to hardware, or use your own approach
+    depends_on:
+      - novnc
+    environment:
+      - DISPLAY=novnc:0.0
+      - INNATE_OS_ROOT=/root/innate-os
+      - SKIP_UPDATE_CHECK=1 # Skip git update checks in simulation mode
+      - CCACHE_DIR=/root/.cache/ccache
+    ports:
+      - "9090:9090"
+
+    volumes:
+      # 1) Mount your local code (paths are relative to this file's directory)
+      - ../ros2_ws:/root/innate-os/ros2_ws:rw
+      - ../scripts:/root/innate-os/scripts:rw
+      - ../config:/root/innate-os/config:ro
+      - ../workspace:/root/innate-os/workspace:rw
+      - ${INNATE_OS_ENV_FILE:-../.env}:/root/innate-os/.env:ro
+
+      # 2) Keep build/install/log folders as Docker named volumes, so they won't pollute your host
+      - ros2_ws_build:/root/innate-os/ros2_ws/build
+      - ros2_ws_install:/root/innate-os/ros2_ws/install
+      - ros2_ws_log:/root/innate-os/ros2_ws/log
+      - ccache:/root/.cache/ccache
+
+      # 3) Mount git credentials from host (read-only for security)
+      - ~/.ssh:/root/.ssh:ro
+      - ~/.gitconfig:/root/.gitconfig:ro
+
+    # 2) Or just do a "do-nothing" command so the container doesn't exit
+    command: zsh -l
+
+    # 3) Keep container open for interactive usage
+    tty: true
+    stdin_open: true
+    shm_size: "2g"
+    networks:
+      - x11
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  ros2_ws_build:
+  ros2_ws_install:
+  ros2_ws_log:
+  ccache:
+
+networks:
+  x11:

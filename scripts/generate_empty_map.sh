@@ -30,7 +30,7 @@ ros2 topic pub --once /map nav_msgs/msg/OccupancyGrid "{
   data: ${data_array}
 }" &
 
-ros2 run nav2_map_server map_saver_cli -f maps/empty_0size --ros-args -p save_map_timeout:=5000.0
+ros2 run nav2_map_server map_saver_cli -f data/maps/empty_0size --ros-args -p save_map_timeout:=5000.0
 
 wait
 

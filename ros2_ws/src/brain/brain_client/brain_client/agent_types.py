@@ -17,6 +17,10 @@ class Agent(ABC):
     agent is active.
     """
 
+    # Stamped by the loader to "shipped" or "user" based on origin directory.
+    # Subclasses must not set this themselves.
+    source: str = "user"
+
     @property
     @abstractmethod
     def id(self) -> str:

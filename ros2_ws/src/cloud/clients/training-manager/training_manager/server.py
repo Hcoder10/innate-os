@@ -30,7 +30,14 @@ logger = logging.getLogger("training_manager")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(skills_dir: str = "~/skills") -> FastAPI:
+_DEFAULT_SKILLS_DIR = os.path.join(
+    os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os")),
+    "workspace",
+    "custom_skills",
+)
+
+
+def create_app(skills_dir: str = _DEFAULT_SKILLS_DIR) -> FastAPI:
     resolved_skills_dir = str(Path(skills_dir).expanduser().resolve())
 
     app = FastAPI(title="Training Manager", version="0.1.0")
@@ -83,7 +90,7 @@ def _install_log_capture() -> None:
 def main() -> None:
     """Entry point for ``training-manager`` console script."""
     port = int(os.environ.get("PORT", "8080"))
-    skills_dir = os.environ.get("SKILLS_DIR", "~/skills")
+    skills_dir = os.environ.get("SKILLS_DIR", _DEFAULT_SKILLS_DIR)
 
     app = create_app(skills_dir=skills_dir)
 
