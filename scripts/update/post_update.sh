@@ -202,50 +202,18 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 0a. Migrate root-level agents/, inputs/, skills/ into workspace/
-# Refactor moved these under workspace/. User-created content goes into the
-# custom_* subdirs so it never collides with shipped innate_* content.
-# Tracked files were relocated by git checkout; this step preserves any
-# user-created untracked files. Never deletes user data: skips on conflict,
-# and uses rmdir (which only removes empty dirs) for the final cleanup.
+# 0a. Migrate user-created data into the post-refactor layout.
+# The refactor moved agents/skills/inputs under workspace/ and maps + nav-state
+# (.last_mode/.last_map) under data/. git checkout relocated the *tracked*
+# shipped files; this step preserves any user-created *untracked* content
+# (custom skills/agents/inputs, trained models, SLAM maps, last mode/map).
+# Idempotent, never overwrites, only rmdir's empty dirs.
+# Home-dir ~/agents and ~/skills are migrated separately at brain startup
+# (brain_client.script_paths.migrate_legacy_home_directories).
 # -----------------------------------------------------------------------------
-migrate_user_dir() {
-    local old_dir="$1"
-    local new_subdir="$2"
-    local old_path="$REPO_DIR/$old_dir"
-    local new_path="$REPO_DIR/workspace/$new_subdir"
-    [ -d "$old_path" ] || return 0
-
-    shopt -s dotglob nullglob
-    local items=("$old_path"/*)
-    shopt -u dotglob nullglob
-
-    if [ ${#items[@]} -gt 0 ]; then
-        log "Migrating user content from $old_dir/ to workspace/$new_subdir/"
-        mkdir -p "$new_path"
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$new_path"
-        local item name
-        for item in "${items[@]}"; do
-            name=$(basename "$item")
-            if [ -e "$new_path/$name" ]; then
-                log "  Kept $old_dir/$name (conflicts with existing workspace/$new_subdir/$name - reconcile manually)"
-            else
-                mv "$item" "$new_path/"
-                log "  Moved $old_dir/$name -> workspace/$new_subdir/$name"
-            fi
-        done
-    fi
-
-    if rmdir "$old_path" 2>/dev/null; then
-        log "Removed empty $old_dir/"
-    else
-        log "Kept $old_dir/ (still contains files after migration)"
-    fi
-}
-
-migrate_user_dir agents custom_agents
-migrate_user_dir skills custom_skills
-migrate_user_dir inputs  inputs
+# shellcheck source=scripts/update/migrate_user_data.sh
+source "$SCRIPT_DIR/migrate_user_data.sh"
+MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
 
 # Stop running services before updating (keep app.cpp alive during build)
 log "Stopping services to begin update..."
@@ -712,43 +680,9 @@ chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"
 
 # -----------------------------------------------------------------------------
-# 11. Move primitives .h5 files to workspace/innate_skills/
+# 11. (User-data migration — primitives models, legacy directives, maps and
+# nav-state — now runs up front in step 0a via run_user_data_migrations.)
 # -----------------------------------------------------------------------------
-PRIMITIVES_DIR="$REPO_DIR/primitives"
-INNATE_SKILLS_DIR="$REPO_DIR/workspace/innate_skills"
-if [ -d "$PRIMITIVES_DIR" ]; then
-    log "Migrating primitives .h5 files to innate_skills directory..."
-    # Move each .h5 file to corresponding workspace/innate_skills/ path
-    # (e.g. primitives/x/a.h5 -> workspace/innate_skills/x/a.h5)
-    find "$PRIMITIVES_DIR" -name "*.h5" -type f | while read -r h5_file; do
-        rel_path="${h5_file#$PRIMITIVES_DIR/}"
-        mkdir -p "$INNATE_SKILLS_DIR/$(dirname "$rel_path")"
-        log "  Moving $rel_path"
-        mv "$h5_file" "$INNATE_SKILLS_DIR/$rel_path"
-    done
-    
-    # Remove any __pycache__ directories left behind
-    find "$PRIMITIVES_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    
-    # Remove primitives directory if no files remain
-    if [ -z "$(find "$PRIMITIVES_DIR" -type f)" ]; then
-        rm -rf "$PRIMITIVES_DIR"
-        log "  Removed empty primitives directory"
-    fi
-fi
-
-# Clean up directives directory if it exists
-DIRECTIVES_DIR="$REPO_DIR/directives"
-if [ -d "$DIRECTIVES_DIR" ]; then
-    # Remove any __pycache__ directories left behind
-    find "$DIRECTIVES_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    
-    # Remove directives directory if no files remain
-    if [ -z "$(find "$DIRECTIVES_DIR" -type f)" ]; then
-        rm -rf "$DIRECTIVES_DIR"
-        log "  Removed empty directives directory"
-    fi
-fi
 
 # -----------------------------------------------------------------------------
 # 11b. Download skill assets from metadata.json
