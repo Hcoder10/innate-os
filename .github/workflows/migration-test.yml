@@ -37,5 +37,8 @@ jobs:
       - name: Upgrade-migration test across release tags (repo-root layout)
         run: bash scripts/update/test_migrate_user_data.sh
 
-      - name: Home-directory migration unit tests (~/agents, ~/skills)
-        run: pytest ros2_ws/src/brain/brain_client/tests/test_home_migration.py -v
+      - name: Migration edge cases + production invocation + update git flow
+        run: bash scripts/update/test_migrate_user_data_edgecases.sh
+
+      - name: Home-directory migration + runtime loadability unit tests
+        run: pytest ros2_ws/src/brain/brain_client/tests/ -v
