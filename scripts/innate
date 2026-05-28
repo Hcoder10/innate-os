@@ -2197,9 +2197,9 @@ class _UpdateManager:
 
         # Tags are fetched up front; treat any non-tag target as a branch to track.
         if not self.git.is_tag(target):
-            # The configured branch is already fetched at the call site; only other
-            # branches need an explicit fetch, which also confirms they exist.
-            if target != self.config.branch and not self.git.fetch_branch(target):
+            # Always fetch right before the destructive checkout so we reset onto a
+            # fresh, verified ref; this also confirms the branch exists on the remote.
+            if not self.git.fetch_branch(target):
                 self.logger.error(f"Unknown target: {target}")
                 self._remove_update_lock()
                 return 1
