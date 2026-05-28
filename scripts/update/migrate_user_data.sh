@@ -44,13 +44,28 @@ _mig_chown() {
     fi
 }
 
+# Like `mkdir -p`, but chowns every directory level it creates to
+# MIGRATE_CHOWN_USER (when root). Plain `mkdir -p` run as root would leave the
+# intermediate dirs (e.g. workspace/innate_skills/<skill>/, data/) root-owned,
+# locking the robot user out. Existing dirs are left untouched. Builds parents
+# first so each chown -R only sees the empty dir it just created.
+_mig_mkdir() {
+    local dir="$1"
+    if [ -d "$dir" ]; then
+        return 0
+    fi
+    _mig_mkdir "$(dirname "$dir")"
+    mkdir "$dir"
+    _mig_chown "$dir"
+}
+
 # Move a single entry, skipping (never clobbering) an existing destination.
 _mig_move() {
     local src="$1" dst="$2" label="$3"
     if [ -e "$dst" ]; then
         _mig_log "  Kept $label (already exists at destination — reconcile manually)"
     else
-        mkdir -p "$(dirname "$dst")"
+        _mig_mkdir "$(dirname "$dst")"
         mv "$src" "$dst"
         _mig_chown "$dst"
         _mig_log "  Moved $label"
@@ -70,8 +85,7 @@ _migrate_dir_into_workspace() {
 
     if [ ${#items[@]} -gt 0 ]; then
         _mig_log "Migrating $old_rel/ -> workspace/$new_rel/"
-        mkdir -p "$new_path"
-        _mig_chown "$new_path"
+        _mig_mkdir "$new_path"
         local item name
         for item in "${items[@]}"; do
             name=$(basename "$item")
@@ -125,8 +139,7 @@ _migrate_nav_state() {
                 name=$(basename "$item")
                 # The repo-root .gitignore marker is a shipped file, not user data.
                 [ "$name" = ".gitignore" ] && continue
-                mkdir -p "$data/maps"
-                _mig_chown "$data/maps"
+                _mig_mkdir "$data/maps"
                 _mig_move "$item" "$data/maps/$name" "maps/$name -> data/maps/$name"
             done
         fi
@@ -136,8 +149,7 @@ _migrate_nav_state() {
     local f
     for f in .last_mode .last_map; do
         if [ -f "$repo/$f" ]; then
-            mkdir -p "$data"
-            _mig_chown "$data"
+            _mig_mkdir "$data"
             _mig_move "$repo/$f" "$data/$f" "$f -> data/$f"
         fi
     done

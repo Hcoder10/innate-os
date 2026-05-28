@@ -41,6 +41,9 @@ fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 # Substring match without a pipe (avoids set -o pipefail + grep -q SIGPIPE).
 contains() { case "$2" in *"$1"*) return 0 ;; *) return 1 ;; esac }
 
+# Owning user of a path, portable across GNU (Linux) and BSD (macOS) stat.
+owner_of() { stat -c '%U' "$1" 2>/dev/null || stat -f '%Su' "$1" 2>/dev/null; }
+
 new_repo() {
     local base
     base="$(mktemp -d)"
@@ -180,6 +183,46 @@ test_stash_flow() {
     git -C "$wt" stash drop >/dev/null 2>&1 || true
 }
 test_stash_flow
+
+echo "=== 7. chown: root-created intermediate dirs owned by MIGRATE_CHOWN_USER ==="
+test_chown_intermediate_dirs() {
+    # Reproduces the production path: post_update.sh runs as root with
+    # MIGRATE_CHOWN_USER set. Needs root; skip gracefully otherwise.
+    local sudo
+    if [ "$(id -u)" -eq 0 ]; then
+        sudo=""
+    elif sudo -n true 2>/dev/null; then
+        sudo="sudo"
+    else
+        echo "  SKIP: needs root or passwordless sudo (not available here)"
+        return
+    fi
+
+    local r target
+    r="$(new_repo)"
+    target="$(id -un)"
+    mkdir -p "$r/primitives/legacy_wave" "$r/maps"
+    printf 'h5' > "$r/primitives/legacy_wave/policy.h5"
+    printf 'map' > "$r/maps/home.yaml"   # maps-only => exercises data/ parent chown
+
+    $sudo env MIGRATE_CHOWN_USER="$target" bash "$MIGRATE" "$r" > /dev/null
+
+    [ "$(owner_of "$r/workspace/innate_skills")" = "$target" ] &&
+        ok "innate_skills/ owned by $target (not root)" ||
+        fail "innate_skills/ owned by '$(owner_of "$r/workspace/innate_skills")'"
+    [ "$(owner_of "$r/workspace/innate_skills/legacy_wave")" = "$target" ] &&
+        ok "intermediate dir innate_skills/legacy_wave/ owned by $target" ||
+        fail "intermediate dir owned by '$(owner_of "$r/workspace/innate_skills/legacy_wave")'"
+    [ "$(owner_of "$r/data")" = "$target" ] &&
+        ok "data/ owned by $target (not root)" ||
+        fail "data/ owned by '$(owner_of "$r/data")'"
+    [ "$(owner_of "$r/data/maps")" = "$target" ] &&
+        ok "data/maps/ owned by $target" ||
+        fail "data/maps/ owned by '$(owner_of "$r/data/maps")'"
+
+    $sudo rm -rf "$r" 2>/dev/null || true
+}
+test_chown_intermediate_dirs
 
 echo "=================================================================="
 echo "RESULT: $PASS passed, $FAIL failed"
