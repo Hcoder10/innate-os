@@ -1066,6 +1066,8 @@ class SkillsActionServer(Node):
     def execute_callback(self, goal_handle):
         # Trace entry into the execute callback for debugging
         self.get_logger().debug(f"[SAS] execute_callback ENTER for skill: '{goal_handle.request.skill_type}'")
+        skill_type = goal_handle.request.skill_type
+
         # Decode the inputs (assumed to be JSON)
         try:
             inputs = json.loads(goal_handle.request.inputs)
@@ -1078,12 +1080,20 @@ class SkillsActionServer(Node):
                 success_type=SkillResult.FAILURE.value,
             )
 
-        skill_type = goal_handle.request.skill_type
+        if not isinstance(inputs, dict):
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message="Skill inputs must be a JSON object.",
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
 
         # Snapshot the skill entry under lock so check-then-access is atomic.
         with self._skills_lock:
             code_entry = self._code_skills.get(skill_type)
             physical_entry = self._physical_skills.get(skill_type)
+            in_training_entry = self._in_training_skills.get(skill_type)
 
         # Check if it's a code skill
         if code_entry is not None:
@@ -1093,10 +1103,26 @@ class SkillsActionServer(Node):
         elif physical_entry is not None:
             return self._execute_physical_skill(goal_handle, skill_type, inputs)
 
+        elif in_training_entry is not None:
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message=(
+                    f"Skill '{skill_type}' is not executable yet because it is still in training "
+                    "or missing required runtime artifacts."
+                ),
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
+
         # Skill not found
         else:
             with self._skills_lock:
-                all_skills = list(self._code_skills.keys()) + list(self._physical_skills.keys())
+                all_skills = (
+                    list(self._code_skills.keys())
+                    + list(self._physical_skills.keys())
+                    + list(self._in_training_skills.keys())
+                )
             self.get_logger().error(f"Skill '{skill_type}' not available")
             self.get_logger().error(f"Available skills: {all_skills}")
             goal_handle.abort()
@@ -1224,6 +1250,72 @@ class SkillsActionServer(Node):
             elif interface_type == InterfaceType.HEAD:
                 skill.inject_interface(interface_type, self.head)
 
+    def _validate_skill_inputs(self, skill_id: str, skill, inputs) -> str | None:
+        """Return a user-facing validation error, or None if inputs are usable."""
+        if not isinstance(inputs, dict):
+            return "Skill inputs must be a JSON object."
+
+        try:
+            signature = inspect.signature(skill.execute)
+        except (TypeError, ValueError):
+            return None
+
+        parameters = {
+            name: param
+            for name, param in signature.parameters.items()
+            if name != "self" and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        }
+        accepts_extra_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+        )
+
+        if not accepts_extra_kwargs:
+            unexpected = sorted(set(inputs) - set(parameters))
+            if unexpected:
+                accepted = ", ".join(parameters) if parameters else "none"
+                return (
+                    f"Skill '{skill_id}' got unsupported input(s): {', '.join(unexpected)}. "
+                    f"Accepted inputs: {accepted}."
+                )
+
+        missing = [
+            name
+            for name, param in parameters.items()
+            if param.default == inspect.Parameter.empty
+            and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+            and name not in inputs
+        ]
+        if missing:
+            return f"Skill '{skill_id}' is missing required input(s): {', '.join(missing)}."
+
+        for name, param in parameters.items():
+            if name not in inputs or param.annotation == inspect.Parameter.empty:
+                continue
+            if get_origin(param.annotation) is Literal:
+                allowed = list(get_args(param.annotation))
+                if inputs[name] not in allowed:
+                    allowed_text = ", ".join(str(value) for value in allowed)
+                    return f"Skill '{skill_id}' input '{name}' must be one of: {allowed_text}."
+
+        return None
+
+    def _sim_manipulation_unavailable_reason(self, skill) -> str | None:
+        """Explain why a manipulation skill cannot run in the current sim session."""
+        if not self.simulator_mode:
+            return None
+        if InterfaceType.MANIPULATION not in skill.get_required_interfaces():
+            return None
+
+        topic_names = {name for name, _types in self.get_topic_names_and_types()}
+        missing_topics = [name for name in ("/fk_pose", "/ik_solution") if name not in topic_names]
+        if missing_topics:
+            return (
+                "Arm manipulation skills are not available in this simulator session "
+                f"(missing {', '.join(missing_topics)}). The skill was not run."
+            )
+
+        return None
+
     def _state_update_thread_func(self):
         """Background thread that continuously updates robot state for running skill."""
         while not self._state_update_stop_event.is_set():
@@ -1260,6 +1352,28 @@ class SkillsActionServer(Node):
 
         # Pass the feedback callback to the skill if it supports it
         skill.set_feedback_callback(_publish_feedback)
+
+        validation_error = self._validate_skill_inputs(skill_type, skill, inputs)
+        if validation_error:
+            self.get_logger().info(f"Skill '{skill_type}' rejected invalid inputs: {validation_error}")
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message=validation_error,
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
+
+        manipulation_error = self._sim_manipulation_unavailable_reason(skill)
+        if manipulation_error:
+            self.get_logger().info(f"Skill '{skill_type}' skipped in simulator mode: {manipulation_error}")
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message=manipulation_error,
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
 
         required_states = skill.get_required_robot_states()
         needs_camera = required_states and (

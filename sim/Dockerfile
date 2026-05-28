@@ -61,6 +61,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         cartesia \
         einops \
         python-dotenv \
+        python-chess \
+        google-genai \
         websocket-client && \
     uv pip install --system \
         --index-url https://download.pytorch.org/whl/cpu \

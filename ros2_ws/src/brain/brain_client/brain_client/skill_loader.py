@@ -195,7 +195,7 @@ class SkillLoader:
         Returns:
             tuple: (is_valid: bool, is_in_training: bool, episode_count: int)
                 - is_valid: True if the skill can be loaded (either ready or in training)
-                - is_in_training: True if the skill is a learned type missing its checkpoint
+                - is_in_training: True if the skill is missing required runtime artifacts
                 - episode_count: Number of recorded episodes (0 if not applicable or not found)
         """
         skill_type = metadata.get("type", "").lower()
@@ -206,12 +206,20 @@ class SkillLoader:
             episode_count = self._get_episode_count(skill_dir)
             return (is_valid, is_in_training, episode_count)
         elif skill_type == "replay":
+            replay_file = execution.get("replay_file")
+            if not replay_file:
+                self.logger.warning(f"Replay skill in {skill_dir} missing replay_file - marked as in_training")
+                return (True, True, 0)
+            replay_path = os.path.join(skill_dir, replay_file)
+            if not os.path.exists(replay_path):
+                self.logger.warning(f"Replay skill file not found: {replay_path} - marked as in_training")
+                return (True, True, 0)
             is_valid = self._validate_replay_skill(skill_dir, execution)
             return (
                 is_valid,
                 False,
                 0,
-            )  # Replay skills are never "in training", no episodes
+            )  # Ready replay skills have no training episodes.
         else:
             self.logger.warning(f"Unknown skill type '{skill_type}' in {skill_dir}")
             return (True, False, 0)  # Allow unknown types but log warning
