@@ -745,8 +745,8 @@ const SensitivityLabel = styled.div`
 `;
 
 export default function App() {
-  const useAlternativeUi =
-    new URLSearchParams(window.location.search).get("ui") === "alt";
+  const uiMode = new URLSearchParams(window.location.search).get("ui");
+  const useAlternativeUi = uiMode !== "classic";
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [activeSkillIds, setActiveSkillIds] = useState<string[]>([]);
   const [pendingSkillChanges, setPendingSkillChanges] = useState<
