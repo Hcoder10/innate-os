@@ -42,7 +42,7 @@ jobs:
 
     - name: Build ROS2 workspace in Docker
       run: |
-        docker build -t ros2-builder -f Dockerfile.build --build-arg CI_BUILD=true .
+        docker build -t ros2-builder -f sim/Dockerfile --build-arg CI_BUILD=true .
 
     - name: Extract built artifacts from Docker
       run: |
@@ -61,25 +61,16 @@ jobs:
 
         # Copy all files
         cp -r ros2_ws release-package/innate-os/
-        cp -r dds release-package/innate-os/
-        cp -r config release-package/innate-os/ || true
-        cp -r maps release-package/innate-os/ || true
-        cp -r skills release-package/innate-os/ || true
-        cp -r agents release-package/innate-os/ || true
-        cp -r inputs release-package/innate-os/ || true
-        cp -r scripts release-package/innate-os/ || true
-        cp -r systemd release-package/innate-os/ || true
-        cp -r udev release-package/innate-os/ || true
-        cp -r zshrcs release-package/innate-os/ || true
+        cp -r config release-package/innate-os/
+        cp -r workspace release-package/innate-os/
+        cp -r scripts release-package/innate-os/
+        cp -r docs release-package/innate-os/
 
-        cp README.md release-package/innate-os/ || true
-        cp SYSTEM_SETUP.md release-package/innate-os/ || true
-        cp SYSTEM_OVERVIEW.md release-package/innate-os/ || true
-        cp Dockerfile release-package/innate-os/ || true
-        cp Dockerfile.build release-package/innate-os/ || true
-        cp docker-compose*.yml release-package/innate-os/ || true
-        cp .env.template release-package/innate-os/ || true
-        cp os_config.json release-package/innate-os/ || true
+        cp README.md release-package/innate-os/
+        cp LICENSE release-package/innate-os/
+        cp pyproject.toml release-package/innate-os/
+        cp innate release-package/innate-os/
+        cp .env.template release-package/innate-os/
 
         # Version file
         echo "Version: ${{ steps.version.outputs.version }}" > release-package/innate-os/VERSION

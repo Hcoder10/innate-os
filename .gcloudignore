@@ -11,11 +11,12 @@ sim/launcher/.state/
 sim/.venv/
 
 **
-!Dockerfile
 !.dockerignore
 !.github/
-!.github/cloudbuild.sim-images.yaml
+!ci/
+!ci/cloudbuild.sim-images.yaml
 !sim/
+!sim/Dockerfile
 !sim/Dockerfile.ros-prebuilt
 !sim/Dockerfile.ros-prebuilt.dockerignore
 !sim/apt-dependencies.txt

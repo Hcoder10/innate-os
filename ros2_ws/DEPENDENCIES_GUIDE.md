@@ -19,30 +19,16 @@ Legacy file kept for backwards compatibility. Points to the new mode-specific fi
 
 ## Usage
 
-### Docker (Recommended)
+### Docker
 
-The Dockerfile automatically handles mode selection:
-
-**Simulation Mode (default):**
+The dev Dockerfile at [sim/Dockerfile](../sim/Dockerfile) builds a simulation-only image using [sim/apt-dependencies.txt](../sim/apt-dependencies.txt):
 ```bash
-docker compose -f docker-compose.dev.yml build
+docker compose -f sim/docker-compose.dev.yml build
 # or
-docker build --build-arg MODE=simulation -t innate-os .
+docker build -t innate-os -f sim/Dockerfile .
 ```
 
-**Hardware Mode (for physical robots):**
-```bash
-docker build --build-arg MODE=hardware -t innate-os .
-```
-
-You can also change the mode in `docker-compose.dev.yml`:
-```yaml
-services:
-  innate:
-    build:
-      args:
-        MODE: hardware  # or 'simulation'
-```
+Hardware (Jetson) builds run natively on the robot via `scripts/update/post_update.sh`, not through Docker.
 
 ### Manual Installation
 

@@ -6,6 +6,7 @@
 # Usage: sudo ./post_update.sh
 #
 # This script handles:
+#   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -16,7 +17,7 @@
 #   7. Zsh configuration
 #   8. DDS setup
 #   9. Sudoers configuration
-#   10. Move primitives .h5 files to skills directory
+#   10. Move primitives .h5 files to workspace/innate_skills/
 #   11. Service restart
 
 set -e  # Exit on error
@@ -160,7 +161,7 @@ if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ]; th
 fi
 
 # -----------------------------------------------------------------------------
-# 0. Migrate .env file (comment out deprecated URLs)
+# 0. Migrate .env file (replace deprecated URLs with new endpoints)
 # -----------------------------------------------------------------------------
 ENV_FILE="$REPO_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -174,17 +175,17 @@ if [ -f "$ENV_FILE" ]; then
     fi
 
     if [ "$NEEDS_ENV_MIGRATION" = true ]; then
-        log "Migrating .env file (commenting out deprecated URLs)..."
+        log "Migrating .env file (updating deprecated URLs to new endpoints)..."
 
         # Backup .env
         cp "$ENV_FILE" "$ACTUAL_HOME/.env.backup"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.env.backup"
         log "  Backed up .env to $ACTUAL_HOME/.env.backup"
 
-        # Comment out deprecated values
-        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot|# INNATE_PROXY_URL=https://robot-services.innate.bot|' "$ENV_FILE"
-        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot|# BRAIN_WEBSOCKET_URI=wss://brain.innate.bot|' "$ENV_FILE"
-        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot|# TELEMETRY_URL=https://logs.innate.bot|' "$ENV_FILE"
+        # Replace deprecated URLs with their new equivalents in-place
+        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot.*|INNATE_PROXY_URL=https://proxy-v1.innate.bot|' "$ENV_FILE"
+        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot.*|BRAIN_WEBSOCKET_URI=wss://agent-v1.innate.bot|' "$ENV_FILE"
+        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot.*|TELEMETRY_URL=https://logs-v1.innate.bot|' "$ENV_FILE"
 
         # Add reference comment at the bottom of .env
         if ! grep -q 'Refer to .env.template for examples' "$ENV_FILE"; then
@@ -193,10 +194,58 @@ if [ -f "$ENV_FILE" ]; then
         fi
 
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ENV_FILE"
-        log "  Deprecated URLs commented out in .env"
-        log "  Variables unset from environment"
+        log "  Deprecated URLs replaced with new endpoints in .env"
+        log "    robot-services.innate.bot → proxy-v1.innate.bot"
+        log "    brain.innate.bot          → agent-v1.innate.bot"
+        log "    logs.innate.bot           → logs-v1.innate.bot"
     fi
 fi
+
+# -----------------------------------------------------------------------------
+# 0a. Migrate root-level agents/, inputs/, skills/ into workspace/
+# Refactor moved these under workspace/. User-created content goes into the
+# custom_* subdirs so it never collides with shipped innate_* content.
+# Tracked files were relocated by git checkout; this step preserves any
+# user-created untracked files. Never deletes user data: skips on conflict,
+# and uses rmdir (which only removes empty dirs) for the final cleanup.
+# -----------------------------------------------------------------------------
+migrate_user_dir() {
+    local old_dir="$1"
+    local new_subdir="$2"
+    local old_path="$REPO_DIR/$old_dir"
+    local new_path="$REPO_DIR/workspace/$new_subdir"
+    [ -d "$old_path" ] || return 0
+
+    shopt -s dotglob nullglob
+    local items=("$old_path"/*)
+    shopt -u dotglob nullglob
+
+    if [ ${#items[@]} -gt 0 ]; then
+        log "Migrating user content from $old_dir/ to workspace/$new_subdir/"
+        mkdir -p "$new_path"
+        chown "$ACTUAL_USER:$ACTUAL_USER" "$new_path"
+        local item name
+        for item in "${items[@]}"; do
+            name=$(basename "$item")
+            if [ -e "$new_path/$name" ]; then
+                log "  Kept $old_dir/$name (conflicts with existing workspace/$new_subdir/$name - reconcile manually)"
+            else
+                mv "$item" "$new_path/"
+                log "  Moved $old_dir/$name -> workspace/$new_subdir/$name"
+            fi
+        done
+    fi
+
+    if rmdir "$old_path" 2>/dev/null; then
+        log "Removed empty $old_dir/"
+    else
+        log "Kept $old_dir/ (still contains files after migration)"
+    fi
+}
+
+migrate_user_dir agents custom_agents
+migrate_user_dir skills custom_skills
+migrate_user_dir inputs  inputs
 
 # Stop running services before updating (keep app.cpp alive during build)
 log "Stopping services to begin update..."
@@ -232,8 +281,8 @@ log "Services stopped (app.cpp still running)."
 # 1. Update systemd service files
 # -----------------------------------------------------------------------------
 log "Installing systemd service files..."
-if [ -d "$REPO_DIR/systemd" ]; then
-    for service_file in "$REPO_DIR/systemd"/*.service; do
+if [ -d "$REPO_DIR/config/systemd" ]; then
+    for service_file in "$REPO_DIR/config/systemd"/*.service; do
         if [ -f "$service_file" ]; then
             service_name=$(basename "$service_file")
             log "  Installing $service_name"
@@ -305,8 +354,8 @@ fi
 # 3. Update udev rules
 # -----------------------------------------------------------------------------
 log "Installing udev rules..."
-if [ -d "$REPO_DIR/udev" ]; then
-    for rule_file in "$REPO_DIR/udev"/*.rules; do
+if [ -d "$REPO_DIR/config/udev" ]; then
+    for rule_file in "$REPO_DIR/config/udev"/*.rules; do
         if [ -f "$rule_file" ]; then
             rule_name=$(basename "$rule_file")
             log "  Installing $rule_name"
@@ -566,22 +615,22 @@ if [ -f "$ACTUAL_HOME/.zshrc" ]; then
 fi
 
 # Copy our zsh configuration files
-if [ -d "$REPO_DIR/zshrcs" ]; then
+if [ -d "$REPO_DIR/config/zsh" ]; then
     log "  Installing Innate zsh configuration"
 
     # Copy .zshrc.pre-oh-my-zsh (contains ROS2/DDS setup)
-    if [ -f "$REPO_DIR/zshrcs/.zshrc.pre-oh-my-zsh" ]; then
+    if [ -f "$REPO_DIR/config/zsh/.zshrc.pre-oh-my-zsh" ]; then
         # Update paths in the file
         sed -e "s|/home/jetson1|$ACTUAL_HOME|g" \
-            "$REPO_DIR/zshrcs/.zshrc.pre-oh-my-zsh" > "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
+            "$REPO_DIR/config/zsh/.zshrc.pre-oh-my-zsh" > "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc.pre-oh-my-zsh"
     fi
 
     # Copy main .zshrc
-    if [ -f "$REPO_DIR/zshrcs/.zshrc" ]; then
+    if [ -f "$REPO_DIR/config/zsh/.zshrc" ]; then
         # Update paths in the file
         sed -e "s|/home/jetson1|$ACTUAL_HOME|g" \
-            "$REPO_DIR/zshrcs/.zshrc" > "$ACTUAL_HOME/.zshrc"
+            "$REPO_DIR/config/zsh/.zshrc" > "$ACTUAL_HOME/.zshrc"
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc"
     fi
 fi
@@ -623,13 +672,13 @@ fi
 # 9. Setup DDS configuration
 # -----------------------------------------------------------------------------
 log "Setting up DDS configuration..."
-if [ -d "$REPO_DIR/dds" ]; then
+if [ -d "$REPO_DIR/config/dds" ]; then
     # Ensure DDS scripts are executable
-    chmod +x "$REPO_DIR/dds"/*.zsh 2>/dev/null || true
+    chmod +x "$REPO_DIR/config/dds"/*.zsh 2>/dev/null || true
 
     # Generate initial DDS config (will be regenerated on shell login)
-    if [ -f "$REPO_DIR/dds/setup_dds.zsh" ]; then
-        log "  DDS setup script ready at $REPO_DIR/dds/setup_dds.zsh"
+    if [ -f "$REPO_DIR/config/dds/setup_dds.zsh" ]; then
+        log "  DDS setup script ready at $REPO_DIR/config/dds/setup_dds.zsh"
     fi
 fi
 
@@ -663,18 +712,19 @@ chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"
 
 # -----------------------------------------------------------------------------
-# 11. Move primitives .h5 files to skills directory
+# 11. Move primitives .h5 files to workspace/innate_skills/
 # -----------------------------------------------------------------------------
 PRIMITIVES_DIR="$REPO_DIR/primitives"
+INNATE_SKILLS_DIR="$REPO_DIR/workspace/innate_skills"
 if [ -d "$PRIMITIVES_DIR" ]; then
-    log "Migrating primitives .h5 files to skills directory..."
-    # Move each .h5 file to corresponding skills/ path (e.g. primitives/x/a.h5 -> skills/x/a.h5)
+    log "Migrating primitives .h5 files to innate_skills directory..."
+    # Move each .h5 file to corresponding workspace/innate_skills/ path
+    # (e.g. primitives/x/a.h5 -> workspace/innate_skills/x/a.h5)
     find "$PRIMITIVES_DIR" -name "*.h5" -type f | while read -r h5_file; do
-        # Remove the primitives directory path to get just the relative path (e.g. /path/primitives/x/a.h5 -> x/a.h5)
         rel_path="${h5_file#$PRIMITIVES_DIR/}"
-        mkdir -p "$REPO_DIR/skills/$(dirname "$rel_path")"
+        mkdir -p "$INNATE_SKILLS_DIR/$(dirname "$rel_path")"
         log "  Moving $rel_path"
-        mv "$h5_file" "$REPO_DIR/skills/$rel_path"
+        mv "$h5_file" "$INNATE_SKILLS_DIR/$rel_path"
     done
     
     # Remove any __pycache__ directories left behind
@@ -703,7 +753,7 @@ fi
 # -----------------------------------------------------------------------------
 # 11b. Download skill assets from metadata.json
 # -----------------------------------------------------------------------------
-for meta_file in "$REPO_DIR"/skills/*/metadata.json; do
+for meta_file in "$REPO_DIR"/workspace/innate_skills/*/metadata.json "$REPO_DIR"/workspace/custom_skills/*/metadata.json; do
     [ -f "$meta_file" ] || continue
     jq -r '.downloads // {} | to_entries[] | "\(.key)\t\(.value)"' "$meta_file" 2>/dev/null | \
     while IFS=$'\t' read -r fname url; do

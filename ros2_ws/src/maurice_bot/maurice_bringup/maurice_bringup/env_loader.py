@@ -5,6 +5,7 @@ Loads .env file and provides access to environment variables.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +24,14 @@ ENV_KEYS_MOVED_TO_OS_CONFIG = {
 def _load_key_value_env(path: Path) -> None:
     if not path.exists():
         return
-    with open(path) as f:
+    try:
+        f = open(path)
+    except OSError as e:
+        # Transient mount errors (e.g. Docker Desktop single-file bind EPERM)
+        # would otherwise crash launch-file loading. Treat as "no env file".
+        print(f"[env_loader] Could not open {path}: {e}", file=sys.stderr)
+        return
+    with f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
@@ -87,14 +95,19 @@ def _parse_toml_scalar(raw_value: str):
 def _parse_toml_file(path: Path) -> dict:
     if not path.exists():
         return {}
-    if tomllib is not None:
-        with path.open("rb") as f:
-            data = tomllib.load(f)
-        return data if isinstance(data, dict) else {}
+    try:
+        if tomllib is not None:
+            with path.open("rb") as f:
+                data = tomllib.load(f)
+            return data if isinstance(data, dict) else {}
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"[env_loader] Could not read {path}: {e}", file=sys.stderr)
+        return {}
 
     data: dict = {}
     current_section: dict = data
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in raw_text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue

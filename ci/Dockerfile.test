@@ -1,35 +1,37 @@
+# syntax=docker/dockerfile:1.7
 #
-# Dockerfile.test - Test image for CI on non-Jetson platforms
+# ci/Dockerfile.test - Test image for CI on non-Jetson platforms.
 # Skips Jetson-specific packages (nvidia-*, cuda-*, etc.)
 #
 
 FROM ros:humble-ros-base
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV ROS_DISTRO=humble
-ENV INNATE_OS_ROOT=/root/innate-os
+ENV DEBIAN_FRONTEND=noninteractive \
+    ROS_DISTRO=humble \
+    INNATE_OS_ROOT=/root/innate-os \
+    UV_SYSTEM_PYTHON=1 \
+    UV_LINK_MODE=copy \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install minimal prerequisites first (needed for add-apt-repository)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    curl \
-    gnupg \
-    lsb-release \
-    && rm -rf /var/lib/apt/lists/*
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Add universe repository (for gstreamer, pygame, libhdf5-dev, etc.)
-RUN add-apt-repository universe
-
-# Install remaining prerequisites
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    locales \
-    iproute2 \
-    iputils-ping \
-    libcairo2-dev \
-    python3-pip \
-    libhdf5-dev \
-    ros-humble-kdl-parser \
-    && rm -rf /var/lib/apt/lists/*
+# Install base prerequisites + enable universe (for gstreamer, libhdf5-dev, etc.)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+        curl \
+        iputils-ping \
+        gnupg \
+        lsb-release \
+        ca-certificates && \
+    add-apt-repository universe && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        locales \
+        iproute2 \
+        libcairo2-dev \
+        libhdf5-dev \
+        ros-humble-kdl-parser
 
 # Setup locale
 RUN locale-gen en_US en_US.UTF-8 && \
@@ -46,22 +48,31 @@ RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
 COPY ros2_ws/apt-dependencies.common.txt /tmp/apt-dependencies.txt
 
 # Install apt dependencies from common list
-RUN apt-get update && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && \
     grep -v '^#' /tmp/apt-dependencies.txt | grep -v '^$' | \
-    xargs apt-get install -y && \
-    rm -rf /var/lib/apt/lists/*
+        xargs apt-get install -y --no-install-recommends && \
+    rm /tmp/apt-dependencies.txt
 
-# Copy and install Python dependencies, skipping Jetson-specific packages
+# Install uv for fast, cached Python package installation.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
+
+# Install Python deps with uv. Test image is non-Jetson, so we drop Jetson-only
+# entries (cupy, jetson-ai-lab index) and runtime-only packages that don't
+# install on CI runners (pynput, bluezero). google-generativeai is required by
+# skills/scan_for_objects.py in integration tests.
 COPY ros2_ws/pip-requirements.txt /tmp/pip-requirements.txt
-RUN pip3 install --no-cache-dir meson ninja && \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     grep -v 'pypi.jetson-ai-lab.io' /tmp/pip-requirements.txt | \
-    grep -v -E '^cupy' | \
-    grep -v -E '^pynput' | \
-    grep -v -E '^bluezero' | \
-    pip3 install --no-cache-dir -r /dev/stdin
-
-# Test-only dependency: required by skills/scan_for_objects.py in integration tests.
-RUN pip3 install --no-cache-dir google-generativeai
+        grep -v -E '^cupy' | \
+        grep -v -E '^pynput' | \
+        grep -v -E '^bluezero' > /tmp/pip-requirements.filtered.txt && \
+    uv pip install --system meson ninja && \
+    uv pip install --system -r /tmp/pip-requirements.filtered.txt && \
+    uv pip install --system google-generativeai && \
+    rm /tmp/pip-requirements.txt /tmp/pip-requirements.filtered.txt
 
 # Initialize rosdep
 RUN rosdep init || true && rosdep update
@@ -72,13 +83,9 @@ WORKDIR /root/innate-os
 # Copy workspace source
 COPY ros2_ws /root/innate-os/ros2_ws
 
-# Copy DDS configuration
-COPY dds /root/innate-os/dds
-
 # Copy additional directories needed at runtime
 COPY config /root/innate-os/config
-COPY skills /root/innate-os/skills
-COPY agents /root/innate-os/agents
+COPY workspace /root/innate-os/workspace
 
 # Import external dependencies using vcs
 RUN cd /root/innate-os/ros2_ws/src && \

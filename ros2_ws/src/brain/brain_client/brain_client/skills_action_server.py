@@ -43,6 +43,14 @@ from brain_client.hot_reload_watcher import HotReloadWatcher
 from brain_client.manipulation_interface import ManipulationInterface
 from brain_client.mobility_interface import MobilityInterface
 from brain_client.skill_cli_bridge import SkillCliBridge, SkillCliGoalHandle
+from brain_client.script_paths import (
+    classify_source,
+    ensure_user_directories,
+    get_custom_skills_dir,
+    get_innate_skills_dir,
+    get_skill_directories,
+    migrate_legacy_home_directories,
+)
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
     InterfaceType,
@@ -123,13 +131,16 @@ class SkillsActionServer(Node):
 
         # Create code skill instances keyed by ID
         self._code_skills: dict[str, tuple[str, Skill]] = {}  # {id: (display_name, instance)}
-        for skill_id, (display_name, skill_class, _src) in id_keyed.items():
+        for skill_id, (display_name, skill_class, src_path) in id_keyed.items():
             try:
                 skill_instance = skill_class(self.get_logger())
                 skill_instance.node = self  # Inject the node
+                skill_instance.source = classify_source(src_path)
                 self._inject_required_interfaces(skill_instance)
                 self._code_skills[skill_id] = (display_name, skill_instance)
-                self.get_logger().info(f"Loaded code skill: {skill_id} ({display_name})")
+                self.get_logger().info(
+                    f"Loaded code skill: {skill_id} ({display_name}) [source={skill_instance.source}]"
+                )
             except Exception as e:
                 self.get_logger().error(f"Error instantiating skill {skill_id}: {e}")
 
@@ -519,13 +530,14 @@ class SkillsActionServer(Node):
         # Build new dicts locally, then swap under lock to avoid a window
         # where _code_skills is empty while still being populated.
         new_code_skills: dict[str, tuple[str, Skill]] = {}
-        for skill_id, (display_name, cls, _src) in id_keyed.items():
+        for skill_id, (display_name, cls, src_path) in id_keyed.items():
             try:
                 instance = cls(self.get_logger())
                 instance.node = self
+                instance.source = classify_source(src_path)
                 self._inject_required_interfaces(instance)
                 new_code_skills[skill_id] = (display_name, instance)
-                self.get_logger().info(f"Reloaded code skill: {skill_id}")
+                self.get_logger().info(f"Reloaded code skill: {skill_id} [source={instance.source}]")
             except Exception as e:
                 self.get_logger().error(f"Error instantiating {skill_id}: {e}")
 
@@ -542,20 +554,19 @@ class SkillsActionServer(Node):
 
     def _resolve_skills_directories(self) -> list[str]:
         """Build the ordered list of skill directories to scan."""
-        maurice_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-        self._innate_os_skills_dir = os.path.join(maurice_root, "skills")
-        user_skills_directory = os.path.join(os.path.expanduser("~"), "skills")
+        innate_skills_dir = str(get_innate_skills_dir())
+        custom_skills_dir = str(get_custom_skills_dir())
 
-        if not os.path.exists(self._innate_os_skills_dir):
-            self.get_logger().fatal(f"Skills directory not found: {self._innate_os_skills_dir}")
-            raise FileNotFoundError(f"Skills directory must exist at {self._innate_os_skills_dir}")
+        if not os.path.exists(innate_skills_dir):
+            self.get_logger().fatal(f"Skills directory not found: {innate_skills_dir}")
+            raise FileNotFoundError(f"Skills directory must exist at {innate_skills_dir}")
 
-        # Match initializer behavior: ensure ~/skills is always available.
-        os.makedirs(user_skills_directory, exist_ok=True)
+        ensure_user_directories()
+        migrate_legacy_home_directories(self.get_logger())
 
-        self.get_logger().info(f"Scanning root skills directory: {self._innate_os_skills_dir}")
-        self.get_logger().info(f"Scanning user skills directory: {user_skills_directory}")
-        return [self._innate_os_skills_dir, user_skills_directory]
+        self.get_logger().info(f"Scanning innate skills directory: {innate_skills_dir}")
+        self.get_logger().info(f"Scanning custom skills directory: {custom_skills_dir}")
+        return [innate_skills_dir, custom_skills_dir]
 
     def _apply_sim_swap(self, id_keyed: dict[str, tuple[str, type, Path]]) -> None:
         """Swap navigate_to_position_sim → navigate_to_position in sim mode, or remove it.
@@ -575,15 +586,13 @@ class SkillsActionServer(Node):
     def _compute_skill_id(self, path: str | Path) -> str:
         """Compute a deterministic skill ID from a file or directory path.
 
-        Returns 'innate-os/<basename>' for paths under $INNATE_OS_ROOT/skills,
-        'local/<basename>' for paths under ~/skills.
+        Returns 'innate-os/<basename>' for paths under workspace/innate_skills/,
+        'local/<basename>' for paths under workspace/custom_skills/.
         """
-        path = str(Path(path).resolve())
-        root = str(Path(self._innate_os_skills_dir).resolve())
-        basename = Path(path).stem if path.endswith(".py") else Path(path).name
-        if path.startswith(root):
-            return f"innate-os/{basename}"
-        return f"local/{basename}"
+        path_str = str(Path(path))
+        basename = Path(path_str).stem if path_str.endswith(".py") else Path(path_str).name
+        prefix = "innate-os" if classify_source(path) == "shipped" else "local"
+        return f"{prefix}/{basename}"
 
     def _handle_reload_skills(self, request, response):
         """Service handler for reloading skills."""
@@ -599,8 +608,8 @@ class SkillsActionServer(Node):
     def _handle_create_physical_skill(self, request, response):
         """Create a new physical (learned) skill directory with metadata.json.
 
-        Creates the skill under the user skills directory (~/skills/) with a
-        kebab-case directory name derived from the display name.
+        Creates the skill under workspace/custom_skills/ with a kebab-case
+        directory name derived from the display name.
         """
         try:
             display_name = request.name.strip()
@@ -623,8 +632,8 @@ class SkillsActionServer(Node):
                 response.skill_id = ""
                 return response
 
-            # Create under user skills directory (last in the list, ~/skills)
-            user_skills_dir = self._skills_directories[-1]
+            # Create under the custom skills directory.
+            user_skills_dir = str(get_custom_skills_dir())
             skill_dir = os.path.join(user_skills_dir, dir_name)
 
             if os.path.exists(os.path.join(skill_dir, "metadata.json")):

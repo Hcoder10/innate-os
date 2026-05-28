@@ -55,7 +55,7 @@ A `.py` file in a skills directory. Contains a class inheriting from `Skill` wit
 ### Physical Skills
 A subdirectory containing `metadata.json`. Involve the robot's arm/body. Have a lifecycle:
 
-1. **Creation** (skills_action_server) — app calls `create_physical_skill` with a display name. Server creates the directory under `~/skills/` with a kebab-case name and writes `metadata.json`.
+1. **Creation** (skills_action_server) — app calls `create_physical_skill` with a display name. Server creates the directory under `workspace/custom_skills/` with a kebab-case name and writes `metadata.json`.
 2. **Recording** (recorder_node) — human demonstrates by puppeteering the arm. Recorder is activated with an absolute directory path and creates episode H5 files + `dataset_metadata.json` under `data/`.
 3. **Training** (training_node → cloud) — episode data uploaded, neural network trained, checkpoint downloaded back.
 4. **Execution** (skills_action_server → behavior_server) — runs the trained policy or replays recorded motion.
@@ -98,10 +98,10 @@ brain_client (LLM) → /execute_skill → skills_action_server
 App (CreateSkillScreen)
   │
   ├─ 1. callROSService(/brain/create_physical_skill, { name: "Pick Socks" })
-  │     → skills_action_server creates ~/skills/pick-socks/metadata.json
-  │     → returns { success, skill_directory: "/home/user/skills/pick-socks" }
+  │     → skills_action_server creates workspace/custom_skills/pick-socks/metadata.json
+  │     → returns { success, skill_directory: "/home/user/innate-os/workspace/custom_skills/pick-socks" }
   │
-  └─ 2. callROSService(/brain/recorder/activate_physical_primitive, { task_directory: "/home/user/skills/pick-socks" })
+  └─ 2. callROSService(/brain/recorder/activate_physical_primitive, { task_directory: "/home/user/innate-os/workspace/custom_skills/pick-socks" })
         → recorder_node activates recording for that directory
 ```
 
@@ -129,32 +129,32 @@ Skill IDs follow the pattern: `<user>/<skill_name>` matching `[a-z0-9_-]+/[a-z0-
 
 | User | Disk location | Description |
 |------|--------------|-------------|
-| `local` | `~/skills/<skill_name>/` | User-created skills (recording, custom code) |
-| `innate-os` | `$INNATE_OS_ROOT/skills/<skill_name>/` | Built-in skills shipped with innate-os |
+| `local` | `$INNATE_OS_ROOT/workspace/custom_skills/<skill_name>/` | User-created skills (recording, custom code). Directory is gitignored. |
+| `innate-os` | `$INNATE_OS_ROOT/workspace/innate_skills/<skill_name>/` | Built-in skills shipped with innate-os. Tracked in git. |
 
 No other users are valid yet. Future: cloud-synced skills from other users.
 
 ### ID ↔ Path resolution
 
 ```
-innate-os/<skill_name>  →  $INNATE_OS_ROOT/skills/<skill_name>/
-local/<skill_name>   →  ~/skills/<skill_name>/
+innate-os/<skill_name>  →  $INNATE_OS_ROOT/workspace/innate_skills/<skill_name>/
+local/<skill_name>      →  $INNATE_OS_ROOT/workspace/custom_skills/<skill_name>/
 ```
 
 For code skills, the "directory" is the parent directory containing the `.py` file:
 ```
-innate-os/navigate_to_position  →  $INNATE_OS_ROOT/skills/navigate_to_position.py
-local/my-custom-skill        →  ~/skills/my-custom-skill.py
+innate-os/navigate_to_position  →  $INNATE_OS_ROOT/workspace/innate_skills/navigate_to_position.py
+local/my-custom-skill           →  $INNATE_OS_ROOT/workspace/custom_skills/my-custom-skill.py
 ```
 
 ### Examples
 
 | ID | Display Name | Path |
 |----|-------------|------|
-| `local/pick-socks` | Pick Socks | `~/skills/pick-socks/` |
-| `innate-os/wave` | wave | `$INNATE_OS_ROOT/skills/wave/` |
-| `innate-os/navigate_to_position` | navigate_to_position | `$INNATE_OS_ROOT/skills/navigate_to_position.py` |
-| `local/arm-circle` | Arm Circle | `~/skills/arm-circle/` |
+| `local/pick-socks` | Pick Socks | `$INNATE_OS_ROOT/workspace/custom_skills/pick-socks/` |
+| `innate-os/wave` | wave | `$INNATE_OS_ROOT/workspace/innate_skills/wave/` |
+| `innate-os/navigate_to_position` | navigate_to_position | `$INNATE_OS_ROOT/workspace/innate_skills/navigate_to_position.py` |
+| `local/arm-circle` | Arm Circle | `$INNATE_OS_ROOT/workspace/custom_skills/arm-circle/` |
 
 ---
 
@@ -171,7 +171,7 @@ local/my-custom-skill        →  ~/skills/my-custom-skill.py
 
 | Interface | Type | Server | Param | Format | Notes |
 |-----------|------|--------|-------|--------|-------|
-| `/brain/create_physical_skill` | `CreatePhysicalSkill` | skills_action_server | `name` | Display name | Creates dir + `metadata.json` under `~/skills/`. Returns `success`, `message`, `skill_directory` (abs path), `skill_id`. Converts display name to kebab-case for directory name. |
+| `/brain/create_physical_skill` | `CreatePhysicalSkill` | skills_action_server | `name` | Display name | Creates dir + `metadata.json` under `$INNATE_OS_ROOT/workspace/custom_skills/`. Returns `success`, `message`, `skill_directory` (abs path), `skill_id`. Converts display name to kebab-case for directory name. |
 | `/brain/reload_primitives` | `Trigger` | skills_action_server | *(none)* | — | Reloads all skills from disk |
 | `/brain/reload_skills` | `ReloadSkillsAgents` | skills_action_server | `skills[]` | **IDs** | Selectively reload specific skills by ID (empty list = reload all) |
 | `/brain/reload_skills_agents` | `ReloadSkillsAgents` | brain_client | `skills[]` | **IDs** | Forwards to `/brain/reload_skills` |

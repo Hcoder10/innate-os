@@ -82,7 +82,7 @@ export default function DatasetsTab() {
 
       {!loading && datasets.length === 0 && (
         <p className="text-innate-muted italic text-sm">
-          No skills found in ~/skills/
+          No skills found in workspace/custom_skills/
         </p>
       )}
 

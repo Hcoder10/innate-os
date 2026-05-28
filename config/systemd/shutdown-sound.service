@@ -12,7 +12,7 @@ Type=oneshot
 User=jetson1
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 # Play custom shutdown sound
-ExecStart=/usr/bin/gst-play-1.0 /home/jetson1/innate-os/sounds/turnoff.mp3
+ExecStart=/usr/bin/gst-play-1.0 /home/jetson1/innate-os/config/sounds/turnoff.mp3
 TimeoutStartSec=10
 RemainAfterExit=yes
 

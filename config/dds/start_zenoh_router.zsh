@@ -27,7 +27,7 @@ if [ -n "$1" ]; then
 
     ros2 daemon stop > /dev/null # stop any stray dds or zenoh instances
 
-    echo "Make sure to source innate-os/dds/setup_dds.zsh in every terminal to load the zenoh config into ROS"
+    echo "Make sure to source innate-os/config/dds/setup_dds.zsh in every terminal to load the zenoh config into ROS"
   else
     echo "Error: Cannot connect to $1:7447"
     exit 1

@@ -7,7 +7,7 @@ services:
       - SKIP_UPDATE_CHECK=1
 
     shm_size: "2g"
-    # Test image already contains ros2_ws, skills, and agents from Dockerfile.test.
+    # Test image already contains ros2_ws and workspace from ci/Dockerfile.test.
     # Rebuild once in-container to keep behavior aligned with current test workflow.
     command: >
       zsh -lc '

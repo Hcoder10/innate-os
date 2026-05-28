@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -425,7 +426,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     if container_was_running:
         log("Innate OS dev container already running.")
     else:
-        up_cmd = ["docker", "compose", "-f", "docker-compose.dev.yml", "up", "-d"]
+        up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
         if os_image:
             try:
                 ensure_os_image_available(
@@ -444,6 +445,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
                     f"Pull details are in {COMPOSE_LOG_PATH}."
                 )
                 os_image = ""
+                up_cmd.append("--build")
             else:
                 up_cmd.append("--no-build")
 
@@ -467,9 +469,13 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
+    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[
+        :16
+    ]
 
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
+        f"INNATE_OS_HOST_REPO_ID={shlex.quote(host_repo_id)} "
         "~/innate-os/scripts/validate_sim_ros_install.zsh"
     )
 
@@ -545,7 +551,7 @@ def down_os(config: dict[str, object]) -> None:
     ensure_state_dir()
     with DOWN_LOG_PATH.open("a", encoding="utf-8") as log_file:
         subprocess.run(
-            ["docker", "compose", "-f", "docker-compose.dev.yml", "down"],
+            ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"],
             cwd=os_repo,
             env=compose_env,
             text=True,
@@ -755,7 +761,7 @@ def tail_file(path: Path, limit: int = 40) -> str:
 
 
 def docker_compose_cmd(*parts: str) -> list[str]:
-    return ["docker", "compose", "-f", "docker-compose.dev.yml", *parts]
+    return ["docker", "compose", "-f", "sim/docker-compose.dev.yml", *parts]
 
 
 def os_compose_exec_cmd(*parts: str) -> list[str]:
@@ -820,8 +826,8 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
         os_compose_zsh_cmd(
             f"tmux has-session -t {shlex.quote(TMUX_SESSION_NAME)} >/dev/null 2>&1; "
             "echo tmux=$?; "
-            "pgrep -f rws_server >/dev/null; echo rosbridge=$?; "
-            "pgrep -f brain_client_node.py >/dev/null; echo brain=$?"
+            "pgrep -f '[r]ws_server' >/dev/null; echo rosbridge=$?; "
+            "pgrep -f '[b]rain_client_node.py' >/dev/null; echo brain=$?"
         ),
         cwd=os_repo,
         env=compose_env,

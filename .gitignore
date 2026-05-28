@@ -62,8 +62,6 @@ sim/config.toml
 ENV/
 deploy-keys/
 sim/launcher/.state/
-# Ignore stale local launcher state from older sim branches.
-dev/launcher/.state/
 
 # Ignore stale local hook dirs from older setup flows or local tooling.
 .githooks/
@@ -85,16 +83,10 @@ data/
 !sim/data/
 !sim/data/.gitignore
 
-# Primitives directory - ignore checkpoints and data symlinks, keep metadata
-skills/**/data
-skills/**/action_only/
-skills/**/*.h5
-skills/**/*.pt
-skills/**/*.pth
-skills/**/__pycache__/
-
-# Directives directory - track all directive files
-agents/**/__pycache__/
+# User-created scripts live under workspace/custom_*/ and stay local to the machine.
+# Directories are recreated at runtime by ensure_user_directories().
+workspace/custom_agents/
+workspace/custom_skills/
 
 # recordings folder
 recordings/
@@ -104,8 +96,8 @@ recordings/
 
 logs
 
-.last_map
-.last_mode
+data/.last_map
+data/.last_mode
 .onnx
 
 # arm_wave directory (local data, not tracked)

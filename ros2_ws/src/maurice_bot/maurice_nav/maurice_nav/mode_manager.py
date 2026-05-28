@@ -141,15 +141,18 @@ class ModeManager(Node):
         
         # Use environment variable if set, otherwise construct from HOME
         maurice_root = os.environ.get('INNATE_OS_ROOT', os.path.join(os.path.expanduser('~'), 'innate-os'))
-        
+
+        # State directory — groups maps, last_mode, and last_map together
+        state_dir = os.path.join(maurice_root, 'data')
+
         # Maps directory
-        self.maps_dir = os.path.join(maurice_root, 'maps')
-        
+        self.maps_dir = os.path.join(state_dir, 'maps')
+
         # Mode persistence file
-        self.mode_file = os.path.join(maurice_root, '.last_mode')
-        
-        # Map persistence file  
-        self.map_file = os.path.join(maurice_root, '.last_map')
+        self.mode_file = os.path.join(state_dir, '.last_mode')
+
+        # Map persistence file
+        self.map_file = os.path.join(state_dir, '.last_map')
         
         # BasicNavigator for map operations
         self.navigator = None
