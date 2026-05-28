@@ -1,0 +1,41 @@
+name: Migration Test
+
+# Guards the data-migration path used when a robot runs `innate update`:
+# every user-created skill, agent, input, trained model, SLAM map, and the
+# last mode/map must survive the refactor that moved them under workspace/ and
+# data/. Runs entirely on ubuntu-latest (no ROS build needed).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  migration-test:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 + tags so the cross-version test can check out old tags.
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Show available release tags
+        run: git tag --sort=-v:refname | head -n 20
+
+      - name: Upgrade-migration test across release tags (repo-root layout)
+        run: bash scripts/update/test_migrate_user_data.sh
+
+      - name: Home-directory migration unit tests (~/agents, ~/skills)
+        run: pytest ros2_ws/src/brain/brain_client/tests/test_home_migration.py -v
