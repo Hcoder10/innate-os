@@ -116,8 +116,12 @@ _migrate_primitives_models() {
     done < <(find "$prim" -type f \( -name "*.h5" -o -name "*.pt" -o -name "*.pth" \))
 
     find "$prim" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    if [ -z "$(find "$prim" -type f 2>/dev/null)" ]; then
-        rm -rf "$prim"
+    # Remove now-empty dirs bottom-up. rmdir only deletes empty dirs (never
+    # files), matching the empty-only contract; any dir with leftover files stays.
+    find "$prim" -depth -type d -exec rmdir {} \; 2>/dev/null || true
+    if [ -d "$prim" ]; then
+        _mig_log "Kept primitives/ (still contains files after migration)"
+    else
         _mig_log "Removed empty primitives/"
     fi
 }
