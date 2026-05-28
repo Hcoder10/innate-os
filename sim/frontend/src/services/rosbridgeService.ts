@@ -342,6 +342,8 @@ export async function getAvailableAgentsDirect(
   let skills = parseRobotSkills(parsedPayload?.skills);
   const currentAgentId = values.current_directive ?? null;
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
+  const hasActiveSkillIds =
+    parsedPayload !== null && Array.isArray(parsedPayload.active_skills);
   const activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
   try {
     skills = await getAvailableSkillsFromTopicDirect(wsUrl);
@@ -355,7 +357,7 @@ export async function getAvailableAgentsDirect(
     current_agent_id: currentAgentId,
     startup_agent_id: values.startup_directive ?? null,
     active_skill_ids:
-      activeSkillIds.length > 0 ? activeSkillIds : currentAgent?.skills ?? [],
+      hasActiveSkillIds ? activeSkillIds : currentAgent?.skills ?? [],
   };
 }
 

@@ -7,6 +7,7 @@ import { ImageDisplay } from "./ImageDisplay";
 
 type ViewMode = "frontFocus" | "map";
 type BackendDisplayLevel = "healthy" | "warning" | "error";
+type SkillPendingAction = "enable" | "disable";
 
 type AgentWarning = {
   title: string;
@@ -28,6 +29,9 @@ type AlternativeSimDashboardProps = {
   onSelectAgent: (agentId: string | null) => void;
   availableSkills: RobotSkill[];
   activeSkillIds: string[];
+  pendingSkillChanges: Record<string, SkillPendingAction>;
+  isSettingAgent: boolean;
+  skillUpdateError: string | null;
   onToggleActiveSkill: (skillId: string) => void;
 };
 
@@ -327,20 +331,27 @@ const AgentList = styled.div`
   overflow-y: auto;
 `;
 
-const AgentButton = styled.button<{ $active: boolean }>`
+const AgentButton = styled.button<{ $active: boolean; $pending?: boolean }>`
   width: 100%;
   border: 0;
   border-bottom: 1px solid rgba(31, 41, 55, 0.8);
   border-radius: 0;
-  background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "transparent")};
-  color: ${({ $active }) => ($active ? "#fff" : "#9ca3af")};
+  background: ${({ $active, $pending }) =>
+    $pending
+      ? "rgba(113, 63, 18, 0.24)"
+      : $active
+        ? "rgba(20, 83, 45, 0.24)"
+        : "transparent"};
+  color: ${({ $active, $pending }) =>
+    $pending ? "#fbbf24" : $active ? "#fff" : "#9ca3af"};
   display: grid;
   gap: 10px;
   padding: 14px 18px;
   text-align: left;
 
   &:hover {
-    background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.3)" : "#0f172a")};
+    background: ${({ $active, $pending }) =>
+      $pending ? "rgba(113, 63, 18, 0.28)" : $active ? "rgba(20, 83, 45, 0.3)" : "#0f172a"};
     color: #fff;
   }
 
@@ -350,8 +361,14 @@ const AgentButton = styled.button<{ $active: boolean }>`
   }
 
   &:disabled:hover {
-    background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "transparent")};
-    color: ${({ $active }) => ($active ? "#fff" : "#9ca3af")};
+    background: ${({ $active, $pending }) =>
+      $pending
+        ? "rgba(113, 63, 18, 0.24)"
+        : $active
+          ? "rgba(20, 83, 45, 0.24)"
+          : "transparent"};
+    color: ${({ $active, $pending }) =>
+      $pending ? "#fbbf24" : $active ? "#fff" : "#9ca3af"};
   }
 `;
 
@@ -367,25 +384,30 @@ const AgentName = styled.span`
   line-height: 1.25;
 `;
 
-const AgentState = styled.span<{ $active: boolean }>`
-  color: ${({ $active }) => ($active ? "#4ade80" : "#4b5563")};
+const AgentState = styled.span<{ $active: boolean; $pending?: boolean }>`
+  color: ${({ $active, $pending }) =>
+    $pending ? "#fbbf24" : $active ? "#4ade80" : "#4b5563"};
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 `;
 
-const ToggleRail = styled.span<{ $active: boolean }>`
-  border: 1px solid ${({ $active }) => ($active ? "rgba(34, 197, 94, 0.5)" : "#374151")};
-  background: ${({ $active }) => ($active ? "rgba(20, 83, 45, 0.24)" : "#030712")};
+const ToggleRail = styled.span<{ $active: boolean; $pending?: boolean }>`
+  border: 1px solid
+    ${({ $active, $pending }) =>
+      $pending ? "rgba(245, 158, 11, 0.55)" : $active ? "rgba(34, 197, 94, 0.5)" : "#374151"};
+  background: ${({ $active, $pending }) =>
+    $pending ? "rgba(113, 63, 18, 0.24)" : $active ? "rgba(20, 83, 45, 0.24)" : "#030712"};
   display: inline-flex;
   height: 16px;
   padding: 1px;
   width: 36px;
 `;
 
-const ToggleThumb = styled.span<{ $active: boolean }>`
-  background: ${({ $active }) => ($active ? "#4ade80" : "#6b7280")};
+const ToggleThumb = styled.span<{ $active: boolean; $pending?: boolean }>`
+  background: ${({ $active, $pending }) =>
+    $pending ? "#fbbf24" : $active ? "#4ade80" : "#6b7280"};
   display: block;
   height: 12px;
   transform: translateX(${({ $active }) => ($active ? "18px" : "0")});
@@ -398,6 +420,15 @@ const EmptyAgentState = styled.div`
   font-size: 12px;
   line-height: 1.5;
   padding: 18px;
+`;
+
+const SkillNotice = styled.div`
+  border-bottom: 1px solid rgba(127, 29, 29, 0.65);
+  background: rgba(127, 29, 29, 0.18);
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 12px 18px;
 `;
 
 const DangerButton = styled.button`
@@ -601,10 +632,14 @@ export function AlternativeSimDashboard({
   onSelectAgent,
   availableSkills,
   activeSkillIds,
+  pendingSkillChanges,
+  isSettingAgent,
+  skillUpdateError,
   onToggleActiveSkill,
 }: AlternativeSimDashboardProps) {
   const selectedAgent = activeAgent ?? "";
   const currentAgent = agents.find((agent) => agent.id === activeAgent);
+  const skillUpdatePending = Object.keys(pendingSkillChanges).length > 0;
   const backendDetail =
     agentWarning?.detail ||
     (backendLevel === "healthy"
@@ -661,31 +696,47 @@ export function AlternativeSimDashboard({
               <IoRefresh size={15} />
             </IconButton>
           </SectionTitleBar>
+          {skillUpdateError && <SkillNotice>{skillUpdateError}</SkillNotice>}
 
           <AgentList>
             {availableSkills.length > 0 ? (
               availableSkills.map((skill) => {
                 const isActive = activeSkillIds.includes(skill.id);
+                const pendingAction = pendingSkillChanges[skill.id];
+                const isPending = pendingAction !== undefined;
+                const displayedActive = pendingAction
+                  ? pendingAction === "enable"
+                  : isActive;
                 return (
                   <AgentButton
                     key={skill.id}
                     type="button"
-                    $active={isActive}
-                    disabled={!currentAgent}
+                    $active={displayedActive}
+                    $pending={isPending}
+                    disabled={
+                      !currentAgent ||
+                      isLoadingAgents ||
+                      isSettingAgent ||
+                      skillUpdatePending
+                    }
                     onClick={() => onToggleActiveSkill(skill.id)}
                   >
                     <AgentRow>
                       <AgentName>{formatSkillName(skill)}</AgentName>
-                      <ToggleRail $active={isActive}>
-                        <ToggleThumb $active={isActive} />
+                      <ToggleRail $active={displayedActive} $pending={isPending}>
+                        <ToggleThumb $active={displayedActive} $pending={isPending} />
                       </ToggleRail>
                     </AgentRow>
-                    <AgentState $active={isActive}>
-                      {currentAgent
-                        ? isActive
-                          ? "Enabled"
-                          : "Disabled"
-                        : "Select agent"}
+                    <AgentState $active={displayedActive} $pending={isPending}>
+                      {isPending
+                        ? pendingAction === "enable"
+                          ? "Enabling"
+                          : "Disabling"
+                        : currentAgent
+                          ? isActive
+                            ? "Enabled"
+                            : "Disabled"
+                          : "Select agent"}
                     </AgentState>
                   </AgentButton>
                 );
@@ -750,6 +801,7 @@ export function AlternativeSimDashboard({
               onChange={(event) => {
                 onSelectAgent(event.target.value || null);
               }}
+              disabled={isLoadingAgents || isSettingAgent || skillUpdatePending}
               aria-label="Active agent"
             >
               <option value="">No prompt</option>

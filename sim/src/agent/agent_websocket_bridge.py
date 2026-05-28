@@ -419,6 +419,8 @@ async def inbound_service_loop(ws, shared_queues):
                 startup_directive = values.get("startup_directive", "")
 
                 agents = []
+                skills = []
+                active_skill_ids = None
 
                 try:
                     if isinstance(directives_raw, list) and len(directives_raw) > 0:
@@ -428,7 +430,24 @@ async def inbound_service_loop(ws, shared_queues):
                     else:
                         json_string = "[]"
 
-                    agents_list = json.loads(json_string)
+                    directives_payload = json.loads(json_string)
+                    if isinstance(directives_payload, dict):
+                        agents_list = directives_payload.get("agents", [])
+                        skills_list = directives_payload.get("skills", [])
+                        if not isinstance(agents_list, list):
+                            agents_list = []
+                        if not isinstance(skills_list, list):
+                            skills_list = []
+                        raw_active_skill_ids = directives_payload.get("active_skills")
+                        if isinstance(raw_active_skill_ids, list):
+                            active_skill_ids = [
+                                skill_id
+                                for skill_id in raw_active_skill_ids
+                                if isinstance(skill_id, str)
+                            ]
+                    else:
+                        agents_list = directives_payload
+                        skills_list = []
 
                     for directive in agents_list:
                         if isinstance(directive, dict):
@@ -445,6 +464,15 @@ async def inbound_service_loop(ws, shared_queues):
                             print(
                                 f"[ROSBridge] Parsed agent: {agent.id} - {agent.display_name}"
                             )
+                    for skill in skills_list:
+                        if isinstance(skill, dict):
+                            skill_info = SkillInfo(
+                                id=str(skill.get("id", "")),
+                                name=str(skill.get("name", skill.get("id", ""))),
+                                type=str(skill.get("type", "")),
+                                in_training=bool(skill.get("in_training", False)),
+                            )
+                            skills.append(skill_info)
                 except json.JSONDecodeError as e:
                     print(f"[ROSBridge] Failed to parse directives JSON: {e}")
                 except Exception as e:
@@ -454,7 +482,10 @@ async def inbound_service_loop(ws, shared_queues):
                     agents=agents,
                     current_agent_id=current_directive,
                     startup_agent_id=startup_directive,
+                    active_skill_ids=active_skill_ids,
                 )
+                if skills:
+                    shared_queues.update_available_skills(skills)
                 print(f"[ROSBridge] Loaded {len(agents)} available agents from brain")
 
         await asyncio.sleep(0.0001)

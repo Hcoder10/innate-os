@@ -35,6 +35,7 @@ const BACKEND_WARMUP_STATES = new Set([
   "connecting",
   "authenticating",
 ]);
+type SkillPendingAction = "enable" | "disable";
 
 function formatBackendState(state?: string | null) {
   return (state || "unknown").replace(/_/g, " ");
@@ -748,6 +749,11 @@ export default function App() {
     new URLSearchParams(window.location.search).get("ui") === "alt";
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [activeSkillIds, setActiveSkillIds] = useState<string[]>([]);
+  const [pendingSkillChanges, setPendingSkillChanges] = useState<
+    Record<string, SkillPendingAction>
+  >({});
+  const [isSettingAgent, setIsSettingAgent] = useState(false);
+  const [skillUpdateError, setSkillUpdateError] = useState<string | null>(null);
   const [agents, setAgents] = useState<RobotAgent[]>([]);
   const [availableSkills, setAvailableSkills] = useState<RobotSkill[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(true);
@@ -1390,71 +1396,95 @@ export default function App() {
   }
 
   async function handleSetDirective(directive: string) {
-    try {
-      if (useDirectRobot) {
-        await setDirectiveDirect(robotWsUrl, directive);
-        await handleSetBrainActive(true);
-        return;
-      }
-
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-
-      // Set the directive
-      const response = await fetch(`${simBaseUrl}/set_directive`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ text: directive }),
-      });
-
-      const data = await response.json();
-      console.log("Directive response:", data);
-
+    if (useDirectRobot) {
+      await setDirectiveDirect(robotWsUrl, directive);
       await handleSetBrainActive(true);
-    } catch (error) {
-      console.error("Error setting directive:", error);
-    }
-  }
-
-  async function handleSetActiveSkills(agentId: string | null, skills: string[]) {
-    try {
-      if (useDirectRobot) {
-        await setActiveSkillsDirect(robotWsUrl, agentId, skills);
-        return;
-      }
-
-      const response = await fetch(`${simBaseUrl}/set_active_skills`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: agentId, skills }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-    } catch (error) {
-      console.error("Error setting active skills:", error);
-    }
-  }
-
-  function handleAgentSelect(agentId: string | null) {
-    if (!agentId) {
-      setActiveAgent(null);
-      setActiveSkillIds([]);
-      void handleSetActiveSkills(null, []);
-      void handleSetBrainActive(false);
       return;
     }
 
-    const selectedAgent = agents.find((agent) => agent.id === agentId) ?? null;
-    setActiveAgent(agentId);
-    setActiveSkillIds(selectedAgent?.skills ?? []);
-    void handleSetDirective(agentId);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    // Set the directive
+    const response = await fetch(`${simBaseUrl}/set_directive`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text: directive }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Set directive failed (HTTP ${response.status})`);
+    }
+    const data = await response.json();
+    console.log("Directive response:", data);
+    if (data.status !== "directive_enqueued") {
+      throw new Error(`Set directive failed: ${data.status ?? "unknown status"}`);
+    }
+
+    await handleSetBrainActive(true);
   }
 
-  function handleToggleActiveSkill(skillId: string) {
-    if (!activeAgentRecord) {
+  async function handleSetActiveSkills(agentId: string | null, skills: string[]) {
+    if (useDirectRobot) {
+      await setActiveSkillsDirect(robotWsUrl, agentId, skills);
+      return;
+    }
+
+    const response = await fetch(`${simBaseUrl}/set_active_skills`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId, skills }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Set active skills failed (HTTP ${response.status})`);
+    }
+    const data = await response.json();
+    if (data.status !== "active_skills_enqueued") {
+      throw new Error(`Set active skills failed: ${data.status ?? "unknown status"}`);
+    }
+  }
+
+  async function handleAgentSelect(agentId: string | null) {
+    if (isSettingAgent || Object.keys(pendingSkillChanges).length > 0) {
+      return;
+    }
+
+    const previousAgent = activeAgent;
+    const previousSkillIds = activeSkillIds;
+    setIsSettingAgent(true);
+    setSkillUpdateError(null);
+    try {
+      if (!agentId) {
+        setActiveAgent(null);
+        setActiveSkillIds([]);
+        await handleSetActiveSkills(null, []);
+        await handleSetBrainActive(false);
+        return;
+      }
+
+      const selectedAgent = agents.find((agent) => agent.id === agentId) ?? null;
+      setActiveAgent(agentId);
+      setActiveSkillIds(selectedAgent?.skills ?? []);
+      await handleSetDirective(agentId);
+    } catch (error) {
+      setActiveAgent(previousAgent);
+      setActiveSkillIds(previousSkillIds);
+      const message = error instanceof Error ? error.message : String(error);
+      setSkillUpdateError(message);
+      console.error("Error selecting agent:", error);
+    } finally {
+      setIsSettingAgent(false);
+    }
+  }
+
+  async function handleToggleActiveSkill(skillId: string) {
+    if (
+      !activeAgentRecord ||
+      isSettingAgent ||
+      Object.keys(pendingSkillChanges).length > 0
+    ) {
       return;
     }
 
@@ -1468,8 +1498,22 @@ export default function App() {
           (id) => id === skillId || activeSkillIds.includes(id),
         );
 
-    setActiveSkillIds(nextSkillIds);
-    void handleSetActiveSkills(activeAgentRecord.id, nextSkillIds);
+    const action: SkillPendingAction = activeSkillIds.includes(skillId)
+      ? "disable"
+      : "enable";
+    setPendingSkillChanges({ [skillId]: action });
+    setSkillUpdateError(null);
+    try {
+      await handleSetActiveSkills(activeAgentRecord.id, nextSkillIds);
+      setActiveSkillIds(nextSkillIds);
+      window.setTimeout(() => void fetchAgents(), 150);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSkillUpdateError(message);
+      console.error("Error setting active skills:", error);
+    } finally {
+      setPendingSkillChanges({});
+    }
   }
 
   const backendStatusIsWarning = isBackendWarningStatus(
@@ -1511,10 +1555,13 @@ export default function App() {
         onReloadAgents={handleReloadAgents}
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
-        onSelectAgent={handleAgentSelect}
+        onSelectAgent={(agentId) => void handleAgentSelect(agentId)}
         availableSkills={availableSkills}
         activeSkillIds={activeSkillIds}
-        onToggleActiveSkill={handleToggleActiveSkill}
+        pendingSkillChanges={pendingSkillChanges}
+        isSettingAgent={isSettingAgent}
+        skillUpdateError={skillUpdateError}
+        onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
       />
     );
   }
@@ -1625,7 +1672,7 @@ export default function App() {
                   <AgentItem
                     key={agent.id}
                     $isActive={agent.id === activeAgent}
-                    onClick={() => handleAgentSelect(agent.id)}
+                    onClick={() => void handleAgentSelect(agent.id)}
                   >
                     <AgentName>{agent.display_name}</AgentName>
                     <AgentCheck $isActive={agent.id === activeAgent}>
@@ -1655,7 +1702,7 @@ export default function App() {
             viewMode={viewMode}
             setViewMode={setViewMode}
             onResetRobot={handleResetBrain}
-            onSetDirective={handleAgentSelect}
+            onSetDirective={(directive) => void handleAgentSelect(directive)}
           />
         </MainContent>
 

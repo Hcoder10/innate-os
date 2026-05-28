@@ -2556,7 +2556,8 @@ class BrainClientNode(Node):
         """
         self.get_logger().info("Received request for available directives")
 
-        # Build detailed directive information as JSON
+        # Build detailed directive information as JSON.
+        # The active skill subset is runtime state only; agent source files stay unchanged.
         directive_details = []
         for directive_name, directive in self.directives.items():
             directive_info = {
@@ -2570,7 +2571,15 @@ class BrainClientNode(Node):
             directive_details.append(directive_info)
 
         # Keep detailed directive data in the existing string[] field.
-        response.directives = [json.dumps(directive_details)]
+        response.directives = [
+            json.dumps(
+                {
+                    "agents": directive_details,
+                    "skills": self.primitives_metadata_list,
+                    "active_skills": self._active_skill_ids_for_registration(),
+                }
+            )
+        ]
         response.current_directive = (
             self.current_directive.id if self.current_directive else ""
         )
