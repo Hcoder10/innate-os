@@ -2203,12 +2203,12 @@ class _UpdateManager:
                 return 1
 
             remote_ref = f"origin/{target}"
-            if self.git.resolve_ref(remote_ref) == current:
+            commits_behind = self.git.commits_between("HEAD", remote_ref)
+            if commits_behind == 0:
                 self.logger.success(f"Already up to date with {target}")
                 self._remove_update_lock()
                 return 0
 
-            commits_behind = self.git.commits_between("HEAD", remote_ref)
             self.logger.info(f"Updating to latest on {target} ({commits_behind} commits)")
             print()
             print("Changes to be applied:")
