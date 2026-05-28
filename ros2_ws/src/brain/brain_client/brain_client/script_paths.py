@@ -6,6 +6,11 @@ Layout:
     $INNATE_OS_ROOT/workspace/custom_agents/   # user agents   (gitignored)
     $INNATE_OS_ROOT/workspace/innate_skills/   # shipped skills (tracked)
     $INNATE_OS_ROOT/workspace/custom_skills/   # user skills   (gitignored)
+    ~/agents/                                  # user agents   (alternative, in place)
+    ~/skills/                                  # user skills   (alternative, in place)
+
+User content is supported in either workspace/custom_* or the home directory
+(~/agents, ~/skills); both are scanned and home content is never moved.
 
 Provenance is determined by which directory a script came from:
 "shipped" if the path is under innate_*/, "user" otherwise.
@@ -14,7 +19,6 @@ Provenance is determined by which directory a script came from:
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -49,14 +53,42 @@ def get_custom_skills_dir() -> Path:
     return _workspace() / "custom_skills"
 
 
+def get_home_agents_dir() -> Path:
+    """Optional user location ~/agents (an alternative to custom_agents)."""
+    return Path.home() / "agents"
+
+
+def get_home_skills_dir() -> Path:
+    """Optional user location ~/skills (an alternative to custom_skills)."""
+    return Path.home() / "skills"
+
+
 def get_agent_directories() -> list[Path]:
-    """Ordered list of directories to scan for agents."""
-    return [get_innate_agents_dir(), get_custom_agents_dir()]
+    """Ordered list of directories to scan for agents.
+
+    Shipped agents first, then user agents from workspace/custom_agents and,
+    when it exists, the home directory (~/agents). Home content is scanned in
+    place and never moved, so users may keep agents in either location.
+    """
+    dirs = [get_innate_agents_dir(), get_custom_agents_dir()]
+    home = get_home_agents_dir()
+    if home.is_dir():
+        dirs.append(home)
+    return dirs
 
 
 def get_skill_directories() -> list[Path]:
-    """Ordered list of directories to scan for skills."""
-    return [get_innate_skills_dir(), get_custom_skills_dir()]
+    """Ordered list of directories to scan for skills.
+
+    Shipped skills first, then user skills from workspace/custom_skills and,
+    when it exists, the home directory (~/skills). Home content is scanned in
+    place and never moved, so users may keep skills in either location.
+    """
+    dirs = [get_innate_skills_dir(), get_custom_skills_dir()]
+    home = get_home_skills_dir()
+    if home.is_dir():
+        dirs.append(home)
+    return dirs
 
 
 def classify_source(path: str | os.PathLike) -> Source:
@@ -76,36 +108,3 @@ def ensure_user_directories() -> None:
     """Create custom_* directories if they don't exist yet."""
     get_custom_agents_dir().mkdir(parents=True, exist_ok=True)
     get_custom_skills_dir().mkdir(parents=True, exist_ok=True)
-
-
-def migrate_legacy_home_directories(logger=None) -> None:
-    """Move any leftover ~/agents and ~/skills content into the custom_* dirs.
-
-    One-shot migration. Skips files that already exist at the destination.
-    Safe to call on every startup.
-    """
-    pairs = [
-        (Path.home() / "agents", get_custom_agents_dir()),
-        (Path.home() / "skills", get_custom_skills_dir()),
-    ]
-    for src, dst in pairs:
-        if not src.exists() or not src.is_dir():
-            continue
-        dst.mkdir(parents=True, exist_ok=True)
-        for entry in src.iterdir():
-            if entry.name in ("__pycache__",):
-                continue
-            target = dst / entry.name
-            if target.exists():
-                if logger:
-                    logger.warning(
-                        f"Skipping migration of {entry} — {target} already exists."
-                    )
-                continue
-            try:
-                shutil.move(str(entry), str(target))
-                if logger:
-                    logger.info(f"Migrated {entry} -> {target}")
-            except Exception as e:
-                if logger:
-                    logger.error(f"Failed to migrate {entry}: {e}")
