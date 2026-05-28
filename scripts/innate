@@ -1843,6 +1843,19 @@ class _GitRepo:
         result = self._run(["fetch", "origin", "--tags", "--force", "--prune"], check=False)
         return result.returncode == 0
 
+    def fetch_branch(self, branch: str) -> bool:
+        """Fetch a specific branch from origin, updating its remote-tracking ref."""
+        result = self._run(
+            ["fetch", "origin", f"{branch}:refs/remotes/origin/{branch}", "--force"],
+            check=False,
+        )
+        return result.returncode == 0
+
+    def is_tag(self, name: str) -> bool:
+        """Return True if `name` is a local tag (tags are fetched up front)."""
+        result = self._run(["show-ref", "--verify", "--quiet", f"refs/tags/{name}"], check=False)
+        return result.returncode == 0
+
     def prune_stale_local_tags(self) -> list[str]:
         """Delete local tags that no longer exist on the remote.
 
@@ -2182,34 +2195,36 @@ class _UpdateManager:
         """Apply updates to a specific target (tag or branch)."""
         target = self.target
 
-        # If target is the branch name, track remote branch
-        if target == self.config.branch:
-            remote_ref = f"origin/{self.config.branch}"
+        # Tags are fetched up front; treat any non-tag target as a branch to track.
+        if not self.git.is_tag(target):
+            # Always fetch right before the destructive checkout so we reset onto a
+            # fresh, verified ref; this also confirms the branch exists on the remote.
+            if not self.git.fetch_branch(target):
+                self.logger.error(f"Unknown target: {target}")
+                self._remove_update_lock()
+                return 1
+
+            remote_ref = f"origin/{target}"
             commits_behind = self.git.commits_between("HEAD", remote_ref)
             if commits_behind == 0:
-                self.logger.success(f"Already up to date with {self.config.branch}")
+                self.logger.success(f"Already up to date with {target}")
                 self._remove_update_lock()
                 return 0
 
-            self.logger.info(f"Updating to latest on {self.config.branch} ({commits_behind} commits)")
+            self.logger.info(f"Updating to latest on {target} ({commits_behind} commits)")
             print()
             print("Changes to be applied:")
             self._show_commits("HEAD", remote_ref, commits_behind, max_show=20)
 
             return self._do_git_update(
-                self.config.branch,
-                f"latest on {self.config.branch}",
+                target,
+                f"latest on {target}",
                 current,
                 track_remote=remote_ref,
             )
 
-        # Target is a tag — verify it exists
+        # Target is a tag
         tag_commit = self.git.resolve_ref(target)
-        if tag_commit == "unknown":
-            self.logger.error(f"Unknown target: {target}")
-            self._remove_update_lock()
-            return 1
-
         if tag_commit == current:
             self.logger.success(f"Already at {target}")
             self._remove_update_lock()
@@ -2733,6 +2748,7 @@ def apply(ctx, yes, background, in_tmux, target):
       innate update apply                    Apply latest stable tag
       innate update --dev apply 0.5.0-rc1    Apply a specific tag
       innate update --dev apply main         Update to latest commit on main
+      innate update --dev apply my-feature   Update to latest commit on a branch
       innate update apply 0.5.0              Apply a specific target
     """
     dev = ctx.obj["dev"]
