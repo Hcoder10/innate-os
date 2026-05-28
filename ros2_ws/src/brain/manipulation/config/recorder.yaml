@@ -1,7 +1,7 @@
 # File: brain/manipulation/config/recorder.yaml
 /**:
   ros__parameters:
-    data_directory: "~/skills"  # Base directory for skills (each task stores episodes in {task}/data/)
+    data_directory: "~/innate-os/workspace/custom_skills"  # Fallback default; recorder.launch.py overrides this with $INNATE_OS_ROOT/workspace/custom_skills.
     data_frequency: 30                    # Frequency (e.g., Hz) at which data is recorded
     image_topics:                         # List of image topic names
       - "/mars/main_camera/left/image_raw"

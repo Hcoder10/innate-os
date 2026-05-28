@@ -1,9 +1,12 @@
+export type AgentSource = "shipped" | "user";
+
 export interface RobotAgent {
   id: string;
   display_name: string;
   display_icon: string | null;
   prompt: string;
   skills: string[];
+  source: AgentSource;
 }
 
 export interface BrainBackendStatus {
@@ -225,6 +228,7 @@ export async function getAvailableAgentsDirect(
                 .filter((skill): skill is string => typeof skill === "string")
                 .map((skill) => skill)
             : [],
+          source: entry.source === "shipped" ? "shipped" : "user",
         }))
     : [];
 

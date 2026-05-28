@@ -17,7 +17,7 @@ be opened from any device on the same network.
 
 - **Backend**: FastAPI server (`training_manager/`) that delegates to the existing
   `training_client` `SkillManager` and `OrchestratorClient` for all cloud operations.
-  Reads/writes skill directories on disk (`~/skills/`).
+  Reads/writes skill directories on disk (`$INNATE_OS_ROOT/workspace/custom_skills/`).
 - **Frontend**: React + Vite + Tailwind SPA (`frontend/`), built into
   `training_manager/static/` and served by the FastAPI app.
 
@@ -55,7 +55,7 @@ export INNATE_AUTH_ISSUER_URL="https://auth-v1.innate.bot"  # optional
 
 ```bash
 # Via the training CLI (recommended)
-python -m training_client.cli ui --skills-dir ~/skills --port 8080
+python -m training_client.cli ui --skills-dir $INNATE_OS_ROOT/workspace/custom_skills --port 8080
 
 # Or directly
 python -m training_manager.server
@@ -76,7 +76,7 @@ After a successful build:
 
 ```bash
 source ~/innate-os/ros2_ws/install/setup.bash
-python -m training_client.cli ui --skills-dir ~/skills
+python -m training_client.cli ui --skills-dir $INNATE_OS_ROOT/workspace/custom_skills
 ```
 
 ## CLI Options
@@ -86,7 +86,7 @@ python -m training_client.cli ui [OPTIONS]
 
 Options:
   --port INTEGER       HTTP port (default: 8080)
-  --skills-dir PATH    Root skills directory (default: ~/skills)
+  --skills-dir PATH    Root skills directory (default: $INNATE_OS_ROOT/workspace/custom_skills)
   -s, --server TEXT     Orchestrator URL (or set TRAINING_SERVER_URL)
   -t, --token TEXT      Service key (or set INNATE_SERVICE_KEY)
   --issuer TEXT         Auth issuer URL (or set INNATE_AUTH_ISSUER_URL)

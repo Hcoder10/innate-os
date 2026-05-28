@@ -109,6 +109,9 @@ class Interface:
 
 
 class Skill(ABC):
+    # Stamped by the loader to "shipped" or "user" based on origin directory.
+    source: str = "user"
+
     def __init__(self, logger):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None

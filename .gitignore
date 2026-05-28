@@ -83,16 +83,10 @@ data/
 !sim/data/
 !sim/data/.gitignore
 
-# Primitives directory - ignore checkpoints and data symlinks, keep metadata
-skills/**/data
-skills/**/action_only/
-skills/**/*.h5
-skills/**/*.pt
-skills/**/*.pth
-skills/**/__pycache__/
-
-# Directives directory - track all directive files
-agents/**/__pycache__/
+# User-created scripts live under workspace/custom_*/ and stay local to the machine.
+# Directories are recreated at runtime by ensure_user_directories().
+workspace/custom_agents/
+workspace/custom_skills/
 
 # recordings folder
 recordings/

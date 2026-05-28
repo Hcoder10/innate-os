@@ -65,6 +65,7 @@ from std_srvs.srv import SetBool, Trigger
 
 from brain_client.ws_bridge import WSBridge
 from brain_client.initializers import initialize_agents
+from brain_client.script_paths import get_agent_directories
 from brain_client.tts_handler import TTSHandler
 from brain_client.hot_reload_watcher import HotReloadWatcher
 
@@ -599,16 +600,10 @@ class BrainClientNode(Node):
         # Initialize hot reload file watcher (agents only — skills watched by SAS)
         self._hot_reload_pending = None  # (skill_names, agent_names) tuple
         self._hot_reload_lock = threading.Lock()
-        innate_root = os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
         self._hot_reload_watcher = HotReloadWatcher(
             logger=self.get_logger(),
             skills_directories=[],  # Skills hot reload is handled by SAS
-            agents_directories=[
-                os.path.join(innate_root, "workspace", "agents"),
-                os.path.join(os.path.expanduser("~"), "agents"),
-            ],
+            agents_directories=[str(p) for p in get_agent_directories()],
             on_reload=self._queue_hot_reload,
             debounce_seconds=1.0,
         )
@@ -2477,6 +2472,7 @@ class BrainClientNode(Node):
                 "display_icon": directive.display_icon_data,
                 "prompt": directive.get_prompt(),
                 "skills": directive.get_skills(),
+                "source": getattr(directive, "source", "user"),
             }
             directive_details.append(directive_info)
 
@@ -2706,54 +2702,51 @@ class BrainClientNode(Node):
     def _reload_agents_selective(self, agent_names: list) -> list:
         """
         Reload specific agents by name.
-        
+
         Args:
             agent_names: List of agent names to reload.
-            
+
         Returns:
             List of agent names that were successfully reloaded.
         """
         from brain_client.agent_loader import AgentLoader
-        
+        from brain_client.script_paths import classify_source
+
         agent_loader = AgentLoader(self.get_logger())
-        
-        # Get agent directories
-        innate_root = os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
-        agents_directories = [
-            os.path.join(innate_root, "workspace", "agents"),
-            os.path.join(os.path.expanduser("~"), "agents"),
-        ]
+
+        agents_directories = [str(p) for p in get_agent_directories()]
 
         reloaded = []
         for agent_name in agent_names:
-            agent_class = agent_loader.reload_agent_by_name(agent_name, agents_directories)
-            if agent_class is not None:
+            entry = agent_loader.reload_agent_by_name(agent_name, agents_directories)
+            if entry is not None:
+                agent_class, source_file = entry
                 try:
-                    # Create instance and validate
                     agent_instance = agent_class()
-                    
-                    # Load icon
-                    agent_loader._load_display_icon(agent_instance, agents_directories[0])
-                    
+                    agent_instance.source = classify_source(source_file)
+
+                    # Load icon from the agent's own source directory.
+                    agent_loader._load_display_icon(agent_instance, str(source_file.parent))
+
                     # Validate skills
                     if self.primitives_dict:
                         agent_loader._validate_agent_skills(agent_instance, self.primitives_dict)
-                    
+
                     # Update the directives dict
                     self.directives[agent_name] = agent_instance
                     reloaded.append(agent_name)
-                    
+
                     # If this is the current directive, update it
                     if self.current_directive and self.current_directive.id == agent_name:
                         self.current_directive = agent_instance
                         self.get_logger().info(f"Updated current directive: {agent_name}")
-                    
-                    self.get_logger().info(f"Reloaded agent: {agent_name}")
+
+                    self.get_logger().info(
+                        f"Reloaded agent: {agent_name} [source={agent_instance.source}]"
+                    )
                 except Exception as e:
                     self.get_logger().error(f"Error instantiating agent {agent_name}: {e}")
-        
+
         return reloaded
 
     def _perform_reload(self):

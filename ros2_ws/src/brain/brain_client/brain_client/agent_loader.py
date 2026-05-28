@@ -12,10 +12,11 @@ import os
 import sys
 import importlib.util
 import inspect
-from typing import Dict, List, Type, Optional
+from typing import Dict, List, Optional, Tuple, Type
 from pathlib import Path
 
 from brain_client.agent_types import Agent
+from brain_client.script_paths import classify_source
 
 
 class AgentLoader:
@@ -29,7 +30,7 @@ class AgentLoader:
 
     def discover_agents_in_directory(
         self, directory_path: str
-    ) -> Dict[str, Type[Agent]]:
+    ) -> Dict[str, Tuple[Type[Agent], Path]]:
         """
         Scans a directory for Python files and attempts to load agent classes.
 
@@ -37,9 +38,9 @@ class AgentLoader:
             directory_path: Path to directory containing agent files
 
         Returns:
-            Dictionary mapping agent names to their classes
+            Dictionary mapping agent names to (class, source_file) tuples
         """
-        agents = {}
+        agents: Dict[str, Tuple[Type[Agent], Path]] = {}
         directory = Path(directory_path)
 
         if not directory.exists():
@@ -69,7 +70,9 @@ class AgentLoader:
         self.logger.info(f"Discovered {len(agents)} agents in {directory_path}")
         return agents
 
-    def _load_agents_from_file(self, file_path: Path) -> Dict[str, Type[Agent]]:
+    def _load_agents_from_file(
+        self, file_path: Path
+    ) -> Dict[str, Tuple[Type[Agent], Path]]:
         """
         Loads agent classes from a single Python file.
 
@@ -77,9 +80,9 @@ class AgentLoader:
             file_path: Path to the Python file
 
         Returns:
-            Dictionary mapping agent names to their classes
+            Dictionary mapping agent names to (class, source_file) tuples
         """
-        agents = {}
+        agents: Dict[str, Tuple[Type[Agent], Path]] = {}
         module_name = file_path.stem
 
         # Load the module
@@ -118,7 +121,7 @@ class AgentLoader:
                 # Validate the agent class
                 if self._validate_agent_class(obj):
                     agent_name = self._get_agent_name(obj)
-                    agents[agent_name] = obj
+                    agents[agent_name] = (obj, file_path)
                     self.logger.debug(f"Loaded agent: {agent_name} from {file_path}")
                 else:
                     self.logger.warning(f"Invalid agent class: {name} in {file_path}")
@@ -205,28 +208,30 @@ class AgentLoader:
         s1 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", class_name)
         return s1.lower()
 
-    def reload_agent_by_name(self, agent_name: str, directories: List[str]) -> Optional[Type[Agent]]:
+    def reload_agent_by_name(
+        self, agent_name: str, directories: List[str]
+    ) -> Optional[Tuple[Type[Agent], Path]]:
         """
         Reload a specific agent by name from the given directories.
-        
+
         Args:
             agent_name: The name of the agent to reload
             directories: List of directories to search for the agent
-            
+
         Returns:
-            The reloaded agent class, or None if not found
+            (class, source_file) for the reloaded agent, or None if not found
         """
         for directory in directories:
             directory_path = Path(directory)
             if not directory_path.exists():
                 continue
-                
+
             # Search for python files that might contain this agent
             python_files = [
                 f for f in directory_path.glob("*.py")
                 if f.name not in ["__init__.py", "types.py"] and not f.name.startswith("_")
             ]
-            
+
             for py_file in python_files:
                 try:
                     discovered = self._load_agents_from_file(py_file)
@@ -235,31 +240,33 @@ class AgentLoader:
                         return discovered[agent_name]
                 except Exception as e:
                     self.logger.debug(f"Error checking {py_file} for agent {agent_name}: {e}")
-        
+
         self.logger.warning(f"Could not find agent '{agent_name}' in any directory")
         return None
 
-    def reload_agents_by_names(self, agent_names: List[str], directories: List[str]) -> Dict[str, Type[Agent]]:
+    def reload_agents_by_names(
+        self, agent_names: List[str], directories: List[str]
+    ) -> Dict[str, Tuple[Type[Agent], Path]]:
         """
         Reload specific agents by name.
-        
+
         Args:
             agent_names: List of agent names to reload
             directories: List of directories to search
-            
+
         Returns:
-            Dictionary of reloaded agent classes
+            Dictionary mapping agent names to (class, source_file) tuples
         """
-        reloaded = {}
+        reloaded: Dict[str, Tuple[Type[Agent], Path]] = {}
         for name in agent_names:
-            agent_class = self.reload_agent_by_name(name, directories)
-            if agent_class is not None:
-                reloaded[name] = agent_class
+            entry = self.reload_agent_by_name(name, directories)
+            if entry is not None:
+                reloaded[name] = entry
         return reloaded
 
     def load_agents_from_directories(
         self, directories: List[str]
-    ) -> Dict[str, Type[Agent]]:
+    ) -> Dict[str, Tuple[Type[Agent], Path]]:
         """
         Load agents from multiple directories.
 
@@ -267,23 +274,25 @@ class AgentLoader:
             directories: List of directory paths to scan
 
         Returns:
-            Dictionary mapping agent names to their classes
+            Dictionary mapping agent names to (class, source_file) tuples
         """
-        all_agents = {}
+        all_agents: Dict[str, Tuple[Type[Agent], Path]] = {}
 
         for directory in directories:
             try:
                 discovered = self.discover_agents_in_directory(directory)
 
                 # Check for name conflicts
-                for name, agent_class in discovered.items():
+                for name, entry in discovered.items():
                     if name in all_agents:
+                        existing_cls, _existing_path = all_agents[name]
+                        new_cls, _new_path = entry
                         self.logger.warning(
                             f"Agent name conflict: '{name}' found in both "
-                            f"{all_agents[name].__module__} and {agent_class.__module__}. "
+                            f"{existing_cls.__module__} and {new_cls.__module__}. "
                             f"Using the latter."
                         )
-                    all_agents[name] = agent_class
+                    all_agents[name] = entry
 
             except Exception as e:
                 self.logger.error(f"Error loading agents from {directory}: {e}")
@@ -292,36 +301,41 @@ class AgentLoader:
 
     def create_agent_instances(
         self,
-        agent_classes: Dict[str, Type[Agent]],
+        agent_classes: Dict[str, Tuple[Type[Agent], Path]],
         available_skills: Optional[Dict[str, any]] = None,
-        agents_directory: Optional[str] = None,
     ) -> Dict[str, Agent]:
         """
         Create instances of agent classes.
 
         Args:
-            agent_classes: Dictionary of agent name to class mappings
+            agent_classes: Dictionary of agent name to (class, source_file) mappings
             available_skills: Optional dictionary of available skill names to validate against
-            agents_directory: Optional path to agents directory for loading icons
 
         Returns:
             Dictionary mapping agent names to their instances
         """
         agent_instances = {}
 
-        for agent_name, agent_class in agent_classes.items():
+        for agent_name, entry in agent_classes.items():
+            agent_class, source_file = entry
             try:
                 agent_instance = agent_class()
 
-                # Load and encode the display icon as base64
-                self._load_display_icon(agent_instance, agents_directory)
+                # Stamp provenance based on where the file lives on disk.
+                agent_instance.source = classify_source(source_file)
+
+                # Load and encode the display icon as base64, resolving the icon
+                # path relative to the agent's own source directory.
+                self._load_display_icon(agent_instance, str(source_file.parent))
 
                 # Validate skills if available_skills dict is provided
                 if available_skills is not None:
                     self._validate_agent_skills(agent_instance, available_skills)
 
                 agent_instances[agent_name] = agent_instance
-                self.logger.debug(f"Created agent instance: {agent_name}")
+                self.logger.debug(
+                    f"Created agent instance: {agent_name} (source={agent_instance.source})"
+                )
             except Exception as e:
                 self.logger.error(f"Error creating agent instance {agent_name}: {e}")
 

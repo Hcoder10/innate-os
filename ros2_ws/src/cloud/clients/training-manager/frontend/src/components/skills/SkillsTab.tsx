@@ -65,7 +65,7 @@ export default function SkillsTab() {
 
       {skills.length === 0 ? (
         <p className="text-innate-muted italic text-sm">
-          No skills found in ~/skills/
+          No skills found in workspace/custom_skills/
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

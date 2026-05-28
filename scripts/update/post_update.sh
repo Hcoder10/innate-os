@@ -6,6 +6,7 @@
 # Usage: sudo ./post_update.sh
 #
 # This script handles:
+#   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -16,7 +17,7 @@
 #   7. Zsh configuration
 #   8. DDS setup
 #   9. Sudoers configuration
-#   10. Move primitives .h5 files to skills directory
+#   10. Move primitives .h5 files to workspace/innate_skills/
 #   11. Service restart
 
 set -e  # Exit on error
@@ -199,6 +200,52 @@ if [ -f "$ENV_FILE" ]; then
         log "    logs.innate.bot           → logs-v1.innate.bot"
     fi
 fi
+
+# -----------------------------------------------------------------------------
+# 0a. Migrate root-level agents/, inputs/, skills/ into workspace/
+# Refactor moved these under workspace/. User-created content goes into the
+# custom_* subdirs so it never collides with shipped innate_* content.
+# Tracked files were relocated by git checkout; this step preserves any
+# user-created untracked files. Never deletes user data: skips on conflict,
+# and uses rmdir (which only removes empty dirs) for the final cleanup.
+# -----------------------------------------------------------------------------
+migrate_user_dir() {
+    local old_dir="$1"
+    local new_subdir="$2"
+    local old_path="$REPO_DIR/$old_dir"
+    local new_path="$REPO_DIR/workspace/$new_subdir"
+    [ -d "$old_path" ] || return 0
+
+    shopt -s dotglob nullglob
+    local items=("$old_path"/*)
+    shopt -u dotglob nullglob
+
+    if [ ${#items[@]} -gt 0 ]; then
+        log "Migrating user content from $old_dir/ to workspace/$new_subdir/"
+        mkdir -p "$new_path"
+        chown "$ACTUAL_USER:$ACTUAL_USER" "$new_path"
+        local item name
+        for item in "${items[@]}"; do
+            name=$(basename "$item")
+            if [ -e "$new_path/$name" ]; then
+                log "  Kept $old_dir/$name (conflicts with existing workspace/$new_subdir/$name - reconcile manually)"
+            else
+                mv "$item" "$new_path/"
+                log "  Moved $old_dir/$name -> workspace/$new_subdir/$name"
+            fi
+        done
+    fi
+
+    if rmdir "$old_path" 2>/dev/null; then
+        log "Removed empty $old_dir/"
+    else
+        log "Kept $old_dir/ (still contains files after migration)"
+    fi
+}
+
+migrate_user_dir agents custom_agents
+migrate_user_dir skills custom_skills
+migrate_user_dir inputs  inputs
 
 # Stop running services before updating (keep app.cpp alive during build)
 log "Stopping services to begin update..."
@@ -665,18 +712,19 @@ chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"
 
 # -----------------------------------------------------------------------------
-# 11. Move primitives .h5 files to skills directory
+# 11. Move primitives .h5 files to workspace/innate_skills/
 # -----------------------------------------------------------------------------
 PRIMITIVES_DIR="$REPO_DIR/primitives"
+INNATE_SKILLS_DIR="$REPO_DIR/workspace/innate_skills"
 if [ -d "$PRIMITIVES_DIR" ]; then
-    log "Migrating primitives .h5 files to skills directory..."
-    # Move each .h5 file to corresponding skills/ path (e.g. primitives/x/a.h5 -> skills/x/a.h5)
+    log "Migrating primitives .h5 files to innate_skills directory..."
+    # Move each .h5 file to corresponding workspace/innate_skills/ path
+    # (e.g. primitives/x/a.h5 -> workspace/innate_skills/x/a.h5)
     find "$PRIMITIVES_DIR" -name "*.h5" -type f | while read -r h5_file; do
-        # Remove the primitives directory path to get just the relative path (e.g. /path/primitives/x/a.h5 -> x/a.h5)
         rel_path="${h5_file#$PRIMITIVES_DIR/}"
-        mkdir -p "$REPO_DIR/skills/$(dirname "$rel_path")"
+        mkdir -p "$INNATE_SKILLS_DIR/$(dirname "$rel_path")"
         log "  Moving $rel_path"
-        mv "$h5_file" "$REPO_DIR/skills/$rel_path"
+        mv "$h5_file" "$INNATE_SKILLS_DIR/$rel_path"
     done
     
     # Remove any __pycache__ directories left behind
@@ -705,7 +753,7 @@ fi
 # -----------------------------------------------------------------------------
 # 11b. Download skill assets from metadata.json
 # -----------------------------------------------------------------------------
-for meta_file in "$REPO_DIR"/skills/*/metadata.json; do
+for meta_file in "$REPO_DIR"/workspace/innate_skills/*/metadata.json "$REPO_DIR"/workspace/custom_skills/*/metadata.json; do
     [ -f "$meta_file" ] || continue
     jq -r '.downloads // {} | to_entries[] | "\(.key)\t\(.value)"' "$meta_file" 2>/dev/null | \
     while IFS=$'\t' read -r fname url; do

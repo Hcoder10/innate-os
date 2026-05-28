@@ -6,10 +6,14 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
-import os
 from typing import Dict, Any, Optional, Tuple
 
 from brain_client.agent_loader import AgentLoader
+from brain_client.script_paths import (
+    ensure_user_directories,
+    get_agent_directories,
+    migrate_legacy_home_directories,
+)
 
 
 def initialize_agents(
@@ -29,31 +33,22 @@ def initialize_agents(
     """
     agent_loader = AgentLoader(logger)
 
-    # Define directories to scan for agents
-    # Using the unified agents directory at the root plus ~/agents
-    innate_root = os.environ.get(
-        "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-    )
-    agents_directories = [
-        os.path.join(innate_root, "workspace", "agents"),
-        os.path.join(os.path.expanduser("~"), "agents"),
-    ]
+    # Ensure custom dirs exist and migrate any legacy ~/agents content into them.
+    ensure_user_directories()
+    migrate_legacy_home_directories(logger)
 
-    # Ensure ~/agents directory exists
-    os.makedirs(agents_directories[1], exist_ok=True)
-
-    agents_directory = agents_directories[0]  # Keep for icon loading
+    agents_directories = [str(p) for p in get_agent_directories()]
 
     # Load all agents dynamically from all directories
     discovered_agent_classes = agent_loader.load_agents_from_directories(
         agents_directories
     )
 
-    # Create agent instances with skill validation and icon loading
+    # Create agent instances with skill validation and icon loading.
+    # The loader stamps `source` per instance based on origin file path.
     agents = agent_loader.create_agent_instances(
         discovered_agent_classes,
         available_skills=skills_dict,
-        agents_directory=agents_directory,
     )
 
     logger.info(f"Successfully loaded {len(agents)} agents")
