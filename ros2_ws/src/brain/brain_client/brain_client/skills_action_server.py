@@ -1251,7 +1251,7 @@ class SkillsActionServer(Node):
                 skill.inject_interface(interface_type, self.head)
 
     def _validate_skill_inputs(self, skill_id: str, skill, inputs) -> str | None:
-        """Return a user-facing validation error, or None if inputs are usable."""
+        """Return a basic call-shape validation error, or None if inputs are usable."""
         if not isinstance(inputs, dict):
             return "Skill inputs must be a JSON object."
 
@@ -1287,15 +1287,6 @@ class SkillsActionServer(Node):
         ]
         if missing:
             return f"Skill '{skill_id}' is missing required input(s): {', '.join(missing)}."
-
-        for name, param in parameters.items():
-            if name not in inputs or param.annotation == inspect.Parameter.empty:
-                continue
-            if get_origin(param.annotation) is Literal:
-                allowed = list(get_args(param.annotation))
-                if inputs[name] not in allowed:
-                    allowed_text = ", ".join(str(value) for value in allowed)
-                    return f"Skill '{skill_id}' input '{name}' must be one of: {allowed_text}."
 
         return None
 
