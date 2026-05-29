@@ -61,7 +61,12 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
             "id": skill.id,
             "name": skill.name,
             "type": skill.type,
+            "guidelines": skill.guidelines,
+            "guidelines_when_running": skill.guidelines_when_running,
+            "inputs": skill.inputs,
             "in_training": skill.in_training,
+            "episode_count": skill.episode_count,
+            "directory": skill.directory,
         }
         for skill in skills
     ]

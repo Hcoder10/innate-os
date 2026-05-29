@@ -102,12 +102,33 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
     for skill in skills_raw:
         if not isinstance(skill, dict):
             continue
+        raw_inputs = skill.get("inputs", {})
+        inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
+        if not inputs:
+            inputs_json = skill.get("inputs_json", "")
+            try:
+                parsed_inputs = (
+                    json.loads(inputs_json)
+                    if isinstance(inputs_json, str) and inputs_json
+                    else {}
+                )
+            except json.JSONDecodeError:
+                parsed_inputs = {}
+            if isinstance(parsed_inputs, dict):
+                inputs = parsed_inputs
         skills.append(
             SkillInfo(
                 id=skill.get("id", ""),
                 name=skill.get("name", skill.get("id", "")),
                 type=skill.get("type", ""),
+                guidelines=str(skill.get("guidelines", "")),
+                guidelines_when_running=str(
+                    skill.get("guidelines_when_running", "")
+                ),
+                inputs=inputs,
                 in_training=bool(skill.get("in_training", False)),
+                episode_count=int(skill.get("episode_count", 0) or 0),
+                directory=str(skill.get("directory", "")),
             )
         )
     return skills
@@ -468,11 +489,33 @@ async def inbound_service_loop(ws, shared_queues):
                             )
                     for skill in skills_list:
                         if isinstance(skill, dict):
+                            raw_inputs = skill.get("inputs", {})
+                            inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
+                            if not inputs:
+                                inputs_json = skill.get("inputs_json", "")
+                                try:
+                                    parsed_inputs = (
+                                        json.loads(inputs_json)
+                                        if isinstance(inputs_json, str)
+                                        and inputs_json
+                                        else {}
+                                    )
+                                except json.JSONDecodeError:
+                                    parsed_inputs = {}
+                                if isinstance(parsed_inputs, dict):
+                                    inputs = parsed_inputs
                             skill_info = SkillInfo(
                                 id=str(skill.get("id", "")),
                                 name=str(skill.get("name", skill.get("id", ""))),
                                 type=str(skill.get("type", "")),
+                                guidelines=str(skill.get("guidelines", "")),
+                                guidelines_when_running=str(
+                                    skill.get("guidelines_when_running", "")
+                                ),
+                                inputs=inputs,
                                 in_training=bool(skill.get("in_training", False)),
+                                episode_count=int(skill.get("episode_count", 0) or 0),
+                                directory=str(skill.get("directory", "")),
                             )
                             skills.append(skill_info)
                 except json.JSONDecodeError as e:

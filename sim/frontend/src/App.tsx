@@ -11,6 +11,7 @@ import {
   RobotAgent,
   RobotSkill,
   StackMetricsResponse,
+  executeSkillDirect,
   getAvailableAgentsDirect,
   resetBrainDirect,
   setActiveSkillsDirect,
@@ -1559,6 +1560,17 @@ export default function App() {
     }
   }
 
+  async function handleRunSkill(skill: RobotSkill, inputsJson: string) {
+    const result = await executeSkillDirect(robotWsUrl, skill.id, inputsJson);
+    if (result?.success && result.success_type === "success") {
+      return result.message || `Skill "${skill.name || skill.id}" finished.`;
+    }
+    if (result?.success_type === "cancelled") {
+      return result.message || `Skill "${skill.name || skill.id}" was cancelled.`;
+    }
+    throw new Error(result?.message || `Skill "${skill.name || skill.id}" failed.`);
+  }
+
   const backendStatusIsWarning = isBackendWarningStatus(
     brainBackendStatus,
     backendWarmupTimedOut || agentLoadTimedOut,
@@ -1597,15 +1609,13 @@ export default function App() {
         onReloadAgents={handleReloadAgents}
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
-        onSetHarnessActive={(active) =>
-          void handleAgentSelect(active ? EMPTY_DIRECTIVE_ID : null)
-        }
         availableSkills={availableSkills}
         activeSkillIds={activeSkillIds}
         pendingSkillChanges={pendingSkillChanges}
         isSettingHarness={isSettingAgent}
         skillUpdateError={skillUpdateError}
         onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
+        onRunSkill={handleRunSkill}
       />
     );
   }

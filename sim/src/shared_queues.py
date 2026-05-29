@@ -37,7 +37,12 @@ class SkillInfo(NamedTuple):
     id: str
     name: str
     type: str
+    guidelines: str
+    guidelines_when_running: str
+    inputs: Dict[str, Any]
     in_training: bool
+    episode_count: int
+    directory: str
 
 
 class SharedQueues:

@@ -13,7 +13,20 @@ export interface RobotSkill {
   id: string;
   name: string;
   type: string;
+  guidelines?: string;
+  guidelines_when_running?: string;
+  inputs?: Record<string, unknown>;
+  inputs_json?: string;
   in_training: boolean;
+  episode_count?: number;
+  directory?: string;
+}
+
+export interface ExecuteSkillResult {
+  success?: boolean;
+  message?: string;
+  skill_type?: string;
+  success_type?: "success" | "failure" | "cancelled" | string;
 }
 
 export interface BrainBackendStatus {
@@ -56,6 +69,7 @@ interface RosbridgeServiceResponse<T> {
 
 const DEFAULT_SERVICE_TIMEOUT_MS = 10000;
 const DEFAULT_PUBLISH_LINGER_MS = 120;
+const DEFAULT_ACTION_TIMEOUT_MS = 300000;
 
 export function callRosbridgeService<T = Record<string, unknown>>(
   wsUrl: string,
@@ -228,13 +242,170 @@ function parseRobotSkills(rawSkills: unknown): RobotSkill[] {
           (entry): entry is Record<string, unknown> =>
             !!entry && typeof entry === "object",
         )
-        .map((entry) => ({
-          id: String(entry.id ?? ""),
-          name: String(entry.name ?? entry.id ?? ""),
-          type: String(entry.type ?? ""),
-          in_training: Boolean(entry.in_training ?? false),
-        }))
+        .map((entry) => {
+          let inputs: Record<string, unknown> = {};
+          if (entry.inputs && typeof entry.inputs === "object" && !Array.isArray(entry.inputs)) {
+            inputs = entry.inputs as Record<string, unknown>;
+          } else if (typeof entry.inputs_json === "string" && entry.inputs_json) {
+            try {
+              const parsed = JSON.parse(entry.inputs_json) as unknown;
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                inputs = parsed as Record<string, unknown>;
+              }
+            } catch {
+              inputs = {};
+            }
+          }
+
+          return {
+            id: String(entry.id ?? ""),
+            name: String(entry.name ?? entry.id ?? ""),
+            type: String(entry.type ?? ""),
+            guidelines: String(entry.guidelines ?? ""),
+            guidelines_when_running: String(entry.guidelines_when_running ?? ""),
+            inputs,
+            inputs_json:
+              typeof entry.inputs_json === "string"
+                ? entry.inputs_json
+                : JSON.stringify(inputs),
+            in_training: Boolean(entry.in_training ?? false),
+            episode_count:
+              typeof entry.episode_count === "number"
+                ? entry.episode_count
+                : Number(entry.episode_count ?? 0),
+            directory: String(entry.directory ?? ""),
+          };
+        })
     : [];
+}
+
+function makeGoalId() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = (Math.random() * 16) | 0;
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+export function callRosbridgeAction<T = Record<string, unknown>>(
+  wsUrl: string,
+  action: string,
+  actionType: string,
+  goal: Record<string, unknown>,
+  timeoutMs: number = DEFAULT_ACTION_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const callId = `action_${action.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}_${Math.floor(
+      Math.random() * 1e5,
+    )}`;
+    const goalId = makeGoalId();
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+    let timeoutHandle: number | null = null;
+
+    const finish = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      fn();
+    };
+
+    timeoutHandle = window.setTimeout(() => {
+      finish(() => {
+        reject(new Error(`Action ${action} timed out after ${timeoutMs}ms`));
+      });
+    }, timeoutMs);
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          op: "send_action_goal",
+          id: callId,
+          action,
+          action_type: actionType,
+          args: goal,
+          feedback: true,
+          goal_id: goalId,
+        }),
+      );
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data as string) as {
+          op?: string;
+          id?: string;
+          status?: number | string;
+          values?: T;
+        };
+        if (message.op !== "action_result" || message.id !== callId) {
+          return;
+        }
+
+        const status = message.status;
+        const terminalStatus =
+          status === undefined ||
+          status === 4 ||
+          status === 5 ||
+          status === 6 ||
+          (typeof status === "string" &&
+            ["succeeded", "canceled", "aborted"].includes(status.toLowerCase()));
+        if (!terminalStatus) {
+          return;
+        }
+
+        finish(() => {
+          const cancelled =
+            status === 5 ||
+            (typeof status === "string" &&
+              status.toLowerCase() === "canceled");
+          const aborted =
+            status === 6 ||
+            (typeof status === "string" &&
+              status.toLowerCase() === "aborted");
+          if (cancelled) {
+            reject(new Error("Action was cancelled"));
+          } else if (aborted) {
+            const errorMessage =
+              message.values &&
+              typeof message.values === "object" &&
+              "message" in message.values
+                ? String(message.values.message)
+                : "Action was aborted";
+            reject(new Error(errorMessage));
+          } else {
+            resolve((message.values ?? {}) as T);
+          }
+        });
+      } catch {
+        // Ignore non-JSON/unrelated messages.
+      }
+    };
+
+    ws.onerror = () => {
+      finish(() => {
+        reject(new Error(`Failed to connect to ROSBridge at ${wsUrl}`));
+      });
+    };
+
+    ws.onclose = () => {
+      if (!settled) {
+        finish(() => {
+          reject(new Error(`Connection closed before ${action} completed`));
+        });
+      }
+    };
+  });
 }
 
 function parseSkillIds(rawSkillIds: unknown): string[] {
@@ -408,4 +579,20 @@ export async function resetBrainDirect(
 
 export async function stopAgentDirect(wsUrl: string): Promise<void> {
   await setBrainActiveDirect(wsUrl, false);
+}
+
+export async function executeSkillDirect(
+  wsUrl: string,
+  skillType: string,
+  inputsJson: string,
+): Promise<ExecuteSkillResult> {
+  return callRosbridgeAction<ExecuteSkillResult>(
+    wsUrl,
+    "/execute_skill",
+    "brain_messages/action/ExecuteSkill",
+    {
+      skill_type: skillType,
+      inputs: inputsJson,
+    },
+  );
 }
