@@ -32,6 +32,7 @@ export interface AvailableAgentsResponse {
   current_agent_id: string | null;
   startup_agent_id: string | null;
   active_skill_ids?: string[];
+  brain_active?: boolean;
   brain_backend_status?: BrainBackendStatus;
   error?: string;
 }

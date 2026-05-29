@@ -93,6 +93,7 @@ class SharedQueues:
         self.current_agent_id: Optional[str] = None
         self.startup_agent_id: Optional[str] = None
         self.active_skill_ids: List[str] = []
+        self.brain_active: bool = False
         self.available_agents_updated_at: float = 0.0
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
@@ -228,6 +229,12 @@ class SharedQueues:
             self.active_skill_ids = skill_ids.copy()
             self.available_agents_updated_at = time.time()
 
+    def set_brain_active(self, active: bool):
+        """Track whether the brain is currently accepting user input."""
+        with self.agents_lock:
+            self.brain_active = active
+            self.available_agents_updated_at = time.time()
+
     def get_available_agents(
         self,
     ) -> Tuple[
@@ -236,6 +243,7 @@ class SharedQueues:
         Optional[str],
         Optional[str],
         List[str],
+        bool,
     ]:
         """Thread-safe method to get available agents, skills, and active IDs."""
         with self.agents_lock:
@@ -245,6 +253,7 @@ class SharedQueues:
                 self.current_agent_id,
                 self.startup_agent_id,
                 self.active_skill_ids.copy(),
+                self.brain_active,
             )
 
     def get_available_agents_updated_at(self) -> float:

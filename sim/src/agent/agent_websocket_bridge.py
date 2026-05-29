@@ -754,6 +754,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
                 print(f"[ROSBridge] Setting brain active: {msg.active}")
                 await service_call_queue.put(brain_active_srv)
+                shared_queues.set_brain_active(msg.active)
 
             elif isinstance(msg, RefreshAgentsCmd):
                 refresh_agents_srv = rosbridge_call_service(
@@ -873,7 +874,7 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
             service_name = srv_msg.get("service", "unknown")
             print(f"[ROSBridge] [service] Forwarded call_service: {service_name}")
         except asyncio.TimeoutError:
-            agents, _, _, _, _ = shared_queues.get_available_agents()
+            agents, _, _, _, _, _ = shared_queues.get_available_agents()
             now = time.time()
             if not agents and now - last_agents_refresh_at >= agents_retry_interval:
                 retry_get_agents = rosbridge_call_service(

@@ -982,6 +982,16 @@ export default function App() {
           setAvailableSkills(nextAvailableSkills);
           setAgentAvailabilityWarning(null);
           setAgentLoadTimedOut(false);
+          if (useAlternativeUi) {
+            const harnessActive =
+              data.brain_active ?? (activeAgentRef.current === EMPTY_DIRECTIVE_ID);
+            setActiveAgent(harnessActive ? EMPTY_DIRECTIVE_ID : null);
+            setActiveSkillIds(
+              Array.isArray(data.active_skill_ids) ? data.active_skill_ids : [],
+            );
+            return;
+          }
+
           const backendCurrentAgentId =
             data.current_agent_id &&
             data.current_agent_id !== EMPTY_DIRECTIVE_ID &&
@@ -1042,6 +1052,7 @@ export default function App() {
 
   const selectableAgents = agents.filter((agent) => agent.id !== EMPTY_DIRECTIVE_ID);
   const hasEmptyDirective = agents.some((agent) => agent.id === EMPTY_DIRECTIVE_ID);
+  const isHarnessRunning = activeAgent === EMPTY_DIRECTIVE_ID;
   const activeAgentRecord =
     selectableAgents.find((agent) => agent.id === activeAgent) ?? null;
 
@@ -1467,6 +1478,19 @@ export default function App() {
     setIsSettingAgent(true);
     setSkillUpdateError(null);
     try {
+      if (useAlternativeUi) {
+        if (!agentId) {
+          setActiveAgent(null);
+          await handleSetBrainActive(false);
+          return;
+        }
+
+        setActiveAgent(EMPTY_DIRECTIVE_ID);
+        setActiveSkillIds([]);
+        await handleSetDirective(EMPTY_DIRECTIVE_ID);
+        return;
+      }
+
       if (!agentId) {
         setActiveAgent(null);
         setActiveSkillIds([]);
@@ -1496,7 +1520,8 @@ export default function App() {
 
   async function handleToggleActiveSkill(skillId: string) {
     if (
-      !activeAgentRecord ||
+      (!useAlternativeUi && !activeAgentRecord) ||
+      (useAlternativeUi && !isHarnessRunning) ||
       isSettingAgent ||
       Object.keys(pendingSkillChanges).length > 0
     ) {
@@ -1506,7 +1531,7 @@ export default function App() {
     const skillOrder =
       availableSkills.length > 0
         ? availableSkills.map((skill) => skill.id)
-        : activeAgentRecord.skills;
+        : activeAgentRecord?.skills ?? [];
     const nextSkillIds = activeSkillIds.includes(skillId)
       ? activeSkillIds.filter((id) => id !== skillId)
       : skillOrder.filter(
@@ -1519,7 +1544,10 @@ export default function App() {
     setPendingSkillChanges({ [skillId]: action });
     setSkillUpdateError(null);
     try {
-      await handleSetActiveSkills(activeAgentRecord.id, nextSkillIds);
+      await handleSetActiveSkills(
+        useAlternativeUi ? EMPTY_DIRECTIVE_ID : activeAgentRecord?.id ?? null,
+        nextSkillIds,
+      );
       setActiveSkillIds(nextSkillIds);
       window.setTimeout(() => void fetchAgents(), 150);
     } catch (error) {
@@ -1551,7 +1579,7 @@ export default function App() {
       }
     : agentAvailabilityWarning
       ? {
-          title: "Behavior agents unavailable",
+          title: useAlternativeUi ? "Harness unavailable" : "Behavior agents unavailable",
           detail: agentAvailabilityWarning,
         }
       : null;
@@ -1559,8 +1587,7 @@ export default function App() {
   if (useAlternativeUi) {
     return (
       <AlternativeSimDashboard
-        agents={selectableAgents}
-        activeAgent={activeAgent}
+        isHarnessRunning={isHarnessRunning}
         agentWarning={agentWarning}
         backendLabel={backendLabel}
         backendLevel={backendLevel}
@@ -1570,11 +1597,13 @@ export default function App() {
         onReloadAgents={handleReloadAgents}
         onResetBrain={() => void handleResetBrain()}
         onResetPosition={() => void handleResetPosition()}
-        onSelectAgent={(agentId) => void handleAgentSelect(agentId)}
+        onSetHarnessActive={(active) =>
+          void handleAgentSelect(active ? EMPTY_DIRECTIVE_ID : null)
+        }
         availableSkills={availableSkills}
         activeSkillIds={activeSkillIds}
         pendingSkillChanges={pendingSkillChanges}
-        isSettingAgent={isSettingAgent}
+        isSettingHarness={isSettingAgent}
         skillUpdateError={skillUpdateError}
         onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
       />

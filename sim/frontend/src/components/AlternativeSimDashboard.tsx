@@ -1,7 +1,7 @@
 import { IoRefresh } from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
-import { RobotAgent, RobotSkill } from "../services/rosbridgeService";
+import { RobotSkill } from "../services/rosbridgeService";
 import { Chat } from "./Chat";
 import { ImageDisplay } from "./ImageDisplay";
 
@@ -15,8 +15,7 @@ type AgentWarning = {
 } | null;
 
 type AlternativeSimDashboardProps = {
-  agents: RobotAgent[];
-  activeAgent: string | null;
+  isHarnessRunning: boolean;
   agentWarning: AgentWarning;
   backendLabel: string;
   backendLevel: BackendDisplayLevel;
@@ -26,11 +25,11 @@ type AlternativeSimDashboardProps = {
   onReloadAgents: () => void;
   onResetBrain: () => void;
   onResetPosition: () => void;
-  onSelectAgent: (agentId: string | null) => void;
+  onSetHarnessActive: (active: boolean) => void;
   availableSkills: RobotSkill[];
   activeSkillIds: string[];
   pendingSkillChanges: Record<string, SkillPendingAction>;
-  isSettingAgent: boolean;
+  isSettingHarness: boolean;
   skillUpdateError: string | null;
   onToggleActiveSkill: (skillId: string) => void;
 };
@@ -587,19 +586,50 @@ const SelectHeader = styled.div`
   margin-bottom: 10px;
 `;
 
-const Select = styled.select`
-  width: 100%;
+const HarnessCard = styled.div`
   border: 1px solid #374151;
-  border-radius: 0;
   background: #000;
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  min-height: 42px;
-  padding: 0 12px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+`;
 
-  &:focus {
-    border-color: #9ca3af;
+const HarnessName = styled.div`
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+`;
+
+const HarnessMeta = styled.div`
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.45;
+`;
+
+const HarnessButton = styled.button<{ $active: boolean; $pending?: boolean }>`
+  border: 1px solid
+    ${({ $active }) => ($active ? "rgba(127, 29, 29, 0.8)" : "#166534")};
+  border-radius: 0;
+  background: ${({ $active }) =>
+    $active ? "rgba(127, 29, 29, 0.18)" : "rgba(20, 83, 45, 0.24)"};
+  color: ${({ $active }) => ($active ? "#f87171" : "#4ade80")};
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  min-height: 40px;
+  text-transform: uppercase;
+
+  &:hover:not(:disabled) {
+    background: ${({ $active }) =>
+      $active ? "rgba(127, 29, 29, 0.35)" : "rgba(20, 83, 45, 0.4)"};
+    border-color: ${({ $active }) => ($active ? "#ef4444" : "#22c55e")};
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
   }
 `;
 
@@ -618,8 +648,7 @@ function formatSkillName(skill: RobotSkill) {
 }
 
 export function AlternativeSimDashboard({
-  agents,
-  activeAgent,
+  isHarnessRunning,
   agentWarning,
   backendLabel,
   backendLevel,
@@ -629,16 +658,14 @@ export function AlternativeSimDashboard({
   onReloadAgents,
   onResetBrain,
   onResetPosition,
-  onSelectAgent,
+  onSetHarnessActive,
   availableSkills,
   activeSkillIds,
   pendingSkillChanges,
-  isSettingAgent,
+  isSettingHarness,
   skillUpdateError,
   onToggleActiveSkill,
 }: AlternativeSimDashboardProps) {
-  const selectedAgent = activeAgent ?? "";
-  const currentAgent = agents.find((agent) => agent.id === activeAgent);
   const skillUpdatePending = Object.keys(pendingSkillChanges).length > 0;
   const backendDetail =
     agentWarning?.detail ||
@@ -714,9 +741,9 @@ export function AlternativeSimDashboard({
                     $active={displayedActive}
                     $pending={isPending}
                     disabled={
-                      !currentAgent ||
+                      !isHarnessRunning ||
                       isLoadingAgents ||
-                      isSettingAgent ||
+                      isSettingHarness ||
                       skillUpdatePending
                     }
                     onClick={() => onToggleActiveSkill(skill.id)}
@@ -732,11 +759,11 @@ export function AlternativeSimDashboard({
                         ? pendingAction === "enable"
                           ? "Enabling"
                           : "Disabling"
-                        : currentAgent
+                        : isHarnessRunning
                           ? isActive
                             ? "Enabled"
                             : "Disabled"
-                          : "Select agent"}
+                          : "Start harness"}
                     </AgentState>
                   </AgentButton>
                 );
@@ -745,9 +772,9 @@ export function AlternativeSimDashboard({
               <EmptyAgentState>
                 {isLoadingAgents
                   ? "Loading available skills..."
-                  : currentAgent
+                  : isHarnessRunning
                     ? "No skills are available from the brain yet."
-                    : "Select an agent to edit its active skills."}
+                    : "Start the harness to edit active skills."}
               </EmptyAgentState>
             )}
           </AgentList>
@@ -770,7 +797,7 @@ export function AlternativeSimDashboard({
               viewMode={viewMode}
               setViewMode={setViewMode}
               onResetRobot={onResetBrain}
-              onSetDirective={onSelectAgent}
+              onSetDirective={() => onSetHarnessActive(true)}
             />
           </FeedFrame>
           <CoordinateBadge>X: 45.2 | Y: 12.0 | Z: 0.4</CoordinateBadge>
@@ -791,26 +818,31 @@ export function AlternativeSimDashboard({
 
           <AgentSelectWrap>
             <SelectHeader>
-              <Eyebrow style={{ marginBottom: 0 }}>Active Agent</Eyebrow>
-              <AgentState $active={!!currentAgent}>
-                {currentAgent ? "Running" : "None"}
+              <Eyebrow style={{ marginBottom: 0 }}>Active Harness</Eyebrow>
+              <AgentState $active={isHarnessRunning}>
+                {isHarnessRunning ? "Running" : "Stopped"}
               </AgentState>
             </SelectHeader>
-            <Select
-              value={selectedAgent}
-              onChange={(event) => {
-                onSelectAgent(event.target.value || null);
-              }}
-              disabled={isLoadingAgents || isSettingAgent || skillUpdatePending}
-              aria-label="Active agent"
-            >
-              <option value="">No prompt</option>
-              {agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.display_name}
-                </option>
-              ))}
-            </Select>
+            <HarnessCard>
+              <div>
+                <HarnessName>Innate Harness</HarnessName>
+                <HarnessMeta>
+                  Runs the no-prompt brain harness with the selected skill set.
+                </HarnessMeta>
+              </div>
+              <HarnessButton
+                type="button"
+                $active={isHarnessRunning}
+                disabled={isLoadingAgents || isSettingHarness || skillUpdatePending}
+                onClick={() => onSetHarnessActive(!isHarnessRunning)}
+              >
+                {isSettingHarness
+                  ? "Updating"
+                  : isHarnessRunning
+                    ? "Stop Harness"
+                    : "Start Harness"}
+              </HarnessButton>
+            </HarnessCard>
           </AgentSelectWrap>
         </RightPanel>
       </Layout>

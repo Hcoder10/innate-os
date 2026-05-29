@@ -42,6 +42,7 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
         current_agent_id,
         startup_agent_id,
         active_skill_ids,
+        brain_active,
     ) = shared_queues.get_available_agents()
     brain_backend_status = shared_queues.get_brain_backend_status()
 
@@ -71,6 +72,7 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
         "current_agent_id": current_agent_id,
         "startup_agent_id": startup_agent_id,
         "active_skill_ids": active_skill_ids,
+        "brain_active": brain_active,
         "brain_backend_status": brain_backend_status,
     }
     if error:
@@ -308,6 +310,7 @@ async def set_brain_active(request: Request, brain_request: SetBrainActiveReques
             shared_queues.sim_to_agent.put_nowait(
                 BrainActiveCmd(active=brain_request.active)
             )
+            shared_queues.set_brain_active(brain_request.active)
             return {"status": "brain_command_enqueued"}
         except Exception:
             return {"status": "queue_full"}

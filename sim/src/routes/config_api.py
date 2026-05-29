@@ -438,6 +438,7 @@ def stop_agent(request: Request):
     # Deactivate brain via rosbridge (calls /brain/set_brain_active with data=False)
     try:
         shared_queues.sim_to_agent.put_nowait(BrainActiveCmd(active=False))
+        shared_queues.set_brain_active(False)
         print("[ConfigAPI] Agent stopped via API endpoint (brain deactivated)")
     except Exception as e:
         print(f"[ConfigAPI] Error sending brain deactivate command: {e}")
