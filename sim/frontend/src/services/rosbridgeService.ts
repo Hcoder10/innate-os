@@ -342,6 +342,7 @@ export function startRosbridgeAction<T = Record<string, unknown>>(
         op: "cancel_action_goal",
         id: callId,
         action,
+        goal_id: goalId,
       }),
     );
   };

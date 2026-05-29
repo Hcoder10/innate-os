@@ -9,8 +9,8 @@ This interface allows skills to:
 """
 
 import time
+import threading
 
-import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
 from maurice_msgs.srv import GotoJS, GotoJSTrajectory
 from rclpy.node import Node
@@ -104,14 +104,23 @@ class ManipulationInterface:
         self._arm_state = None
 
     def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
-        """Spin the underlying ROS node to process pending callbacks.
+        """Yield briefly while the node's executor processes callbacks.
 
-        Args:
-            count: Number of spin iterations.
-            timeout_sec: Timeout per iteration.
+        The skills action server already owns this node in a MultiThreadedExecutor.
+        Calling rclpy.spin_once/spin_until_future_complete here can remove the node
+        from that executor, making later skill goals or cancels hang.
         """
         for _ in range(count):
-            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+            time.sleep(timeout_sec)
+
+    def _wait_for_future(self, future, timeout_sec: float | None = None) -> bool:
+        """Wait for a ROS future without spinning or re-adding this node."""
+        if future.done():
+            return True
+
+        done_event = threading.Event()
+        future.add_done_callback(lambda _future: done_event.set())
+        return done_event.wait(timeout=timeout_sec)
 
     def _ik_solution_callback(self, msg: JointState):
         """Store the latest IK solution."""
@@ -246,7 +255,7 @@ class ManipulationInterface:
 
         self._ik_target_pub.publish(target)
 
-        # Wait for solution - use spin_once to process callbacks
+        # Wait for the executor thread to deliver the IK solution callback.
         start_time = time.time()
         iteration = 0
         while time.time() - start_time < timeout:
@@ -307,7 +316,7 @@ class ManipulationInterface:
 
             if blocking:
                 # Wait for the service to respond (motion completion)
-                rclpy.spin_until_future_complete(self.node, future, timeout_sec=duration + 1.0)
+                self._wait_for_future(future, timeout_sec=duration + 1.0)
                 if future.result() is not None:
                     result = future.result()
                     if not result.success:
@@ -351,7 +360,7 @@ class ManipulationInterface:
             True if successful, False otherwise
         """
         # Reintroduce IK solving, but with solve_ik no longer performing
-        # rclpy.spin_once inside the loop.
+        # nested ROS spins inside the loop.
         joint_positions = self.solve_ik(x, y, z, roll, pitch, yaw, timeout=ik_timeout)
         if joint_positions is None:
             self.logger.error("Failed to solve IK for target pose")
@@ -464,7 +473,7 @@ class ManipulationInterface:
         total_time = sum(seg_durations) + segment_duration  # extra for current->first
         try:
             future = self._goto_js_traj_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=total_time + 5.0)
+            self._wait_for_future(future, timeout_sec=total_time + 5.0)
             if future.result() is not None:
                 if not future.result().success:
                     self.logger.error("[ManipulationInterface] GotoJSTrajectory returned failure")
@@ -510,7 +519,7 @@ class ManipulationInterface:
         try:
             request = Trigger.Request()
             future = self._torque_on_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=2.0)
+            self._wait_for_future(future, timeout_sec=2.0)
             if future.result() is not None:
                 result = future.result()
                 if result.success:
@@ -541,7 +550,7 @@ class ManipulationInterface:
         try:
             request = Trigger.Request()
             future = self._torque_off_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=2.0)
+            self._wait_for_future(future, timeout_sec=2.0)
             if future.result() is not None:
                 result = future.result()
                 if result.success:
@@ -573,7 +582,7 @@ class ManipulationInterface:
         try:
             request = Trigger.Request()
             future = self._reboot_servos_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
+            self._wait_for_future(future, timeout_sec=10.0)
             if future.result() is not None:
                 result = future.result()
                 if result.success:
