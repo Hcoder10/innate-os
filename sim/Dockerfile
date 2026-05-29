@@ -61,6 +61,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         cartesia \
         einops \
         python-dotenv \
+        urdf-parser-py \
         websocket-client && \
     uv pip install --system \
         --index-url https://download.pytorch.org/whl/cpu \

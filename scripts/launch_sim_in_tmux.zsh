@@ -106,7 +106,14 @@ tmux new-window -t "$SESSION_NAME" -n behavior
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:behavior" "ros2 launch manipulation behavior.launch.py" C-m
 echo "Started behavior server..."
 
-# === Window 5: Vision Navigation Inference Client ===
+# === Window 5: Sim Arm Services + IK ===
+tmux new-window -t "$SESSION_NAME" -n arm-sim
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-sim" "/root/innate-os/ros2_ws/install/maurice_sim/lib/maurice_sim/sim_arm_services.py" C-m
+tmux split-window -t "${TMUX_TARGET_PREFIX}:arm-sim" -h
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-sim.1" "ros2 run maurice_arm ik.py" C-m
+echo "Started sim arm services and IK..."
+
+# === Window 6: Vision Navigation Inference Client ===
 tmux new-window -t "$SESSION_NAME" -n vision-nav
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:vision-nav" "ros2 launch innate_uninavid uninavid.launch.py cmd_vel_topic:=/cmd_vel" C-m
 echo "Started vision navigation inference client..."
