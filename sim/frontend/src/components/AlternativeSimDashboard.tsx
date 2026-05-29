@@ -961,7 +961,14 @@ function isInputRequired(schema: SkillInputSchema) {
 }
 
 function defaultInputValue(schema: SkillInputSchema) {
-  if (typeof schema === "string" || schema.default === undefined) {
+  if (typeof schema === "string") {
+    return "";
+  }
+  if (schema.default === undefined) {
+    const enumValues = getInputEnum(schema);
+    if (schema.required && enumValues.length > 0) {
+      return enumValues[0];
+    }
     return "";
   }
   return typeof schema.default === "object"
