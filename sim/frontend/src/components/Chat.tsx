@@ -353,6 +353,10 @@ const mergeSkillStatusMessage = (
   previous: Message[],
   incoming: Message,
 ): Message[] => {
+  if (!incoming.primitiveId) {
+    return appendUniqueMessage(previous, incoming);
+  }
+
   const nextMessages = [...previous];
   const targetIndex = [...nextMessages]
     .reverse()
@@ -360,13 +364,7 @@ const mergeSkillStatusMessage = (
       if (message.sender !== "task_activated") {
         return false;
       }
-      if (incoming.primitiveId && message.primitiveId === incoming.primitiveId) {
-        return true;
-      }
-      if (incoming.skillId && message.skillId === incoming.skillId) {
-        return true;
-      }
-      return message.text === incoming.text;
+      return message.primitiveId === incoming.primitiveId;
     });
 
   if (targetIndex < 0) {
