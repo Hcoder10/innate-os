@@ -92,7 +92,11 @@ async def disable_frontend_cache(request, call_next):
 
 # Mount the React build directory
 frontend_build_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-app.mount("/static", StaticFiles(directory=frontend_build_path), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory=frontend_build_path, html=True),
+    name="static",
+)
 
 # Include the routers
 app.include_router(video_api_router)
