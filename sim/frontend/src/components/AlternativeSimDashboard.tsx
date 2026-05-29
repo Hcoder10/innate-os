@@ -20,6 +20,11 @@ type AgentWarning = {
   detail: string;
 } | null;
 
+type SkillRunHandle = {
+  promise: Promise<string | void>;
+  cancel: () => void;
+};
+
 type AlternativeSimDashboardProps = {
   isHarnessRunning: boolean;
   agentWarning: AgentWarning;
@@ -38,7 +43,7 @@ type AlternativeSimDashboardProps = {
   skillUpdateError: string | null;
   onSetHarnessRunning: (running: boolean) => void;
   onToggleActiveSkill: (skillId: string) => void;
-  onRunSkill: (skill: RobotSkill, inputsJson: string) => Promise<string | void>;
+  onRunSkill: (skill: RobotSkill, inputsJson: string) => SkillRunHandle;
 };
 
 type SkillInputSchema =
@@ -686,6 +691,19 @@ const ConfirmSkillButton = styled.button`
   }
 `;
 
+const StopSkillButton = styled(ConfirmSkillButton)`
+  align-items: center;
+  background: rgba(127, 29, 29, 0.24);
+  border-color: #7f1d1d;
+  display: inline-flex;
+  gap: 7px;
+
+  &:hover:not(:disabled) {
+    background: #7f1d1d;
+    border-color: #ef4444;
+  }
+`;
+
 const DangerButton = styled.button`
   width: 100%;
   border: 1px solid rgba(127, 29, 29, 0.8);
@@ -1071,6 +1089,10 @@ export function AlternativeSimDashboard({
     Record<string, Record<string, string>>
   >({});
   const [executingSkillId, setExecutingSkillId] = useState<string | null>(null);
+  const [cancelingSkillId, setCancelingSkillId] = useState<string | null>(null);
+  const [runningSkillCancel, setRunningSkillCancel] = useState<(() => void) | null>(
+    null,
+  );
   const [skillRunMessages, setSkillRunMessages] = useState<
     Record<string, { text: string; error?: boolean }>
   >({});
@@ -1135,15 +1157,18 @@ export function AlternativeSimDashboard({
     }
 
     setExecutingSkillId(skill.id);
+    setCancelingSkillId(null);
     setSkillRunMessages((previous) => ({
       ...previous,
       [skill.id]: { text: "Running skill..." },
     }));
     try {
-      const message = await onRunSkill(
+      const run = onRunSkill(
         skill,
         stringifyInputsWithFloatHints(parsedInputs, schemas),
       );
+      setRunningSkillCancel(() => run.cancel);
+      const message = await run.promise;
       setSkillRunMessages((previous) => ({
         ...previous,
         [skill.id]: { text: message || "Skill finished." },
@@ -1156,7 +1181,21 @@ export function AlternativeSimDashboard({
       }));
     } finally {
       setExecutingSkillId(null);
+      setCancelingSkillId(null);
+      setRunningSkillCancel(null);
     }
+  };
+
+  const handleStopSkillRun = (skill: RobotSkill) => {
+    if (executingSkillId !== skill.id || runningSkillCancel === null) {
+      return;
+    }
+    setCancelingSkillId(skill.id);
+    setSkillRunMessages((previous) => ({
+      ...previous,
+      [skill.id]: { text: "Stopping skill..." },
+    }));
+    runningSkillCancel();
   };
 
   return (
@@ -1226,6 +1265,7 @@ export function AlternativeSimDashboard({
                 const values = skillInputValues[skill.id] ?? initialInputValues(skill);
                 const message = skillRunMessages[skill.id];
                 const isExecutingSkill = executingSkillId === skill.id;
+                const isCancelingSkill = cancelingSkillId === skill.id;
                 const otherSkillExecuting =
                   executingSkillId !== null && executingSkillId !== skill.id;
                 const skillToggleDisabled =
@@ -1310,6 +1350,7 @@ export function AlternativeSimDashboard({
                                   {enumValues.length > 0 ? (
                                     <SkillSelect
                                       $invalid={error !== null}
+                                      disabled={isExecutingSkill || otherSkillExecuting}
                                       value={value}
                                       onChange={(event) =>
                                         setSkillInputValue(
@@ -1332,6 +1373,7 @@ export function AlternativeSimDashboard({
                                     <BooleanChoiceRow>
                                       <BooleanChoice
                                         type="button"
+                                        disabled={isExecutingSkill || otherSkillExecuting}
                                         $selected={value === "true"}
                                         onClick={() =>
                                           setSkillInputValue(
@@ -1345,6 +1387,7 @@ export function AlternativeSimDashboard({
                                       </BooleanChoice>
                                       <BooleanChoice
                                         type="button"
+                                        disabled={isExecutingSkill || otherSkillExecuting}
                                         $selected={value === "false"}
                                         onClick={() =>
                                           setSkillInputValue(
@@ -1360,6 +1403,7 @@ export function AlternativeSimDashboard({
                                   ) : isJsonInput(type) ? (
                                     <SkillTextArea
                                       $invalid={error !== null}
+                                      disabled={isExecutingSkill || otherSkillExecuting}
                                       value={value}
                                       onChange={(event) =>
                                         setSkillInputValue(
@@ -1373,6 +1417,7 @@ export function AlternativeSimDashboard({
                                   ) : (
                                     <SkillInput
                                       $invalid={error !== null}
+                                      disabled={isExecutingSkill || otherSkillExecuting}
                                       type={isNumericInput(type) ? "number" : "text"}
                                       value={value}
                                       onChange={(event) =>
@@ -1405,17 +1450,24 @@ export function AlternativeSimDashboard({
                               Executes through /execute_skill.
                             </SkillRunMessage>
                           )}
-                          <ConfirmSkillButton
-                            type="button"
-                            disabled={
-                              isExecutingSkill ||
-                              otherSkillExecuting ||
-                              skill.in_training
-                            }
-                            onClick={() => void handleConfirmSkillRun(skill)}
-                          >
-                            {isExecutingSkill ? "Running" : "Confirm"}
-                          </ConfirmSkillButton>
+                          {isExecutingSkill ? (
+                            <StopSkillButton
+                              type="button"
+                              disabled={isCancelingSkill}
+                              onClick={() => handleStopSkillRun(skill)}
+                            >
+                              <IoStop size={13} aria-hidden="true" />
+                              {isCancelingSkill ? "Stopping" : "Stop"}
+                            </StopSkillButton>
+                          ) : (
+                            <ConfirmSkillButton
+                              type="button"
+                              disabled={otherSkillExecuting || skill.in_training}
+                              onClick={() => void handleConfirmSkillRun(skill)}
+                            >
+                              Confirm
+                            </ConfirmSkillButton>
+                          )}
                         </SkillRunFooter>
                       </SkillRunPanelInner>
                     </SkillRunPanel>

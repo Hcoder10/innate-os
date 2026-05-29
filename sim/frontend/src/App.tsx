@@ -11,13 +11,13 @@ import {
   RobotAgent,
   RobotSkill,
   StackMetricsResponse,
-  executeSkillDirect,
   getAvailableAgentsDirect,
   resetBrainDirect,
   setActiveSkillsDirect,
   setBrainActiveDirect,
   setBrainBackendConfigDirect,
   setDirectiveDirect,
+  startSkillExecutionDirect,
 } from "./services/rosbridgeService";
 
 const AGENT_BACKEND_WARNING_DELAY_MS = 15_000;
@@ -1560,15 +1560,30 @@ export default function App() {
     }
   }
 
-  async function handleRunSkill(skill: RobotSkill, inputsJson: string) {
-    const result = await executeSkillDirect(robotWsUrl, skill.id, inputsJson);
-    if (result?.success && result.success_type === "success") {
-      return result.message || `Skill "${skill.name || skill.id}" finished.`;
-    }
-    if (result?.success_type === "cancelled") {
-      return result.message || `Skill "${skill.name || skill.id}" was cancelled.`;
-    }
-    throw new Error(result?.message || `Skill "${skill.name || skill.id}" failed.`);
+  function handleRunSkill(skill: RobotSkill, inputsJson: string) {
+    const action = startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson);
+    return {
+      cancel: action.cancel,
+      promise: action.promise
+        .then((result) => {
+          if (result?.success && result.success_type === "success") {
+            return result.message || `Skill "${skill.name || skill.id}" finished.`;
+          }
+          if (result?.success_type === "cancelled") {
+            return result.message || `Skill "${skill.name || skill.id}" was cancelled.`;
+          }
+          throw new Error(
+            result?.message || `Skill "${skill.name || skill.id}" failed.`,
+          );
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.toLowerCase().includes("cancel")) {
+            return `Skill "${skill.name || skill.id}" was cancelled.`;
+          }
+          throw error;
+        }),
+    };
   }
 
   const backendStatusIsWarning = isBackendWarningStatus(

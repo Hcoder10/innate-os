@@ -28,6 +28,8 @@ from brain_messages.msg import AvailableSkills, SkillInfo
 from brain_messages.srv import CreatePhysicalSkill
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
@@ -156,6 +158,7 @@ class SkillsActionServer(Node):
         self._behavior_goal_handles = {}
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
+        self._action_callback_group = ReentrantCallbackGroup()
 
         self._action_server = ActionServer(
             self,
@@ -164,6 +167,7 @@ class SkillsActionServer(Node):
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
+            callback_group=self._action_callback_group,
         )
 
         self._cli_skill_tasks = queue.Queue()
@@ -1562,11 +1566,13 @@ class SkillsActionServer(Node):
 def main(args=None):
     rclpy.init(args=args)
     action_server = SkillsActionServer()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(action_server)
     try:
-        while rclpy.ok():
-            rclpy.spin_once(action_server, timeout_sec=1.0)
+        executor.spin()
     except KeyboardInterrupt:
         pass
+    executor.remove_node(action_server)
     action_server.destroy()
     rclpy.shutdown()
 
