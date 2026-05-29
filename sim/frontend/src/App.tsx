@@ -1614,6 +1614,9 @@ export default function App() {
         pendingSkillChanges={pendingSkillChanges}
         isSettingHarness={isSettingAgent}
         skillUpdateError={skillUpdateError}
+        onSetHarnessRunning={(running) =>
+          void handleAgentSelect(running ? EMPTY_DIRECTIVE_ID : null)
+        }
         onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
         onRunSkill={handleRunSkill}
       />

@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { IoInformationCircleOutline, IoPlay, IoRefresh } from "react-icons/io5";
+import {
+  IoInformationCircleOutline,
+  IoPlay,
+  IoRefresh,
+  IoStop,
+} from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
 import { RobotSkill } from "../services/rosbridgeService";
@@ -31,6 +36,7 @@ type AlternativeSimDashboardProps = {
   pendingSkillChanges: Record<string, SkillPendingAction>;
   isSettingHarness: boolean;
   skillUpdateError: string | null;
+  onSetHarnessRunning: (running: boolean) => void;
   onToggleActiveSkill: (skillId: string) => void;
   onRunSkill: (skill: RobotSkill, inputsJson: string) => Promise<string | void>;
 };
@@ -858,6 +864,34 @@ const HarnessMeta = styled.div`
   line-height: 1.45;
 `;
 
+const HarnessActionButton = styled.button<{ $active: boolean }>`
+  align-items: center;
+  border: 1px solid ${({ $active }) => ($active ? "#7f1d1d" : "#0a84ff")};
+  border-radius: 0;
+  background: ${({ $active }) =>
+    $active ? "rgba(127, 29, 29, 0.22)" : "#0a84ff"};
+  color: #fff;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 900;
+  gap: 7px;
+  justify-content: center;
+  letter-spacing: 0.14em;
+  min-height: 36px;
+  padding: 0 14px;
+  text-transform: uppercase;
+
+  &:hover:not(:disabled) {
+    background: ${({ $active }) => ($active ? "#7f1d1d" : "#2563eb")};
+    border-color: ${({ $active }) => ($active ? "#ef4444" : "#2563eb")};
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+`;
+
 const ResetActions = styled(SectionPad)`
   display: grid;
   gap: 10px;
@@ -1027,6 +1061,7 @@ export function AlternativeSimDashboard({
   pendingSkillChanges,
   isSettingHarness,
   skillUpdateError,
+  onSetHarnessRunning,
   onToggleActiveSkill,
   onRunSkill,
 }: AlternativeSimDashboardProps) {
@@ -1449,6 +1484,24 @@ export function AlternativeSimDashboard({
                     : "Harness is stopped. Skills can still be run directly."}
                 </HarnessMeta>
               </div>
+              <HarnessActionButton
+                type="button"
+                $active={isHarnessRunning}
+                disabled={isSettingHarness}
+                onClick={() => onSetHarnessRunning(!isHarnessRunning)}
+              >
+                {isHarnessRunning ? (
+                  <>
+                    <IoStop size={13} aria-hidden="true" />
+                    Stop Harness
+                  </>
+                ) : (
+                  <>
+                    <IoPlay size={13} aria-hidden="true" />
+                    Start Harness
+                  </>
+                )}
+              </HarnessActionButton>
             </HarnessCard>
           </AgentSelectWrap>
         </RightPanel>
