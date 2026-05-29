@@ -99,6 +99,8 @@ ros-humble-dynamixel-sdk
 ros-humble-innate-rws
 ros-humble-moveit-msgs
 ros-humble-robot-state-publisher
+ros-humble-rosbridge-server
+ros-humble-rosbridge-suite
 ros-humble-rosidl-default-generators
 ros-humble-rosidl-default-runtime
 ros-humble-shape-msgs

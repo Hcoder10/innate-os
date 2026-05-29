@@ -809,6 +809,26 @@ def tcp_port_open(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
+def websocket_port_open(port: int) -> bool:
+    request = (
+        f"GET / HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    ).encode()
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0) as sock:
+            sock.settimeout(1.0)
+            sock.sendall(request)
+            response = sock.recv(128)
+    except OSError:
+        return False
+    return response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
+
+
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
     os_running = container_running("innate-dev")
     status = {
@@ -826,7 +846,7 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
         os_compose_zsh_cmd(
             f"tmux has-session -t {shlex.quote(TMUX_SESSION_NAME)} >/dev/null 2>&1; "
             "echo tmux=$?; "
-            "pgrep -f '[r]ws_server' >/dev/null; echo rosbridge=$?; "
+            "pgrep -f '[r]ws_server|[r]osbridge_websocket' >/dev/null; echo rosbridge=$?; "
             "pgrep -f '[b]rain_client_node.py' >/dev/null; echo brain=$?"
         ),
         cwd=os_repo,
@@ -863,7 +883,7 @@ def collect_runtime_probe(
     rosbridge_live = (
         os_status["os_session_running"]
         and os_status["rosbridge_process_live"]
-        and tcp_port_open(9090)
+        and websocket_port_open(9090)
     )
     agent_running = (
         True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
@@ -896,7 +916,7 @@ def os_runtime_ready(config: dict[str, object]) -> bool:
         os_status["os_session_running"]
         and os_status["rosbridge_process_live"]
         and os_status["brain_process_live"]
-        and tcp_port_open(9090)
+        and websocket_port_open(9090)
     )
 
 
