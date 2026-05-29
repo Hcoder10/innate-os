@@ -63,32 +63,31 @@ def get_home_skills_dir() -> Path:
     return Path.home() / "skills"
 
 
-def get_agent_directories() -> list[Path]:
-    """Ordered list of directories to scan for agents.
+def _scan_dirs(innate: Path, custom: Path, home: Path) -> list[Path]:
+    """Ordered scan list: shipped first, then user (custom + home).
 
-    Shipped agents first, then user agents from workspace/custom_agents and,
-    when it exists, the home directory (~/agents). Home content is scanned in
-    place and never moved, so users may keep agents in either location.
+    The home directory is appended only when it exists, so it can be used as an
+    in-place alternative to custom_* without ever being moved, and consumers
+    (loaders, hot-reload watcher) never receive a non-existent path.
     """
-    dirs = [get_innate_agents_dir(), get_custom_agents_dir()]
-    home = get_home_agents_dir()
+    dirs = [innate, custom]
     if home.is_dir():
         dirs.append(home)
     return dirs
+
+
+def get_agent_directories() -> list[Path]:
+    """Directories to scan for agents: innate, custom_agents, then ~/agents."""
+    return _scan_dirs(
+        get_innate_agents_dir(), get_custom_agents_dir(), get_home_agents_dir()
+    )
 
 
 def get_skill_directories() -> list[Path]:
-    """Ordered list of directories to scan for skills.
-
-    Shipped skills first, then user skills from workspace/custom_skills and,
-    when it exists, the home directory (~/skills). Home content is scanned in
-    place and never moved, so users may keep skills in either location.
-    """
-    dirs = [get_innate_skills_dir(), get_custom_skills_dir()]
-    home = get_home_skills_dir()
-    if home.is_dir():
-        dirs.append(home)
-    return dirs
+    """Directories to scan for skills: innate, custom_skills, then ~/skills."""
+    return _scan_dirs(
+        get_innate_skills_dir(), get_custom_skills_dir(), get_home_skills_dir()
+    )
 
 
 def classify_source(path: str | os.PathLike) -> Source:
