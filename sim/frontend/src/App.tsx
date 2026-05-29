@@ -13,6 +13,7 @@ import {
   StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
+  publishManualSkillEventDirect,
   setActiveSkillsDirect,
   setBrainActiveDirect,
   setBrainBackendConfigDirect,
@@ -1561,26 +1562,72 @@ export default function App() {
   }
 
   function handleRunSkill(skill: RobotSkill, inputsJson: string) {
+    const primitiveId = `manual_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const skillName = skill.name || skill.id;
+    let terminalManualEventPublished = false;
+    const publishManualEvent = (
+      status: "running" | "completed" | "failed" | "interrupted",
+      reason?: string,
+    ) => {
+      if (status !== "running") {
+        if (terminalManualEventPublished) {
+          return;
+        }
+        terminalManualEventPublished = true;
+      }
+      window.dispatchEvent(
+        new CustomEvent("manual-skill-event", {
+          detail: {
+            sender: "task_activated",
+            text: skillName,
+            timestamp: Date.now() / 1000,
+            taskStatus: status,
+            primitiveName: skillName,
+            primitiveId,
+            skillId: skill.id,
+            failureReason: reason,
+          },
+        }),
+      );
+      void publishManualSkillEventDirect(robotWsUrl, {
+        status,
+        skill_id: skill.id,
+        skill_name: skillName,
+        primitive_id: primitiveId,
+        inputs: inputsJson,
+        reason,
+        source: "sim_ui",
+      }).catch((error) => {
+        console.warn("Failed to publish manual skill event:", error);
+      });
+    };
+
+    publishManualEvent("running");
     const action = startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson);
     return {
       cancel: action.cancel,
       promise: action.promise
         .then((result) => {
           if (result?.success && result.success_type === "success") {
-            return result.message || `Skill "${skill.name || skill.id}" finished.`;
+            publishManualEvent("completed");
+            return result.message || `Skill "${skillName}" finished.`;
           }
           if (result?.success_type === "cancelled") {
-            return result.message || `Skill "${skill.name || skill.id}" was cancelled.`;
+            publishManualEvent("interrupted", result.message);
+            return result.message || `Skill "${skillName}" was cancelled.`;
           }
+          publishManualEvent("failed", result?.message);
           throw new Error(
-            result?.message || `Skill "${skill.name || skill.id}" failed.`,
+            result?.message || `Skill "${skillName}" failed.`,
           );
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
           if (message.toLowerCase().includes("cancel")) {
-            return `Skill "${skill.name || skill.id}" was cancelled.`;
+            publishManualEvent("interrupted", message);
+            return `Skill "${skillName}" was cancelled.`;
           }
+          publishManualEvent("failed", message);
           throw error;
         }),
     };

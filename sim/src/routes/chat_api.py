@@ -49,6 +49,10 @@ async def broadcast_messages(shared_queues: SharedQueues):
                                 "sender": msg.sender,
                                 "text": msg.text,
                                 "timestamp": msg.timestamp,
+                                "taskStatus": msg.task_status,
+                                "primitiveId": msg.primitive_id,
+                                "skillId": msg.skill_id,
+                                "failureReason": msg.failure_reason,
                             }
                         )
                     except Exception:

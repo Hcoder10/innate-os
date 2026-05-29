@@ -14,6 +14,10 @@ class ChatMessage(NamedTuple):
     text: str
     timestamp: float
     timestamp_put_in_queue: Optional[float]  # Used to check if the message was lost
+    task_status: Optional[str] = None
+    primitive_id: Optional[str] = None
+    skill_id: Optional[str] = None
+    failure_reason: Optional[str] = None
 
 
 class ChatSignal(NamedTuple):

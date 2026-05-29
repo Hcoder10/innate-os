@@ -29,6 +29,16 @@ export interface ExecuteSkillResult {
   success_type?: "success" | "failure" | "cancelled" | string;
 }
 
+export interface ManualSkillEvent {
+  status: "running" | "completed" | "failed" | "interrupted";
+  skill_id: string;
+  skill_name: string;
+  primitive_id: string;
+  inputs?: string;
+  reason?: string;
+  source?: string;
+}
+
 export interface CancelableAction<T> {
   promise: Promise<T>;
   cancel: () => void;
@@ -612,6 +622,18 @@ export async function setBrainBackendConfigDirect(
 ): Promise<void> {
   await publishRosbridgeTopic(wsUrl, "/brain/backend_config", {
     data: JSON.stringify(config),
+  });
+}
+
+export async function publishManualSkillEventDirect(
+  wsUrl: string,
+  event: ManualSkillEvent,
+): Promise<void> {
+  await publishRosbridgeTopic(wsUrl, "/brain/manual_skill_event", {
+    data: JSON.stringify({
+      ...event,
+      timestamp: Date.now() / 1000,
+    }),
   });
 }
 

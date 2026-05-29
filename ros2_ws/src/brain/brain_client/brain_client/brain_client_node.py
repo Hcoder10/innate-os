@@ -580,6 +580,12 @@ class BrainClientNode(Node):
         self.active_skills_sub = self.create_subscription(
             String, "/brain/set_active_skills", self.set_active_skills_callback, 10
         )
+        self.manual_skill_event_sub = self.create_subscription(
+            String,
+            "/brain/manual_skill_event",
+            self.manual_skill_event_callback,
+            10,
+        )
         # Mirror backend credentials so registration payloads use the current
         # token after a live swap. ws_client_node owns the actual reconnection;
         # we only refresh self.ws_uri/self.token for outgoing message payloads.
@@ -1698,6 +1704,98 @@ class BrainClientNode(Node):
             payload["reason"] = reason
 
         self.task_status_pub.publish(String(data=json.dumps(payload)))
+
+    def _send_primitive_lifecycle_message(
+        self,
+        status: str,
+        primitive_name: str,
+        primitive_id: typing.Optional[str],
+        reason: typing.Optional[str] = None,
+    ):
+        message_type_by_status = {
+            "running": MessageInType.PRIMITIVE_ACTIVATED,
+            "completed": MessageInType.PRIMITIVE_COMPLETED,
+            "interrupted": MessageInType.PRIMITIVE_INTERRUPTED,
+            "failed": MessageInType.PRIMITIVE_FAILED,
+        }
+        message_type = message_type_by_status.get(status)
+        if message_type is None:
+            return
+
+        payload = {
+            "primitive_name": primitive_name,
+            "primitive_id": primitive_id,
+        }
+        if reason and status == "failed":
+            payload["reason"] = reason
+
+        self.ws_bridge.send_message(MessageIn(type=message_type, payload=payload))
+
+    def manual_skill_event_callback(self, msg: String):
+        """Record manually-triggered simulator skill runs in brain/agent history."""
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().error("Invalid /brain/manual_skill_event payload JSON")
+            return
+
+        if not isinstance(payload, dict):
+            self.get_logger().error("/brain/manual_skill_event payload must be an object")
+            return
+
+        status = payload.get("status")
+        if status not in {"running", "completed", "failed", "interrupted"}:
+            self.get_logger().error(
+                "/brain/manual_skill_event status must be one of: "
+                "running, completed, failed, interrupted"
+            )
+            return
+
+        skill_id = payload.get("skill_id")
+        if not isinstance(skill_id, str) or not skill_id:
+            self.get_logger().error("/brain/manual_skill_event skill_id is required")
+            return
+
+        primitive_name = payload.get("skill_name")
+        if not isinstance(primitive_name, str) or not primitive_name:
+            primitive_name = self._id_to_name.get(skill_id, skill_id)
+
+        primitive_id = payload.get("primitive_id")
+        if not isinstance(primitive_id, str) or not primitive_id:
+            primitive_id = f"manual_{skill_id}_{int(time.time() * 1000)}"
+
+        reason = payload.get("reason")
+        if not isinstance(reason, str):
+            reason = None
+
+        self.get_logger().info(
+            f"Manual skill event: {status} {primitive_name} ({skill_id})"
+        )
+        if self.is_brain_active:
+            self._send_primitive_lifecycle_message(
+                status=status,
+                primitive_name=primitive_name,
+                primitive_id=primitive_id,
+                reason=reason,
+            )
+        self._publish_task_status(
+            primitive_name=primitive_name,
+            primitive_id=primitive_id,
+            status=status,
+            skill_id=skill_id,
+            reason=reason,
+        )
+        self.chat_history.append(
+            {
+                "sender": "task_activated",
+                "text": primitive_name,
+                "timestamp": payload.get("timestamp", time.time()),
+                "taskStatus": status,
+                "primitiveId": primitive_id,
+                "skillId": skill_id,
+                **({"failureReason": reason} if reason else {}),
+            }
+        )
 
     def handle_vision_agent_output(self, payload: VisionAgentOutput):
         execute_next_task_immediately = True

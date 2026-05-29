@@ -234,8 +234,37 @@ async def inbound_data_loop(ws, shared_queues):
                         text=text,
                         timestamp=timestamp,
                         timestamp_put_in_queue=time.time(),
+                        task_status=payload.get("taskStatus")
+                        or payload.get("task_status"),
+                        primitive_id=payload.get("primitiveId")
+                        or payload.get("primitive_id"),
+                        skill_id=payload.get("skillId") or payload.get("skill_id"),
+                        failure_reason=payload.get("failureReason")
+                        or payload.get("reason"),
                     )
                     # Forward to sim/UI without allowing stale history to pile up.
+                    shared_queues.enqueue_chat_from_bridge(chat_msg)
+
+            elif topic == "/brain/skill_status_update":
+                payload = json.loads(msg_data.get("data", ""))
+                text = (
+                    payload.get("primitive_name")
+                    or payload.get("skill_name")
+                    or payload.get("skill_id")
+                    or ""
+                )
+                status = payload.get("status")
+                if text and status:
+                    chat_msg = ChatMessage(
+                        sender="task_activated",
+                        text=text,
+                        timestamp=payload.get("timestamp", time.time()),
+                        timestamp_put_in_queue=time.time(),
+                        task_status=status,
+                        primitive_id=payload.get("primitive_id"),
+                        skill_id=payload.get("skill_id"),
+                        failure_reason=payload.get("reason"),
+                    )
                     shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/websocket_status":
@@ -424,6 +453,13 @@ async def inbound_service_loop(ws, shared_queues):
                             text=chat.get("text", ""),
                             timestamp=chat.get("timestamp", time.time()),
                             timestamp_put_in_queue=time.time(),
+                            task_status=chat.get("taskStatus")
+                            or chat.get("task_status"),
+                            primitive_id=chat.get("primitiveId")
+                            or chat.get("primitive_id"),
+                            skill_id=chat.get("skillId") or chat.get("skill_id"),
+                            failure_reason=chat.get("failureReason")
+                            or chat.get("reason"),
                         )
                         shared_queues.enqueue_chat_from_bridge(chat_msg)
                     except Exception as e:
@@ -632,6 +668,9 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Also subscribe to /cmd_vel, /chat_out, and navigation topics
     sub_cmd_vel = rosbridge_subscribe("/cmd_vel", "geometry_msgs/msg/Twist")
     sub_chat_out = rosbridge_subscribe("/brain/chat_out", "std_msgs/msg/String")
+    sub_skill_status = rosbridge_subscribe(
+        "/brain/skill_status_update", "std_msgs/msg/String"
+    )
     sub_brain_ws_status = rosbridge_subscribe(
         "/brain/websocket_status", "std_msgs/msg/String"
     )
@@ -647,6 +686,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     )
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
+    await ws.send(json.dumps(sub_skill_status))
     await ws.send(json.dumps(sub_brain_ws_status))
     await ws.send(json.dumps(sub_available_skills))
     await ws.send(json.dumps(sub_nav_path))
@@ -654,7 +694,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_arm_cmd))
     print(
         "[ROSBridge] Subscribed to /cmd_vel, /brain/chat_out, "
-        "/brain/websocket_status, /brain/available_skills, "
+        "/brain/skill_status_update, /brain/websocket_status, /brain/available_skills, "
         "/mars/arm/commands, and navigation topics"
     )
 

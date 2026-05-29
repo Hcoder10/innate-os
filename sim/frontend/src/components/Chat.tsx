@@ -3,7 +3,16 @@
  */
 import { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
-import { IoSend, IoPerson, IoHardwareChip, IoStop } from "react-icons/io5";
+import {
+  IoCheckmarkCircle,
+  IoCloseCircle,
+  IoHardwareChip,
+  IoPauseCircle,
+  IoPerson,
+  IoPlayCircle,
+  IoSend,
+  IoStop,
+} from "react-icons/io5";
 import { RobotGroupedBubble } from "./RobotGroupedBubble";
 import { SystemMessageBubble } from "./SystemMessageBubble";
 import { groupMessages, Message, DisplayMessage } from "../utils/groupMessages";
@@ -63,6 +72,53 @@ const MessageSender = styled.div<{ $isUser: boolean }>`
   display: flex;
   align-items: center;
   gap: 6px;
+`;
+
+const ActionMessageBubble = styled.div<{ $status?: string }>`
+  max-width: 90%;
+  padding: 8px 12px;
+  align-self: flex-start;
+  font-size: 13px;
+  line-height: 1.5;
+  display: inline-block;
+  background: ${({ $status }) =>
+    $status === "failed"
+      ? "rgba(220, 38, 38, 0.12)"
+      : $status === "interrupted"
+        ? "rgba(234, 179, 8, 0.12)"
+        : "rgba(34, 197, 94, 0.1)"};
+  color: ${({ theme }) => theme.colors.foreground};
+  border: 1px solid
+    ${({ $status, theme }) =>
+      $status === "failed"
+        ? "#dc2626"
+        : $status === "interrupted"
+          ? "#eab308"
+          : theme.colors.primary};
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 4px;
+`;
+
+const ActionMessageTitle = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  opacity: 0.7;
+`;
+
+const ActionMessageStatus = styled.span<{ $status?: string }>`
+  color: ${({ $status, theme }) =>
+    $status === "failed"
+      ? "#dc2626"
+      : $status === "interrupted"
+        ? "#eab308"
+        : $status === "completed"
+          ? theme.colors.primary
+          : theme.colors.foreground};
 `;
 
 const InputArea = styled.div`
@@ -135,6 +191,7 @@ const StopButton = styled.button`
 
 const CHAT_IN_TOPIC = "/brain/chat_in";
 const CHAT_OUT_TOPIC = "/brain/chat_out";
+const SKILL_STATUS_UPDATE_TOPIC = "/brain/skill_status_update";
 
 const VALID_CHAT_SENDERS = new Set<Message["sender"]>([
   "user",
@@ -143,6 +200,7 @@ const VALID_CHAT_SENDERS = new Set<Message["sender"]>([
   "robot_anticipation",
   "system",
   "vision_agent_output",
+  "task_activated",
 ]);
 
 const parseRosbridgeChatMessage = (payload: unknown): Message | null => {
@@ -165,6 +223,11 @@ const parseRosbridgeChatMessage = (payload: unknown): Message | null => {
     text?: unknown;
     timestamp?: unknown;
     timestamp_sec?: unknown;
+    taskStatus?: unknown;
+    primitiveName?: unknown;
+    primitiveId?: unknown;
+    skillId?: unknown;
+    failureReason?: unknown;
   };
 
   if (
@@ -186,6 +249,24 @@ const parseRosbridgeChatMessage = (payload: unknown): Message | null => {
     sender: chatMessage.sender as Message["sender"],
     text: chatMessage.text,
     timestamp,
+    taskStatus:
+      typeof chatMessage.taskStatus === "string"
+        ? chatMessage.taskStatus
+        : undefined,
+    primitiveName:
+      typeof chatMessage.primitiveName === "string"
+        ? chatMessage.primitiveName
+        : undefined,
+    primitiveId:
+      typeof chatMessage.primitiveId === "string"
+        ? chatMessage.primitiveId
+        : undefined,
+    skillId:
+      typeof chatMessage.skillId === "string" ? chatMessage.skillId : undefined,
+    failureReason:
+      typeof chatMessage.failureReason === "string"
+        ? chatMessage.failureReason
+        : undefined,
   };
 };
 
@@ -207,6 +288,125 @@ const appendUniqueMessage = (
   const nextMessages = [...previous, incoming];
   nextMessages.sort((a, b) => a.timestamp - b.timestamp);
   return nextMessages;
+};
+
+const parseSkillStatusMessage = (payload: unknown): Message | null => {
+  let parsedPayload: unknown = payload;
+
+  if (typeof parsedPayload === "string") {
+    try {
+      parsedPayload = JSON.parse(parsedPayload);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!parsedPayload || typeof parsedPayload !== "object") {
+    return null;
+  }
+
+  const statusPayload = parsedPayload as {
+    primitive_name?: unknown;
+    primitive_id?: unknown;
+    skill_name?: unknown;
+    skill_id?: unknown;
+    status?: unknown;
+    timestamp?: unknown;
+    reason?: unknown;
+  };
+  const text =
+    typeof statusPayload.primitive_name === "string"
+      ? statusPayload.primitive_name
+      : typeof statusPayload.skill_name === "string"
+        ? statusPayload.skill_name
+        : typeof statusPayload.skill_id === "string"
+          ? statusPayload.skill_id
+          : "";
+
+  if (!text || typeof statusPayload.status !== "string") {
+    return null;
+  }
+
+  return {
+    sender: "task_activated",
+    text,
+    timestamp:
+      typeof statusPayload.timestamp === "number"
+        ? statusPayload.timestamp
+        : Date.now() / 1000,
+    taskStatus: statusPayload.status,
+    primitiveName: text,
+    primitiveId:
+      typeof statusPayload.primitive_id === "string"
+        ? statusPayload.primitive_id
+        : undefined,
+    skillId:
+      typeof statusPayload.skill_id === "string"
+        ? statusPayload.skill_id
+        : undefined,
+    failureReason:
+      typeof statusPayload.reason === "string" ? statusPayload.reason : undefined,
+  };
+};
+
+const mergeSkillStatusMessage = (
+  previous: Message[],
+  incoming: Message,
+): Message[] => {
+  const nextMessages = [...previous];
+  const targetIndex = [...nextMessages]
+    .reverse()
+    .findIndex((message) => {
+      if (message.sender !== "task_activated") {
+        return false;
+      }
+      if (incoming.primitiveId && message.primitiveId === incoming.primitiveId) {
+        return true;
+      }
+      if (incoming.skillId && message.skillId === incoming.skillId) {
+        return true;
+      }
+      return message.text === incoming.text;
+    });
+
+  if (targetIndex < 0) {
+    return appendUniqueMessage(previous, incoming);
+  }
+
+  const forwardIndex = nextMessages.length - 1 - targetIndex;
+  nextMessages[forwardIndex] = {
+    ...nextMessages[forwardIndex],
+    ...incoming,
+    timestamp: nextMessages[forwardIndex].timestamp,
+  };
+  nextMessages.sort((a, b) => a.timestamp - b.timestamp);
+  return nextMessages;
+};
+
+const taskStatusLabel = (status?: string) => {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "stopped";
+    default:
+      return "running";
+  }
+};
+
+const TaskStatusIcon = ({ status }: { status?: string }) => {
+  if (status === "completed") {
+    return <IoCheckmarkCircle size={14} />;
+  }
+  if (status === "failed") {
+    return <IoCloseCircle size={14} />;
+  }
+  if (status === "interrupted") {
+    return <IoPauseCircle size={14} />;
+  }
+  return <IoPlayCircle size={14} />;
 };
 
 export function Chat() {
@@ -305,6 +505,12 @@ export function Chat() {
             socket.send(
               JSON.stringify({ op: "subscribe", topic: CHAT_IN_TOPIC }),
             );
+            socket.send(
+              JSON.stringify({
+                op: "subscribe",
+                topic: SKILL_STATUS_UPDATE_TOPIC,
+              }),
+            );
           }
         };
 
@@ -322,7 +528,21 @@ export function Chat() {
                 );
                 if (parsedMessage) {
                   setMessages((prev) =>
-                    appendUniqueMessage(prev, parsedMessage),
+                    parsedMessage.sender === "task_activated"
+                      ? mergeSkillStatusMessage(prev, parsedMessage)
+                      : appendUniqueMessage(prev, parsedMessage),
+                  );
+                }
+              } else if (
+                data.op === "publish" &&
+                data.topic === SKILL_STATUS_UPDATE_TOPIC
+              ) {
+                const parsedMessage = parseSkillStatusMessage(
+                  data.msg?.data ?? data.msg ?? data.data,
+                );
+                if (parsedMessage) {
+                  setMessages((prev) =>
+                    mergeSkillStatusMessage(prev, parsedMessage),
                   );
                 }
               }
@@ -348,9 +568,17 @@ export function Chat() {
                 sender: data.sender,
                 text: data.text,
                 timestamp: data.timestamp,
+                taskStatus: data.taskStatus,
+                primitiveId: data.primitiveId,
+                skillId: data.skillId,
+                failureReason: data.failureReason,
               });
               if (parsedMessage) {
-                setMessages((prev) => appendUniqueMessage(prev, parsedMessage));
+                setMessages((prev) =>
+                  parsedMessage.sender === "task_activated"
+                    ? mergeSkillStatusMessage(prev, parsedMessage)
+                    : appendUniqueMessage(prev, parsedMessage),
+                );
               }
             }
           } catch {
@@ -397,6 +625,23 @@ export function Chat() {
       }
     };
   }, [useDirectRobot, robotWsUrl, backendWsBaseUrl]);
+
+  useEffect(() => {
+    const handleManualSkillEvent = (event: Event) => {
+      const parsedMessage = parseRosbridgeChatMessage(
+        (event as CustomEvent).detail,
+      );
+      if (!parsedMessage || parsedMessage.sender !== "task_activated") {
+        return;
+      }
+      setMessages((prev) => mergeSkillStatusMessage(prev, parsedMessage));
+    };
+
+    window.addEventListener("manual-skill-event", handleManualSkillEvent);
+    return () => {
+      window.removeEventListener("manual-skill-event", handleManualSkillEvent);
+    };
+  }, []);
 
   useEffect(() => {
     if (isScrolledToBottom) {
@@ -884,6 +1129,27 @@ export function Chat() {
                 contentRef={(el) => (systemContentRefs.current[index] = el)}
                 isError={message.isError}
               />
+            );
+          } else if (message.sender === "task_activated") {
+            return (
+              <ActionMessageBubble
+                key={`${message.sender}-${index}`}
+                $status={message.taskStatus}
+              >
+                <ActionMessageTitle>
+                  <TaskStatusIcon status={message.taskStatus} />
+                  <span>Skill</span>
+                  <ActionMessageStatus $status={message.taskStatus}>
+                    {taskStatusLabel(message.taskStatus)}
+                  </ActionMessageStatus>
+                </ActionMessageTitle>
+                {message.text}
+                {message.failureReason && (
+                  <div style={{ marginTop: 4, opacity: 0.8 }}>
+                    {message.failureReason}
+                  </div>
+                )}
+              </ActionMessageBubble>
             );
           }
           return null;
