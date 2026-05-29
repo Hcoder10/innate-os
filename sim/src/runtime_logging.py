@@ -28,6 +28,8 @@ NOISY_PATTERNS = [
     re.compile(r"^\[SimulationNode\] Drawing trajectory: "),
     re.compile(r"^\[SimulationNode\] Trajectory visualization complete: "),
     re.compile(r"^\[SimulationNode\] Clearing \d+ trajectory objects"),
+    re.compile(r"^\[SimulationNode\] Applying arm positions: "),
+    re.compile(r"^\[ROSBridge\] Received arm command: "),
     re.compile(r"^\[ROSBridge\] Queue status: "),
     re.compile(r"^\[ROSBridge\] Chat message latency: "),
 ]
