@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { IoPlay, IoRefresh } from "react-icons/io5";
+import { IoInformationCircleOutline, IoRefresh } from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
 import { RobotSkill } from "../services/rosbridgeService";
@@ -379,18 +379,65 @@ const SkillTitleBlock = styled.div`
   min-width: 0;
 `;
 
-const SkillDescription = styled.div`
-  color: #6b7280;
-  font-size: 11px;
-  line-height: 1.4;
-  margin-top: 4px;
-`;
-
 const SkillActions = styled.div`
   align-items: center;
   display: inline-flex;
   gap: 8px;
   flex-shrink: 0;
+`;
+
+const InfoWrap = styled.span`
+  position: relative;
+  display: inline-flex;
+`;
+
+const InfoButton = styled.button`
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #6b7280;
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+  width: 22px;
+
+  &:hover,
+  &:focus-visible {
+    color: #e5e7eb;
+  }
+`;
+
+const InfoTooltip = styled.span`
+  background: #050505;
+  border: 1px solid #374151;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.55);
+  color: #d1d5db;
+  font-size: 11px;
+  left: 50%;
+  line-height: 1.45;
+  max-width: 240px;
+  min-width: 180px;
+  opacity: 0;
+  padding: 9px 10px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+  visibility: hidden;
+  white-space: normal;
+  z-index: 10;
+
+  ${InfoWrap}:hover &,
+  ${InfoWrap}:focus-within & {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    visibility: visible;
+  }
 `;
 
 const ToggleButton = styled.button`
@@ -412,9 +459,13 @@ const RunSkillButton = styled.button<{ $active?: boolean }>`
   background: ${({ $active }) => ($active ? "rgba(30, 64, 175, 0.32)" : "#080808")};
   color: ${({ $active }) => ($active ? "#bfdbfe" : "#9ca3af")};
   display: inline-flex;
-  height: 24px;
+  font-size: 10px;
+  font-weight: 900;
+  height: 30px;
   justify-content: center;
-  width: 28px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  width: 100%;
 
   &:hover:not(:disabled) {
     background: #fff;
@@ -1146,6 +1197,8 @@ export function AlternativeSimDashboard({
                   isLoadingAgents ||
                   isSettingHarness ||
                   skillUpdatePending;
+                const skillDescription =
+                  skill.guidelines || skill.guidelines_when_running || "No description available.";
                 return (
                   <AgentButton
                     key={skill.id}
@@ -1156,25 +1209,17 @@ export function AlternativeSimDashboard({
                     <AgentRow>
                       <SkillTitleBlock>
                         <AgentName>{formatSkillName(skill)}</AgentName>
-                        <SkillDescription>
-                          {skill.guidelines || `${skill.type || "Available"} skill`}
-                        </SkillDescription>
                       </SkillTitleBlock>
                       <SkillActions>
-                        <RunSkillButton
-                          type="button"
-                          $active={isExpanded}
-                          disabled={skill.in_training || otherSkillExecuting}
-                          onClick={() => toggleSkillRunner(skill)}
-                          title={
-                            skill.in_training
-                              ? "Skill is still training"
-                              : "Run skill"
-                          }
-                          aria-label={`Run ${formatSkillName(skill)}`}
-                        >
-                          <IoPlay size={14} />
-                        </RunSkillButton>
+                        <InfoWrap>
+                          <InfoButton
+                            type="button"
+                            aria-label={`${formatSkillName(skill)} info`}
+                          >
+                            <IoInformationCircleOutline size={16} />
+                          </InfoButton>
+                          <InfoTooltip role="tooltip">{skillDescription}</InfoTooltip>
+                        </InfoWrap>
                         <ToggleButton
                           type="button"
                           disabled={skillToggleDisabled}
@@ -1182,7 +1227,7 @@ export function AlternativeSimDashboard({
                           title={
                             isHarnessRunning
                               ? "Toggle skill in harness"
-                              : "Harness is stopped"
+                              : "Skill activation unavailable"
                           }
                           aria-label={`Toggle ${formatSkillName(skill)}`}
                         >
@@ -1195,17 +1240,18 @@ export function AlternativeSimDashboard({
                         </ToggleButton>
                       </SkillActions>
                     </AgentRow>
-                    <AgentState $active={displayedActive} $pending={isPending}>
-                      {isPending
-                        ? pendingAction === "enable"
-                          ? "Enabling"
-                          : "Disabling"
-                        : isHarnessRunning
-                          ? isActive
-                            ? "Enabled"
-                            : "Disabled"
-                          : "Harness stopped"}
-                    </AgentState>
+                    <RunSkillButton
+                      type="button"
+                      $active={isExpanded}
+                      disabled={skill.in_training || otherSkillExecuting}
+                      onClick={() => toggleSkillRunner(skill)}
+                      title={
+                        skill.in_training ? "Skill is still training" : "Run skill"
+                      }
+                      aria-label={`Run ${formatSkillName(skill)}`}
+                    >
+                      RUN |&gt;
+                    </RunSkillButton>
                     <SkillRunPanel $open={isExpanded}>
                       <SkillRunPanelInner>
                         <SkillRunTitle>Run Parameters</SkillRunTitle>
