@@ -47,6 +47,7 @@ class ManipulationInterface:
         self._ik_solution_fk = None
         self._fk_pose = None
         self._arm_state = None
+        self._torque_enabled = None
 
         # Subscription handles (created in start(), destroyed in stop())
         self._ik_solution_sub = None
@@ -281,6 +282,9 @@ class ManipulationInterface:
         if len(joint_positions) != 6:
             self.logger.error(f"Expected 6 joint positions, got {len(joint_positions)}")
             return False
+        if self._torque_enabled is False:
+            self.logger.error("[ManipulationInterface] Arm torque is disabled")
+            return False
 
         # Ensure GotoJS client is available
         if self._goto_js_client is None:
@@ -400,6 +404,9 @@ class ManipulationInterface:
         if len(poses) < 2:
             self.logger.error("[ManipulationInterface] Need at least 2 poses for trajectory")
             return False
+        if self._torque_enabled is False:
+            self.logger.error("[ManipulationInterface] Arm torque is disabled")
+            return False
 
         # Resolve gripper position once
         if gripper_position is None:
@@ -507,6 +514,7 @@ class ManipulationInterface:
             if future.result() is not None:
                 result = future.result()
                 if result.success:
+                    self._torque_enabled = True
                     self.logger.info("Torque enabled on arm")
                     return True
                 else:
@@ -537,6 +545,7 @@ class ManipulationInterface:
             if future.result() is not None:
                 result = future.result()
                 if result.success:
+                    self._torque_enabled = False
                     self.logger.info("Torque disabled on arm")
                     return True
                 else:
@@ -568,6 +577,7 @@ class ManipulationInterface:
             if future.result() is not None:
                 result = future.result()
                 if result.success:
+                    self._torque_enabled = True
                     self.logger.info(f"Servos rebooted: {result.message}")
                     return True
                 else:

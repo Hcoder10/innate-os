@@ -40,6 +40,7 @@ class SimArmServices(Node):
         self._callback_group = ReentrantCallbackGroup()
         self._position_lock = threading.Lock()
         self._latest_positions = [0.0] * ARM_JOINT_COUNT
+        self._torque_enabled = True
 
         self._command_pub = self.create_publisher(
             Float64MultiArray,
@@ -69,17 +70,24 @@ class SimArmServices(Node):
             callback_group=self._callback_group,
         )
 
-        for service_name in (
+        self.create_service(
+            Trigger,
             "/mars/arm/torque_on",
+            self._handle_torque_on,
+            callback_group=self._callback_group,
+        )
+        self.create_service(
+            Trigger,
             "/mars/arm/torque_off",
+            self._handle_torque_off,
+            callback_group=self._callback_group,
+        )
+        self.create_service(
+            Trigger,
             "/mars/arm/reboot",
-        ):
-            self.create_service(
-                Trigger,
-                service_name,
-                self._handle_noop_trigger,
-                callback_group=self._callback_group,
-            )
+            self._handle_reboot,
+            callback_group=self._callback_group,
+        )
 
         self.get_logger().info(
             "Sim arm services ready: /mars/arm/goto_js, "
@@ -135,6 +143,11 @@ class SimArmServices(Node):
             self._latest_positions = target.copy()
 
     def _handle_goto_js(self, request: GotoJS.Request, response: GotoJS.Response):
+        if not self._torque_enabled:
+            self.get_logger().warning("Rejecting arm goto: torque is disabled")
+            response.success = False
+            return response
+
         target = self._coerce_target(request.data.data)
         if target is None:
             self.get_logger().error("Rejecting arm goto: expected 6 joint values")
@@ -153,6 +166,11 @@ class SimArmServices(Node):
         request: GotoJSTrajectory.Request,
         response: GotoJSTrajectory.Response,
     ):
+        if not self._torque_enabled:
+            self.get_logger().warning("Rejecting arm trajectory: torque is disabled")
+            response.success = False
+            return response
+
         num_joints = int(request.num_joints or ARM_JOINT_COUNT)
         try:
             flat_waypoints = [float(v) for v in request.waypoints.data]
@@ -192,9 +210,25 @@ class SimArmServices(Node):
         response.success = True
         return response
 
-    def _handle_noop_trigger(self, _request: Trigger.Request, response: Trigger.Response):
+    def _handle_torque_on(self, _request: Trigger.Request, response: Trigger.Response):
+        self._torque_enabled = True
+        self.get_logger().info("Sim arm torque enabled")
         response.success = True
-        response.message = "No-op in simulator."
+        response.message = "Sim arm torque enabled."
+        return response
+
+    def _handle_torque_off(self, _request: Trigger.Request, response: Trigger.Response):
+        self._torque_enabled = False
+        self.get_logger().info("Sim arm torque disabled")
+        response.success = True
+        response.message = "Sim arm torque disabled; motion commands will be rejected."
+        return response
+
+    def _handle_reboot(self, _request: Trigger.Request, response: Trigger.Response):
+        self._torque_enabled = True
+        self.get_logger().info("Sim arm rebooted")
+        response.success = True
+        response.message = "Sim arm rebooted; torque enabled."
         return response
 
 
