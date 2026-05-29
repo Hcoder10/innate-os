@@ -33,6 +33,7 @@ from src.shared_queues import SharedQueues
 ROBOT_INIT_POS = (2, -5, 0.05)
 ROBOT_INIT_QUAT = (0, 0, 0, 1)
 ROBOT_ROOT_POS = (0.0, 0.0, ROBOT_INIT_POS[2])
+SIM_ROBOT_ORANGE_LINKS = {"link1", "link3", "link5", "ee_link"}
 DEFAULT_SCENE_CONFIG = {
     "name": "Baked_sc0_staging_00",
     "mesh_path": "data/ReplicaCAD_baked_lighting/stages_uncompressed/Baked_sc0_staging_00.glb",
@@ -381,6 +382,7 @@ class SimulationNode:
             "package://maurice_sim/",
             package_root.rstrip("/") + "/",
         )
+        urdf_text = self._apply_sim_robot_visual_palette(urdf_text)
 
         generated_dir = os.path.join(self.project_root, "launcher", ".state", "urdf")
         os.makedirs(generated_dir, exist_ok=True)
@@ -392,6 +394,37 @@ class SimulationNode:
         self._load_urdf_fixed_joints(generated_path)
         print(f"[SimulationNode] Using ROS robot URDF: {source_path}")
         return generated_path
+
+    def _apply_sim_robot_visual_palette(self, urdf_text: str) -> str:
+        """Keep ROS geometry/frames, but use a visible simulator-only palette."""
+        root = ET.fromstring(urdf_text)
+
+        material_colors = {
+            "matt_black": "0.16 0.16 0.16 1.0",
+            "bright_orange": "1.0 0.5 0.0 1.0",
+        }
+        for material_name, rgba in material_colors.items():
+            material = root.find(f"material[@name='{material_name}']")
+            if material is None:
+                material = ET.SubElement(root, "material", {"name": material_name})
+            color = material.find("color")
+            if color is None:
+                color = ET.SubElement(material, "color")
+            color.set("rgba", rgba)
+
+        for link in root.findall("link"):
+            material_name = (
+                "bright_orange"
+                if link.attrib.get("name") in SIM_ROBOT_ORANGE_LINKS
+                else "matt_black"
+            )
+            for visual in link.findall("visual"):
+                material = visual.find("material")
+                if material is None:
+                    material = ET.SubElement(visual, "material")
+                material.set("name", material_name)
+
+        return ET.tostring(root, encoding="unicode")
 
     def _load_urdf_fixed_joints(self, urdf_path: str) -> None:
         """Cache fixed-joint transforms so merged Genesis links can still be addressed."""
