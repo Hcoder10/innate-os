@@ -25,7 +25,7 @@ from enum import IntEnum, auto
 from typing import Optional
 
 import websockets
-from aiotools import create_timer
+
 
 class Action(IntEnum):
     STOP = 0
@@ -208,13 +208,17 @@ class UninavidWsClient:
                 # Start periodic send timer + run recv loop
                 self._ws = ws
                 self._send_count = 0
-                send_timer = create_timer(
-                    self._send_tick, 1.0 / self._image_send_hz,
+                send_task = asyncio.create_task(
+                    self._send_loop(1.0 / self._image_send_hz)
                 )
                 try:
                     await self._recv_loop(ws)
                 finally:
-                    send_timer.cancel()
+                    send_task.cancel()
+                    try:
+                        await send_task
+                    except asyncio.CancelledError:
+                        pass
 
         except websockets.InvalidStatus as exc:
             status = exc.response.status_code
@@ -240,8 +244,8 @@ class UninavidWsClient:
                 self._state = ClientState.FAILED
                 self._error_msg = str(exc)
 
-    async def _send_tick(self, interval: float) -> None:
-        """Called by aiotools.create_timer every 1/image_send_hz seconds."""
+    async def _send_tick(self) -> None:
+        """Send the latest available camera frame once, if there is one."""
         try:
             with self._lock:
                 payload = self._frame
@@ -261,6 +265,12 @@ class UninavidWsClient:
                 )
         except Exception as exc:
             self._log.error(f"send_tick error: {exc}")
+
+    async def _send_loop(self, interval: float) -> None:
+        """Periodically send the latest camera frame while the websocket is open."""
+        while True:
+            await asyncio.sleep(interval)
+            await self._send_tick()
 
     async def _recv_loop(self, ws) -> None:
         _recv_count = 0

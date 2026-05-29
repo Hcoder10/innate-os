@@ -17,8 +17,10 @@ Manual test::
 
 from __future__ import annotations
 
+import json
 import os
 import statistics
+import threading
 import time
 from typing import Optional
 
@@ -27,7 +29,7 @@ from auth_client import AuthProvider
 from dotenv import find_dotenv, load_dotenv
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import CompressedImage
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int32MultiArray, String
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -40,6 +42,17 @@ from .ws_client import Action, ClientState, UninavidWsClient
 
 DEFAULT_WS_URL = "wss://nav-v1.innate.bot"
 DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
+RUNTIME_BACKEND_CONFIG_TOPIC = "/brain/backend_config"
+
+PLACEHOLDER_SERVICE_KEYS = {
+    "my_hardcoded_token",
+    "your_service_key_here",
+    "your-service-key-here",
+    "replace_me",
+    "changeme",
+    "change_me",
+    "todo",
+}
 
 _CMD_VEL: dict[int, tuple[float, float]] = {
     Action.STOP:    (0.0,  0.0),
@@ -80,12 +93,19 @@ class UninavidNode(Node):
 
         self._ws_url = str(self.get_parameter("ws_url").value)
         service_key = str(self.get_parameter("service_key").value)
-        auth_issuer = str(self.get_parameter("auth_issuer_url").value)
+        self._auth_issuer = str(self.get_parameter("auth_issuer_url").value)
+        self._config_lock = threading.Lock()
+        self._service_key = service_key.strip()
 
-        self._auth: Optional[AuthProvider] = (
-            AuthProvider(issuer_url=auth_issuer, service_key=service_key)
-            if service_key else None
+        self._auth: Optional[AuthProvider] = self._make_auth_provider(
+            self._service_key
         )
+        if self._auth is None:
+            self.get_logger().warn(
+                "UniNavid service key is missing or placeholder. "
+                "Vision navigation goals will fail until INNATE_SERVICE_KEY is "
+                "configured or a runtime service key update is received."
+            )
 
         self._client: Optional[UninavidWsClient] = None
         self._goal_handle = None
@@ -101,6 +121,9 @@ class UninavidNode(Node):
         )
         self._cmd = self.create_publisher(Twist, "/cmd_vel", 10)
         self._actions_pub = self.create_publisher(Int32MultiArray, "/vln/actions", 10)
+        self._backend_config_sub = self.create_subscription(
+            String, RUNTIME_BACKEND_CONFIG_TOPIC, self._backend_config_callback, 10
+        )
 
         self._action_server = ActionServer(
             self,
@@ -113,6 +136,56 @@ class UninavidNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
         self.get_logger().info("UninavidNode ready")
+
+    @staticmethod
+    def _is_configured_service_key(service_key: str) -> bool:
+        normalized = (service_key or "").strip()
+        if not normalized:
+            return False
+        return normalized.lower() not in PLACEHOLDER_SERVICE_KEYS
+
+    def _make_auth_provider(self, service_key: str) -> Optional[AuthProvider]:
+        if not self._is_configured_service_key(service_key):
+            return None
+        return AuthProvider(issuer_url=self._auth_issuer, service_key=service_key)
+
+    def _backend_config_callback(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().error("Invalid /brain/backend_config payload JSON.")
+            return
+        if not isinstance(payload, dict):
+            self.get_logger().error("/brain/backend_config payload must be an object.")
+            return
+
+        service_key = payload.get("service_key") or payload.get("token")
+        if service_key is None:
+            return
+
+        new_service_key = str(service_key).strip()
+        with self._config_lock:
+            if new_service_key == self._service_key:
+                self.get_logger().info("UniNavid service key unchanged.")
+                return
+            self._service_key = new_service_key
+            self._auth = self._make_auth_provider(new_service_key)
+            configured = self._auth is not None
+            active_client = self._client is not None and self._client.state in (
+                ClientState.CONNECTING,
+                ClientState.CONNECTED,
+            )
+
+        if configured:
+            message = "UniNavid service key updated from runtime backend config."
+            if active_client:
+                message += " The new key will be used by the next navigation goal."
+            self.get_logger().info(message)
+        else:
+            self.get_logger().warn(
+                "UniNavid received an empty or placeholder service key; "
+                "vision navigation remains unavailable."
+            )
 
     # ── Preemption (Nav2 pattern) ─────────────────────────────────────────
 
@@ -157,6 +230,22 @@ class UninavidNode(Node):
         instruction = goal_handle.request.instruction
         self.get_logger().info(f"Executing: {instruction!r}")
 
+        result = NavigateInstruction.Result()
+        feedback = NavigateInstruction.Feedback()
+
+        with self._config_lock:
+            auth = self._auth
+            ws_url = self._ws_url
+
+        if auth is None:
+            self._cmd.publish(_STOP)
+            goal_handle.abort()
+            return self._result(
+                result,
+                False,
+                "Missing or placeholder INNATE_SERVICE_KEY for UniNavid.",
+            )
+
         cmd_duration = float(self.get_parameter("cmd_duration_sec").value)
         cmd_publish_hz = float(self.get_parameter("cmd_publish_hz").value)
         poll_period = float(self.get_parameter("poll_period_sec").value)
@@ -165,7 +254,7 @@ class UninavidNode(Node):
         consecutive_stops = int(self.get_parameter("consecutive_stops_to_complete").value)
 
         client = UninavidWsClient(
-            url=self._ws_url, auth_provider=self._auth,
+            url=ws_url, auth_provider=auth,
             logger=self.get_logger(),
             image_send_hz=image_send_hz,
             consecutive_stops_to_complete=consecutive_stops,
@@ -173,9 +262,6 @@ class UninavidNode(Node):
         self._client = client
         client.connect(instruction)
         self._last_rtt_report = 0.0
-
-        result = NavigateInstruction.Result()
-        feedback = NavigateInstruction.Feedback()
 
         try:
             while rclpy.ok() and goal_handle.is_active:
