@@ -221,8 +221,10 @@ class SimulationNode:
         self.urdf_fixed_joints = {}
         self.main_camera_mount = None
         self.main_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.main_camera_up = np.array([0.0, 0.0, 1.0])
         self.arm_camera_mount = None
         self.arm_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.arm_camera_up = np.array([0.0, 0.0, 1.0])
         self.main_camera_frame_id = "camera_color_frame"
         self.startup_timings_enabled = _env_bool("SIM_STARTUP_TIMINGS")
         self._startup_t0 = time.perf_counter()
@@ -989,16 +991,33 @@ class SimulationNode:
         """Pick camera links from the loaded robot URDF."""
         self.main_camera_mount = None
         self.main_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.main_camera_up = np.array([0.0, 0.0, 1.0])
         self.main_camera_frame_id = "camera_color_frame"
-        for link_name, forward, frame_id in (
-            ("camera_optical_frame", np.array([0.0, 0.0, 1.0]), "camera_optical_frame"),
-            ("head_camera_left", np.array([1.0, 0.0, 0.0]), "head_camera_left"),
-            ("head_camera_link", np.array([1.0, 0.0, 0.0]), "head_camera_link"),
+        for link_name, forward, up, frame_id in (
+            (
+                "camera_optical_frame",
+                np.array([0.0, 0.0, 1.0]),
+                np.array([0.0, -1.0, 0.0]),
+                "camera_optical_frame",
+            ),
+            (
+                "head_camera_left",
+                np.array([1.0, 0.0, 0.0]),
+                np.array([0.0, 0.0, 1.0]),
+                "head_camera_left",
+            ),
+            (
+                "head_camera_link",
+                np.array([1.0, 0.0, 0.0]),
+                np.array([0.0, 0.0, 1.0]),
+                "head_camera_link",
+            ),
         ):
             mount = self._resolve_urdf_frame_mount(link_name)
             if mount is not None:
                 self.main_camera_mount = mount
                 self.main_camera_forward = forward
+                self.main_camera_up = up
                 self.main_camera_frame_id = frame_id
                 print(
                     "[SimulationNode] Main camera follows URDF frame: "
@@ -1008,14 +1027,20 @@ class SimulationNode:
 
         self.arm_camera_mount = None
         self.arm_camera_forward = np.array([1.0, 0.0, 0.0])
-        for link_name, forward in (
-            ("arm_camera_link", np.array([1.0, 0.0, 0.0])),
-            ("link5", np.array([1.0, 0.0, 0.0])),
+        self.arm_camera_up = np.array([0.0, 0.0, 1.0])
+        for link_name, forward, up in (
+            (
+                "arm_camera_link",
+                np.array([1.0, 0.0, 0.0]),
+                np.array([0.0, 0.0, 1.0]),
+            ),
+            ("link5", np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0])),
         ):
             mount = self._resolve_urdf_frame_mount(link_name)
             if mount is not None:
                 self.arm_camera_mount = mount
                 self.arm_camera_forward = forward
+                self.arm_camera_up = up
                 print(
                     "[SimulationNode] Wrist camera follows URDF frame: "
                     f"{link_name} (anchor={mount['anchor_link']})"
@@ -2254,14 +2279,20 @@ class SimulationNode:
                     )
                     look_dir = rotate_vector(self.main_camera_forward, camera_quat)
                     lookat = camera_pos + look_dir
-                    self.robot_camera.set_pose(pos=camera_pos, lookat=lookat)
+                    up_dir = rotate_vector(self.main_camera_up, camera_quat)
+                    self.robot_camera.set_pose(
+                        pos=camera_pos, lookat=lookat, up=up_dir
+                    )
 
                 # Update arm wrist camera from the URDF camera link when available.
                 if self.arm_wrist_camera is not None and self.arm_camera_mount is not None:
                     arm_pos, arm_quat = self._camera_world_pose(self.arm_camera_mount)
                     arm_look_dir = rotate_vector(self.arm_camera_forward, arm_quat)
                     arm_lookat = arm_pos + arm_look_dir
-                    self.arm_wrist_camera.set_pose(pos=arm_pos, lookat=arm_lookat)
+                    arm_up_dir = rotate_vector(self.arm_camera_up, arm_quat)
+                    self.arm_wrist_camera.set_pose(
+                        pos=arm_pos, lookat=arm_lookat, up=arm_up_dir
+                    )
 
                 # Update chase camera to follow robot
                 if self.chase_camera is not None:
