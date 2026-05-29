@@ -4,6 +4,7 @@ import numpy as np
 import genesis as gs
 import cv2  # for potential image saving/processing
 import json
+import xml.etree.ElementTree as ET
 from scipy.spatial.transform import Rotation as R, Slerp
 import time  # Add import for time functions
 import os  # Add os import for path joining
@@ -207,6 +208,13 @@ class SimulationNode:
         self.robot_camera = None
         self.arm_wrist_camera = None
         self.chase_camera = None
+        self.robot_urdf_path = None
+        self.urdf_fixed_joints = {}
+        self.main_camera_mount = None
+        self.main_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.arm_camera_mount = None
+        self.arm_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.main_camera_frame_id = "camera_color_frame"
         self.startup_timings_enabled = _env_bool("SIM_STARTUP_TIMINGS")
         self._startup_t0 = time.perf_counter()
         self._startup_last = self._startup_t0
@@ -233,6 +241,7 @@ class SimulationNode:
         self.scene.build()
         self._startup_mark("scene.build")
         self._init_robot_base_pose_control()
+        self._init_camera_link_refs()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self.scene_built = True
 
@@ -336,6 +345,87 @@ class SimulationNode:
         if os.path.isabs(path):
             return path
         return os.path.join(self.project_root, path)
+
+    def _resolve_robot_urdf_path(self) -> str:
+        """Return the URDF path Genesis should load for the robot entity."""
+        requested = os.getenv("SIM_ROBOT_URDF", "ros").strip()
+        if requested.lower() in {"legacy", "sim"}:
+            print("[SimulationNode] Using legacy sim robot URDF.")
+            self.robot_urdf_path = self._resolve_project_path("data/urdf/maurice.urdf")
+            self._load_urdf_fixed_joints(self.robot_urdf_path)
+            return "data/urdf/maurice.urdf"
+
+        repo_root = os.path.dirname(self.project_root)
+        if requested.lower() in {"", "ros"}:
+            source_path = os.path.join(
+                repo_root,
+                "ros2_ws",
+                "src",
+                "maurice_bot",
+                "maurice_sim",
+                "urdf",
+                "maurice.urdf",
+            )
+        else:
+            source_path = requested
+            if not os.path.isabs(source_path):
+                source_path = os.path.join(repo_root, source_path)
+
+        if not os.path.exists(source_path):
+            raise FileNotFoundError(f"Robot URDF not found: {source_path}")
+
+        package_root = os.path.dirname(os.path.dirname(source_path))
+        with open(source_path, "r", encoding="utf-8") as source_file:
+            urdf_text = source_file.read()
+        urdf_text = urdf_text.replace(
+            "package://maurice_sim/",
+            package_root.rstrip("/") + "/",
+        )
+
+        generated_dir = os.path.join(self.project_root, "launcher", ".state", "urdf")
+        os.makedirs(generated_dir, exist_ok=True)
+        generated_path = os.path.join(generated_dir, "maurice_ros_resolved.urdf")
+        with open(generated_path, "w", encoding="utf-8") as generated_file:
+            generated_file.write(urdf_text)
+
+        self.robot_urdf_path = generated_path
+        self._load_urdf_fixed_joints(generated_path)
+        print(f"[SimulationNode] Using ROS robot URDF: {source_path}")
+        return generated_path
+
+    def _load_urdf_fixed_joints(self, urdf_path: str) -> None:
+        """Cache fixed-joint transforms so merged Genesis links can still be addressed."""
+        self.urdf_fixed_joints = {}
+        try:
+            root = ET.parse(urdf_path).getroot()
+        except Exception as exc:
+            print(f"[SimulationNode] Could not parse robot URDF fixed joints: {exc}")
+            return
+
+        for joint in root.findall("joint"):
+            if joint.attrib.get("type") != "fixed":
+                continue
+            parent_node = joint.find("parent")
+            child_node = joint.find("child")
+            if parent_node is None or child_node is None:
+                continue
+            origin_node = joint.find("origin")
+            xyz = np.zeros(3)
+            rpy = np.zeros(3)
+            if origin_node is not None:
+                xyz = np.array(
+                    [float(value) for value in origin_node.attrib.get("xyz", "0 0 0").split()],
+                    dtype=float,
+                )
+                rpy = np.array(
+                    [float(value) for value in origin_node.attrib.get("rpy", "0 0 0").split()],
+                    dtype=float,
+                )
+            self.urdf_fixed_joints[child_node.attrib["link"]] = (
+                parent_node.attrib["link"],
+                xyz,
+                self._quat_wxyz_from_rpy(rpy),
+            )
 
     def _resolve_scene_config(
         self, env_config: Optional[Dict[str, Any]]
@@ -821,7 +911,7 @@ class SimulationNode:
     def _init_robot(self):
         """Initialize robot and its parameters"""
         urdf_kwargs = {
-            "file": "data/urdf/maurice.urdf",
+            "file": self._resolve_robot_urdf_path(),
             # Keep the articulation root fixed and drive the planar base joints directly.
             "pos": ROBOT_ROOT_POS,
             "quat": (1.0, 0.0, 0.0, 0.0),
@@ -839,10 +929,89 @@ class SimulationNode:
         """Cache the planar base DOFs used to drive Maurice in world space."""
         self.robot_base_root_pos = np.array(ROBOT_ROOT_POS, dtype=float)
         self.base_pose_joint_names = ("base_x", "base_y", "base_yaw")
-        self.base_pose_dof_indices = [
-            self.robot.get_joint(name).dofs_idx_local[0]
-            for name in self.base_pose_joint_names
-        ]
+        try:
+            self.base_pose_dof_indices = [
+                self.robot.get_joint(name).dofs_idx_local[0]
+                for name in self.base_pose_joint_names
+            ]
+            self.base_pose_mode = "dofs"
+        except Exception:
+            self.base_pose_dof_indices = []
+            self.base_pose_mode = "root"
+            print(
+                "[SimulationNode] Robot URDF has no sim planar base joints; "
+                "driving the Genesis root pose directly."
+            )
+
+    def _init_camera_link_refs(self):
+        """Pick camera links from the loaded robot URDF."""
+        self.main_camera_mount = None
+        self.main_camera_forward = np.array([1.0, 0.0, 0.0])
+        self.main_camera_frame_id = "camera_color_frame"
+        for link_name, forward, frame_id in (
+            ("camera_optical_frame", np.array([0.0, 0.0, 1.0]), "camera_optical_frame"),
+            ("head_camera_left", np.array([1.0, 0.0, 0.0]), "head_camera_left"),
+            ("head_camera_link", np.array([1.0, 0.0, 0.0]), "head_camera_link"),
+        ):
+            mount = self._resolve_urdf_frame_mount(link_name)
+            if mount is not None:
+                self.main_camera_mount = mount
+                self.main_camera_forward = forward
+                self.main_camera_frame_id = frame_id
+                print(
+                    "[SimulationNode] Main camera follows URDF frame: "
+                    f"{link_name} (anchor={mount['anchor_link']})"
+                )
+                break
+
+        self.arm_camera_mount = None
+        self.arm_camera_forward = np.array([1.0, 0.0, 0.0])
+        for link_name, forward in (
+            ("arm_camera_link", np.array([1.0, 0.0, 0.0])),
+            ("link5", np.array([1.0, 0.0, 0.0])),
+        ):
+            mount = self._resolve_urdf_frame_mount(link_name)
+            if mount is not None:
+                self.arm_camera_mount = mount
+                self.arm_camera_forward = forward
+                print(
+                    "[SimulationNode] Wrist camera follows URDF frame: "
+                    f"{link_name} (anchor={mount['anchor_link']})"
+                )
+                break
+
+    def _resolve_urdf_frame_mount(self, frame_name: str):
+        """Resolve a URDF frame to an existing Genesis link plus fixed offset."""
+        offset_pos = np.zeros(3)
+        offset_quat = np.array([1.0, 0.0, 0.0, 0.0])
+        current = frame_name
+        while current:
+            try:
+                self.robot.get_link(current)
+                return {
+                    "frame": frame_name,
+                    "anchor_link": current,
+                    "offset_pos": offset_pos,
+                    "offset_quat": offset_quat,
+                }
+            except Exception:
+                fixed_joint = self.urdf_fixed_joints.get(current)
+                if fixed_joint is None:
+                    return None
+                parent, joint_pos, joint_quat = fixed_joint
+                offset_pos = joint_pos + rotate_vector(offset_pos, joint_quat)
+                offset_quat = self._quat_wxyz_multiply(joint_quat, offset_quat)
+                current = parent
+
+        return None
+
+    def _camera_world_pose(self, mount):
+        anchor = self.robot.get_link(mount["anchor_link"])
+        anchor_pos = anchor.get_pos().cpu().numpy()
+        anchor_quat = anchor.get_quat().cpu().numpy()
+        camera_pos = anchor_pos + rotate_vector(mount["offset_pos"], anchor_quat)
+        camera_quat = self._quat_wxyz_multiply(anchor_quat, mount["offset_quat"])
+        return camera_pos, camera_quat
 
     def _normalize_angle(self, angle: float) -> float:
         return np.arctan2(np.sin(angle), np.cos(angle))
@@ -855,12 +1024,47 @@ class SimulationNode:
         half_yaw = yaw / 2.0
         return np.array([np.cos(half_yaw), 0.0, 0.0, np.sin(half_yaw)], dtype=float)
 
+    def _quat_wxyz_from_rpy(self, rpy: np.ndarray) -> np.ndarray:
+        quat_xyzw = R.from_euler("xyz", rpy).as_quat()
+        return np.array(
+            [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]], dtype=float
+        )
+
+    def _quat_wxyz_multiply(self, q1, q2) -> np.ndarray:
+        w1, x1, y1, z1 = np.asarray(q1, dtype=float)
+        w2, x2, y2, z2 = np.asarray(q2, dtype=float)
+        return np.array(
+            [
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            ],
+            dtype=float,
+        )
+
     def _get_robot_base_dofs(self) -> np.ndarray:
+        if getattr(self, "base_pose_mode", "dofs") != "dofs":
+            pos, quat = self._get_robot_base_pose()
+            return np.array([pos[0], pos[1], self._yaw_from_wxyz(quat)], dtype=float)
         return (
             self.robot.get_dofs_position(self.base_pose_dof_indices).cpu().numpy().astype(float)
         )
 
     def _set_robot_base_dofs(self, x: float, y: float, yaw: float):
+        if getattr(self, "base_pose_mode", "dofs") != "dofs":
+            self.robot.set_pos(
+                [x, y, self.robot_base_root_pos[2]],
+                zero_velocity=True,
+                relative=False,
+            )
+            self.robot.set_quat(
+                self._quat_wxyz_from_yaw(yaw),
+                zero_velocity=True,
+                relative=False,
+            )
+            return
+
         base_dofs = torch.tensor(
             [x - self.robot_base_root_pos[0], y - self.robot_base_root_pos[1], yaw],
             dtype=torch.float32,
@@ -1482,6 +1686,9 @@ class SimulationNode:
         self._init_map_params()
 
         self.scene.build()
+        self._init_robot_base_pose_control()
+        self._init_camera_link_refs()
+        self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self.scene_built = True
         print("[SimulationNode] Scene rebuilt")
 
@@ -1750,7 +1957,6 @@ class SimulationNode:
         )
 
     def run(self):
-        local_forward = np.array([1.0, 0.0, 0.0])
         step_count = 0
         sim_time = 0  # Track simulation time
 
@@ -1990,27 +2196,20 @@ class SimulationNode:
                 self.cameras_enabled
                 and sim_time - self.last_render_time >= self.render_interval - 1e-9
             ):
-                camera_link = self.robot.get_link("head_camera_link")
-                camera_pos = camera_link.get_pos()
-                camera_quat = camera_link.get_quat()
-                look_dir = rotate_vector(local_forward, camera_quat)
-                lookat = camera_pos.cpu().numpy() + look_dir
-                if self.robot_camera is not None:
-                    self.robot_camera.set_pose(
-                        pos=camera_pos.cpu().numpy(), lookat=lookat
+                if self.robot_camera is not None and self.main_camera_mount is not None:
+                    camera_pos, camera_quat = self._camera_world_pose(
+                        self.main_camera_mount
                     )
+                    look_dir = rotate_vector(self.main_camera_forward, camera_quat)
+                    lookat = camera_pos + look_dir
+                    self.robot_camera.set_pose(pos=camera_pos, lookat=lookat)
 
-                # Update arm wrist camera (mounted on link5, looking forward along the arm)
-                if self.arm_wrist_camera is not None:
-                    link5 = self.robot.get_link("link5")
-                    link5_pos = link5.get_pos()
-                    link5_quat = link5.get_quat()
-                    arm_forward = np.array([1.0, 0.0, 0.0])  # Arm points along X axis
-                    arm_look_dir = rotate_vector(arm_forward, link5_quat)
-                    arm_lookat = link5_pos.cpu().numpy() + arm_look_dir
-                    self.arm_wrist_camera.set_pose(
-                        pos=link5_pos.cpu().numpy(), lookat=arm_lookat
-                    )
+                # Update arm wrist camera from the URDF camera link when available.
+                if self.arm_wrist_camera is not None and self.arm_camera_mount is not None:
+                    arm_pos, arm_quat = self._camera_world_pose(self.arm_camera_mount)
+                    arm_look_dir = rotate_vector(self.arm_camera_forward, arm_quat)
+                    arm_lookat = arm_pos + arm_look_dir
+                    self.arm_wrist_camera.set_pose(pos=arm_pos, lookat=arm_lookat)
 
                 # Update chase camera to follow robot
                 if self.chase_camera is not None:
@@ -2107,7 +2306,7 @@ class SimulationNode:
                 fy=self.fy,
                 cx=self.cx,
                 cy=self.cy,
-                frame_id="camera_color_frame",
+                frame_id=self.main_camera_frame_id,
                 distortion_model="plumb_bob",
                 D=[0.0, 0.0, 0.0, 0.0, 0.0],
                 # odometry: pose
