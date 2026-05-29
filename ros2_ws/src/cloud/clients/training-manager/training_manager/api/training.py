@@ -24,7 +24,7 @@ from training_client.src.skill_manager import (
 )
 from training_client.src.types import ClientConfig, ProgressUpdate, RunInfo
 
-from training_manager.api.skill_paths import iter_skill_dirs, skills_dir
+from training_manager.api.skill_paths import iter_all_skill_dirs, resolve_skill_dir
 
 logger = logging.getLogger("training_manager.api.training")
 
@@ -117,7 +117,7 @@ async def list_all_runs(request: Request) -> list[dict[str, Any]]:
     manager = _make_manager()
     all_runs: list[dict[str, Any]] = []
 
-    for child in iter_skill_dirs(skills_dir(request)):
+    for child in iter_all_skill_dirs(request):
         skill_id = read_skill_id(child)
         if not skill_id:
             continue
@@ -142,7 +142,7 @@ async def list_all_runs(request: Request) -> list[dict[str, Any]]:
 @router.get("/runs/{skill_name}/{run_id}")
 async def get_run(request: Request, skill_name: str, run_id: int) -> dict[str, Any]:
     """Get details for a specific training run via SkillManager.run_status()."""
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     skill_id = read_skill_id(skill_path)
     if not skill_id:
         raise HTTPException(404, f"No training_skill_id for {skill_name}")
@@ -165,7 +165,7 @@ async def watch_run(
     request: Request, skill_name: str, run_id: int
 ) -> StreamingResponse:
     """SSE endpoint that polls run status using SkillManager.run_status()."""
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     skill_id = read_skill_id(skill_path)
     if not skill_id:
         raise HTTPException(404, f"No training_skill_id for {skill_name}")
@@ -215,7 +215,7 @@ async def create_run(
     Builds the training_params dict in the same format as the training
     CLI's `run` command, including source_dir for result download.
     """
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     skill_id = read_skill_id(skill_path)
     if not skill_id:
         raise HTTPException(404, f"No training_skill_id for {skill_name}")
@@ -315,7 +315,7 @@ async def download_run(
     Uses SkillManager.download() which writes into the run's
     ``source_dir/{run_id}/`` and marks the run ``downloaded`` on success.
     """
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     skill_id = read_skill_id(skill_path)
     if not skill_id:
         raise HTTPException(404, f"No training_skill_id for {skill_name}")

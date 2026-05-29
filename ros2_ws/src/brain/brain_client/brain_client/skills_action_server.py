@@ -49,7 +49,6 @@ from brain_client.script_paths import (
     get_custom_skills_dir,
     get_innate_skills_dir,
     get_skill_directories,
-    migrate_legacy_home_directories,
 )
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
@@ -553,20 +552,24 @@ class SkillsActionServer(Node):
         self._publish_skills_list()
 
     def _resolve_skills_directories(self) -> list[str]:
-        """Build the ordered list of skill directories to scan."""
+        """Build the ordered list of skill directories to scan.
+
+        Shipped (innate_skills), then user skills from workspace/custom_skills
+        and, when present, ~/skills. Home skills are scanned in place — never
+        moved — so users may keep skills in either location.
+        """
         innate_skills_dir = str(get_innate_skills_dir())
-        custom_skills_dir = str(get_custom_skills_dir())
 
         if not os.path.exists(innate_skills_dir):
             self.get_logger().fatal(f"Skills directory not found: {innate_skills_dir}")
             raise FileNotFoundError(f"Skills directory must exist at {innate_skills_dir}")
 
         ensure_user_directories()
-        migrate_legacy_home_directories(self.get_logger())
 
-        self.get_logger().info(f"Scanning innate skills directory: {innate_skills_dir}")
-        self.get_logger().info(f"Scanning custom skills directory: {custom_skills_dir}")
-        return [innate_skills_dir, custom_skills_dir]
+        directories = [str(p) for p in get_skill_directories()]
+        for directory in directories:
+            self.get_logger().info(f"Scanning skills directory: {directory}")
+        return directories
 
     def _apply_sim_swap(self, id_keyed: dict[str, tuple[str, type, Path]]) -> None:
         """Swap navigate_to_position_sim → navigate_to_position in sim mode, or remove it.

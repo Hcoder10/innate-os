@@ -26,7 +26,11 @@ from training_client.src.skill_manager import (
 )
 from training_client.src.types import ClientConfig, ProgressUpdate
 
-from training_manager.api.skill_paths import iter_skill_dirs, skills_dir
+from training_manager.api.skill_paths import (
+    iter_all_skill_dirs,
+    resolve_skill_dir,
+    skills_dir,
+)
 
 logger = logging.getLogger("training_manager.api.datasets")
 
@@ -74,7 +78,7 @@ def _dataset_status(skill_path: Path) -> str:
 async def list_datasets(request: Request) -> list[dict[str, Any]]:
     """List all skills with their dataset info."""
     datasets: list[dict[str, Any]] = []
-    for child in iter_skill_dirs(skills_dir(request)):
+    for child in iter_all_skill_dirs(request):
         with _locked_metadata(child) as meta_path:
             meta = _read_meta(meta_path)
         if not meta:
@@ -100,7 +104,7 @@ async def list_datasets(request: Request) -> list[dict[str, Any]]:
 @router.get("/{skill_name}")
 async def get_dataset(request: Request, skill_name: str) -> dict[str, Any]:
     """Full dataset details including per-episode info."""
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     if not skill_path.is_dir():
         raise HTTPException(404, f"Skill not found: {skill_name}")
 
@@ -132,7 +136,7 @@ async def get_episode_video(
     request: Request, skill_name: str, episode_id: int, camera: int = 0
 ) -> FileResponse:
     """Stream an episode MP4 file."""
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     ds_meta = _read_dataset_metadata(skill_path)
     if ds_meta is None:
         raise HTTPException(404, "No dataset metadata")
@@ -169,7 +173,7 @@ async def submit_skill(
     training client, which handles H.264 conversion, signed-URL uploads,
     verification, and metadata updates.
     """
-    skill_path = skills_dir(request) / skill_name
+    skill_path = resolve_skill_dir(request, skill_name)
     if not skill_path.is_dir():
         raise HTTPException(404, f"Skill not found: {skill_name}")
 
@@ -299,13 +303,12 @@ async def copy_dataset(
     Clears training_skill_id, checkpoint, stats_file, and removes run
     directories from the copy.
     """
-    root = skills_dir(request)
-    source = root / skill_name
+    source = resolve_skill_dir(request, skill_name)
     if not source.is_dir():
         raise HTTPException(404, f"Skill not found: {skill_name}")
 
     dest_dir_name = body.new_name.replace(" ", "-").lower()
-    dest = root / dest_dir_name
+    dest = skills_dir(request) / dest_dir_name
     if dest.exists():
         raise HTTPException(409, f"Destination already exists: {dest_dir_name}")
 
@@ -398,9 +401,8 @@ async def merge_datasets(request: Request, body: MergeRequest) -> dict[str, str]
     Uses the training client's locked metadata for safe reads from source
     skills.  The new skill gets a fresh metadata.json with empty execution.
     """
-    root = skills_dir(request)
     dest_dir_name = body.new_name.replace(" ", "-").lower()
-    dest = root / dest_dir_name
+    dest = skills_dir(request) / dest_dir_name
     if dest.exists():
         raise HTTPException(409, f"Destination already exists: {dest_dir_name}")
 
@@ -427,7 +429,7 @@ async def merge_datasets(request: Request, body: MergeRequest) -> dict[str, str]
         new_idx = 0
 
         for src in body.sources:
-            src_path = root / src.skill_name
+            src_path = resolve_skill_dir(request, src.skill_name)
             if not src_path.is_dir():
                 raise HTTPException(404, f"Source skill not found: {src.skill_name}")
 

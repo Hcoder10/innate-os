@@ -12,7 +12,6 @@ from brain_client.agent_loader import AgentLoader
 from brain_client.script_paths import (
     ensure_user_directories,
     get_agent_directories,
-    migrate_legacy_home_directories,
 )
 
 
@@ -33,9 +32,9 @@ def initialize_agents(
     """
     agent_loader = AgentLoader(logger)
 
-    # Ensure custom dirs exist and migrate any legacy ~/agents content into them.
+    # Ensure custom dirs exist. Agents are scanned from workspace/custom_agents
+    # and, if present, ~/agents (in place — never moved).
     ensure_user_directories()
-    migrate_legacy_home_directories(logger)
 
     agents_directories = [str(p) for p in get_agent_directories()]
 
