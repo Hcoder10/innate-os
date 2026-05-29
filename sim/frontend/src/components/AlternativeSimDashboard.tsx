@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { IoInformationCircleOutline, IoRefresh } from "react-icons/io5";
+import { IoInformationCircleOutline, IoPlay, IoRefresh } from "react-icons/io5";
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
 import { RobotSkill } from "../services/rosbridgeService";
@@ -58,13 +58,13 @@ const Shell = styled.div`
 const Layout = styled.div`
   height: 100%;
   display: grid;
-  grid-template-columns: 280px minmax(420px, 1fr) 340px;
+  grid-template-columns: 320px minmax(420px, 1fr) 380px;
   grid-template-rows: 56px minmax(0, 1fr);
-  min-width: 1040px;
+  min-width: 1120px;
 
   @media (max-width: 1120px) {
     min-width: 0;
-    grid-template-columns: 260px minmax(360px, 1fr) 320px;
+    grid-template-columns: 290px minmax(360px, 1fr) 340px;
   }
 
   @media (max-width: 900px) {
@@ -461,6 +461,7 @@ const RunSkillButton = styled.button<{ $active?: boolean }>`
   display: inline-flex;
   font-size: 10px;
   font-weight: 900;
+  gap: 7px;
   height: 30px;
   justify-content: center;
   letter-spacing: 0.16em;
@@ -1250,7 +1251,8 @@ export function AlternativeSimDashboard({
                       }
                       aria-label={`Run ${formatSkillName(skill)}`}
                     >
-                      RUN |&gt;
+                      <span>RUN</span>
+                      <IoPlay size={12} aria-hidden="true" />
                     </RunSkillButton>
                     <SkillRunPanel $open={isExpanded}>
                       <SkillRunPanelInner>
