@@ -14,7 +14,7 @@ class BasicAgent(Agent):
 
     @property
     def display_name(self) -> str:
-        return "No Prompt"
+        return "Basic Navigation"
 
     def get_skills(self) -> List[str]:
         """Return the list of skill IDs this directive can use"""

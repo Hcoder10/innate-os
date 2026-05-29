@@ -60,6 +60,10 @@ class SharedQueues:
         # Separate size-1 queue for camera/sensor data - always keeps only latest frame
         # This prevents image data from backing up and causing latency
         self.sensor_to_agent = queue.Queue(maxsize=1)
+        self.latest_clock_msg: Optional[Dict[str, Any]] = None
+        self.latest_arm_state_msg: Optional[Any] = None
+        self.latest_nav_feedback_msg: Optional[Any] = None
+        self.latest_agent_update_lock = threading.Lock()
 
         # Flag to indicate if all model outputs should be logged
         self.log_everything = log_everything
@@ -68,7 +72,12 @@ class SharedQueues:
 
         # Queues specifically for chat messages
         self.chat_to_bridge = queue.Queue(maxsize=5000)
-        self.chat_from_bridge = queue.Queue(maxsize=5000)
+        self.chat_from_bridge = queue.Queue(maxsize=200)
+        self.chat_from_bridge_lock = threading.Lock()
+        self._recent_chat_from_bridge_keys: deque[tuple[str, str, float]] = deque(
+            maxlen=300
+        )
+        self._recent_chat_from_bridge_key_set: set[tuple[str, str, float]] = set()
 
         # Store the latest robot position and orientation for direct access
         # Format: [x, y, z]
@@ -243,6 +252,67 @@ class SharedQueues:
         with self.agents_lock:
             return self.available_agents_updated_at
 
+    def set_latest_clock_msg(self, msg: Dict[str, Any]) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_clock_msg = msg
+
+    def set_latest_arm_state_msg(self, msg: Any) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_arm_state_msg = msg
+
+    def set_latest_nav_feedback_msg(self, msg: Any) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_nav_feedback_msg = msg
+
+    def pop_latest_agent_updates(self) -> Tuple[
+        Optional[Dict[str, Any]], Optional[Any], Optional[Any]
+    ]:
+        with self.latest_agent_update_lock:
+            clock_msg = self.latest_clock_msg
+            arm_state_msg = self.latest_arm_state_msg
+            nav_feedback_msg = self.latest_nav_feedback_msg
+            self.latest_clock_msg = None
+            self.latest_arm_state_msg = None
+            self.latest_nav_feedback_msg = None
+        return clock_msg, arm_state_msg, nav_feedback_msg
+
+    def enqueue_chat_from_bridge(self, msg: ChatMessage) -> bool:
+        timestamp = float(msg.timestamp or 0.0)
+        key = (msg.sender, msg.text, round(timestamp, 3))
+
+        with self.chat_from_bridge_lock:
+            if key in self._recent_chat_from_bridge_key_set:
+                return False
+
+            while self.chat_from_bridge.full():
+                try:
+                    dropped = self.chat_from_bridge.get_nowait()
+                except queue.Empty:
+                    break
+                dropped_timestamp = float(dropped.timestamp or 0.0)
+                dropped_key = (
+                    dropped.sender,
+                    dropped.text,
+                    round(dropped_timestamp, 3),
+                )
+                self._recent_chat_from_bridge_key_set.discard(dropped_key)
+
+            try:
+                self.chat_from_bridge.put_nowait(msg)
+            except queue.Full:
+                return False
+
+            if (
+                self._recent_chat_from_bridge_keys.maxlen is not None
+                and len(self._recent_chat_from_bridge_keys)
+                >= self._recent_chat_from_bridge_keys.maxlen
+            ):
+                old_key = self._recent_chat_from_bridge_keys.popleft()
+                self._recent_chat_from_bridge_key_set.discard(old_key)
+            self._recent_chat_from_bridge_keys.append(key)
+            self._recent_chat_from_bridge_key_set.add(key)
+            return True
+
     def update_brain_backend_status(self, status: Dict[str, Any]):
         """Thread-safe method to update brain/cloud backend connection status."""
         now = time.time()
@@ -318,6 +388,13 @@ class SharedQueues:
             available_agent_count = len(self.available_agents)
             available_agents_updated_at = self.available_agents_updated_at
 
+        with self.latest_agent_update_lock:
+            latest_agent_updates = {
+                "clock": self.latest_clock_msg is not None,
+                "arm_state": self.latest_arm_state_msg is not None,
+                "nav_feedback": self.latest_nav_feedback_msg is not None,
+            }
+
         return {
             "queue_sizes": {
                 "sim_to_agent": self.sim_to_agent.qsize(),
@@ -327,6 +404,7 @@ class SharedQueues:
                 "chat_to_bridge": self.chat_to_bridge.qsize(),
                 "chat_from_bridge": self.chat_from_bridge.qsize(),
             },
+            "latest_agent_updates": latest_agent_updates,
             "fps_by_camera": fps_by_camera,
             "latest_frame_age_by_camera": latest_frame_age_by_camera,
             "available_agent_count": available_agent_count,

@@ -36,6 +36,7 @@ const BACKEND_WARMUP_STATES = new Set([
   "authenticating",
 ]);
 type SkillPendingAction = "enable" | "disable";
+const EMPTY_DIRECTIVE_ID = "empty_directive";
 
 function formatBackendState(state?: string | null) {
   return (state || "unknown").replace(/_/g, " ");
@@ -983,13 +984,17 @@ export default function App() {
           setAgentLoadTimedOut(false);
           const backendCurrentAgentId =
             data.current_agent_id &&
+            data.current_agent_id !== EMPTY_DIRECTIVE_ID &&
             data.agents.some((agent) => agent.id === data.current_agent_id)
               ? data.current_agent_id
               : null;
           const previousAgentId = activeAgentRef.current;
           const nextAgentId =
             previousAgentId &&
-            data.agents.some((agent) => agent.id === previousAgentId)
+            data.agents.some(
+              (agent) =>
+                agent.id === previousAgentId && agent.id !== EMPTY_DIRECTIVE_ID,
+            )
               ? previousAgentId
               : useAlternativeUi
                 ? null
@@ -1035,8 +1040,10 @@ export default function App() {
     void fetchAgents();
   }, [fetchAgents]);
 
+  const selectableAgents = agents.filter((agent) => agent.id !== EMPTY_DIRECTIVE_ID);
+  const hasEmptyDirective = agents.some((agent) => agent.id === EMPTY_DIRECTIVE_ID);
   const activeAgentRecord =
-    agents.find((agent) => agent.id === activeAgent) ?? null;
+    selectableAgents.find((agent) => agent.id === activeAgent) ?? null;
 
   useEffect(() => {
     if (useDirectRobot) {
@@ -1395,10 +1402,12 @@ export default function App() {
     }
   }
 
-  async function handleSetDirective(directive: string) {
+  async function handleSetDirective(directive: string, activate = true) {
     if (useDirectRobot) {
       await setDirectiveDirect(robotWsUrl, directive);
-      await handleSetBrainActive(true);
+      if (activate) {
+        await handleSetBrainActive(true);
+      }
       return;
     }
 
@@ -1422,7 +1431,9 @@ export default function App() {
       throw new Error(`Set directive failed: ${data.status ?? "unknown status"}`);
     }
 
-    await handleSetBrainActive(true);
+    if (activate) {
+      await handleSetBrainActive(true);
+    }
   }
 
   async function handleSetActiveSkills(agentId: string | null, skills: string[]) {
@@ -1459,8 +1470,12 @@ export default function App() {
       if (!agentId) {
         setActiveAgent(null);
         setActiveSkillIds([]);
-        await handleSetActiveSkills(null, []);
         await handleSetBrainActive(false);
+        if (hasEmptyDirective) {
+          await handleSetDirective(EMPTY_DIRECTIVE_ID, false);
+        } else {
+          await handleSetActiveSkills(null, []);
+        }
         return;
       }
 
@@ -1544,7 +1559,7 @@ export default function App() {
   if (useAlternativeUi) {
     return (
       <AlternativeSimDashboard
-        agents={agents}
+        agents={selectableAgents}
         activeAgent={activeAgent}
         agentWarning={agentWarning}
         backendLabel={backendLabel}
@@ -1661,14 +1676,14 @@ export default function App() {
                   <AgentNoticeDetail>{agentWarning.detail}</AgentNoticeDetail>
                 </AgentNotice>
               )}
-              {agents.length === 0 ? (
+              {selectableAgents.length === 0 ? (
                 isLoadingAgents ? (
                   <AgentStatusItem>Loading agents...</AgentStatusItem>
                 ) : agentWarning ? null : (
                   <AgentStatusItem>Waiting for robot connection</AgentStatusItem>
                 )
               ) : (
-                agents.map((agent) => (
+                selectableAgents.map((agent) => (
                   <AgentItem
                     key={agent.id}
                     $isActive={agent.id === activeAgent}

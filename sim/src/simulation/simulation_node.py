@@ -1979,10 +1979,7 @@ class SimulationNode:
             sec_clock = int(sim_time)
             nsec_clock = int((sim_time - sec_clock) * 1e9)
             clock_msg = {"clock": {"sec": sec_clock, "nanosec": nsec_clock}}
-            try:
-                self.shared_queues.sim_to_agent.put_nowait(clock_msg)
-            except queue.Full:
-                pass
+            self.shared_queues.set_latest_clock_msg(clock_msg)
 
             # Check if enough time has passed since last render
             if (
@@ -2074,10 +2071,7 @@ class SimulationNode:
                     joint_positions=self.arm_current_positions.copy(),
                     joint_names=self.arm_joint_names,
                 )
-                try:
-                    self.shared_queues.sim_to_agent.put_nowait(arm_state_msg)
-                except queue.Full:
-                    pass
+                self.shared_queues.set_latest_arm_state_msg(arm_state_msg)
                 self.last_arm_state_time = sim_time
 
             # --- (F) Build and publish RobotStateMsg with latest state

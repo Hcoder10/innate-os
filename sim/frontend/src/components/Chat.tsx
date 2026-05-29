@@ -8,6 +8,7 @@ import { RobotGroupedBubble } from "./RobotGroupedBubble";
 import { SystemMessageBubble } from "./SystemMessageBubble";
 import { groupMessages, Message, DisplayMessage } from "../utils/groupMessages";
 import { CartesiaClient } from "@cartesia/cartesia-js";
+import type CartesiaWebsocket from "@cartesia/cartesia-js/wrapper/Websocket";
 import { stopAgentDirect } from "../services/rosbridgeService";
 
 const ChatContainer = styled.div`
@@ -224,7 +225,7 @@ export function Chat() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const cartesiaRef = useRef<CartesiaClient | null>(null);
-  const websocketRef = useRef<any>(null);
+  const websocketRef = useRef<CartesiaWebsocket | null>(null);
   const audioBuffersRef = useRef<Float32Array[]>([]);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const [audioQueue, setAudioQueue] = useState<Float32Array[]>([]);
@@ -578,7 +579,7 @@ export function Chat() {
       if (audioSourceRef.current) {
         try {
           audioSourceRef.current.stop();
-        } catch (e) {
+        } catch {
           // Ignore errors if already stopped
         }
       }
@@ -589,9 +590,14 @@ export function Chat() {
   const ensureAudioContext = async () => {
     // Create AudioContext if it doesn't exist
     if (!audioContextRef.current) {
-      audioContextRef.current = new (
-        window.AudioContext || (window as any).webkitAudioContext
-      )();
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error("AudioContext is not available in this browser.");
+      }
+      audioContextRef.current = new AudioContextClass();
     }
 
     // Resume the AudioContext if it's suspended
@@ -667,7 +673,7 @@ export function Chat() {
       });
 
       // Process audio data
-      response.on("message", (message: any) => {
+      response.on("message", (message: string) => {
         // Handle chunked audio data
         // Parse the message
         const parsedMessage = JSON.parse(message);
@@ -704,7 +710,10 @@ export function Chat() {
       });
 
       // Handle errors
-      response.on("error", (error: any) => {
+      const responseWithErrorHandler = response as typeof response & {
+        on(event: "error", callback: (error: unknown) => void): void;
+      };
+      responseWithErrorHandler.on("error", (error: unknown) => {
         console.error("Error during speech synthesis:", error);
         setIsSpeaking(false);
       });
@@ -784,7 +793,7 @@ export function Chat() {
     if (audioSourceRef.current) {
       try {
         audioSourceRef.current.stop();
-      } catch (e) {
+      } catch {
         // Ignore errors if already stopped
       }
       audioSourceRef.current = null;

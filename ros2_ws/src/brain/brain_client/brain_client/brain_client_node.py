@@ -2281,7 +2281,11 @@ class BrainClientNode(Node):
             )
 
             # Auto-activate brain in simulator mode
-            if self.simulator_mode and not self.is_brain_active:
+            is_empty_directive = (
+                self.current_directive is not None
+                and self.current_directive.id == "empty_directive"
+            )
+            if self.simulator_mode and not self.is_brain_active and not is_empty_directive:
                 self.get_logger().info(
                     "\033[1;92m[BrainClient] Auto-activating brain in simulator mode\033[0m"
                 )

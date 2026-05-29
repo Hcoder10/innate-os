@@ -44,6 +44,10 @@ BACKEND_WARMUP_STATES = {
     "authenticating",
 }
 BACKEND_STATUS_LOG_INTERVAL_SEC = 30.0
+SENSOR_PUBLISH_INTERVAL_SEC = 0.10
+CLOCK_PUBLISH_INTERVAL_SEC = 0.05
+ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
+NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 
 
 def np_encoder(obj):
@@ -210,8 +214,8 @@ async def inbound_data_loop(ws, shared_queues):
                         timestamp=timestamp,
                         timestamp_put_in_queue=time.time(),
                     )
-                    # Forward to sim
-                    shared_queues.chat_from_bridge.put_nowait(chat_msg)
+                    # Forward to sim/UI without allowing stale history to pile up.
+                    shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/websocket_status":
                 raw_status = msg_data.get("data", "{}")
@@ -389,6 +393,9 @@ async def inbound_service_loop(ws, shared_queues):
                 else:
                     history_data = history_data_raw
 
+                if isinstance(history_data, list) and len(history_data) > 30:
+                    history_data = history_data[-30:]
+
                 for chat in history_data:
                     try:
                         chat_msg = ChatMessage(
@@ -397,12 +404,7 @@ async def inbound_service_loop(ws, shared_queues):
                             timestamp=chat.get("timestamp", time.time()),
                             timestamp_put_in_queue=time.time(),
                         )
-                        try:
-                            shared_queues.chat_from_bridge.put_nowait(chat_msg)
-                        except queue.Full:
-                            print(
-                                "[ROSBridge] chat_from_bridge queue is full; dropping chat message."
-                            )
+                        shared_queues.enqueue_chat_from_bridge(chat_msg)
                     except Exception as e:
                         print(f"[ROSBridge] Error processing chat history entry: {e}")
 
@@ -510,6 +512,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Queue monitoring - log periodically if queues are backing up
     last_queue_log_time = time.time()
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
+    last_sensor_publish_time = 0.0
+    last_clock_publish_time = 0.0
+    last_arm_state_publish_time = 0.0
+    last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
     adv_color = rosbridge_advertise(
@@ -666,10 +672,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                     await ws.send(json.dumps(outbound))
 
                     # Echo back to UI
-                    try:
-                        shared_queues.chat_from_bridge.put_nowait(msg)
-                    except queue.Full:
-                        pass
+                    shared_queues.enqueue_chat_from_bridge(msg)
 
                 elif isinstance(msg, ChatSignal):
                     print(f"[ROSBridge] Publishing chat signal: {msg.signal}")
@@ -684,14 +687,17 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             except queue.Empty:
                 break
 
-        # PRIORITY 2: Process sensor data from dedicated size-1 queue (camera frames)
-        # This queue only ever has 0 or 1 item - old frames are dropped at the source
-        try:
-            sensor_msg = shared_queues.sensor_to_agent.get_nowait()
-            if isinstance(sensor_msg, RobotStateMsg):
-                await publish_robot_state(ws, sensor_msg, shared_queues)
-        except queue.Empty:
-            pass
+        # PRIORITY 2: Process sensor data from the latest-only queue.
+        # The web UI can render faster locally; ROSBridge cannot cheaply carry
+        # full camera payloads at the UI frame rate because images are JSON.
+        if now - last_sensor_publish_time >= SENSOR_PUBLISH_INTERVAL_SEC:
+            try:
+                sensor_msg = shared_queues.sensor_to_agent.get_nowait()
+                if isinstance(sensor_msg, RobotStateMsg):
+                    await publish_robot_state(ws, sensor_msg, shared_queues)
+                    last_sensor_publish_time = time.time()
+            except queue.Empty:
+                pass
 
         # PRIORITY 3: Process sim_to_agent messages (commands, map, arm state, etc.)
         try:
@@ -793,6 +799,37 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
         except queue.Empty:
             # no messages to publish right now
             pass
+
+        clock_msg, arm_state_msg, nav_feedback_msg = (
+            shared_queues.pop_latest_agent_updates()
+        )
+        updates_now = time.time()
+        if (
+            clock_msg is not None
+            and updates_now - last_clock_publish_time >= CLOCK_PUBLISH_INTERVAL_SEC
+        ):
+            outbound = rosbridge_publish("/clock", clock_msg)
+            await ws.send(json.dumps(outbound))
+            last_clock_publish_time = updates_now
+        if (
+            arm_state_msg is not None
+            and updates_now - last_arm_state_publish_time >= ARM_STATE_PUBLISH_INTERVAL_SEC
+        ):
+            await publish_arm_state(ws, arm_state_msg)
+            last_arm_state_publish_time = updates_now
+        if (
+            nav_feedback_msg is not None
+            and updates_now - last_nav_feedback_publish_time
+            >= NAV_FEEDBACK_PUBLISH_INTERVAL_SEC
+        ):
+            feedback_msg = {
+                "x": nav_feedback_msg.distance_to_goal,
+                "y": nav_feedback_msg.unused_y,
+                "z": nav_feedback_msg.unused_z,
+            }
+            outbound = rosbridge_publish("/sim_navigation/feedback", feedback_msg)
+            await ws.send(json.dumps(outbound))
+            last_nav_feedback_publish_time = updates_now
 
         await asyncio.sleep(0.0001)
 

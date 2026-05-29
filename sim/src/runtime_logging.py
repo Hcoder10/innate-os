@@ -31,6 +31,10 @@ NOISY_PATTERNS = [
     re.compile(r"^\[ROSBridge\] Queue status: "),
     re.compile(r"^\[ROSBridge\] Chat message latency: "),
 ]
+SENSITIVE_QUERY_VALUE_PATTERN = re.compile(
+    r"((?:innate_service_key|service_key)=)[^&\s\"'),]+",
+    re.IGNORECASE,
+)
 
 
 def normalize_sim_log_mode(value: str | None) -> str:
@@ -54,6 +58,10 @@ def is_debug_log_line(line: str) -> bool:
     return any(pattern.search(stripped) for pattern in NOISY_PATTERNS)
 
 
+def redact_sensitive_values(text: str) -> str:
+    return SENSITIVE_QUERY_VALUE_PATTERN.sub(r"\1redacted", text)
+
+
 class RuntimeLogStream(io.TextIOBase):
     def __init__(self, wrapped, get_mode):
         self._wrapped = wrapped
@@ -70,8 +78,9 @@ class RuntimeLogStream(io.TextIOBase):
     def _emit(self, chunk: str) -> None:
         if not chunk:
             return
-        if self._should_emit(chunk):
-            self._wrapped.write(chunk)
+        sanitized = redact_sensitive_values(chunk)
+        if self._should_emit(sanitized):
+            self._wrapped.write(sanitized)
 
     def write(self, data: str) -> int:
         if not data:
