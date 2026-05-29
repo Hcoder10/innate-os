@@ -33,6 +33,14 @@ from src.shared_queues import SharedQueues
 ROBOT_INIT_POS = (2, -5, 0.05)
 ROBOT_INIT_QUAT = (0, 0, 0, 1)
 ROBOT_ROOT_POS = (0.0, 0.0, ROBOT_INIT_POS[2])
+ROBOT_ARM_HOME_POSITIONS = [
+    1.445009902188274,
+    -1.3882526130365052,
+    1.517106999218899,
+    0.44638840927472156,
+    -0.08897088569736719,
+    0.0015339807878856412,
+]
 SIM_ROBOT_ORANGE_LINKS = {"link1", "link3", "link5", "ee_link"}
 DEFAULT_SCENE_CONFIG = {
     "name": "Baked_sc0_staging_00",
@@ -184,7 +192,7 @@ class SimulationNode:
             "joint5",
             "joint6",
         ]
-        self.arm_current_positions = [0.0] * 6  # Current joint positions
+        self.arm_current_positions = ROBOT_ARM_HOME_POSITIONS.copy()
         self.arm_target_positions = None  # Target for interpolation
         self.arm_start_positions = None  # Start positions for interpolation
         self.arm_interpolation_start_time = None
@@ -244,6 +252,7 @@ class SimulationNode:
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
+        self._reset_arm_pose()
         self.scene_built = True
 
         print("Scene built")
@@ -1120,6 +1129,14 @@ class SimulationNode:
         yaw = self._yaw_from_wxyz(np.asarray(quat_wxyz, dtype=float))
         self._set_robot_base_dofs(position[0], position[1], yaw)
 
+    def _reset_arm_pose(self):
+        self.arm_current_positions = ROBOT_ARM_HOME_POSITIONS.copy()
+        self.arm_target_positions = None
+        self.arm_start_positions = None
+        self.arm_interpolation_start_time = None
+        self.arm_interpolation_duration = None
+        self._apply_arm_positions(self.arm_current_positions)
+
     def _apply_arm_positions(self, joint_positions):
         """Apply joint positions to arm and update current state.
 
@@ -1722,6 +1739,7 @@ class SimulationNode:
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
+        self._reset_arm_pose()
         self.scene_built = True
         print("[SimulationNode] Scene rebuilt")
 
@@ -2103,6 +2121,7 @@ class SimulationNode:
                     # Cancel any in-flight nav target so the robot stays at the reset pose.
                     self.nav_target_pos = None
                     self.nav_target_yaw = None
+                    self._reset_arm_pose()
 
                 # Apply arm joint positions if we have an arm command (immediate)
                 if latest_arm_cmd is not None:
