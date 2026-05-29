@@ -137,6 +137,10 @@ class SimulationNode:
             self.render_fps = requested_render_fps
         self.render_interval = 1 / self.render_fps
         print(f"[SimulationNode] Target camera render FPS: {self.render_fps:g}")
+        self.ros_image_fps = min(self.render_fps, _env_float("SIM_ROS_IMAGE_FPS", 10.0))
+        self.ros_image_interval = 1 / self.ros_image_fps
+        self.last_ros_image_time = -self.ros_image_interval
+        print(f"[SimulationNode] Target ROS camera image FPS: {self.ros_image_fps:g}")
 
         # Store commanded velocities for odometry
         self.commanded_lin_vel = np.zeros(3)  # [vx, vy, vz]
@@ -2065,6 +2069,22 @@ class SimulationNode:
                 depth_to_send = None
                 arm_rgb_to_send = None
 
+            # ROSBridge serializes image payloads as JSON; keep those frames lower
+            # rate than the local UI stream so control/status traffic stays snappy.
+            publish_ros_images = (
+                rgb_to_send is not None
+                and sim_time - self.last_ros_image_time >= self.ros_image_interval - 1e-9
+            )
+            if publish_ros_images:
+                ros_rgb_to_send = rgb_to_send
+                ros_depth_to_send = depth_to_send
+                ros_arm_rgb_to_send = arm_rgb_to_send
+                self.last_ros_image_time = sim_time
+            else:
+                ros_rgb_to_send = None
+                ros_depth_to_send = None
+                ros_arm_rgb_to_send = None
+
             # --- (E2) Publish arm joint state at ~50Hz
             if sim_time - self.last_arm_state_time >= self.arm_state_interval:
                 arm_state_msg = ArmStateMsg(
@@ -2077,11 +2097,9 @@ class SimulationNode:
             # --- (F) Build and publish RobotStateMsg with latest state
             state_msg = RobotStateMsg(
                 # camera data
-                rgb_frame=rgb_to_send if "rgb_to_send" in locals() else None,
-                depth_frame=depth_to_send if "depth_to_send" in locals() else None,
-                arm_rgb_frame=(
-                    arm_rgb_to_send if "arm_rgb_to_send" in locals() else None
-                ),
+                rgb_frame=ros_rgb_to_send,
+                depth_frame=ros_depth_to_send,
+                arm_rgb_frame=ros_arm_rgb_to_send,
                 # camera intrinsics
                 width=self.width,
                 height=self.height,
