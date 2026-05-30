@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Simulator arm service shim.
+"""ROS service facade for the Genesis simulator arm.
 
-The Genesis simulator owns the visual arm.  This ROS node exposes the same
-joint-space services as the physical arm node, then streams joint commands to
-``/mars/arm/commands`` so the simulator can animate the URDF joints.
+The physical robot exposes ``/mars/arm/...`` services from ``maurice_arm``.
+In simulation, Genesis owns the visual arm, so this standalone sim node exposes
+the same joint-space services and streams joint commands back to the simulator.
 """
 
 from __future__ import annotations

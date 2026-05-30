@@ -108,7 +108,7 @@ echo "Started behavior server..."
 
 # === Window 5: Sim Arm Services + IK ===
 tmux new-window -t "$SESSION_NAME" -n arm-sim
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-sim" "/root/innate-os/ros2_ws/install/maurice_sim/lib/maurice_sim/sim_arm_services.py" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-sim" "python3 /root/innate-os/sim/ros_nodes/sim_arm_services.py" C-m
 tmux split-window -t "${TMUX_TARGET_PREFIX}:arm-sim" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-sim.1" "ros2 run maurice_arm ik.py" C-m
 echo "Started sim arm services and IK..."
