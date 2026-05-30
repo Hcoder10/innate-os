@@ -3,18 +3,8 @@
  */
 import { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
-import {
-  IoCheckmarkCircle,
-  IoCloseCircle,
-  IoHardwareChip,
-  IoPauseCircle,
-  IoPerson,
-  IoPlayCircle,
-  IoSend,
-  IoStop,
-} from "react-icons/io5";
+import { IoSend, IoStop } from "react-icons/io5";
 import { RobotGroupedBubble } from "./RobotGroupedBubble";
-import { SystemMessageBubble } from "./SystemMessageBubble";
 import { groupMessages, Message, DisplayMessage } from "../utils/groupMessages";
 import { CartesiaClient } from "@cartesia/cartesia-js";
 import type CartesiaWebsocket from "@cartesia/cartesia-js/wrapper/Websocket";
@@ -38,87 +28,99 @@ const MessagesWrapper = styled.div`
   gap: 16px;
 `;
 
-interface MessageBubbleProps {
-  $isUser: boolean;
-}
-
-const MessageBubble = styled.div<MessageBubbleProps>`
-  max-width: 90%;
-  padding: 8px 12px;
-  align-self: ${({ $isUser }) => ($isUser ? "flex-end" : "flex-start")};
-  text-align: ${({ $isUser }) => ($isUser ? "right" : "left")};
-  font-size: 13px;
-  line-height: 1.5;
-  display: inline-block;
-  background: ${({ $isUser, theme }) =>
-    $isUser ? "rgba(64, 31, 251, 0.1)" : theme.colors.secondary};
-  color: ${({ $isUser, theme }) =>
-    $isUser ? theme.colors.primary : theme.colors.foreground};
-  border: 1px solid
-    ${({ $isUser, theme }) =>
-      $isUser ? theme.colors.primary : theme.colors.foreground};
-  border-bottom-left-radius: ${({ $isUser }) => ($isUser ? "4px" : "0")};
-  border-bottom-right-radius: ${({ $isUser }) => ($isUser ? "0" : "4px")};
-  box-shadow: ${({ $isUser }) =>
-    $isUser ? "none" : "4px 4px 0 rgba(255,255,255,0.05)"};
+const InteractionMessage = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 `;
 
-const MessageSender = styled.div<{ $isUser: boolean }>`
+const InteractionLabel = styled.span<{ $tone: "mars" | "user" | "skill" | "system" }>`
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  margin-bottom: 4px;
-  opacity: 0.5;
+  letter-spacing: 0.12em;
+  color: ${({ $tone }) => {
+    if ($tone === "mars") return "#f97316";
+    if ($tone === "skill") return "#a855f7";
+    if ($tone === "system") return "#3b82f6";
+    return "#6b7280";
+  }};
+`;
+
+const InteractionBody = styled.div<{
+  $tone: "mars" | "user" | "skill" | "system";
+  $isError?: boolean;
+}>`
+  padding: 12px;
+  border-left: 2px solid
+    ${({ $tone, $isError }) => {
+      if ($isError) return "#ef4444";
+      if ($tone === "mars") return "#f97316";
+      if ($tone === "skill") return "#a855f7";
+      if ($tone === "system") return "#3b82f6";
+      return "#374151";
+    }};
+  background: ${({ $tone, $isError }) => {
+    if ($isError) return "rgba(127, 29, 29, 0.22)";
+    if ($tone === "mars") return "rgba(154, 52, 18, 0.1)";
+    if ($tone === "skill") return "rgba(88, 28, 135, 0.2)";
+    if ($tone === "system") return "rgba(17, 24, 39, 0.4)";
+    return "#000";
+  }};
+  color: ${({ $tone, $isError }) => {
+    if ($isError) return "#fecaca";
+    if ($tone === "skill") return "#d8b4fe";
+    if ($tone === "system" || $tone === "mars") return "#d1d5db";
+    return "#e5e7eb";
+  }};
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+`;
+
+const SkillLine = styled.div`
   display: flex;
   align-items: center;
   gap: 6px;
 `;
 
-const ActionMessageBubble = styled.div<{ $status?: string }>`
-  max-width: 90%;
-  padding: 8px 12px;
-  align-self: flex-start;
-  font-size: 13px;
-  line-height: 1.5;
-  display: inline-block;
-  background: ${({ $status }) =>
-    $status === "failed"
-      ? "rgba(220, 38, 38, 0.12)"
-      : $status === "interrupted"
-        ? "rgba(234, 179, 8, 0.12)"
-        : "rgba(34, 197, 94, 0.1)"};
-  color: ${({ theme }) => theme.colors.foreground};
-  border: 1px solid
-    ${({ $status, theme }) =>
-      $status === "failed"
-        ? "#dc2626"
-        : $status === "interrupted"
-          ? "#eab308"
-          : theme.colors.primary};
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 4px;
-`;
-
-const ActionMessageTitle = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
+const SkillStatusText = styled.span<{ $status?: string }>`
+  margin-left: auto;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  margin-bottom: 4px;
-  opacity: 0.7;
-`;
-
-const ActionMessageStatus = styled.span<{ $status?: string }>`
+  letter-spacing: 0.1em;
   color: ${({ $status, theme }) =>
     $status === "failed"
-      ? "#dc2626"
+      ? "#f87171"
       : $status === "interrupted"
-        ? "#eab308"
+        ? "#facc15"
         : $status === "completed"
           ? theme.colors.primary
-          : theme.colors.foreground};
+          : "#c084fc"};
+`;
+
+const SkillPulse = styled.div<{ $active?: boolean }>`
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: #a855f7;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.8);
+  animation: ${({ $active }) =>
+    $active ? "skill-pulse 1.4s ease-in-out infinite" : "none"};
+
+  @keyframes skill-pulse {
+    0%, 100% {
+      opacity: 0.45;
+      transform: scale(0.9);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
 `;
 
 const InputArea = styled.div`
@@ -394,19 +396,6 @@ const taskStatusLabel = (status?: string) => {
   }
 };
 
-const TaskStatusIcon = ({ status }: { status?: string }) => {
-  if (status === "completed") {
-    return <IoCheckmarkCircle size={14} />;
-  }
-  if (status === "failed") {
-    return <IoCloseCircle size={14} />;
-  }
-  if (status === "interrupted") {
-    return <IoPauseCircle size={14} />;
-  }
-  return <IoPlayCircle size={14} />;
-};
-
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -414,12 +403,6 @@ export function Chat() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
-  const [expandedSystemMessages, setExpandedSystemMessages] = useState<{
-    [key: number]: boolean;
-  }>({});
-  const systemContentRefs = useRef<{ [key: number]: HTMLDivElement | null }>(
-    {},
-  );
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const cartesiaRef = useRef<CartesiaClient | null>(null);
@@ -793,14 +776,6 @@ export function Chat() {
   // Use the grouping utility to prepare messages for display.
   const groupedMessages: DisplayMessage[] = groupMessages(filteredMessages);
 
-  // Helper function to toggle system message expansion
-  const toggleSystemMessage = (messageId: number) => {
-    setExpandedSystemMessages((prev) => ({
-      ...prev,
-      [messageId]: !prev[messageId],
-    }));
-  };
-
   // Initialize Cartesia client
   useEffect(() => {
     if (!cartesiaRef.current) {
@@ -1071,41 +1046,17 @@ export function Chat() {
         {groupedMessages.map((message, index) => {
           if (message.sender === "user") {
             return (
-              <MessageBubble key={`${message.sender}-${index}`} $isUser>
-                <MessageSender $isUser>
-                  <span>You</span>
-                  <IoPerson size={14} />
-                </MessageSender>
-                {message.text}
-              </MessageBubble>
+              <InteractionMessage key={`${message.sender}-${index}`}>
+                <InteractionLabel $tone="user">User</InteractionLabel>
+                <InteractionBody $tone="user">{message.text}</InteractionBody>
+              </InteractionMessage>
             );
           } else if (message.sender === "robot") {
             return (
-              <MessageBubble key={`${message.sender}-${index}`} $isUser={false}>
-                <MessageSender $isUser={false}>
-                  <IoHardwareChip size={14} />
-                  <span>Robot</span>
-                  <button
-                    onClick={async () => {
-                      // This is a user interaction, so we can safely try to initialize AudioContext
-                      await ensureAudioContext();
-                      speakMessage(message.text, false);
-                    }}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      marginLeft: "auto",
-                      opacity: isSpeaking ? 0.5 : 1,
-                    }}
-                    disabled={isSpeaking}
-                    title={isSpeaking ? "Speaking..." : "Speak this message"}
-                  >
-                    🔊
-                  </button>
-                </MessageSender>
-                {message.text}
-              </MessageBubble>
+              <InteractionMessage key={`${message.sender}-${index}`}>
+                <InteractionLabel $tone="mars">MARS</InteractionLabel>
+                <InteractionBody $tone="mars">{message.text}</InteractionBody>
+              </InteractionMessage>
             );
           } else if (message.sender === "robot_grouped") {
             return (
@@ -1118,36 +1069,32 @@ export function Chat() {
             );
           } else if (message.sender === "system") {
             return (
-              <SystemMessageBubble
-                key={`${message.sender}-${index}`}
-                messageId={index}
-                text={message.text}
-                isExpanded={!!expandedSystemMessages[index]}
-                onToggleExpand={toggleSystemMessage}
-                contentRef={(el) => (systemContentRefs.current[index] = el)}
-                isError={message.isError}
-              />
+              <InteractionMessage key={`${message.sender}-${index}`}>
+                <InteractionLabel $tone="system">System</InteractionLabel>
+                <InteractionBody $tone="system" $isError={message.isError}>
+                  {message.text}
+                </InteractionBody>
+              </InteractionMessage>
             );
           } else if (message.sender === "task_activated") {
             return (
-              <ActionMessageBubble
-                key={`${message.sender}-${index}`}
-                $status={message.taskStatus}
-              >
-                <ActionMessageTitle>
-                  <TaskStatusIcon status={message.taskStatus} />
-                  <span>Skill</span>
-                  <ActionMessageStatus $status={message.taskStatus}>
-                    {taskStatusLabel(message.taskStatus)}
-                  </ActionMessageStatus>
-                </ActionMessageTitle>
-                {message.text}
-                {message.failureReason && (
-                  <div style={{ marginTop: 4, opacity: 0.8 }}>
-                    {message.failureReason}
-                  </div>
-                )}
-              </ActionMessageBubble>
+              <InteractionMessage key={`${message.sender}-${index}`}>
+                <InteractionLabel $tone="skill">Skill Triggered</InteractionLabel>
+                <InteractionBody $tone="skill">
+                  <SkillLine>
+                    <SkillPulse $active={message.taskStatus === "running"} />
+                    <span>{message.text}</span>
+                    <SkillStatusText $status={message.taskStatus}>
+                      {taskStatusLabel(message.taskStatus)}
+                    </SkillStatusText>
+                  </SkillLine>
+                  {message.failureReason && (
+                    <div style={{ marginTop: 6, opacity: 0.8 }}>
+                      {message.failureReason}
+                    </div>
+                  )}
+                </InteractionBody>
+              </InteractionMessage>
             );
           }
           return null;
