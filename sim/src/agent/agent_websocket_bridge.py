@@ -48,6 +48,13 @@ SENSOR_PUBLISH_INTERVAL_SEC = 0.10
 CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
+ARM_JOINT_COUNT = 6
+ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
+ARM_TRIGGER_SERVICES = {
+    "/mars/arm/torque_on",
+    "/mars/arm/torque_off",
+    "/mars/arm/reboot",
+}
 
 
 def np_encoder(obj):
@@ -169,6 +176,193 @@ def rosbridge_service_response(service: str, result: dict, call_id: str = None) 
     return resp
 
 
+def is_arm_torque_enabled(shared_queues) -> bool:
+    lock = getattr(shared_queues, "arm_torque_lock", None)
+    if lock is None:
+        return bool(getattr(shared_queues, "arm_torque_enabled", True))
+    with lock:
+        return bool(getattr(shared_queues, "arm_torque_enabled", True))
+
+
+def set_arm_torque_enabled(shared_queues, enabled: bool) -> None:
+    lock = getattr(shared_queues, "arm_torque_lock", None)
+    if lock is None:
+        shared_queues.arm_torque_enabled = enabled
+        return
+    with lock:
+        shared_queues.arm_torque_enabled = enabled
+
+
+def _multi_array_data(value) -> list:
+    if isinstance(value, dict):
+        value = value.get("data", [])
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _parse_arm_goto_args(args: dict) -> tuple[list[float] | None, float]:
+    joint_data = _multi_array_data(args.get("data", {}))
+    if len(joint_data) < ARM_JOINT_COUNT:
+        return None, 1.0
+    try:
+        joint_positions = [float(value) for value in joint_data[:ARM_JOINT_COUNT]]
+        duration = float(args.get("time", 1.0))
+    except (TypeError, ValueError):
+        return None, 1.0
+    return joint_positions, max(0.0, duration)
+
+
+def _parse_arm_trajectory_args(args: dict) -> tuple[list[list[float]], list[float]] | None:
+    try:
+        num_joints = int(args.get("num_joints") or ARM_JOINT_COUNT)
+    except (TypeError, ValueError):
+        return None
+    if num_joints <= 0:
+        return None
+
+    try:
+        flat_waypoints = [
+            float(value) for value in _multi_array_data(args.get("waypoints", {}))
+        ]
+    except (TypeError, ValueError):
+        return None
+
+    if len(flat_waypoints) < num_joints or len(flat_waypoints) % num_joints != 0:
+        return None
+
+    waypoints = []
+    for index in range(0, len(flat_waypoints), num_joints):
+        waypoint = flat_waypoints[index : index + num_joints]
+        if len(waypoint) < ARM_JOINT_COUNT:
+            return None
+        waypoints.append(waypoint[:ARM_JOINT_COUNT])
+
+    try:
+        durations = [float(value) for value in args.get("segment_durations", [])]
+    except (TypeError, ValueError):
+        durations = []
+
+    return waypoints, durations
+
+
+async def _send_service_response(ws, service_name: str, values: dict, call_id: str | None):
+    response = rosbridge_service_response(service_name, values, call_id)
+    await ws.send(json.dumps(response))
+
+
+async def _run_arm_trajectory_service(
+    ws,
+    shared_queues,
+    service_name: str,
+    call_id: str | None,
+    waypoints: list[list[float]],
+    durations: list[float],
+):
+    initial_duration = durations[0] if durations else 1.0
+    try:
+        for index, waypoint in enumerate(waypoints):
+            if not is_arm_torque_enabled(shared_queues):
+                await _send_service_response(
+                    ws,
+                    service_name,
+                    {"success": False},
+                    call_id,
+                )
+                return
+
+            if index == 0:
+                duration = initial_duration
+            elif index - 1 < len(durations):
+                duration = durations[index - 1]
+            else:
+                duration = initial_duration
+
+            shared_queues.agent_to_sim.put_nowait(
+                ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration))
+            )
+            await asyncio.sleep(max(0.0, duration))
+
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+    except queue.Full:
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+    except Exception as exc:
+        print(f"[ROSBridge] Arm trajectory service failed: {exc}")
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+
+
+async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, args):
+    if service_name in ARM_GOTO_SERVICES:
+        print(f"[ROSBridge] Received {service_name} service call: {args}")
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        joint_positions, duration = _parse_arm_goto_args(args)
+        if joint_positions is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        try:
+            shared_queues.agent_to_sim.put_nowait(
+                ArmGotoCmd(
+                    joint_positions=joint_positions,
+                    duration=duration,
+                    service_id=call_id,
+                )
+            )
+        except queue.Full:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+        return
+
+    if service_name == "/mars/arm/goto_js_trajectory":
+        print(f"[ROSBridge] Received goto_js_trajectory service call: {args}")
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        parsed = _parse_arm_trajectory_args(args)
+        if parsed is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        waypoints, durations = parsed
+        asyncio.create_task(
+            _run_arm_trajectory_service(
+                ws,
+                shared_queues,
+                service_name,
+                call_id,
+                waypoints,
+                durations,
+            )
+        )
+        return
+
+    if service_name in ARM_TRIGGER_SERVICES:
+        if service_name == "/mars/arm/torque_off":
+            set_arm_torque_enabled(shared_queues, False)
+            message = "Sim arm torque disabled; motion commands will be rejected."
+        else:
+            set_arm_torque_enabled(shared_queues, True)
+            message = (
+                "Sim arm rebooted; torque enabled."
+                if service_name == "/mars/arm/reboot"
+                else "Sim arm torque enabled."
+            )
+
+        print(f"[ROSBridge] {message}")
+        await _send_service_response(
+            ws,
+            service_name,
+            {"success": True, "message": message},
+            call_id,
+        )
+
+
 async def inbound_data_loop(ws, shared_queues):
     """
     Continuously receive inbound messages on the data WebSocket
@@ -214,6 +408,17 @@ async def inbound_data_loop(ws, shared_queues):
             elif topic == "/mars/arm/commands":
                 arm_cmd = parse_arm_command(msg_data)
                 if arm_cmd:
+                    if not is_arm_torque_enabled(shared_queues):
+                        last_log = getattr(
+                            shared_queues, "_last_arm_torque_disabled_log_at", 0.0
+                        )
+                        now = time.time()
+                        if now - last_log > 5.0:
+                            print(
+                                "[ROSBridge] Ignoring arm command: sim arm torque is disabled"
+                            )
+                            shared_queues._last_arm_torque_disabled_log_at = now
+                        continue
                     print(
                         f"[ROSBridge] Received arm command: {arm_cmd.joint_positions}"
                     )
@@ -372,30 +577,13 @@ async def inbound_data_loop(ws, shared_queues):
             call_id = inbound_data.get("id", None)
             args = inbound_data.get("args", {})
 
-            # Handle /mars/arm/goto_js service
-            if service_name == "/mars/arm/goto_js":
-                print(f"[ROSBridge] Received goto_js service call: {args}")
-                data = args.get("data", {})
-                joint_data = data.get("data", [])
-                duration = args.get("time", 1)
-
-                if len(joint_data) >= 6:
-                    joint_positions = [float(d) for d in joint_data[:6]]
-                    arm_goto_cmd = ArmGotoCmd(
-                        joint_positions=joint_positions,
-                        duration=float(duration),
-                        service_id=call_id,
-                    )
-                    try:
-                        shared_queues.agent_to_sim.put_nowait(arm_goto_cmd)
-                    except queue.Full:
-                        pass
-
-                    # Send immediate success response (motion started)
-                    response = rosbridge_service_response(
-                        service_name, {"success": True}, call_id
-                    )
-                    await ws.send(json.dumps(response))
+            await _handle_arm_service_call(
+                ws,
+                shared_queues,
+                service_name,
+                call_id,
+                args,
+            )
 
         await asyncio.sleep(0.0001)
 
@@ -634,8 +822,19 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
-    adv_arm_goto_service = rosbridge_advertise_service(
-        "/mars/arm/goto_js", "maurice_msgs/srv/GotoJS"
+    arm_service_adverts = [
+        rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS")
+        for service in sorted(ARM_GOTO_SERVICES)
+    ]
+    arm_service_adverts.append(
+        rosbridge_advertise_service(
+            "/mars/arm/goto_js_trajectory",
+            "maurice_msgs/srv/GotoJSTrajectory",
+        )
+    )
+    arm_service_adverts.extend(
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
+        for service in sorted(ARM_TRIGGER_SERVICES)
     )
 
     await ws.send(json.dumps(adv_color))
@@ -654,9 +853,12 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_camera))
-    # await ws.send(json.dumps(adv_arm_goto_service))
+    for service_advert in arm_service_adverts:
+        await ws.send(json.dumps(service_advert))
     print(
-        "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, /brain/backend_config, /logging_config, navigation topics, and arm interfaces"
+        "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, "
+        "/brain/backend_config, /logging_config, navigation topics, "
+        "and simulator-owned arm interfaces"
     )
 
     # Publish initial navigation mode (simulator always uses mapfree)

@@ -71,6 +71,8 @@ class SharedQueues:
         self.sensor_to_agent = queue.Queue(maxsize=1)
         self.latest_clock_msg: Optional[Dict[str, Any]] = None
         self.latest_arm_state_msg: Optional[Any] = None
+        self.arm_torque_enabled: bool = True
+        self.arm_torque_lock = threading.Lock()
         self.latest_nav_feedback_msg: Optional[Any] = None
         self.latest_agent_update_lock = threading.Lock()
 
