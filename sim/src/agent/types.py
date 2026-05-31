@@ -89,6 +89,13 @@ class ArmGotoCmd(NamedTuple):
     service_id: str = None  # For service response callback
 
 
+class ArmTrajectoryCmd(NamedTuple):
+    """Agent -> Simulation: precomputed arm trajectory points."""
+
+    joint_positions: List[List[float]]
+    point_dt: float
+
+
 class ArmStateMsg(NamedTuple):
     """Simulation -> Agent: current arm joint state for publishing."""
 

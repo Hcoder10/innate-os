@@ -71,6 +71,7 @@ class SharedQueues:
         self.sensor_to_agent = queue.Queue(maxsize=1)
         self.latest_clock_msg: Optional[Dict[str, Any]] = None
         self.latest_arm_state_msg: Optional[Any] = None
+        self.current_arm_state_msg: Optional[Any] = None
         self.arm_torque_enabled: bool = True
         self.arm_torque_lock = threading.Lock()
         self.latest_nav_feedback_msg: Optional[Any] = None
@@ -279,6 +280,11 @@ class SharedQueues:
     def set_latest_arm_state_msg(self, msg: Any) -> None:
         with self.latest_agent_update_lock:
             self.latest_arm_state_msg = msg
+            self.current_arm_state_msg = msg
+
+    def get_current_arm_state_msg(self) -> Optional[Any]:
+        with self.latest_agent_update_lock:
+            return self.current_arm_state_msg
 
     def set_latest_nav_feedback_msg(self, msg: Any) -> None:
         with self.latest_agent_update_lock:

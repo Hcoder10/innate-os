@@ -19,6 +19,7 @@ from src.agent.types import (
     VelocityCmd,
     ArmCmd,
     ArmGotoCmd,
+    ArmTrajectoryCmd,
     ArmStateMsg,
     PositionCmd,
     ResetRobotCmd,
@@ -197,6 +198,9 @@ class SimulationNode:
         self.arm_start_positions = None  # Start positions for interpolation
         self.arm_interpolation_start_time = None
         self.arm_interpolation_duration = None
+        self.arm_trajectory_points = None
+        self.arm_trajectory_dt = None
+        self.arm_trajectory_start_time = None
         self.last_arm_state_time = 0
         self.arm_state_interval = 0.02  # Publish at ~50Hz
 
@@ -1186,6 +1190,9 @@ class SimulationNode:
         self.arm_start_positions = None
         self.arm_interpolation_start_time = None
         self.arm_interpolation_duration = None
+        self.arm_trajectory_points = None
+        self.arm_trajectory_dt = None
+        self.arm_trajectory_start_time = None
         self._apply_arm_positions(self.arm_current_positions, direct=True)
 
     def _init_arm_position_control(self):
@@ -2137,6 +2144,7 @@ class SimulationNode:
                 latest_set_env_cmd = None  # Variable to hold the latest env command
                 latest_arm_cmd = None
                 latest_arm_goto_cmd = None
+                latest_arm_trajectory_cmd = None
 
                 while True:
                     try:
@@ -2147,6 +2155,8 @@ class SimulationNode:
                             latest_arm_cmd = cmd
                         elif isinstance(cmd, ArmGotoCmd):
                             latest_arm_goto_cmd = cmd
+                        elif isinstance(cmd, ArmTrajectoryCmd):
+                            latest_arm_trajectory_cmd = cmd
                         elif isinstance(cmd, PositionCmd):
                             latest_position_cmd = cmd
                         elif isinstance(cmd, ResetRobotCmd):
@@ -2242,22 +2252,50 @@ class SimulationNode:
                     self._apply_arm_positions(joint_positions)
                     # Cancel any ongoing interpolation
                     self.arm_target_positions = None
+                    self.arm_trajectory_points = None
+                    self.arm_trajectory_start_time = None
 
                 # Start arm interpolation if we have a goto command
-                if latest_arm_goto_cmd is not None:
+                if latest_arm_trajectory_cmd is not None:
+                    if latest_arm_trajectory_cmd.joint_positions:
+                        self.arm_trajectory_points = (
+                            latest_arm_trajectory_cmd.joint_positions
+                        )
+                        self.arm_trajectory_dt = max(
+                            0.001, latest_arm_trajectory_cmd.point_dt
+                        )
+                        self.arm_trajectory_start_time = sim_time
+                        self.arm_target_positions = None
+                        self._apply_arm_positions(self.arm_trajectory_points[0])
+                    else:
+                        self.arm_trajectory_points = None
+                        self.arm_trajectory_start_time = None
+                elif latest_arm_goto_cmd is not None:
                     self.arm_start_positions = self.arm_current_positions.copy()
                     self.arm_target_positions = latest_arm_goto_cmd.joint_positions
                     self.arm_interpolation_start_time = sim_time
                     self.arm_interpolation_duration = max(
                         0.1, latest_arm_goto_cmd.duration
                     )
+                    self.arm_trajectory_points = None
+                    self.arm_trajectory_start_time = None
 
-                # Update arm interpolation if active
-                if self.arm_target_positions is not None:
+                # Update arm trajectory if active.
+                if self.arm_trajectory_points is not None:
+                    elapsed = sim_time - self.arm_trajectory_start_time
+                    index = min(
+                        len(self.arm_trajectory_points) - 1,
+                        max(0, int(elapsed / self.arm_trajectory_dt)),
+                    )
+                    self._apply_arm_positions(self.arm_trajectory_points[index])
+                    if index >= len(self.arm_trajectory_points) - 1:
+                        self.arm_trajectory_points = None
+                        self.arm_trajectory_start_time = None
+                elif self.arm_target_positions is not None:
                     elapsed = sim_time - self.arm_interpolation_start_time
                     t = min(1.0, elapsed / self.arm_interpolation_duration)
-                    # Smooth interpolation using ease-in-out
-                    t_smooth = t * t * (3 - 2 * t)
+                    # Match maurice_arm's quintic smootherstep profile.
+                    t_smooth = t * t * t * (t * (6 * t - 15) + 10)
                     interpolated = [
                         self.arm_start_positions[i]
                         + t_smooth

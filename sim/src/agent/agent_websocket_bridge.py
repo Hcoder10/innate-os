@@ -18,7 +18,7 @@ from src.agent.types import (
     RobotStateMsg,
     VelocityCmd,
     ArmCmd,
-    ArmGotoCmd,
+    ArmTrajectoryCmd,
     ArmStateMsg,
     DirectiveCmd,
     ActiveSkillsCmd,
@@ -49,6 +49,10 @@ CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 ARM_JOINT_COUNT = 6
+# Mirrors maurice_arm/config/arm_config.yaml for the sim-provided arm facade.
+ARM_TRAJECTORY_RATE_HZ = 100.0
+ARM_TRAJECTORY_DT = 1.0 / ARM_TRAJECTORY_RATE_HZ
+ARM_MAX_JERK_RAD_PER_S3 = 150.0
 ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
 ARM_TRIGGER_SERVICES = {
     "/mars/arm/torque_on",
@@ -246,6 +250,89 @@ def _parse_arm_trajectory_args(args: dict) -> tuple[list[list[float]], list[floa
     return waypoints, durations
 
 
+def _current_arm_positions(shared_queues) -> list[float] | None:
+    if hasattr(shared_queues, "get_current_arm_state_msg"):
+        arm_state = shared_queues.get_current_arm_state_msg()
+    else:
+        arm_state = getattr(shared_queues, "latest_arm_state_msg", None)
+    positions = getattr(arm_state, "joint_positions", None)
+    if not positions or len(positions) < ARM_JOINT_COUNT:
+        return None
+    try:
+        return [float(value) for value in positions[:ARM_JOINT_COUNT]]
+    except (TypeError, ValueError):
+        return None
+
+
+def _jerk_limited_duration(
+    start: list[float], goal: list[float], requested_duration: float
+) -> float | None:
+    if requested_duration <= 0.0:
+        return None
+    max_delta = max(
+        abs(goal[index] - start[index]) for index in range(ARM_JOINT_COUNT)
+    )
+    if ARM_MAX_JERK_RAD_PER_S3 <= 0.0 or max_delta <= 0.0:
+        return requested_duration
+    min_duration = math.pow(60.0 * max_delta / ARM_MAX_JERK_RAD_PER_S3, 1.0 / 3.0)
+    return max(requested_duration, min_duration)
+
+
+def _quintic_smootherstep(ratio: float) -> float:
+    ratio = min(1.0, max(0.0, ratio))
+    return ratio * ratio * ratio * (ratio * (6.0 * ratio - 15.0) + 10.0)
+
+
+def _build_arm_goto_trajectory(
+    start: list[float], goal: list[float], requested_duration: float
+) -> tuple[list[list[float]], float] | None:
+    duration = _jerk_limited_duration(start, goal, requested_duration)
+    if duration is None:
+        return None
+
+    num_steps = max(1, int(duration / ARM_TRAJECTORY_DT))
+    trajectory = []
+    for step in range(num_steps + 1):
+        ratio = _quintic_smootherstep((step * ARM_TRAJECTORY_DT) / duration)
+        trajectory.append(
+            [
+                start[index] + (goal[index] - start[index]) * ratio
+                for index in range(ARM_JOINT_COUNT)
+            ]
+        )
+    trajectory[-1] = goal
+    return trajectory, (len(trajectory) - 1) * ARM_TRAJECTORY_DT
+
+
+def _build_linear_arm_trajectory(
+    waypoints: list[list[float]], durations: list[float]
+) -> tuple[list[list[float]], float] | None:
+    if len(waypoints) < 2 or len(durations) != len(waypoints) - 1:
+        return None
+
+    trajectory = []
+    for segment_index, duration in enumerate(durations):
+        if duration <= 0.0:
+            continue
+        start = waypoints[segment_index]
+        end = waypoints[segment_index + 1]
+        num_steps = max(1, int(duration / ARM_TRAJECTORY_DT))
+        start_step = 0 if segment_index == 0 else 1
+
+        for step in range(start_step, num_steps + 1):
+            alpha = step / num_steps
+            trajectory.append(
+                [
+                    start[index] + (end[index] - start[index]) * alpha
+                    for index in range(ARM_JOINT_COUNT)
+                ]
+            )
+
+    if not trajectory:
+        return None
+    return trajectory, (len(trajectory) - 1) * ARM_TRAJECTORY_DT
+
+
 async def _send_service_response(ws, service_name: str, values: dict, call_id: str | None):
     response = rosbridge_service_response(service_name, values, call_id)
     await ws.send(json.dumps(response))
@@ -256,32 +343,22 @@ async def _run_arm_trajectory_service(
     shared_queues,
     service_name: str,
     call_id: str | None,
-    waypoints: list[list[float]],
-    durations: list[float],
+    trajectory: list[list[float]],
+    duration: float,
 ):
-    initial_duration = durations[0] if durations else 1.0
     try:
-        for index, waypoint in enumerate(waypoints):
-            if not is_arm_torque_enabled(shared_queues):
-                await _send_service_response(
-                    ws,
-                    service_name,
-                    {"success": False},
-                    call_id,
-                )
-                return
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
 
-            if index == 0:
-                duration = initial_duration
-            elif index - 1 < len(durations):
-                duration = durations[index - 1]
-            else:
-                duration = initial_duration
+        shared_queues.agent_to_sim.put_nowait(
+            ArmTrajectoryCmd(joint_positions=trajectory, point_dt=ARM_TRAJECTORY_DT)
+        )
+        await asyncio.sleep(duration)
 
-            shared_queues.agent_to_sim.put_nowait(
-                ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration))
-            )
-            await asyncio.sleep(max(0.0, duration))
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
 
         await _send_service_response(ws, service_name, {"success": True}, call_id)
     except queue.Full:
@@ -303,19 +380,29 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
             await _send_service_response(ws, service_name, {"success": False}, call_id)
             return
 
-        try:
-            shared_queues.agent_to_sim.put_nowait(
-                ArmGotoCmd(
-                    joint_positions=joint_positions,
-                    duration=duration,
-                    service_id=call_id,
-                )
-            )
-        except queue.Full:
+        current_positions = _current_arm_positions(shared_queues)
+        if current_positions is None:
             await _send_service_response(ws, service_name, {"success": False}, call_id)
             return
 
-        await _send_service_response(ws, service_name, {"success": True}, call_id)
+        planned = _build_arm_goto_trajectory(
+            current_positions, joint_positions, duration
+        )
+        if planned is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+        trajectory, actual_duration = planned
+
+        asyncio.create_task(
+            _run_arm_trajectory_service(
+                ws,
+                shared_queues,
+                service_name,
+                call_id,
+                trajectory,
+                actual_duration,
+            )
+        )
         return
 
     if service_name == "/mars/arm/goto_js_trajectory":
@@ -330,14 +417,29 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
             return
 
         waypoints, durations = parsed
+        current_positions = _current_arm_positions(shared_queues)
+        if current_positions is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        # Match the C++ arm service: start from current state and duplicate the
+        # first segment duration for that prepended segment.
+        waypoints = [current_positions, *waypoints]
+        durations = [durations[0] if durations else 0.5, *durations]
+        planned = _build_linear_arm_trajectory(waypoints, durations)
+        if planned is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+        trajectory, actual_duration = planned
+
         asyncio.create_task(
             _run_arm_trajectory_service(
                 ws,
                 shared_queues,
                 service_name,
                 call_id,
-                waypoints,
-                durations,
+                trajectory,
+                actual_duration,
             )
         )
         return
