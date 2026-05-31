@@ -226,6 +226,13 @@ class SimulationNode:
         self.arm_camera_forward = np.array([1.0, 0.0, 0.0])
         self.arm_camera_up = np.array([0.0, 0.0, 1.0])
         self.main_camera_frame_id = "camera_color_frame"
+        self.manipulation_contacts_enabled = _env_bool(
+            "SIM_MANIPULATION_CONTACTS", self.physics_collision_enabled
+        )
+        self.arm_position_control_enabled = _env_bool(
+            "SIM_ARM_POSITION_CONTROL", self.manipulation_contacts_enabled
+        )
+        self.arm_control_dof_indices: list[int] = []
         self.startup_timings_enabled = _env_bool("SIM_STARTUP_TIMINGS")
         self._startup_t0 = time.perf_counter()
         self._startup_last = self._startup_t0
@@ -253,6 +260,7 @@ class SimulationNode:
         self._startup_mark("scene.build")
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_arm_position_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
@@ -319,13 +327,31 @@ class SimulationNode:
                 iterations=5,
                 ls_iterations=1,
             )
-        elif _env_bool("SIM_LIGHT_RIGID_OPTIONS", True):
+        elif _env_bool(
+            "SIM_LIGHT_RIGID_OPTIONS", not self.manipulation_contacts_enabled
+        ):
             print("[SimulationNode] Using light rigid solver options.")
             scene_kwargs["rigid_options"] = gs.options.RigidOptions(
                 enable_self_collision=False,
                 max_collision_pairs=64,
                 iterations=20,
                 ls_iterations=10,
+            )
+        else:
+            print("[SimulationNode] Using manipulation rigid solver options.")
+            scene_kwargs["rigid_options"] = gs.options.RigidOptions(
+                enable_collision=True,
+                enable_self_collision=_env_bool("SIM_ROBOT_SELF_COLLISION", False),
+                enable_multi_contact=True,
+                box_box_detection=True,
+                noslip_iterations=_env_int("SIM_NOSLIP_ITERATIONS", 5),
+                iterations=_env_int("SIM_RIGID_SOLVER_ITERATIONS", 80),
+                ls_iterations=_env_int("SIM_RIGID_LS_ITERATIONS", 50),
+                constraint_timeconst=_env_float("SIM_CONSTRAINT_TIMECONST", 0.002),
+                contact_pruning_tolerance=_env_float(
+                    "SIM_CONTACT_PRUNING_TOLERANCE", 0.001
+                ),
+                max_collision_pairs=_env_int("SIM_MAX_COLLISION_PAIRS", 256),
             )
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=scene_dt, substeps=substeps),
@@ -1160,13 +1186,62 @@ class SimulationNode:
         self.arm_start_positions = None
         self.arm_interpolation_start_time = None
         self.arm_interpolation_duration = None
-        self._apply_arm_positions(self.arm_current_positions)
+        self._apply_arm_positions(self.arm_current_positions, direct=True)
 
-    def _apply_arm_positions(self, joint_positions):
+    def _init_arm_position_control(self):
+        """Configure arm joint motors for contact-aware motion."""
+        self.arm_control_dof_indices = []
+        if not self.arm_position_control_enabled:
+            return
+
+        dof_indices = []
+        for joint_name in self.arm_joint_names:
+            try:
+                joint = self.robot.get_joint(joint_name)
+                if joint.dofs_idx_local is not None and len(joint.dofs_idx_local) > 0:
+                    dof_indices.append(joint.dofs_idx_local[0])
+            except Exception as e:
+                print(
+                    f"[SimulationNode] Error getting arm control joint {joint_name}: {e}"
+                )
+
+        try:
+            joint6m = self.robot.get_joint("joint6M")
+            if joint6m.dofs_idx_local is not None and len(joint6m.dofs_idx_local) > 0:
+                dof_indices.append(joint6m.dofs_idx_local[0])
+        except Exception as e:
+            print(f"[SimulationNode] Error getting arm control joint6M: {e}")
+
+        if len(dof_indices) != 7:
+            print(
+                "[SimulationNode] Arm position control disabled: "
+                f"expected 7 arm/gripper dofs, got {len(dof_indices)}."
+            )
+            self.arm_control_dof_indices = []
+            return
+
+        self.arm_control_dof_indices = dof_indices
+        self.robot.set_dofs_kp(
+            np.array([500, 500, 500, 500, 300, 150, 150], dtype=float),
+            dofs_idx_local=self.arm_control_dof_indices,
+        )
+        self.robot.set_dofs_kv(
+            np.array([35, 35, 35, 35, 25, 8, 8], dtype=float),
+            dofs_idx_local=self.arm_control_dof_indices,
+        )
+        self.robot.set_dofs_force_range(
+            np.array([-25, -25, -25, -25, -15, -12, -12], dtype=float),
+            np.array([25, 25, 25, 25, 15, 12, 12], dtype=float),
+            dofs_idx_local=self.arm_control_dof_indices,
+        )
+        print("[SimulationNode] Arm position controllers enabled for contact motion.")
+
+    def _apply_arm_positions(self, joint_positions, *, direct: bool = False):
         """Apply joint positions to arm and update current state.
 
         Args:
             joint_positions: List of 6 floats [j0, j1, j2, j3, j4, j5] in radians
+            direct: If true, teleport the joints. Used for reset/home initialization.
         """
         # Get DOF indices for all arm joints
         dof_indices = []
@@ -1197,11 +1272,22 @@ class SimulationNode:
         # Apply all positions at once using robot entity
         if dof_indices and positions:
             try:
-                self.robot.set_dofs_position(
-                    position=torch.tensor(positions, dtype=torch.float32),
-                    dofs_idx_local=dof_indices,
-                    zero_velocity=True,
-                )
+                position_tensor = torch.tensor(positions, dtype=torch.float32)
+                if (
+                    not direct
+                    and self.arm_position_control_enabled
+                    and dof_indices == self.arm_control_dof_indices
+                ):
+                    self.robot.control_dofs_position(
+                        position_tensor,
+                        dofs_idx_local=dof_indices,
+                    )
+                else:
+                    self.robot.set_dofs_position(
+                        position=position_tensor,
+                        dofs_idx_local=dof_indices,
+                        zero_velocity=True,
+                    )
             except Exception as e:
                 print(f"[SimulationNode] Error applying arm positions: {e}")
 
@@ -1763,6 +1849,7 @@ class SimulationNode:
         self.scene.build()
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_arm_position_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
