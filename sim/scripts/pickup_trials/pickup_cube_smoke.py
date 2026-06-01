@@ -43,6 +43,10 @@ class TrialMetrics:
     output_contact_sheet: str
     output_metrics: str
     output_trace: str
+    object_kind: str
+    object_material: str
+    object_particle_count: int
+    contact_metrics_supported: bool
     cube_size_m: float
     object_size_m: tuple[float, float, float]
     cube_initial_z_m: float
@@ -81,6 +85,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-every", type=int, default=3)
     parser.add_argument("--dt", type=float, default=0.01)
     parser.add_argument("--substeps", type=int, default=4)
+    parser.add_argument(
+        "--object-kind",
+        default="box",
+        choices=["box", "sphere", "cylinder"],
+        help="Object morphology to add at the pickup target.",
+    )
+    parser.add_argument(
+        "--object-material",
+        default="rigid",
+        choices=["rigid", "mpm-elastic", "fem-elastic"],
+        help="Physics material used for the pickup object.",
+    )
     parser.add_argument("--cube-size", type=float, default=0.030)
     parser.add_argument(
         "--object-size",
@@ -90,6 +106,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override cube size with a box object size in meters.",
     )
+    parser.add_argument("--object-radius", type=float, default=0.004)
+    parser.add_argument("--object-height", type=float, default=0.010)
     parser.add_argument("--cube-x", type=float, default=0.340)
     parser.add_argument("--cube-y", type=float, default=-0.05285)
     parser.add_argument("--grasp-z-offset", type=float, default=0.015)
@@ -103,6 +121,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--close-angle", type=float, default=0.0)
     parser.add_argument("--cube-friction", type=float, default=5.0)
     parser.add_argument("--robot-friction", type=float, default=5.0)
+    parser.add_argument("--deformable-e", type=float, default=5.0e4)
+    parser.add_argument("--deformable-density", type=float, default=120.0)
+    parser.add_argument("--deformable-nu", type=float, default=0.2)
+    parser.add_argument("--mpm-particle-size", type=float, default=0.002)
+    parser.add_argument(
+        "--mpm-lower-bound",
+        type=float,
+        nargs=3,
+        default=(-0.05, -0.20, -0.05),
+    )
+    parser.add_argument(
+        "--mpm-upper-bound",
+        type=float,
+        nargs=3,
+        default=(0.70, 0.20, 0.40),
+    )
     parser.add_argument("--noslip-iterations", type=int, default=5)
     parser.add_argument("--solver-iterations", type=int, default=80)
     parser.add_argument("--contact-pruning-tolerance", type=float, default=0.001)
@@ -218,6 +252,81 @@ def set_robot_qpos(robot, qpos: np.ndarray) -> None:
     )
 
 
+def get_object_size(args: argparse.Namespace) -> tuple[float, float, float]:
+    if args.object_kind == "box":
+        return (
+            tuple(float(v) for v in args.object_size)
+            if args.object_size is not None
+            else (args.cube_size, args.cube_size, args.cube_size)
+        )
+    if args.object_kind == "sphere":
+        diameter = 2.0 * args.object_radius
+        return (diameter, diameter, diameter)
+    if args.object_kind == "cylinder":
+        diameter = 2.0 * args.object_radius
+        return (diameter, diameter, args.object_height)
+    raise ValueError(f"Unsupported object kind: {args.object_kind}")
+
+
+def get_object_center_z(args: argparse.Namespace, object_size: tuple[float, float, float]) -> float:
+    if args.object_kind == "sphere":
+        return args.object_radius
+    if args.object_kind in {"box", "cylinder"}:
+        return object_size[2] / 2.0
+    raise ValueError(f"Unsupported object kind: {args.object_kind}")
+
+
+def make_object_morph(gs, args: argparse.Namespace, center_z: float):
+    pos = (args.cube_x, args.cube_y, center_z)
+    if args.object_kind == "box":
+        return gs.morphs.Box(size=get_object_size(args), pos=pos, fixed=False)
+    if args.object_kind == "sphere":
+        return gs.morphs.Sphere(radius=args.object_radius, pos=pos, fixed=False)
+    if args.object_kind == "cylinder":
+        return gs.morphs.Cylinder(
+            radius=args.object_radius,
+            height=args.object_height,
+            pos=pos,
+            fixed=False,
+        )
+    raise ValueError(f"Unsupported object kind: {args.object_kind}")
+
+
+def make_object_material(gs, args: argparse.Namespace):
+    if args.object_material == "rigid":
+        return gs.materials.Rigid(
+            rho=args.deformable_density,
+            friction=args.cube_friction,
+            coup_friction=args.cube_friction,
+        )
+    if args.object_material == "mpm-elastic":
+        return gs.materials.MPM.Elastic(
+            E=args.deformable_e,
+            nu=args.deformable_nu,
+            rho=args.deformable_density,
+            sampler="regular",
+        )
+    if args.object_material == "fem-elastic":
+        return gs.materials.FEM.Elastic(
+            E=args.deformable_e,
+            nu=args.deformable_nu,
+            rho=args.deformable_density,
+            friction_mu=args.cube_friction,
+        )
+    raise ValueError(f"Unsupported object material: {args.object_material}")
+
+
+def get_object_points(entity, object_material: str) -> np.ndarray:
+    if object_material == "rigid":
+        return entity.get_pos().cpu().numpy().reshape(1, 3)
+    if hasattr(entity, "get_particles_pos"):
+        return entity.get_particles_pos().cpu().numpy().reshape(-1, 3)
+    if hasattr(entity, "get_state"):
+        state = entity.get_state()
+        return state.pos.cpu().numpy().reshape(-1, 3)
+    raise RuntimeError(f"Cannot query positions for {type(entity).__name__}")
+
+
 def render_frame(camera) -> np.ndarray:
     frame, _, _, _ = camera.render()
     return frame
@@ -267,6 +376,19 @@ def main() -> int:
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=args.dt, substeps=args.substeps),
+        mpm_options=gs.options.MPMOptions(
+            particle_size=args.mpm_particle_size,
+            lower_bound=tuple(float(v) for v in args.mpm_lower_bound),
+            upper_bound=tuple(float(v) for v in args.mpm_upper_bound),
+            enable_CPIC=True,
+        ),
+        fem_options=gs.options.FEMOptions(
+            damping=0.1,
+            use_implicit_solver=args.object_material == "fem-elastic",
+            n_newton_iterations=4,
+            n_pcg_iterations=200,
+            enable_vertex_constraints=True,
+        ),
         rigid_options=rigid_options,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=camera_pos,
@@ -292,29 +414,20 @@ def main() -> int:
             quat=(1, 0, 0, 0),
             fixed=True,
         ),
-        material=gs.materials.Rigid(friction=args.robot_friction),
+        material=gs.materials.Rigid(
+            friction=args.robot_friction,
+            coup_friction=args.robot_friction,
+        ),
     )
 
-    object_size = (
-        tuple(float(v) for v in args.object_size)
-        if args.object_size is not None
-        else (args.cube_size, args.cube_size, args.cube_size)
-    )
-    cube_center_z = object_size[2] / 2
+    object_size = get_object_size(args)
+    cube_center_z = get_object_center_z(args, object_size)
     cube = scene.add_entity(
-        gs.morphs.Box(
-            size=object_size,
-            pos=(args.cube_x, args.cube_y, cube_center_z),
-            fixed=False,
-        ),
-        material=gs.materials.Rigid(
-            rho=120.0,
-            friction=args.cube_friction,
-            coup_friction=args.cube_friction,
-        ),
+        make_object_morph(gs, args, cube_center_z),
+        material=make_object_material(gs, args),
         surface=gs.surfaces.Rough(color=(0.95, 0.58, 0.12, 1.0)),
-        visualize_contact=True,
-        name="pickup_cube",
+        visualize_contact=args.object_material == "rigid",
+        name="pickup_object",
     )
 
     camera = scene.add_camera(
@@ -381,6 +494,8 @@ def main() -> int:
     saved_frames: list[np.ndarray] = []
     trace_rows = []
     max_tcp_error = 0.0
+    contact_metrics_supported = args.object_material == "rigid"
+    object_particle_count = int(getattr(cube, "n_particles", getattr(cube, "n_vertices", 0)))
     gripper_cube_contact_steps = 0
     max_gripper_cube_contacts = 0
     max_gripper_cube_penetration = 0.0
@@ -410,15 +525,21 @@ def main() -> int:
             cube.set_pos(transform_local_point(link5, tcp_local))
 
         scene.step()
-        cube_pos = cube.get_pos().cpu().numpy()
+        object_points = get_object_points(cube, args.object_material)
+        cube_pos = object_points.mean(axis=0)
+        object_min = object_points.min(axis=0)
+        object_max = object_points.max(axis=0)
         tcp_pos = transform_local_point(link5, tcp_local)
         tcp_error = float(np.linalg.norm(tcp_pos - current_target[0]))
         max_tcp_error = max(max_tcp_error, tcp_error)
-        contacts = cube.get_contacts(with_entity=robot)
         contact_count = 0
         contact_penetration = 0.0
         contact_force = 0.0
-        if contacts["geom_a"].numel():
+        if contact_metrics_supported:
+            contacts = cube.get_contacts(with_entity=robot)
+        else:
+            contacts = None
+        if contacts is not None and contacts["geom_a"].numel():
             geom_a = contacts["geom_a"].cpu().numpy()
             geom_b = contacts["geom_b"].cpu().numpy()
             mask = np.array(
@@ -450,6 +571,8 @@ def main() -> int:
                 "cube_x": float(cube_pos[0]),
                 "cube_y": float(cube_pos[1]),
                 "cube_z": float(cube_pos[2]),
+                "object_min_z": float(object_min[2]),
+                "object_max_z": float(object_max[2]),
                 "tcp_x": float(tcp_pos[0]),
                 "tcp_y": float(tcp_pos[1]),
                 "tcp_z": float(tcp_pos[2]),
@@ -524,18 +647,23 @@ def main() -> int:
     final_lift_delta = cube_final_z - cube_initial_z
     pickup_success = lift_delta >= args.lift_threshold
     held_after_lift = final_lift_delta >= args.held_threshold
-    contact_valid_pickup = (
-        pickup_success
-        and held_after_lift
-        and gripper_cube_contact_steps > 0
-        and max_gripper_cube_penetration <= args.max_allowed_penetration
-    )
+    contact_valid_pickup = pickup_success and held_after_lift
+    if contact_metrics_supported:
+        contact_valid_pickup = (
+            contact_valid_pickup
+            and gripper_cube_contact_steps > 0
+            and max_gripper_cube_penetration <= args.max_allowed_penetration
+        )
 
     metrics = TrialMetrics(
         output_video=str(video_path),
         output_contact_sheet=str(sheet_path),
         output_metrics=str(metrics_path),
         output_trace=str(trace_path),
+        object_kind=args.object_kind,
+        object_material=args.object_material,
+        object_particle_count=object_particle_count,
+        contact_metrics_supported=contact_metrics_supported,
         cube_size_m=args.cube_size,
         object_size_m=object_size,
         cube_initial_z_m=cube_initial_z,
@@ -561,9 +689,12 @@ def main() -> int:
         open_angle_rad=args.open_angle,
         close_angle_rad=args.close_angle,
         notes=(
-            "Uses this branch's ROS Maurice URDF and Genesis rigid bodies. "
+            "Uses this branch's ROS Maurice URDF and Genesis object entities. "
             f"drive_mode={args.drive_mode}. This validates scripted grasp "
-            "contact response, not a learned or e2e policy."
+            "response, not a learned or e2e policy. Rigid objects report "
+            "Genesis rigid contact penetration; deformables are judged by "
+            "centroid lift because their rigid coupling is not exposed through "
+            "RigidEntity.get_contacts()."
         ),
     )
 
