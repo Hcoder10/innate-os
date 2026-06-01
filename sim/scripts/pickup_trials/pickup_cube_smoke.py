@@ -46,6 +46,7 @@ class TrialMetrics:
     object_kind: str
     object_material: str
     object_particle_count: int
+    pbd_attached_particles: int
     contact_metrics_supported: bool
     cube_size_m: float
     object_size_m: tuple[float, float, float]
@@ -67,6 +68,7 @@ class TrialMetrics:
     max_tcp_error_m: float
     backend: str
     genesis_version: str
+    gravity_z: float
     robot_friction: float
     cube_friction: float
     open_angle_rad: float
@@ -85,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-every", type=int, default=3)
     parser.add_argument("--dt", type=float, default=0.01)
     parser.add_argument("--substeps", type=int, default=4)
+    parser.add_argument("--gravity-z", type=float, default=-9.81)
     parser.add_argument(
         "--object-kind",
         default="box",
@@ -110,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--object-height", type=float, default=0.010)
     parser.add_argument("--cube-x", type=float, default=0.340)
     parser.add_argument("--cube-y", type=float, default=-0.05285)
+    parser.add_argument("--object-euler", type=float, nargs=3, default=(0.0, 0.0, 0.0))
     parser.add_argument("--grasp-z-offset", type=float, default=0.015)
     parser.add_argument("--lift-height", type=float, default=0.120)
     parser.add_argument("--lift-threshold", type=float, default=0.040)
@@ -139,6 +143,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pbd-particle-size", type=float, default=0.003)
     parser.add_argument("--cloth-size", type=float, nargs=2, default=(0.070, 0.045))
+    parser.add_argument("--cloth-mesh-file", type=Path, default=None)
+    parser.add_argument("--cloth-mesh-scale", type=float, default=1.0)
     parser.add_argument("--cloth-resolution", type=int, nargs=2, default=(25, 17))
     parser.add_argument("--cloth-initial-z", type=float, default=0.003)
     parser.add_argument("--cloth-ridge-height", type=float, default=0.018)
@@ -153,6 +159,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shirt-cell-size", type=float, default=0.004)
     parser.add_argument("--pbd-stretch-iterations", type=int, default=12)
     parser.add_argument("--pbd-bending-iterations", type=int, default=8)
+    parser.add_argument("--pbd-grasp-attach", action="store_true")
+    parser.add_argument("--pbd-grasp-attach-count", type=int, default=8)
+    parser.add_argument("--pbd-grasp-attach-radius", type=float, default=0.020)
+    parser.add_argument("--pbd-grasp-attach-link", default="link5")
+    parser.add_argument(
+        "--disable-floor-coupling",
+        action="store_true",
+        help="Keep the floor visual/rigid but exclude it from particle-solver coupling.",
+    )
     parser.add_argument("--noslip-iterations", type=int, default=5)
     parser.add_argument("--solver-iterations", type=int, default=80)
     parser.add_argument("--contact-pruning-tolerance", type=float, default=0.001)
@@ -429,10 +444,13 @@ def get_object_center_z(args: argparse.Namespace, object_size: tuple[float, floa
 
 def make_object_morph(gs, args: argparse.Namespace, center_z: float):
     pos = (args.cube_x, args.cube_y, center_z)
+    object_euler = tuple(float(v) for v in args.object_euler)
     if args.object_kind == "cloth":
         return gs.morphs.Mesh(
             file=str(args.object_mesh_path),
+            scale=args.cloth_mesh_scale,
             pos=pos,
+            euler=object_euler,
             fixed=False,
             convexify=False,
             file_meshes_are_zup=True,
@@ -441,6 +459,7 @@ def make_object_morph(gs, args: argparse.Namespace, center_z: float):
         return gs.morphs.Mesh(
             file=str(args.object_mesh_path),
             pos=pos,
+            euler=object_euler,
             fixed=False,
             convexify=False,
             file_meshes_are_zup=True,
@@ -539,9 +558,9 @@ def main() -> int:
     sheet_path = args.out_dir / f"{run_name}_contact_sheet.jpg"
     metrics_path = args.out_dir / f"{run_name}_metrics.json"
     trace_path = args.out_dir / f"{run_name}_trace.csv"
-    args.object_mesh_path = args.out_dir / f"{run_name}_cloth.obj"
+    args.object_mesh_path = args.cloth_mesh_file or args.out_dir / f"{run_name}_cloth.obj"
 
-    if args.object_material == "pbd-cloth":
+    if args.object_material == "pbd-cloth" and args.cloth_mesh_file is None:
         write_cloth_mesh(
             args.object_mesh_path,
             tuple(float(v) for v in args.cloth_size),
@@ -588,7 +607,11 @@ def main() -> int:
     camera_pos = tuple(float(v) for v in args.camera_pos)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=args.dt, substeps=args.substeps),
+        sim_options=gs.options.SimOptions(
+            dt=args.dt,
+            substeps=args.substeps,
+            gravity=(0.0, 0.0, args.gravity_z),
+        ),
         mpm_options=gs.options.MPMOptions(
             particle_size=args.mpm_particle_size,
             lower_bound=tuple(float(v) for v in args.mpm_lower_bound),
@@ -623,7 +646,10 @@ def main() -> int:
 
     scene.add_entity(
         gs.morphs.Plane(pos=(0, 0, 0)),
-        material=gs.materials.Rigid(friction=2.0),
+        material=gs.materials.Rigid(
+            friction=2.0,
+            needs_coup=not args.disable_floor_coupling,
+        ),
         surface=gs.surfaces.Rough(color=(0.45, 0.48, 0.50, 1.0)),
     )
 
@@ -637,6 +663,11 @@ def main() -> int:
         material=gs.materials.Rigid(
             friction=args.robot_friction,
             coup_friction=args.robot_friction,
+            coup_links=(
+                ("link61", "link62")
+                if args.object_material == "pbd-cloth"
+                else None
+            ),
         ),
     )
 
@@ -716,6 +747,7 @@ def main() -> int:
     max_tcp_error = 0.0
     contact_metrics_supported = args.object_material == "rigid"
     object_particle_count = int(getattr(cube, "n_particles", getattr(cube, "n_vertices", 0)))
+    pbd_attached_particles = 0
     gripper_cube_contact_steps = 0
     max_gripper_cube_contacts = 0
     max_gripper_cube_penetration = 0.0
@@ -810,6 +842,27 @@ def main() -> int:
                 saved_frames.append(frame)
         step_index += 1
 
+    def attach_pbd_grasp_particles() -> None:
+        nonlocal pbd_attached_particles
+        if not args.pbd_grasp_attach or args.object_material != "pbd-cloth":
+            return
+
+        object_points = get_object_points(cube, args.object_material)
+        tcp_pos = transform_local_point(link5, tcp_local)
+        distances = np.linalg.norm(object_points - tcp_pos, axis=1)
+        within_radius = np.flatnonzero(distances <= args.pbd_grasp_attach_radius)
+        if within_radius.size:
+            selected = within_radius[np.argsort(distances[within_radius])]
+        else:
+            selected = np.argsort(distances)
+        selected = selected[: max(1, args.pbd_grasp_attach_count)]
+        attach_link = robot.get_link(args.pbd_grasp_attach_link)
+        cube.fix_particles_to_link(
+            attach_link.idx,
+            particles_idx_local=selected.astype(np.int32),
+        )
+        pbd_attached_particles = int(selected.size)
+
     set_robot_qpos(robot, q_pre)
     for _ in range(args.settle_steps):
         apply_qpos(q_pre)
@@ -836,6 +889,8 @@ def main() -> int:
     for _ in range(args.hold_before_lift_steps):
         apply_qpos(prev_q)
         step_and_maybe_record("hold_closed_before_lift")
+
+    attach_pbd_grasp_particles()
 
     for i in range(args.lift_steps):
         alpha = (i + 1) / max(1, args.lift_steps)
@@ -883,6 +938,7 @@ def main() -> int:
         object_kind=args.object_kind,
         object_material=args.object_material,
         object_particle_count=object_particle_count,
+        pbd_attached_particles=pbd_attached_particles,
         contact_metrics_supported=contact_metrics_supported,
         cube_size_m=args.cube_size,
         object_size_m=object_size,
@@ -904,6 +960,7 @@ def main() -> int:
         max_tcp_error_m=max_tcp_error,
         backend=args.backend,
         genesis_version=getattr(gs, "__version__", "unknown"),
+        gravity_z=args.gravity_z,
         robot_friction=args.robot_friction,
         cube_friction=args.cube_friction,
         open_angle_rad=args.open_angle,
@@ -914,7 +971,9 @@ def main() -> int:
             "response, not a learned or e2e policy. Rigid objects report "
             "Genesis rigid contact penetration; deformables are judged by "
             "centroid lift because their rigid coupling is not exposed through "
-            "RigidEntity.get_contacts()."
+            "RigidEntity.get_contacts(). "
+            f"PBD grasp attach enabled={args.pbd_grasp_attach} with "
+            f"{pbd_attached_particles} particles attached."
         ),
     )
 
