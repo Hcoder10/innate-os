@@ -88,13 +88,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--object-kind",
         default="box",
-        choices=["box", "sphere", "cylinder"],
+        choices=["box", "sphere", "cylinder", "cloth", "shirt"],
         help="Object morphology to add at the pickup target.",
     )
     parser.add_argument(
         "--object-material",
         default="rigid",
-        choices=["rigid", "mpm-elastic", "fem-elastic"],
+        choices=["rigid", "mpm-elastic", "fem-elastic", "pbd-cloth"],
         help="Physics material used for the pickup object.",
     )
     parser.add_argument("--cube-size", type=float, default=0.030)
@@ -137,6 +137,22 @@ def parse_args() -> argparse.Namespace:
         nargs=3,
         default=(0.70, 0.20, 0.40),
     )
+    parser.add_argument("--pbd-particle-size", type=float, default=0.003)
+    parser.add_argument("--cloth-size", type=float, nargs=2, default=(0.070, 0.045))
+    parser.add_argument("--cloth-resolution", type=int, nargs=2, default=(25, 17))
+    parser.add_argument("--cloth-initial-z", type=float, default=0.003)
+    parser.add_argument("--cloth-ridge-height", type=float, default=0.018)
+    parser.add_argument("--cloth-ridge-width", type=float, default=0.006)
+    parser.add_argument("--cloth-stretch-compliance", type=float, default=8.0e-6)
+    parser.add_argument("--cloth-bending-compliance", type=float, default=8.0e-4)
+    parser.add_argument("--cloth-stretch-relaxation", type=float, default=0.45)
+    parser.add_argument("--cloth-bending-relaxation", type=float, default=0.25)
+    parser.add_argument("--cloth-friction", type=float, default=2.0)
+    parser.add_argument("--cloth-rho", type=float, default=0.40)
+    parser.add_argument("--shirt-thickness", type=float, default=0.006)
+    parser.add_argument("--shirt-cell-size", type=float, default=0.004)
+    parser.add_argument("--pbd-stretch-iterations", type=int, default=12)
+    parser.add_argument("--pbd-bending-iterations", type=int, default=8)
     parser.add_argument("--noslip-iterations", type=int, default=5)
     parser.add_argument("--solver-iterations", type=int, default=80)
     parser.add_argument("--contact-pruning-tolerance", type=float, default=0.001)
@@ -145,6 +161,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-lookat", type=float, nargs=3, default=None)
     parser.add_argument("--camera-fov", type=float, default=35)
     parser.add_argument("--show-viewer", action="store_true")
+    parser.add_argument("--settle-steps", type=int, default=90)
+    parser.add_argument("--descend-steps", type=int, default=60)
+    parser.add_argument("--close-steps", type=int, default=80)
+    parser.add_argument("--hold-before-lift-steps", type=int, default=70)
+    parser.add_argument("--lift-steps", type=int, default=90)
+    parser.add_argument("--hold-after-lift-steps", type=int, default=80)
     parser.add_argument(
         "--drive-mode",
         default="position",
@@ -236,6 +258,119 @@ def write_contact_sheet(frames: list[np.ndarray], path: Path) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(sheet, cv2.COLOR_RGB2BGR))
 
 
+def write_cloth_mesh(
+    path: Path,
+    size: tuple[float, float],
+    resolution: tuple[int, int],
+    ridge_height: float,
+    ridge_width: float,
+) -> None:
+    """Write a small triangulated cloth patch with a center fold for pinching."""
+    nx, ny = resolution
+    if nx < 3 or ny < 3:
+        raise ValueError("--cloth-resolution must be at least 3 by 3")
+
+    width_x, width_y = size
+    xs = np.linspace(-width_x / 2.0, width_x / 2.0, nx)
+    ys = np.linspace(-width_y / 2.0, width_y / 2.0, ny)
+
+    vertices = []
+    ridge_width = max(ridge_width, 1.0e-4)
+    for y in ys:
+        ridge = ridge_height * np.exp(-0.5 * (y / ridge_width) ** 2)
+        for x in xs:
+            # A tiny woven ripple makes the cloth read as fabric when it moves.
+            ripple = 0.0015 * np.sin(2.0 * np.pi * (x / width_x + 0.5))
+            vertices.append((x, y, max(0.0, ridge + ripple)))
+
+    faces = []
+    for j in range(ny - 1):
+        for i in range(nx - 1):
+            v0 = j * nx + i + 1
+            v1 = v0 + 1
+            v2 = v0 + nx
+            v3 = v2 + 1
+            faces.append((v0, v1, v3))
+            faces.append((v0, v3, v2))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        f.write("# generated pickup cloth patch\n")
+        for vertex in vertices:
+            f.write(f"v {vertex[0]:.8f} {vertex[1]:.8f} {vertex[2]:.8f}\n")
+        for face in faces:
+            f.write(f"f {face[0]} {face[1]} {face[2]}\n")
+
+
+def write_voxel_shirt_mesh(
+    path: Path,
+    size: tuple[float, float],
+    thickness: float,
+    cell_size: float,
+) -> None:
+    """Write a small watertight voxelized shirt/rag silhouette for MPM."""
+    width_x, width_y = size
+    nx = max(5, int(np.ceil(width_x / cell_size)))
+    ny = max(5, int(np.ceil(width_y / cell_size)))
+    cell_x = width_x / nx
+    cell_y = width_y / ny
+    z0 = -thickness / 2.0
+    z1 = thickness / 2.0
+
+    occupied: set[tuple[int, int]] = set()
+    for i in range(nx):
+        cx = -width_x / 2.0 + (i + 0.5) * cell_x
+        for j in range(ny):
+            cy = -width_y / 2.0 + (j + 0.5) * cell_y
+            torso = abs(cx) <= 0.18 * width_x and -0.44 * width_y <= cy <= 0.36 * width_y
+            sleeves = abs(cx) <= 0.46 * width_x and 0.08 * width_y <= cy <= 0.34 * width_y
+            neck = abs(cx) <= 0.07 * width_x and cy >= 0.22 * width_y
+            if (torso or sleeves) and not neck:
+                occupied.add((i, j))
+
+    vertex_ids: dict[tuple[float, float, float], int] = {}
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+
+    def add_vertex(vertex: tuple[float, float, float]) -> int:
+        key = tuple(round(v, 8) for v in vertex)
+        if key not in vertex_ids:
+            vertex_ids[key] = len(vertices) + 1
+            vertices.append(key)
+        return vertex_ids[key]
+
+    def add_quad(quad: list[tuple[float, float, float]]) -> None:
+        ids = [add_vertex(vertex) for vertex in quad]
+        faces.append((ids[0], ids[1], ids[2]))
+        faces.append((ids[0], ids[2], ids[3]))
+
+    for i, j in occupied:
+        x0 = -width_x / 2.0 + i * cell_x
+        x1 = x0 + cell_x
+        y0 = -width_y / 2.0 + j * cell_y
+        y1 = y0 + cell_y
+
+        if (i + 1, j) not in occupied:
+            add_quad([(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)])
+        if (i - 1, j) not in occupied:
+            add_quad([(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)])
+        if (i, j + 1) not in occupied:
+            add_quad([(x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0)])
+        if (i, j - 1) not in occupied:
+            add_quad([(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)])
+
+        add_quad([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)])
+        add_quad([(x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0)])
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        f.write("# generated voxelized shirt patch\n")
+        for vertex in vertices:
+            f.write(f"v {vertex[0]:.8f} {vertex[1]:.8f} {vertex[2]:.8f}\n")
+        for face in faces:
+            f.write(f"f {face[0]} {face[1]} {face[2]}\n")
+
+
 def set_gripper(qpos: np.ndarray, robot, angle: float) -> np.ndarray:
     q = qpos.copy()
     joint6 = robot.get_joint("joint6").dofs_idx_local[0]
@@ -253,6 +388,18 @@ def set_robot_qpos(robot, qpos: np.ndarray) -> None:
 
 
 def get_object_size(args: argparse.Namespace) -> tuple[float, float, float]:
+    if args.object_kind == "cloth":
+        return (
+            float(args.cloth_size[0]),
+            float(args.cloth_size[1]),
+            float(args.cloth_initial_z + args.cloth_ridge_height),
+        )
+    if args.object_kind == "shirt":
+        return (
+            float(args.cloth_size[0]),
+            float(args.cloth_size[1]),
+            float(args.shirt_thickness),
+        )
     if args.object_kind == "box":
         return (
             tuple(float(v) for v in args.object_size)
@@ -269,6 +416,10 @@ def get_object_size(args: argparse.Namespace) -> tuple[float, float, float]:
 
 
 def get_object_center_z(args: argparse.Namespace, object_size: tuple[float, float, float]) -> float:
+    if args.object_kind == "cloth":
+        return args.cloth_initial_z
+    if args.object_kind == "shirt":
+        return args.shirt_thickness / 2.0
     if args.object_kind == "sphere":
         return args.object_radius
     if args.object_kind in {"box", "cylinder"}:
@@ -278,6 +429,22 @@ def get_object_center_z(args: argparse.Namespace, object_size: tuple[float, floa
 
 def make_object_morph(gs, args: argparse.Namespace, center_z: float):
     pos = (args.cube_x, args.cube_y, center_z)
+    if args.object_kind == "cloth":
+        return gs.morphs.Mesh(
+            file=str(args.object_mesh_path),
+            pos=pos,
+            fixed=False,
+            convexify=False,
+            file_meshes_are_zup=True,
+        )
+    if args.object_kind == "shirt":
+        return gs.morphs.Mesh(
+            file=str(args.object_mesh_path),
+            pos=pos,
+            fixed=False,
+            convexify=False,
+            file_meshes_are_zup=True,
+        )
     if args.object_kind == "box":
         return gs.morphs.Box(size=get_object_size(args), pos=pos, fixed=False)
     if args.object_kind == "sphere":
@@ -313,14 +480,36 @@ def make_object_material(gs, args: argparse.Namespace):
             rho=args.deformable_density,
             friction_mu=args.cube_friction,
         )
+    if args.object_material == "pbd-cloth":
+        return gs.materials.PBD.Cloth(
+            rho=args.cloth_rho,
+            static_friction=args.cloth_friction,
+            kinetic_friction=args.cloth_friction,
+            stretch_compliance=args.cloth_stretch_compliance,
+            bending_compliance=args.cloth_bending_compliance,
+            stretch_relaxation=args.cloth_stretch_relaxation,
+            bending_relaxation=args.cloth_bending_relaxation,
+            air_resistance=0.01,
+        )
     raise ValueError(f"Unsupported object material: {args.object_material}")
+
+
+def make_object_surface(gs, args: argparse.Namespace):
+    if args.object_material == "pbd-cloth" or args.object_kind == "shirt":
+        return gs.surfaces.Rough(color=(0.16, 0.36, 0.90, 1.0))
+    return gs.surfaces.Rough(color=(0.95, 0.58, 0.12, 1.0))
 
 
 def get_object_points(entity, object_material: str) -> np.ndarray:
     if object_material == "rigid":
         return entity.get_pos().cpu().numpy().reshape(1, 3)
     if hasattr(entity, "get_particles_pos"):
-        return entity.get_particles_pos().cpu().numpy().reshape(-1, 3)
+        points = entity.get_particles_pos().cpu().numpy().reshape(-1, 3)
+        if hasattr(entity, "get_particles_active"):
+            active = entity.get_particles_active().cpu().numpy().reshape(-1)
+            if active.shape[0] == points.shape[0] and active.any():
+                points = points[active.astype(bool)]
+        return points
     if hasattr(entity, "get_state"):
         state = entity.get_state()
         return state.pos.cpu().numpy().reshape(-1, 3)
@@ -335,6 +524,13 @@ def render_frame(camera) -> np.ndarray:
 def main() -> int:
     args = parse_args()
 
+    if args.object_material == "pbd-cloth" and args.object_kind != "cloth":
+        raise ValueError("--object-material pbd-cloth requires --object-kind cloth")
+    if args.object_kind == "cloth" and args.object_material != "pbd-cloth":
+        raise ValueError("--object-kind cloth requires --object-material pbd-cloth")
+    if args.object_kind == "shirt" and args.object_material != "mpm-elastic":
+        raise ValueError("--object-kind shirt requires --object-material mpm-elastic")
+
     import genesis as gs
 
     run_name = args.name or datetime.now().strftime("pickup_cube_%Y%m%d_%H%M%S")
@@ -343,6 +539,23 @@ def main() -> int:
     sheet_path = args.out_dir / f"{run_name}_contact_sheet.jpg"
     metrics_path = args.out_dir / f"{run_name}_metrics.json"
     trace_path = args.out_dir / f"{run_name}_trace.csv"
+    args.object_mesh_path = args.out_dir / f"{run_name}_cloth.obj"
+
+    if args.object_material == "pbd-cloth":
+        write_cloth_mesh(
+            args.object_mesh_path,
+            tuple(float(v) for v in args.cloth_size),
+            tuple(int(v) for v in args.cloth_resolution),
+            args.cloth_ridge_height,
+            args.cloth_ridge_width,
+        )
+    elif args.object_kind == "shirt":
+        write_voxel_shirt_mesh(
+            args.object_mesh_path,
+            tuple(float(v) for v in args.cloth_size),
+            args.shirt_thickness,
+            args.shirt_cell_size,
+        )
 
     gs.init(backend=getattr(gs, args.backend), logging_level="warning")
 
@@ -381,6 +594,13 @@ def main() -> int:
             lower_bound=tuple(float(v) for v in args.mpm_lower_bound),
             upper_bound=tuple(float(v) for v in args.mpm_upper_bound),
             enable_CPIC=True,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=args.pbd_particle_size,
+            lower_bound=tuple(float(v) for v in args.mpm_lower_bound),
+            upper_bound=tuple(float(v) for v in args.mpm_upper_bound),
+            max_stretch_solver_iterations=args.pbd_stretch_iterations,
+            max_bending_solver_iterations=args.pbd_bending_iterations,
         ),
         fem_options=gs.options.FEMOptions(
             damping=0.1,
@@ -425,7 +645,7 @@ def main() -> int:
     cube = scene.add_entity(
         make_object_morph(gs, args, cube_center_z),
         material=make_object_material(gs, args),
-        surface=gs.surfaces.Rough(color=(0.95, 0.58, 0.12, 1.0)),
+        surface=make_object_surface(gs, args),
         visualize_contact=args.object_material == "rigid",
         name="pickup_object",
     )
@@ -591,21 +811,21 @@ def main() -> int:
         step_index += 1
 
     set_robot_qpos(robot, q_pre)
-    for _ in range(90):
+    for _ in range(args.settle_steps):
         apply_qpos(q_pre)
         step_and_maybe_record("settle_open_above_cube")
 
     prev_q = q_pre.copy()
-    for i in range(60):
-        alpha = (i + 1) / 60
+    for i in range(args.descend_steps):
+        alpha = (i + 1) / max(1, args.descend_steps)
         current_target[0] = lerp(pregrasp_target, grasp_target, alpha)
         q = set_gripper(solve_tcp(current_target[0], prev_q), robot, args.open_angle)
         apply_qpos(q)
         prev_q = q
         step_and_maybe_record("descend_open")
 
-    for i in range(80):
-        alpha = (i + 1) / 80
+    for i in range(args.close_steps):
+        alpha = (i + 1) / max(1, args.close_steps)
         angle = float(lerp(np.array(args.open_angle), np.array(args.close_angle), alpha))
         q = set_gripper(prev_q, robot, angle)
         apply_qpos(q)
@@ -613,12 +833,12 @@ def main() -> int:
         current_target[0] = grasp_target
         step_and_maybe_record("close_gripper")
 
-    for _ in range(70):
+    for _ in range(args.hold_before_lift_steps):
         apply_qpos(prev_q)
         step_and_maybe_record("hold_closed_before_lift")
 
-    for i in range(90):
-        alpha = (i + 1) / 90
+    for i in range(args.lift_steps):
+        alpha = (i + 1) / max(1, args.lift_steps)
         current_target[0] = lerp(grasp_target, lift_target, alpha)
         q = set_gripper(solve_tcp(current_target[0], prev_q), robot, args.close_angle)
         apply_qpos(q)
@@ -626,7 +846,7 @@ def main() -> int:
         step_and_maybe_record("lift_closed")
 
     current_target[0] = lift_target
-    for _ in range(80):
+    for _ in range(args.hold_after_lift_steps):
         apply_qpos(prev_q)
         step_and_maybe_record("hold_closed_after_lift")
 
