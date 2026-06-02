@@ -130,18 +130,6 @@ class SyncRealtimeConnection:
             if self._on_close and not self._stopped.is_set():
                 self._on_close()
 
-    def _on_error(self, ws: Any, error: Any) -> None:
-        logger.error("WebSocket error: %s", error)
-        if self._on_error_callback:
-            self._on_error_callback(str(error))
-        self.stop()
-
-    def _on_close(self, ws: Any, status_code: Any, msg: Any) -> None:
-        logger.info("WebSocket closed")
-        self._connected_event.clear()
-        if self._on_close_callback:
-            self._on_close_callback()
-
 
 # ---------------------------------------------------------------------------
 # Main adapter

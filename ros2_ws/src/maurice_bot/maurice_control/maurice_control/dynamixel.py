@@ -72,9 +72,6 @@ class Dynamixel:
 
         if not self.portHandler.setBaudRate(self.config.baudrate):
             raise Exception(f"failed to set baudrate to {self.config.baudrate}")
-        # self.operating_mode = OperatingMode.UNKNOWN
-        # self.torque_enabled = False
-        # self._disable_torque()
 
         self.operating_modes = [None for _ in range(32)]
         self.torque_enabled = [None for _ in range(32)]
@@ -84,19 +81,9 @@ class Dynamixel:
         self.portHandler.closePort()
 
     def set_goal_position(self, motor_id, goal_position):
-        # if self.operating_modes[motor_id] is not OperatingMode.POSITION:
-        #     self._disable_torque(motor_id)
-        #     self.set_operating_mode(motor_id, OperatingMode.POSITION)
-
-        # if not self.torque_enabled[motor_id]:
-        #     self._enable_torque(motor_id)
-
-        # self._enable_torque(motor_id)
         dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(
             self.portHandler, motor_id, self.ADDR_GOAL_POSITION, goal_position
         )
-        # self._process_response(dxl_comm_result, dxl_error)
-        # print(f'set position of motor {motor_id} to {goal_position}')
 
     def set_pwm_value(self, motor_id: int, pwm_value, tries=3):
         if self.operating_modes[motor_id] is not OperatingMode.PWM:
@@ -155,9 +142,6 @@ class Dynamixel:
 
     def read_hardware_error_status(self, motor_id: int):
         return self._read_value(motor_id, ReadAttribute.HARDWARE_ERROR_STATUS, 1)
-
-    def disconnect(self):  # noqa: F811
-        self.portHandler.closePort()
 
     def set_id(self, old_id, new_id, use_broadcast_id: bool = False):
         """
@@ -245,10 +229,7 @@ class Dynamixel:
 
     def read_home_offset(self, motor_id: int):
         self._disable_torque(motor_id)
-        # dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(self.portHandler, motor_id,
-        #                                                                ReadAttribute.HOMING_OFFSET.value, home_position)
         home_offset = self._read_value(motor_id, ReadAttribute.HOMING_OFFSET, 4)
-        # self._process_response(dxl_comm_result, dxl_error)
         self._enable_torque(motor_id)
         return home_offset
 
@@ -363,8 +344,3 @@ class Dynamixel:
 
 
 __all__ = ["Dynamixel", "OperatingMode", "ReadAttribute"]
-
-# For direct Python imports and ROS relay script
-for name in ["Dynamixel", "OperatingMode", "ReadAttribute"]:
-    if name in locals():
-        globals()[name] = locals()[name]

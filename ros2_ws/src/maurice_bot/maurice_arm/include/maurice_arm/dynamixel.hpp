@@ -83,6 +83,12 @@ class Dynamixel {
 
    private:
     void connect();
+    // Write `value` (truncated to `num_bytes`) to a control-table register, throwing on failure.
+    void writeRegister(int motor_id, uint16_t address, uint32_t value, int num_bytes, const char* op_name);
+    // Throw a uniform runtime_error if a TxRx result is not COMM_SUCCESS.
+    void checkComm(int dxl_comm_result, int motor_id, const char* op_name);
+    // Reinterpret a 32-bit register value as a signed integer.
+    static int toSigned32(uint32_t value);
 
     Config config_;
     dynamixel::PortHandler* port_handler_;

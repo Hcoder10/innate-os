@@ -42,6 +42,7 @@ from tf2_ros import TransformException  # noqa: E402
 from tf2_ros.buffer import Buffer  # noqa: E402
 from tf2_ros.transform_listener import TransformListener  # noqa: E402
 
+from brain_client.geometry import quaternion_to_yaw  # noqa: E402
 from brain_client.hot_reload_watcher import HotReloadWatcher  # noqa: E402
 from brain_client.initializers import initialize_agents  # noqa: E402
 
@@ -242,7 +243,6 @@ class BrainClientNode(Node):
         self.image_buffer = deque(maxlen=self.image_buffer_max_size)
 
         self.get_logger().info(f"Starting BrainClientNode with ws_uri={self.ws_uri}")
-        self.get_logger().info("testing update")
         self.get_logger().info(f"Log everything mode: {self.log_everything}")
 
         # Initialize TF2 buffer and listener
@@ -381,7 +381,6 @@ class BrainClientNode(Node):
         # Pose stamping for local navigation compensation
         # Stores (x, y, theta) when an image is sent to the agent
         self.pose_at_image_send = None
-        self.image_at_send = None  # Store image for debug visualization
 
         self.agent_timer = self.create_timer(0.1, self.agent_loop_callback)
 
@@ -635,9 +634,7 @@ class BrainClientNode(Node):
                 pos = transform.transform.translation
                 ori = transform.transform.rotation
 
-            siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-            cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-            theta = math.atan2(siny_cosp, cosy_cosp)
+            theta = quaternion_to_yaw(ori)
             return (pos.x, pos.y, theta)
         except Exception:
             return None
@@ -725,53 +722,6 @@ class BrainClientNode(Node):
         )
 
         return adjusted_inputs
-
-    def _save_pose_compensation_debug(
-        self,
-        original_inputs: dict,
-        adjusted_inputs: dict,
-        delta: tuple[float, float, float],
-    ):
-        """Save debug images and info when pose compensation is applied."""
-        try:
-            import datetime
-
-            debug_dir = "/Users/axelpeytavin/Projects/innate-repos/innate-os/pose_debug"
-            os.makedirs(debug_dir, exist_ok=True)
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            delta_forward, delta_lateral, delta_theta = delta
-
-            # Save image from when command was sent
-            if self.image_at_send is not None:
-                cv2.imwrite(f"{debug_dir}/{timestamp}_1_image_at_send.jpg", self.image_at_send)
-
-            # Save current image
-            if self.last_image is not None:
-                cv2.imwrite(f"{debug_dir}/{timestamp}_2_image_now.jpg", self.last_image)
-
-            # Save compensation info to text file
-            with open(f"{debug_dir}/{timestamp}_info.txt", "w") as f:
-                f.write(f"Pose Compensation Debug - {timestamp}\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(f"Pose at image send: {self.pose_at_image_send}\n")
-                f.write(f"Pose now: {self._get_current_pose_xyt()}\n\n")
-                f.write("Delta (robot motion since image):\n")
-                f.write(f"  Forward: {delta_forward:.3f} m\n")
-                f.write(f"  Lateral: {delta_lateral:.3f} m\n")
-                f.write(f"  Rotation: {math.degrees(delta_theta):.1f} deg\n\n")
-                f.write("Original command:\n")
-                f.write(f"  x: {original_inputs.get('x', 0):.3f} m\n")
-                f.write(f"  y: {original_inputs.get('y', 0):.3f} m\n")
-                f.write(f"  theta: {math.degrees(original_inputs.get('theta', 0)):.1f} deg\n\n")
-                f.write("Adjusted command:\n")
-                f.write(f"  x: {adjusted_inputs.get('x', 0):.3f} m\n")
-                f.write(f"  y: {adjusted_inputs.get('y', 0):.3f} m\n")
-                f.write(f"  theta: {math.degrees(adjusted_inputs.get('theta', 0)):.1f} deg\n")
-
-            self.get_logger().info(f"[PoseCompensation] Debug saved to {debug_dir}/{timestamp}_*")
-        except Exception as e:
-            self.get_logger().warn(f"[PoseCompensation] Failed to save debug: {e}")
 
     def _get_pose_source(self, log_prefix: str = "") -> tuple[bool, tuple | None]:
         """
@@ -882,9 +832,7 @@ class BrainClientNode(Node):
         elif self.last_map is not None:
             map_data = self.last_map.data
             ori = self.last_map.info.origin.orientation
-            siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-            cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-            yaw = math.atan2(siny_cosp, cosy_cosp)
+            yaw = quaternion_to_yaw(ori)
 
             payload["map"] = {
                 "resolution": self.last_map.info.resolution,
@@ -909,9 +857,7 @@ class BrainClientNode(Node):
         pose_msg = pose_source[1]
         pos = pose_msg.pose.position
         ori = pose_msg.pose.orientation
-        siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-        cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-        theta = math.atan2(siny_cosp, cosy_cosp)
+        theta = quaternion_to_yaw(ori)
 
         robot_coords_payload = {
             "x": pos.x,
@@ -1224,13 +1170,6 @@ class BrainClientNode(Node):
                 # For simplicity, let's zero them or leave them default for now.
 
                 self.last_odom = odom_msg
-
-                # Calculate yaw (theta) from quaternion - this theta_degrees is not used here
-                ori = odom_msg.pose.pose.orientation
-                siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-                cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-                theta_radians = math.atan2(siny_cosp, cosy_cosp)
-                theta_degrees = math.degrees(theta_radians)  # noqa: F841
             else:
                 self.get_logger().warn(
                     f"Could not get transform from '{robot_base_frame}' to "
@@ -1335,10 +1274,7 @@ class BrainClientNode(Node):
                 return
 
             # Compute yaw from quaternion
-            siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-            cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-            theta = math.atan2(siny_cosp, cosy_cosp)
-            self.pos_data_xyt = (pos.x, pos.y, theta)
+            theta = quaternion_to_yaw(ori)
 
             # Create and send the pose_image message
             payload = {
@@ -1531,10 +1467,7 @@ class BrainClientNode(Node):
                     current_pose = self._get_current_pose_xyt()
                     if current_pose is not None:
                         delta = self._compute_pose_delta(self.pose_at_image_send, current_pose)
-                        original_inputs = task_inputs.copy()
                         task_inputs = self._adjust_local_nav_command(task_inputs, delta)
-                        # Save debug images for pose compensation visualization
-                        self._save_pose_compensation_debug(original_inputs, task_inputs, delta)
                     else:
                         self.get_logger().warn("[PoseCompensation] Could not get current pose for compensation")
 
@@ -1724,9 +1657,8 @@ class BrainClientNode(Node):
                         }
                         self.get_logger().debug("Including arm camera image in message")
 
-                # Store pose and image at send time for local nav compensation
+                # Store pose at send time for local nav compensation
                 self.pose_at_image_send = self._get_current_pose_xyt()
-                self.image_at_send = self.last_image.copy() if self.last_image is not None else None
 
                 # Build and send the message
                 image_msg = MessageIn(type=MessageInType.IMAGE, payload=payload)
@@ -1973,7 +1905,6 @@ class BrainClientNode(Node):
         self.get_logger().info(f"Registration response: {msg.payload}")
         if msg.payload.get("success", False):
             self.primitives_registered = True
-            self.directive_registered = True
             primitive_count = msg.payload.get("count", 0)
             directive_registered = msg.payload.get("directive_registered", False)
             self.get_logger().info(

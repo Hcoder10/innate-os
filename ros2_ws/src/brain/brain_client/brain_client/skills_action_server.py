@@ -36,6 +36,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from brain_client.camera_provider import CameraProvider
+from brain_client.geometry import quaternion_to_yaw
 from brain_client.head_interface import HeadInterface
 
 # Import skill loader and types
@@ -1136,9 +1137,7 @@ class SkillsActionServer(Node):
             if self.last_odom is not None:
                 pos = self.last_odom.pose.pose.position
                 ori = self.last_odom.pose.pose.orientation
-                siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
-                cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
-                theta = math.atan2(siny_cosp, cosy_cosp)
+                theta = quaternion_to_yaw(ori)
                 robot_state_to_inject[RobotStateType.LAST_ODOM.value] = {
                     "header": {
                         "stamp": {
@@ -1168,9 +1167,7 @@ class SkillsActionServer(Node):
             if self.last_map is not None:
                 map_data_bytes = np.array(self.last_map.data, dtype=np.int8).tobytes()
                 ori_map = self.last_map.info.origin.orientation
-                siny_cosp_map = 2.0 * (ori_map.w * ori_map.z + ori_map.x * ori_map.y)
-                cosy_cosp_map = 1.0 - 2.0 * (ori_map.y * ori_map.y + ori_map.z * ori_map.z)
-                yaw_map = math.atan2(siny_cosp_map, cosy_cosp_map)
+                yaw_map = quaternion_to_yaw(ori_map)
                 robot_state_to_inject[RobotStateType.LAST_MAP.value] = {
                     "header": {
                         "stamp": {

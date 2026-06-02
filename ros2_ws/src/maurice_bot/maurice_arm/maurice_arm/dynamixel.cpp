@@ -45,102 +45,82 @@ void Dynamixel::connect() {
     }
 }
 
-void Dynamixel::enableTorque(int motor_id) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write1ByteTxRx(port_handler_, motor_id, ADDR_TORQUE_ENABLE, 1, &dxl_error);
-
+void Dynamixel::checkComm(int dxl_comm_result, int motor_id, const char* op_name) {
     if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to enable torque for motor " + std::to_string(motor_id));
+        throw std::runtime_error(std::string("Failed to ") + op_name + " for motor " + std::to_string(motor_id));
     }
+}
+
+void Dynamixel::writeRegister(int motor_id, uint16_t address, uint32_t value, int num_bytes, const char* op_name) {
+    uint8_t dxl_error = 0;
+    int dxl_comm_result = COMM_SUCCESS;
+    switch (num_bytes) {
+        case 1:
+            dxl_comm_result = packet_handler_->write1ByteTxRx(port_handler_, motor_id, address,
+                                                              static_cast<uint8_t>(value), &dxl_error);
+            break;
+        case 2:
+            dxl_comm_result = packet_handler_->write2ByteTxRx(port_handler_, motor_id, address,
+                                                              static_cast<uint16_t>(value), &dxl_error);
+            break;
+        case 4:
+            dxl_comm_result = packet_handler_->write4ByteTxRx(port_handler_, motor_id, address, value, &dxl_error);
+            break;
+        default:
+            throw std::invalid_argument("Unsupported register width: " + std::to_string(num_bytes));
+    }
+    checkComm(dxl_comm_result, motor_id, op_name);
+}
+
+int Dynamixel::toSigned32(uint32_t value) {
+    int signed_value = static_cast<int>(value);
+    if (signed_value > (1LL << 31)) {
+        signed_value -= (1LL << 32);
+    }
+    return signed_value;
+}
+
+void Dynamixel::enableTorque(int motor_id) {
+    writeRegister(motor_id, ADDR_TORQUE_ENABLE, 1, 1, "enable torque");
 }
 
 void Dynamixel::disableTorque(int motor_id) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write1ByteTxRx(port_handler_, motor_id, ADDR_TORQUE_ENABLE, 0, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to disable torque for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_TORQUE_ENABLE, 0, 1, "disable torque");
 }
 
 void Dynamixel::setOperatingMode(int motor_id, OperatingMode mode) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write1ByteTxRx(port_handler_, motor_id, OPERATING_MODE_ADDR,
-                                                          static_cast<uint8_t>(mode), &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set operating mode for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, OPERATING_MODE_ADDR, static_cast<uint8_t>(mode), 1, "set operating mode");
 }
 
 void Dynamixel::setMinPositionLimit(int motor_id, int min_position) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_MIN_POSITION_LIMIT, min_position, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set min position limit for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_MIN_POSITION_LIMIT, min_position, 4, "set min position limit");
 }
 
 void Dynamixel::setMaxPositionLimit(int motor_id, int max_position) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_MAX_POSITION_LIMIT, max_position, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set max position limit for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_MAX_POSITION_LIMIT, max_position, 4, "set max position limit");
 }
 
 void Dynamixel::setPwmLimit(int motor_id, int limit) {
     if (limit < 0 || limit > 885) {
         throw std::invalid_argument("PWM limit must be between 0 and 885");
     }
-
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write2ByteTxRx(port_handler_, motor_id, ADDR_PWM_LIMIT, limit, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set PWM limit for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_PWM_LIMIT, limit, 2, "set PWM limit");
 }
 
 void Dynamixel::setCurrentLimit(int motor_id, int current_limit) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write2ByteTxRx(port_handler_, motor_id, ADDR_CURRENT_LIMIT, current_limit, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set current limit for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_CURRENT_LIMIT, current_limit, 2, "set current limit");
 }
 
 void Dynamixel::setP(int motor_id, int p) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write2ByteTxRx(port_handler_, motor_id, POSITION_P, p, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set P gain for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, POSITION_P, p, 2, "set P gain");
 }
 
 void Dynamixel::setI(int motor_id, int i) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write2ByteTxRx(port_handler_, motor_id, POSITION_I, i, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set I gain for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, POSITION_I, i, 2, "set I gain");
 }
 
 void Dynamixel::setD(int motor_id, int d) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->write2ByteTxRx(port_handler_, motor_id, POSITION_D, d, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set D gain for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, POSITION_D, d, 2, "set D gain");
 }
 
 void Dynamixel::syncWritePID(const std::vector<std::tuple<int, int, int, int, int, int>>& pid_data) {
@@ -213,81 +193,35 @@ void Dynamixel::syncWriteProfile(const std::vector<std::tuple<int, int, int>>& p
 }
 
 void Dynamixel::setHomeOffset(int motor_id, int home_position) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_HOMING_OFFSET, home_position, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set home offset for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_HOMING_OFFSET, home_position, 4, "set home offset");
 }
 
 void Dynamixel::setProfileVelocity(int motor_id, int velocity) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_PROFILE_VELOCITY, velocity, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set profile velocity for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_PROFILE_VELOCITY, velocity, 4, "set profile velocity");
 }
 
 void Dynamixel::setProfileAcceleration(int motor_id, int acceleration) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_PROFILE_ACCELERATION, acceleration, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set profile acceleration for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_PROFILE_ACCELERATION, acceleration, 4, "set profile acceleration");
 }
 
 int Dynamixel::readPosition(int motor_id) {
     uint32_t position = 0;
     uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->read4ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_POSITION, &position, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to read position for motor " + std::to_string(motor_id));
-    }
-
-    // Convert to signed
-    int signed_position = static_cast<int>(position);
-    if (signed_position > (1LL << 31)) {
-        signed_position -= (1LL << 32);
-    }
-
-    return signed_position;
+    checkComm(packet_handler_->read4ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_POSITION, &position, &dxl_error),
+              motor_id, "read position");
+    return toSigned32(position);
 }
 
 int Dynamixel::readVelocity(int motor_id) {
     uint32_t velocity = 0;
     uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->read4ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_VELOCITY, &velocity, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to read velocity for motor " + std::to_string(motor_id));
-    }
-
-    // Convert to signed
-    int signed_velocity = static_cast<int>(velocity);
-    if (signed_velocity > (1LL << 31)) {
-        signed_velocity -= (1LL << 32);
-    }
-
-    return signed_velocity;
+    checkComm(packet_handler_->read4ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_VELOCITY, &velocity, &dxl_error),
+              motor_id, "read velocity");
+    return toSigned32(velocity);
 }
 
 void Dynamixel::setGoalPosition(int motor_id, int goal_position) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write4ByteTxRx(port_handler_, motor_id, ADDR_GOAL_POSITION, goal_position, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set goal position for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_GOAL_POSITION, goal_position, 4, "set goal position");
 }
 
 void Dynamixel::reboot(int motor_id) {
@@ -302,48 +236,30 @@ void Dynamixel::reboot(int motor_id) {
 uint8_t Dynamixel::readHardwareErrorStatus(int motor_id) {
     uint8_t status = 0;
     uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->read1ByteTxRx(port_handler_, motor_id, ADDR_HARDWARE_ERROR_STATUS, &status, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to read hardware error status for motor " + std::to_string(motor_id));
-    }
-
+    checkComm(packet_handler_->read1ByteTxRx(port_handler_, motor_id, ADDR_HARDWARE_ERROR_STATUS, &status, &dxl_error),
+              motor_id, "read hardware error status");
     return status;
 }
 
 int16_t Dynamixel::readPresentLoad(int motor_id) {
     uint16_t load = 0;
     uint8_t dxl_error = 0;
-    int dxl_comm_result = packet_handler_->read2ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_LOAD, &load, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to read load for motor " + std::to_string(motor_id));
-    }
-
+    checkComm(packet_handler_->read2ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_LOAD, &load, &dxl_error), motor_id,
+              "read load");
     return static_cast<int16_t>(load);
 }
 
 uint8_t Dynamixel::readPresentTemperature(int motor_id) {
     uint8_t temperature = 0;
     uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->read1ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_TEMPERATURE, &temperature, &dxl_error);
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to read temperature for motor " + std::to_string(motor_id));
-    }
-
+    checkComm(
+        packet_handler_->read1ByteTxRx(port_handler_, motor_id, ADDR_PRESENT_TEMPERATURE, &temperature, &dxl_error),
+        motor_id, "read temperature");
     return temperature;
 }
 
 void Dynamixel::setReturnDelayTime(int motor_id, int value) {
-    uint8_t dxl_error = 0;
-    int dxl_comm_result =
-        packet_handler_->write1ByteTxRx(port_handler_, motor_id, ADDR_RETURN_DELAY_TIME, value, &dxl_error);
-    if (dxl_comm_result != COMM_SUCCESS) {
-        throw std::runtime_error("Failed to set return delay time for motor " + std::to_string(motor_id));
-    }
+    writeRegister(motor_id, ADDR_RETURN_DELAY_TIME, value, 1, "set return delay time");
 }
 
 }  // namespace maurice_arm

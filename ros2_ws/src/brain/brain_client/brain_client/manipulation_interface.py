@@ -124,26 +124,6 @@ class ManipulationInterface:
         """Store the latest arm state (includes effort/load)."""
         self._arm_state = msg
 
-    def get_motor_load(self) -> list[float] | None:
-        """
-        Get the current motor load/effort for all arm joints.
-
-        Returns:
-            List of 6 effort values (percentage, -100% to 100%)
-            or None if no arm state is available
-        """
-        self.spin_node_to_refresh_topics()
-
-        if self._arm_state is None:
-            self.logger.warn("No arm state available yet")
-            return None
-
-        if not self._arm_state.effort:
-            self.logger.warn("Arm state has no effort data")
-            return None
-
-        return list(self._arm_state.effort)
-
     def get_current_end_effector_pose(self) -> dict | None:
         """
         Get the current end-effector pose in Cartesian space.
@@ -466,114 +446,39 @@ class ManipulationInterface:
 
         return True
 
-    def get_joint_limits(self) -> dict:
-        """
-        Get the joint limits for the arm.
+    def _call_trigger(self, client, action_name: str, success_msg: str, timeout_sec: float = 2.0) -> bool:
+        """Call a std_srvs/Trigger service, log the outcome, and return whether it succeeded."""
+        if not client.service_is_ready():
+            self.logger.error(f"[ManipulationInterface] {action_name} service not ready")
+            return False
 
-        Returns:
-            Dictionary with joint limit information
-        """
-        # These could be loaded from URDF or config files
-        # For now, returning typical limits
-        return {
-            "joint1": {"min": -3.14, "max": 3.14},
-            "joint2": {"min": -1.57, "max": 1.22},
-            "joint3": {"min": -1.57, "max": 1.57},
-            "joint4": {"min": -1.57, "max": 1.57},
-            "joint5": {"min": -1.57, "max": 1.57},
-            "joint6": {"min": -1.57, "max": 1.57},
-        }
+        try:
+            future = client.call_async(Trigger.Request())
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
+            result = future.result()
+            if result is None:
+                self.logger.error(f"{action_name} service call timed out")
+                return False
+            if not result.success:
+                self.logger.error(f"{action_name} failed: {result.message}")
+                return False
+            self.logger.info(success_msg)
+            return True
+        except Exception as e:
+            self.logger.error(f"Exception calling {action_name}: {e}")
+            return False
 
     def torque_on(self) -> bool:
-        """
-        Enable torque on all arm motors.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self._torque_on_client.service_is_ready():
-            self.logger.error("[ManipulationInterface] Torque on service not ready")
-            return False
-
-        try:
-            request = Trigger.Request()
-            future = self._torque_on_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=2.0)
-            if future.result() is not None:
-                result = future.result()
-                if result.success:
-                    self.logger.info("Torque enabled on arm")
-                    return True
-                else:
-                    self.logger.error(f"Torque on failed: {result.message}")
-                    return False
-            else:
-                self.logger.error("Torque on service call timed out")
-                return False
-        except Exception as e:
-            self.logger.error(f"Exception calling torque_on: {e}")
-            return False
+        """Enable torque on all arm motors. Returns True if successful."""
+        return self._call_trigger(self._torque_on_client, "Torque on", "Torque enabled on arm")
 
     def torque_off(self) -> bool:
-        """
-        Disable torque on all arm motors (arm will be limp).
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self._torque_off_client.service_is_ready():
-            self.logger.error("[ManipulationInterface] Torque off service not ready")
-            return False
-
-        try:
-            request = Trigger.Request()
-            future = self._torque_off_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=2.0)
-            if future.result() is not None:
-                result = future.result()
-                if result.success:
-                    self.logger.info("Torque disabled on arm")
-                    return True
-                else:
-                    self.logger.error(f"Torque off failed: {result.message}")
-                    return False
-            else:
-                self.logger.error("Torque off service call timed out")
-                return False
-        except Exception as e:
-            self.logger.error(f"Exception calling torque_off: {e}")
-            return False
+        """Disable torque on all arm motors (arm will be limp). Returns True if successful."""
+        return self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
 
     def reboot_servos(self) -> bool:
-        """
-        Reboot all arm Dynamixel servos. This clears hardware errors
-        and reinitializes motor control state.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self._reboot_servos_client.service_is_ready():
-            self.logger.error("[ManipulationInterface] Reboot servos service not ready")
-            return False
-
-        try:
-            request = Trigger.Request()
-            future = self._reboot_servos_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
-            if future.result() is not None:
-                result = future.result()
-                if result.success:
-                    self.logger.info(f"Servos rebooted: {result.message}")
-                    return True
-                else:
-                    self.logger.error(f"Servo reboot failed: {result.message}")
-                    return False
-            else:
-                self.logger.error("Servo reboot service call timed out")
-                return False
-        except Exception as e:
-            self.logger.error(f"Exception calling reboot_servos: {e}")
-            return False
+        """Reboot all arm Dynamixel servos, clearing hardware errors. Returns True if successful."""
+        return self._call_trigger(self._reboot_servos_client, "Reboot servos", "Servos rebooted", timeout_sec=10.0)
 
     # Gripper position constants (radians)
     GRIPPER_CLOSED = 0.0

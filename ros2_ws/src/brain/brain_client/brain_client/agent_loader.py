@@ -221,26 +221,6 @@ class AgentLoader:
         self.logger.warning(f"Could not find agent '{agent_name}' in any directory")
         return None
 
-    def reload_agents_by_names(
-        self, agent_names: list[str], directories: list[str]
-    ) -> dict[str, tuple[type[Agent], Path]]:
-        """
-        Reload specific agents by name.
-
-        Args:
-            agent_names: List of agent names to reload
-            directories: List of directories to search
-
-        Returns:
-            Dictionary mapping agent names to (class, source_file) tuples
-        """
-        reloaded: dict[str, tuple[type[Agent], Path]] = {}
-        for name in agent_names:
-            entry = self.reload_agent_by_name(name, directories)
-            if entry is not None:
-                reloaded[name] = entry
-        return reloaded
-
     def load_agents_from_directories(self, directories: list[str]) -> dict[str, tuple[type[Agent], Path]]:
         """
         Load agents from multiple directories.
