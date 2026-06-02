@@ -29,13 +29,17 @@ steps:
 
   - id: run-tests
     name: gcr.io/cloud-builders/docker
-    env:
-      - INNATE_TEST_IMAGE=innate-os-test:latest
+    # Explicit --shm-size=2g: compose's shm_size is not honored by the Cloud Build
+    # daemon, and rmw_zenoh needs a large /dev/shm (~48 MiB POSIX shm per node).
+    # Keeps Zenoh SHM enabled (production parity). The image bakes in the test
+    # script + entrypoint (sources ROS); --rm cleans up the container.
     args:
-      - compose
-      - -f
-      - ci/docker-compose.test.yml
-      - up
-      - --abort-on-container-exit
-      - --exit-code-from
-      - integration-test
+      - run
+      - --rm
+      - --shm-size=2g
+      - -e
+      - INNATE_OS_ROOT=/root/innate-os
+      - -e
+      - SKIP_UPDATE_CHECK=1
+      - innate-os-test:latest
+      - run_integration_tests.sh
