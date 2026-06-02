@@ -96,7 +96,7 @@ ros-humble-message-filters
 
 # Arm, behavior, and support packages used by loaded skills and nodes
 ros-humble-dynamixel-sdk
-ros-humble-innate-rws
+ros-humble-innate-rws=2.2.0-0jammy
 ros-humble-moveit-msgs
 ros-humble-robot-state-publisher
 ros-humble-rosbridge-server
