@@ -1,0 +1,39 @@
+# Runs the innate-os integration tests on Google Cloud Build instead of a
+# self-hosted runner. Submitted by .github/workflows/integration-test.yml via
+# `gcloud builds submit` (GitHub Actions authenticates with Workload Identity
+# Federation — same setup as ci/cloudbuild.sim-images.yaml).
+#
+# It builds ci/Dockerfile.test and then runs the *same* test flow as a local
+# `docker compose -f ci/docker-compose.test.yml up`, so there is a single source
+# of truth for what "the tests" are.
+timeout: 3600s
+
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: "150"
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build-test-image
+    name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --progress=plain
+      - -t
+      - innate-os-test:latest
+      - -f
+      - ci/Dockerfile.test
+      - .
+
+  - id: run-tests
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        INNATE_TEST_IMAGE=innate-os-test:latest \
+          docker compose -f ci/docker-compose.test.yml up \
+            --abort-on-container-exit \
+            --exit-code-from integration-test
