@@ -234,8 +234,8 @@ export async function getAvailableAgentsDirect(
 
   return {
     agents,
-    current_agent_id: values.current_directive ?? null,
-    startup_agent_id: values.startup_directive ?? null,
+    current_agent_id: values.current_directive || null,
+    startup_agent_id: values.startup_directive || null,
   };
 }
 

@@ -156,7 +156,8 @@ class BrainClientNode(Node):
         )  # Default to sending single image
 
         # --- New: Brain active state flag ---
-        self.is_brain_active = False  # Brain starts active
+        self.is_brain_active = False
+        self._activate_when_directive_selected = False
 
         # --- New: Simulator mode parameter ---
         self.declare_parameter("simulator_mode", False)
@@ -2274,8 +2275,12 @@ class BrainClientNode(Node):
                 f"Successfully registered {primitive_count} primitives and directive: {directive_registered}"
             )
 
-            # Auto-activate brain in simulator mode
-            if self.simulator_mode and not self.is_brain_active:
+            # Auto-activate brain in simulator mode once a directive exists.
+            if (
+                self.simulator_mode
+                and self.current_directive is not None
+                and not self.is_brain_active
+            ):
                 self.get_logger().info(
                     "\033[1;92m[BrainClient] Auto-activating brain in simulator mode\033[0m"
                 )
@@ -2427,14 +2432,25 @@ class BrainClientNode(Node):
             )
             self.ws_bridge.send_message(reset_msg)
 
-            # Re-register primitives and directive with the server to update
-            self.register_primitives_and_directive()
+            should_activate = (
+                self._activate_when_directive_selected and not self.is_brain_active
+            )
+            self._activate_when_directive_selected = False
 
-            # Activate input devices required by this directive
-            self.activate_directive_inputs()
+            if should_activate:
+                self.get_logger().info(
+                    "\033[1;92m[BrainClient] Activating brain after directive selection\033[0m"
+                )
+                self._reactivate_brain()
+            else:
+                # Re-register primitives and directive with the server to update
+                self.register_primitives_and_directive()
 
-            # Update gaze tracker for new directive
-            self._update_gaze_tracker()
+                # Activate input devices required by this directive
+                self.activate_directive_inputs()
+
+                # Update gaze tracker for new directive
+                self._update_gaze_tracker()
 
             # Publish confirmation
             chat_entry = {
@@ -2478,7 +2494,9 @@ class BrainClientNode(Node):
 
         # Convert the detailed info to JSON string for the directives field
         response.directives = [json.dumps(directive_details)]
-        response.current_directive = self.current_directive.id
+        response.current_directive = (
+            self.current_directive.id if self.current_directive else ""
+        )
 
         return response
 
@@ -2755,6 +2773,10 @@ class BrainClientNode(Node):
             # Deactivate brain: stops agent loop, cancels running primitive
             self._deactivate_brain()
 
+            previous_directive_id = (
+                self.current_directive.id if self.current_directive else None
+            )
+
             # Clear current state so queries during reload return empty
             self.directives = {}
             self.primitives_dict = {}
@@ -2795,9 +2817,11 @@ class BrainClientNode(Node):
                 )
 
             # Reload directives locally
-            self.directives, self.current_directive = initialize_agents(
+            self.directives, _ = initialize_agents(
                 self.get_logger(), self.primitives_dict
             )
+            if previous_directive_id in self.directives:
+                self.current_directive = self.directives[previous_directive_id]
 
             # Re-register with server
             self.register_primitives_and_directive()
@@ -2817,6 +2841,7 @@ class BrainClientNode(Node):
         """Deactivates the brain's main operational loops and interactions."""
         self.get_logger().info("\033[1;93m[BrainClient] Deactivating brain...\033[0m")
         self.is_brain_active = False
+        self._activate_when_directive_selected = False
         self._stop_brain_subscriptions()
 
         # Stop timers
@@ -2891,8 +2916,8 @@ class BrainClientNode(Node):
             self.get_logger().warn(
                 "\033[1;93m[BrainClient] No directive configured. Brain remains inactive.\033[0m"
             )
-            return
-        
+            return False
+
         self.is_brain_active = True
         self._start_brain_subscriptions()
 
@@ -2933,20 +2958,32 @@ class BrainClientNode(Node):
         self.get_logger().info(
             "\033[1;92m[BrainClient] Brain reactivated and reset initiated.\033[0m"
         )
+        return True
 
     def handle_set_brain_active(self, request, response):
         """Service handler for activating or deactivating the brain."""
         if request.data:  # True means activate
+            if self.current_directive is None:
+                self._activate_when_directive_selected = True
+                msg = "No directive selected. Brain will activate after an agent is selected."
+                self.get_logger().warn(msg)
+                response.success = True
+                response.message = msg
+                return response
             if self.is_brain_active:
                 msg = "Brain is already active."
                 self.get_logger().info(msg)
                 response.success = True
                 response.message = msg
             else:
-                self._reactivate_brain()
-                response.success = True
-                response.message = "Brain reactivated and reset initiated."
+                response.success = self._reactivate_brain()
+                response.message = (
+                    "Brain reactivated and reset initiated."
+                    if response.success
+                    else "No directive selected. Select an agent before activating the brain."
+                )
         else:  # False means deactivate
+            self._activate_when_directive_selected = False
             if not self.is_brain_active:
                 msg = "Brain is already inactive."
                 self.get_logger().info(msg)
