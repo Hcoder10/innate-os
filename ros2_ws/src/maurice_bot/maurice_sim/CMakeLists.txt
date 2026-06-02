@@ -15,18 +15,6 @@ install(
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install launch files
-install(
-  DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-
-# Install config files
-install(
-  DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
 # Install URDF files
 install(
   DIRECTORY urdf
@@ -37,25 +25,6 @@ install(
 install(
   DIRECTORY meshes
   DESTINATION share/${PROJECT_NAME}
-)
-
-# Install worlds files
-install(
-  DIRECTORY worlds
-  DESTINATION share/${PROJECT_NAME}
-)
-
-# Install mjcf files
-install(
-  DIRECTORY mjcf
-  DESTINATION share/${PROJECT_NAME}
-)
-
-# Install programs
-install(
-  PROGRAMS
-    maurice_sim/sim.py
-  DESTINATION lib/${PROJECT_NAME}
 )
 
 # Tests
