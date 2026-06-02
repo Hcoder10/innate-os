@@ -70,7 +70,6 @@ install(DIRECTORY include/
 # Install Python files
 install(FILES
   maurice_arm/__init__.py
-  maurice_arm/arm_utils.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -85,7 +84,6 @@ install(
 
 # Make Python files executable
 install(PROGRAMS
-  maurice_arm/arm_utils.py
   maurice_arm/ik.py
   maurice_arm/pid_hot_reload.py
   DESTINATION lib/${PROJECT_NAME}

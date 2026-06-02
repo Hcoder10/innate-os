@@ -1,0 +1,45 @@
+# Runs the innate-os integration tests on Google Cloud Build instead of a
+# self-hosted runner. Submitted by .github/workflows/integration-test.yml via
+# `gcloud builds submit` (GitHub Actions authenticates with Workload Identity
+# Federation — same setup as ci/cloudbuild.sim-images.yaml).
+#
+# It builds ci/Dockerfile.test and then runs the *same* test flow as a local
+# `docker compose -f ci/docker-compose.test.yml up`, so there is a single source
+# of truth for what "the tests" are.
+timeout: 3600s
+
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: "150"
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build-test-image
+    name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --progress=plain
+      - -t
+      - innate-os-test:latest
+      - -f
+      - ci/Dockerfile.test
+      - .
+
+  - id: run-tests
+    name: gcr.io/cloud-builders/docker
+    # Explicit --shm-size=2g: compose's shm_size is not honored by the Cloud Build
+    # daemon, and rmw_zenoh needs a large /dev/shm (~48 MiB POSIX shm per node).
+    # Keeps Zenoh SHM enabled (production parity). The image bakes in the test
+    # script + entrypoint (sources ROS); --rm cleans up the container.
+    args:
+      - run
+      - --rm
+      - --shm-size=2g
+      - -e
+      - INNATE_OS_ROOT=/root/innate-os
+      - -e
+      - SKIP_UPDATE_CHECK=1
+      - innate-os-test:latest
+      - run_integration_tests.sh

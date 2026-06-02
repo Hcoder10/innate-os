@@ -17,11 +17,9 @@ import statistics
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
-
 from innate_proxy import ProxyClient
 
 load_dotenv()
@@ -58,12 +56,12 @@ class RunResult:
 @dataclass
 class BenchGroup:
     label: str
-    results: List[RunResult] = field(default_factory=list)
+    results: list[RunResult] = field(default_factory=list)
 
     def add(self, r: RunResult) -> None:
         self.results.append(r)
 
-    def summary(self) -> Dict[str, str]:
+    def summary(self) -> dict[str, str]:
         if not self.results:
             return {}
         ttfbs = [r.ttfb for r in self.results]
@@ -95,7 +93,7 @@ class BenchGroup:
 async def _tts_request(
     http: httpx.AsyncClient,
     url: str,
-    headers: Dict[str, str],
+    headers: dict[str, str],
     text: str,
 ) -> RunResult:
     """Single streaming TTS request, returns timing stats."""
@@ -124,7 +122,7 @@ async def _tts_request(
     )
 
 
-def _print_table(groups: List[BenchGroup]) -> None:
+def _print_table(groups: list[BenchGroup]) -> None:
     """Pretty-print a comparison table."""
     col_w = 36
     header = "  " + "".join(g.label.ljust(col_w) for g in groups)
@@ -177,7 +175,7 @@ async def main() -> None:
 
         print(f"\n{'═' * 60}")
         print(f"  {label.upper()} TEXT  ({len(text)} chars, {runs} runs)")
-        print(f"  \"{text[:60]}{'…' if len(text) > 60 else ''}\"")
+        print(f'  "{text[:60]}{"…" if len(text) > 60 else ""}"')
         print(f"{'═' * 60}\n")
 
         # Use persistent connections (one client per target) to

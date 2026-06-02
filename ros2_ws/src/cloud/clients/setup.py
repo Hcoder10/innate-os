@@ -1,5 +1,6 @@
 import glob
-from setuptools import setup, find_packages
+
+from setuptools import setup
 
 package_name = "cloud_clients"
 
@@ -9,9 +10,7 @@ package_name = "cloud_clients"
 _static_root = "training-manager/training_manager/static"
 _static_files = glob.glob(f"{_static_root}/**/*", recursive=True)
 _package_data_static = [
-    f.replace("training-manager/training_manager/", "")
-    for f in _static_files
-    if not f.endswith("/")
+    f.replace("training-manager/training_manager/", "") for f in _static_files if not f.endswith("/")
 ]
 
 setup(

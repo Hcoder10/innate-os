@@ -78,14 +78,10 @@ class SkillLoader:
             spec.loader.exec_module(module)
         except ModuleNotFoundError as e:
             missing = e.name or str(e)
-            self.logger.warning(
-                f"Skipping skill module {module_name}: missing dependency '{missing}'"
-            )
+            self.logger.warning(f"Skipping skill module {module_name}: missing dependency '{missing}'")
             return skills
         except ImportError as e:
-            self.logger.warning(
-                f"Skipping skill module {module_name}: import failed ({e})"
-            )
+            self.logger.warning(f"Skipping skill module {module_name}: import failed ({e})")
             return skills
         except Exception as e:
             self.logger.error(f"Error executing module {module_name}: {e}")

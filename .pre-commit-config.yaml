@@ -1,0 +1,20 @@
+# Pre-commit hooks for innate-os.
+#
+# Mirrors the ruff checks enforced in CI (.github/workflows/format.yml) so
+# violations are caught locally before they reach a PR. The ruff version is
+# pinned here and in the CI workflow to keep local and CI results identical.
+#
+# One-time setup:
+#   pip install pre-commit
+#   pre-commit install            # run automatically on `git commit`
+# Run manually across the whole repo:
+#   pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.15
+    hooks:
+      # Lint (auto-fixes what it safely can, then fails so you re-stage).
+      - id: ruff
+        args: [--fix]
+      # Format.
+      - id: ruff-format

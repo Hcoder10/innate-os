@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-import os, re, math, tempfile, numpy as np, xml.etree.ElementTree as ET
+import math
+import os
+import re
+import tempfile
+
+import fcl
+import numpy as np
+import PyKDL as kdl
 import rclpy
+import trimesh
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from ament_index_python.packages import get_package_share_directory
-from urdf_parser_py.urdf import URDF, Mesh as URDFMesh
+from urdf_parser_py.urdf import URDF
+from urdf_parser_py.urdf import Mesh as URDFMesh
+
 from maurice_arm.urdf import treeFromUrdfModel  # your local URDF→KDL parser
-import PyKDL as kdl
-import trimesh
-import fcl
 
 # ------------------ CONFIG ------------------
-URDF_PATH   = "/home/vignesh/maurice-prod/ros2_ws/src/maurice_bot/maurice_sim/urdf/maurice.urdf"
-BASE_LINK   = "base_link"
+URDF_PATH = "/home/vignesh/maurice-prod/ros2_ws/src/maurice_bot/maurice_sim/urdf/maurice.urdf"
+BASE_LINK = "base_link"
 LINK_A_NAME = "base_link"
 LINK_B_NAME = "link5"
 JOINT_TOPIC = "/mars/arm/state"
-TIMER_HZ    = 1.0
+TIMER_HZ = 1.0
 # -------------------------------------------
+
 
 def resolve_package_uris(text: str) -> str:
     def repl(m):
@@ -26,40 +34,48 @@ def resolve_package_uris(text: str) -> str:
             base = get_package_share_directory(pkg)
         except Exception:
             return m.group(0)
-        return os.path.join(base, rest.lstrip('/')).replace('\\', '/')
+        return os.path.join(base, rest.lstrip("/")).replace("\\", "/")
+
     return re.sub(r'package://([A-Za-z0-9_\-]+)/([^"\'\s<]+)', repl, text)
+
 
 def rpy_to_rot(r, p, y):
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
     cy, sy = math.cos(y), math.sin(y)
     # URDF uses extrinsic XYZ (roll,pitch,yaw) == intrinsic ZYX
-    return np.array([
-        [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr],
-        [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr],
-        [ -sp ,        cp*sr    ,        cp*cr    ],
-    ], dtype=np.float64)
+    return np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ],
+        dtype=np.float64,
+    )
+
 
 def mat4_from_xyz_rpy(xyz, rpy):
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = rpy_to_rot(rpy[0], rpy[1], rpy[2])
-    T[:3, 3]  = xyz
+    T[:3, 3] = xyz
     return T
+
 
 def transform_vertices(V, T4):
     Vh = np.c_[V, np.ones((V.shape[0], 1), dtype=np.float64)]
     return (T4 @ Vh.T).T[:, :3]
 
+
 class KDLFCLDistanceNode(Node):
     def __init__(self):
-        super().__init__('kdl_fcl_distance_node')
+        super().__init__("kdl_fcl_distance_node")
 
         # -------- Load URDF (resolved paths) --------
-        with open(URDF_PATH, 'r') as f:
+        with open(URDF_PATH) as f:
             resolved = resolve_package_uris(f.read())
-        tmp_dir = tempfile.mkdtemp(prefix='urdf_resolved_')
-        self.urdf_resolved_path = os.path.join(tmp_dir, 'robot_resolved.urdf')
-        with open(self.urdf_resolved_path, 'w') as f:
+        tmp_dir = tempfile.mkdtemp(prefix="urdf_resolved_")
+        self.urdf_resolved_path = os.path.join(tmp_dir, "robot_resolved.urdf")
+        with open(self.urdf_resolved_path, "w") as f:
             f.write(resolved)
 
         self.robot_model = URDF.from_xml_file(self.urdf_resolved_path)
@@ -82,7 +98,7 @@ class KDLFCLDistanceNode(Node):
 
         # -------- Build FCL BVHs for the two links --------
         self._mesh_cache = {}
-        
+
         print("=== BUILDING COLLISION MODELS ===")
         # Create BVH models first, then collision objects
         self.bvh_A = self._build_link_bvh(LINK_A_NAME)
@@ -90,12 +106,12 @@ class KDLFCLDistanceNode(Node):
         # Also build link2 for visualization
         self.bvh_link2 = self._build_link_bvh("link2")
         print("=== COLLISION MODELS BUILT ===")
-        
+
         # Export collision meshes as STL files for visualization
         print("=== EXPORTING FCL MESHES ===")
         self.export_fcl_meshes()
         print("=== EXPORT COMPLETE ===")
-        
+
         # Create collision objects with identity transforms initially
         self.co_A = fcl.CollisionObject(self.bvh_A)
         self.co_B = fcl.CollisionObject(self.bvh_B)
@@ -105,9 +121,7 @@ class KDLFCLDistanceNode(Node):
         self.create_subscription(JointState, JOINT_TOPIC, self._on_joint, 10)
         self.create_timer(1.0 / TIMER_HZ, self._on_timer)
 
-        self.get_logger().info(
-            f"Ready. KDL FK + FCL distance: {LINK_A_NAME} ↔ {LINK_B_NAME} @ {TIMER_HZ:.1f} Hz"
-        )
+        self.get_logger().info(f"Ready. KDL FK + FCL distance: {LINK_A_NAME} ↔ {LINK_B_NAME} @ {TIMER_HZ:.1f} Hz")
 
     # ---------- KDL helpers ----------
     def _make_chain(self, base: str, tip: str):
@@ -116,7 +130,7 @@ class KDLFCLDistanceNode(Node):
         try:
             return self.kdl_tree.getChain(base, tip)
         except Exception:
-            raise ValueError(f"KDL chain not found: {base} -> {tip}")
+            raise ValueError(f"KDL chain not found: {base} -> {tip}")  # noqa: B904
 
     @staticmethod
     def _chain_joint_names(chain: kdl.Chain | None):
@@ -134,58 +148,59 @@ class KDLFCLDistanceNode(Node):
         qa = kdl.JntArray(len(chain_names))
         if not chain_names:
             return qa  # size 0 for identity
-        name_to_pos = dict(zip(joint_msg.name, joint_msg.position))
+        name_to_pos = dict(zip(joint_msg.name, joint_msg.position))  # noqa: B905
         for i, name in enumerate(chain_names):
             qa[i] = float(name_to_pos.get(name, 0.0))
         return qa
 
     @staticmethod
     def _frame_to_mat4(F: kdl.Frame):
-        R = np.array([[F.M[0,0], F.M[0,1], F.M[0,2]],
-                      [F.M[1,0], F.M[1,1], F.M[1,2]],
-                      [F.M[2,0], F.M[2,1], F.M[2,2]]], dtype=np.float64)
+        R = np.array(
+            [[F.M[0, 0], F.M[0, 1], F.M[0, 2]], [F.M[1, 0], F.M[1, 1], F.M[1, 2]], [F.M[2, 0], F.M[2, 1], F.M[2, 2]]],
+            dtype=np.float64,
+        )
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = R
-        T[:3, 3]  = [F.p[0], F.p[1], F.p[2]]
+        T[:3, 3] = [F.p[0], F.p[1], F.p[2]]
         return T
 
     def export_fcl_meshes(self):
         """Export FCL collision objects as STL files for visualization."""
-        
+
         # Extract vertices and faces from FCL BVH models
         for name in [LINK_A_NAME, LINK_B_NAME, "link2"]:
             try:
-                link = next((l for l in self.robot_model.links if l.name == name), None)
+                link = next((l for l in self.robot_model.links if l.name == name), None)  # noqa: E741
                 if link and link.collisions:
                     for i, col in enumerate(link.collisions):
                         if isinstance(col.geometry, URDFMesh):
                             V, F = self._load_mesh(col.geometry.filename)
-                            
+
                             # Apply same transforms as in _build_link_bvh
-                            scale = np.array(col.geometry.scale if col.geometry.scale else [1,1,1])
-                            V = V * scale.reshape(1,3)
-                            
-                            xyz = np.array(col.origin.xyz if col.origin else [0,0,0])
-                            rpy = np.array(col.origin.rpy if col.origin else [0,0,0])
+                            scale = np.array(col.geometry.scale if col.geometry.scale else [1, 1, 1])
+                            V = V * scale.reshape(1, 3)
+
+                            xyz = np.array(col.origin.xyz if col.origin else [0, 0, 0])
+                            rpy = np.array(col.origin.rpy if col.origin else [0, 0, 0])
                             T_local = mat4_from_xyz_rpy(xyz, rpy)
                             V = transform_vertices(V, T_local)
-                            
+
                             # Create trimesh and save
                             mesh = trimesh.Trimesh(vertices=V, faces=F)
                             filename = f"fcl_{name}_collision_{i}.stl"
                             mesh.export(filename)
                             print(f"Exported {filename}")
-                            
+
                             # Also print some info about the exported mesh
                             print(f"  Vertices: {V.shape[0]}, Faces: {F.shape[0]}")
                             print(f"  Bounds: {np.min(V, axis=0)} to {np.max(V, axis=0)}")
-                            
+
             except Exception as e:
                 print(f"Failed to export {name}: {e}")
 
     def export_transformed_meshes(self, T_A, T_B):
         """Export collision meshes in their current world transforms."""
-        
+
         # Compute FK for link2 as well
         chain_link2 = self._make_chain(BASE_LINK, "link2")
         if chain_link2 is None:
@@ -200,42 +215,42 @@ class KDLFCLDistanceNode(Node):
                 T_link2 = np.eye(4, dtype=np.float64)
             else:
                 T_link2 = self._frame_to_mat4(F_link2)
-        
+
         # Include all links with their transforms
         transforms = {
             "base_link": np.eye(4, dtype=np.float64),  # Base link is at world origin
-            LINK_A_NAME: T_A, 
+            LINK_A_NAME: T_A,
             "link2": T_link2,
-            LINK_B_NAME: T_B
+            LINK_B_NAME: T_B,
         }
-        
+
         for name, T in transforms.items():
             try:
-                link = next((l for l in self.robot_model.links if l.name == name), None)
+                link = next((l for l in self.robot_model.links if l.name == name), None)  # noqa: E741
                 if link and link.collisions:
                     for i, col in enumerate(link.collisions):
                         if isinstance(col.geometry, URDFMesh):
                             V, F = self._load_mesh(col.geometry.filename)
-                            
+
                             # Apply local transforms (same as in _build_link_bvh)
-                            scale = np.array(col.geometry.scale if col.geometry.scale else [1,1,1])
-                            V = V * scale.reshape(1,3)
-                            
-                            xyz = np.array(col.origin.xyz if col.origin else [0,0,0])
-                            rpy = np.array(col.origin.rpy if col.origin else [0,0,0])
+                            scale = np.array(col.geometry.scale if col.geometry.scale else [1, 1, 1])
+                            V = V * scale.reshape(1, 3)
+
+                            xyz = np.array(col.origin.xyz if col.origin else [0, 0, 0])
+                            rpy = np.array(col.origin.rpy if col.origin else [0, 0, 0])
                             T_local = mat4_from_xyz_rpy(xyz, rpy)
                             V = transform_vertices(V, T_local)
-                            
+
                             # Apply world transform (FK result)
                             V = transform_vertices(V, T)
-                            
+
                             # Create and save mesh
                             mesh = trimesh.Trimesh(vertices=V, faces=F)
                             filename = f"world_{name}_collision_{i}.stl"
                             mesh.export(filename)
                             print(f"Exported world position: {filename}")
                             print(f"  World bounds: {np.min(V, axis=0)} to {np.max(V, axis=0)}")
-                            
+
             except Exception as e:
                 print(f"Failed to export world {name}: {e}")
 
@@ -243,7 +258,7 @@ class KDLFCLDistanceNode(Node):
     def _build_link_bvh(self, link_name: str):
         print(f"\n--- Building BVH for {link_name} ---")
         # find link
-        link = next((l for l in self.robot_model.links if l.name == link_name), None)
+        link = next((l for l in self.robot_model.links if l.name == link_name), None)  # noqa: E741
         if link is None:
             self.get_logger().warn(f"Link '{link_name}' not in URDF; creating empty BVH.")
             bvh = fcl.BVHModel()
@@ -261,20 +276,20 @@ class KDLFCLDistanceNode(Node):
                     # (optional) handle primitives: box/sphere/cylinder → FCL primitives
                     continue
                 filename = geom.filename
-                scale = np.array(geom.scale if geom.scale is not None else [1,1,1], dtype=np.float64)
+                scale = np.array(geom.scale if geom.scale is not None else [1, 1, 1], dtype=np.float64)
 
                 V, F = self._load_mesh(filename)
                 print(f"Raw mesh bounds for {link_name}: {np.min(V, axis=0)} to {np.max(V, axis=0)}")
-                
+
                 # Apply mesh scale from URDF
-                V = V * scale.reshape(1,3)
+                V = V * scale.reshape(1, 3)
                 print(f"After scale: {np.min(V, axis=0)} to {np.max(V, axis=0)}")
 
                 # origin is urdf_parser_py.Pose(xyz, rpy)
-                xyz = np.array(col.origin.xyz if col.origin else [0,0,0], dtype=np.float64)
-                rpy = np.array(col.origin.rpy if col.origin else [0,0,0], dtype=np.float64)
+                xyz = np.array(col.origin.xyz if col.origin else [0, 0, 0], dtype=np.float64)
+                rpy = np.array(col.origin.rpy if col.origin else [0, 0, 0], dtype=np.float64)
                 print(f"Collision origin offset: xyz={xyz}, rpy={rpy}")
-                
+
                 T_local = mat4_from_xyz_rpy(xyz, rpy)
                 V = transform_vertices(V, T_local)
                 print(f"After local transform: {np.min(V, axis=0)} to {np.max(V, axis=0)}")
@@ -291,9 +306,9 @@ class KDLFCLDistanceNode(Node):
 
         V_all = np.vstack(all_V).astype(np.float64, copy=False)
         F_all = np.vstack(all_F).astype(np.int32, copy=False)
-        
+
         print(f"Final {link_name} collision mesh bounds: {np.min(V_all, axis=0)} to {np.max(V_all, axis=0)}")
-        
+
         # Check distance from origin
         min_dist_to_origin = np.min(np.linalg.norm(V_all, axis=1))
         print(f"Minimum distance from {link_name} collision geometry to origin: {min_dist_to_origin:.6f} m")
@@ -308,10 +323,12 @@ class KDLFCLDistanceNode(Node):
     # ---------- URDF mesh → FCL ----------
     def _build_link_fcl(self, link_name: str):
         # find link
-        link = next((l for l in self.robot_model.links if l.name == link_name), None)
+        link = next((l for l in self.robot_model.links if l.name == link_name), None)  # noqa: E741
         if link is None:
             self.get_logger().warn(f"Link '{link_name}' not in URDF; creating empty FCL object.")
-            bvh = fcl.BVHModel(); bvh.beginModel(0, 0); bvh.endModel()
+            bvh = fcl.BVHModel()
+            bvh.beginModel(0, 0)
+            bvh.endModel()
             return fcl.CollisionObject(bvh, np.eye(4))
 
         all_V, all_F, v_ofs = [], [], 0
@@ -324,14 +341,14 @@ class KDLFCLDistanceNode(Node):
                     # (optional) handle primitives: box/sphere/cylinder → FCL primitives
                     continue
                 filename = geom.filename
-                scale = np.array(geom.scale if geom.scale is not None else [1,1,1], dtype=np.float64)
+                scale = np.array(geom.scale if geom.scale is not None else [1, 1, 1], dtype=np.float64)
 
                 V, F = self._load_mesh(filename)
-                V = V * scale.reshape(1,3)
+                V = V * scale.reshape(1, 3)
 
                 # origin is urdf_parser_py.Pose(xyz, rpy)
-                xyz = np.array(col.origin.xyz if col.origin else [0,0,0], dtype=np.float64)
-                rpy = np.array(col.origin.rpy if col.origin else [0,0,0], dtype=np.float64)
+                xyz = np.array(col.origin.xyz if col.origin else [0, 0, 0], dtype=np.float64)
+                rpy = np.array(col.origin.rpy if col.origin else [0, 0, 0], dtype=np.float64)
                 T_local = mat4_from_xyz_rpy(xyz, rpy)
                 V = transform_vertices(V, T_local)
 
@@ -340,7 +357,9 @@ class KDLFCLDistanceNode(Node):
                 v_ofs += V.shape[0]
 
         if not all_V:
-            bvh = fcl.BVHModel(); bvh.beginModel(0, 0); bvh.endModel()
+            bvh = fcl.BVHModel()
+            bvh.beginModel(0, 0)
+            bvh.endModel()
             return fcl.CollisionObject(bvh, np.eye(4))
 
         V_all = np.vstack(all_V).astype(np.float64, copy=False)
@@ -358,12 +377,12 @@ class KDLFCLDistanceNode(Node):
             self._mesh_cache = {}
         if filename in self._mesh_cache:
             return self._mesh_cache[filename]
-        m = trimesh.load(filename, force='mesh')
+        m = trimesh.load(filename, force="mesh")
         if not isinstance(m, trimesh.Trimesh):
             m = trimesh.util.concatenate(m.dump())
         V = np.asarray(m.vertices, dtype=np.float64)
         F = np.asarray(m.faces, dtype=np.int32)
-        
+
         # Debug: Print mesh bounds
         bounds = m.bounds
         size = bounds[1] - bounds[0]
@@ -371,40 +390,40 @@ class KDLFCLDistanceNode(Node):
         print(f"  Bounds: {bounds}")
         print(f"  Size: {size}")
         print(f"  Max dimension: {np.max(size):.4f}")
-        
+
         self._mesh_cache[filename] = (V, F)
         return V, F
 
     def get_true_distance(self, co_A, co_B):
         """Get the true distance between two collision objects, handling FCL's collision detection quirks."""
-        
+
         # Try distance query first
         req = fcl.DistanceRequest()
         req.enable_nearest_points = True
         req.enable_signed_distance = True
         req.rel_err = 0.0
         req.abs_err = 0.0
-        
+
         res = fcl.DistanceResult()
-        
+
         try:
             fcl_dist = fcl.distance(co_A, co_B, req, res)
         except Exception:
             return None, None, None
-            
+
         # Check for collision
         col_req = fcl.CollisionRequest()
         col_res = fcl.CollisionResult()
         is_colliding = fcl.collide(co_A, co_B, col_req, col_res)
-        
+
         # Get nearest points
         nearest_points = None
         manual_dist = None
-        if hasattr(res, 'nearest_points') and res.nearest_points:
+        if hasattr(res, "nearest_points") and res.nearest_points:
             pa, pb = res.nearest_points
             nearest_points = (pa, pb)
             manual_dist = np.linalg.norm(pa - pb)
-        
+
         # Determine the true distance
         if is_colliding and fcl_dist == 0.0 and manual_dist is not None:
             # FCL thinks they're colliding but nearest points show they're close
@@ -418,7 +437,7 @@ class KDLFCLDistanceNode(Node):
             # Normal case
             true_dist = fcl_dist
             status = "NORMAL"
-            
+
         return true_dist, nearest_points, status
 
     # ---------- ROS callbacks ----------
@@ -459,7 +478,7 @@ class KDLFCLDistanceNode(Node):
         origin_A = T_A[:3, 3]
         origin_B = T_B[:3, 3]
         origin_dist = np.linalg.norm(origin_B - origin_A)
-        
+
         print(f"Link origins distance: {origin_dist:.4f} m")
         print(f"  {LINK_A_NAME} origin: {np.array2string(origin_A, precision=4)}")
         print(f"  {LINK_B_NAME} origin: {np.array2string(origin_B, precision=4)}")
@@ -473,7 +492,7 @@ class KDLFCLDistanceNode(Node):
             self.co_B.setTransform(T_B)
 
         # Export world-positioned meshes once for visualization
-        if not hasattr(self, '_exported_world'):
+        if not hasattr(self, "_exported_world"):
             print("=== EXPORTING WORLD-POSITIONED MESHES ===")
             self.export_transformed_meshes(T_A, T_B)
             print("=== WORLD EXPORT COMPLETE ===")
@@ -481,18 +500,19 @@ class KDLFCLDistanceNode(Node):
 
         # Get true distance using our custom function
         true_dist, nearest_points, status = self.get_true_distance(self.co_A, self.co_B)
-        
+
         if true_dist is not None:
             print(f"Surface distance: {true_dist:.6f} m ({status})")
-            
+
             if nearest_points:
                 pa, pb = nearest_points
                 print(f"  {LINK_A_NAME} surface: {np.array2string(pa, precision=4)}")
                 print(f"  {LINK_B_NAME} surface: {np.array2string(pb, precision=4)}")
         else:
-            print(f"[ERROR] Failed to compute distance")
-        
+            print("[ERROR] Failed to compute distance")
+
         print("---")
+
 
 def main():
     rclpy.init()
@@ -505,5 +525,6 @@ def main():
         node.destroy_node()
         rclpy.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

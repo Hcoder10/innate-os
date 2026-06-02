@@ -7,7 +7,6 @@ Loads .env file and provides access to environment variables.
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
     import tomllib
@@ -34,14 +33,13 @@ def _load_key_value_env(path: Path) -> None:
     with f:
         for line in f:
             line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
                 key = key.strip()
                 if key in ENV_KEYS_MOVED_TO_OS_CONFIG:
                     continue
                 value = value.strip()
-                if (value.startswith('"') and value.endswith('"')) or \
-                   (value.startswith("'") and value.endswith("'")):
+                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
                     value = value[1:-1]
                 os.environ[key] = value
 
@@ -78,11 +76,7 @@ def _strip_toml_comment(value: str) -> str:
 
 def _parse_toml_scalar(raw_value: str):
     value = _strip_toml_comment(raw_value).strip()
-    if (
-        len(value) >= 2
-        and value[0] == value[-1]
-        and value[0] in {"'", '"'}
-    ):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     lowered = value.lower()
     if lowered == "true":
@@ -151,19 +145,16 @@ def _load_os_config(path: Path) -> None:
         os.environ.setdefault("CARTESIA_VOICE_ID", cartesia_voice_id.strip())
 
 
-def load_env_file(env_path: Optional[Path] = None) -> None:
+def load_env_file(env_path: Path | None = None) -> None:
     """
     Load environment variables from .env file.
-    
+
     Args:
         env_path: Optional path to .env file. If not provided, uses INNATE_OS_ROOT
                   or defaults to ~/innate-os/.env
     """
     if env_path is None:
-        innate_root = os.environ.get(
-            'INNATE_OS_ROOT', 
-            os.path.join(os.path.expanduser('~'), 'innate-os')
-        )
+        innate_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
         env_path = Path(innate_root) / ".env"
 
     innate_root = env_path.parent
@@ -174,11 +165,11 @@ def load_env_file(env_path: Optional[Path] = None) -> None:
 def get_env(key: str, default: str = "") -> str:
     """
     Get environment variable, loading .env if not already loaded.
-    
+
     Args:
         key: Environment variable name
         default: Default value if not found
-        
+
     Returns:
         Environment variable value or default
     """

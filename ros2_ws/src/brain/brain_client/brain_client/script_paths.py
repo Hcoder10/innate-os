@@ -26,11 +26,7 @@ Source = Literal["shipped", "user"]
 
 
 def get_innate_os_root() -> Path:
-    return Path(
-        os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
-    )
+    return Path(os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")))
 
 
 def _workspace() -> Path:
@@ -78,16 +74,12 @@ def _scan_dirs(innate: Path, custom: Path, home: Path) -> list[Path]:
 
 def get_agent_directories() -> list[Path]:
     """Directories to scan for agents: innate, custom_agents, then ~/agents."""
-    return _scan_dirs(
-        get_innate_agents_dir(), get_custom_agents_dir(), get_home_agents_dir()
-    )
+    return _scan_dirs(get_innate_agents_dir(), get_custom_agents_dir(), get_home_agents_dir())
 
 
 def get_skill_directories() -> list[Path]:
     """Directories to scan for skills: innate, custom_skills, then ~/skills."""
-    return _scan_dirs(
-        get_innate_skills_dir(), get_custom_skills_dir(), get_home_skills_dir()
-    )
+    return _scan_dirs(get_innate_skills_dir(), get_custom_skills_dir(), get_home_skills_dir())
 
 
 def classify_source(path: str | os.PathLike) -> Source:

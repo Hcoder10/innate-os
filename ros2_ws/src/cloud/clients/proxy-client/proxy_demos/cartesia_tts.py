@@ -17,9 +17,7 @@ import argparse
 import asyncio
 import shutil
 import subprocess
-import sys
 import time
-from typing import List, Optional
 
 from innate_proxy import ProxyClient
 
@@ -40,10 +38,7 @@ def _parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = _parse_args()
     quick: bool = args.quick
-    text = (
-        " ".join(args.text)
-        or "Hello! This is a test of Cartesia text to speech through the proxy."
-    )
+    text = " ".join(args.text) or "Hello! This is a test of Cartesia text to speech through the proxy."
 
     print(f'▶ Synthesising: "{text}"')
 
@@ -69,15 +64,13 @@ async def main() -> None:
         t_start = time.perf_counter()
 
         async with httpx.AsyncClient(timeout=60.0) as http:
-            async with http.stream(
-                "POST", url, json=request_json, headers=headers
-            ) as stream:
+            async with http.stream("POST", url, json=request_json, headers=headers) as stream:
                 stream.raise_for_status()
                 t_first_byte = time.perf_counter()
 
                 # Start the audio player with stdin pipe so it plays
                 # immediately as chunks arrive — no temp file needed.
-                player_proc: Optional[subprocess.Popen[bytes]] = None
+                player_proc: subprocess.Popen[bytes] | None = None
                 if player_cmd is not None:
                     player_proc = subprocess.Popen(player_cmd, stdin=subprocess.PIPE)
 
@@ -89,7 +82,7 @@ async def main() -> None:
                 # a background task drains chunks to the player's
                 # stdin via a thread (so blocking pipe writes don't
                 # throttle the download).
-                queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+                queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
                 async def _player_writer() -> None:
                     """Drain queue → player stdin in a thread."""
@@ -102,7 +95,7 @@ async def main() -> None:
                         await asyncio.to_thread(player_proc.stdin.write, chunk)
                     player_proc.stdin.close()
 
-                writer_task: Optional[asyncio.Task[None]] = None
+                writer_task: asyncio.Task[None] | None = None
                 if player_proc is not None:
                     writer_task = asyncio.create_task(_player_writer())
 
@@ -120,7 +113,7 @@ async def main() -> None:
                     await queue.put(None)
                     await writer_task
 
-    print(f"  ── profile ──────────────────────")
+    print("  ── profile ──────────────────────")
     print(f"  TTFB (first byte)  {t_first_byte - t_start:.3f}s")
     print(f"  transfer           {t_done - t_first_byte:.3f}s")
     print(f"  total request      {t_done - t_start:.3f}s")
@@ -141,9 +134,9 @@ async def main() -> None:
     print("✔ Done.")
 
 
-def _find_player() -> Optional[List[str]]:
+def _find_player() -> list[str] | None:
     """Return a command list for the first available audio player."""
-    candidates: List[List[str]] = [
+    candidates: list[list[str]] = [
         ["aplay", "-q"],
         ["paplay"],
         ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],

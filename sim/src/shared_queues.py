@@ -1,10 +1,10 @@
 # src/shared_queues.py
 
-from collections import deque
-from typing import NamedTuple, Optional, List, Tuple, Dict, Any
-import threading
 import queue
+import threading
 import time
+from collections import deque
+from typing import Any, NamedTuple
 
 from src.runtime_logging import normalize_sim_log_mode
 
@@ -13,7 +13,7 @@ class ChatMessage(NamedTuple):
     sender: str
     text: str
     timestamp: float
-    timestamp_put_in_queue: Optional[float]  # Used to check if the message was lost
+    timestamp_put_in_queue: float | None  # Used to check if the message was lost
 
 
 class ChatSignal(NamedTuple):
@@ -26,9 +26,9 @@ class AgentInfo(NamedTuple):
 
     id: str
     display_name: str
-    display_icon: Optional[str]  # Base64-encoded icon data or None
+    display_icon: str | None  # Base64-encoded icon data or None
     prompt: str
-    skills: List[str]
+    skills: list[str]
 
 
 class SharedQueues:
@@ -42,9 +42,7 @@ class SharedQueues:
     def __init__(self, log_everything=False, sim_log_mode: str = "debug"):
         self.sim_to_agent = queue.Queue(maxsize=100)  # Commands, nav status, etc.
         self.agent_to_sim = queue.Queue(maxsize=100)
-        self.sim_to_web = queue.Queue(
-            maxsize=100
-        )  # Will now contain dicts of named images
+        self.sim_to_web = queue.Queue(maxsize=100)  # Will now contain dicts of named images
         self.latest_frames = {}
         self.exit_event = threading.Event()
 
@@ -63,21 +61,21 @@ class SharedQueues:
 
         # Store the latest robot position and orientation for direct access
         # Format: [x, y, z]
-        self.latest_robot_position: List[float] = [0.0, 0.0, 0.0]
+        self.latest_robot_position: list[float] = [0.0, 0.0, 0.0]
         # Format: [ox, oy, oz, ow] (quaternion)
-        self.latest_robot_orientation: List[float] = [0.0, 0.0, 0.0, 1.0]
+        self.latest_robot_orientation: list[float] = [0.0, 0.0, 0.0, 1.0]
         self.robot_position_timestamp: float = 0.0
         self.robot_position_lock = threading.Lock()  # For thread-safe updates
 
         # Store available agents/directives from the robot
-        self.available_agents: List[AgentInfo] = []
-        self.current_agent_id: Optional[str] = None
-        self.startup_agent_id: Optional[str] = None
+        self.available_agents: list[AgentInfo] = []
+        self.current_agent_id: str | None = None
+        self.startup_agent_id: str | None = None
         self.available_agents_updated_at: float = 0.0
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
         # Store the brain client's cloud/local-agent websocket state for the UI.
-        self.brain_backend_status: Dict[str, Any] = {
+        self.brain_backend_status: dict[str, Any] = {
             "state": "unknown",
             "connected": False,
             "message": "Waiting for brain backend status",
@@ -89,11 +87,11 @@ class SharedQueues:
 
         # One-shot status map for /set_environment request/response.
         # Key: request_id, Value: {"success": bool, "error": Optional[str]}
-        self.environment_apply_results: Dict[str, Dict[str, Any]] = {}
+        self.environment_apply_results: dict[str, dict[str, Any]] = {}
         self.environment_apply_lock = threading.Lock()
 
         # Lightweight runtime metrics for the local stack dashboard.
-        self.camera_frame_times: Dict[str, deque[float]] = {}
+        self.camera_frame_times: dict[str, deque[float]] = {}
         self.camera_metrics_lock = threading.Lock()
 
     def set_sim_log_mode(self, mode: str) -> str:
@@ -105,9 +103,7 @@ class SharedQueues:
         with self.sim_log_mode_lock:
             return self._sim_log_mode
 
-    def update_robot_position(
-        self, x: float, y: float, z: float, timestamp: float = None
-    ):
+    def update_robot_position(self, x: float, y: float, z: float, timestamp: float = None):
         """Thread-safe method to update the robot's position"""
         if timestamp is None:
             import time
@@ -140,12 +136,12 @@ class SharedQueues:
             self.latest_robot_orientation = [ox, oy, oz, ow]
             self.robot_position_timestamp = timestamp
 
-    def get_robot_position(self) -> Tuple[List[float], float]:
+    def get_robot_position(self) -> tuple[list[float], float]:
         """Thread-safe method to get the robot's position and timestamp"""
         with self.robot_position_lock:
             return self.latest_robot_position.copy(), self.robot_position_timestamp
 
-    def get_robot_pose(self) -> Tuple[List[float], List[float], float]:
+    def get_robot_pose(self) -> tuple[list[float], list[float], float]:
         """Thread-safe method to get the robot's position, orientation and timestamp"""
         with self.robot_position_lock:
             return (
@@ -156,9 +152,9 @@ class SharedQueues:
 
     def update_available_agents(
         self,
-        agents: List[AgentInfo],
-        current_agent_id: Optional[str] = None,
-        startup_agent_id: Optional[str] = None,
+        agents: list[AgentInfo],
+        current_agent_id: str | None = None,
+        startup_agent_id: str | None = None,
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
@@ -169,7 +165,7 @@ class SharedQueues:
 
     def get_available_agents(
         self,
-    ) -> Tuple[List[AgentInfo], Optional[str], Optional[str]]:
+    ) -> tuple[list[AgentInfo], str | None, str | None]:
         """Thread-safe method to get available agents, current agent, and startup agent"""
         with self.agents_lock:
             return (
@@ -183,7 +179,7 @@ class SharedQueues:
         with self.agents_lock:
             return self.available_agents_updated_at
 
-    def update_brain_backend_status(self, status: Dict[str, Any]):
+    def update_brain_backend_status(self, status: dict[str, Any]):
         """Thread-safe method to update brain/cloud backend connection status."""
         now = time.time()
         with self.brain_backend_status_lock:
@@ -199,14 +195,12 @@ class SharedQueues:
                 }
             )
 
-    def get_brain_backend_status(self) -> Dict[str, Any]:
+    def get_brain_backend_status(self) -> dict[str, Any]:
         """Thread-safe method to get brain/cloud backend connection status."""
         with self.brain_backend_status_lock:
             return dict(self.brain_backend_status)
 
-    def set_environment_apply_result(
-        self, request_id: Optional[str], success: bool, error: Optional[str] = None
-    ) -> None:
+    def set_environment_apply_result(self, request_id: str | None, success: bool, error: str | None = None) -> None:
         """Store result for a set_environment request ID."""
         if not request_id:
             return
@@ -216,14 +210,12 @@ class SharedQueues:
                 "error": error,
             }
 
-    def pop_environment_apply_result(
-        self, request_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def pop_environment_apply_result(self, request_id: str) -> dict[str, Any] | None:
         """Pop and return a set_environment result if available."""
         with self.environment_apply_lock:
             return self.environment_apply_results.pop(request_id, None)
 
-    def record_web_frames(self, camera_names: List[str], timestamp: Optional[float] = None):
+    def record_web_frames(self, camera_names: list[str], timestamp: float | None = None):
         """Record frame timestamps for dashboard-friendly FPS estimates."""
         if timestamp is None:
             timestamp = time.time()
@@ -236,23 +228,19 @@ class SharedQueues:
                     self.camera_frame_times[camera_name] = history
                 history.append(timestamp)
 
-    def get_runtime_metrics(self) -> Dict[str, Any]:
+    def get_runtime_metrics(self) -> dict[str, Any]:
         """Return lightweight runtime metrics for local stack dashboards."""
         now = time.time()
         with self.camera_metrics_lock:
-            fps_by_camera: Dict[str, float] = {}
-            latest_frame_age_by_camera: Dict[str, Optional[float]] = {}
+            fps_by_camera: dict[str, float] = {}
+            latest_frame_age_by_camera: dict[str, float | None] = {}
             for camera_name, history in self.camera_frame_times.items():
                 timestamps = list(history)
                 if len(timestamps) >= 2 and timestamps[-1] > timestamps[0]:
-                    fps_by_camera[camera_name] = round(
-                        (len(timestamps) - 1) / (timestamps[-1] - timestamps[0]), 2
-                    )
+                    fps_by_camera[camera_name] = round((len(timestamps) - 1) / (timestamps[-1] - timestamps[0]), 2)
                 else:
                     fps_by_camera[camera_name] = 0.0
-                latest_frame_age_by_camera[camera_name] = round(
-                    now - timestamps[-1], 3
-                ) if timestamps else None
+                latest_frame_age_by_camera[camera_name] = round(now - timestamps[-1], 3) if timestamps else None
 
         with self.agents_lock:
             available_agent_count = len(self.available_agents)

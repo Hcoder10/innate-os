@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from config import BOOTSTRAP_LOG_PATH, CLI_SIM, REPO_ROOT, STATE_DIR, StackError, log
+from config import CLI_SIM, REPO_ROOT, STATE_DIR, StackError, log
 
 ASSET_LOCK_PATH = REPO_ROOT / "sim" / "assets.lock.json"
 ASSET_STATE_PATH = STATE_DIR / "sim-assets.sha256"
@@ -32,9 +32,7 @@ DEFAULT_ASSET_FILES = (
     "data/urdf/meshes/link61.STL",
     "data/urdf/meshes/link62.STL",
 )
-ASSET_PATH_PATTERN = re.compile(
-    r"data/(?:assets/[^\"'\\\s]+|urdf/[^\"'\\\s]+|replica_scene\.stl)"
-)
+ASSET_PATH_PATTERN = re.compile(r"data/(?:assets/[^\"'\\\s]+|urdf/[^\"'\\\s]+|replica_scene\.stl)")
 ASSET_REFERENCE_SUFFIXES = (
     ".bmp",
     ".dae",
@@ -57,9 +55,7 @@ ASSET_PAYLOAD_PREFIXES = (
     "sim/data/assets/",
     "sim/data/urdf/",
 )
-ASSET_PAYLOAD_EXACT_PATHS = (
-    "sim/data/replica_scene.stl",
-)
+ASSET_PAYLOAD_EXACT_PATHS = ("sim/data/replica_scene.stl",)
 
 
 def run_checked(cmd: list[str], *, cwd: Path, failure_message: str) -> str:
@@ -117,11 +113,7 @@ def required_asset_paths(lock: dict[str, Any]) -> list[Path]:
 
 
 def missing_asset_files(sim_repo: Path, lock: dict[str, Any]) -> list[Path]:
-    return [
-        sim_repo / path
-        for path in required_asset_paths(lock)
-        if not (sim_repo / path).is_file()
-    ]
+    return [sim_repo / path for path in required_asset_paths(lock) if not (sim_repo / path).is_file()]
 
 
 def compute_asset_content_sha(sim_repo: Path, paths: list[Path]) -> str:
@@ -180,8 +172,7 @@ def ensure_sim_assets(config: dict[str, object], *, allow_fetch: bool) -> None:
     expected = str(lock["content_sha256"])
     if actual != expected:
         raise StackError(
-            "Downloaded simulator asset pack did not match assets.lock.json.\n"
-            f"Expected: {expected}\nActual:   {actual}"
+            f"Downloaded simulator asset pack did not match assets.lock.json.\nExpected: {expected}\nActual:   {actual}"
         )
     write_asset_state(lock)
 
@@ -271,10 +262,7 @@ def publish_assets(sim_repo: Path, *, image: str = DEFAULT_ASSET_IMAGE) -> dict[
                 ".",
             ],
             cwd=tmp_path,
-            failure_message=(
-                "Building and pushing simulator asset image failed. "
-                "Log in to ghcr.io and retry."
-            ),
+            failure_message=("Building and pushing simulator asset image failed. Log in to ghcr.io and retry."),
         )
     print(f"Published {image_ref}")
     return lock
@@ -324,16 +312,13 @@ def staged_asset_relevant_changes(repo_root: Path) -> list[str]:
         return []
     changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return [
-        path
-        for path in changed
-        if any(path == prefix or path.startswith(prefix) for prefix in ASSET_RELEVANT_PREFIXES)
+        path for path in changed if any(path == prefix or path.startswith(prefix) for prefix in ASSET_RELEVANT_PREFIXES)
     ]
 
 
 def is_asset_payload_repo_path(path: str) -> bool:
     return (
-        path in ASSET_PAYLOAD_EXACT_PATHS
-        or any(path.startswith(prefix) for prefix in ASSET_PAYLOAD_PREFIXES)
+        path in ASSET_PAYLOAD_EXACT_PATHS or any(path.startswith(prefix) for prefix in ASSET_PAYLOAD_PREFIXES)
     ) and path.endswith(ASSET_REFERENCE_SUFFIXES)
 
 
@@ -359,9 +344,7 @@ def staged_asset_payload_changes(repo_root: Path) -> list[str]:
     if result.returncode != 0:
         return []
     return [
-        path.strip()
-        for path in result.stdout.splitlines()
-        if path.strip() and is_asset_payload_repo_path(path.strip())
+        path.strip() for path in result.stdout.splitlines() if path.strip() and is_asset_payload_repo_path(path.strip())
     ]
 
 
@@ -384,16 +367,12 @@ def tracked_asset_payload_files(repo_root: Path) -> list[str]:
     if result.returncode != 0:
         return []
     return [
-        path.strip()
-        for path in result.stdout.splitlines()
-        if path.strip() and is_asset_payload_repo_path(path.strip())
+        path.strip() for path in result.stdout.splitlines() if path.strip() and is_asset_payload_repo_path(path.strip())
     ]
 
 
 def raise_if_payload_files_are_committed(repo_root: Path) -> None:
-    paths = sorted(
-        set(staged_asset_payload_changes(repo_root) + tracked_asset_payload_files(repo_root))
-    )
+    paths = sorted(set(staged_asset_payload_changes(repo_root) + tracked_asset_payload_files(repo_root)))
     if not paths:
         return
     details = "\n".join(f"- {path}" for path in paths)

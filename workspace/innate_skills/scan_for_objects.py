@@ -2,12 +2,15 @@
 """
 Skill that rotates the robot 360 degrees while scanning for objects using Gemini.
 """
-import math
+
 import json
-from pathlib import Path
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
 import google.generativeai as genai
-from brain_client.skill_types import Skill, SkillResult, RobotState, RobotStateType, Interface, InterfaceType
+
+from brain_client.skill_types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 
 def _load_env_file(env_path: Path) -> dict:
@@ -38,7 +41,7 @@ class ScanForObjects(Skill):
         # Load config from .env.scan next to this skill
         env_path = Path(__file__).parent / ".env.scan"
         env_vars = _load_env_file(env_path)
-        
+
         self.api_key = env_vars.get("GEMINI_API_KEY", "")
         if self.api_key and self.api_key != "your_gemini_api_key_here":
             genai.configure(api_key=self.api_key)
@@ -47,9 +50,9 @@ class ScanForObjects(Skill):
         else:
             self.model = None
             self.logger.warn(f"[ScanForObjects] GEMINI_API_KEY not set in {env_path}")
-        
+
         # Scan parameters
-        self.num_snapshots = 8    # Number of images to capture during rotation
+        self.num_snapshots = 8  # Number of images to capture during rotation
 
     @property
     def name(self):
@@ -84,15 +87,15 @@ class ScanForObjects(Skill):
 
         # Phase 1: Capture all images while rotating
         image_buffer = []  # List of (image_b64, direction_name, direction_deg)
-        
+
         try:
             for i in range(self.num_snapshots):
                 direction_deg = (i * 360 / self.num_snapshots) % 360
                 direction_name = self._direction_name(direction_deg)
-                
+
                 if self.image:
                     image_buffer.append((self.image, direction_name, direction_deg))
-                
+
                 # Rotate to next position (skip rotation after last snapshot)
                 if i < self.num_snapshots - 1:
                     self.mobility.rotate(rotation_per_snapshot)
@@ -106,7 +109,7 @@ class ScanForObjects(Skill):
 
         # Phase 2: Send all images to Gemini in parallel
         self._send_feedback(f"Analyzing {len(image_buffer)} images...")
-        
+
         all_detections = []
         target_found = False
         target_directions = []
@@ -118,7 +121,7 @@ class ScanForObjects(Skill):
                     executor.submit(self._detect_objects, img, target_object): (dir_name, dir_deg)
                     for img, dir_name, dir_deg in image_buffer
                 }
-                
+
                 # Collect results as they complete
                 for future in as_completed(future_to_direction):
                     direction_name, direction_deg = future_to_direction[future]
@@ -126,11 +129,11 @@ class ScanForObjects(Skill):
                         detections = future.result()
                         if detections:
                             for det in detections:
-                                det['direction'] = direction_name
-                                det['direction_deg'] = direction_deg
+                                det["direction"] = direction_name
+                                det["direction_deg"] = direction_deg
                                 all_detections.append(det)
-                                
-                                if target_object and target_object.lower() in det['class'].lower():
+
+                                if target_object and target_object.lower() in det["class"].lower():
                                     target_found = True
                                     target_directions.append(direction_name)
                     except Exception:
@@ -155,11 +158,11 @@ class ScanForObjects(Skill):
             # Report all unique objects found
             unique_objects = {}
             for det in all_detections:
-                obj_class = det['class']
+                obj_class = det["class"]
                 if obj_class not in unique_objects:
                     unique_objects[obj_class] = []
-                unique_objects[obj_class].append(det['direction'])
-            
+                unique_objects[obj_class].append(det["direction"])
+
             if unique_objects:
                 summary_parts = []
                 for obj, directions in unique_objects.items():
@@ -168,7 +171,7 @@ class ScanForObjects(Skill):
                 result = f"Objects found: {'; '.join(summary_parts)}"
             else:
                 result = "No objects detected during scan"
-            
+
             self._send_feedback(result)
             return result, SkillResult.SUCCESS
 
@@ -176,7 +179,7 @@ class ScanForObjects(Skill):
         """Send image to Gemini and return detected objects."""
         if not self.model:
             return []
-        
+
         try:
             # Build prompt for structured output
             if target_object:
@@ -195,22 +198,19 @@ Respond with ONLY a JSON array. Each object should have:
 - "confidence": your confidence 0.0-1.0  
 - "position": "left", "center", or "right" side of image
 
-Example: [{"class": "laptop", "confidence": 0.95, "position": "center"}, {"class": "coffee mug", "confidence": 0.8, "position": "right"}]"""
-            
+Example: [{"class": "laptop", "confidence": 0.95, "position": "center"}, {"class": "coffee mug", "confidence": 0.8, "position": "right"}]"""  # noqa: W291
+
             # Create image part for Gemini
-            image_part = {
-                "mime_type": "image/jpeg",
-                "data": image_b64
-            }
-            
+            image_part = {"mime_type": "image/jpeg", "data": image_b64}
+
             # Call Gemini
             response = self.model.generate_content(
                 [prompt, image_part],
                 generation_config=genai.GenerationConfig(
                     response_mime_type="application/json",
-                )
+                ),
             )
-            
+
             # Parse response
             response_text = response.text.strip()
             try:
@@ -219,7 +219,7 @@ Example: [{"class": "laptop", "confidence": 0.95, "position": "center"}, {"class
                     detections = []
             except json.JSONDecodeError:
                 detections = []
-            
+
             return detections
 
         except Exception:
@@ -229,7 +229,7 @@ Example: [{"class": "laptop", "confidence": 0.95, "position": "center"}, {"class
         """Convert degrees to cardinal direction name."""
         # Normalize to 0-360
         degrees = degrees % 360
-        
+
         if degrees < 22.5 or degrees >= 337.5:
             return "front"
         elif degrees < 67.5:

@@ -8,11 +8,10 @@ and can automatically register them with the brain client.
 """
 
 import base64
-import os
-import sys
 import importlib.util
 import inspect
-from typing import Dict, List, Optional, Tuple, Type
+import os
+import sys
 from pathlib import Path
 
 from brain_client.agent_types import Agent
@@ -26,11 +25,9 @@ class AgentLoader:
 
     def __init__(self, logger):
         self.logger = logger
-        self._loaded_agents: Dict[str, Type[Agent]] = {}
+        self._loaded_agents: dict[str, type[Agent]] = {}
 
-    def discover_agents_in_directory(
-        self, directory_path: str
-    ) -> Dict[str, Tuple[Type[Agent], Path]]:
+    def discover_agents_in_directory(self, directory_path: str) -> dict[str, tuple[type[Agent], Path]]:
         """
         Scans a directory for Python files and attempts to load agent classes.
 
@@ -40,7 +37,7 @@ class AgentLoader:
         Returns:
             Dictionary mapping agent names to (class, source_file) tuples
         """
-        agents: Dict[str, Tuple[Type[Agent], Path]] = {}
+        agents: dict[str, tuple[type[Agent], Path]] = {}
         directory = Path(directory_path)
 
         if not directory.exists():
@@ -70,9 +67,7 @@ class AgentLoader:
         self.logger.info(f"Discovered {len(agents)} agents in {directory_path}")
         return agents
 
-    def _load_agents_from_file(
-        self, file_path: Path
-    ) -> Dict[str, Tuple[Type[Agent], Path]]:
+    def _load_agents_from_file(self, file_path: Path) -> dict[str, tuple[type[Agent], Path]]:
         """
         Loads agent classes from a single Python file.
 
@@ -82,7 +77,7 @@ class AgentLoader:
         Returns:
             Dictionary mapping agent names to (class, source_file) tuples
         """
-        agents: Dict[str, Tuple[Type[Agent], Path]] = {}
+        agents: dict[str, tuple[type[Agent], Path]] = {}
         module_name = file_path.stem
 
         # Load the module
@@ -94,9 +89,7 @@ class AgentLoader:
         module = importlib.util.module_from_spec(spec)
 
         # Add the root directory to sys.path for imports to work
-        maurice_prod_dir = os.environ.get(
-            "INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")
-        )
+        maurice_prod_dir = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
         if maurice_prod_dir not in sys.path:
             sys.path.insert(0, maurice_prod_dir)
 
@@ -112,12 +105,7 @@ class AgentLoader:
 
         # Find all classes in the module that inherit from Agent
         for name, obj in inspect.getmembers(module, inspect.isclass):
-            if (
-                obj != Agent
-                and issubclass(obj, Agent)
-                and obj.__module__ == module.__name__
-            ):
-
+            if obj != Agent and issubclass(obj, Agent) and obj.__module__ == module.__name__:
                 # Validate the agent class
                 if self._validate_agent_class(obj):
                     agent_name = self._get_agent_name(obj)
@@ -128,7 +116,7 @@ class AgentLoader:
 
         return agents
 
-    def _validate_agent_class(self, agent_class: Type[Agent]) -> bool:
+    def _validate_agent_class(self, agent_class: type[Agent]) -> bool:
         """
         Validates that an agent class is properly implemented.
 
@@ -143,25 +131,17 @@ class AgentLoader:
             required_methods = ["id", "display_name", "get_skills", "get_prompt"]
             for method_name in required_methods:
                 if not hasattr(agent_class, method_name):
-                    self.logger.error(
-                        f"Agent {agent_class.__name__} missing required method: {method_name}"
-                    )
+                    self.logger.error(f"Agent {agent_class.__name__} missing required method: {method_name}")
                     return False
 
             # Check that id is a property
-            if not hasattr(agent_class, "id") or not isinstance(
-                agent_class.id, property
-            ):
+            if not hasattr(agent_class, "id") or not isinstance(agent_class.id, property):
                 self.logger.error(f"Agent {agent_class.__name__} id must be a property")
                 return False
 
             # Check that display_name is a property
-            if not hasattr(agent_class, "display_name") or not isinstance(
-                agent_class.display_name, property
-            ):
-                self.logger.error(
-                    f"Agent {agent_class.__name__} display_name must be a property"
-                )
+            if not hasattr(agent_class, "display_name") or not isinstance(agent_class.display_name, property):
+                self.logger.error(f"Agent {agent_class.__name__} display_name must be a property")
                 return False
 
             return True
@@ -170,7 +150,7 @@ class AgentLoader:
             self.logger.error(f"Error validating agent {agent_class.__name__}: {e}")
             return False
 
-    def _get_agent_name(self, agent_class: Type[Agent]) -> str:
+    def _get_agent_name(self, agent_class: type[Agent]) -> str:
         """
         Gets the agent name by creating a temporary instance.
         This is needed because the name is a property that requires instantiation.
@@ -185,9 +165,7 @@ class AgentLoader:
             temp_instance = agent_class()
             return temp_instance.id
         except Exception as e:
-            self.logger.debug(
-                f"Could not get name from agent {agent_class.__name__}: {e}"
-            )
+            self.logger.debug(f"Could not get name from agent {agent_class.__name__}: {e}")
             # Fallback to class name converted to snake_case
             fallback_name = self._class_name_to_snake_case(agent_class.__name__)
             self.logger.debug(f"Using fallback name: {fallback_name}")
@@ -208,9 +186,7 @@ class AgentLoader:
         s1 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", class_name)
         return s1.lower()
 
-    def reload_agent_by_name(
-        self, agent_name: str, directories: List[str]
-    ) -> Optional[Tuple[Type[Agent], Path]]:
+    def reload_agent_by_name(self, agent_name: str, directories: list[str]) -> tuple[type[Agent], Path] | None:
         """
         Reload a specific agent by name from the given directories.
 
@@ -228,7 +204,8 @@ class AgentLoader:
 
             # Search for python files that might contain this agent
             python_files = [
-                f for f in directory_path.glob("*.py")
+                f
+                for f in directory_path.glob("*.py")
                 if f.name not in ["__init__.py", "types.py"] and not f.name.startswith("_")
             ]
 
@@ -245,8 +222,8 @@ class AgentLoader:
         return None
 
     def reload_agents_by_names(
-        self, agent_names: List[str], directories: List[str]
-    ) -> Dict[str, Tuple[Type[Agent], Path]]:
+        self, agent_names: list[str], directories: list[str]
+    ) -> dict[str, tuple[type[Agent], Path]]:
         """
         Reload specific agents by name.
 
@@ -257,16 +234,14 @@ class AgentLoader:
         Returns:
             Dictionary mapping agent names to (class, source_file) tuples
         """
-        reloaded: Dict[str, Tuple[Type[Agent], Path]] = {}
+        reloaded: dict[str, tuple[type[Agent], Path]] = {}
         for name in agent_names:
             entry = self.reload_agent_by_name(name, directories)
             if entry is not None:
                 reloaded[name] = entry
         return reloaded
 
-    def load_agents_from_directories(
-        self, directories: List[str]
-    ) -> Dict[str, Tuple[Type[Agent], Path]]:
+    def load_agents_from_directories(self, directories: list[str]) -> dict[str, tuple[type[Agent], Path]]:
         """
         Load agents from multiple directories.
 
@@ -276,7 +251,7 @@ class AgentLoader:
         Returns:
             Dictionary mapping agent names to (class, source_file) tuples
         """
-        all_agents: Dict[str, Tuple[Type[Agent], Path]] = {}
+        all_agents: dict[str, tuple[type[Agent], Path]] = {}
 
         for directory in directories:
             try:
@@ -301,9 +276,9 @@ class AgentLoader:
 
     def create_agent_instances(
         self,
-        agent_classes: Dict[str, Tuple[Type[Agent], Path]],
-        available_skills: Optional[Dict[str, any]] = None,
-    ) -> Dict[str, Agent]:
+        agent_classes: dict[str, tuple[type[Agent], Path]],
+        available_skills: dict[str, any] | None = None,
+    ) -> dict[str, Agent]:
         """
         Create instances of agent classes.
 
@@ -333,17 +308,13 @@ class AgentLoader:
                     self._validate_agent_skills(agent_instance, available_skills)
 
                 agent_instances[agent_name] = agent_instance
-                self.logger.debug(
-                    f"Created agent instance: {agent_name} (source={agent_instance.source})"
-                )
+                self.logger.debug(f"Created agent instance: {agent_name} (source={agent_instance.source})")
             except Exception as e:
                 self.logger.error(f"Error creating agent instance {agent_name}: {e}")
 
         return agent_instances
 
-    def _load_display_icon(
-        self, agent_instance: Agent, agents_directory: Optional[str]
-    ) -> None:
+    def _load_display_icon(self, agent_instance: Agent, agents_directory: str | None) -> None:
         """
         Load and encode the agent's display icon as base64.
 
@@ -362,18 +333,12 @@ class AgentLoader:
             try:
                 with open(icon_path, "rb") as f:
                     icon_bytes = f.read()
-                    agent_instance.display_icon_data = base64.b64encode(
-                        icon_bytes
-                    ).decode("utf-8")
+                    agent_instance.display_icon_data = base64.b64encode(icon_bytes).decode("utf-8")
                     self.logger.debug(f"Loaded icon for agent '{agent_instance.id}'")
             except Exception as e:
-                self.logger.warning(
-                    f"Failed to load icon for agent '{agent_instance.id}': {e}"
-                )
+                self.logger.warning(f"Failed to load icon for agent '{agent_instance.id}': {e}")
 
-    def _validate_agent_skills(
-        self, agent_instance: Agent, available_skills: Dict[str, any]
-    ) -> None:
+    def _validate_agent_skills(self, agent_instance: Agent, available_skills: dict[str, any]) -> None:
         """
         Validates that all skills referenced by an agent have corresponding
         skill files available.
@@ -399,11 +364,6 @@ class AgentLoader:
                     f"{missing_skills}. Available skills: {list(available_skills.keys())}"
                 )
             else:
-                self.logger.debug(
-                    f"Agent '{agent_instance.id}' skills validated successfully: "
-                    f"{agent_skills}"
-                )
+                self.logger.debug(f"Agent '{agent_instance.id}' skills validated successfully: {agent_skills}")
         except Exception as e:
-            self.logger.error(
-                f"Error validating skills for agent '{agent_instance.id}': {e}"
-            )
+            self.logger.error(f"Error validating skills for agent '{agent_instance.id}': {e}")

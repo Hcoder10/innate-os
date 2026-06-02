@@ -3,17 +3,15 @@
 import math
 import threading
 import time
-from typing import Optional
 
 from src.agent.types import (
-    NavigationPathMsg,
-    NavigationCancelMsg,
-    NavigationStatusMsg,
+    ClearTrajectoryCmd,
+    DrawTrajectoryCmd,
     NavigationFeedbackMsg,
+    NavigationPathMsg,
+    NavigationStatusMsg,
     NavigationWaypoint,
     PositionCmd,
-    DrawTrajectoryCmd,
-    ClearTrajectoryCmd,
 )
 
 
@@ -27,7 +25,7 @@ class NavigationController:
         self.shared_queues = shared_queues
 
         # Navigation state
-        self.current_path: Optional[NavigationPathMsg] = None
+        self.current_path: NavigationPathMsg | None = None
         self.current_status = "IDLE"
         self.is_navigating = False
         self.cancel_requested = False
@@ -41,10 +39,10 @@ class NavigationController:
 
         # Path following state
         self.current_waypoint_index = 0
-        self.final_goal: Optional[NavigationWaypoint] = None
+        self.final_goal: NavigationWaypoint | None = None
 
         # Navigation thread
-        self.nav_thread: Optional[threading.Thread] = None
+        self.nav_thread: threading.Thread | None = None
         self.nav_thread_stop = threading.Event()
 
         # Status and feedback publishing
@@ -60,18 +58,14 @@ class NavigationController:
             self._publish_status()
             return
 
-        print(
-            f"[NavController] Received navigation path with {len(path.waypoints)} waypoints"
-        )
+        print(f"[NavController] Received navigation path with {len(path.waypoints)} waypoints")
 
         print(f"[NavController] Path: {path}")
 
         # Log start and end positions
         start_wp = path.waypoints[0]
         end_wp = path.waypoints[-1]
-        print(
-            f"[NavController] Path: ({start_wp.x:.2f}, {start_wp.y:.2f}) -> ({end_wp.x:.2f}, {end_wp.y:.2f})"
-        )
+        print(f"[NavController] Path: ({start_wp.x:.2f}, {start_wp.y:.2f}) -> ({end_wp.x:.2f}, {end_wp.y:.2f})")
 
         # Cancel any existing navigation
         self.cancel_navigation()
@@ -84,16 +78,14 @@ class NavigationController:
         self.is_navigating = True
         self.current_waypoint_index = 0
 
-        print(
-            f"[NavController] Starting path following with {len(path.waypoints)} waypoints"
-        )
+        print(f"[NavController] Starting path following with {len(path.waypoints)} waypoints")
 
         # Send trajectory drawing command to simulator
         draw_cmd = DrawTrajectoryCmd(waypoints=path.waypoints)
         try:
             self.shared_queues.agent_to_sim.put_nowait(draw_cmd)
             print("[NavController] Sent trajectory visualization command")
-        except:
+        except:  # noqa: E722
             pass  # Queue full
 
         # Start navigation thread
@@ -147,9 +139,7 @@ class NavigationController:
         dy = waypoint.y - robot_y
         distance = math.sqrt(dx * dx + dy * dy)
 
-        position_tolerance = (
-            self.final_goal_tolerance if is_final else self.waypoint_tolerance
-        )
+        position_tolerance = self.final_goal_tolerance if is_final else self.waypoint_tolerance
         position_reached = distance < position_tolerance
 
         # For final waypoint, also check orientation
@@ -179,9 +169,7 @@ class NavigationController:
         if not self.current_path or not self.current_path.waypoints:
             return
 
-        print(
-            f"[NavController] Starting path following with {len(self.current_path.waypoints)} waypoints"
-        )
+        print(f"[NavController] Starting path following with {len(self.current_path.waypoints)} waypoints")
 
         while not self.nav_thread_stop.is_set() and not self.cancel_requested:
             # Get current robot position and orientation
@@ -191,9 +179,7 @@ class NavigationController:
             # Convert quaternion to yaw angle
             # robot_quat is [ox, oy, oz, ow] format
             qx, qy, qz, qw = robot_quat[0], robot_quat[1], robot_quat[2], robot_quat[3]
-            robot_yaw = math.atan2(
-                2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)
-            )
+            robot_yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
             # Get current target waypoint
             target_waypoint = self._get_current_target_waypoint()
@@ -206,18 +192,12 @@ class NavigationController:
                 break
 
             # Check if we've reached the current waypoint
-            is_final_waypoint = (
-                self.current_waypoint_index == len(self.current_path.waypoints) - 1
-            )
+            is_final_waypoint = self.current_waypoint_index == len(self.current_path.waypoints) - 1
 
-            if self._is_waypoint_reached(
-                robot_x, robot_y, robot_yaw, target_waypoint, is_final_waypoint
-            ):
+            if self._is_waypoint_reached(robot_x, robot_y, robot_yaw, target_waypoint, is_final_waypoint):
                 if is_final_waypoint:
                     # Reached the final goal
-                    print(
-                        f"[NavController] Reached final goal at ({target_waypoint.x:.2f}, {target_waypoint.y:.2f})"
-                    )
+                    print(f"[NavController] Reached final goal at ({target_waypoint.x:.2f}, {target_waypoint.y:.2f})")
                     self.current_status = "SUCCEEDED"
                     self.is_navigating = False
                     break
@@ -232,9 +212,7 @@ class NavigationController:
                     continue
 
             # Send position command to move toward current waypoint
-            self._send_position_command(
-                target_waypoint.x, target_waypoint.y, target_waypoint.yaw
-            )
+            self._send_position_command(target_waypoint.x, target_waypoint.y, target_waypoint.yaw)
 
             # Calculate distance to final goal for feedback
             if self.final_goal:
@@ -259,21 +237,17 @@ class NavigationController:
         try:
             self.shared_queues.agent_to_sim.put_nowait(ClearTrajectoryCmd())
             print("[NavController] Cleared trajectory visualization")
-        except:
+        except:  # noqa: E722
             pass
 
         print(f"[NavController] Navigation ended with status: {self.current_status}")
 
-    def _send_position_command(
-        self, target_x: float, target_y: float, target_yaw: float
-    ):
+    def _send_position_command(self, target_x: float, target_y: float, target_yaw: float):
         """Send position command with orientation to simulator."""
-        pos_cmd = PositionCmd(
-            target_x=target_x, target_y=target_y, target_z=0.0, target_yaw=target_yaw
-        )
+        pos_cmd = PositionCmd(target_x=target_x, target_y=target_y, target_z=0.0, target_yaw=target_yaw)
         try:
             self.shared_queues.agent_to_sim.put_nowait(pos_cmd)
-        except:
+        except:  # noqa: E722
             pass  # Queue full, skip this command
 
     def _publish_status(self):
@@ -282,7 +256,7 @@ class NavigationController:
         try:
             # Add to sim_to_agent queue for bridge to pick up
             self.shared_queues.sim_to_agent.put_nowait(status_msg)
-        except:
+        except:  # noqa: E722
             pass
 
     def _publish_feedback(self, distance_to_goal: float):
@@ -293,7 +267,7 @@ class NavigationController:
             try:
                 # Add to sim_to_agent queue for bridge to pick up
                 self.shared_queues.sim_to_agent.put_nowait(feedback_msg)
-            except:
+            except:  # noqa: E722
                 pass
             self.last_feedback_publish = now
 

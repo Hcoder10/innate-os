@@ -3,20 +3,17 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-from typing import Optional
 
 import psutil
 import rclpy
+from auth_client import AuthError, AuthProvider
+from diagnostic_msgs.msg import DiagnosticArray
 from dotenv import find_dotenv, load_dotenv
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
-from diagnostic_msgs.msg import DiagnosticArray
 from std_msgs.msg import String
-
-from auth_client import AuthError, AuthProvider
 
 from innate_logger.client import TelemetryClient
 
@@ -55,9 +52,7 @@ class LoggerNode(Node):
             os.getenv("INNATE_AUTH_URL", DEFAULT_AUTH_ISSUER_URL),
         )
 
-        telemetry_url: str = str(
-            self.get_parameter("telemetry_url").get_parameter_value().string_value
-        )
+        telemetry_url: str = str(self.get_parameter("telemetry_url").get_parameter_value().string_value)
         service_key: str = str(self.get_parameter("service_key").value)
         auth_issuer: str = str(self.get_parameter("auth_issuer_url").value)
 
@@ -81,29 +76,20 @@ class LoggerNode(Node):
         psutil.cpu_percent()
 
         # ── Subscriptions ───────────────────────────────────────────
-        self._latest_battery: Optional[BatteryState] = None
-        self._latest_diagnostics: Optional[DiagnosticArray] = None
+        self._latest_battery: BatteryState | None = None
+        self._latest_diagnostics: DiagnosticArray | None = None
 
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
-        self.create_subscription(
-            DiagnosticArray, "/diagnostics", self._on_diagnostics, 1
-        )
-        self.create_subscription(
-            String, "/brain/set_directive", self._on_directive, 10
-        )
+        self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diagnostics, 1)
+        self.create_subscription(String, "/brain/set_directive", self._on_directive, 10)
 
         # Timer for vitals logging
         self.create_timer(self.LOG_INTERVAL, self._log_vitals)
 
     # ── Helpers ─────────────────────────────────────────────────────
 
-    def _log_auth_retry(
-        self, attempt: int, error: AuthError, next_delay: float
-    ) -> None:
-        self.get_logger().warning(
-            f"Auth not ready yet (attempt {attempt}): {error} — "
-            f"retrying in {next_delay:.0f}s"
-        )
+    def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
+        self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
 
     @staticmethod
     def _get_git_commit() -> str:
@@ -119,7 +105,6 @@ class LoggerNode(Node):
             return "unknown"
 
     # ── Callbacks ───────────────────────────────────────────────────
-
 
     def _on_battery(self, msg: BatteryState) -> None:
         self._latest_battery = msg
@@ -146,25 +131,17 @@ class LoggerNode(Node):
             vitals["battery_percentage"] = bat.percentage
             vitals["battery_status"] = bat.power_supply_status
             vitals["battery_health"] = bat.power_supply_health
-            self.get_logger().info(
-                f"battery: {bat.voltage:.2f}V ({bat.percentage:.1%})"
-            )
+            self.get_logger().info(f"battery: {bat.voltage:.2f}V ({bat.percentage:.1%})")
 
         if self._latest_diagnostics is not None:
             diag = self._latest_diagnostics
             if diag.status:
                 entry = diag.status[0]
-                level = (
-                    entry.level[0]
-                    if isinstance(entry.level, bytes)
-                    else entry.level
-                )
+                level = entry.level[0] if isinstance(entry.level, bytes) else entry.level
                 vitals["diagnostics_status"] = level
                 vitals["diagnostics_message"] = entry.message
                 vitals["diagnostics_hardware_id"] = entry.hardware_id
-                self.get_logger().info(
-                    f"diagnostics: [{level}] {entry.name}: {entry.message}"
-                )
+                self.get_logger().info(f"diagnostics: [{level}] {entry.name}: {entry.message}")
 
         self.get_logger().info(f"cpu: {cpu_usage:.1f}%")
 

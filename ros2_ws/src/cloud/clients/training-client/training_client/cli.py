@@ -45,30 +45,25 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
 import click
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
 logging.basicConfig(
-    level=getattr(
-        logging, os.environ.get("LOG_LEVEL", "WARNING").upper(), logging.WARNING
-    ),
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "WARNING").upper(), logging.WARNING),
     format="%(levelname)s %(name)s: %(message)s",
 )
 
-from training_client.src.skill_manager import SkillManager, read_skill_id
-from training_client.src.types import (
-    ClientConfig,
+from training_client.src.skill_manager import SkillManager, read_skill_id  # noqa: E402
+from training_client.src.types import (  # noqa: E402
     DEFAULT_AUTH_ISSUER_URL,
     DEFAULT_SERVER_URL,
-    ProgressStage,
+    ClientConfig,
     ProgressUpdate,
 )
 
@@ -90,9 +85,7 @@ def _resolve_skill_id(skill_dir: str | None) -> str:
         raise click.BadParameter(f"Not a directory: {d}")
     sid = read_skill_id(d)
     if not sid:
-        raise click.UsageError(
-            f"No training_skill_id found in {d}/metadata.json. " "Run `submit` first."
-        )
+        raise click.UsageError(f"No training_skill_id found in {d}/metadata.json. Run `submit` first.")
     return sid
 
 
@@ -268,9 +261,7 @@ def watch(ctx: click.Context, skill_dir: str, run_id: int, interval: float) -> N
     manager = _make_manager(ctx)
     skill_id = _resolve_skill_id(skill_dir)
 
-    click.echo(
-        f"Watching run {skill_id}/{run_id} (poll every {interval}s, Ctrl+C to stop)"
-    )
+    click.echo(f"Watching run {skill_id}/{run_id} (poll every {interval}s, Ctrl+C to stop)")
     try:
         gen = manager.watch(skill_id, run_id, interval=interval)
         _print_progress(gen)
@@ -305,8 +296,7 @@ def download(ctx: click.Context, skill_dir: str, run_id: int, dest: str | None) 
 
 @cli.command("fetch-data")
 @click.argument("skill_dir", type=click.Path(exists=True, file_okay=False), default=".")
-@click.option("--dest", type=click.Path(), default=None,
-              help="Destination dir (default: SKILL_DIR/data)")
+@click.option("--dest", type=click.Path(), default=None, help="Destination dir (default: SKILL_DIR/data)")
 @click.pass_context
 def fetch_data(ctx: click.Context, skill_dir: str, dest: str | None) -> None:
     """Download the input training data files for a skill."""
@@ -369,9 +359,7 @@ def list_runs(ctx: click.Context, skill_dir: str) -> None:
 
 @cli.command("run")
 @click.argument("skill_dir", type=click.Path(exists=True, file_okay=False), default=".")
-@click.option(
-    "--preset", default=None, help="Server-side preset name (e.g. act-default)"
-)
+@click.option("--preset", default=None, help="Server-side preset name (e.g. act-default)")
 @click.option("--repo", default=None, help="GitHub repo (owner/repo)")
 @click.option("--ref", default=None, help="Git ref (branch/tag/commit)")
 @click.option("--command", "-c", multiple=True, help="Training command parts")
@@ -379,18 +367,14 @@ def list_runs(ctx: click.Context, skill_dir: str) -> None:
 @click.option("--gpu-type", default=None, help="GPU type (e.g. H100)")
 @click.option("--min-gpus", type=int, default=None)
 @click.option("--max-gpus", type=int, default=None)
-@click.option(
-    "--budget", type=float, default=None, help="Max total cost USD (optional)"
-)
+@click.option("--budget", type=float, default=None, help="Max total cost USD (optional)")
 @click.option(
     "--checkpoint-patterns",
     "-p",
     multiple=True,
     help="Glob patterns for files to upload (e.g. 'checkpoints/**/*.pt')",
 )
-@click.option(
-    "--env", "-e", multiple=True, help="Environment variables as KEY=VALUE (repeatable)"
-)
+@click.option("--env", "-e", multiple=True, help="Environment variables as KEY=VALUE (repeatable)")
 @click.pass_context
 def create_run(
     ctx: click.Context,
@@ -425,9 +409,7 @@ def create_run(
         if not gpu_type:
             missing.append("--gpu-type")
         if missing:
-            raise click.UsageError(
-                f"Missing required options (or use --preset): {', '.join(missing)}"
-            )
+            raise click.UsageError(f"Missing required options (or use --preset): {', '.join(missing)}")
 
     manager = _make_manager(ctx)
     skill_id = _resolve_skill_id(skill_dir)
@@ -457,9 +439,7 @@ def create_run(
         env_dict = {}
         for item in env:
             if "=" not in item:
-                raise click.BadParameter(
-                    f"Expected KEY=VALUE, got: {item!r}", param_hint="--env"
-                )
+                raise click.BadParameter(f"Expected KEY=VALUE, got: {item!r}", param_hint="--env")
             k, v = item.split("=", 1)
             env_dict[k] = v
         params["env"] = env_dict
@@ -489,7 +469,7 @@ def activate(ctx: click.Context, skill_dir: str, run_id: int) -> None:
     try:
         result = manager.activate_run(skill_dir, run_id)
     except (FileNotFoundError, ValueError) as e:
-        raise click.UsageError(str(e))
+        raise click.UsageError(str(e))  # noqa: B904
 
     click.echo(f"Activated run {run_id}:")
     click.echo(f"  checkpoint:  {result['checkpoint']}")
@@ -522,11 +502,10 @@ def launch_ui(ctx: click.Context, port: int, skills_dir: str) -> None:
     and create training runs from your browser.
     """
     try:
-        from training_manager.server import create_app, _get_lan_ip
+        from training_manager.server import _get_lan_ip, create_app
     except ImportError:
-        raise click.UsageError(
-            "training-manager package is not installed. "
-            "Install it with: pip install -e clients/training-manager"
+        raise click.UsageError(  # noqa: B904
+            "training-manager package is not installed. Install it with: pip install -e clients/training-manager"
         )
 
     import uvicorn

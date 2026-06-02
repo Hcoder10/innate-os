@@ -1,4 +1,3 @@
-from typing import List
 from brain_client.agent_types import Agent
 
 
@@ -16,14 +15,11 @@ class BasicAgent(Agent):
     def display_name(self) -> str:
         return "No Prompt"
 
-    def get_skills(self) -> List[str]:
+    def get_skills(self) -> list[str]:
         """Return the list of skill IDs this directive can use"""
-        return [
-            "innate-os/navigate_to_position",
-            "innate-os/navigate_with_vision"
-        ]
+        return ["innate-os/navigate_to_position", "innate-os/navigate_with_vision"]
 
-    def get_inputs(self) -> List[str]:
+    def get_inputs(self) -> list[str]:
         """Enable microphone input to hear user"""
         return ["micro"]
 

@@ -7,34 +7,33 @@ This is a pure Python class with NO ROS dependencies.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
+
 import base64
 import json
 import queue
+import re
+import subprocess
 import threading
 import time
-from typing import Optional
+
 import sounddevice as sd
-import subprocess
-import re
 
 from brain_client.input_types import InputDevice
 from brain_client.logging_config import UniversalLogger
 
-
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
-DTYPE = 'int16'
+DTYPE = "int16"
 CHUNK_DURATION_SEC = 0.02
-
 
 
 class MicroInput(InputDevice):
     """
     Microphone input device.
-    
+
     Connects to OpenAI Realtime API via proxy (self.proxy.openai.realtime).
     Config comes from self.proxy.config (set by InputManagerNode).
-    
+
     Supports "ducking" - suppresses audio while robot is speaking.
     Automatically reconnects if WebSocket connection is lost.
     """
@@ -52,7 +51,7 @@ class MicroInput(InputDevice):
         self._max_reconnect_delay = 30  # Max 30 seconds between retries
         # Initialize logger wrapper (will be updated when set_logger is called)
         self.logger = UniversalLogger(enabled=False)
-    
+
     def set_logger(self, logger):
         """Wrap the provided logger with UniversalLogger."""
         super().set_logger(logger)
@@ -62,13 +61,13 @@ class MicroInput(InputDevice):
     @property
     def name(self) -> str:
         return "micro"
-    
+
     def set_tts_playing(self, is_playing: bool):
         """
         Called when TTS (text-to-speech) status changes.
-        
+
         Implements "ducking" - suppressing mic input while robot speaks.
-        
+
         Args:
             is_playing: True if robot is speaking, False otherwise
         """
@@ -80,31 +79,32 @@ class MicroInput(InputDevice):
         if not self.proxy or not self.proxy.is_available():
             self.logger.error("❌ Proxy not configured - cannot start microphone input")
             return
-        
+
         try:
             # Auto-detect and start microphone
             detected_device = self._detect_audio_device()
             if not detected_device:
-                detected_device = 'default'
-            
+                detected_device = "default"
+
             self.logger.info(f"🎙️ Using audio device: {detected_device}")
-            
+
             # Pass logger to ArecordStreamer
             self.mic = ArecordStreamer(self.logger)
             self.mic.start(
-                device=detected_device if detected_device != 'default' else 'default',
-                          sample_rate=DEFAULT_SAMPLE_RATE, 
-                channels=DEFAULT_CHANNELS
+                device=detected_device if detected_device != "default" else "default",
+                sample_rate=DEFAULT_SAMPLE_RATE,
+                channels=DEFAULT_CHANNELS,
             )
-            
+
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
-            
+
             # Connect via proxy
             self._connect_via_proxy()
-                
+
         except Exception as e:
             self.logger.error(f"❌ Failed to start microphone: {e}")
             import traceback
+
             traceback.print_exc()
 
     def _on_openai_message(self, ws, message: str):
@@ -114,9 +114,9 @@ class MicroInput(InputDevice):
         except Exception:
             self.logger.error(f"Failed to parse message: {message[:200]}")
             return
-        
+
         etype = event.get("type")
-        
+
         # Event type to handler mapping
         event_handlers = {
             "session.updated": lambda e: self.logger.info(
@@ -126,9 +126,7 @@ class MicroInput(InputDevice):
             "input_audio_buffer.speech_started": lambda e: self.logger.info("🎤 Speech detected"),
             "input_audio_buffer.speech_stopped": lambda e: self.logger.info("🔇 Speech stopped"),
             "conversation.item.input_audio_transcription.completed": lambda e: (
-                self._on_transcript(e.get("transcript", "")) 
-                if e.get("transcript") and self.is_active() 
-                else None
+                self._on_transcript(e.get("transcript", "")) if e.get("transcript") and self.is_active() else None
             ),
             "error": lambda e: (
                 self.logger.error(
@@ -140,28 +138,25 @@ class MicroInput(InputDevice):
                 else None
             ),
         }
-        
+
         # Execute handler if exists, otherwise log unknown event type
         handler = event_handlers.get(etype)
         if handler:
             handler(event)
         else:
             self.logger.info(f"📨 OpenAI event: {etype}")
-    
+
     def _on_openai_open(self):
         """Handle WebSocket open event - send session configuration."""
-        transcribe_model = self.proxy.config.get('openai_transcribe_model', 'gpt-4o-mini-transcribe')
+        transcribe_model = self.proxy.config.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
         vad_threshold = 0.3  # Lower = more sensitive to speech
-        
+
         self.logger.info("📤 WebSocket opened, sending session.update...")
         session_update = {
             "type": "session.update",
             "session": {
                 "input_audio_format": "pcm16",
-                "input_audio_transcription": {
-                    "model": transcribe_model,
-                    "language": "en"
-                },
+                "input_audio_transcription": {"model": transcribe_model, "language": "en"},
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": float(vad_threshold),
@@ -175,30 +170,30 @@ class MicroInput(InputDevice):
         self.logger.info(f"📤 Session config: model={transcribe_model}, vad_threshold={vad_threshold}")
         self.client.send_json(session_update)
         self.logger.info("📤 session.update sent")
-    
+
     def _on_openai_error(self, error):
         """Handle WebSocket error event."""
         self.logger.error(f"[ws error] {error}")
-    
+
     def _on_openai_close(self):
         """Handle WebSocket close event - trigger reconnection."""
         self.logger.warning("WebSocket closed")
         self._is_connected = False
-        
+
         # Don't reconnect if we're shutting down
         if self._stop_evt.is_set():
             return
-        
+
         # Start reconnection in background thread
         self._schedule_reconnect()
 
     def _connect_via_proxy(self):
         """Connect to OpenAI Realtime API via proxy."""
         self.logger.info("🔗 Connecting to OpenAI via proxy...")
-        
+
         # Get config from proxy (injected by InputManager)
-        model = self.proxy.config.get('openai_realtime_model', 'gpt-4o-realtime-preview')
-        
+        model = self.proxy.config.get("openai_realtime_model", "gpt-4o-realtime-preview")
+
         # Use proxy's OpenAI adapter
         self.client = self.proxy.openai.realtime.connect_sync(
             model=model,
@@ -208,66 +203,66 @@ class MicroInput(InputDevice):
             on_close=self._on_openai_close,
         )
         self.client.start()
-        
+
         # Start audio streaming thread
         self._start_audio_thread()
-        
+
         self._is_connected = True
         self._reconnect_delay = 1  # Reset delay on successful connection
         self.logger.info(f"✅ Connected to OpenAI Realtime (model: {model})")
-    
+
     def _schedule_reconnect(self):
         """Schedule a reconnection attempt in a background thread."""
         if self._reconnect_thread and self._reconnect_thread.is_alive():
             return  # Already reconnecting
-        
+
         def reconnect_loop():
             while not self._stop_evt.is_set() and not self._is_connected:
                 self.logger.info(f"🔄 Reconnecting to OpenAI in {self._reconnect_delay}s...")
-                
+
                 # Wait before reconnecting (interruptible)
                 if self._stop_evt.wait(timeout=self._reconnect_delay):
                     break  # Stop event was set
-                
+
                 try:
                     # Stop old client if exists
                     if self.client:
                         try:
                             self.client.stop()
-                        except:
+                        except:  # noqa: E722
                             pass
                         self.client = None
-                    
+
                     # Stop old audio thread
                     self._stop_evt.set()
                     if self._audio_thread and self._audio_thread.is_alive():
                         self._audio_thread.join(timeout=1.0)
                     self._stop_evt.clear()
-                    
+
                     # Reconnect
                     self._connect_via_proxy()
-                    
+
                     if self._is_connected:
                         self.logger.info("✅ Reconnection successful!")
                         break
-                        
+
                 except Exception as e:
                     self.logger.error(f"❌ Reconnection failed: {e}")
                     # Exponential backoff
                     self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
-        
+
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
 
     def _start_audio_thread(self):
         """Start the audio streaming thread."""
         self._stop_evt.clear()
-        
+
         def audio_loop():
             if not self.client.wait_until_connected(timeout=10):
                 self.logger.error("WebSocket didn't connect in time")
                 return
-            
+
             self.logger.info("🎧 Audio streaming thread started")
 
             chunks_sent = 0
@@ -282,12 +277,12 @@ class MicroInput(InputDevice):
                     if empty_count == 50:
                         self.logger.warning("⚠️ No audio chunks received (queue empty for 5s)")
                     continue
-                
+
                 try:
                     # Skip sending if not connected (reconnection in progress)
                     if not self._is_connected:
                         continue
-                    
+
                     # Skip sending while ducking (robot is speaking)
                     if self._is_robot_talking:
                         if not ducking_logged:
@@ -295,7 +290,7 @@ class MicroInput(InputDevice):
                         ducking_logged = True
                         continue
                     ducking_logged = False
-                    
+
                     payload = {
                         "type": "input_audio_buffer.append",
                         "audio": base64.b64encode(chunk).decode("ascii"),
@@ -312,7 +307,7 @@ class MicroInput(InputDevice):
                     # Only log if we think we're connected (avoid spam during reconnect)
                     if self._is_connected:
                         self.logger.error(f"Send error: {e}")
-        
+
         self._audio_thread = threading.Thread(target=audio_loop, daemon=True)
         self._audio_thread.start()
 
@@ -320,20 +315,20 @@ class MicroInput(InputDevice):
         """Stop microphone and disconnect."""
         self._stop_evt.set()
         self._is_connected = False  # Prevent reconnection attempts
-        
+
         if self._audio_thread:
             self._audio_thread.join(timeout=1.0)
-        
+
         if self._reconnect_thread:
             self._reconnect_thread.join(timeout=1.0)
-        
+
         if self.mic:
             try:
                 self.mic.stop()
-            except:
+            except:  # noqa: E722
                 pass
             self.mic = None
-        
+
         if self.client:
             self.client.stop()
             self.client = None
@@ -342,114 +337,115 @@ class MicroInput(InputDevice):
         """Detect and list available audio capture devices."""
         devices = []
         try:
-            result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                pattern = r'card (\d+):.*?\[([^\]]+)\].*?device (\d+):'
+                pattern = r"card (\d+):.*?\[([^\]]+)\].*?device (\d+):"
                 for match in re.finditer(pattern, result.stdout):
                     card_num = match.group(1)
                     card_name = match.group(2)
                     device_num = match.group(3)
                     device_id = f"plughw:{card_num},{device_num}"
-                    devices.append({
-                        'card': card_num,
-                        'device': device_num,
-                        'name': card_name,
-                        'id': device_id
-                    })
+                    devices.append({"card": card_num, "device": device_num, "name": card_name, "id": device_id})
         except Exception:
             pass
-        
+
         # Try to find a suitable microphone device
         preferred_device = None
-        
+
         self.logger.info(f"🔍 Found {len(devices)} audio devices: {[d['name'] for d in devices]}")
-        
+
         # Look for USB microphones (usually better quality)
         for dev in devices:
-            name_lower = dev['name'].lower()
-            if 'mic' in name_lower and 'usb' in name_lower:
+            name_lower = dev["name"].lower()
+            if "mic" in name_lower and "usb" in name_lower:
                 preferred_device = dev
                 break
-        
+
         # Look for USB Sound Device (common external mic name)
         if not preferred_device:
             for dev in devices:
-                name_lower = dev['name'].lower()
-                if 'sound' in name_lower and ('usb' in name_lower or 'pnp' in name_lower):
+                name_lower = dev["name"].lower()
+                if "sound" in name_lower and ("usb" in name_lower or "pnp" in name_lower):
                     preferred_device = dev
                     break
-        
+
         # Fall back to any mic
         if not preferred_device:
             for dev in devices:
-                if 'mic' in dev['name'].lower():
+                if "mic" in dev["name"].lower():
                     preferred_device = dev
                     break
-        
+
         # Fall back to any USB audio device (but NOT camera)
         if not preferred_device:
             for dev in devices:
-                name_lower = dev['name'].lower()
-                if 'usb' in name_lower and 'camera' not in name_lower and 'webcam' not in name_lower:
+                name_lower = dev["name"].lower()
+                if "usb" in name_lower and "camera" not in name_lower and "webcam" not in name_lower:
                     preferred_device = dev
                     break
-        
+
         # Fall back to camera audio (least preferred)
         if not preferred_device:
             for dev in devices:
-                if 'camera' in dev['name'].lower() or 'webcam' in dev['name'].lower():
+                if "camera" in dev["name"].lower() or "webcam" in dev["name"].lower():
                     preferred_device = dev
                     break
-        
+
         # Last resort: use first available device
         if not preferred_device and devices:
             preferred_device = devices[0]
-        
+
         if preferred_device:
             self.logger.info(f"🎙️ Selected audio device: {preferred_device['name']} ({preferred_device['id']})")
-        
-        return preferred_device['id'] if preferred_device else None
-    
+
+        return preferred_device["id"] if preferred_device else None
+
     def _on_transcript(self, text: str):
         """Called when transcript is ready."""
         if text:
             self.logger.info(f"🎤 Transcript: {text}")
-            
+
             self.send_data(text, data_type="chat_in")
 
 
 # ========== Audio Streaming Helpers ==========
 
+
 class ArecordStreamer:
     """Streams audio from ALSA via arecord subprocess."""
-    
+
     def __init__(self, logger):
-        self.queue: "queue.Queue[bytes]" = queue.Queue(maxsize=100)
-        self._proc: Optional[subprocess.Popen] = None
+        self.queue: queue.Queue[bytes] = queue.Queue(maxsize=100)
+        self._proc: subprocess.Popen | None = None
         self.logger = logger
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.channels = DEFAULT_CHANNELS
-        self._reader_thread: Optional[threading.Thread] = None
+        self._reader_thread: threading.Thread | None = None
         self._stop = threading.Event()
 
-    def start(self, device: str = 'default', sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS):
+    def start(self, device: str = "default", sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS):
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
         # arecord raw PCM 16-bit, stdout
         cmd = [
-            'arecord',
-            '-D', str(device),
-            '-f', 'S16_LE',
-            '-r', str(self.sample_rate),
-            '-c', str(self.channels),
-            '-t', 'raw',
-            '-q',  # quiet
-            '-'
+            "arecord",
+            "-D",
+            str(device),
+            "-f",
+            "S16_LE",
+            "-r",
+            str(self.sample_rate),
+            "-c",
+            str(self.channels),
+            "-t",
+            "raw",
+            "-q",  # quiet
+            "-",
         ]
         self.logger.info(f"🎙️ Starting arecord: {' '.join(cmd)}")
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         if not self._proc or not self._proc.stdout:
-            raise RuntimeError('Failed to start arecord process')
+            raise RuntimeError("Failed to start arecord process")
         self.logger.info(f"🎙️ arecord process started (pid: {self._proc.pid})")
 
         def reader():
@@ -477,6 +473,7 @@ class ArecordStreamer:
                         pass
             except Exception as e:
                 self.logger.error(f"arecord reader error: {e}")
+
         self._reader_thread = threading.Thread(target=reader, daemon=True)
         self._reader_thread.start()
 
@@ -500,10 +497,10 @@ class ArecordStreamer:
 
 class MicStreamer:
     """Streams audio via sounddevice (PortAudio)."""
-    
+
     def __init__(self, logger):
-        self.queue: "queue.Queue[bytes]" = queue.Queue(maxsize=50)
-        self._stream: Optional[sd.RawInputStream] = None
+        self.queue: queue.Queue[bytes] = queue.Queue(maxsize=50)
+        self._stream: sd.RawInputStream | None = None
         self.logger = logger
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.channels = DEFAULT_CHANNELS
@@ -516,7 +513,9 @@ class MicStreamer:
         except queue.Full:
             pass
 
-    def start(self, device: Optional[str] = None, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS):
+    def start(
+        self, device: str | None = None, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS
+    ):
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
         frames_per_chunk = int(self.sample_rate * CHUNK_DURATION_SEC)
@@ -529,9 +528,9 @@ class MicStreamer:
         )
         if device:
             try:
-                kwargs['device'] = int(device) if isinstance(device, str) and device.isdigit() else device
+                kwargs["device"] = int(device) if isinstance(device, str) and device.isdigit() else device
             except Exception:
-                kwargs['device'] = device
-        
+                kwargs["device"] = device
+
         self._stream = sd.RawInputStream(**kwargs)
         self._stream.start()

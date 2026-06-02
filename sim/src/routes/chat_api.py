@@ -1,15 +1,15 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+import asyncio
 import os
 import time
-import asyncio
-from src.shared_queues import SharedQueues, ChatMessage, ChatSignal
-from typing import Dict
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from src.shared_queues import ChatMessage, ChatSignal, SharedQueues
 
 router = APIRouter()
 
 # Track connected clients by user ID
-connected_clients: Dict[str, WebSocket] = {}
+connected_clients: dict[str, WebSocket] = {}
 # Broadcast task
 broadcast_task = None
 
@@ -17,11 +17,9 @@ broadcast_task = None
 @router.get("/")
 def serve_react_app():
     """Serves the React frontend index.html from the pre-built dist folder."""
-    frontend_build_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "frontend", "dist"
-    )
+    frontend_build_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
     index_path = os.path.join(frontend_build_path, "index.html")
-    with open(index_path, "r", encoding="utf-8") as f:
+    with open(index_path, encoding="utf-8") as f:
         html_content = f.read()
     return HTMLResponse(content=html_content, status_code=200)
 
@@ -36,9 +34,7 @@ async def broadcast_messages(shared_queues: SharedQueues):
         while True:
             try:
                 # Get messages from the queue
-                msg = await asyncio.get_event_loop().run_in_executor(
-                    None, shared_queues.chat_from_bridge.get
-                )
+                msg = await asyncio.get_event_loop().run_in_executor(None, shared_queues.chat_from_bridge.get)
 
                 # Broadcast to all connected clients
                 disconnected_clients = []
@@ -89,9 +85,7 @@ async def chat_websocket(websocket: WebSocket, user_id: str = None):
         broadcast_task = asyncio.create_task(broadcast_messages(shared_queues))
 
     # Upon connection, signal to the bridge that we're ready to receive messages
-    shared_queues.chat_to_bridge.put_nowait(
-        ChatSignal(signal="ready", timestamp=time.time())
-    )
+    shared_queues.chat_to_bridge.put_nowait(ChatSignal(signal="ready", timestamp=time.time()))
 
     try:
         # Only handle inbound messages from the user
@@ -107,9 +101,7 @@ async def chat_websocket(websocket: WebSocket, user_id: str = None):
             del connected_clients[user_id]
 
 
-async def handle_inbound_user(
-    websocket: WebSocket, user_id: str, shared_queues: SharedQueues
-):
+async def handle_inbound_user(websocket: WebSocket, user_id: str, shared_queues: SharedQueues):
     """Handle inbound messages from the user."""
     try:
         while True:

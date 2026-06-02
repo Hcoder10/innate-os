@@ -1,4 +1,3 @@
-from typing import List
 from brain_client.agent_types import Agent
 
 
@@ -15,11 +14,11 @@ class DemoAgent(Agent):
     def display_name(self) -> str:
         return "Demo Agent"
 
-    def get_skills(self) -> List[str]:
+    def get_skills(self) -> list[str]:
         """Return skill IDs for navigation and waving."""
         return ["innate-os/navigate_to_position", "innate-os/wave", "innate-os/navigate_with_vision"]
 
-    def get_inputs(self) -> List[str]:
+    def get_inputs(self) -> list[str]:
         """Enable microphone input to hear user"""
         return ["micro"]
 
@@ -30,4 +29,3 @@ class DemoAgent(Agent):
     def uses_gaze(self) -> bool:
         """Enable person-tracking gaze during conversation."""
         return True
-

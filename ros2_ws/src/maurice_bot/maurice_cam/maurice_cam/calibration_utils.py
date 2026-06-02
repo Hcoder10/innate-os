@@ -10,12 +10,11 @@ import time
 import cv2
 import rclpy
 from std_msgs.msg import Int32, String
-from std_srvs.srv import Trigger
-
 
 # ---------------------------------------------------------------------------
 # Head & arm control
 # ---------------------------------------------------------------------------
+
 
 def setup_head_and_arm(node):
     """Set head to +20 degrees and disable arm torque for calibration.
@@ -32,37 +31,36 @@ def setup_head_and_arm(node):
     # --- Read and set head position ---
     try:
         got_msg = threading.Event()
-        head_msg = {'data': None}
+        head_msg = {"data": None}
 
         def head_cb(msg):
-            head_msg['data'] = msg
+            head_msg["data"] = msg
             got_msg.set()
 
-        head_sub = node.create_subscription(
-            String, '/mars/head/current_position', head_cb, 1)
+        head_sub = node.create_subscription(String, "/mars/head/current_position", head_cb, 1)
 
         # Wait for the executor to deliver the callback (no spin_once needed).
         got_msg.wait(timeout=2.0)
         node.destroy_subscription(head_sub)
 
-        if head_msg['data'] is not None:
-            head_data = json.loads(head_msg['data'].data)
-            node.original_head_position = int(round(head_data['current_position']))
-            node.get_logger().info(f'Current head position: {node.original_head_position} degrees')
+        if head_msg["data"] is not None:
+            head_data = json.loads(head_msg["data"].data)
+            node.original_head_position = int(round(head_data["current_position"]))
+            node.get_logger().info(f"Current head position: {node.original_head_position} degrees")
         else:
-            node.get_logger().warn('Could not read head position (timeout)')
+            node.get_logger().warn("Could not read head position (timeout)")
 
         # Set head to +20 degrees for calibration
-        head_pub = node.create_publisher(Int32, '/mars/head/set_position', 1)
+        head_pub = node.create_publisher(Int32, "/mars/head/set_position", 1)
         time.sleep(0.1)  # allow publisher discovery
         msg = Int32()
         msg.data = 20
         head_pub.publish(msg)
-        node.get_logger().info('Set head position to +20 degrees for calibration')
+        node.get_logger().info("Set head position to +20 degrees for calibration")
         node.destroy_publisher(head_pub)
 
     except Exception as e:
-        node.get_logger().warn(f'Failed to set head position: {e}')
+        node.get_logger().warn(f"Failed to set head position: {e}")
 
     # # --- Read and disable arm torque ---
     # try:
@@ -114,16 +112,15 @@ def restore_head_and_arm(node):
     # --- Restore head position ---
     if node.original_head_position is not None:
         try:
-            head_pub = node.create_publisher(Int32, '/mars/head/set_position', 1)
+            head_pub = node.create_publisher(Int32, "/mars/head/set_position", 1)
             time.sleep(0.1)  # allow publisher discovery
             msg = Int32()
             msg.data = node.original_head_position
             head_pub.publish(msg)
-            node.get_logger().info(
-                f'Restored head position to {node.original_head_position} degrees')
+            node.get_logger().info(f"Restored head position to {node.original_head_position} degrees")
             node.destroy_publisher(head_pub)
         except Exception as e:
-            node.get_logger().warn(f'Failed to restore head position: {e}')
+            node.get_logger().warn(f"Failed to restore head position: {e}")
 
     # # --- Restore arm torque ---
     # if node.original_torque_enabled is not None and node.original_torque_enabled:
@@ -147,6 +144,7 @@ def restore_head_and_arm(node):
 # Calibration file I/O
 # ---------------------------------------------------------------------------
 
+
 def save_calibration(node):
     """Save calibration to YAML file using OpenCV FileStorage.
 
@@ -157,45 +155,46 @@ def save_calibration(node):
     try:
         calib_dir = find_calibration_dir(node)
         if calib_dir is None:
-            calib_dir = node.data_directory / 'calibration_config'
+            calib_dir = node.data_directory / "calibration_config"
             calib_dir.mkdir(parents=True, exist_ok=True)
-            node.get_logger().info(f'Created new calibration directory: {calib_dir}')
+            node.get_logger().info(f"Created new calibration directory: {calib_dir}")
 
-        output_path = calib_dir / 'stereo_calib.yaml'
-        backup_path = calib_dir / 'stereo_calib.yaml.backup'
+        output_path = calib_dir / "stereo_calib.yaml"
+        backup_path = calib_dir / "stereo_calib.yaml.backup"
 
         if output_path.exists():
             shutil.copy(output_path, backup_path)
-            node.get_logger().info(f'Backed up existing calibration to: {backup_path}')
+            node.get_logger().info(f"Backed up existing calibration to: {backup_path}")
 
         fs = cv2.FileStorage(str(output_path), cv2.FileStorage_WRITE)
         if not fs.isOpened():
-            raise RuntimeError(f'Failed to open file for writing: {output_path}')
+            raise RuntimeError(f"Failed to open file for writing: {output_path}")
 
-        fs.write('version', 2)
-        fs.write('model', 'pinhole')
-        fs.write('image_width', node.calibration_data['image_width'])
-        fs.write('image_height', node.calibration_data['image_height'])
-        fs.write('K1', node.calibration_data['K1'])
-        fs.write('D1', node.calibration_data['D1'])
-        fs.write('K2', node.calibration_data['K2'])
-        fs.write('D2', node.calibration_data['D2'])
-        fs.write('R', node.calibration_data['R'])
-        fs.write('T', node.calibration_data['T'])
-        fs.write('R1', node.calibration_data['R1'])
-        fs.write('R2', node.calibration_data['R2'])
-        fs.write('P1', node.calibration_data['P1'])
-        fs.write('P2', node.calibration_data['P2'])
-        fs.write('Q', node.calibration_data['Q'])
+        fs.write("version", 2)
+        fs.write("model", "pinhole")
+        fs.write("image_width", node.calibration_data["image_width"])
+        fs.write("image_height", node.calibration_data["image_height"])
+        fs.write("K1", node.calibration_data["K1"])
+        fs.write("D1", node.calibration_data["D1"])
+        fs.write("K2", node.calibration_data["K2"])
+        fs.write("D2", node.calibration_data["D2"])
+        fs.write("R", node.calibration_data["R"])
+        fs.write("T", node.calibration_data["T"])
+        fs.write("R1", node.calibration_data["R1"])
+        fs.write("R2", node.calibration_data["R2"])
+        fs.write("P1", node.calibration_data["P1"])
+        fs.write("P2", node.calibration_data["P2"])
+        fs.write("Q", node.calibration_data["Q"])
 
         fs.release()
 
-        node.get_logger().info(f'Calibration saved to: {output_path}')
+        node.get_logger().info(f"Calibration saved to: {output_path}")
         import sys
+
         sys.stdout.flush()
         return str(output_path)
     except Exception as e:
-        node.get_logger().error(f'Error saving calibration: {e}')
+        node.get_logger().error(f"Error saving calibration: {e}")
         raise
 
 
@@ -210,7 +209,7 @@ def find_calibration_dir(node):
         return None
 
     for entry in node.data_directory.iterdir():
-        if entry.is_dir() and 'calibration_config' in entry.name:
+        if entry.is_dir() and "calibration_config" in entry.name:
             return entry
 
     return None
@@ -222,27 +221,27 @@ def prompt_save(node):
     Args:
         node: StereoCalibrator node instance.
     """
-    print('')
-    print('Do you want to save this calibration and replace the existing one?')
+    print("")
+    print("Do you want to save this calibration and replace the existing one?")
 
     try:
         response = input('Type "y" to save, "n" to discard: ').strip().lower()
-        if response == 'y':
+        if response == "y":
             try:
                 save_calibration(node)
             except Exception as e:
-                node.get_logger().error(f'Failed to save calibration: {e}')
+                node.get_logger().error(f"Failed to save calibration: {e}")
         else:
-            node.get_logger().info('Calibration discarded.')
+            node.get_logger().info("Calibration discarded.")
     except EOFError:
-        node.get_logger().info('Calibration discarded (no input).')
+        node.get_logger().info("Calibration discarded (no input).")
     except Exception as e:
-        node.get_logger().error(f'Error during save prompt: {e}')
+        node.get_logger().error(f"Error during save prompt: {e}")
 
     # Restore head and arm to original state
     restore_head_and_arm(node)
 
-    node.get_logger().info('Calibration complete. Shutting down...')
+    node.get_logger().info("Calibration complete. Shutting down...")
 
     # Shut down rclpy so that rclpy.spin() on the main thread unblocks.
     # This is safe to call from any thread — spin() will raise and main() handles cleanup.

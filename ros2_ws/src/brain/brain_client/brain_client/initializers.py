@@ -6,7 +6,7 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
 
 from brain_client.agent_loader import AgentLoader
 from brain_client.script_paths import (
@@ -15,9 +15,7 @@ from brain_client.script_paths import (
 )
 
 
-def initialize_agents(
-    logger, skills_dict: Optional[Dict[str, Any]] = None
-) -> Tuple[Dict[str, Any], Optional[Any]]:
+def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tuple[dict[str, Any], Any | None]:
     """
     Initialize all agents using dynamic loading.
 
@@ -39,9 +37,7 @@ def initialize_agents(
     agents_directories = [str(p) for p in get_agent_directories()]
 
     # Load all agents dynamically from all directories
-    discovered_agent_classes = agent_loader.load_agents_from_directories(
-        agents_directories
-    )
+    discovered_agent_classes = agent_loader.load_agents_from_directories(agents_directories)
 
     # Create agent instances with skill validation and icon loading.
     # The loader stamps `source` per instance based on origin file path.

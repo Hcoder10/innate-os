@@ -80,17 +80,12 @@ class ManipulationInterface:
         self._ik_solution_fk_sub = self.node.create_subscription(
             PoseStamped, "/ik_solution_fk", self._ik_solution_fk_callback, 10
         )
-        self._fk_pose_sub = self.node.create_subscription(
-            PoseStamped, "/fk_pose", self._fk_pose_callback, 10
-        )
-        self._arm_state_sub = self.node.create_subscription(
-            JointState, "/mars/arm/state", self._arm_state_callback, 10
-        )
+        self._fk_pose_sub = self.node.create_subscription(PoseStamped, "/fk_pose", self._fk_pose_callback, 10)
+        self._arm_state_sub = self.node.create_subscription(JointState, "/mars/arm/state", self._arm_state_callback, 10)
 
     def stop(self):
         """Destroy all subscriptions and clear cached state."""
-        for sub in (self._ik_solution_sub, self._ik_solution_fk_sub,
-                    self._fk_pose_sub, self._arm_state_sub):
+        for sub in (self._ik_solution_sub, self._ik_solution_fk_sub, self._fk_pose_sub, self._arm_state_sub):
             if sub is not None:
                 self.node.destroy_subscription(sub)
         self._ik_solution_sub = None
