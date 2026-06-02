@@ -368,7 +368,39 @@ if [ -d "$REPO_DIR/config/udev" ]; then
     log "Udev rules reloaded"
 fi
 
-
+# -----------------------------------------------------------------------------
+# 3b. Install SSH keepalive drop-in
+# Keeps VS Code Remote-SSH (and plain ssh) tunnels alive across Wi-Fi sleep and
+# NAT idle-timeouts so they are not silently dropped — which, with password
+# auth, would force a reconnect and password re-entry. Only sets keepalive,
+# never touches auth. Validated before applying and reloaded (not restarted) so
+# existing connections are never dropped; backs out cleanly if validation fails.
+# -----------------------------------------------------------------------------
+log "Installing SSH keepalive configuration..."
+SSH_DROPIN_SRC="$REPO_DIR/config/ssh/10-innate-fleet.conf"
+SSH_DROPIN_DST="/etc/ssh/sshd_config.d/10-innate-fleet.conf"
+if [ -f "$SSH_DROPIN_SRC" ] && [ -d "$(dirname "$SSH_DROPIN_DST")" ]; then
+    if [ -f "$SSH_DROPIN_DST" ] && diff -q "$SSH_DROPIN_SRC" "$SSH_DROPIN_DST" >/dev/null 2>&1; then
+        log "  SSH keepalive config already up to date"
+    else
+        cp "$SSH_DROPIN_SRC" "$SSH_DROPIN_DST"
+        chmod 644 "$SSH_DROPIN_DST"
+        # Validate the full sshd config; back out the drop-in if invalid so we
+        # never leave a broken config that could block sshd on its next restart.
+        if sshd -t 2>/dev/null; then
+            if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null; then
+                log "  SSH keepalive config installed and ssh reloaded"
+            else
+                log "  SSH keepalive config installed (reload skipped; applies on next ssh restart)"
+            fi
+        else
+            log "  WARNING: sshd config validation failed; removing keepalive drop-in"
+            rm -f "$SSH_DROPIN_DST"
+        fi
+    fi
+else
+    log "  Skipping SSH keepalive config (source or sshd_config.d not present)"
+fi
 
 # 4. Configure passwordless shutdown for ROS app
 log "Configuring passwordless shutdown..."
