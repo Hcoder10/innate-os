@@ -94,12 +94,13 @@ RUN cd /root/innate-os/ros2_ws/src && \
         vcs import --input dependencies.repos; \
     fi
 
-# Install ROS dependencies and build workspace, skipping Jetson-dependent packages
+# Install ROS dependencies and build the whole workspace.
+# maurice_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
+# guarded by if(VPI_FOUND), nav's only Jetson dep (python3-cupy) is runtime-only.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
     rosdep install --from-paths src --ignore-src -r -y || true && \
-    colcon build --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release \
-        --packages-skip maurice_cam maurice_nav maurice_control
+    colcon build --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # Create entrypoint script with Zenoh configuration.
 # Written via a heredoc (not `echo '...\n...'`, which emits literal "\n" under
