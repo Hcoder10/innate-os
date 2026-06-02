@@ -24,15 +24,10 @@ Requires: ``pip install click``
 from __future__ import annotations
 
 import json
-import sys
-import threading
 from datetime import datetime, timezone
 
 import click
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-
 from innate_cloud_msgs.msg import (
     TrainingJobList,
     TrainingParams,
@@ -41,6 +36,8 @@ from innate_cloud_msgs.msg import (
     TransferProgress,
 )
 from innate_cloud_msgs.srv import CreateRun, DownloadResults, SubmitSkill
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 # ── Pretty-print helpers ────────────────────────────────────────────
 
@@ -104,10 +101,7 @@ def _fmt_run(run: TrainingRunStatus, indent: str = "    ") -> str:
         lines.append(f"{indent}  error:  {run.error_message}")
     if run.instance_type:
         lines.append(f"{indent}  type:   {run.instance_type}")
-    lines.append(
-        f"{indent}  started: {_ros_time_str(run.started_at)}  "
-        f"finished: {_ros_time_str(run.finished_at)}"
-    )
+    lines.append(f"{indent}  started: {_ros_time_str(run.started_at)}  finished: {_ros_time_str(run.finished_at)}")
     if run.transfer_done:
         lines.append(f"{indent}  ✓ download complete")
     if run.has_active_transfer:
@@ -202,15 +196,9 @@ def submit(skill_dir: str) -> None:
 @cli.command("run")
 @click.argument("skill_dir")
 @click.option("--preset", default="", help="Training preset name.")
-@click.option(
-    "--env", multiple=True, help="Environment overrides as KEY=VALUE (repeatable)."
-)
-@click.option(
-    "--json", "extra_json", default="", help="Extra params as a JSON object string."
-)
-def create_run(
-    skill_dir: str, preset: str, env: tuple[str, ...], extra_json: str
-) -> None:
+@click.option("--env", multiple=True, help="Environment overrides as KEY=VALUE (repeatable).")
+@click.option("--json", "extra_json", default="", help="Extra params as a JSON object string.")
+def create_run(skill_dir: str, preset: str, env: tuple[str, ...], extra_json: str) -> None:
     """Create a training run for a skill identified by its local directory."""
     if extra_json:
         try:

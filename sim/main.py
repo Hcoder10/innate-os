@@ -1,31 +1,29 @@
 import argparse
-import time
-import threading
-import os
 import json
+import os
+import threading
+from typing import Any
 from urllib.parse import parse_qsl, urlencode
-from typing import Optional, Dict, Any
-from dotenv import load_dotenv
-import genesis as gs
+
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
-from src.shared_queues import SharedQueues
-from src.simulation.simulation_node import SimulationNode
 from src.agent.agent_websocket_bridge import run_agent_async
+from src.routes.chat_api import router as chat_api_router
+from src.routes.config_api import router as config_api_router
 
 # Import the new video & reset endpoints router
 from src.routes.video_api import router as video_api_router
-from src.routes.chat_api import router as chat_api_router
-from src.routes.config_api import router as config_api_router
 from src.runtime_logging import (
     DEFAULT_SIM_LOG_MODE,
     SIM_LOG_MODES,
     install_runtime_log_filter,
     normalize_sim_log_mode,
 )
+from src.shared_queues import SharedQueues
+from src.simulation.simulation_node import SimulationNode
 
 # Load environment variables from .env file
 load_dotenv()
@@ -67,10 +65,9 @@ def redact_sensitive_query_string(query_string: bytes) -> bytes:
 
 @app.middleware("http")
 async def redact_sensitive_query_params(request, call_next):
-    request.scope["query_string"] = redact_sensitive_query_string(
-        request.scope.get("query_string", b"")
-    )
+    request.scope["query_string"] = redact_sensitive_query_string(request.scope.get("query_string", b""))
     return await call_next(request)
+
 
 # Enable CORS
 app.add_middleware(
@@ -123,14 +120,10 @@ def frame_collector(shared_queues: SharedQueues):
             shared_queues.latest_frames[cam_name] = frame
 
 
-def load_initial_environment_config(
-    config_name: Optional[str], config_path: Optional[str]
-) -> Optional[Dict[str, Any]]:
+def load_initial_environment_config(config_name: str | None, config_path: str | None) -> dict[str, Any] | None:
     """Load initial environment config from name in data/environments or explicit path."""
     if config_name and config_path:
-        raise ValueError(
-            "Provide only one of --initial-environment or --initial-environment-path."
-        )
+        raise ValueError("Provide only one of --initial-environment or --initial-environment-path.")
 
     if not config_name and not config_path:
         return None
@@ -138,17 +131,11 @@ def load_initial_environment_config(
     project_root = os.path.dirname(os.path.abspath(__file__))
 
     if config_name:
-        resolved_path = os.path.join(
-            project_root, "data", "environments", f"{config_name}.json"
-        )
+        resolved_path = os.path.join(project_root, "data", "environments", f"{config_name}.json")
     else:
-        resolved_path = (
-            config_path
-            if os.path.isabs(config_path)
-            else os.path.join(project_root, config_path)
-        )
+        resolved_path = config_path if os.path.isabs(config_path) else os.path.join(project_root, config_path)
 
-    with open(resolved_path, "r") as f:
+    with open(resolved_path) as f:
         config = json.load(f)
 
     print(f"[Main] Loaded initial environment config from {resolved_path}")
@@ -163,9 +150,7 @@ def load_initial_environment_config(
 # -------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-v", "--vis", action="store_true", default=False, help="Enable visualization"
-    )
+    parser.add_argument("-v", "--vis", action="store_true", default=False, help="Enable visualization")
     parser.add_argument(
         "--log-everything",
         action="store_true",
@@ -213,25 +198,19 @@ def main():
     parser.add_argument(
         "--sim-log-mode",
         choices=SIM_LOG_MODES,
-        default=normalize_sim_log_mode(
-            os.getenv("SIM_LOG_MODE", DEFAULT_SIM_LOG_MODE)
-        ),
+        default=normalize_sim_log_mode(os.getenv("SIM_LOG_MODE", DEFAULT_SIM_LOG_MODE)),
         help="Runtime simulator log mode. 'quiet' suppresses noisy debug chatter.",
     )
     args = parser.parse_args()
 
     # 1) Create shared queues
     global SHARED_QUEUES
-    SHARED_QUEUES = SharedQueues(
-        log_everything=args.log_everything, sim_log_mode=args.sim_log_mode
-    )
+    SHARED_QUEUES = SharedQueues(log_everything=args.log_everything, sim_log_mode=args.sim_log_mode)
     app.state.SHARED_QUEUES = SHARED_QUEUES
     install_runtime_log_filter(SHARED_QUEUES)
 
     # 1b) Start the background frame collector
-    collector_thread = threading.Thread(
-        target=frame_collector, args=(SHARED_QUEUES,), daemon=True
-    )
+    collector_thread = threading.Thread(target=frame_collector, args=(SHARED_QUEUES,), daemon=True)
     collector_thread.start()
 
     try:

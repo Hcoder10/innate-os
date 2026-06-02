@@ -143,7 +143,7 @@ def find_config_path():
 
 def apply_config(config_path):
     """Apply config by loading it directly as ROS 2 parameters.
-    
+
     The YAML is now standard ros__parameters format (no JSON blobs),
     so `ros2 param load` handles everything natively.
     """

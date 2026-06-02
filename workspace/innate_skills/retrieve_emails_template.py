@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import imaplib
-import email
+
 from brain_client.skill_types import Skill, SkillResult
 
 

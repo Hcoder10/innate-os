@@ -66,9 +66,7 @@ SIM_IMAGE_INPUT_FILES = (
     "ros2_ws/apt-dependencies.common.txt",
     "ros2_ws/apt-dependencies.hardware.txt",
 )
-ROS_INSTALL_VALIDATION_INPUT_FILES = (
-    "scripts/validate_sim_ros_install.zsh",
-)
+ROS_INSTALL_VALIDATION_INPUT_FILES = ("scripts/validate_sim_ros_install.zsh",)
 OS_CONTAINER_SERVICE = "innate"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
 ENV_KEYS_MOVED_TO_OS_CONFIG = {
@@ -76,9 +74,7 @@ ENV_KEYS_MOVED_TO_OS_CONFIG = {
     "TELEMETRY_URL",
     "CARTESIA_VOICE_ID",
 }
-SECRET_ENV_KEYS = (
-    "INNATE_SERVICE_KEY",
-)
+SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY",)
 SECRET_ENV_PLACEHOLDERS = {
     "INNATE_SERVICE_KEY": {
         "",
@@ -118,6 +114,7 @@ SHOW_LIVE_DASHBOARD_DEFAULT = sys.stdout.isatty()
 TMUX_SESSION_NAME = "innate"
 CLI_ROOT = "./innate"
 CLI_SIM = "./innate sim"
+
 
 class StackError(RuntimeError):
     pass
@@ -164,11 +161,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         value = value.strip()
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         env[key.strip()] = value
     return env
@@ -351,10 +344,7 @@ def resolve_brain_websocket_uri(
 ) -> str:
     if mode in LOCAL_MODES:
         return f"ws://host.docker.internal:{cloud_port}"
-    return (
-        get_nested_str(os_config, "brain", "websocket_uri")
-        or DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
-    )
+    return get_nested_str(os_config, "brain", "websocket_uri") or DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
 
 
 def resolve_brain_client_version(repo_root: Path) -> str:
@@ -460,14 +450,8 @@ def get_config() -> dict[str, object]:
     ensure_config_file(SIM_CONFIG_PATH, SIM_CONFIG_TEMPLATE_PATH)
 
     user_env = parse_env_file(ENV_PATH)
-    ignored_os_env_keys = sorted(
-        key for key in user_env if key in ENV_KEYS_MOVED_TO_OS_CONFIG
-    )
-    raw_env = {
-        key: value
-        for key, value in user_env.items()
-        if key not in ENV_KEYS_MOVED_TO_OS_CONFIG
-    }
+    ignored_os_env_keys = sorted(key for key in user_env if key in ENV_KEYS_MOVED_TO_OS_CONFIG)
+    raw_env = {key: value for key, value in user_env.items() if key not in ENV_KEYS_MOVED_TO_OS_CONFIG}
     for key in SECRET_ENV_KEYS:
         value = os.environ.get(key, "").strip()
         if is_configured_secret_value(key, value):
@@ -489,9 +473,7 @@ def get_config() -> dict[str, object]:
 
     mode = get_nested_str(sim_config, "cloud_agent", "mode") or HOSTED_MODE
     if mode not in {HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}:
-        raise StackError(
-            "sim/config.toml cloud_agent.mode must be one of: hosted, local-image, local-source"
-        )
+        raise StackError("sim/config.toml cloud_agent.mode must be one of: hosted, local-image, local-source")
 
     os_repo = require_path(REPO_ROOT, "innate-os repository")
     sim_repo = require_path(REPO_ROOT / "sim", "sim repository")

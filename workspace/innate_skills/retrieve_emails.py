@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-import imaplib
 import email
+import imaplib
 from email.header import decode_header
+
 from brain_client.skill_types import Skill, SkillResult
 
 
@@ -168,12 +169,8 @@ class RetrieveEmails(Skill):
                     msg = email.message_from_bytes(msg_data[0][1])
 
                     # Extract email information
-                    subject = self._decode_header_value(
-                        msg.get("Subject", "No Subject")
-                    )
-                    sender = self._decode_header_value(
-                        msg.get("From", "Unknown Sender")
-                    )
+                    subject = self._decode_header_value(msg.get("Subject", "No Subject"))
+                    sender = self._decode_header_value(msg.get("From", "Unknown Sender"))
                     date = msg.get("Date", "Unknown Date")
                     content = self._extract_email_content(msg)
 
@@ -185,9 +182,7 @@ class RetrieveEmails(Skill):
                         "subject": subject,
                         "from": sender,
                         "date": date,
-                        "content": (
-                            content if content else "[No text content available]"
-                        ),
+                        "content": (content if content else "[No text content available]"),
                     }
 
                     emails_info.append(email_info)
@@ -214,9 +209,7 @@ class RetrieveEmails(Skill):
 
             result_message = "\n".join(result_lines)
 
-            self.logger.info(
-                f"\033[92m[BrainClient] Successfully retrieved {len(emails_info)} emails\033[0m"
-            )
+            self.logger.info(f"\033[92m[BrainClient] Successfully retrieved {len(emails_info)} emails\033[0m")
 
             return result_message, SkillResult.SUCCESS
 
@@ -241,8 +234,5 @@ class RetrieveEmails(Skill):
         Returns:
             str: A message describing the cancellation result.
         """
-        self.logger.info(
-            "\033[91m[BrainClient] Email retrieval operation cannot be canceled "
-            "once started\033[0m"
-        )
+        self.logger.info("\033[91m[BrainClient] Email retrieval operation cannot be canceled once started\033[0m")
         return "Email retrieval is an atomic operation that cannot be canceled once started"

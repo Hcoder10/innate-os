@@ -2,6 +2,8 @@
 target-version = "py310"
 line-length = 120
 src = ["ros2_ws/src"]
+# Never lint generated/build artifacts (colcon build/install/log trees).
+extend-exclude = ["**/build", "**/install", "**/log"]
 
 [tool.ruff.lint]
 select = [

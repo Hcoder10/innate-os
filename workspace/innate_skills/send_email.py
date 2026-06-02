@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from brain_client.skill_types import Skill, SkillResult
 
 
@@ -68,9 +69,7 @@ class SendEmail(Skill):
             f"Message: {message}"
         )
 
-        self.logger.info(
-            f"\033[92m[BrainClient] Emergency email sent to {recipients_str}" "\033[0m"
-        )
+        self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
         return f"Email sent to {recipients_str}", SkillResult.SUCCESS
 
         # Just pretending here it worked for sure.
@@ -91,10 +90,7 @@ class SendEmail(Skill):
             server.quit()
 
             # Log success message
-            self.logger.info(
-                f"\033[92m[BrainClient] Emergency email sent to {recipients_str}"
-                "\033[0m"
-            )
+            self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
             return f"Email sent to {recipients_str}", SkillResult.SUCCESS
 
         except Exception as e:
@@ -112,10 +108,5 @@ class SendEmail(Skill):
         Returns:
             str: A message describing the cancellation result.
         """
-        self.logger.info(
-            "\033[91m[BrainClient] Email sending operation cannot be canceled "
-            "once started\033[0m"
-        )
-        return (
-            "Email sending is an atomic operation that cannot be canceled once started"
-        )
+        self.logger.info("\033[91m[BrainClient] Email sending operation cannot be canceled once started\033[0m")
+        return "Email sending is an atomic operation that cannot be canceled once started"

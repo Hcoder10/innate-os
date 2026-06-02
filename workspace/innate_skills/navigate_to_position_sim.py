@@ -1,14 +1,15 @@
 import math
 import threading
 import time
-from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Path
-from std_msgs.msg import String, Bool
-from nav2_simple_commander.robot_navigator import BasicNavigator
-from brain_client.skill_types import Skill, SkillResult
+
 import rclpy
+from geometry_msgs.msg import PoseStamped
+from nav2_simple_commander.robot_navigator import BasicNavigator
+from nav_msgs.msg import Path
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
+from std_msgs.msg import Bool, String
+
+from brain_client.skill_types import Skill, SkillResult
 
 
 class SimPathPlanningController:
@@ -29,12 +30,8 @@ class SimPathPlanningController:
         self.node = Node("path_planning_controller")
 
         # Topic-based communication for sending path to simulator
-        self.path_publisher = self.node.create_publisher(
-            Path, "/sim_navigation/global_plan", 10
-        )
-        self.cancel_publisher = self.node.create_publisher(
-            Bool, "/sim_navigation/cancel", 10
-        )
+        self.path_publisher = self.node.create_publisher(Path, "/sim_navigation/global_plan", 10)
+        self.cancel_publisher = self.node.create_publisher(Bool, "/sim_navigation/cancel", 10)
 
         # Subscribe to execution status from simulator
         self.status_subscriber = self.node.create_subscription(
@@ -52,9 +49,7 @@ class SimPathPlanningController:
     def _status_callback(self, msg):
         """Callback for navigation status updates from simulator"""
         if not self._waiting_for_status:
-            self.logger.debug(
-                f"Ignoring status '{msg.data}' - not waiting for navigation"
-            )
+            self.logger.debug(f"Ignoring status '{msg.data}' - not waiting for navigation")
             return
         self._navigation_status = msg.data
         if self._navigation_status in ["SUCCEEDED", "FAILED", "CANCELED"]:
@@ -62,9 +57,7 @@ class SimPathPlanningController:
             self._waiting_for_status = False
         self.logger.debug(f"Navigation status: {self._navigation_status}")
 
-    def go_to_position(
-        self, x: float, y: float, theta: float, local_frame: bool = False
-    ):
+    def go_to_position(self, x: float, y: float, theta: float, local_frame: bool = False):
         """
         Plans a path to the goal and sends it to the simulator for execution.
 
@@ -114,9 +107,7 @@ class SimPathPlanningController:
         self._waiting_for_status = True  # Start accepting status messages
         self.path_publisher.publish(path)
 
-        self.logger.debug(
-            "[NavSim] Path sent to simulator via /sim_navigation/global_plan"
-        )
+        self.logger.debug("[NavSim] Path sent to simulator via /sim_navigation/global_plan")
 
         # Wait for simulator to complete navigation or handle cancellation
         loop_count = 0
@@ -134,9 +125,7 @@ class SimPathPlanningController:
             loop_count += 1
             time.sleep(0.1)
 
-        self.logger.debug(
-            f"[NavSim] Wait loop exited with status: {self._navigation_status}"
-        )
+        self.logger.debug(f"[NavSim] Wait loop exited with status: {self._navigation_status}")
         return self._navigation_status
 
     def cancel_navigation(self):

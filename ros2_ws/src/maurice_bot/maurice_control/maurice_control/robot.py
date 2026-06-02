@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 
-import numpy as np
-from maurice_control.dynamixel import Dynamixel, OperatingMode, ReadAttribute
 import time
+from enum import Enum, auto
+
+import numpy as np
 from dynamixel_sdk import (
+    COMM_SUCCESS,
+    DXL_HIBYTE,
+    DXL_HIWORD,
+    DXL_LOBYTE,
+    DXL_LOWORD,
     GroupSyncRead,
     GroupSyncWrite,
-    DXL_LOBYTE,
-    DXL_HIBYTE,
-    DXL_LOWORD,
-    DXL_HIWORD,
-    COMM_SUCCESS,
 )
-from enum import Enum, auto
-from typing import Union
+
+from maurice_control.dynamixel import OperatingMode, ReadAttribute
 
 
 class MotorControlType(Enum):
@@ -25,7 +26,7 @@ class MotorControlType(Enum):
 
 class Robot:
     # def __init__(self, device_name: str, baudrate=1_000_000, servo_ids=[1, 2, 3, 4, 5]):
-    def __init__(self, dynamixel, baudrate=1_000_000, servo_ids=[1, 2, 3, 4, 5]):
+    def __init__(self, dynamixel, baudrate=1_000_000, servo_ids=[1, 2, 3, 4, 5]):  # noqa: B006
         self.servo_ids = servo_ids
         self.dynamixel = dynamixel
         # self.dynamixel = Dynamixel.Config(baudrate=baudrate, device_name=device_name).instantiate()
@@ -64,7 +65,7 @@ class Robot:
         )
         for id in self.servo_ids:
             self.pwm_writer.addParam(id, [2048])
-        #self._disable_torque()
+        # self._disable_torque()
         self.motor_control_state = MotorControlType.POSITION_CONTROL
 
     def read_position(self, tries=2):
@@ -78,7 +79,7 @@ class Robot:
             if tries > 0:
                 return self.read_position(tries=tries - 1)
             else:
-                print(f"failed to read position!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("failed to read position!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         positions = []
         for id in self.servo_ids:
             position = self.position_reader.getData(id, ReadAttribute.POSITION.value, 4)
@@ -106,7 +107,7 @@ class Robot:
 
         :param action: list or numpy array of target joint positions in range [0, 4096]
         """
-        if not self.motor_control_state is MotorControlType.POSITION_CONTROL:
+        if self.motor_control_state is not MotorControlType.POSITION_CONTROL:
             self._set_position_control()
         for i, motor_id in enumerate(self.servo_ids):
             data_write = [
@@ -124,7 +125,7 @@ class Robot:
         Sets the pwm values for the servos.
         :param action: list or numpy array of pwm values in range [0, 885]
         """
-        if not self.motor_control_state is MotorControlType.PWM:
+        if self.motor_control_state is not MotorControlType.PWM:
             self._set_pwm_control()
         for i, motor_id in enumerate(self.servo_ids):
             data_write = [
@@ -142,7 +143,7 @@ class Robot:
         self.dynamixel._enable_torque(self.servo_ids[-1])
         self.dynamixel.set_pwm_value(self.servo_ids[-1], 200)
 
-    def limit_pwm(self, limit: Union[int, list, np.ndarray]):
+    def limit_pwm(self, limit: int | list | np.ndarray):
         """
         Limits the pwm values for the servos in for position control
         @param limit: 0 ~ 885
@@ -155,7 +156,7 @@ class Robot:
         else:
             limits = limit
         self._disable_torque()
-        for motor_id, limit in zip(self.servo_ids, limits):
+        for motor_id, limit in zip(self.servo_ids, limits):  # noqa: B905
             self.dynamixel.set_pwm_limit(motor_id, limit)
         self._enable_torque()
 
@@ -194,9 +195,7 @@ class Robot:
                 error_status = self.dynamixel.read_hardware_error_status(motor_id)
 
                 if error_status != 0:
-                    print(
-                        f"Dynamixel ID {motor_id} has a hardware error: {error_status}"
-                    )
+                    print(f"Dynamixel ID {motor_id} has a hardware error: {error_status}")
                     self._reboot_single_dynamixel(motor_id)
                 else:
                     print(f"Dynamixel ID {motor_id} is healthy")
@@ -208,9 +207,7 @@ class Robot:
         Reboots a single Dynamixel servo.
         """
         print(f"Rebooting Dynamixel ID: {motor_id}")
-        dxl_comm_result, dxl_error = self.dynamixel.packetHandler.reboot(
-            self.dynamixel.portHandler, motor_id
-        )
+        dxl_comm_result, dxl_error = self.dynamixel.packetHandler.reboot(self.dynamixel.portHandler, motor_id)
         if dxl_comm_result != COMM_SUCCESS:
             print(f"Failed to reboot Dynamixel ID {motor_id}")
             print("Error:", self.dynamixel.packetHandler.getTxRxResult(dxl_comm_result))
@@ -224,12 +221,8 @@ class Robot:
         time.sleep(0.5)
 
         # After rebooting, we need to reinitialize the motor control state for this servo
-        self.dynamixel._disable_torque(
-            motor_id
-        )  # Ensure torque is disabled after reboot
-        self.dynamixel.set_operating_mode(
-            motor_id, OperatingMode.POSITION
-        )  # Set to position control mode
+        self.dynamixel._disable_torque(motor_id)  # Ensure torque is disabled after reboot
+        self.dynamixel.set_operating_mode(motor_id, OperatingMode.POSITION)  # Set to position control mode
         self.dynamixel._enable_torque(motor_id)  # Re-enable torque
 
     def _reboot_all(self):
@@ -239,9 +232,7 @@ class Robot:
         print("Rebooting all Dynamixel servos...")
         for motor_id in self.servo_ids:
             print(f"Rebooting Dynamixel ID: {motor_id}")
-            dxl_comm_result, dxl_error = self.dynamixel.packetHandler.reboot(
-                self.dynamixel.portHandler, motor_id
-            )
+            dxl_comm_result, dxl_error = self.dynamixel.packetHandler.reboot(self.dynamixel.portHandler, motor_id)
             if dxl_comm_result != COMM_SUCCESS:
                 print(f"Failed to reboot Dynamixel ID {motor_id}")
                 print(
@@ -250,9 +241,7 @@ class Robot:
                 )
             elif dxl_error != 0:
                 print(f"Dynamixel ID {motor_id} responded with an error")
-                print(
-                    "Error:", self.dynamixel.packetHandler.getRxPacketError(dxl_error)
-                )
+                print("Error:", self.dynamixel.packetHandler.getRxPacketError(dxl_error))
             else:
                 print(f"Dynamixel ID {motor_id} rebooted successfully")
             self.dynamixel.disconnect()
@@ -275,4 +264,3 @@ if __name__ == "__main__":
         pos = robot.read_position()
         elapsed = time.time() - s
         print(f"read took {elapsed} pos {pos}")
-

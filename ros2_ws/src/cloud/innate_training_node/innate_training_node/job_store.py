@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 
 from builtin_interfaces.msg import Time as RosTime
-
 from innate_cloud_msgs.msg import (
     TrainingRunStatus,
     TrainingSkillStatus,
     TransferProgress,
 )
-
 from training_client.src.types import (
     ProgressStage,
     ProgressUpdate,
@@ -139,9 +137,7 @@ class JobStore:
 
     # ── Transfers ───────────────────────────────────────────────────
 
-    def update_transfer(
-        self, direction: int, skill_id: str, run_id: int, update: ProgressUpdate
-    ) -> None:
+    def update_transfer(self, direction: int, skill_id: str, run_id: int, update: ProgressUpdate) -> None:
         key = (direction, skill_id, run_id)
         finished = update.stage in (ProgressStage.DONE, ProgressStage.ERROR)
         with self._lock:
@@ -150,9 +146,7 @@ class JobStore:
                 if update.stage == ProgressStage.DONE:
                     self._completed_transfers.add(key)
             else:
-                self._transfers[key] = _progress_to_transfer(
-                    direction, skill_id, run_id, update
-                )
+                self._transfers[key] = _progress_to_transfer(direction, skill_id, run_id, update)
 
     def mark_upload_pending(self, skill_id: str) -> None:
         """Insert a placeholder upload transfer so the very next publish
@@ -251,9 +245,7 @@ def build_skill_status(
     return s
 
 
-def _progress_to_transfer(
-    direction: int, skill_id: str, run_id: int, update: ProgressUpdate
-) -> TransferProgress:
+def _progress_to_transfer(direction: int, skill_id: str, run_id: int, update: ProgressUpdate) -> TransferProgress:
     msg = TransferProgress()
     msg.direction = direction
     msg.stage = _STAGE_MAP.get(update.stage.value, TransferProgress.STAGE_ERROR)

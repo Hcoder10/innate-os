@@ -16,7 +16,8 @@ import asyncio
 import json
 import logging
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from auth_client import AuthProvider
 
@@ -54,10 +55,10 @@ class SyncRealtimeConnection:
         self,
         auth: AuthProvider,
         ws_url: str,
-        on_message: Optional[Callable] = None,
-        on_open: Optional[Callable] = None,
-        on_error: Optional[Callable] = None,
-        on_close: Optional[Callable] = None,
+        on_message: Callable | None = None,
+        on_open: Callable | None = None,
+        on_error: Callable | None = None,
+        on_close: Callable | None = None,
     ) -> None:
         self._auth = auth
         self._ws_url = ws_url
@@ -67,8 +68,8 @@ class SyncRealtimeConnection:
         self._on_close = on_close
 
         self._ws: Any = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
         self._connected = threading.Event()
         self._stopped = threading.Event()
 
@@ -167,7 +168,7 @@ class ProxyOpenAIClient:
     # -- Realtime -------------------------------------------------------------
 
     class Realtime:
-        def __init__(self, openai_client: "ProxyOpenAIClient") -> None:
+        def __init__(self, openai_client: ProxyOpenAIClient) -> None:
             self._oc = openai_client
 
         def _build_ws_url(self, model: str) -> str:
@@ -178,7 +179,7 @@ class ProxyOpenAIClient:
         async def connect(
             self,
             model: str = "gpt-4o-realtime-preview",
-            on_message: Optional[Callable] = None,
+            on_message: Callable | None = None,
         ):
             """Open an async WebSocket to the OpenAI Realtime API via proxy."""
             ws_url = self._build_ws_url(model)
@@ -197,10 +198,10 @@ class ProxyOpenAIClient:
         def connect_sync(
             self,
             model: str = "gpt-4o-realtime-preview",
-            on_message: Optional[Callable] = None,
-            on_open: Optional[Callable] = None,
-            on_error: Optional[Callable] = None,
-            on_close: Optional[Callable] = None,
+            on_message: Callable | None = None,
+            on_open: Callable | None = None,
+            on_error: Callable | None = None,
+            on_close: Callable | None = None,
         ) -> SyncRealtimeConnection:
             """Return a :class:`SyncRealtimeConnection` (call ``.start()`` to connect)."""
             ws_url = self._build_ws_url(model)
@@ -222,7 +223,7 @@ class ProxyOpenAIClient:
     async def close(self) -> None:
         await self._parent.close_async()
 
-    async def __aenter__(self) -> "ProxyOpenAIClient":
+    async def __aenter__(self) -> ProxyOpenAIClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

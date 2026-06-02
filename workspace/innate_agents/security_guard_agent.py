@@ -1,4 +1,3 @@
-from typing import List
 from brain_client.agent_types import Agent
 
 
@@ -20,7 +19,7 @@ class SecurityGuardAgent(Agent):
     def display_icon(self) -> str:
         return "assets/security_guard.png"
 
-    def get_skills(self) -> List[str]:
+    def get_skills(self) -> list[str]:
         """Return the list of skill IDs this directive can use"""
         return [
             "innate-os/navigate_to_position",
@@ -28,7 +27,7 @@ class SecurityGuardAgent(Agent):
             "innate-os/send_email",
         ]
 
-    def get_inputs(self) -> List[str]:
+    def get_inputs(self) -> list[str]:
         """Enable microphone input to hear user"""
         return ["micro"]
 

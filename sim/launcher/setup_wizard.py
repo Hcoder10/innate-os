@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from config import ENV_PATH, HOSTED_MODE, is_configured_secret_value, warn, success
+from config import ENV_PATH, HOSTED_MODE, is_configured_secret_value, success, warn
 from dashboard import BOLD, CYAN, DIM, GREEN, NC, YELLOW
 
 INNATE_SERVICE_KEY = "INNATE_SERVICE_KEY"
@@ -37,7 +37,7 @@ def _prompt_yes_no(question: str, *, default: bool = False) -> bool:
             value = input(f"{YELLOW}{question} [{default_label}]: {NC}").strip().lower()
         except (KeyboardInterrupt, EOFError):
             print()
-            raise SystemExit(1)
+            raise SystemExit(1)  # noqa: B904
         if not value:
             return default
         if value in {"y", "yes"}:
@@ -52,7 +52,7 @@ def _prompt_secret(question: str) -> str:
         return getpass.getpass(f"{YELLOW}{question}: {NC}", stream=sys.stdout).strip()
     except (KeyboardInterrupt, EOFError):
         print()
-        raise SystemExit(1)
+        raise SystemExit(1)  # noqa: B904
 
 
 def _quote_env_value(value: str) -> str:

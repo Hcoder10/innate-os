@@ -13,22 +13,22 @@ import json
 import logging
 import re
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator
 
 from requests.exceptions import ConnectionError, Timeout
 
 from .client import APIError, OrchestratorClient
-from .downloader import download_results, download_skill_data, download_files
+from .downloader import download_results, download_skill_data
+from .episode_converter import convert_episodes_to_h264
 from .types import (
     ClientConfig,
-    RunInfo,
-    SkillInfo,
     ProgressStage,
     ProgressUpdate,
+    RunInfo,
+    SkillInfo,
 )
-from .episode_converter import convert_episodes_to_h264
 from .uploader import upload_data_files
 
 logger = logging.getLogger(__name__)
@@ -117,9 +117,7 @@ def _migrate_skill_id(skill_dir: Path) -> None:
     meta["training_skill_id"] = old_id
     _write_meta(meta_path, meta)
     old_path.unlink(missing_ok=True)
-    logger.info(
-        "Migrated skill_id %s from %s → %s", old_id, old_path.name, meta_path.name
-    )
+    logger.info("Migrated skill_id %s from %s → %s", old_id, old_path.name, meta_path.name)
 
 
 def read_skill_id(skill_dir: str | Path) -> str | None:
@@ -233,8 +231,7 @@ class SkillManager:
             except APIError as e:
                 if e.status_code in (403, 404):
                     logger.warning(
-                        "Skill %s from metadata.json not accessible on server "
-                        "(HTTP %d) — creating a new skill",
+                        "Skill %s from metadata.json not accessible on server (HTTP %d) — creating a new skill",
                         existing_id,
                         e.status_code,
                     )
@@ -309,11 +306,13 @@ class SkillManager:
                         raise
                     delay = _URL_REQUEST_BACKOFF_BASE * (2 ** (attempt - 1))
                     logger.warning(
-                        "URL request batch %d/%d attempt %d/%d failed: %s "
-                        "— retrying in %ds",
-                        batch_num, total_batches,
-                        attempt, _URL_REQUEST_MAX_RETRIES,
-                        e, delay,
+                        "URL request batch %d/%d attempt %d/%d failed: %s — retrying in %ds",
+                        batch_num,
+                        total_batches,
+                        attempt,
+                        _URL_REQUEST_MAX_RETRIES,
+                        e,
+                        delay,
                     )
                     time.sleep(delay)
 
@@ -419,9 +418,7 @@ class SkillManager:
         elif run.source_dir:
             dest = Path(run.source_dir)
         else:
-            raise ValueError(
-                f"No dest_dir provided and run {skill_id}/{run_id} has no source_dir in params"
-            )
+            raise ValueError(f"No dest_dir provided and run {skill_id}/{run_id} has no source_dir in params")
 
         # Download into a run-specific subdirectory
         dest = dest / str(run_id)
@@ -472,9 +469,7 @@ class SkillManager:
         # Find checkpoint and stats
         checkpoint = _find_latest_checkpoint(run_dir)
         if not checkpoint:
-            raise FileNotFoundError(
-                f"No *_step_*.pth checkpoint file found in {run_dir}"
-            )
+            raise FileNotFoundError(f"No *_step_*.pth checkpoint file found in {run_dir}")
 
         stats_file = _find_stats_file(run_dir)
         if not stats_file:
@@ -528,7 +523,6 @@ class SkillManager:
             skill_id=skill_id,
             dest_dir=Path(dest_dir),
         )
-
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

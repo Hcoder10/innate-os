@@ -1,8 +1,10 @@
 import math
 import threading
 import time
+
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+
 from brain_client.skill_types import Skill, SkillResult
 
 
@@ -12,9 +14,9 @@ class Nav2Controller:
         Initialize the Nav2Controller by creating a BasicNavigator instance
         """
         # Create a BasicNavigator instance to communicate with Nav2.
-        self.navigator = BasicNavigator(namespace='')
-        self.navigator_mapfree = BasicNavigator(namespace='mapfree')
-        self.navigator_navigation = BasicNavigator(namespace='navigation')
+        self.navigator = BasicNavigator(namespace="")
+        self.navigator_mapfree = BasicNavigator(namespace="mapfree")
+        self.navigator_navigation = BasicNavigator(namespace="navigation")
         self.logger = logger
         # Add a cancellation flag
         self._cancel_requested = threading.Event()
@@ -46,7 +48,7 @@ class Nav2Controller:
         self._cancel_requested.clear()
 
         # Determine behavior tree based on navigation mode
-        behavior_tree = 'mapfree' if local_frame else 'navigation'
+        behavior_tree = "mapfree" if local_frame else "navigation"
 
         # Create a PoseStamped goal.
         goal_pose = PoseStamped()
@@ -75,8 +77,8 @@ class Nav2Controller:
         self.logger.debug("Waiting for navigation to complete ...")
 
         was_canceled = False
-        initial_distance_to_goal = -1.0 # Initialize with a value that indicates it's not set
-        feedback_sent_close_to_goal = False # Flag to track if feedback has been sent
+        initial_distance_to_goal = -1.0  # Initialize with a value that indicates it's not set
+        feedback_sent_close_to_goal = False  # Flag to track if feedback has been sent
 
         # Modified loop to check for cancellation
         while not navigator.isTaskComplete():
@@ -97,8 +99,7 @@ class Nav2Controller:
 
                 # Compute the distance to the goal
                 current_distance_to_goal = math.sqrt(
-                    (current_position.x - goal_position.x) ** 2
-                    + (current_position.y - goal_position.y) ** 2
+                    (current_position.x - goal_position.x) ** 2 + (current_position.y - goal_position.y) ** 2
                 )
                 # Compute the angle to the goal
                 goal_orientation = math.atan2(
@@ -112,9 +113,7 @@ class Nav2Controller:
                 q_y = current_orientation.y
                 q_z = current_orientation.z
                 q_w = current_orientation.w
-                current_robot_yaw = math.atan2(
-                    2.0 * (q_w * q_z + q_x * q_y), 1.0 - 2.0 * (q_y * q_y + q_z * q_z)
-                )
+                current_robot_yaw = math.atan2(2.0 * (q_w * q_z + q_x * q_y), 1.0 - 2.0 * (q_y * q_y + q_z * q_z))
 
                 angle_difference = math.atan2(
                     math.sin(goal_orientation - current_robot_yaw),
@@ -124,13 +123,17 @@ class Nav2Controller:
                 # Now we compute 2 percentages:
                 # 1. The percentage of the path that has been completed
                 # 2. The percentage of the angle that has been completed
-                if initial_distance_to_goal < 0.0 and current_distance_to_goal > 0 : # Check if not set and current_distance is valid
+                if (
+                    initial_distance_to_goal < 0.0 and current_distance_to_goal > 0
+                ):  # Check if not set and current_distance is valid
                     initial_distance_to_goal = current_distance_to_goal
 
-                if initial_distance_to_goal > 0: # Avoid division by zero if goal is already reached or not set
+                if initial_distance_to_goal > 0:  # Avoid division by zero if goal is already reached or not set
                     path_completion = (1.0 - (current_distance_to_goal / initial_distance_to_goal)) * 100
                 else:
-                    path_completion = 100.0 if current_distance_to_goal == 0 else 0.0 # If initial distance is 0, and current is 0, it's 100%
+                    path_completion = (
+                        100.0 if current_distance_to_goal == 0 else 0.0
+                    )  # If initial distance is 0, and current is 0, it's 100%
 
                 angle_completion = (1 - abs(angle_difference) / math.pi) * 100
                 average_completion = (path_completion + angle_completion) / 2
@@ -159,7 +162,7 @@ class Nav2Controller:
                             "I'm almost done with this movement, if I think I should navigate again to pursue this task"
                             ", I should stop the current primitive and start a new navigation movement."
                         )
-                        feedback_sent_close_to_goal = True # Set flag to true after sending feedback
+                        feedback_sent_close_to_goal = True  # Set flag to true after sending feedback
 
             # Small sleep to prevent CPU hogging
             time.sleep(0.1)  # 100ms check interval
@@ -210,9 +213,7 @@ class NavigateToPosition(Skill):
         )
 
     def execute(self, x: float, y: float, theta: float, local_frame: bool = False):
-        self.logger.info(
-            f"Initiating navigation to position: x={x}, y={y}, theta={theta}, local_frame={local_frame}"
-        )
+        self.logger.info(f"Initiating navigation to position: x={x}, y={y}, theta={theta}, local_frame={local_frame}")
 
         result = self.nav2_controller.go_to_position(x, y, theta, local_frame)
 

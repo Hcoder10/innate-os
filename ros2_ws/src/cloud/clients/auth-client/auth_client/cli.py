@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
-from auth_client.provider import AuthProvider, AuthError
+from auth_client.provider import AuthError, AuthProvider
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
         print("INNATE_JWT=" + auth.token)
     except AuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1)  # noqa: B904
 
 
 if __name__ == "__main__":
