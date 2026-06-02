@@ -2655,7 +2655,10 @@ def main(args=None):
         node.get_logger().info("KeyboardInterrupt, shutting down.")
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # Guard against double-shutdown (see ws_client_node): avoids a teardown
+        # RCLError that exits the process 1 and masks real crashes.
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

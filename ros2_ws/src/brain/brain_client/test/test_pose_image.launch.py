@@ -307,9 +307,10 @@ class TestShutdown(unittest.TestCase):
     """Verify both nodes exited cleanly."""
 
     def test_exit_codes(self, proc_info):
-        # Allow 0 (clean), -2 (SIGINT), and 1 (rclpy shutdown race condition
-        # in brain_client_node's finally block)
+        # 0 (clean) and -2 (SIGINT on teardown) only. 1 is Python's generic
+        # unhandled-exception code - allowing it would mask real node crashes.
+        # (The former rclpy double-shutdown race is fixed in the nodes' main().)
         launch_testing.asserts.assertExitCodes(
             proc_info,
-            allowable_exit_codes=[0, -2, 1],
+            allowable_exit_codes=[0, -2],
         )

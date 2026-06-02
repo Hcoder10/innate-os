@@ -1568,7 +1568,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     action_server.destroy()
-    rclpy.shutdown()
+    # Guard against double-shutdown (see ws_client_node): avoids a teardown
+    # RCLError that exits the process 1 and masks real crashes.
+    if rclpy.ok():
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

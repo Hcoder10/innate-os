@@ -559,7 +559,11 @@ def main(args=None):
     finally:
         node.exit_event.set()
         node.destroy_node()
-        rclpy.shutdown()
+        # Guard against double-shutdown: on SIGINT teardown rclpy may have already
+        # shut the context down, and a second shutdown() raises RCLError -> process
+        # exits 1 (which would mask real crashes). Only shut down if still up.
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
