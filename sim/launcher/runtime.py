@@ -718,9 +718,6 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
     env = os.environ.copy()
     raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
     env["ROSBRIDGE_URI"] = raw_env.get("ROSBRIDGE_URI", "ws://localhost:9090")
-    env["ROSBRIDGE_ADVERTISED_SERVICE_URI"] = raw_env.get(
-        "ROSBRIDGE_ADVERTISED_SERVICE_URI", "ws://localhost:9091"
-    )
     env["SIMULATOR_PORT"] = raw_env.get("SIMULATOR_PORT", "8000")
     env["SIM_LOG_MODE"] = str(config.get("sim_log_mode", "quiet"))
     if config.get("sim_render_fps") is not None:
@@ -887,7 +884,6 @@ def collect_runtime_probe(
         os_status["os_session_running"]
         and os_status["rosbridge_process_live"]
         and websocket_port_open(9090)
-        and websocket_port_open(9091)
     )
     agent_running = (
         True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
@@ -921,7 +917,6 @@ def os_runtime_ready(config: dict[str, object]) -> bool:
         and os_status["rosbridge_process_live"]
         and os_status["brain_process_live"]
         and websocket_port_open(9090)
-        and websocket_port_open(9091)
     )
 
 

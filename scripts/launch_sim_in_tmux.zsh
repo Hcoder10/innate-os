@@ -78,18 +78,12 @@ tmux split-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch maurice_control app.sim.launch.py" C-m
 echo "Started app control..."
 
-# === Window 2: Simulator-owned services bridge ===
-tmux new-window -t "$SESSION_NAME" -n sim-services
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:sim-services" "ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091" C-m
-echo "Started simulator services bridge..."
-settle_after_launch
-
-# === Window 3: WebRTC Streamer ===
+# === Window 2: WebRTC Streamer ===
 tmux new-window -t "$SESSION_NAME" -n webrtc
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch maurice_cam webrtc_streamer.sim.launch.py" C-m
 echo "Started webrtc streamer (sim mode with compressed images)..."
 
-# === Window 4: Nav + Brain ===
+# === Window 3: Nav + Brain ===
 tmux new-window -t "$SESSION_NAME" -n nav-brain
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain" "ros2 launch maurice_nav navigation_sim.launch.py" C-m
 echo "Started navigation system..."

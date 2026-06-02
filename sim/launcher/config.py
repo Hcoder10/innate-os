@@ -485,7 +485,6 @@ def get_config() -> dict[str, object]:
     merged_env = dict(raw_env)
     merged_env.update(os_config_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
-    merged_env.setdefault("ROSBRIDGE_ADVERTISED_SERVICE_URI", "ws://localhost:9091")
     merged_env.setdefault("SIMULATOR_PORT", "8000")
 
     mode = get_nested_str(sim_config, "cloud_agent", "mode") or HOSTED_MODE
