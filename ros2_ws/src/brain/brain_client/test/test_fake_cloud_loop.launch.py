@@ -78,20 +78,15 @@ IMAGE_TOPIC = "/test/camera/compressed"
 # FakeCloud is started in generate_test_description (before the nodes connect) and
 # referenced from the active test in the same process. Module-global by necessity:
 # launch_testing runs the description and the TestCase in one interpreter.
+# Each test scripts its OWN tasks at runtime and asserts only on the slice of the
+# transcript it produced (see _baseline), so tests don't depend on run order.
 FAKE = None
-SCRIPTED_PRIMITIVE_ID = None
 
 
 @pytest.mark.launch_test
 def generate_test_description():
-    global FAKE, SCRIPTED_PRIMITIVE_ID
-
+    global FAKE
     FAKE = FakeCloud().start()
-    # Queue two primitives before anyone connects. The brain runs them one at a
-    # time; the first dispatches on the first perception, the second after the
-    # first completes.
-    SCRIPTED_PRIMITIVE_ID = FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
-    FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
 
     common = {
         "simulator_mode": True,
@@ -216,14 +211,25 @@ class TestFakeCloudLoop(unittest.TestCase):
         finally:
             self.node.destroy_client(client)
 
-    def _feed_perception(self, duration=15.0):
-        """Keep publishing image + TF so the brain has something to send, while
-        spinning. The brain's loop runs against FakeCloud on its own thread."""
+    def _feed_until(self, predicate, timeout=40.0):
+        """Publish image + TF and spin until predicate() is true (return True) or
+        the timeout elapses (return False). Returns as soon as the work is done -
+        fast on fast machines, tolerant on slow CI, no fixed-duration sleeps."""
         self.tf_broadcaster.sendTransform(_make_static_tf())
-        end = time.monotonic() + duration
+        end = time.monotonic() + timeout
         while time.monotonic() < end:
             self.image_pub.publish(_make_compressed_image())
-            self._spin_for(0.3)
+            self._spin_for(0.2)
+            if predicate():
+                return True
+        return predicate()
+
+    def _since(self, before, *types):
+        """Transcript messages of the given types recorded since index `before`.
+
+        Slicing from a per-test baseline keeps each test independent of work done
+        by earlier-running tests (methods share the one FAKE transcript)."""
+        return [m for m in FAKE.transcript[before:] if m.get("type") in types]
 
     def test_connection_and_registration(self):
         """The stack connects and registers without manual intervention:
@@ -235,40 +241,42 @@ class TestFakeCloudLoop(unittest.TestCase):
     def test_brain_sends_perception(self):
         """Once registered + auto-activated (sim mode), the brain sends imagery."""
         self._wait_for_brain_client()
-        self._feed_perception(duration=10.0)
-        types = FAKE.received_types()
-        self.assertTrue(
-            "image" in types or "pose_image" in types,
-            f"Brain never sent perception. Transcript: {types}",
-        )
+        FAKE.wait_for("register_primitives_and_directive", timeout=30.0)
+        before = len(FAKE.transcript)
+        sent = self._feed_until(lambda: bool(self._since(before, "image", "pose_image")), timeout=20.0)
+        self.assertTrue(sent, f"Brain never sent perception. Types: {FAKE.received_types()}")
 
     def test_scripted_primitive_runs_to_completion(self):
-        """The scripted next_task is dispatched, executed by the skills server,
-        and reported complete - a full directive->primitive->completion cycle."""
+        """A scripted next_task is dispatched, executed by the skills server, and
+        reported complete - a full directive->primitive->completion cycle. Scripts
+        its own task and asserts only on its own slice, so it is order-independent."""
         self._wait_for_brain_client()
-        self._feed_perception(duration=20.0)
+        before = len(FAKE.transcript)
+        pid = FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
 
         # primitive_activated carries next_task.primitive_id verbatim
         # (brain_client_node.py:1802), so this correlation is exact.
-        activated = [
-            m
-            for m in FAKE.transcript
-            if m.get("type") == "primitive_activated"
-            and m.get("payload", {}).get("primitive_id") == SCRIPTED_PRIMITIVE_ID
-        ]
+        activated = self._feed_until(
+            lambda: any(
+                m.get("payload", {}).get("primitive_id") == pid for m in self._since(before, "primitive_activated")
+            ),
+            timeout=40.0,
+        )
         self.assertTrue(
             activated,
-            f"Scripted primitive was never activated (not dispatched). Transcript types: {FAKE.received_types()}",
+            f"Scripted primitive {pid} was never activated. Types: {FAKE.received_types()}",
         )
 
-        # And the execution cycle closes with a terminal lifecycle message.
-        terminal = [m for m in FAKE.transcript if m.get("type") in ("primitive_completed", "primitive_failed")]
-        self.assertTrue(
-            terminal,
-            f"Primitive activated but never reported a terminal result. Transcript types: {FAKE.received_types()}",
+        done = self._feed_until(
+            lambda: bool(self._since(before, "primitive_completed", "primitive_failed")),
+            timeout=20.0,
         )
-        # send_email succeeds headlessly (no external creds), so the
-        # terminal result should be completion, not failure.
+        self.assertTrue(
+            done,
+            f"Primitive activated but never reported a terminal result. Types: {FAKE.received_types()}",
+        )
+        # send_email succeeds headlessly (no external creds) -> completion, not failure.
+        terminal = self._since(before, "primitive_completed", "primitive_failed")
         self.assertEqual(
             terminal[0].get("type"),
             "primitive_completed",
@@ -276,15 +284,16 @@ class TestFakeCloudLoop(unittest.TestCase):
         )
 
     def test_loop_continues_after_completion(self):
-        """After one primitive completes the brain requests the next task and
-        runs it too - the post-completion continuation path. Two were scripted."""
+        """After one primitive completes the brain requests and runs the next -
+        the post-completion continuation path. Scripts two of its own tasks."""
         self._wait_for_brain_client()
-        self._feed_perception(duration=30.0)
-        completed = [m for m in FAKE.transcript if m.get("type") == "primitive_completed"]
-        self.assertGreaterEqual(
-            len(completed),
-            2,
-            f"Loop did not continue past the first primitive. Transcript types: {FAKE.received_types()}",
+        before = len(FAKE.transcript)
+        FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
+        FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
+        done = self._feed_until(lambda: len(self._since(before, "primitive_completed")) >= 2, timeout=45.0)
+        self.assertTrue(
+            done,
+            f"Loop did not complete two primitives. Types: {FAKE.received_types()}",
         )
 
     def test_chat_in_is_forwarded_to_cloud(self):
@@ -294,22 +303,23 @@ class TestFakeCloudLoop(unittest.TestCase):
         # Registration -> brain auto-activates in sim mode; chat_in needs that.
         FAKE.wait_for("register_primitives_and_directive", timeout=30.0)
         before = len(FAKE.transcript)
-        for _ in range(5):
+        end = time.monotonic() + 15.0
+        forwarded = False
+        while time.monotonic() < end and not forwarded:
             self.chat_pub.publish(String(data=json.dumps({"text": "hello robot"})))
             self._spin_for(0.5)
-        chat = [m for m in FAKE.transcript[before:] if m.get("type") == "chat_in"]
-        self.assertTrue(
-            chat,
-            f"chat_in was not forwarded. Transcript types: {FAKE.received_types()}",
-        )
+            forwarded = bool(self._since(before, "chat_in"))
+        self.assertTrue(forwarded, f"chat_in was not forwarded. Types: {FAKE.received_types()}")
 
 
 @launch_testing.post_shutdown_test()
 class TestShutdown(unittest.TestCase):
     def test_exit_codes(self, proc_info):
+        # 0 (clean) and -2 (SIGINT on teardown) only. 1 is Python's generic
+        # unhandled-exception code - allowing it would mask real node crashes.
         launch_testing.asserts.assertExitCodes(
             proc_info,
-            allowable_exit_codes=[0, -2, 1],
+            allowable_exit_codes=[0, -2],
         )
 
 

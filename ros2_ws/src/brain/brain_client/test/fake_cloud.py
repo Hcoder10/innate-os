@@ -71,8 +71,8 @@ class FakeCloud:
     """Scriptable fake cloud agent. Start it, point the robot at `.uri`, script
     the tasks it should dispatch, then assert on `.transcript`.
 
-    Not thread-safe for scripting from multiple threads; script before the robot
-    connects, or use the async inject helpers from the server's own loop.
+    script_task() and the transcript are lock-guarded, so scripting and asserting
+    from the test thread is safe while the server runs in its own thread.
     """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0):
@@ -111,7 +111,9 @@ class FakeCloud:
         """
         pid = primitive_id or str(uuid.uuid4())
         # "name" (not "type") mirrors the live cloud; the robot renames it.
-        self._task_queue.append({"name": name, "inputs": inputs or {}, "primitive_id": pid})
+        # Lock-guarded so tests can script at runtime (server thread pops below).
+        with self._cond:
+            self._task_queue.append({"name": name, "inputs": inputs or {}, "primitive_id": pid})
         return pid
 
     # -------------------------------------------------------------- observation
@@ -255,7 +257,9 @@ class FakeCloud:
         # chat_in: fast path; recorded only.
 
     async def _handle_perception(self):
-        # The real brain only issues a new task when idle.
-        next_task = self._task_queue.pop(0) if self._task_queue and not self._busy else None
+        # The real brain only issues a new task when idle. Lock-guarded because
+        # tests may script_task() concurrently from their own thread.
+        with self._cond:
+            next_task = self._task_queue.pop(0) if self._task_queue and not self._busy else None
         await self._send(_vision_agent_output(next_task))
         await self._send({"type": "ready_for_image", "payload": {}})
