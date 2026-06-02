@@ -1,7 +1,7 @@
 # CI (`ci/`)
 
 How innate-os is built and tested in CI, and *why* it's wired this way. For the
-gate-by-gate breakdown of what runs, see [`../TESTING.md`](../TESTING.md).
+gate-by-gate breakdown of what runs, see [`../docs/TESTING.md`](../docs/TESTING.md).
 
 ## Layout
 

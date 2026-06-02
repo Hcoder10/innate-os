@@ -440,7 +440,7 @@ class AppControl : public rclcpp::Node {
      */
     void _load_app_config() {
         std::string maurice_root = get_maurice_root();
-        std::string config_file_path = maurice_root + "/os_config.yaml";
+        std::string config_file_path = maurice_root + "/config/os_config.yaml";
 
         try {
             if (std::filesystem::exists(config_file_path)) {
