@@ -13,9 +13,9 @@ namespace maurice_arm {
 // x330 motors (XL330, XC330) have current control hw (addr 38/102, modes 0/5)
 // x430 motors do not. addr 38 max = 1750 mA for all x330.
 static constexpr int kX330MaxCurrentLimit = 1750;
-static constexpr int kLoadWarningThreshold = 800;   // ~80% load (0.1% units)
+static constexpr int kLoadWarningThreshold = 800;  // ~80% load (0.1% units)
 static constexpr int kTemperatureWarningC = 70;
-static constexpr int kGainScheduleInterval = 20;     // control cycles between updates
+static constexpr int kGainScheduleInterval = 20;  // control cycles between updates
 
 inline bool isX330(const std::string& motor_type) {
     return motor_type.find("330") != std::string::npos;
@@ -48,7 +48,9 @@ struct GainProfile {
     bool operator==(const GainProfile& o) const {
         return kp == o.kp && ki == o.ki && kd == o.kd && ff1 == o.ff1 && ff2 == o.ff2;
     }
-    bool operator!=(const GainProfile& o) const { return !(*this == o); }
+    bool operator!=(const GainProfile& o) const {
+        return !(*this == o);
+    }
 };
 
 // Gain mode: SCHEDULED = interpolate near/far by extension, TELEOP = flat teleop gains
@@ -57,18 +59,23 @@ enum class GainMode { SCHEDULED, TELEOP };
 inline GainProfile parseGainsArray(const std::vector<int64_t>& arr) {
     constexpr int kMaxGain = 16383;
     GainProfile g;
-    if (arr.size() >= 1) g.kp  = std::clamp(static_cast<int>(arr[0]), 0, kMaxGain);
-    if (arr.size() >= 2) g.ki  = std::clamp(static_cast<int>(arr[1]), 0, kMaxGain);
-    if (arr.size() >= 3) g.kd  = std::clamp(static_cast<int>(arr[2]), 0, kMaxGain);
-    if (arr.size() >= 4) g.ff1 = std::clamp(static_cast<int>(arr[3]), 0, kMaxGain);
-    if (arr.size() >= 5) g.ff2 = std::clamp(static_cast<int>(arr[4]), 0, kMaxGain);
+    if (arr.size() >= 1)
+        g.kp = std::clamp(static_cast<int>(arr[0]), 0, kMaxGain);
+    if (arr.size() >= 2)
+        g.ki = std::clamp(static_cast<int>(arr[1]), 0, kMaxGain);
+    if (arr.size() >= 3)
+        g.kd = std::clamp(static_cast<int>(arr[2]), 0, kMaxGain);
+    if (arr.size() >= 4)
+        g.ff1 = std::clamp(static_cast<int>(arr[3]), 0, kMaxGain);
+    if (arr.size() >= 5)
+        g.ff2 = std::clamp(static_cast<int>(arr[4]), 0, kMaxGain);
     return g;
 }
 
 // Per-motor stress tracking for overload protection
 struct MotorStressTracker {
-    double score = 0.0;           // accumulated stress score
-    bool in_cooldown = false;     // currently resting?
+    double score = 0.0;                                    // accumulated stress score
+    bool in_cooldown = false;                              // currently resting?
     std::chrono::steady_clock::time_point cooldown_until;  // when to re-enable
 };
 
@@ -89,4 +96,4 @@ struct TimingAccumulator {
     }
 };
 
-} // namespace maurice_arm
+}  // namespace maurice_arm

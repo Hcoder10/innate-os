@@ -1,8 +1,9 @@
 # Pre-commit hooks for innate-os.
 #
-# Mirrors the ruff checks enforced in CI (.github/workflows/format.yml) so
-# violations are caught locally before they reach a PR. The ruff version is
-# pinned here and in the CI workflow to keep local and CI results identical.
+# These are the same checks CI enforces (.github/workflows/format.yml runs
+# `pre-commit run --all-files`), so violations are caught locally before they
+# reach a PR. Hook versions are pinned here, so local and CI results are
+# identical regardless of any system-installed tools.
 #
 # One-time setup:
 #   pip install pre-commit
@@ -18,3 +19,14 @@ repos:
         args: [--fix]
       # Format.
       - id: ruff-format
+
+  # C++ formatting. The mirror installs clang-format from pip at this pinned
+  # version, so every contributor (and CI) uses the exact same formatter,
+  # independent of any system clang-format.
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.3
+    hooks:
+      - id: clang-format
+        # C/C++ only. The hook otherwise also targets json/js/java, which the
+        # C++-only .clang-format can't format.
+        types_or: [c, c++]

@@ -17,22 +17,9 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install ruff
-        # Pinned to match .pre-commit-config.yaml so local and CI agree.
-        run: pip install ruff==0.15.15
-
-      - name: Check Python formatting
-        # Whole repo (build/install/log excluded via pyproject extend-exclude).
-        run: ruff format --check .
-
-      - name: Check Python linting
-        run: ruff check .
-
-      - name: Install clang-format
-        run: sudo apt-get install -y clang-format
-
-      - name: Check C++ formatting
+      - name: Run pre-commit (ruff + clang-format)
+        # Single source of truth: hooks and their versions are pinned in
+        # .pre-commit-config.yaml, so CI and local `git commit` agree exactly.
         run: |
-          find ros2_ws/src -type f \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) | while read file; do
-            clang-format --dry-run --Werror "$file"
-          done
+          pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure

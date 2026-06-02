@@ -22,7 +22,6 @@ RecorderNode::RecorderNode()
       replay_frame_index_(0),
       replay_total_frames_(0),
       replay_fps_(10.0) {
-    
     // Declare parameters
     this->declare_parameter("data_directory", "/path/to/data");
     this->declare_parameter("data_frequency", 10);
@@ -47,7 +46,7 @@ RecorderNode::RecorderNode()
     } else {
         data_directory_ = data_dir_param;
     }
-    
+
     data_frequency_ = this->get_parameter("data_frequency").as_int();
     image_topics_ = this->get_parameter("image_topics").as_string_array();
     arm_state_topic_ = this->get_parameter("arm_state_topic").as_string();
@@ -78,28 +77,22 @@ RecorderNode::RecorderNode()
     for (const auto& topic : image_topics_) {
         auto sub = this->create_subscription<sensor_msgs::msg::Image>(
             topic, image_qos,
-            [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
-                this->image_callback(msg, topic);
-            });
+            [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) { this->image_callback(msg, topic); });
         image_subs_.push_back(sub);
     }
 
     // Create other subscribers
     arm_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-        arm_state_topic_, 10,
-        std::bind(&RecorderNode::arm_state_callback, this, std::placeholders::_1));
-    
+        arm_state_topic_, 10, std::bind(&RecorderNode::arm_state_callback, this, std::placeholders::_1));
+
     leader_command_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
-        leader_command_topic_, 10,
-        std::bind(&RecorderNode::leader_command_callback, this, std::placeholders::_1));
-    
+        leader_command_topic_, 10, std::bind(&RecorderNode::leader_command_callback, this, std::placeholders::_1));
+
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-        velocity_topic_, 10,
-        std::bind(&RecorderNode::cmd_vel_callback, this, std::placeholders::_1));
-    
+        velocity_topic_, 10, std::bind(&RecorderNode::cmd_vel_callback, this, std::placeholders::_1));
+
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        odom_topic_, 10,
-        std::bind(&RecorderNode::odom_callback, this, std::placeholders::_1));
+        odom_topic_, 10, std::bind(&RecorderNode::odom_callback, this, std::placeholders::_1));
 
     // Log subscriptions
     RCLCPP_INFO(this->get_logger(), "Subscribing to image topics:");
@@ -118,27 +111,27 @@ RecorderNode::RecorderNode()
     activate_physical_primitive_srv_ = this->create_service<brain_messages::srv::ActivateManipulationTask>(
         "brain/recorder/activate_physical_primitive",
         std::bind(&RecorderNode::activate_physical_primitive, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     new_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/new_episode",
         std::bind(&RecorderNode::handle_new_episode, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     save_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/save_episode",
         std::bind(&RecorderNode::handle_save_episode, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     cancel_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/cancel_episode",
         std::bind(&RecorderNode::handle_cancel_episode, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     stop_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/stop_episode",
         std::bind(&RecorderNode::handle_stop_episode, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     end_task_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/end_task",
         std::bind(&RecorderNode::handle_end_task, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     get_task_metadata_srv_ = this->create_service<brain_messages::srv::GetTaskMetadata>(
         "brain/recorder/get_task_metadata",
         std::bind(&RecorderNode::handle_get_task_metadata, this, std::placeholders::_1, std::placeholders::_2));
@@ -165,23 +158,22 @@ RecorderNode::RecorderNode()
     replay_qos.best_effort();
     replay_main_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
         "/brain/recorder/replay/main_camera/left/image_raw", replay_qos);
-    replay_arm_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
-        "/brain/recorder/replay/arm_camera/image_raw", replay_qos);
-    replay_status_pub_ = this->create_publisher<brain_messages::msg::ReplayStatus>(
-        "/brain/recorder/replay_status", 10);
+    replay_arm_pub_ =
+        this->create_publisher<sensor_msgs::msg::Image>("/brain/recorder/replay/arm_camera/image_raw", replay_qos);
+    replay_status_pub_ = this->create_publisher<brain_messages::msg::ReplayStatus>("/brain/recorder/replay_status", 10);
 
     load_episode_srv_ = this->create_service<brain_messages::srv::LoadEpisode>(
         "brain/recorder/load_episode",
         std::bind(&RecorderNode::handle_load_episode, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     play_replay_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/play_replay",
         std::bind(&RecorderNode::handle_play_replay, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     pause_replay_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/pause_replay",
         std::bind(&RecorderNode::handle_pause_replay, this, std::placeholders::_1, std::placeholders::_2));
-    
+
     stop_replay_srv_ = this->create_service<std_srvs::srv::Trigger>(
         "brain/recorder/stop_replay",
         std::bind(&RecorderNode::handle_stop_replay, this, std::placeholders::_1, std::placeholders::_2));
@@ -233,7 +225,8 @@ void RecorderNode::leader_command_callback(const std_msgs::msg::Float64MultiArra
     latest_leader_command_ = msg;
     if (!topics_received_[leader_command_topic_]) {
         topics_received_[leader_command_topic_] = true;
-        RCLCPP_INFO(this->get_logger(), "First message received on leader command topic: %s", leader_command_topic_.c_str());
+        RCLCPP_INFO(this->get_logger(), "First message received on leader command topic: %s",
+                    leader_command_topic_.c_str());
         check_all_topics_received();
     }
 }
@@ -259,7 +252,8 @@ void RecorderNode::timer_callback() {
     // Check for required sensor data
     for (const auto& topic : image_topics_) {
         if (!latest_images_[topic]) {
-            RCLCPP_WARN(this->get_logger(), "Incomplete sensor data; missing image from topic %s. Skipping timestep.", topic.c_str());
+            RCLCPP_WARN(this->get_logger(), "Incomplete sensor data; missing image from topic %s. Skipping timestep.",
+                        topic.c_str());
             return;
         }
     }
@@ -296,17 +290,16 @@ void RecorderNode::timer_callback() {
     std::vector<double> qvel(latest_arm_state_->velocity.begin(), latest_arm_state_->velocity.end());
 
     // Get arm timestamp
-    double arm_timestamp = latest_arm_state_->header.stamp.sec + 
-                           latest_arm_state_->header.stamp.nanosec * 1e-9;
+    double arm_timestamp = latest_arm_state_->header.stamp.sec + latest_arm_state_->header.stamp.nanosec * 1e-9;
 
     // Convert images
     std::vector<cv::Mat> images_converted;
     std::vector<double> image_timestamps;
-    
+
     for (const auto& topic : image_topics_) {
         try {
             auto cv_ptr = cv_bridge::toCvCopy(latest_images_[topic], "bgr8");
-            
+
             // Only resize if dimensions don't match
             if (cv_ptr->image.cols != image_size_[0] || cv_ptr->image.rows != image_size_[1]) {
                 cv::Mat resized;
@@ -318,8 +311,8 @@ void RecorderNode::timer_callback() {
                 images_converted.push_back(cv_ptr->image);
             }
 
-            double img_ts = latest_images_[topic]->header.stamp.sec +
-                            latest_images_[topic]->header.stamp.nanosec * 1e-9;
+            double img_ts =
+                latest_images_[topic]->header.stamp.sec + latest_images_[topic]->header.stamp.nanosec * 1e-9;
             image_timestamps.push_back(img_ts);
         } catch (const cv_bridge::Exception& e) {
             RCLCPP_ERROR(this->get_logger(), "Error converting image from topic %s: %s", topic.c_str(), e.what());
@@ -330,15 +323,16 @@ void RecorderNode::timer_callback() {
     try {
         current_episode_->add_timestep(action_data, qpos, qvel, images_converted, arm_timestamp, image_timestamps);
         size_t timestep_count = current_episode_->get_episode_length();
-        
+
         // Check if timestep limit reached
         if (timestep_count >= static_cast<size_t>(max_timesteps_)) {
-            RCLCPP_INFO(this->get_logger(), "Timestep limit (%d) reached. Automatically stopping episode.", max_timesteps_);
+            RCLCPP_INFO(this->get_logger(), "Timestep limit (%d) reached. Automatically stopping episode.",
+                        max_timesteps_);
             state_ = State::EPISODE_STOPPED;
             publish_status("stopped", std::to_string(episode_count_));
             return;
         }
-        
+
         if (timestep_count % 20 == 0) {
             auto now = std::chrono::steady_clock::now();
             double elapsed = std::chrono::duration<double>(now - episode_start_time_).count();
@@ -367,22 +361,33 @@ void RecorderNode::set_head_ai_position() {
 
 std::string RecorderNode::state_to_string(State state) {
     switch (state) {
-        case State::IDLE: return "IDLE";
-        case State::TASK_ACTIVE: return "TASK_ACTIVE";
-        case State::EPISODE_ACTIVE: return "EPISODE_ACTIVE";
-        case State::EPISODE_STOPPED: return "EPISODE_STOPPED";
-        default: return "UNKNOWN";
+        case State::IDLE:
+            return "IDLE";
+        case State::TASK_ACTIVE:
+            return "TASK_ACTIVE";
+        case State::EPISODE_ACTIVE:
+            return "EPISODE_ACTIVE";
+        case State::EPISODE_STOPPED:
+            return "EPISODE_STOPPED";
+        default:
+            return "UNKNOWN";
     }
 }
 
 std::string RecorderNode::replay_state_to_string(ReplayState state) {
     switch (state) {
-        case ReplayState::IDLE: return "idle";
-        case ReplayState::READY: return "ready";
-        case ReplayState::PLAYING: return "playing";
-        case ReplayState::PAUSED: return "paused";
-        case ReplayState::FINISHED: return "finished";
-        default: return "unknown";
+        case ReplayState::IDLE:
+            return "idle";
+        case ReplayState::READY:
+            return "ready";
+        case ReplayState::PLAYING:
+            return "playing";
+        case ReplayState::PAUSED:
+            return "paused";
+        case ReplayState::FINISHED:
+            return "finished";
+        default:
+            return "unknown";
     }
 }
 
@@ -407,9 +412,9 @@ std::string get_timestamp_string() {
 void RecorderNode::activate_physical_primitive(
     const std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Request> request,
     std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Response> response) {
-    
     if (state_ == State::EPISODE_ACTIVE || state_ == State::EPISODE_STOPPED) {
-        RCLCPP_WARN(this->get_logger(), "New physical primitive requested during an %s episode; canceling current episode.",
+        RCLCPP_WARN(this->get_logger(),
+                    "New physical primitive requested during an %s episode; canceling current episode.",
                     state_to_string(state_).c_str());
         publish_status("cancelled", std::to_string(episode_count_));
         if (current_episode_) {
@@ -431,17 +436,15 @@ void RecorderNode::activate_physical_primitive(
     // Validate that the directory was previously created by /brain/create_physical_skill
     if (!fs::is_directory(task_dir)) {
         response->success = false;
-        RCLCPP_ERROR(this->get_logger(),
-            "task_directory '%s' does not exist. Call /brain/create_physical_skill first.",
-            task_dir.c_str());
+        RCLCPP_ERROR(this->get_logger(), "task_directory '%s' does not exist. Call /brain/create_physical_skill first.",
+                     task_dir.c_str());
         return;
     }
     std::string metadata_path = task_dir + "/metadata.json";
     if (!fs::exists(metadata_path)) {
         response->success = false;
-        RCLCPP_ERROR(this->get_logger(),
-            "No metadata.json in '%s'. Call /brain/create_physical_skill first.",
-            metadata_path.c_str());
+        RCLCPP_ERROR(this->get_logger(), "No metadata.json in '%s'. Call /brain/create_physical_skill first.",
+                     metadata_path.c_str());
         return;
     }
 
@@ -463,19 +466,18 @@ void RecorderNode::activate_physical_primitive(
     } else {
         episode_count_ = 0;
     }
-    
+
     current_task_name_ = display_name;
     current_task_dir_ = task_dir;
     state_ = State::TASK_ACTIVE;
-    RCLCPP_INFO(this->get_logger(), "New physical primitive '%s' started at %s.", display_name.c_str(), task_dir.c_str());
+    RCLCPP_INFO(this->get_logger(), "New physical primitive '%s' started at %s.", display_name.c_str(),
+                task_dir.c_str());
     publish_status("active");
     response->success = true;
 }
 
-void RecorderNode::handle_new_episode(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (state_ == State::IDLE) {
         RCLCPP_ERROR(this->get_logger(), "Cannot start a new episode unless a task is active.");
         publish_status("failed - no active task");
@@ -483,13 +485,14 @@ void RecorderNode::handle_new_episode(
         response->message = "No active task. Please start a task first.";
         return;
     }
-    
+
     if (state_ == State::EPISODE_ACTIVE || state_ == State::EPISODE_STOPPED) {
-        RCLCPP_ERROR(this->get_logger(), "Cannot start a new episode while an episode is %s.", 
+        RCLCPP_ERROR(this->get_logger(), "Cannot start a new episode while an episode is %s.",
                      state_to_string(state_).c_str());
         publish_status("failed - episode " + state_to_string(state_), std::to_string(episode_count_));
         response->success = false;
-        response->message = "An episode is already " + state_to_string(state_) + ". Please save or cancel the current episode first.";
+        response->message =
+            "An episode is already " + state_to_string(state_) + ". Please save or cancel the current episode first.";
         return;
     }
 
@@ -508,21 +511,19 @@ void RecorderNode::handle_new_episode(
     episode_start_system_time_ = std::chrono::system_clock::now();
     state_ = State::EPISODE_ACTIVE;
     episode_count_++;
-    
+
     std::string episode_str = std::to_string(episode_count_);
     RCLCPP_INFO(this->get_logger(), "=== RECORDING STARTED ===");
     RCLCPP_INFO(this->get_logger(), "Task: %s, Episode: %s", current_task_name_.c_str(), episode_str.c_str());
     RCLCPP_INFO(this->get_logger(), "Recording at %d Hz", data_frequency_);
-    
+
     publish_status("active", episode_str);
     response->success = true;
     response->message = "Episode started.";
 }
 
-void RecorderNode::handle_save_episode(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_save_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if ((state_ != State::EPISODE_ACTIVE && state_ != State::EPISODE_STOPPED) || !current_episode_) {
         RCLCPP_ERROR(this->get_logger(), "No active or stopped episode to save.");
         if (state_ == State::TASK_ACTIVE) {
@@ -563,8 +564,7 @@ void RecorderNode::handle_save_episode(
     // Roll the state machine back to TASK_ACTIVE on any save failure so the
     // recorder stays usable for the next episode instead of wedging with a
     // null current_episode_ but EPISODE_ACTIVE/STOPPED state.
-    auto abort_save_with_error = [&](const std::string& reason,
-                                     const std::string& status_tag,
+    auto abort_save_with_error = [&](const std::string& reason, const std::string& status_tag,
                                      const std::string& message) {
         RCLCPP_ERROR(this->get_logger(), "%s", reason.c_str());
         current_episode_.reset();
@@ -583,10 +583,8 @@ void RecorderNode::handle_save_episode(
     } catch (const std::exception& e) {
         // Try to clean up the partial file so we don't leave a broken slot.
         current_episode_->cancel();
-        abort_save_with_error(
-            std::string("Failed to finalize streaming HDF5 file: ") + e.what(),
-            "failed - finalize error",
-            std::string("Failed to finalize episode: ") + e.what());
+        abort_save_with_error(std::string("Failed to finalize streaming HDF5 file: ") + e.what(),
+                              "failed - finalize error", std::string("Failed to finalize episode: ") + e.what());
         return;
     }
 
@@ -597,10 +595,8 @@ void RecorderNode::handle_save_episode(
         // remove it so we don't leak a stranded file.
         std::error_code ec;
         std::filesystem::remove(temp_path, ec);
-        abort_save_with_error(
-            std::string("Failed to register saved episode: ") + e.what(),
-            "failed - rename error",
-            std::string("Failed to register episode: ") + e.what());
+        abort_save_with_error(std::string("Failed to register saved episode: ") + e.what(), "failed - rename error",
+                              std::string("Failed to register episode: ") + e.what());
         return;
     }
 
@@ -615,10 +611,8 @@ void RecorderNode::handle_save_episode(
     response->message = "Episode saved.";
 }
 
-void RecorderNode::handle_cancel_episode(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_cancel_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if ((state_ != State::EPISODE_ACTIVE && state_ != State::EPISODE_STOPPED) || !current_episode_) {
         RCLCPP_ERROR(this->get_logger(), "No active or stopped episode to cancel.");
         if (state_ == State::TASK_ACTIVE) {
@@ -643,10 +637,8 @@ void RecorderNode::handle_cancel_episode(
     response->message = "Episode canceled.";
 }
 
-void RecorderNode::handle_stop_episode(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_stop_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (state_ == State::EPISODE_ACTIVE) {
         state_ = State::EPISODE_STOPPED;
         RCLCPP_INFO(this->get_logger(), "Episode recording stopped. Waiting for save or cancel command.");
@@ -671,10 +663,8 @@ void RecorderNode::handle_stop_episode(
     }
 }
 
-void RecorderNode::handle_end_task(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_end_task(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                   std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (state_ == State::EPISODE_ACTIVE || state_ == State::EPISODE_STOPPED) {
         RCLCPP_WARN(this->get_logger(), "Ending task during an %s episode; canceling current episode first.",
                     state_to_string(state_).c_str());
@@ -684,7 +674,7 @@ void RecorderNode::handle_end_task(
         }
         current_episode_.reset();
     }
-    
+
     task_manager_->end_task();
     state_ = State::IDLE;
     RCLCPP_INFO(this->get_logger(), "Task ended; recorder state set to IDLE.");
@@ -696,15 +686,12 @@ void RecorderNode::handle_end_task(
     response->message = "Task ended.";
 }
 
-
-
 void RecorderNode::handle_get_task_metadata(
     const std::shared_ptr<brain_messages::srv::GetTaskMetadata::Request> request,
     std::shared_ptr<brain_messages::srv::GetTaskMetadata::Response> response) {
-    
     RCLCPP_INFO(this->get_logger(), "Received request to get metadata for task directory: %s",
                 request->task_directory.c_str());
-    
+
     try {
         auto [success, message, metadata_json] = task_manager_->get_task_metadata_by_directory(request->task_directory);
         response->success = success;
@@ -729,13 +716,10 @@ void RecorderNode::handle_get_task_metadata(
 
 // ========== REPLAY FUNCTIONALITY ==========
 
-void RecorderNode::handle_load_episode(
-    const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
-    std::shared_ptr<brain_messages::srv::LoadEpisode::Response> response) {
-    
-    RCLCPP_INFO(this->get_logger(), "Loading episode %d from %s", 
-                request->episode_id, request->task_directory.c_str());
-    
+void RecorderNode::handle_load_episode(const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
+                                       std::shared_ptr<brain_messages::srv::LoadEpisode::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Loading episode %d from %s", request->episode_id, request->task_directory.c_str());
+
     try {
         // Stop any current replay
         if (replay_state_ == ReplayState::PLAYING || replay_state_ == ReplayState::PAUSED) {
@@ -792,7 +776,7 @@ void RecorderNode::handle_load_episode(
         }
 
         hid_t img_group = H5Gopen2(file_id, "/observations/images", H5P_DEFAULT);
-        
+
         // Get camera names
         std::vector<std::string> camera_names;
         hsize_t num_objs;
@@ -820,7 +804,7 @@ void RecorderNode::handle_load_episode(
         for (const auto& cam_name : camera_names) {
             hid_t dataset = H5Dopen2(img_group, cam_name.c_str(), H5P_DEFAULT);
             hid_t dataspace = H5Dget_space(dataset);
-            
+
             int ndims = H5Sget_simple_extent_ndims(dataspace);
             std::vector<hsize_t> dims(ndims);
             H5Sget_simple_extent_dims(dataspace, dims.data(), nullptr);
@@ -842,9 +826,9 @@ void RecorderNode::handle_load_episode(
                 frames.push_back(frame.clone());
             }
             replay_buffer_[cam_name] = std::move(frames);
-            
-            RCLCPP_INFO(this->get_logger(), "Loaded %s: [%zu, %d, %d, %d]", 
-                        cam_name.c_str(), num_frames, height, width, channels);
+
+            RCLCPP_INFO(this->get_logger(), "Loaded %s: [%zu, %d, %d, %d]", cam_name.c_str(), num_frames, height, width,
+                        channels);
 
             H5Sclose(dataspace);
             H5Dclose(dataset);
@@ -867,10 +851,10 @@ void RecorderNode::handle_load_episode(
             hid_t ts_space = H5Dget_space(ts_dataset);
             hsize_t ts_dims[1];
             H5Sget_simple_extent_dims(ts_space, ts_dims, nullptr);
-            
+
             std::vector<double> arm_ts(ts_dims[0]);
             H5Dread(ts_dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, arm_ts.data());
-            
+
             if (!arm_ts.empty()) {
                 double first_ts = arm_ts[0];
                 for (auto& ts : arm_ts) {
@@ -878,7 +862,7 @@ void RecorderNode::handle_load_episode(
                 }
             }
             RCLCPP_INFO(this->get_logger(), "Loaded arm timestamps: %zu frames", arm_ts.size());
-            
+
             H5Sclose(ts_space);
             H5Dclose(ts_dataset);
         } else {
@@ -895,10 +879,10 @@ void RecorderNode::handle_load_episode(
             hid_t qpos_space = H5Dget_space(qpos_dataset);
             hsize_t qpos_dims[2];
             H5Sget_simple_extent_dims(qpos_space, qpos_dims, nullptr);
-            
+
             std::vector<double> qpos_data(qpos_dims[0] * qpos_dims[1]);
             H5Dread(qpos_dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, qpos_data.data());
-            
+
             for (size_t i = 0; i < qpos_dims[0]; i++) {
                 nlohmann::json row = nlohmann::json::array();
                 for (size_t j = 0; j < qpos_dims[1]; j++) {
@@ -907,7 +891,7 @@ void RecorderNode::handle_load_episode(
                 arm_data["qpos"].push_back(row);
             }
             RCLCPP_INFO(this->get_logger(), "Loaded qpos: [%llu, %llu]", qpos_dims[0], qpos_dims[1]);
-            
+
             H5Sclose(qpos_space);
             H5Dclose(qpos_dataset);
         }
@@ -918,10 +902,10 @@ void RecorderNode::handle_load_episode(
             hid_t qvel_space = H5Dget_space(qvel_dataset);
             hsize_t qvel_dims[2];
             H5Sget_simple_extent_dims(qvel_space, qvel_dims, nullptr);
-            
+
             std::vector<double> qvel_data(qvel_dims[0] * qvel_dims[1]);
             H5Dread(qvel_dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, qvel_data.data());
-            
+
             for (size_t i = 0; i < qvel_dims[0]; i++) {
                 nlohmann::json row = nlohmann::json::array();
                 for (size_t j = 0; j < qvel_dims[1]; j++) {
@@ -930,7 +914,7 @@ void RecorderNode::handle_load_episode(
                 arm_data["qvel"].push_back(row);
             }
             RCLCPP_INFO(this->get_logger(), "Loaded qvel: [%llu, %llu]", qvel_dims[0], qvel_dims[1]);
-            
+
             H5Sclose(qvel_space);
             H5Dclose(qvel_dataset);
         }
@@ -943,8 +927,8 @@ void RecorderNode::handle_load_episode(
         replay_state_ = ReplayState::READY;
 
         double duration = static_cast<double>(replay_total_frames_) / replay_fps_;
-        RCLCPP_INFO(this->get_logger(), "Episode loaded: %d frames, %.1f fps, %.1fs", 
-                    replay_total_frames_, replay_fps_, duration);
+        RCLCPP_INFO(this->get_logger(), "Episode loaded: %d frames, %.1f fps, %.1fs", replay_total_frames_, replay_fps_,
+                    duration);
 
         publish_replay_status();
 
@@ -966,10 +950,8 @@ void RecorderNode::handle_load_episode(
     }
 }
 
-void RecorderNode::handle_play_replay(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_play_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (replay_state_ == ReplayState::IDLE) {
         response->success = false;
         response->message = "No episode loaded. Call load_episode first.";
@@ -988,18 +970,16 @@ void RecorderNode::handle_play_replay(
 
     start_replay_timer();
     replay_state_ = ReplayState::PLAYING;
-    
+
     RCLCPP_INFO(this->get_logger(), "Replay started from frame %d", replay_frame_index_);
     publish_replay_status();
-    
+
     response->success = true;
     response->message = "Replay started from frame " + std::to_string(replay_frame_index_);
 }
 
-void RecorderNode::handle_pause_replay(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_pause_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (replay_state_ != ReplayState::PLAYING) {
         response->success = false;
         response->message = "Cannot pause: replay is " + replay_state_to_string(replay_state_);
@@ -1008,18 +988,16 @@ void RecorderNode::handle_pause_replay(
 
     stop_replay_timer();
     replay_state_ = ReplayState::PAUSED;
-    
+
     RCLCPP_INFO(this->get_logger(), "Replay paused at frame %d", replay_frame_index_);
     publish_replay_status();
-    
+
     response->success = true;
     response->message = "Replay paused at frame " + std::to_string(replay_frame_index_);
 }
 
-void RecorderNode::handle_stop_replay(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    
+void RecorderNode::handle_stop_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     if (replay_state_ == ReplayState::IDLE) {
         response->success = false;
         response->message = "No episode loaded.";
@@ -1029,10 +1007,10 @@ void RecorderNode::handle_stop_replay(
     stop_replay_timer();
     replay_frame_index_ = 0;
     replay_state_ = ReplayState::READY;
-    
+
     RCLCPP_INFO(this->get_logger(), "Replay stopped and reset to frame 0");
     publish_replay_status();
-    
+
     response->success = true;
     response->message = "Replay stopped and reset to frame 0";
 }

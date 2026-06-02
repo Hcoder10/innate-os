@@ -30,18 +30,17 @@
 namespace maurice_arm {
 
 class MauriceArmNode : public rclcpp::Node {
-public:
+   public:
     MauriceArmNode();
     ~MauriceArmNode() = default;
 
     // ── Configuration (arm_config.cpp) ──────────────────────────────────
     void loadJointConfigs(const std::vector<std::string>& joint_names);
-    rcl_interfaces::msg::SetParametersResult onParameterChange(
-        const std::vector<rclcpp::Parameter>& parameters);
+    rcl_interfaces::msg::SetParametersResult onParameterChange(const std::vector<rclcpp::Parameter>& parameters);
 
     // ── Servo init & helpers (arm_services.cpp) ─────────────────────────
     void initializeServos();
-    template<typename Func>
+    template <typename Func>
     void retryServoOp(int servo_id, const char* op_name, Func&& fn, int max_retries = 3);
     void configureServoByIdLocked(int servo_id, bool enable_torque = true);
     void configureServosLocked(bool enable_torque = true);
@@ -57,18 +56,14 @@ public:
 
     // ── Service & topic callbacks (arm_services.cpp) ────────────────────
     void armCommandCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
-    void armTorqueOnCallback(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void armTorqueOffCallback(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void armRebootServosCallback(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void armFixErrorCallback(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void armTorqueOnCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void armTorqueOffCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void armRebootServosCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                 std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void armFixErrorCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void healthMonitorCallback();
     std::string describeHardwareError(uint8_t status, int servo_id) const;
 
@@ -79,33 +74,25 @@ public:
     void moveHeadToAngleLocked(double logical_angle_deg);
     void publishHeadPosition(int encoder_value);
     void headPositionCallback(const std_msgs::msg::Int32::SharedPtr msg);
-    void headAiPositionCallback(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void headEnableServoCallback(
-        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-        std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+    void headAiPositionCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void headEnableServoCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                 std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
     // ── Trajectory planning & execution (arm_trajectory.cpp) ────────────
-    std::vector<std::vector<double>> computeCubicSplineTrajectory(
-        const std::vector<double>& start,
-        const std::vector<double>& goal,
-        double duration,
-        double dt);
+    std::vector<std::vector<double>> computeCubicSplineTrajectory(const std::vector<double>& start,
+                                                                  const std::vector<double>& goal, double duration,
+                                                                  double dt);
     bool planAndExecuteTrajectory(const std::vector<double>& target_positions, double trajectory_time,
-                                   GainMode trajectory_gain_mode = GainMode::SCHEDULED);
-    bool planAndExecuteMultiWaypointTrajectory(
-        const std::vector<std::vector<double>>& waypoints,
-        const std::vector<double>& segment_durations);
-    void armGotoJSCallback(
-        const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
-        std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response);
-    void armGotoJSV2Callback(
-        const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
-        std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response);
-    void armGotoJSTrajectoryCallback(
-        const std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Request> request,
-        std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Response> response);
+                                  GainMode trajectory_gain_mode = GainMode::SCHEDULED);
+    bool planAndExecuteMultiWaypointTrajectory(const std::vector<std::vector<double>>& waypoints,
+                                               const std::vector<double>& segment_durations);
+    void armGotoJSCallback(const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
+                           std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response);
+    void armGotoJSV2Callback(const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
+                             std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response);
+    void armGotoJSTrajectoryCallback(const std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Request> request,
+                                     std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Response> response);
 
     // ── Member variables ────────────────────────────────────────────────
 
@@ -124,7 +111,7 @@ public:
     rclcpp::Service<maurice_msgs::srv::GotoJS>::SharedPtr arm_goto_js_service_;
     rclcpp::Service<maurice_msgs::srv::GotoJS>::SharedPtr arm_goto_js_v2_service_;
     rclcpp::Service<maurice_msgs::srv::GotoJSTrajectory>::SharedPtr arm_goto_js_traj_service_;
-    sensor_msgs::msg::JointState arm_state_msg_;   // 6-joint message for /mars/arm/state
+    sensor_msgs::msg::JointState arm_state_msg_;    // 6-joint message for /mars/arm/state
     sensor_msgs::msg::JointState joint_state_msg_;  // 7-joint message for /joint_states
     std::vector<int> latest_arm_command_;
     std::mutex arm_command_mutex_;
@@ -185,41 +172,35 @@ public:
     // Motor stress protection (overload cooldown)
     // Leaky integrator: score += (A * |PWM| - C) * dt, clamped >= 0
     std::array<MotorStressTracker, 7> stress_trackers_;
-    bool stress_enabled_{false};              // master enable for leaky integrator
-    double stress_threshold_{100.0};      // score at which cooldown triggers
-    double stress_cooldown_sec_{2.0};     // how long to rest (seconds)
-    double stress_multiplier_{1.0};       // A: multiplier on |load|
-    double stress_leak_{0.0};             // C: constant leak rate
+    bool stress_enabled_{false};       // master enable for leaky integrator
+    double stress_threshold_{100.0};   // score at which cooldown triggers
+    double stress_cooldown_sec_{2.0};  // how long to rest (seconds)
+    double stress_multiplier_{1.0};    // A: multiplier on |load|
+    double stress_leak_{0.0};          // C: constant leak rate
 
     // Control loop timing instrumentation
-    std::array<TimingAccumulator, 10> timing_stats_{{
-        TimingAccumulator{"total"},
-        TimingAccumulator{"lock_wait"},
-        TimingAccumulator{"readState"},
-        TimingAccumulator{"readEffort"},
-        TimingAccumulator{"pubArm"},
-        TimingAccumulator{"pubHead+JS"},
-        TimingAccumulator{"gainSched"},
-        TimingAccumulator{"cmdWrite"},
-        TimingAccumulator{"syncWritePID"},
-        TimingAccumulator{"misc"}
-    }};
+    std::array<TimingAccumulator, 10> timing_stats_{{TimingAccumulator{"total"}, TimingAccumulator{"lock_wait"},
+                                                     TimingAccumulator{"readState"}, TimingAccumulator{"readEffort"},
+                                                     TimingAccumulator{"pubArm"}, TimingAccumulator{"pubHead+JS"},
+                                                     TimingAccumulator{"gainSched"}, TimingAccumulator{"cmdWrite"},
+                                                     TimingAccumulator{"syncWritePID"}, TimingAccumulator{"misc"}}};
 };
 
 // Template implementation must be in the header
-template<typename Func>
+template <typename Func>
 void MauriceArmNode::retryServoOp(int servo_id, const char* op_name, Func&& fn, int max_retries) {
     for (int attempt = 1; attempt <= max_retries; ++attempt) {
         try {
             fn();
             return;
         } catch (const std::exception& e) {
-            RCLCPP_WARN(this->get_logger(), "Servo %d %s attempt %d/%d failed: %s",
-                servo_id, op_name, attempt, max_retries, e.what());
-            if (attempt == max_retries) throw;
+            RCLCPP_WARN(this->get_logger(), "Servo %d %s attempt %d/%d failed: %s", servo_id, op_name, attempt,
+                        max_retries, e.what());
+            if (attempt == max_retries)
+                throw;
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
     }
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm

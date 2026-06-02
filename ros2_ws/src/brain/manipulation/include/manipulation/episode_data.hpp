@@ -23,7 +23,7 @@ namespace manipulation {
 //
 // Move-only: HDF5 handles must not be duplicated.
 class EpisodeData {
-public:
+   public:
     EpisodeData();
     explicit EpisodeData(const std::vector<std::string>& camera_names);
     ~EpisodeData();
@@ -38,13 +38,9 @@ public:
 
     // Append one timestep to the file. On the first call we create the
     // HDF5 file and all chunked extendable datasets sized from the inputs.
-    void add_timestep(
-        const std::vector<double>& action,
-        const std::vector<double>& qpos,
-        const std::vector<double>& qvel,
-        const std::vector<cv::Mat>& images,
-        double arm_timestamp = -1.0,
-        const std::vector<double>& image_timestamps = {});
+    void add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
+                      const std::vector<double>& qvel, const std::vector<cv::Mat>& images, double arm_timestamp = -1.0,
+                      const std::vector<double>& image_timestamps = {});
 
     // Write the termination columns of /action, then close the file.
     // Safe to call when no timesteps were written; in that case behaves
@@ -54,16 +50,19 @@ public:
     // Close any open handles and delete the file on disk.
     void cancel();
 
-    size_t get_episode_length() const { return timestep_count_; }
-    bool is_open() const { return file_id_ >= 0; }
-    const std::string& get_file_path() const { return file_path_; }
+    size_t get_episode_length() const {
+        return timestep_count_;
+    }
+    bool is_open() const {
+        return file_id_ >= 0;
+    }
+    const std::string& get_file_path() const {
+        return file_path_;
+    }
 
-private:
-    void create_file_and_datasets(
-        const std::vector<double>& action,
-        const std::vector<double>& qpos,
-        const std::vector<double>& qvel,
-        const std::vector<cv::Mat>& images);
+   private:
+    void create_file_and_datasets(const std::vector<double>& action, const std::vector<double>& qpos,
+                                  const std::vector<double>& qvel, const std::vector<cv::Mat>& images);
     void close_handles();
     // Best-effort rollback: shrink every streaming dataset back to `rows`
     // along its time axis. Used to recover from a partial failed timestep.

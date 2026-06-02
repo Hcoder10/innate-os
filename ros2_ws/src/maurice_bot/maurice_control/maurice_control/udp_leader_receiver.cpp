@@ -78,7 +78,7 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #endif
 
 class UdpLeaderReceiver : public rclcpp::Node {
-public:
+   public:
     UdpLeaderReceiver() : Node("udp_leader_receiver") {
         // Declare parameters
         this->declare_parameter("port", 9999);
@@ -92,14 +92,12 @@ public:
 
         // Publisher for arm commands (best effort QoS for low-latency teleoperation)
         auto qos = rclcpp::QoS(1).best_effort();
-        commands_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
-            "/mars/arm/commands", qos);
+        commands_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/mars/arm/commands", qos);
 
         // Service for start/stop
         start_stop_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/udp_leader_receiver/start",
-            std::bind(&UdpLeaderReceiver::handle_start_stop, this,
-                      std::placeholders::_1, std::placeholders::_2));
+            std::bind(&UdpLeaderReceiver::handle_start_stop, this, std::placeholders::_1, std::placeholders::_2));
 
         // Initialize state
         socket_fd_ = -1;
@@ -110,8 +108,8 @@ public:
         last_sequence_ = -1;
         last_log_time_ = std::chrono::steady_clock::now();
 
-        RCLCPP_INFO(this->get_logger(), 
-            "UDP Leader Receiver initialized on port %d -> /mars/arm/commands [C++]", port_);
+        RCLCPP_INFO(this->get_logger(), "UDP Leader Receiver initialized on port %d -> /mars/arm/commands [C++]",
+                    port_);
 
         // Auto-start if configured
         if (auto_start_) {
@@ -123,7 +121,7 @@ public:
         stop_receiver();
     }
 
-private:
+   private:
     bool start_receiver() {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -246,8 +244,7 @@ private:
 
             if (pfd.revents & POLLIN) {
                 ssize_t recv_len = recvfrom(socket_fd_, buffer.data(), buffer.size(), 0,
-                                            reinterpret_cast<struct sockaddr*>(&sender_addr),
-                                            &sender_len);
+                                            reinterpret_cast<struct sockaddr*>(&sender_addr), &sender_len);
 
                 if (recv_len < 0) {
                     if (errno != EAGAIN && errno != EWOULDBLOCK && running_.load()) {
@@ -276,9 +273,8 @@ private:
         if (len != PACKET_SIZE) {
             char addr_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &addr.sin_addr, addr_str, sizeof(addr_str));
-            RCLCPP_WARN(this->get_logger(),
-                        "Invalid packet size: %zu bytes (expected %zu) from %s:%d",
-                        len, PACKET_SIZE, addr_str, ntohs(addr.sin_port));
+            RCLCPP_WARN(this->get_logger(), "Invalid packet size: %zu bytes (expected %zu) from %s:%d", len,
+                        PACKET_SIZE, addr_str, ntohs(addr.sin_port));
             error_count_++;
             return;
         }
@@ -290,8 +286,7 @@ private:
         if (packet->magic_header != MAGIC_HEADER) {
             char addr_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &addr.sin_addr, addr_str, sizeof(addr_str));
-            RCLCPP_WARN(this->get_logger(),
-                        "Invalid magic header: 0x%04X (expected 0x%04X) from %s:%d",
+            RCLCPP_WARN(this->get_logger(), "Invalid magic header: 0x%04X (expected 0x%04X) from %s:%d",
                         packet->magic_header, MAGIC_HEADER, addr_str, ntohs(addr.sin_port));
             error_count_++;
             return;
@@ -311,8 +306,7 @@ private:
         msg.data.reserve(NUM_SERVOS);
         for (size_t i = 0; i < NUM_SERVOS; ++i) {
             // Convert: radians = (position - 2048) * (2π / 4096)
-            double radians = (static_cast<double>(packet->servo_positions[i]) - 2048.0) 
-                             * (2.0 * M_PI / 4096.0);
+            double radians = (static_cast<double>(packet->servo_positions[i]) - 2048.0) * (2.0 * M_PI / 4096.0);
             msg.data.push_back(radians);
         }
         commands_pub_->publish(msg);
@@ -327,11 +321,10 @@ private:
             RCLCPP_INFO(this->get_logger(),
                         "Stats - Packets: %lu, Errors: %lu, Out-of-order: %lu, "
                         "Last seq: %ld, Timestamp: %.2fms, Positions: [%d, %d, %d, %d, %d, %d]",
-                        packet_count_.load(), error_count_.load(), out_of_order_count_.load(),
-                        last_sequence_.load(), packet->timestamp,
-                        packet->servo_positions[0], packet->servo_positions[1],
-                        packet->servo_positions[2], packet->servo_positions[3],
-                        packet->servo_positions[4], packet->servo_positions[5]);
+                        packet_count_.load(), error_count_.load(), out_of_order_count_.load(), last_sequence_.load(),
+                        packet->timestamp, packet->servo_positions[0], packet->servo_positions[1],
+                        packet->servo_positions[2], packet->servo_positions[3], packet->servo_positions[4],
+                        packet->servo_positions[5]);
             last_log_time_ = current_time;
         }
     }
@@ -343,8 +336,7 @@ private:
         if (packet->magic_header != RESET_MAGIC_HEADER) {
             char addr_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &addr.sin_addr, addr_str, sizeof(addr_str));
-            RCLCPP_WARN(this->get_logger(),
-                        "Invalid reset magic header: 0x%04X (expected 0x%04X) from %s:%d",
+            RCLCPP_WARN(this->get_logger(), "Invalid reset magic header: 0x%04X (expected 0x%04X) from %s:%d",
                         packet->magic_header, RESET_MAGIC_HEADER, addr_str, ntohs(addr.sin_port));
             error_count_++;
             return;
@@ -373,10 +365,8 @@ private:
         return sequence <= static_cast<uint32_t>(last_sequence_);
     }
 
-    void handle_start_stop(
-        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-        std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
-
+    void handle_start_stop(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                           std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
         if (request->data) {
             // Start request
             bool success = start_receiver();

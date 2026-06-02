@@ -21,9 +21,9 @@ void MauriceArmNode::controlTimerCallback() {
         std::vector<double> efforts;
         for (size_t j = 0; j < loads.size() && j < joint_configs_.size(); ++j) {
             if (joint_configs_[j].current_limit > 0) {
-                efforts.push_back(static_cast<double>(loads[j]));        // mA
+                efforts.push_back(static_cast<double>(loads[j]));  // mA
             } else {
-                efforts.push_back(static_cast<double>(loads[j]) / 10.0); // %
+                efforts.push_back(static_cast<double>(loads[j]) / 10.0);  // %
             }
         }
         ts[3] = std::chrono::steady_clock::now();
@@ -93,17 +93,19 @@ void MauriceArmNode::controlTimerCallback() {
 
         // ========== PERIODIC GAIN DUMP (every 2s) ==========
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Gains: J1[P=%d I=%d D=%d F1=%d F2=%d] J2[P=%d I=%d D=%d F1=%d F2=%d] "
-            "J3[P=%d I=%d D=%d F1=%d F2=%d] J4[P=%d I=%d D=%d F1=%d F2=%d] "
-            "J5[P=%d I=%d D=%d F1=%d F2=%d] J6[P=%d I=%d D=%d F1=%d F2=%d] "
-            "J7[P=%d I=%d D=%d F1=%d F2=%d]",
-            joint_configs_[0].kp, joint_configs_[0].ki, joint_configs_[0].kd, joint_configs_[0].ff1, joint_configs_[0].ff2,
-            joint_configs_[1].kp, joint_configs_[1].ki, joint_configs_[1].kd, joint_configs_[1].ff1, joint_configs_[1].ff2,
-            joint_configs_[2].kp, joint_configs_[2].ki, joint_configs_[2].kd, joint_configs_[2].ff1, joint_configs_[2].ff2,
-            joint_configs_[3].kp, joint_configs_[3].ki, joint_configs_[3].kd, joint_configs_[3].ff1, joint_configs_[3].ff2,
-            joint_configs_[4].kp, joint_configs_[4].ki, joint_configs_[4].kd, joint_configs_[4].ff1, joint_configs_[4].ff2,
-            joint_configs_[5].kp, joint_configs_[5].ki, joint_configs_[5].kd, joint_configs_[5].ff1, joint_configs_[5].ff2,
-            joint_configs_[6].kp, joint_configs_[6].ki, joint_configs_[6].kd, joint_configs_[6].ff1, joint_configs_[6].ff2);
+                             "Gains: J1[P=%d I=%d D=%d F1=%d F2=%d] J2[P=%d I=%d D=%d F1=%d F2=%d] "
+                             "J3[P=%d I=%d D=%d F1=%d F2=%d] J4[P=%d I=%d D=%d F1=%d F2=%d] "
+                             "J5[P=%d I=%d D=%d F1=%d F2=%d] J6[P=%d I=%d D=%d F1=%d F2=%d] "
+                             "J7[P=%d I=%d D=%d F1=%d F2=%d]",
+                             joint_configs_[0].kp, joint_configs_[0].ki, joint_configs_[0].kd, joint_configs_[0].ff1,
+                             joint_configs_[0].ff2, joint_configs_[1].kp, joint_configs_[1].ki, joint_configs_[1].kd,
+                             joint_configs_[1].ff1, joint_configs_[1].ff2, joint_configs_[2].kp, joint_configs_[2].ki,
+                             joint_configs_[2].kd, joint_configs_[2].ff1, joint_configs_[2].ff2, joint_configs_[3].kp,
+                             joint_configs_[3].ki, joint_configs_[3].kd, joint_configs_[3].ff1, joint_configs_[3].ff2,
+                             joint_configs_[4].kp, joint_configs_[4].ki, joint_configs_[4].kd, joint_configs_[4].ff1,
+                             joint_configs_[4].ff2, joint_configs_[5].kp, joint_configs_[5].ki, joint_configs_[5].kd,
+                             joint_configs_[5].ff1, joint_configs_[5].ff2, joint_configs_[6].kp, joint_configs_[6].ki,
+                             joint_configs_[6].kd, joint_configs_[6].ff1, joint_configs_[6].ff2);
 
         // ========== GAIN SCHEDULING ==========
         // TELEOP mode: use flat teleop gains (no extension-based interpolation)
@@ -122,7 +124,8 @@ void MauriceArmNode::controlTimerCallback() {
                         dynamixel_->setProfileVelocity(joint_configs_[i].servo_id, 0);
                         dynamixel_->setProfileAcceleration(joint_configs_[i].servo_id, 0);
                     }
-                    RCLCPP_INFO(this->get_logger(), "TELEOP: profile velocity/acceleration set to 0 (unlimited) for joints 1-6");
+                    RCLCPP_INFO(this->get_logger(),
+                                "TELEOP: profile velocity/acceleration set to 0 (unlimited) for joints 1-6");
                 }
 
                 // TELEOP: apply flat teleop gains for joints 1-6
@@ -131,26 +134,28 @@ void MauriceArmNode::controlTimerCallback() {
                     if (target != gs_last_applied_[i]) {
                         gs_changed = true;
                         gs_last_applied_[i] = target;
-                        joint_configs_[i].kp  = target.kp;
-                        joint_configs_[i].ki  = target.ki;
-                        joint_configs_[i].kd  = target.kd;
+                        joint_configs_[i].kp = target.kp;
+                        joint_configs_[i].ki = target.ki;
+                        joint_configs_[i].kd = target.kd;
                         joint_configs_[i].ff1 = target.ff1;
                         joint_configs_[i].ff2 = target.ff2;
                     }
-                    gs_pid_data.emplace_back(joint_configs_[i].servo_id, target.ff2, target.ff1, target.kd, target.ki, target.kp);
+                    gs_pid_data.emplace_back(joint_configs_[i].servo_id, target.ff2, target.ff1, target.kd, target.ki,
+                                             target.kp);
                 }
                 if (gs_changed) {
                     auto pid_start = std::chrono::steady_clock::now();
                     dynamixel_->syncWritePID(gs_pid_data);
                     auto pid_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - pid_start).count();
+                                      std::chrono::steady_clock::now() - pid_start)
+                                      .count();
                     timing_stats_[8].add(pid_us);
                     RCLCPP_INFO(this->get_logger(),
-                        "TELEOP gains applied | J1 P=%d I=%d D=%d | J2 P=%d I=%d D=%d | J3 P=%d I=%d D=%d | J4 P=%d I=%d D=%d",
-                        gs_teleop_[0].kp, gs_teleop_[0].ki, gs_teleop_[0].kd,
-                        gs_teleop_[1].kp, gs_teleop_[1].ki, gs_teleop_[1].kd,
-                        gs_teleop_[2].kp, gs_teleop_[2].ki, gs_teleop_[2].kd,
-                        gs_teleop_[3].kp, gs_teleop_[3].ki, gs_teleop_[3].kd);
+                                "TELEOP gains applied | J1 P=%d I=%d D=%d | J2 P=%d I=%d D=%d | J3 P=%d I=%d D=%d | J4 "
+                                "P=%d I=%d D=%d",
+                                gs_teleop_[0].kp, gs_teleop_[0].ki, gs_teleop_[0].kd, gs_teleop_[1].kp,
+                                gs_teleop_[1].ki, gs_teleop_[1].kd, gs_teleop_[2].kp, gs_teleop_[2].ki,
+                                gs_teleop_[2].kd, gs_teleop_[3].kp, gs_teleop_[3].ki, gs_teleop_[3].kd);
                 }
             } else {
                 // On transition to SCHEDULED: restore profile limits from config
@@ -158,25 +163,26 @@ void MauriceArmNode::controlTimerCallback() {
                     last_applied_gain_mode_ = GainMode::SCHEDULED;
                     for (int i = 0; i < 6; i++) {
                         if (joint_configs_[i].profile_velocity > 0)
-                            dynamixel_->setProfileVelocity(joint_configs_[i].servo_id, joint_configs_[i].profile_velocity);
+                            dynamixel_->setProfileVelocity(joint_configs_[i].servo_id,
+                                                           joint_configs_[i].profile_velocity);
                         if (joint_configs_[i].profile_acceleration > 0)
-                            dynamixel_->setProfileAcceleration(joint_configs_[i].servo_id, joint_configs_[i].profile_acceleration);
+                            dynamixel_->setProfileAcceleration(joint_configs_[i].servo_id,
+                                                               joint_configs_[i].profile_acceleration);
                     }
                     RCLCPP_INFO(this->get_logger(), "SCHEDULED: profile velocity/acceleration restored from config");
                 }
 
                 // SCHEDULED: interpolate near/far by arm extension for joints 1-4
                 constexpr double L2_x = 0.02825, L2_z = 0.12125;
-                constexpr double L3_x = 0.1375,  L3_z = 0.0045;
+                constexpr double L3_x = 0.1375, L3_z = 0.0045;
                 constexpr double L45_x = 0.110838;
                 constexpr double kMaxReach = 0.37291;
 
                 double q2 = positions_rad[1], q3 = positions_rad[2], q4 = positions_rad[3];
                 double a2 = q2, a23 = q2 + q3, a234 = q2 + q3 + q4;
 
-                double ee_x = L2_x*std::cos(a2)  + L2_z*std::sin(a2)
-                            + L3_x*std::cos(a23) + L3_z*std::sin(a23)
-                            + L45_x*std::cos(a234);
+                double ee_x = L2_x * std::cos(a2) + L2_z * std::sin(a2) + L3_x * std::cos(a23) + L3_z * std::sin(a23) +
+                              L45_x * std::cos(a234);
 
                 double horiz_reach = std::abs(ee_x);
                 double extension_linear = std::clamp((horiz_reach / kMaxReach - 0.1) / 0.9, 0.0, 1.0);
@@ -193,27 +199,28 @@ void MauriceArmNode::controlTimerCallback() {
                     if (interp != gs_last_applied_[i]) {
                         gs_changed = true;
                         gs_last_applied_[i] = interp;
-                        joint_configs_[i].kp  = interp.kp;
-                        joint_configs_[i].ki  = interp.ki;
-                        joint_configs_[i].kd  = interp.kd;
+                        joint_configs_[i].kp = interp.kp;
+                        joint_configs_[i].ki = interp.ki;
+                        joint_configs_[i].kd = interp.kd;
                         joint_configs_[i].ff1 = interp.ff1;
                         joint_configs_[i].ff2 = interp.ff2;
                     }
-                    gs_pid_data.emplace_back(joint_configs_[i].servo_id, interp.ff2, interp.ff1, interp.kd, interp.ki, interp.kp);
+                    gs_pid_data.emplace_back(joint_configs_[i].servo_id, interp.ff2, interp.ff1, interp.kd, interp.ki,
+                                             interp.kp);
                 }
                 if (gs_changed) {
                     auto pid_start = std::chrono::steady_clock::now();
                     dynamixel_->syncWritePID(gs_pid_data);
                     auto pid_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - pid_start).count();
+                                      std::chrono::steady_clock::now() - pid_start)
+                                      .count();
                     timing_stats_[8].add(pid_us);
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                    RCLCPP_INFO_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 500,
                         "GainSched ext=%.2f (h=%.3fm) | J1 P=%d D=%d | J2 P=%d D=%d | J3 P=%d D=%d | J4 P=%d D=%d",
-                        extension, horiz_reach,
-                        gs_last_applied_[0].kp, gs_last_applied_[0].kd,
-                        gs_last_applied_[1].kp, gs_last_applied_[1].kd,
-                        gs_last_applied_[2].kp, gs_last_applied_[2].kd,
-                        gs_last_applied_[3].kp, gs_last_applied_[3].kd);
+                        extension, horiz_reach, gs_last_applied_[0].kp, gs_last_applied_[0].kd, gs_last_applied_[1].kp,
+                        gs_last_applied_[1].kd, gs_last_applied_[2].kp, gs_last_applied_[2].kd, gs_last_applied_[3].kp,
+                        gs_last_applied_[3].kd);
                 }
             }
         }
@@ -253,7 +260,8 @@ void MauriceArmNode::controlTimerCallback() {
                 cmd_msg.position.resize(6);
                 for (int i = 0; i < 6; ++i) {
                     double rad = ((full_command[i] - 2048) * 2 * M_PI) / 4096.0;
-                    if (i == 1 || i == 2 || i == 3 || i == 5) rad = -rad;
+                    if (i == 1 || i == 2 || i == 3 || i == 5)
+                        rad = -rad;
                     cmd_msg.position[i] = rad;
                 }
                 arm_command_state_pub_->publish(cmd_msg);
@@ -279,7 +287,8 @@ void MauriceArmNode::controlTimerCallback() {
 
 void MauriceArmNode::recordLoopTiming(std::array<std::chrono::steady_clock::time_point, 9>& ts) {
     for (size_t i = 1; i < ts.size(); ++i)
-        if (ts[i] < ts[i - 1]) ts[i] = ts[i - 1];
+        if (ts[i] < ts[i - 1])
+            ts[i] = ts[i - 1];
 
     std::array<long, 10> us{};
     us[0] = std::chrono::duration_cast<std::chrono::microseconds>(ts[8] - ts[0]).count();
@@ -288,7 +297,8 @@ void MauriceArmNode::recordLoopTiming(std::array<std::chrono::steady_clock::time
     us[9] = std::chrono::duration_cast<std::chrono::microseconds>(ts[8] - ts[7]).count();
 
     for (size_t i = 0; i < timing_stats_.size(); ++i)
-        if (i != 8) timing_stats_[i].add(us[i]);
+        if (i != 8)
+            timing_stats_[i].add(us[i]);
 
     long avg_total = timing_stats_[0].avg();
 
@@ -306,8 +316,8 @@ void MauriceArmNode::recordLoopTiming(std::array<std::chrono::steady_clock::time
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "%s", pct.str().c_str());
 
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-        "SerialBus(us): readState_txrx=%ld  write_txrx=%ld",
-        robot_->last_read_txrx_us, robot_->last_write_txrx_us);
+                         "SerialBus(us): readState_txrx=%ld  write_txrx=%ld", robot_->last_read_txrx_us,
+                         robot_->last_write_txrx_us);
 }
 
 std::vector<int> MauriceArmNode::applyLimitsAndConvertToEncoder(std::vector<double>& command_data) {
@@ -329,7 +339,7 @@ std::vector<int> MauriceArmNode::applyLimitsAndConvertToEncoder(std::vector<doub
         if (joint1_pos < -1.35) {
             // Negative side clear — no restriction
         } else if (joint1_pos < -1.0) {
-            double t = - (joint1_pos - (-1.0)) / (-1.0 - (-1.35));
+            double t = -(joint1_pos - (-1.0)) / (-1.0 - (-1.35));
             double interpolated_limit = restricted_limit + t * (original_min_limit - restricted_limit);
             joint2_min_limit = std::max(joint2_min_limit, interpolated_limit);
         } else if (joint1_pos < 1.0) {
@@ -342,8 +352,8 @@ std::vector<int> MauriceArmNode::applyLimitsAndConvertToEncoder(std::vector<doub
 
         if (joint2_pos < joint2_min_limit) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                "Joint2 limited due to joint1=%.3f: requested %.3f, clamped to %.3f",
-                joint1_pos, joint2_pos, joint2_min_limit);
+                                 "Joint2 limited due to joint1=%.3f: requested %.3f, clamped to %.3f", joint1_pos,
+                                 joint2_pos, joint2_min_limit);
         }
 
         command_data[1] = std::clamp(joint2_pos, joint2_min_limit, joint2_max_limit);
@@ -380,15 +390,13 @@ void MauriceArmNode::updateMotorStress(double dt, const std::vector<int>& loads)
 
                 // Re-enable torque on this servo
                 int servo_id = joint_configs_[j].servo_id;
-                RCLCPP_WARN(this->get_logger(),
-                    "Stress cooldown ended for joint %zu (servo %d) — re-enabling torque",
-                    j + 1, servo_id);
+                RCLCPP_WARN(this->get_logger(), "Stress cooldown ended for joint %zu (servo %d) — re-enabling torque",
+                            j + 1, servo_id);
                 try {
                     dynamixel_->enableTorque(servo_id);
                 } catch (const std::exception& e) {
-                    RCLCPP_ERROR(this->get_logger(),
-                        "Failed to re-enable torque on servo %d after cooldown: %s",
-                        servo_id, e.what());
+                    RCLCPP_ERROR(this->get_logger(), "Failed to re-enable torque on servo %d after cooldown: %s",
+                                 servo_id, e.what());
                 }
             }
             continue;  // skip scoring while in cooldown
@@ -403,31 +411,30 @@ void MauriceArmNode::updateMotorStress(double dt, const std::vector<int>& loads)
         // Check threshold
         if (tracker.score >= stress_threshold_) {
             int servo_id = joint_configs_[j].servo_id;
-            RCLCPP_WARN(this->get_logger(),
+            RCLCPP_WARN(
+                this->get_logger(),
                 "Stress threshold exceeded for joint %zu (servo %d): score=%.1f >= %.1f — disabling torque for %.1fs",
                 j + 1, servo_id, tracker.score, stress_threshold_, stress_cooldown_sec_);
 
             tracker.in_cooldown = true;
             tracker.cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(stress_cooldown_sec_));
+                                               std::chrono::duration<double>(stress_cooldown_sec_));
 
             try {
                 dynamixel_->disableTorque(servo_id);
             } catch (const std::exception& e) {
-                RCLCPP_ERROR(this->get_logger(),
-                    "Failed to disable torque on servo %d for stress cooldown: %s",
-                    servo_id, e.what());
+                RCLCPP_ERROR(this->get_logger(), "Failed to disable torque on servo %d for stress cooldown: %s",
+                             servo_id, e.what());
             }
         }
     }
 
     // Periodic log of stress scores
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-        "StressScores: J1=%.1f J2=%.1f J3=%.1f J4=%.1f J5=%.1f J6=%.1f (threshold=%.1f)",
-        stress_trackers_[0].score, stress_trackers_[1].score,
-        stress_trackers_[2].score, stress_trackers_[3].score,
-        stress_trackers_[4].score, stress_trackers_[5].score,
-        stress_threshold_);
+                         "StressScores: J1=%.1f J2=%.1f J3=%.1f J4=%.1f J5=%.1f J6=%.1f (threshold=%.1f)",
+                         stress_trackers_[0].score, stress_trackers_[1].score, stress_trackers_[2].score,
+                         stress_trackers_[3].score, stress_trackers_[4].score, stress_trackers_[5].score,
+                         stress_threshold_);
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm

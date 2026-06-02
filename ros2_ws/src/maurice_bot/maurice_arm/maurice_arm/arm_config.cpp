@@ -37,10 +37,9 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
         // Validate motor_type vs control_mode
         if (!config.motor_type.empty() && !isX330(config.motor_type) &&
             (config.control_mode == 0 || config.control_mode == 5)) {
-            throw std::runtime_error(
-                jn + " (" + config.motor_type +
-                "): control_mode " + std::to_string(config.control_mode) +
-                " requires current hw — only x330 motors support modes 0/5");
+            throw std::runtime_error(jn + " (" + config.motor_type + "): control_mode " +
+                                     std::to_string(config.control_mode) +
+                                     " requires current hw — only x330 motors support modes 0/5");
         }
 
         // Current limit: x330 defaults to hw max, x430 has no current hw
@@ -49,21 +48,22 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
             config.current_limit = (cl > 0) ? cl : kX330MaxCurrentLimit;
             if (config.current_limit > kX330MaxCurrentLimit) {
                 throw std::runtime_error(jn + ": current_limit out of range [1, " +
-                    std::to_string(kX330MaxCurrentLimit) + "]");
+                                         std::to_string(kX330MaxCurrentLimit) + "]");
             }
         } else if (cl > 0) {
             throw std::runtime_error(jn + " (" + config.motor_type +
-                "): current_limit not supported — no current control hw");
+                                     "): current_limit not supported — no current control hw");
         }
 
         config.homing_offset = static_cast<int>(this->get_parameter(jn + ".homing_offset").as_int());
         config.profile_velocity = static_cast<int>(this->get_parameter(jn + ".profile_velocity").as_int());
         config.profile_acceleration = static_cast<int>(this->get_parameter(jn + ".profile_acceleration").as_int());
 
-        RCLCPP_INFO(this->get_logger(), "Joint %zu (%s): servo_id=%d, motor=%s, limits=[%.3f, %.3f] rad, pwm=%d, mode=%d, current=%d",
-            i + 1, jn.c_str(), config.servo_id,
-            config.motor_type.empty() ? "(unset)" : config.motor_type.c_str(),
-            config.min_pos_rad, config.max_pos_rad, config.pwm_limit, config.control_mode, config.current_limit);
+        RCLCPP_INFO(this->get_logger(),
+                    "Joint %zu (%s): servo_id=%d, motor=%s, limits=[%.3f, %.3f] rad, pwm=%d, mode=%d, current=%d",
+                    i + 1, jn.c_str(), config.servo_id,
+                    config.motor_type.empty() ? "(unset)" : config.motor_type.c_str(), config.min_pos_rad,
+                    config.max_pos_rad, config.pwm_limit, config.control_mode, config.current_limit);
         if (config.homing_offset != 0)
             RCLCPP_INFO(this->get_logger(), "  Homing offset: %d", config.homing_offset);
 
@@ -77,7 +77,8 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
             if (!far_arr.empty()) {
                 far_gains = parseGainsArray(far_arr);
             }
-        } catch (...) {}  // empty [] in YAML may not parse as integer array
+        } catch (...) {
+        }  // empty [] in YAML may not parse as integer array
 
         GainProfile teleop_gains{};  // teleop gains (November tuning)
         bool has_teleop_gains = false;
@@ -87,30 +88,32 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
                 teleop_gains = parseGainsArray(teleop_arr);
                 has_teleop_gains = true;
             }
-        } catch (...) {}
+        } catch (...) {
+        }
 
         // Set joint config gains from near (initial operating gains)
-        config.kp  = near_gains.kp;
-        config.ki  = near_gains.ki;
-        config.kd  = near_gains.kd;
+        config.kp = near_gains.kp;
+        config.ki = near_gains.ki;
+        config.kd = near_gains.kd;
         config.ff1 = near_gains.ff1;
         config.ff2 = near_gains.ff2;
 
         // Store gain scheduling profiles
         gs_near_[i] = near_gains;
-        gs_far_[i]  = far_gains;
+        gs_far_[i] = far_gains;
         gs_teleop_[i] = has_teleop_gains ? teleop_gains : near_gains;
         gs_last_applied_[i] = near_gains;
 
         RCLCPP_INFO(this->get_logger(), "  Gains near: [%d, %d, %d, %d, %d]  far: [%d, %d, %d, %d, %d]%s",
-            near_gains.kp, near_gains.ki, near_gains.kd, near_gains.ff1, near_gains.ff2,
-            far_gains.kp, far_gains.ki, far_gains.kd, far_gains.ff1, far_gains.ff2,
-            (near_gains != far_gains) ? "  (gain scheduling active)" : "");
+                    near_gains.kp, near_gains.ki, near_gains.kd, near_gains.ff1, near_gains.ff2, far_gains.kp,
+                    far_gains.ki, far_gains.kd, far_gains.ff1, far_gains.ff2,
+                    (near_gains != far_gains) ? "  (gain scheduling active)" : "");
         if (has_teleop_gains)
-            RCLCPP_INFO(this->get_logger(), "  Gains teleop: [%d, %d, %d, %d, %d]",
-                teleop_gains.kp, teleop_gains.ki, teleop_gains.kd, teleop_gains.ff1, teleop_gains.ff2);
+            RCLCPP_INFO(this->get_logger(), "  Gains teleop: [%d, %d, %d, %d, %d]", teleop_gains.kp, teleop_gains.ki,
+                        teleop_gains.kd, teleop_gains.ff1, teleop_gains.ff2);
         if (config.profile_velocity > 0 || config.profile_acceleration > 0)
-            RCLCPP_INFO(this->get_logger(), "  Profile: vel=%d, accel=%d", config.profile_velocity, config.profile_acceleration);
+            RCLCPP_INFO(this->get_logger(), "  Profile: vel=%d, accel=%d", config.profile_velocity,
+                        config.profile_acceleration);
 
         // Head-specific config for joint 7 (index 6)
         if (i == 6) {
@@ -130,8 +133,8 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
             }
 
             RCLCPP_INFO(this->get_logger(), "  Head config: range=[%.1f, %.1f] deg, AI pos=%.1f deg, reversed=%s",
-                config.head_min_angle_deg, config.head_max_angle_deg, config.head_ai_position_deg,
-                config.head_direction_reversed ? "true" : "false");
+                        config.head_min_angle_deg, config.head_max_angle_deg, config.head_ai_position_deg,
+                        config.head_direction_reversed ? "true" : "false");
         }
 
         joint_configs_.push_back(config);
@@ -141,7 +144,6 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
 
 rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
     const std::vector<rclcpp::Parameter>& parameters) {
-
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
 
@@ -161,14 +163,18 @@ rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
         // Match pattern: joint_N.<suffix>
         if (name.size() >= 8 && name.substr(0, 6) == "joint_") {
             size_t dot = name.find('.', 6);
-            if (dot == std::string::npos) continue;
+            if (dot == std::string::npos)
+                continue;
 
             int joint_num = 0;
             try {
                 joint_num = std::stoi(name.substr(6, dot - 6));
-            } catch (...) { continue; }
+            } catch (...) {
+                continue;
+            }
 
-            if (joint_num < 1 || joint_num > static_cast<int>(joint_configs_.size())) continue;
+            if (joint_num < 1 || joint_num > static_cast<int>(joint_configs_.size()))
+                continue;
             int ji = joint_num - 1;
 
             std::string suffix = name.substr(dot + 1);
@@ -177,14 +183,14 @@ rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
                 auto arr = param.as_integer_array();
                 GainProfile g = parseGainsArray(arr);
                 gs_near_[ji] = g;
-                joint_configs_[ji].kp  = g.kp;
-                joint_configs_[ji].ki  = g.ki;
-                joint_configs_[ji].kd  = g.kd;
+                joint_configs_[ji].kp = g.kp;
+                joint_configs_[ji].ki = g.ki;
+                joint_configs_[ji].kd = g.kd;
                 joint_configs_[ji].ff1 = g.ff1;
                 joint_configs_[ji].ff2 = g.ff2;
                 pid_changed_joints.insert(joint_num);
-                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_near = [%d, %d, %d, %d, %d]",
-                    joint_num, g.kp, g.ki, g.kd, g.ff1, g.ff2);
+                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_near = [%d, %d, %d, %d, %d]", joint_num,
+                            g.kp, g.ki, g.kd, g.ff1, g.ff2);
             } else if (suffix == "gains_far") {
                 try {
                     auto arr = param.as_integer_array();
@@ -192,8 +198,8 @@ rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
                 } catch (...) {
                     gs_far_[ji] = gs_near_[ji];
                 }
-                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_far = [%d, %d, %d, %d, %d]",
-                    joint_num, gs_far_[ji].kp, gs_far_[ji].ki, gs_far_[ji].kd, gs_far_[ji].ff1, gs_far_[ji].ff2);
+                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_far = [%d, %d, %d, %d, %d]", joint_num,
+                            gs_far_[ji].kp, gs_far_[ji].ki, gs_far_[ji].kd, gs_far_[ji].ff1, gs_far_[ji].ff2);
             } else if (suffix == "gains_teleop") {
                 try {
                     auto arr = param.as_integer_array();
@@ -201,18 +207,19 @@ rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
                 } catch (...) {
                     gs_teleop_[ji] = gs_near_[ji];
                 }
-                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_teleop = [%d, %d, %d, %d, %d]",
-                    joint_num, gs_teleop_[ji].kp, gs_teleop_[ji].ki, gs_teleop_[ji].kd, gs_teleop_[ji].ff1, gs_teleop_[ji].ff2);
+                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.gains_teleop = [%d, %d, %d, %d, %d]", joint_num,
+                            gs_teleop_[ji].kp, gs_teleop_[ji].ki, gs_teleop_[ji].kd, gs_teleop_[ji].ff1,
+                            gs_teleop_[ji].ff2);
             } else if (suffix == "profile_velocity") {
                 joint_configs_[ji].profile_velocity = static_cast<int>(param.as_int());
                 profile_changed_joints.insert(joint_num);
-                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.profile_velocity = %d",
-                    joint_num, joint_configs_[ji].profile_velocity);
+                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.profile_velocity = %d", joint_num,
+                            joint_configs_[ji].profile_velocity);
             } else if (suffix == "profile_acceleration") {
                 joint_configs_[ji].profile_acceleration = static_cast<int>(param.as_int());
                 profile_changed_joints.insert(joint_num);
-                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.profile_acceleration = %d",
-                    joint_num, joint_configs_[ji].profile_acceleration);
+                RCLCPP_INFO(this->get_logger(), "Hot-reload: joint_%d.profile_acceleration = %d", joint_num,
+                            joint_configs_[ji].profile_acceleration);
             }
         }
     }
@@ -249,4 +256,4 @@ rcl_interfaces::msg::SetParametersResult MauriceArmNode::onParameterChange(
     return result;
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm
