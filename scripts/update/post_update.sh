@@ -355,7 +355,7 @@ if [ -f "$SSH_DROPIN_SRC" ] && [ -d "$(dirname "$SSH_DROPIN_DST")" ]; then
         chmod 644 "$SSH_DROPIN_DST"
         # Validate the full sshd config; back out the drop-in if invalid so we
         # never leave a broken config that could block sshd on its next restart.
-        if sshd -t 2>/dev/null; then
+        if SSHD_VALIDATE_ERR=$(sshd -t 2>&1); then
             if systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null; then
                 log "  SSH keepalive config installed and ssh reloaded"
             else
@@ -363,6 +363,7 @@ if [ -f "$SSH_DROPIN_SRC" ] && [ -d "$(dirname "$SSH_DROPIN_DST")" ]; then
             fi
         else
             log "  WARNING: sshd config validation failed; removing keepalive drop-in"
+            log "  sshd -t output: $SSHD_VALIDATE_ERR"
             rm -f "$SSH_DROPIN_DST"
         fi
     fi
