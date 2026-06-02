@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shlex
 from pathlib import Path
 
@@ -28,11 +27,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         value = value.strip()
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         env[key.strip()] = value
     return env
@@ -70,11 +65,7 @@ def _strip_toml_comment(value: str) -> str:
 
 def _parse_toml_scalar(raw_value: str) -> object:
     value = _strip_toml_comment(raw_value).strip()
-    if (
-        len(value) >= 2
-        and value[0] == value[-1]
-        and value[0] in {"'", '"'}
-    ):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     lowered = value.lower()
     if lowered == "true":

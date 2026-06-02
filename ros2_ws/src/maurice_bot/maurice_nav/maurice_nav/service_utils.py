@@ -1,8 +1,9 @@
 """Utilities for calling ROS2 services with timeout handling."""
 
 import time
+
 from lifecycle_msgs.msg import Transition
-from lifecycle_msgs.srv import GetState, ChangeState
+from lifecycle_msgs.srv import ChangeState, GetState
 
 
 def call_service(service_clients: dict, logger, service_name: str, request, timeout_sec: float = 2.0):
@@ -19,12 +20,12 @@ def call_service(service_clients: dict, logger, service_name: str, request, time
         The service response if successful, None otherwise
     """
     client = service_clients[service_name]
-    
+
     try:
         if not client.wait_for_service(timeout_sec=timeout_sec):
             logger.info(f"Service '{service_name}' not available")
             return None
-        
+
         # result = client.call(request)
         future = client.call_async(request)
         start_time = time.time()
@@ -34,8 +35,8 @@ def call_service(service_clients: dict, logger, service_name: str, request, time
             if elapsed >= timeout_sec:
                 logger.warning(f"Timeout waiting for service '{service_name}' after {elapsed:.2f}s")
                 return None
-            time.sleep(.1)
-        
+            time.sleep(0.1)
+
         if future.done():
             result = future.result()
             if result is not None:
@@ -46,7 +47,7 @@ def call_service(service_clients: dict, logger, service_name: str, request, time
         else:
             logger.info(f"Timeout calling service '{service_name}'")
             return None
-            
+
     except Exception as e:
         logger.warning(f"Exception calling service '{service_name}': {e}")
         return None
@@ -56,16 +57,12 @@ def get_node_state(service_clients: dict, logger, node_name: str) -> int:
     """Helper to get the current state of a node. Returns state ID or None if failed."""
     get_state_request = GetState.Request()
     get_state_result = call_service(
-        service_clients,
-        logger,
-        f'/{node_name}/get_state',
-        get_state_request,
-        timeout_sec=10.0
+        service_clients, logger, f"/{node_name}/get_state", get_state_request, timeout_sec=10.0
     )
-    
+
     if get_state_result is None:
         return None
-    
+
     return get_state_result.current_state.id
 
 
@@ -74,15 +71,9 @@ def send_lifecycle_transition(service_clients: dict, logger, node_name: str, tra
     change_state_request = ChangeState.Request()
     change_state_request.transition = Transition()
     change_state_request.transition.id = transition_id
-    
-    result = call_service(
-        service_clients,
-        logger,
-        f'/{node_name}/change_state',
-        change_state_request,
-        timeout_sec=17.0
-    )
-    
+
+    result = call_service(service_clients, logger, f"/{node_name}/change_state", change_state_request, timeout_sec=17.0)
+
     return result is not None and result.success
 
 
@@ -99,20 +90,20 @@ def transition_node(service_clients: dict, logger, node_name: str, target_state:
     Returns: True if transition succeeded, False otherwise
     """
     from lifecycle_msgs.msg import State
-    
+
     try:
         # Get current state
         current_state = get_node_state(service_clients, logger, node_name)
-        
+
         if current_state is None:
             logger.warning(f"Failed to get state for {node_name}")
             return False
-        
+
         # Already at target state
         if current_state == target_state:
             logger.debug(f"{node_name} already at target state {target_state}")
             return True
-        
+
         # Transition down (ACTIVE -> INACTIVE -> UNCONFIGURED)
         if current_state > target_state:
             # If only_up is True, don't transition down - just return True (already "higher" than target)
@@ -125,32 +116,36 @@ def transition_node(service_clients: dict, logger, node_name: str, target_state:
                     # Re-check state - node may have already transitioned down
                     current_state = get_node_state(service_clients, logger, node_name)
                     if current_state is not None and current_state <= target_state:
-                        logger.info(f"{node_name} already at state {current_state} (target {target_state}), treating as success")
+                        logger.info(
+                            f"{node_name} already at state {current_state} (target {target_state}), treating as success"
+                        )
                         return True
                     elif current_state is not None and current_state == State.PRIMARY_STATE_INACTIVE:
                         logger.info(f"{node_name} now INACTIVE, continuing to cleanup")
                     else:
                         logger.warning(f"Failed to deactivate {node_name}")
                         return False
-                
+
                 current_state = get_node_state(service_clients, logger, node_name) or State.PRIMARY_STATE_INACTIVE
                 if current_state <= target_state:
                     return True
-            
+
             # Cleanup if needed
             if current_state == State.PRIMARY_STATE_INACTIVE and target_state == State.PRIMARY_STATE_UNCONFIGURED:
                 if not send_lifecycle_transition(service_clients, logger, node_name, Transition.TRANSITION_CLEANUP):
                     # Re-check state - node may have already been cleaned up
                     current_state = get_node_state(service_clients, logger, node_name)
                     if current_state is not None and current_state <= target_state:
-                        logger.info(f"{node_name} already at state {current_state} (target {target_state}), treating as success")
+                        logger.info(
+                            f"{node_name} already at state {current_state} (target {target_state}), treating as success"
+                        )
                         return True
                     else:
                         logger.warning(f"Failed to cleanup {node_name}")
                         return False
-                
+
                 return True
-        
+
         # Transition up (UNCONFIGURED -> INACTIVE -> ACTIVE)
         else:
             # Configure if needed
@@ -159,30 +154,34 @@ def transition_node(service_clients: dict, logger, node_name: str, target_state:
                     # Re-check state - node may have been configured by another source
                     current_state = get_node_state(service_clients, logger, node_name)
                     if current_state is not None and current_state >= target_state:
-                        logger.info(f"{node_name} already at state {current_state} (target {target_state}), treating as success")
+                        logger.info(
+                            f"{node_name} already at state {current_state} (target {target_state}), treating as success"
+                        )
                     else:
                         logger.warning(f"Failed to configure {node_name}")
                         return False
-                
+
                 current_state = get_node_state(service_clients, logger, node_name) or State.PRIMARY_STATE_INACTIVE
                 if current_state >= target_state:
                     return True
-            
+
             # Activate if needed
             if current_state == State.PRIMARY_STATE_INACTIVE and target_state == State.PRIMARY_STATE_ACTIVE:
                 if not send_lifecycle_transition(service_clients, logger, node_name, Transition.TRANSITION_ACTIVATE):
                     # Re-check state - node may have been activated by another source
                     current_state = get_node_state(service_clients, logger, node_name)
                     if current_state is not None and current_state >= target_state:
-                        logger.info(f"{node_name} already at state {current_state} (target {target_state}), treating as success")
+                        logger.info(
+                            f"{node_name} already at state {current_state} (target {target_state}), treating as success"
+                        )
                     else:
                         logger.warning(f"Failed to activate {node_name}")
                         return False
-                
+
                 return True
-        
+
         return True
-        
+
     except Exception as e:
         logger.warning(f"Error transitioning {node_name}: {e}")
         return False

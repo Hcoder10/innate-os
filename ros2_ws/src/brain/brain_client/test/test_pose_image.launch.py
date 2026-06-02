@@ -38,8 +38,8 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 
-
 # -- Launch description -------------------------------------------------------
+
 
 @pytest.mark.launch_test
 def generate_test_description():
@@ -105,6 +105,7 @@ def generate_test_description():
 
 # -- Helpers ------------------------------------------------------------------
 
+
 def _make_compressed_image():
     """Create a small synthetic JPEG CompressedImage."""
     img = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -140,6 +141,7 @@ def _ws_msg(msg_type, payload):
 
 # -- Active tests -------------------------------------------------------------
 
+
 class TestPoseImage(unittest.TestCase):
     """Active tests that run while brain_client_node is alive."""
 
@@ -156,9 +158,7 @@ class TestPoseImage(unittest.TestCase):
         self.received_msgs = []
 
         # Subscribe to ws_outgoing to capture pose_image messages
-        self.ws_sub = self.node.create_subscription(
-            String, "ws_outgoing", self._ws_callback, 10
-        )
+        self.ws_sub = self.node.create_subscription(String, "ws_outgoing", self._ws_callback, 10)
 
         # Publisher: fake camera images
         image_qos = QoSProfile(
@@ -166,9 +166,7 @@ class TestPoseImage(unittest.TestCase):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        self.image_pub = self.node.create_publisher(
-            CompressedImage, "/test/camera/compressed", image_qos
-        )
+        self.image_pub = self.node.create_publisher(CompressedImage, "/test/camera/compressed", image_qos)
 
         # Publisher: ws_messages (simulate incoming WebSocket messages)
         self.ws_pub = self.node.create_publisher(String, "ws_messages", 10)
@@ -199,9 +197,7 @@ class TestPoseImage(unittest.TestCase):
             ready = client.wait_for_service(timeout_sec=timeout_sec)
             self.assertTrue(
                 ready,
-                "brain_client_node did not become ready within "
-                + str(timeout_sec)
-                + "s",
+                "brain_client_node did not become ready within " + str(timeout_sec) + "s",
             )
         finally:
             self.node.destroy_client(client)
@@ -211,9 +207,7 @@ class TestPoseImage(unittest.TestCase):
         # 1. Broadcast a static transform
         yaw_z = 0.7071
         yaw_w = 0.7071
-        self.tf_broadcaster.sendTransform(
-            _make_static_tf(tf_x, tf_y, yaw_z, yaw_w)
-        )
+        self.tf_broadcaster.sendTransform(_make_static_tf(tf_x, tf_y, yaw_z, yaw_w))
 
         # 2. Publish fake camera images so brain_client picks them up
         if send_images:
@@ -256,9 +250,7 @@ class TestPoseImage(unittest.TestCase):
         self._wait_for_brain_client()
         self._trigger_pose_image()
         results = self._collect_pose_images()
-        self.assertGreater(
-            len(results), 0, "No pose_image message received on ws_outgoing"
-        )
+        self.assertGreater(len(results), 0, "No pose_image message received on ws_outgoing")
 
     def test_pose_image_payload_is_correct(self):
         """The pose_image payload contains image, x, y, theta with expected values."""
@@ -295,9 +287,7 @@ class TestPoseImage(unittest.TestCase):
         self._wait_for_brain_client()
 
         # Broadcast TF and publish images, but do NOT send trigger messages
-        self.tf_broadcaster.sendTransform(
-            _make_static_tf(1.0, 2.0, 0.7071, 0.7071)
-        )
+        self.tf_broadcaster.sendTransform(_make_static_tf(1.0, 2.0, 0.7071, 0.7071))
         for _ in range(5):
             self.image_pub.publish(_make_compressed_image())
             self._spin_for(0.2)
@@ -305,17 +295,12 @@ class TestPoseImage(unittest.TestCase):
         # Spin for a few seconds -- timer was never started, no pose_image
         self._spin_for(3.0)
 
-        pose_msgs = [
-            raw for raw in self.received_msgs
-            if json.loads(raw).get("type") == "pose_image"
-        ]
-        self.assertEqual(
-            len(pose_msgs), 0,
-            "pose_image should not be sent before READY_FOR_IMAGE trigger"
-        )
+        pose_msgs = [raw for raw in self.received_msgs if json.loads(raw).get("type") == "pose_image"]
+        self.assertEqual(len(pose_msgs), 0, "pose_image should not be sent before READY_FOR_IMAGE trigger")
 
 
 # -- Post-shutdown tests ------------------------------------------------------
+
 
 @launch_testing.post_shutdown_test()
 class TestShutdown(unittest.TestCase):

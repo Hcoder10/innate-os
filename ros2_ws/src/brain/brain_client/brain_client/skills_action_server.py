@@ -42,7 +42,6 @@ from brain_client.head_interface import HeadInterface
 from brain_client.hot_reload_watcher import HotReloadWatcher
 from brain_client.manipulation_interface import ManipulationInterface
 from brain_client.mobility_interface import MobilityInterface
-from brain_client.skill_cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.script_paths import (
     classify_source,
     ensure_user_directories,
@@ -50,6 +49,7 @@ from brain_client.script_paths import (
     get_innate_skills_dir,
     get_skill_directories,
 )
+from brain_client.skill_cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skill_loader import SkillLoader
 from brain_client.skill_types import (
     InterfaceType,

@@ -161,9 +161,7 @@ async def get_run(request: Request, skill_name: str, run_id: int) -> dict[str, A
 
 
 @router.get("/runs/{skill_name}/{run_id}/watch")
-async def watch_run(
-    request: Request, skill_name: str, run_id: int
-) -> StreamingResponse:
+async def watch_run(request: Request, skill_name: str, run_id: int) -> StreamingResponse:
     """SSE endpoint that polls run status using SkillManager.run_status()."""
     skill_path = resolve_skill_dir(request, skill_name)
     skill_id = read_skill_id(skill_path)
@@ -175,15 +173,17 @@ async def watch_run(
         while True:
             try:
                 r = manager.run_status(skill_id, run_id)
-                data = json.dumps({
-                    "run_id": r.run_id,
-                    "status": r.status,
-                    "daemon_state": r.daemon_state,
-                    "error_message": r.error_message,
-                    "updated_at": r.updated_at,
-                    "started_at": r.started_at,
-                    "finished_at": r.finished_at,
-                })
+                data = json.dumps(
+                    {
+                        "run_id": r.run_id,
+                        "status": r.status,
+                        "daemon_state": r.daemon_state,
+                        "error_message": r.error_message,
+                        "updated_at": r.updated_at,
+                        "started_at": r.started_at,
+                        "finished_at": r.finished_at,
+                    }
+                )
                 yield f"data: {data}\n\n"
                 if r.is_terminal:
                     break
@@ -207,9 +207,7 @@ class CreateRunRequest(BaseModel):
 
 
 @router.post("/runs/{skill_name}")
-async def create_run(
-    request: Request, skill_name: str, body: CreateRunRequest
-) -> dict[str, Any]:
+async def create_run(request: Request, skill_name: str, body: CreateRunRequest) -> dict[str, Any]:
     """Create a new training run via OrchestratorClient.create_run().
 
     Builds the training_params dict in the same format as the training
@@ -247,18 +245,14 @@ async def create_run(
     except Exception as e:
         raise HTTPException(502, f"Failed to create run: {e}") from e
 
-    logger.info(
-        "Created run %s/%s for skill %s", skill_id, result.get("run_id"), skill_name
-    )
+    logger.info("Created run %s/%s for skill %s", skill_id, result.get("run_id"), skill_name)
     return result
 
 
 # ── Download results ────────────────────────────────────────────────
 
 
-def _apply_download_progress(
-    job: dict[str, Any], update: ProgressUpdate, skill_name: str, run_id: int
-) -> None:
+def _apply_download_progress(job: dict[str, Any], update: ProgressUpdate, skill_name: str, run_id: int) -> None:
     """Apply a ProgressUpdate from SkillManager.download to the job dict."""
     job["stage"] = update.stage.value
     job["message"] = update.message
@@ -271,9 +265,7 @@ def _apply_download_progress(
         job["progress"] = ((fp.index - 1) + per_file) / fp.total
     if update.error:
         job["error"] = update.error
-    logger.info(
-        "[%s/%d] %s: %s", skill_name, run_id, update.stage.value, update.message
-    )
+    logger.info("[%s/%d] %s: %s", skill_name, run_id, update.stage.value, update.message)
 
 
 def _run_download(
@@ -307,9 +299,7 @@ def _run_download(
 
 
 @router.post("/runs/{skill_name}/{run_id}/download")
-async def download_run(
-    request: Request, skill_name: str, run_id: int
-) -> dict[str, str]:
+async def download_run(request: Request, skill_name: str, run_id: int) -> dict[str, str]:
     """Start a background download of a run's result files.
 
     Uses SkillManager.download() which writes into the run's
@@ -349,9 +339,7 @@ async def download_run(
 
 
 @router.get("/runs/{skill_name}/{run_id}/download-status")
-async def download_status(
-    skill_name: str, run_id: int
-) -> dict[str, Any]:
+async def download_status(skill_name: str, run_id: int) -> dict[str, Any]:
     """Poll the download progress for a run."""
     with _download_lock:
         job = _download_jobs.get((skill_name, run_id))

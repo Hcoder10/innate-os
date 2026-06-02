@@ -11,9 +11,9 @@ import threading
 import time
 import unicodedata
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 try:
     import termios
@@ -161,14 +161,10 @@ class DashboardRuntime:
             "simulator": self.callbacks.capture_simulator_logs(
                 bool(snapshot["sim_running"]), lines=self.log_cache_lines
             ),
-            "brain": self.callbacks.capture_os_brain_logs(
-                self.config, lines=self.log_cache_lines
-            ),
+            "brain": self.callbacks.capture_os_brain_logs(self.config, lines=self.log_cache_lines),
         }
         if self.config["mode"] != self.options.hosted_mode:
-            logs["agent"] = self.callbacks.capture_agent_logs(
-                self.config, lines=self.log_cache_lines
-            )
+            logs["agent"] = self.callbacks.capture_agent_logs(self.config, lines=self.log_cache_lines)
         return logs
 
     def read(self) -> tuple[dict[str, object], dict[str, list[str]], int, int]:
@@ -277,14 +273,9 @@ def rgb_bg(rgb: tuple[int, int, int]) -> str:
     return "\033[40m"
 
 
-def blend_rgb(
-    start: tuple[int, int, int], end: tuple[int, int, int], ratio: float
-) -> tuple[int, int, int]:
+def blend_rgb(start: tuple[int, int, int], end: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
     ratio = max(0.0, min(1.0, ratio))
-    return tuple(
-        int(round(start[index] + (end[index] - start[index]) * ratio))
-        for index in range(3)
-    )
+    return tuple(int(round(start[index] + (end[index] - start[index]) * ratio)) for index in range(3))
 
 
 def gradient_rgb(
@@ -348,42 +339,30 @@ def dashboard_snapshot_worker(runtime: DashboardRuntime, interval_seconds: float
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_simulator_log_worker(
-    runtime: DashboardRuntime, interval_seconds: float = 0.1
-) -> None:
+def dashboard_simulator_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.1) -> None:
     while not runtime.stop_event.is_set():
         snapshot, _, _, _ = runtime.read()
         runtime.set_log(
             "simulator",
-            runtime.callbacks.capture_simulator_logs(
-                bool(snapshot["sim_running"]), lines=runtime.log_cache_lines
-            ),
+            runtime.callbacks.capture_simulator_logs(bool(snapshot["sim_running"]), lines=runtime.log_cache_lines),
         )
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_brain_log_worker(
-    runtime: DashboardRuntime, interval_seconds: float = 0.35
-) -> None:
+def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.35) -> None:
     while not runtime.stop_event.is_set():
         runtime.set_log(
             "brain",
-            runtime.callbacks.capture_os_brain_logs(
-                runtime.config, lines=runtime.log_cache_lines
-            ),
+            runtime.callbacks.capture_os_brain_logs(runtime.config, lines=runtime.log_cache_lines),
         )
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_agent_log_worker(
-    runtime: DashboardRuntime, interval_seconds: float = 0.5
-) -> None:
+def dashboard_agent_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.5) -> None:
     while not runtime.stop_event.is_set():
         runtime.set_log(
             "agent",
-            runtime.callbacks.capture_agent_logs(
-                runtime.config, lines=runtime.log_cache_lines
-            ),
+            runtime.callbacks.capture_agent_logs(runtime.config, lines=runtime.log_cache_lines),
         )
         runtime.stop_event.wait(interval_seconds)
 
@@ -396,22 +375,12 @@ def dashboard_runtime(
 ):
     runtime = DashboardRuntime(config, callbacks, options)
     threads = [
-        threading.Thread(
-            target=dashboard_snapshot_worker, args=(runtime,), daemon=True
-        ),
-        threading.Thread(
-            target=dashboard_simulator_log_worker, args=(runtime,), daemon=True
-        ),
-        threading.Thread(
-            target=dashboard_brain_log_worker, args=(runtime,), daemon=True
-        ),
+        threading.Thread(target=dashboard_snapshot_worker, args=(runtime,), daemon=True),
+        threading.Thread(target=dashboard_simulator_log_worker, args=(runtime,), daemon=True),
+        threading.Thread(target=dashboard_brain_log_worker, args=(runtime,), daemon=True),
     ]
     if config["mode"] != options.hosted_mode:
-        threads.append(
-            threading.Thread(
-                target=dashboard_agent_log_worker, args=(runtime,), daemon=True
-            )
-        )
+        threads.append(threading.Thread(target=dashboard_agent_log_worker, args=(runtime,), daemon=True))
 
     for thread in threads:
         thread.start()
@@ -527,10 +496,7 @@ def render_panel_box(
         + colorize("│", fg=border_rgb, bold=True)
     )
     rendered_chart_lines = [
-        colorize("│", fg=border_rgb, bold=True)
-        + line
-        + colorize("│", fg=border_rgb, bold=True)
-        for line in chart_lines
+        colorize("│", fg=border_rgb, bold=True) + line + colorize("│", fg=border_rgb, bold=True) for line in chart_lines
     ]
     return [top, value_line, subtitle_line, *rendered_chart_lines, bottom]
 
@@ -811,11 +777,7 @@ def render_robot_marquee(width: int) -> list[str]:
     rendered: list[str] = []
     for line in frame:
         padded = line.ljust(sprite_width)
-        rendered.append(
-            (" " * offset)
-            + colorize(padded, fg=THEME["fps_end"], bold=True)
-            + (" " * (travel - offset))
-        )
+        rendered.append((" " * offset) + colorize(padded, fg=THEME["fps_end"], bold=True) + (" " * (travel - offset)))
 
     ground = "." * width
     rendered.append(colorize(ground, fg=THEME["dim"], dim=True))
@@ -859,9 +821,7 @@ def render_log_box(
     return [top, *body, bottom]
 
 
-def print_log_columns(
-    columns: list[tuple[str, list[str], tuple[int, int, int]]], *, available_height: int
-) -> None:
+def print_log_columns(columns: list[tuple[str, list[str], tuple[int, int, int]]], *, available_height: int) -> None:
     width = shutil.get_terminal_size((150, 40)).columns
     if available_height < 3:
         print(
@@ -891,9 +851,7 @@ def print_log_columns(
         for index, (title, lines, border_rgb) in enumerate(columns):
             if index > 0 and gap_lines:
                 print()
-            for row in render_log_box(
-                title, lines, width=width, height=box_height, border_rgb=border_rgb
-            ):
+            for row in render_log_box(title, lines, width=width, height=box_height, border_rgb=border_rgb):
                 print(row)
         return
 
@@ -920,14 +878,8 @@ def runtime_is_down(
     options: DashboardOptions,
     snapshot: dict[str, object],
 ) -> bool:
-    local_agent_running = (
-        config["mode"] != options.hosted_mode and bool(snapshot["agent_running"])
-    )
-    return (
-        not bool(snapshot["os_running"])
-        and not bool(snapshot["sim_running"])
-        and not local_agent_running
-    )
+    local_agent_running = config["mode"] != options.hosted_mode and bool(snapshot["agent_running"])
+    return not bool(snapshot["os_running"]) and not bool(snapshot["sim_running"]) and not local_agent_running
 
 
 def print_down_status(options: DashboardOptions) -> None:
@@ -1272,9 +1224,7 @@ def watch_dashboard(
                     next_refresh = now + refresh_seconds
                     redraw = False
 
-                key = read_dashboard_key(
-                    0.2 if input_mode_enabled else max(next_refresh - time.monotonic(), 0.1)
-                )
+                key = read_dashboard_key(0.2 if input_mode_enabled else max(next_refresh - time.monotonic(), 0.1))
                 if key is None:
                     continue
 
@@ -1291,9 +1241,7 @@ def watch_dashboard(
                     next_refresh = 0.0
                 elif normalized == "q":
                     print()
-                    callbacks.success(
-                        "Left the live dashboard. The Innate runtime is still running."
-                    )
+                    callbacks.success("Left the live dashboard. The Innate runtime is still running.")
                     return "detach"
     except KeyboardInterrupt:
         return "shutdown"

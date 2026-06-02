@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import smtplib
 import base64
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import smtplib
 from email.mime.image import MIMEImage
-from brain_client.skill_types import Skill, SkillResult, RobotState, RobotStateType
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+from brain_client.skill_types import RobotState, RobotStateType, Skill, SkillResult
 
 
 class SendPictureViaEmail(Skill):
@@ -54,9 +55,7 @@ class SendPictureViaEmail(Skill):
             self.logger.error("[SendPictureViaEmail] No image available to send.")
             return "No image available to send", SkillResult.FAILURE
 
-        self.logger.info(
-            f"\\033[96m[BrainClient] Sending email with picture to {recipient}\\033[0m"
-        )
+        self.logger.info(f"\\033[96m[BrainClient] Sending email with picture to {recipient}\\033[0m")
 
         try:
             # Decode the base64 image
@@ -82,9 +81,7 @@ class SendPictureViaEmail(Skill):
             server.send_message(msg)
             server.quit()
 
-            self.logger.info(
-                f"\\033[92m[BrainClient] Email with picture sent to {recipient}\\033[0m"
-            )
+            self.logger.info(f"\\033[92m[BrainClient] Email with picture sent to {recipient}\\033[0m")
             return f"Email with picture sent to {recipient}", SkillResult.SUCCESS
 
         except Exception as e:
@@ -95,10 +92,5 @@ class SendPictureViaEmail(Skill):
         """
         Cancel the email sending operation (typically quick, so not much to do).
         """
-        self.logger.info(
-            "\\033[91m[BrainClient] Email sending cannot be effectively canceled "
-            "once started.\\033[0m"
-        )
-        return (
-            "Email sending is an atomic operation and cannot be effectively canceled."
-        )
+        self.logger.info("\\033[91m[BrainClient] Email sending cannot be effectively canceled once started.\\033[0m")
+        return "Email sending is an atomic operation and cannot be effectively canceled."

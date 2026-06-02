@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import socket
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -14,7 +14,6 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from assets import ensure_sim_assets
-from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 from config import (
     BOOTSTRAP_LOG_PATH,
     CLI_SIM,
@@ -30,9 +29,8 @@ from config import (
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
-    OS_SESSION_READY_POLL_SECONDS,
     OS_SESSION_LOG_PATH,
-    REPO_ROOT,
+    OS_SESSION_READY_POLL_SECONDS,
     ROS_INSTALL_STATE_PATH,
     SIM_DATASET_REPOS,
     SIM_HTTP_POLL_SECONDS,
@@ -43,7 +41,6 @@ from config import (
     SIM_PID_PATH,
     SIM_REQUIRED_DATA_PATHS,
     SIM_STARTUP_CHECK_DELAY_SECONDS,
-    STATE_DIR,
     TMUX_SESSION_NAME,
     StackError,
     compute_ros_install_validation_hash,
@@ -52,6 +49,7 @@ from config import (
     require_path,
     warn,
 )
+from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
 FRONTEND_BUILD_INPUT_FILES = (
     ".env",
@@ -94,9 +92,7 @@ def run_logged(
             check=False,
         )
     if result.returncode != 0:
-        raise StackError(
-            f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}"
-        )
+        raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
 def latest_log_line(path: Path) -> str | None:
@@ -149,9 +145,7 @@ def run_logged_with_heartbeat(
     if return_code != 0:
         if not include_recent_log_on_failure:
             raise StackError(f"{failure_message}\nFull log: {log_path}")
-        raise StackError(
-            f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}"
-        )
+        raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
 def ensure_dependency(command: str, label: str | None = None) -> None:
@@ -167,7 +161,7 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
             f"Start Docker, then rerun `{command_hint}`."
         )
 
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: UP022
         ["docker", "info", "--format", "{{.ServerVersion}}"],
         text=True,
         stdin=subprocess.DEVNULL,
@@ -181,9 +175,7 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
     detail = " ".join((result.stderr or result.stdout or "").split())
     detail_lower = detail.lower()
     daemon_unreachable = (
-        "daemon" in detail_lower
-        or "docker desktop" in detail_lower
-        or "failed to connect" in detail_lower
+        "daemon" in detail_lower or "docker desktop" in detail_lower or "failed to connect" in detail_lower
     )
     message = (
         "Docker is installed, but the Docker daemon is not running or not reachable."
@@ -255,9 +247,7 @@ def frontend_dependencies_are_stale(frontend_dir: Path) -> bool:
         return True
 
     dependency_inputs = [
-        frontend_dir / rel_path
-        for rel_path in FRONTEND_DEPENDENCY_INPUT_FILES
-        if (frontend_dir / rel_path).is_file()
+        frontend_dir / rel_path for rel_path in FRONTEND_DEPENDENCY_INPUT_FILES if (frontend_dir / rel_path).is_file()
     ]
     return newest_mtime(dependency_inputs) > newest_mtime([install_marker])
 
@@ -270,18 +260,14 @@ def ensure_frontend_build(frontend_dir: Path, *, allow_setup: bool) -> None:
         return
 
     if not build_exists and not allow_setup:
-        raise StackError(
-            "Simulator frontend build is missing.\n"
-            f"Run `{CLI_SIM} setup` before `{CLI_SIM} up`."
-        )
+        raise StackError(f"Simulator frontend build is missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`.")
 
     ensure_dependency("yarn")
     node_modules = frontend_dir / "node_modules"
     if not node_modules.exists():
         if not allow_setup:
             raise StackError(
-                "Simulator frontend dependencies are missing.\n"
-                f"Run `{CLI_SIM} setup` before `{CLI_SIM} up`."
+                f"Simulator frontend dependencies are missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
             )
         log("Installing simulator frontend dependencies...")
         run_logged(
@@ -293,8 +279,7 @@ def ensure_frontend_build(frontend_dir: Path, *, allow_setup: bool) -> None:
     elif frontend_dependencies_are_stale(frontend_dir):
         if not allow_setup:
             raise StackError(
-                "Simulator frontend dependencies are stale.\n"
-                f"Run `{CLI_SIM} setup` before `{CLI_SIM} up`."
+                f"Simulator frontend dependencies are stale.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
             )
         log("Updating simulator frontend dependencies...")
         run_logged(
@@ -327,8 +312,7 @@ def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
     if sim_python.exists() and not python_import_succeeds(sim_python, "dotenv"):
         if not allow_setup:
             raise StackError(
-                "Simulator virtualenv is incomplete.\n"
-                f"Run `{CLI_SIM} setup` to repair {sim_repo / '.venv'}."
+                f"Simulator virtualenv is incomplete.\nRun `{CLI_SIM} setup` to repair {sim_repo / '.venv'}."
             )
         warn("Simulator virtualenv is incomplete. Re-running setup to repair it...")
         needs_setup = True
@@ -336,8 +320,7 @@ def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
     if needs_setup:
         if not allow_setup:
             raise StackError(
-                "Simulator Python environment is not ready.\n"
-                f"Run `{CLI_SIM} setup` before `{CLI_SIM} up`."
+                f"Simulator Python environment is not ready.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
             )
         log("Setting up sim Python environment...")
         run_logged(
@@ -351,8 +334,7 @@ def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
         raise StackError(f"Simulator Python environment was not created at {sim_python}")
     if not python_import_succeeds(sim_python, "dotenv"):
         raise StackError(
-            "Simulator Python environment is missing required packages after setup.\n"
-            f"Check: {BOOTSTRAP_LOG_PATH}"
+            f"Simulator Python environment is missing required packages after setup.\nCheck: {BOOTSTRAP_LOG_PATH}"
         )
 
     ensure_frontend_build(frontend_dir, allow_setup=allow_setup)
@@ -408,10 +390,7 @@ def ensure_os_image_available(
         cwd=cwd,
         env=env,
         log_path=COMPOSE_LOG_PATH,
-        failure_message=(
-            "Could not pull the prebuilt Innate OS image: "
-            f"{shorten_docker_image_ref(image)}"
-        ),
+        failure_message=(f"Could not pull the prebuilt Innate OS image: {shorten_docker_image_ref(image)}"),
         progress_message="Docker is still pulling the Innate OS image.",
         include_recent_log_on_failure=include_pull_log_on_failure,
     )
@@ -461,17 +440,14 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
             log_path=COMPOSE_LOG_PATH,
             failure_message="Innate OS Docker startup failed.",
             progress_message=(
-                "Docker is still preparing the Innate OS container. "
-                "First boot or an image rebuild can take a minute."
+                "Docker is still preparing the Innate OS container. First boot or an image rebuild can take a minute."
             ),
         )
     compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
-    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[
-        :16
-    ]
+    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[:16]
 
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
@@ -509,15 +485,11 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     brain_websocket_uri = str(config.get("brain_websocket_uri", "")).strip()
     brain_websocket_arg = ""
     if brain_websocket_uri:
-        brain_websocket_arg = (
-            f" --brain-websocket-uri {shlex.quote(brain_websocket_uri)}"
-        )
+        brain_websocket_arg = f" --brain-websocket-uri {shlex.quote(brain_websocket_uri)}"
     brain_client_version = str(config.get("brain_client_version", "")).strip()
     brain_client_version_arg = ""
     if brain_client_version:
-        brain_client_version_arg = (
-            f" --brain-client-version {shlex.quote(brain_client_version)}"
-        )
+        brain_client_version_arg = f" --brain-client-version {shlex.quote(brain_client_version)}"
     launch_script = (
         "INNATE_SIM_TMUX_SETTLE_SECONDS=${INNATE_SIM_TMUX_SETTLE_SECONDS:-0} "
         "INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS=${INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS:-0} "
@@ -578,9 +550,7 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
     if mode == LOCAL_IMAGE_MODE:
         image = str(config["cloud_image"]).strip()
         if not image:
-            raise StackError(
-                "sim/config.toml must set cloud_agent.image when cloud_agent.mode = 'local-image'."
-            )
+            raise StackError("sim/config.toml must set cloud_agent.image when cloud_agent.mode = 'local-image'.")
         log(f"Starting local cloud-agent image {image}...")
         compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_IMAGE": image})
         run_logged(
@@ -603,14 +573,10 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
 
     cloud_repo: Path | None = config["cloud_repo"]  # type: ignore[assignment]
     if cloud_repo is None:
-        raise StackError(
-            "sim/config.toml must set cloud_agent.source_dir when cloud_agent.mode = 'local-source'."
-        )
+        raise StackError("sim/config.toml must set cloud_agent.source_dir when cloud_agent.mode = 'local-source'.")
     require_path(cloud_repo, "innate-cloud-agent repository")
     log(f"Starting local cloud-agent from source at {cloud_repo}...")
-    compose_env = docker_compose_env(
-        {**base_env, "STACK_CLOUD_AGENT_SOURCE_DIR": str(cloud_repo)}
-    )
+    compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_SOURCE_DIR": str(cloud_repo)})
     run_logged(
         [
             "docker",
@@ -623,7 +589,7 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
             "-d",
             "--build",
         ],
-            cwd=LAUNCHER_DIR,
+        cwd=LAUNCHER_DIR,
         env=compose_env,
         log_path=CLOUD_AGENT_LOG_PATH,
         failure_message="Local cloud-agent source startup failed.",
@@ -747,10 +713,7 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
     if proc.poll() is not None:
         SIM_PID_PATH.unlink(missing_ok=True)
         tail = tail_file(SIM_LOG_PATH)
-        raise StackError(
-            "Simulator backend exited immediately.\n"
-            f"Recent log output:\n{tail}"
-        )
+        raise StackError(f"Simulator backend exited immediately.\nRecent log output:\n{tail}")
 
 
 def tail_file(path: Path, limit: int = 40) -> str:
@@ -772,9 +735,7 @@ def os_compose_zsh_cmd(command: str) -> list[str]:
     return os_compose_exec_cmd("zsh", "-lc", command)
 
 
-def capture_command_output(
-    cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
-) -> str:
+def capture_command_output(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         cmd,
         cwd=cwd,
@@ -787,9 +748,7 @@ def capture_command_output(
     return (result.stdout or result.stderr or "").strip()
 
 
-def command_succeeds(
-    cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
-) -> bool:
+def command_succeeds(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> bool:
     result = subprocess.run(
         cmd,
         cwd=cwd,
@@ -855,28 +814,16 @@ def collect_runtime_probe(
 ) -> dict[str, object]:
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
-    sim_running = (
-        bool(simulator_http_ready)
-        if simulator_http_ready is not None
-        else simulator_ready(simulator_port)
-    )
-    rosbridge_live = (
-        os_status["os_session_running"]
-        and os_status["rosbridge_process_live"]
-        and tcp_port_open(9090)
-    )
-    agent_running = (
-        True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
-    )
+    sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
+    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and tcp_port_open(9090)
+    agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
     if isinstance(metrics, dict):
         raw_backend_status = metrics.get("brain_backend_status")
         if isinstance(raw_backend_status, dict):
             backend_status = raw_backend_status
-    backend_level, backend_label = health_from_brain_backend(
-        backend_status, str(config["mode"])
-    )
+    backend_level, backend_label = health_from_brain_backend(backend_status, str(config["mode"]))
     return {
         "simulator_port": simulator_port,
         "os_status": os_status,
@@ -900,9 +847,7 @@ def os_runtime_ready(config: dict[str, object]) -> bool:
     )
 
 
-def wait_for_os_runtime_ready(
-    config: dict[str, object], *, timeout_seconds: float = 8.0
-) -> bool:
+def wait_for_os_runtime_ready(config: dict[str, object], *, timeout_seconds: float = 8.0) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         if os_runtime_ready(config):
@@ -956,23 +901,17 @@ def print_startup_checks(
         (
             bool(probe["rosbridge_live"]),
             "ROSBridge",
-            "ws://localhost:9090 live"
-            if probe["rosbridge_live"]
-            else "not accepting connections",
+            "ws://localhost:9090 live" if probe["rosbridge_live"] else "not accepting connections",
         ),
         (
             os_status["brain_process_live"],
             "Brain process",
-            "brain_client_node.py running"
-            if os_status["brain_process_live"]
-            else "brain_client_node.py missing",
+            "brain_client_node.py running" if os_status["brain_process_live"] else "brain_client_node.py missing",
         ),
         (
             brain_directive_count > 0,
             "Brain directives",
-            f"{brain_directive_count} loaded"
-            if brain_directive_count > 0
-            else "not available yet",
+            f"{brain_directive_count} loaded" if brain_directive_count > 0 else "not available yet",
         ),
         (
             simulator_http_ready,
@@ -1028,9 +967,7 @@ def capture_agent_logs(config: dict[str, object], lines: int = 18) -> list[str]:
         return ["Hosted mode enabled.", "No local agent container is running."]
     if not container_running("stack-cloud-agent"):
         return ["Local cloud-agent is not running."]
-    output = capture_command_output(
-        ["docker", "logs", "--tail", str(lines), "stack-cloud-agent"]
-    )
+    output = capture_command_output(["docker", "logs", "--tail", str(lines), "stack-cloud-agent"])
     if not output:
         return ["No local cloud-agent output yet."]
     return output.splitlines()[-lines:]
@@ -1069,16 +1006,10 @@ def pick_primary_fps(metrics: dict[str, object]) -> float:
 
 
 def pick_latest_frame_age(metrics: dict[str, object]) -> float | None:
-    latest_frame_age = (
-        metrics.get("latest_frame_age_by_camera", {}) if isinstance(metrics, dict) else {}
-    )
+    latest_frame_age = metrics.get("latest_frame_age_by_camera", {}) if isinstance(metrics, dict) else {}
     if not isinstance(latest_frame_age, dict):
         return None
-    ages = [
-        float(value)
-        for value in latest_frame_age.values()
-        if isinstance(value, (float, int))
-    ]
+    ages = [float(value) for value in latest_frame_age.values() if isinstance(value, (float, int))]
     if not ages:
         return None
     return min(ages)
@@ -1096,11 +1027,7 @@ def summarize_queue_pressure(queue_sizes: object) -> tuple[str, str, int]:
         "chat_to_bridge",
         "chat_from_bridge",
     )
-    numeric_sizes = [
-        int(queue_sizes.get(key, 0))
-        for key in tracked_keys
-        if isinstance(queue_sizes.get(key, 0), int)
-    ]
+    numeric_sizes = [int(queue_sizes.get(key, 0)) for key in tracked_keys if isinstance(queue_sizes.get(key, 0), int)]
     max_depth = max(numeric_sizes, default=0)
     total_depth = sum(numeric_sizes)
 
@@ -1137,9 +1064,7 @@ def health_from_video(sim_running: bool, fps: float, frame_age: float | None) ->
     return ("error", "stalled")
 
 
-def health_from_transport(
-    rosbridge_live: bool, queue_sizes: object
-) -> tuple[str, str, str, int]:
+def health_from_transport(rosbridge_live: bool, queue_sizes: object) -> tuple[str, str, str, int]:
     if not rosbridge_live:
         return ("error", "down", "n/a", 0)
     level, label, max_depth = summarize_queue_pressure(queue_sizes)
@@ -1282,8 +1207,7 @@ def wait_for_simulator_http(
             if "ReplicaCAD_baked_lighting" in tail or "ReplicaCAD_dataset" in tail:
                 hint = "\nHint: required simulator scene data is missing. See sim/data/README.md."
             raise StackError(
-                "Simulator backend exited while waiting for the HTTP endpoint.\n"
-                f"Recent log output:\n{tail}{hint}"
+                f"Simulator backend exited while waiting for the HTTP endpoint.\nRecent log output:\n{tail}{hint}"
             )
         payload = sim_get_json(
             port,
@@ -1298,14 +1222,9 @@ def wait_for_simulator_http(
             remaining = max(0, int(deadline - time.time()))
             latest = latest_log_line(SIM_LOG_PATH)
             if latest:
-                log(
-                    "Simulator is still loading the scene "
-                    f"({remaining}s remaining). Latest log: {latest}"
-                )
+                log(f"Simulator is still loading the scene ({remaining}s remaining). Latest log: {latest}")
             else:
-                log(
-                    f"Waiting for the simulator HTTP endpoint ({remaining}s remaining)..."
-                )
+                log(f"Waiting for the simulator HTTP endpoint ({remaining}s remaining)...")
             next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
 
         time.sleep(SIM_HTTP_POLL_SECONDS)
@@ -1343,9 +1262,7 @@ def wait_for_brain_directives(port: str, *, timeout_seconds: float = 30.0) -> in
     return 0
 
 
-def health_from_brain_backend(
-    status: dict[str, object], mode: str
-) -> tuple[str, str]:
+def health_from_brain_backend(status: dict[str, object], mode: str) -> tuple[str, str]:
     if not status:
         return ("warn", "unknown") if mode == HOSTED_MODE else ("warn", "not reported")
 
@@ -1406,9 +1323,7 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     primary_fps = pick_primary_fps(metrics)
     frame_age = pick_latest_frame_age(metrics)
     video_level, video_label = health_from_video(sim_running, primary_fps, frame_age)
-    transport_level, transport_label, queue_pressure, queue_peak = health_from_transport(
-        rosbridge_live, queue_sizes
-    )
+    transport_level, transport_label, queue_pressure, queue_peak = health_from_transport(rosbridge_live, queue_sizes)
     if not os_running:
         brain_level = "error"
         brain_label = "offline"
@@ -1427,11 +1342,7 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     else:
         brain_level = "warn"
         brain_label = "booting"
-    agent_level = (
-        "healthy"
-        if config["mode"] == HOSTED_MODE or agent_running
-        else "warn"
-    )
+    agent_level = "healthy" if config["mode"] == HOSTED_MODE or agent_running else "warn"
     agent_label = "hosted" if config["mode"] == HOSTED_MODE else ("online" if agent_running else "offline")
 
     if all(level == "healthy" for level in (video_level, transport_level, brain_level, backend_level, agent_level)):
@@ -1443,10 +1354,7 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
 
     chat_load = "n/a"
     if isinstance(queue_sizes, dict) and queue_sizes:
-        chat_load = (
-            f"to {queue_sizes.get('chat_to_bridge', 0)} / "
-            f"from {queue_sizes.get('chat_from_bridge', 0)}"
-        )
+        chat_load = f"to {queue_sizes.get('chat_to_bridge', 0)} / from {queue_sizes.get('chat_from_bridge', 0)}"
     frame_age_ms = (frame_age or 0.0) * 1000.0
     queue_summary = "n/a"
     if isinstance(queue_sizes, dict) and queue_sizes:

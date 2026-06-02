@@ -34,7 +34,6 @@ from manipulation.config_validation import (  # noqa: E402
     validate_behavior_config,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -58,9 +57,7 @@ def _touch(dir_path: Path, name: str) -> str:
 
 class TestTopLevelShape:
     def test_raw_json_string_decodes(self, tmp_path):
-        cfg = json.dumps(
-            {"type": "learned", "execution": {"checkpoint": "a.pth"}}
-        )
+        cfg = json.dumps({"type": "learned", "execution": {"checkpoint": "a.pth"}})
         result = _validate(cfg, tmp_path)
         assert result.behavior_type == "learned"
 
@@ -78,9 +75,7 @@ class TestTopLevelShape:
 
     def test_execution_not_object_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="execution"):
-            _validate(
-                {"type": "learned", "execution": "not a dict"}, tmp_path
-            )
+            _validate({"type": "learned", "execution": "not a dict"}, tmp_path)
 
     def test_non_string_non_dict_payload_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="must be a JSON"):
@@ -142,15 +137,11 @@ class TestLearnedExecCfg:
 
     def test_empty_checkpoint_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="checkpoint"):
-            _validate(
-                {"type": "learned", "execution": {"checkpoint": ""}}, tmp_path
-            )
+            _validate({"type": "learned", "execution": {"checkpoint": ""}}, tmp_path)
 
     def test_null_checkpoint_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="checkpoint"):
-            _validate(
-                {"type": "learned", "execution": {"checkpoint": None}}, tmp_path
-            )
+            _validate({"type": "learned", "execution": {"checkpoint": None}}, tmp_path)
 
     def test_checkpoint_file_missing_on_disk(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="does not exist"):
@@ -352,20 +343,14 @@ class TestPosesExecCfg:
 
     def test_empty_poses_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match="poses"):
-            _validate(
-                {"type": "poses", "execution": {"poses": []}}, tmp_path
-            )
+            _validate({"type": "poses", "execution": {"poses": []}}, tmp_path)
 
     def test_inner_pose_wrong_length_rejected(self, tmp_path):
         with pytest.raises(BehaviorConfigError, match=r"poses\.0"):
-            _validate(
-                {"type": "poses", "execution": {"poses": [[0, 0, 0]]}}, tmp_path
-            )
+            _validate({"type": "poses", "execution": {"poses": [[0, 0, 0]]}}, tmp_path)
 
     def test_steps_optional(self, tmp_path):
-        result = _validate(
-            {"type": "poses", "execution": {"poses": [[0.0] * 6]}}, tmp_path
-        )
+        result = _validate({"type": "poses", "execution": {"poses": [[0.0] * 6]}}, tmp_path)
         assert result.params.steps is None
 
     @pytest.mark.parametrize("bad", [0, -1, True, "2"])

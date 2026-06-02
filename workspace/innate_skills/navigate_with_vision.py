@@ -12,9 +12,10 @@ import threading
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from brain_client.skill_types import Skill, SkillResult
 from innate_cloud_msgs.action import NavigateInstruction
 from rclpy.action import ActionClient
+
+from brain_client.skill_types import Skill, SkillResult
 
 # Human-readable labels for the integer action codes returned by the server.
 _ACTION_LABELS = {
@@ -74,9 +75,7 @@ class NavigateWithVision(Skill):
 
         # Lazily create the action client (same pattern as PhysicalSkill)
         if self._action_client is None:
-            self._action_client = ActionClient(
-                self.node, NavigateInstruction, "/navigate_instruction"
-            )
+            self._action_client = ActionClient(self.node, NavigateInstruction, "/navigate_instruction")
 
         self.logger.info(f"[NavigateWithVision] Instruction: {instruction!r}")
         self._send_feedback(f"Sending instruction: {instruction}")
@@ -92,9 +91,7 @@ class NavigateWithVision(Skill):
         goal_msg = NavigateInstruction.Goal()
         goal_msg.instruction = instruction
 
-        goal_future = self._action_client.send_goal_async(
-            goal_msg, feedback_callback=self._on_feedback
-        )
+        goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
 
         try:
             rclpy.spin_until_future_complete(self.node, goal_future, timeout_sec=10.0)
@@ -130,16 +127,12 @@ class NavigateWithVision(Skill):
                 self._goal_handle.cancel_goal_async()
                 # Keep spinning until the server acknowledges the cancel
                 try:
-                    rclpy.spin_until_future_complete(
-                        self.node, result_future, timeout_sec=10.0
-                    )
+                    rclpy.spin_until_future_complete(self.node, result_future, timeout_sec=10.0)
                 except Exception:
                     pass
                 break
             try:
-                rclpy.spin_until_future_complete(
-                    self.node, result_future, timeout_sec=0.25
-                )
+                rclpy.spin_until_future_complete(self.node, result_future, timeout_sec=0.25)
             except Exception:
                 pass
 
@@ -168,7 +161,7 @@ class NavigateWithVision(Skill):
             self._send_feedback(msg)
             return msg, SkillResult.CANCELLED
 
-        msg = result.message or f"Navigation ended unexpectedly."
+        msg = result.message or "Navigation ended unexpectedly."
         self.logger.warning(msg)
         self._send_feedback(msg)
         return msg, SkillResult.FAILURE
@@ -183,15 +176,11 @@ class NavigateWithVision(Skill):
         """
         fb = feedback_msg.feedback
         action_label = _ACTION_LABELS.get(fb.latest_action, str(fb.latest_action))
-        text = (
-            f"Action: {action_label} | "
-            f"Consecutive stops: {fb.consecutive_stops}/{fb.max_consecutive_stops}"
-        )
+        text = f"Action: {action_label} | Consecutive stops: {fb.consecutive_stops}/{fb.max_consecutive_stops}"
         self.logger.debug(f"[NavigateWithVision] feedback: {text}")
 
         action_changed = (
-            fb.latest_action != self._last_feedback_action
-            and fb.latest_action != 0  # don't report individual STOPs
+            fb.latest_action != self._last_feedback_action and fb.latest_action != 0  # don't report individual STOPs
         )
         stops_milestone = False  # no stop-count feedback
         self._last_feedback_action = fb.latest_action

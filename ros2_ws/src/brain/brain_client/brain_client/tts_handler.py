@@ -4,29 +4,26 @@ Text-to-Speech handler using Cartesia API.
 Generates speech audio and plays it through the robot's audio system.
 """
 
-import json
-import os
 import queue
+import subprocess
 import threading
 import time
-from typing import Optional, Dict, Any
-
-import rclpy
-import subprocess
+from typing import Any
 
 from innate_proxy import ProxyClient
 from innate_proxy.adapters.cartesia import ProxyCartesiaClient
+
 from brain_client.logging_config import UniversalLogger
 
 
 class TTSHandler:
     """
     Handles text-to-speech conversion using Cartesia API and audio playback via aplay.
-    
+
     Requires a ProxyClient instance for accessing Cartesia services.
     Voice ID is read from proxy.config["cartesia_voice_id"].
     """
-    
+
     # Default voice ID (Katie - Friendly Fixer)
     DEFAULT_VOICE_ID = "9fdaae0b-f885-4813-b589-3c07cf9d5fea"
 
@@ -38,7 +35,7 @@ class TTSHandler:
     ):
         """
         Initialize the TTS handler.
-        
+
         Args:
             logger: ROS logger instance or any logger
             proxy: ProxyClient instance (required)
@@ -48,14 +45,14 @@ class TTSHandler:
         self._proxy: ProxyClient = proxy
         # Get voice ID from proxy config, fall back to default
         self.voice_id: str = proxy.config.get("cartesia_voice_id", self.DEFAULT_VOICE_ID)
-        self._cartesia_client: Optional[ProxyCartesiaClient] = None
+        self._cartesia_client: ProxyCartesiaClient | None = None
         self.is_playing: bool = False
         self.play_lock = threading.Lock()
         self.tts_status_pub = tts_status_pub
 
         # Initialize Cartesia client
         self._init_client()
-    
+
     def _init_client(self):
         """Initialize the Cartesia client via proxy."""
         try:
@@ -80,37 +77,38 @@ class TTSHandler:
             self.logger.info(f"⏱️ Proxy connection pre-warmed in {dt:.0f}ms")
         except Exception as e:
             self.logger.debug(f"Proxy warmup failed (non-fatal): {e}")
-    
+
     def is_available(self) -> bool:
         """Check if TTS is available and configured."""
         return self._cartesia_client is not None
-    
+
     def _publish_tts_status(self, status: str):
         """Publish TTS playback status to /tts/is_playing topic."""
         if self.tts_status_pub:
             try:
                 from std_msgs.msg import String
+
                 msg = String()
                 msg.data = status
                 self.tts_status_pub.publish(msg)
             except Exception as e:
                 self.logger.debug(f"Failed to publish TTS status: {e}")
 
-    def speak_text(self, text: str, voice_config: Optional[Dict[str, Any]] = None) -> bool:
+    def speak_text(self, text: str, voice_config: dict[str, Any] | None = None) -> bool:
         """
         Convert text to speech and play it.
-        
+
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
-            
+
         Returns:
             True if speech was successfully generated and played, False otherwise
         """
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping speech")
             return False
-            
+
         if not text or not text.strip():
             self.logger.debug("🔇 Empty text provided, skipping speech")
             return False
@@ -121,7 +119,7 @@ class TTSHandler:
                 self.logger.debug("🔊 Audio already playing, skipping new speech request")
                 return False
             self.is_playing = True
-            
+
         # Notify that TTS is starting
         self._publish_tts_status("true")
 
@@ -188,9 +186,7 @@ class TTSHandler:
                     total_bytes += len(chunk)
                     if t_first_chunk is None:
                         t_first_chunk = time.perf_counter()
-                        self.logger.info(
-                            f"⏱️ TTS first byte in {(t_first_chunk - t_api)*1000:.0f}ms"
-                        )
+                        self.logger.info(f"⏱️ TTS first byte in {(t_first_chunk - t_api) * 1000:.0f}ms")
                     q.put(chunk)
 
                 t_stream_done = time.perf_counter()
@@ -206,9 +202,9 @@ class TTSHandler:
                     self.logger.info(
                         f"✅ TTS done ({text_len} chars): "
                         f"TTFB={ttfb_ms:.0f}ms "
-                        f"stream={(t_stream_done - t_api)*1000:.0f}ms "
-                        f"total={(t_play_done - t_start)*1000:.0f}ms "
-                        f"({total_bytes/1024:.0f}KB, {chunk_count} chunks)"
+                        f"stream={(t_stream_done - t_api) * 1000:.0f}ms "
+                        f"total={(t_play_done - t_start) * 1000:.0f}ms "
+                        f"({total_bytes / 1024:.0f}KB, {chunk_count} chunks)"
                     )
                     success = True
                 else:
@@ -235,11 +231,11 @@ class TTSHandler:
 
         return success
 
-    def speak_text_async(self, text: str, voice_config: Optional[Dict[str, Any]] = None) -> None:
+    def speak_text_async(self, text: str, voice_config: dict[str, Any] | None = None) -> None:
         """
         Convert text to speech and play it asynchronously in a separate thread.
         Retries once with 1 second gap on failure.
-        
+
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
@@ -253,23 +249,23 @@ class TTSHandler:
                 self.logger.info("🔄 Retrying TTS after 1 second...")
                 time.sleep(1)
                 self.speak_text(text, voice_config)
-            
+
         speech_thread = threading.Thread(target=speak_thread, daemon=True)
         speech_thread.start()
 
     def get_available_voices(self) -> list:
         """
         Get list of available voices from Cartesia.
-        
+
         Note: This method is not yet implemented in the proxy client.
         Returns empty list for now.
-        
+
         Returns:
             List of available voice objects
         """
         if not self.is_available():
             return []
-            
+
         # TODO: Implement voice listing in proxy client if needed
         self.logger.warn("⚠️ Voice listing not yet implemented in proxy client")
         return []
@@ -277,21 +273,21 @@ class TTSHandler:
     def set_voice(self, voice_id: str) -> bool:
         """
         Set the voice ID for speech synthesis.
-        
+
         Args:
             voice_id: New voice ID to use
-            
+
         Returns:
             True if voice was set successfully, False otherwise
         """
         if not self.is_available():
             return False
-            
+
         try:
             # Verify the voice exists
             voices = self.get_available_voices()
             voice_ids = [voice.id for voice in voices]
-            
+
             if voice_id in voice_ids:
                 self.voice_id = voice_id
                 self.logger.info(f"✅ Voice updated to: {voice_id}")

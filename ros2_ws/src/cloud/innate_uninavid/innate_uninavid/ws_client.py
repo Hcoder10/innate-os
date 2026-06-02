@@ -22,10 +22,10 @@ import threading
 import time
 from collections import deque
 from enum import IntEnum, auto
-from typing import Optional
 
 import websockets
 from aiotools import create_timer
+
 
 class Action(IntEnum):
     STOP = 0
@@ -38,12 +38,13 @@ class ClientState(IntEnum):
     IDLE = auto()
     CONNECTING = auto()
     CONNECTED = auto()
-    COMPLETED = auto()      # goal done (consecutive STOPs)
-    FAILED = auto()         # connection error
-    DISCONNECTED = auto()   # clean shutdown
+    COMPLETED = auto()  # goal done (consecutive STOPs)
+    FAILED = auto()  # connection error
+    DISCONNECTED = auto()  # clean shutdown
 
 
 # ── Client ────────────────────────────────────────────────────────────────────
+
 
 class UninavidWsClient:
     """Async-websockets client wrapped in a daemon thread.
@@ -70,18 +71,18 @@ class UninavidWsClient:
         self._state: ClientState = ClientState.IDLE
         self._action_queue: deque[int] = deque(maxlen=4)
         self._consecutive_stops: int = 0
-        self._frame: Optional[bytes] = None     # latest outgoing frame
+        self._frame: bytes | None = None  # latest outgoing frame
         self._frame_stamp: tuple[int, int] = (0, 0)  # (sec, nsec) of latest frame
-        self._error_msg: Optional[str] = None
+        self._error_msg: str | None = None
         self._rtt_samples: deque[float] = deque(maxlen=500)
         self._sent_stamps: deque[tuple[int, int]] = deque(maxlen=200)
         self._last_send_time: float = 0.0
         self._action_history: deque[int] = deque(maxlen=2000)
 
         # ── Internals (only touched from the ws thread) ──────────────────
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._instruction: Optional[str] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._instruction: str | None = None
         self._send_count: int = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ class UninavidWsClient:
             return self._state
 
     @property
-    def error_message(self) -> Optional[str]:
+    def error_message(self) -> str | None:
         with self._lock:
             return self._error_msg
 
@@ -116,9 +117,7 @@ class UninavidWsClient:
         self._instruction = instruction
 
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name="uninavid_ws"
-        )
+        self._thread = threading.Thread(target=self._run, daemon=True, name="uninavid_ws")
         self._thread.start()
 
     def disconnect(self) -> None:
@@ -133,20 +132,21 @@ class UninavidWsClient:
             ):
                 self._state = ClientState.DISCONNECTED
 
-    def push_frame(self, format: str, stamp_sec: int, stamp_nanosec: int,
-                   data: bytes) -> None:
+    def push_frame(self, format: str, stamp_sec: int, stamp_nanosec: int, data: bytes) -> None:
         """Store a compressed image frame for the send loop to pick up."""
-        header = json.dumps({
-            "type": "image",
-            "format": format,
-            "stamp_sec": stamp_sec,
-            "stamp_nanosec": stamp_nanosec,
-        }).encode()
+        header = json.dumps(
+            {
+                "type": "image",
+                "format": format,
+                "stamp_sec": stamp_sec,
+                "stamp_nanosec": stamp_nanosec,
+            }
+        ).encode()
         with self._lock:
             self._frame = header + b"\n" + data
             self._frame_stamp = (stamp_sec, stamp_nanosec)
 
-    def pop_action(self) -> Optional[int]:
+    def pop_action(self) -> int | None:
         """Pop the oldest queued action code, or None if empty."""
         with self._lock:
             if self._action_queue:
@@ -209,7 +209,8 @@ class UninavidWsClient:
                 self._ws = ws
                 self._send_count = 0
                 send_timer = create_timer(
-                    self._send_tick, 1.0 / self._image_send_hz,
+                    self._send_tick,
+                    1.0 / self._image_send_hz,
                 )
                 try:
                     await self._recv_loop(ws)
@@ -269,9 +270,7 @@ class UninavidWsClient:
             try:
                 raw = await ws.recv()
             except websockets.ConnectionClosed as exc:
-                self._log.info(
-                    f"recv_loop: server disconnected (code={exc.code}, reason={exc.reason!r})"
-                )
+                self._log.info(f"recv_loop: server disconnected (code={exc.code}, reason={exc.reason!r})")
                 return
             except Exception as exc:
                 self._log.error(f"recv_loop: unexpected error: {type(exc).__name__}: {exc}")
@@ -316,9 +315,7 @@ class UninavidWsClient:
                 if self._sent_stamps and self._sent_stamps[0] == resp_stamp:
                     self._sent_stamps.popleft()  # consume the matched one
             if dropped:
-                self._log.info(
-                    f"dropped {len(dropped)} frames: {[f'{s}.{ns:09d}' for s, ns in dropped]}"
-                )
+                self._log.info(f"dropped {len(dropped)} frames: {[f'{s}.{ns:09d}' for s, ns in dropped]}")
 
             self._log.info(
                 f"recv #{_recv_count}: stamp={stamp_sec}.{stamp_nsec:09d}  {action_labels}  rtt={rtt:.3f}s  since_send={since_send:.3f}s"
@@ -345,9 +342,7 @@ class UninavidWsClient:
 
             # If completed, notify server and close
             if self.state == ClientState.COMPLETED:
-                self._log.info(
-                    f"{self._consecutive_stops_to_complete} consecutive STOPs — done"
-                )
+                self._log.info(f"{self._consecutive_stops_to_complete} consecutive STOPs — done")
                 try:
                     await ws.close()
                 except Exception:

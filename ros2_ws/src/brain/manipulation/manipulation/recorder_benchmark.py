@@ -31,10 +31,9 @@ except ImportError:
     sys.exit(1)
 
 import rclpy
+from brain_messages.srv import ActivateManipulationTask, CreatePhysicalSkill
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-
-from brain_messages.srv import ActivateManipulationTask, CreatePhysicalSkill
 
 
 def find_recorder_pid():
@@ -99,17 +98,19 @@ class ResourceSampler:
                 t = time.monotonic() - self._t0
                 with self._lock:
                     phase = self.phase
-                self.samples.append({
-                    "t_sec": round(t, 3),
-                    "phase": phase,
-                    "cpu_pct": round(cpu, 2),
-                    "cpu_pct_normalized": round(cpu / num_cores, 2),
-                    "rss_mb": round(mem.rss / (1024 * 1024), 2),
-                    "vms_mb": round(mem.vms / (1024 * 1024), 2),
-                    "num_threads": nthreads,
-                    "read_bytes": read_bytes,
-                    "write_bytes": write_bytes,
-                })
+                self.samples.append(
+                    {
+                        "t_sec": round(t, 3),
+                        "phase": phase,
+                        "cpu_pct": round(cpu, 2),
+                        "cpu_pct_normalized": round(cpu / num_cores, 2),
+                        "rss_mb": round(mem.rss / (1024 * 1024), 2),
+                        "vms_mb": round(mem.vms / (1024 * 1024), 2),
+                        "num_threads": nthreads,
+                        "read_bytes": read_bytes,
+                        "write_bytes": write_bytes,
+                    }
+                )
             except psutil.NoSuchProcess:
                 break
             except Exception as e:
@@ -125,28 +126,16 @@ class RecorderBenchClient(Node):
     def __init__(self):
         super().__init__("recorder_benchmark_client")
 
-        self.create_skill_cli = self.create_client(
-            CreatePhysicalSkill, "/brain/create_physical_skill"
-        )
+        self.create_skill_cli = self.create_client(CreatePhysicalSkill, "/brain/create_physical_skill")
         self.activate_cli = self.create_client(
             ActivateManipulationTask,
             "/brain/recorder/activate_physical_primitive",
         )
-        self.new_episode_cli = self.create_client(
-            Trigger, "/brain/recorder/new_episode"
-        )
-        self.stop_episode_cli = self.create_client(
-            Trigger, "/brain/recorder/stop_episode"
-        )
-        self.save_episode_cli = self.create_client(
-            Trigger, "/brain/recorder/save_episode"
-        )
-        self.cancel_episode_cli = self.create_client(
-            Trigger, "/brain/recorder/cancel_episode"
-        )
-        self.end_task_cli = self.create_client(
-            Trigger, "/brain/recorder/end_task"
-        )
+        self.new_episode_cli = self.create_client(Trigger, "/brain/recorder/new_episode")
+        self.stop_episode_cli = self.create_client(Trigger, "/brain/recorder/stop_episode")
+        self.save_episode_cli = self.create_client(Trigger, "/brain/recorder/save_episode")
+        self.cancel_episode_cli = self.create_client(Trigger, "/brain/recorder/cancel_episode")
+        self.end_task_cli = self.create_client(Trigger, "/brain/recorder/end_task")
 
     def _wait_for_service(self, client, name, timeout=10.0):
         self.get_logger().info(f"Waiting for service: {name}")
@@ -155,9 +144,7 @@ class RecorderBenchClient(Node):
 
     def wait_for_all_services(self):
         self._wait_for_service(self.create_skill_cli, "/brain/create_physical_skill")
-        self._wait_for_service(
-            self.activate_cli, "/brain/recorder/activate_physical_primitive"
-        )
+        self._wait_for_service(self.activate_cli, "/brain/recorder/activate_physical_primitive")
         self._wait_for_service(self.new_episode_cli, "/brain/recorder/new_episode")
         self._wait_for_service(self.stop_episode_cli, "/brain/recorder/stop_episode")
         self._wait_for_service(self.save_episode_cli, "/brain/recorder/save_episode")
@@ -199,9 +186,7 @@ class RecorderBenchClient(Node):
         self._call(self.stop_episode_cli, Trigger.Request(), "stop_episode")
 
     def save_episode(self):
-        _, elapsed = self._call(
-            self.save_episode_cli, Trigger.Request(), "save_episode"
-        )
+        _, elapsed = self._call(self.save_episode_cli, Trigger.Request(), "save_episode")
         return elapsed
 
     def end_task(self):
@@ -227,9 +212,7 @@ def write_summary(samples, save_durations, args, output_dir, summary_path):
     cpu_norm_values = [s["cpu_pct_normalized"] for s in samples]
 
     write_bytes = [s["write_bytes"] for s in samples if s["write_bytes"] >= 0]
-    total_written_mb = (
-        (write_bytes[-1] - write_bytes[0]) / (1024 * 1024) if len(write_bytes) >= 2 else 0
-    )
+    total_written_mb = (write_bytes[-1] - write_bytes[0]) / (1024 * 1024) if len(write_bytes) >= 2 else 0
 
     # Per-phase stats
     by_phase = {}
@@ -289,15 +272,12 @@ def main():
         type=str,
         default=os.path.expanduser("~/recorder_bench"),
     )
-    parser.add_argument(
-        "--skill-name-prefix", type=str, default="bench"
-    )
+    parser.add_argument("--skill-name-prefix", type=str, default="bench")
     args = parser.parse_args()
 
     pid = find_recorder_pid()
     if pid is None:
-        print("ERROR: recorder_node_cpp process not found. Is it running?",
-              file=sys.stderr)
+        print("ERROR: recorder_node_cpp process not found. Is it running?", file=sys.stderr)
         sys.exit(1)
     print(f"Found recorder PID: {pid}")
 

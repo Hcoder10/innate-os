@@ -7,33 +7,30 @@ import math
 import queue
 import threading
 import time
-import traceback
 
 import cv2
 import numpy as np
 import websockets
-
+from src.agent.navigation_controller import NavigationController
 from src.agent.types import (
-    OccupancyGridMsg,
-    RobotStateMsg,
-    VelocityCmd,
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
-    DirectiveCmd,
-    ResetRobotCmd,
     BrainActiveCmd,
-    RefreshAgentsCmd,
     BrainBackendConfigCmd,
-    NavigationPathMsg,
-    NavigationWaypoint,
+    DirectiveCmd,
     NavigationCancelMsg,
-    NavigationStatusMsg,
     NavigationFeedbackMsg,
+    NavigationPathMsg,
+    NavigationStatusMsg,
+    NavigationWaypoint,
+    OccupancyGridMsg,
+    RefreshAgentsCmd,
+    ResetRobotCmd,
+    RobotStateMsg,
+    VelocityCmd,
 )
-from src.shared_queues import ChatMessage, ChatSignal, AgentInfo
-from src.agent.navigation_controller import NavigationController
-
+from src.shared_queues import AgentInfo, ChatMessage, ChatSignal
 
 BACKEND_WARMUP_STATES = {
     "unknown",
@@ -79,10 +76,7 @@ def log_brain_backend_status(shared_queues, status: dict):
     if key == last_key and now - last_at < BACKEND_STATUS_LOG_INTERVAL_SEC:
         return
 
-    print(
-        "[ROSBridge] ERROR: Brain backend unavailable "
-        f"(state={state}, uri={uri}): {message}"
-    )
+    print(f"[ROSBridge] ERROR: Brain backend unavailable (state={state}, uri={uri}): {message}")
     shared_queues._last_brain_backend_log_key = key
     shared_queues._last_brain_backend_log_at = now
 
@@ -167,9 +161,7 @@ async def inbound_data_loop(ws, shared_queues):
             elif topic == "/mars/arm/commands":
                 arm_cmd = parse_arm_command(msg_data)
                 if arm_cmd:
-                    print(
-                        f"[ROSBridge] Received arm command: {arm_cmd.joint_positions}"
-                    )
+                    print(f"[ROSBridge] Received arm command: {arm_cmd.joint_positions}")
                     try:
                         shared_queues.agent_to_sim.put_nowait(arm_cmd)
                     except queue.Full:
@@ -199,9 +191,7 @@ async def inbound_data_loop(ws, shared_queues):
                         shared_queues.update_brain_backend_status(status)
                         log_brain_backend_status(shared_queues, status)
                 except json.JSONDecodeError:
-                    print(
-                        f"[ROSBridge] Failed to parse /brain/websocket_status JSON: {raw_status}"
-                    )
+                    print(f"[ROSBridge] Failed to parse /brain/websocket_status JSON: {raw_status}")
 
             # 3) /sim_navigation/global_plan
             elif topic == "/sim_navigation/global_plan":
@@ -231,9 +221,7 @@ async def inbound_data_loop(ws, shared_queues):
                 final_qw = float(final_orientation.get("w", 1.0))
                 target_final_yaw = 2 * math.atan2(final_qz, final_qw)
 
-                print(
-                    f"[ROSBridge] Target final orientation: {math.degrees(target_final_yaw):.1f}°"
-                )
+                print(f"[ROSBridge] Target final orientation: {math.degrees(target_final_yaw):.1f}°")
 
                 # Second pass: calculate yaw based on direction of movement
                 for i, (x, y) in enumerate(positions):
@@ -259,18 +247,12 @@ async def inbound_data_loop(ws, shared_queues):
                     waypoint = NavigationWaypoint(x=x, y=y, yaw=yaw)
                     waypoints.append(waypoint)
 
-                    waypoint_type = (
-                        "FINAL" if i == len(positions) - 1 else "intermediate"
-                    )
-                    print(
-                        f"Waypoint {i} ({waypoint_type}): pos=({x:.2f}, {y:.2f}), yaw={math.degrees(yaw):.1f}°"
-                    )
+                    waypoint_type = "FINAL" if i == len(positions) - 1 else "intermediate"
+                    print(f"Waypoint {i} ({waypoint_type}): pos=({x:.2f}, {y:.2f}), yaw={math.degrees(yaw):.1f}°")
 
                 nav_path = NavigationPathMsg(frame_id=frame_id, waypoints=waypoints)
 
-                print(
-                    f"[ROSBridge] Received navigation path with {len(waypoints)} waypoints"
-                )
+                print(f"[ROSBridge] Received navigation path with {len(waypoints)} waypoints")
 
                 # Forward to navigation controller
                 if hasattr(shared_queues, "nav_controller"):
@@ -280,7 +262,7 @@ async def inbound_data_loop(ws, shared_queues):
             elif topic == "/sim_navigation/cancel":
                 cancel_data = msg_data.get("data", False)
                 if cancel_data:
-                    nav_cancel = NavigationCancelMsg(cancel=True)
+                    nav_cancel = NavigationCancelMsg(cancel=True)  # noqa: F841
                     # Forward to navigation controller
                     if hasattr(shared_queues, "nav_controller"):
                         shared_queues.nav_controller.cancel_navigation()
@@ -311,9 +293,7 @@ async def inbound_data_loop(ws, shared_queues):
                         pass
 
                     # Send immediate success response (motion started)
-                    response = rosbridge_service_response(
-                        service_name, {"success": True}, call_id
-                    )
+                    response = rosbridge_service_response(service_name, {"success": True}, call_id)
                     await ws.send(json.dumps(response))
 
         await asyncio.sleep(0.0001)
@@ -373,17 +353,13 @@ async def inbound_service_loop(ws, shared_queues):
                         try:
                             shared_queues.chat_from_bridge.put_nowait(chat_msg)
                         except queue.Full:
-                            print(
-                                "[ROSBridge] chat_from_bridge queue is full; dropping chat message."
-                            )
+                            print("[ROSBridge] chat_from_bridge queue is full; dropping chat message.")
                     except Exception as e:
                         print(f"[ROSBridge] Error processing chat history entry: {e}")
 
             elif service_name == "/brain/get_available_directives":
                 if not inbound_data.get("result", False):
-                    print(
-                        "[ROSBridge] get_available_directives service call failed or brain not ready"
-                    )
+                    print("[ROSBridge] get_available_directives service call failed or brain not ready")
                     continue
 
                 values = inbound_data.get("values", {})
@@ -407,17 +383,13 @@ async def inbound_service_loop(ws, shared_queues):
                         if isinstance(directive, dict):
                             agent = AgentInfo(
                                 id=directive.get("id", ""),
-                                display_name=directive.get(
-                                    "display_name", directive.get("id", "")
-                                ),
+                                display_name=directive.get("display_name", directive.get("id", "")),
                                 display_icon=directive.get("display_icon"),
                                 prompt=directive.get("prompt", ""),
                                 skills=directive.get("skills", []),
                             )
                             agents.append(agent)
-                            print(
-                                f"[ROSBridge] Parsed agent: {agent.id} - {agent.display_name}"
-                            )
+                            print(f"[ROSBridge] Parsed agent: {agent.id} - {agent.display_name}")
                 except json.JSONDecodeError as e:
                     print(f"[ROSBridge] Failed to parse directives JSON: {e}")
                 except Exception as e:
@@ -454,43 +426,27 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
 
     # First, advertise standard topics once
-    adv_color = rosbridge_advertise(
-        "/mars/main_camera/left/image_raw/compressed", "sensor_msgs/msg/CompressedImage"
-    )
-    adv_arm_camera = rosbridge_advertise(
-        "/mars/arm/image_raw/compressed", "sensor_msgs/msg/CompressedImage"
-    )
+    adv_color = rosbridge_advertise("/mars/main_camera/left/image_raw/compressed", "sensor_msgs/msg/CompressedImage")
+    adv_arm_camera = rosbridge_advertise("/mars/arm/image_raw/compressed", "sensor_msgs/msg/CompressedImage")
     adv_depth = rosbridge_advertise("/camera/depth/image_raw", "sensor_msgs/msg/Image")
-    adv_cinfo = rosbridge_advertise(
-        "/camera/color/camera_info", "sensor_msgs/msg/CameraInfo"
-    )
+    adv_cinfo = rosbridge_advertise("/camera/color/camera_info", "sensor_msgs/msg/CameraInfo")
     adv_odom = rosbridge_advertise("/odom", "nav_msgs/msg/Odometry")
     adv_map = rosbridge_advertise("/map", "nav_msgs/msg/OccupancyGrid")
     adv_chat_in = rosbridge_advertise("/brain/chat_in", "std_msgs/msg/String")
-    adv_set_directive = rosbridge_advertise(
-        "/brain/set_directive", "std_msgs/msg/String"
-    )
-    adv_brain_backend_config = rosbridge_advertise(
-        "/brain/backend_config", "std_msgs/msg/String"
-    )
+    adv_set_directive = rosbridge_advertise("/brain/set_directive", "std_msgs/msg/String")
+    adv_brain_backend_config = rosbridge_advertise("/brain/backend_config", "std_msgs/msg/String")
     # Add a new topic for logging configuration
     adv_logging_config = rosbridge_advertise("/logging_config", "std_msgs/msg/Bool")
     adv_clock = rosbridge_advertise("/clock", "rosgraph_msgs/Clock")
 
     # Navigation topics
-    adv_nav_status = rosbridge_advertise(
-        "/sim_navigation/status", "std_msgs/msg/String"
-    )
-    adv_nav_feedback = rosbridge_advertise(
-        "/sim_navigation/feedback", "geometry_msgs/msg/Point"
-    )
+    adv_nav_status = rosbridge_advertise("/sim_navigation/status", "std_msgs/msg/String")
+    adv_nav_feedback = rosbridge_advertise("/sim_navigation/feedback", "geometry_msgs/msg/Point")
     adv_nav_mode = rosbridge_advertise("/nav/current_mode", "std_msgs/msg/String")
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
-    adv_arm_goto_service = rosbridge_advertise_service(
-        "/mars/arm/goto_js", "maurice_msgs/srv/GotoJS"
-    )
+    adv_arm_goto_service = rosbridge_advertise_service("/mars/arm/goto_js", "maurice_msgs/srv/GotoJS")  # noqa: F841
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -521,16 +477,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Also subscribe to /cmd_vel, /chat_out, and navigation topics
     sub_cmd_vel = rosbridge_subscribe("/cmd_vel", "geometry_msgs/msg/Twist")
     sub_chat_out = rosbridge_subscribe("/brain/chat_out", "std_msgs/msg/String")
-    sub_brain_ws_status = rosbridge_subscribe(
-        "/brain/websocket_status", "std_msgs/msg/String"
-    )
-    sub_nav_path = rosbridge_subscribe(
-        "/sim_navigation/global_plan", "nav_msgs/msg/Path"
-    )
+    sub_brain_ws_status = rosbridge_subscribe("/brain/websocket_status", "std_msgs/msg/String")
+    sub_nav_path = rosbridge_subscribe("/sim_navigation/global_plan", "nav_msgs/msg/Path")
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
-    sub_arm_cmd = rosbridge_subscribe(
-        "/mars/arm/commands", "std_msgs/msg/Float64MultiArray"
-    )
+    sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
     await ws.send(json.dumps(sub_brain_ws_status))
@@ -551,9 +501,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
         logging_msg = {"data": shared_queues.log_everything}
         outbound = rosbridge_publish("/logging_config", logging_msg)
         await ws.send(json.dumps(outbound))
-        print(
-            f"[ROSBridge] Set logging configuration (topic): log_everything={shared_queues.log_everything}"
-        )
+        print(f"[ROSBridge] Set logging configuration (topic): log_everything={shared_queues.log_everything}")
 
     # Service calls (set_logging_config, get_available_directives) are sent
     # on the dedicated service connection — see outbound_service_loop.
@@ -565,9 +513,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             chat_qsize = shared_queues.chat_to_bridge.qsize()
             sim_qsize = shared_queues.sim_to_agent.qsize()
             if chat_qsize > 5 or sim_qsize > 50:
-                print(
-                    f"[ROSBridge] Queue status: chat={chat_qsize}, sim_to_agent={sim_qsize}"
-                )
+                print(f"[ROSBridge] Queue status: chat={chat_qsize}, sim_to_agent={sim_qsize}")
             last_queue_log_time = now
 
         # PRIORITY 1: Process ALL pending chat messages first (low latency path)
@@ -578,11 +524,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 msg = shared_queues.chat_to_bridge.get_nowait()
 
                 if isinstance(msg, ChatMessage):
-                    latency = (
-                        time.time() - msg.timestamp_put_in_queue
-                        if hasattr(msg, "timestamp_put_in_queue")
-                        else 0
-                    )
+                    latency = time.time() - msg.timestamp_put_in_queue if hasattr(msg, "timestamp_put_in_queue") else 0
                     if latency > 0.5:
                         print(f"[ROSBridge] Chat message latency: {latency:.2f}s")
                     print(f"[ROSBridge] Publishing chat message: {msg.text}")
@@ -639,9 +581,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 await ws.send(json.dumps(outbound))
                 print(f"[ROSBridge] Published directive: {msg.directive}")
             elif isinstance(msg, ResetRobotCmd):
-                reset_srv = rosbridge_call_service(
-                    "/brain/reset_brain", "brain_messages/srv/ResetBrain"
-                )
+                reset_srv = rosbridge_call_service("/brain/reset_brain", "brain_messages/srv/ResetBrain")
 
                 memory_state = ""
                 if msg.memory_state:
@@ -657,9 +597,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 await service_call_queue.put(reset_srv)
 
             elif isinstance(msg, BrainActiveCmd):
-                brain_active_srv = rosbridge_call_service(
-                    "/brain/set_brain_active", "std_srvs/srv/SetBool"
-                )
+                brain_active_srv = rosbridge_call_service("/brain/set_brain_active", "std_srvs/srv/SetBool")
                 brain_active_srv["args"] = {"data": msg.active}
 
                 print(f"[ROSBridge] Setting brain active: {msg.active}")
@@ -726,15 +664,10 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
 
     # Startup service calls
     if hasattr(shared_queues, "log_everything"):
-        srv_set_logging = rosbridge_call_service(
-            "/brain/set_logging_config", "std_srvs/srv/SetBool"
-        )
+        srv_set_logging = rosbridge_call_service("/brain/set_logging_config", "std_srvs/srv/SetBool")
         srv_set_logging["args"] = {"data": shared_queues.log_everything}
         await ws.send(json.dumps(srv_set_logging))
-        print(
-            f"[ROSBridge] [service] Called /brain/set_logging_config: "
-            f"{shared_queues.log_everything}"
-        )
+        print(f"[ROSBridge] [service] Called /brain/set_logging_config: {shared_queues.log_everything}")
 
     srv_get_agents = rosbridge_call_service(
         "/brain/get_available_directives", "brain_messages/srv/GetAvailableDirectives"
@@ -770,9 +703,7 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
     print("[ROSBridge] outbound_service_loop stopped.")
 
 
-async def _data_connection_loop(
-    shared_queues, rosbridge_uri: str, service_call_queue, retry_interval: float = 2.0
-):
+async def _data_connection_loop(shared_queues, rosbridge_uri: str, service_call_queue, retry_interval: float = 2.0):
     """
     Manage the data WebSocket connection (topics: advertise, subscribe, publish).
     Retries automatically on disconnect.
@@ -784,13 +715,9 @@ async def _data_connection_loop(
                 print(f"[ROSBridge] [data] Connected to {rosbridge_uri}")
                 tasks = [
                     asyncio.create_task(inbound_data_loop(ws, shared_queues)),
-                    asyncio.create_task(
-                        outbound_data_loop(ws, shared_queues, service_call_queue)
-                    ),
+                    asyncio.create_task(outbound_data_loop(ws, shared_queues, service_call_queue)),
                 ]
-                done, pending = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in pending:
                     task.cancel()
         except Exception as e:
@@ -804,9 +731,7 @@ async def _data_connection_loop(
     print("[ROSBridge] [data] Stopped.")
 
 
-async def _service_connection_loop(
-    shared_queues, rosbridge_uri: str, service_call_queue, retry_interval: float = 2.0
-):
+async def _service_connection_loop(shared_queues, rosbridge_uri: str, service_call_queue, retry_interval: float = 2.0):
     """
     Manage the service WebSocket connection (call_service operations).
     Runs independently of the data connection so that blocking RWS
@@ -819,13 +744,9 @@ async def _service_connection_loop(
                 print(f"[ROSBridge] [service] Connected to {rosbridge_uri}")
                 tasks = [
                     asyncio.create_task(inbound_service_loop(ws, shared_queues)),
-                    asyncio.create_task(
-                        outbound_service_loop(ws, shared_queues, service_call_queue)
-                    ),
+                    asyncio.create_task(outbound_service_loop(ws, shared_queues, service_call_queue)),
                 ]
-                done, pending = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in pending:
                     task.cancel()
         except Exception as e:
@@ -833,17 +754,13 @@ async def _service_connection_loop(
 
         if shared_queues.exit_event.is_set():
             break
-        print(
-            f"[ROSBridge] [service] Connection lost. Retrying in {retry_interval}s..."
-        )
+        print(f"[ROSBridge] [service] Connection lost. Retrying in {retry_interval}s...")
         await asyncio.sleep(retry_interval)
 
     print("[ROSBridge] [service] Stopped.")
 
 
-async def rosbridge_loop(
-    shared_queues, rosbridge_uri: str, retry_interval: float = 2.0
-):
+async def rosbridge_loop(shared_queues, rosbridge_uri: str, retry_interval: float = 2.0):
     """
     High-level function that manages two independent WebSocket connections
     to rosbridge:
@@ -856,20 +773,14 @@ async def rosbridge_loop(
     service_call_queue = asyncio.Queue()
 
     data_task = asyncio.create_task(
-        _data_connection_loop(
-            shared_queues, rosbridge_uri, service_call_queue, retry_interval
-        )
+        _data_connection_loop(shared_queues, rosbridge_uri, service_call_queue, retry_interval)
     )
     service_task = asyncio.create_task(
-        _service_connection_loop(
-            shared_queues, rosbridge_uri, service_call_queue, retry_interval
-        )
+        _service_connection_loop(shared_queues, rosbridge_uri, service_call_queue, retry_interval)
     )
 
     # If either loop exits (e.g. exit_event set), cancel the other
-    done, pending = await asyncio.wait(
-        [data_task, service_task], return_when=asyncio.FIRST_COMPLETED
-    )
+    done, pending = await asyncio.wait([data_task, service_task], return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
 
@@ -909,9 +820,7 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
                 "format": "jpeg",
                 "data": list(jpg_bytes),
             }
-            outbound = rosbridge_publish(
-                "/mars/main_camera/left/image_raw/compressed", compressed_msg
-            )
+            outbound = rosbridge_publish("/mars/main_camera/left/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
 
     # -- 1b) COMPRESS ARM WRIST CAMERA IMAGE --
@@ -932,9 +841,7 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
                 "format": "jpeg",
                 "data": list(jpg_bytes),
             }
-            outbound = rosbridge_publish(
-                "/mars/arm/image_raw/compressed", compressed_msg
-            )
+            outbound = rosbridge_publish("/mars/arm/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
 
     # 2) Depth image
@@ -1103,9 +1010,7 @@ def parse_arm_command(msg: dict) -> ArmCmd | None:
             joint_positions = [float(d) for d in data[:6]]
             return ArmCmd(joint_positions=joint_positions)
         else:
-            print(
-                f"[ROSBridge] Arm command has {len(data)} values, need 6. Data: {data}"
-            )
+            print(f"[ROSBridge] Arm command has {len(data)} values, need 6. Data: {data}")
         return None
     except (TypeError, ValueError) as e:
         print(f"[ROSBridge] Failed to parse arm command: {e}, msg={msg}")

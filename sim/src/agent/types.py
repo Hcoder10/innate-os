@@ -1,6 +1,7 @@
 # intypes.py
 
-from typing import NamedTuple, Dict, Any, List, Optional
+from typing import Any, NamedTuple
+
 import numpy as np
 
 
@@ -164,9 +165,9 @@ class RefreshAgentsCmd(NamedTuple):
 class SetEnvironmentCmd(NamedTuple):
     """Command to set the simulation environment from a configuration dict."""
 
-    config: Dict[str, Any]
+    config: dict[str, Any]
     timestamp: float
-    request_id: Optional[str] = None
+    request_id: str | None = None
 
 
 # Navigation-related message types
@@ -185,7 +186,7 @@ class NavigationPathMsg(NamedTuple):
     """
 
     frame_id: str
-    waypoints: List[NavigationWaypoint]  # Complete path from Nav2
+    waypoints: list[NavigationWaypoint]  # Complete path from Nav2
 
 
 class NavigationCancelMsg(NamedTuple):
@@ -223,7 +224,7 @@ class DrawTrajectoryCmd(NamedTuple):
     The path will be rendered as a smooth Bezier curve interpolated through the waypoints.
     """
 
-    waypoints: List[NavigationWaypoint]  # List of waypoints to draw
+    waypoints: list[NavigationWaypoint]  # List of waypoints to draw
     color: tuple = (0.0, 0.8, 1.0, 0.7)  # RGBA color (cyan by default)
     line_radius: float = 0.015  # Radius of the line segments
     floor_height: float = 0.02  # Height above floor to draw the path

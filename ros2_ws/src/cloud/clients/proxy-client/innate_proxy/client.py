@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 from auth_client import AuthProvider
@@ -42,26 +42,20 @@ class ProxyClient:
 
     def __init__(
         self,
-        proxy_url: Optional[str] = None,
-        innate_service_key: Optional[str] = None,
-        auth_issuer_url: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        proxy_url: str | None = None,
+        innate_service_key: str | None = None,
+        auth_issuer_url: str | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
-        raw_url = (
-            proxy_url or os.getenv("INNATE_PROXY_URL", "https://proxy-v1.innate.bot")
-        ).rstrip("/")
+        raw_url = (proxy_url or os.getenv("INNATE_PROXY_URL", "https://proxy-v1.innate.bot")).rstrip("/")
         if raw_url and not raw_url.startswith(("http://", "https://")):
             raw_url = f"https://{raw_url}"
         self.proxy_url: str = raw_url
 
-        self._service_key: str = innate_service_key or os.getenv(
-            "INNATE_SERVICE_KEY", ""
-        )
-        self.config: Dict[str, Any] = config or {}
+        self._service_key: str = innate_service_key or os.getenv("INNATE_SERVICE_KEY", "")
+        self.config: dict[str, Any] = config or {}
 
-        issuer_url = auth_issuer_url or os.getenv(
-            "INNATE_AUTH_URL", "https://auth-v1.innate.bot"
-        )
+        issuer_url = auth_issuer_url or os.getenv("INNATE_AUTH_URL", "https://auth-v1.innate.bot")
         if issuer_url and self._service_key:
             self._auth: AuthProvider | None = AuthProvider(
                 issuer_url=issuer_url,
@@ -108,9 +102,9 @@ class ProxyClient:
         service_name: str,
         endpoint: str,
         method: str = "POST",
-        json: Optional[Dict[str, Any]] = None,
-        data: Optional[bytes] = None,
-        params: Optional[Dict[str, Any]] = None,
+        json: dict[str, Any] | None = None,
+        data: bytes | None = None,
+        params: dict[str, Any] | None = None,
     ):
         """Return a context manager that yields an ``httpx.Response`` with streaming.
 
@@ -129,7 +123,7 @@ class ProxyClient:
 
         url = f"{self.proxy_url}/v1/services/{service_name}/{endpoint.lstrip('/')}"
 
-        kwargs: Dict[str, Any] = {"method": method, "url": url, "params": params}
+        kwargs: dict[str, Any] = {"method": method, "url": url, "params": params}
         if json is not None:
             kwargs["json"] = json
         elif data is not None:
@@ -154,9 +148,9 @@ class ProxyClient:
         service_name: str,
         endpoint: str,
         method: str = "POST",
-        json: Optional[Dict[str, Any]] = None,
-        data: Optional[bytes] = None,
-        params: Optional[Dict[str, Any]] = None,
+        json: dict[str, Any] | None = None,
+        data: bytes | None = None,
+        params: dict[str, Any] | None = None,
     ) -> httpx.Response:
         """Make an asynchronous request through the proxy."""
         if not self.is_available():
@@ -168,7 +162,7 @@ class ProxyClient:
         client = self.get_async_client()
         url = f"{self.proxy_url}/v1/services/{service_name}/{endpoint.lstrip('/')}"
 
-        kwargs: Dict[str, Any] = {"method": method, "url": url, "params": params}
+        kwargs: dict[str, Any] = {"method": method, "url": url, "params": params}
         if json is not None:
             kwargs["json"] = json
         elif data is not None:
@@ -216,13 +210,13 @@ class ProxyClient:
             await self._async_client.aclose()
             self._async_client = None
 
-    def __enter__(self) -> "ProxyClient":
+    def __enter__(self) -> ProxyClient:
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
 
-    async def __aenter__(self) -> "ProxyClient":
+    async def __aenter__(self) -> ProxyClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
