@@ -30,6 +30,7 @@ NOISY_PATTERNS = [
     re.compile(r"^\[SimulationNode\] Clearing \d+ trajectory objects"),
     re.compile(r"^\[SimulationNode\] Applying arm positions: "),
     re.compile(r"^\[ROSBridge\] Received arm command: "),
+    re.compile(r"^\[ROSBridge\] Received (?:/mars/arm/)?(?:goto_js|goto_js_v2|goto_js_trajectory) service call: "),
     re.compile(r"^\[ROSBridge\] Queue status: "),
     re.compile(r"^\[ROSBridge\] Chat message latency: "),
 ]
