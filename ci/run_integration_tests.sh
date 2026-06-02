@@ -6,9 +6,11 @@
 #   - ci/cloudbuild.integration-test.yaml (Cloud Build)
 #
 # The image entrypoint has already sourced ROS 2 and set the Zenoh/RMW env.
-# Zenoh SHM stays enabled (production parity); callers must give the container a
-# large enough /dev/shm (rmw_zenoh pre-allocates ~48 MiB per node) — e.g.
-# `docker run --shm-size=2g` or compose `shm_size: "2g"`.
+# We disable Zenoh shared-memory transport below (see the export block): the SHM
+# provider rmw_zenoh allocates at startup cannot be created in sandboxed CI such
+# as Cloud Build's gVisor, which blocks POSIX shm regardless of /dev/shm size.
+# These are correctness tests (orchestration logic, not transport), so loopback
+# is equivalent; the robot keeps SHM in production via the image entrypoint.
 set -e
 
 ROUTER_PID=""
@@ -20,8 +22,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== /dev/shm (rmw_zenoh needs room here; ~48 MiB per node) ==="
+echo "=== /dev/shm ==="
 df -h /dev/shm || true
+
+# Disable Zenoh shared memory for the test run. The image entrypoint enables it
+# (ZENOH_*_CONFIG_OVERRIDE), so override all three to false here. Without this,
+# rmw_zenoh tries to create a POSIX SHM provider at rclpy.init, which fails under
+# Cloud Build's gVisor sandbox ("Failed to create POSIX SHM provider").
+export ZENOH_SESSION_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
+export ZENOH_ROUTER_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
+export ZENOH_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
 
 cd /root/innate-os/ros2_ws
 colcon build
