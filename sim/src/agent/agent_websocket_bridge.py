@@ -176,6 +176,24 @@ def rosbridge_service_response(service: str, result: dict, call_id: str = None) 
     return resp
 
 
+def arm_service_advertisements() -> list[dict]:
+    adverts = [
+        rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS")
+        for service in sorted(ARM_GOTO_SERVICES)
+    ]
+    adverts.append(
+        rosbridge_advertise_service(
+            "/mars/arm/goto_js_trajectory",
+            "maurice_msgs/srv/GotoJSTrajectory",
+        )
+    )
+    adverts.extend(
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
+        for service in sorted(ARM_TRIGGER_SERVICES)
+    )
+    return adverts
+
+
 def is_arm_torque_enabled(shared_queues) -> bool:
     lock = getattr(shared_queues, "arm_torque_lock", None)
     if lock is None:
@@ -762,6 +780,47 @@ async def inbound_service_loop(ws, shared_queues):
     print("[ROSBridge] inbound_service_loop stopped.")
 
 
+async def arm_advertised_service_loop(ws, shared_queues):
+    """
+    Advertise simulator-owned arm services and handle their service calls.
+
+    This intentionally runs on Python rosbridge_server, not RWS. RWS is kept
+    for the high-volume topic path, but does not currently materialize
+    client-advertised services into the ROS graph.
+    """
+    for service_advert in arm_service_advertisements():
+        await ws.send(json.dumps(service_advert))
+    print("[ROSBridge] Advertised simulator-owned arm services")
+
+    while not shared_queues.exit_event.is_set():
+        try:
+            inbound_raw = await asyncio.wait_for(ws.recv(), timeout=0.01)
+        except asyncio.TimeoutError:
+            await asyncio.sleep(0.001)
+            continue
+        except websockets.exceptions.ConnectionClosed:
+            print("[ROSBridge] Arm service bridge connection closed.")
+            break
+
+        try:
+            inbound_data = json.loads(inbound_raw)
+        except json.JSONDecodeError:
+            continue
+
+        if inbound_data.get("op", "") != "call_service":
+            continue
+
+        await _handle_arm_service_call(
+            ws,
+            shared_queues,
+            inbound_data.get("service", ""),
+            inbound_data.get("id", None),
+            inbound_data.get("args", {}),
+        )
+
+    print("[ROSBridge] Arm advertised service loop stopped.")
+
+
 async def outbound_data_loop(ws, shared_queues, service_call_queue):
     """
     Continuously process messages from sim_to_agent and publish them
@@ -822,20 +881,6 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
-    arm_service_adverts = [
-        rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS")
-        for service in sorted(ARM_GOTO_SERVICES)
-    ]
-    arm_service_adverts.append(
-        rosbridge_advertise_service(
-            "/mars/arm/goto_js_trajectory",
-            "maurice_msgs/srv/GotoJSTrajectory",
-        )
-    )
-    arm_service_adverts.extend(
-        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
-        for service in sorted(ARM_TRIGGER_SERVICES)
-    )
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -853,12 +898,9 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_camera))
-    for service_advert in arm_service_adverts:
-        await ws.send(json.dumps(service_advert))
     print(
         "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, "
-        "/brain/backend_config, /logging_config, navigation topics, "
-        "and simulator-owned arm interfaces"
+        "/brain/backend_config, /logging_config, navigation topics, and arm state"
     )
 
     # Publish initial navigation mode (simulator always uses mapfree)
@@ -1248,8 +1290,41 @@ async def _service_connection_loop(
     print("[ROSBridge] [service] Stopped.")
 
 
+async def _advertised_service_connection_loop(
+    shared_queues, advertised_service_uri: str, retry_interval: float = 2.0
+):
+    """
+    Manage the WebSocket connection used for simulator-advertised ROS services.
+    """
+    while not shared_queues.exit_event.is_set():
+        print(
+            f"[ROSBridge] [advertised-services] Connecting to {advertised_service_uri} ..."
+        )
+        try:
+            async with websockets.connect(advertised_service_uri) as ws:
+                print(
+                    f"[ROSBridge] [advertised-services] Connected to {advertised_service_uri}"
+                )
+                await arm_advertised_service_loop(ws, shared_queues)
+        except Exception as e:
+            print(f"[ROSBridge] [advertised-services] Connection error: {e}")
+
+        if shared_queues.exit_event.is_set():
+            break
+        print(
+            "[ROSBridge] [advertised-services] Connection lost. "
+            f"Retrying in {retry_interval}s..."
+        )
+        await asyncio.sleep(retry_interval)
+
+    print("[ROSBridge] [advertised-services] Stopped.")
+
+
 async def rosbridge_loop(
-    shared_queues, rosbridge_uri: str, retry_interval: float = 2.0
+    shared_queues,
+    rosbridge_uri: str,
+    advertised_service_uri: str | None = None,
+    retry_interval: float = 2.0,
 ):
     """
     High-level function that manages two independent WebSocket connections
@@ -1272,10 +1347,19 @@ async def rosbridge_loop(
             shared_queues, rosbridge_uri, service_call_queue, retry_interval
         )
     )
+    tasks = [data_task, service_task]
+    if advertised_service_uri:
+        tasks.append(
+            asyncio.create_task(
+                _advertised_service_connection_loop(
+                    shared_queues, advertised_service_uri, retry_interval
+                )
+            )
+        )
 
     # If either loop exits (e.g. exit_event set), cancel the other
     done, pending = await asyncio.wait(
-        [data_task, service_task], return_when=asyncio.FIRST_COMPLETED
+        tasks, return_when=asyncio.FIRST_COMPLETED
     )
     for task in pending:
         task.cancel()
@@ -1519,7 +1603,11 @@ def parse_arm_command(msg: dict) -> ArmCmd | None:
         return None
 
 
-def run_agent_async(shared_queues, rosbridge_uri="ws://localhost:9090"):
+def run_agent_async(
+    shared_queues,
+    rosbridge_uri="ws://localhost:9090",
+    advertised_service_uri="ws://localhost:9091",
+):
     """
     Launch the asynchronous rosbridge_loop in a dedicated thread.
     """
@@ -1527,7 +1615,13 @@ def run_agent_async(shared_queues, rosbridge_uri="ws://localhost:9090"):
 
     def _run():
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(rosbridge_loop(shared_queues, rosbridge_uri))
+        loop.run_until_complete(
+            rosbridge_loop(
+                shared_queues,
+                rosbridge_uri,
+                advertised_service_uri=advertised_service_uri,
+            )
+        )
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()

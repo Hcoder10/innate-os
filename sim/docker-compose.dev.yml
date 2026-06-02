@@ -30,6 +30,7 @@ services:
       - CCACHE_DIR=/root/.cache/ccache
     ports:
       - "9090:9090"
+      - "9091:9091"
 
     volumes:
       # 1) Mount your local code (paths are relative to this file's directory)

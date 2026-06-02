@@ -31,6 +31,9 @@ load_dotenv()
 
 # Define constants
 ROSBRIDGE_URI = os.getenv("ROSBRIDGE_URI", "ws://localhost:9090")
+ROSBRIDGE_ADVERTISED_SERVICE_URI = os.getenv(
+    "ROSBRIDGE_ADVERTISED_SERVICE_URI", "ws://localhost:9091"
+)
 SIMULATOR_PORT = int(os.getenv("SIMULATOR_PORT", "8000"))
 
 
@@ -233,6 +236,7 @@ def main():
         run_agent_async(
             SHARED_QUEUES,
             rosbridge_uri=ROSBRIDGE_URI,
+            advertised_service_uri=ROSBRIDGE_ADVERTISED_SERVICE_URI,
         )
 
     # 4) Start Uvicorn in another thread (unless --no-web)
