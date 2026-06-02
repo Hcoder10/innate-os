@@ -65,6 +65,22 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Clean, Readable Code
+
+**You are a senior engineer. Write clean, maintainable code.**
+
+Clean code is understood without reading the comments:
+
+- Use clear, descriptive variable and function names that state intent.
+- Keep complexity low. Avoid deep, multiple-levels-of-nesting indentation.
+- Use early returns to flatten control flow instead of nesting.
+- Keep things simple, always.
+
+When handling errors, don't overdo it:
+
+- Avoid scattering multiple try/catch blocks where one is enough.
+- Catch errors at the level where you can actually do something about them.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
