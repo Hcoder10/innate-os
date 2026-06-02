@@ -101,27 +101,33 @@ RUN . /opt/ros/humble/setup.sh && \
     colcon build --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release \
         --packages-skip maurice_cam maurice_nav maurice_control
 
-# Create entrypoint script with Zenoh configuration
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-# Source ROS2 base\n\
-source /opt/ros/humble/setup.bash\n\
-\n\
-# Source workspace\n\
-if [ -f /root/innate-os/ros2_ws/install/setup.bash ]; then\n\
-    source /root/innate-os/ros2_ws/install/setup.bash\n\
-fi\n\
-\n\
-# Set Zenoh RMW environment variables\n\
-export RMW_IMPLEMENTATION=rmw_zenoh_cpp\n\
-export ROS_DOMAIN_ID=0\n\
-export ZENOH_ROUTER_CHECK_ATTEMPTS=0\n\
-export ZENOH_SESSION_CONFIG_OVERRIDE="transport/shared_memory/enabled=true;transport/shared_memory/transport_optimization/pool_size=12582912;transport/link/tx/queue/congestion_control/drop/wait_before_drop=200000;transport/link/tx/queue/congestion_control/drop/max_wait_before_drop_fragments=300000"\n\
-export ZENOH_CONFIG_OVERRIDE="$ZENOH_SESSION_CONFIG_OVERRIDE"\n\
-export INNATE_OS_ROOT=/root/innate-os\n\
-\n\
-exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+# Create entrypoint script with Zenoh configuration.
+# Written via a heredoc (not `echo '...\n...'`, which emits literal "\n" under
+# bash and produces a corrupt shebang). The quoted delimiter keeps $@ and the
+# Zenoh vars literal so they expand at container runtime, not build time.
+COPY <<'EOF' /entrypoint.sh
+#!/bin/bash
+set -e
+
+# Source ROS2 base
+source /opt/ros/humble/setup.bash
+
+# Source workspace
+if [ -f /root/innate-os/ros2_ws/install/setup.bash ]; then
+    source /root/innate-os/ros2_ws/install/setup.bash
+fi
+
+# Set Zenoh RMW environment variables
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp
+export ROS_DOMAIN_ID=0
+export ZENOH_ROUTER_CHECK_ATTEMPTS=0
+export ZENOH_SESSION_CONFIG_OVERRIDE="transport/shared_memory/enabled=true;transport/shared_memory/transport_optimization/pool_size=12582912;transport/link/tx/queue/congestion_control/drop/wait_before_drop=200000;transport/link/tx/queue/congestion_control/drop/max_wait_before_drop_fragments=300000"
+export ZENOH_CONFIG_OVERRIDE="$ZENOH_SESSION_CONFIG_OVERRIDE"
+export INNATE_OS_ROOT=/root/innate-os
+
+exec "$@"
+EOF
+RUN chmod +x /entrypoint.sh
 
 WORKDIR /root/innate-os
 

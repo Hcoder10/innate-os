@@ -42,9 +42,11 @@ if(BUILD_TESTING)
     add_launch_test("${path}" RUNNER "${RUNNER}" ${ARGN})
   endfunction()
 
-  add_ros_isolated_launch_test(test/test_skill_integration.launch.py)
   add_ros_isolated_launch_test(test/test_pose_image.launch.py
     TIMEOUT 180
+  )
+  add_ros_isolated_launch_test(test/test_fake_cloud_loop.launch.py
+    TIMEOUT 240
   )
 endif()
 
