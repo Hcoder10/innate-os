@@ -87,9 +87,6 @@ COPY ros2_ws /root/innate-os/ros2_ws
 COPY config /root/innate-os/config
 COPY workspace /root/innate-os/workspace
 
-# Shared test entrypoint (used by docker-compose.test.yml and Cloud Build)
-COPY --chmod=755 ci/run_integration_tests.sh /usr/local/bin/run_integration_tests.sh
-
 # Import external dependencies using vcs
 RUN cd /root/innate-os/ros2_ws/src && \
     if [ -f dependencies.repos ]; then \
@@ -104,6 +101,10 @@ WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
     rosdep install --from-paths src --ignore-src -r -y || true && \
     colcon build --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# Shared test entrypoint script (used by docker-compose.test.yml and Cloud Build).
+# Placed after the build so editing it does not invalidate the colcon build cache.
+COPY --chmod=755 ci/run_integration_tests.sh /usr/local/bin/run_integration_tests.sh
 
 # Create entrypoint script with Zenoh configuration.
 # Written via a heredoc (not `echo '...\n...'`, which emits literal "\n" under
