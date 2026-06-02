@@ -87,6 +87,9 @@ COPY ros2_ws /root/innate-os/ros2_ws
 COPY config /root/innate-os/config
 COPY workspace /root/innate-os/workspace
 
+# Shared test entrypoint (used by docker-compose.test.yml and Cloud Build)
+COPY --chmod=755 ci/run_integration_tests.sh /usr/local/bin/run_integration_tests.sh
+
 # Import external dependencies using vcs
 RUN cd /root/innate-os/ros2_ws/src && \
     if [ -f dependencies.repos ]; then \
