@@ -28,7 +28,7 @@ enum class OperatingMode {
 };
 
 class Dynamixel {
-public:
+   public:
     struct Config {
         int baudrate = 57600;
         float protocol_version = 2.0;
@@ -42,7 +42,7 @@ public:
     // Torque control
     void enableTorque(int motor_id);
     void disableTorque(int motor_id);
-    
+
     // Configuration
     void setOperatingMode(int motor_id, OperatingMode mode);
     void setMinPositionLimit(int motor_id, int min_position);
@@ -63,7 +63,7 @@ public:
     // Write profile acceleration + velocity to multiple servos in a single GroupSyncWrite packet
     // Each entry: {servo_id, profile_acceleration, profile_velocity}
     void syncWriteProfile(const std::vector<std::tuple<int, int, int>>& profile_data);
-    
+
     // Read/Write
     int readPosition(int motor_id);
     int readVelocity(int motor_id);
@@ -72,18 +72,22 @@ public:
     uint8_t readHardwareErrorStatus(int motor_id);
     int16_t readPresentLoad(int motor_id);
     uint8_t readPresentTemperature(int motor_id);
-    
-    // Access to SDK objects for GroupSync operations
-    dynamixel::PortHandler* portHandler() { return port_handler_; }
-    dynamixel::PacketHandler* packetHandler() { return packet_handler_; }
 
-private:
+    // Access to SDK objects for GroupSync operations
+    dynamixel::PortHandler* portHandler() {
+        return port_handler_;
+    }
+    dynamixel::PacketHandler* packetHandler() {
+        return packet_handler_;
+    }
+
+   private:
     void connect();
-    
+
     Config config_;
     dynamixel::PortHandler* port_handler_;
     dynamixel::PacketHandler* packet_handler_;
-    
+
     // Control table addresses
     static constexpr int ADDR_RETURN_DELAY_TIME = 9;
     static constexpr int ADDR_TORQUE_ENABLE = 64;
@@ -109,5 +113,4 @@ private:
     static constexpr int ADDR_PRESENT_TEMPERATURE = 146;
 };
 
-} // namespace maurice_arm
-
+}  // namespace maurice_arm

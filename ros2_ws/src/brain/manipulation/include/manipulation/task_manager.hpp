@@ -12,11 +12,11 @@
 namespace manipulation {
 
 class TaskManager {
-public:
+   public:
     explicit TaskManager(const std::string& base_data_directory);
 
     void start_new_task_at_directory(const std::string& task_name, const std::string& task_directory,
-                                      double data_frequency);
+                                     double data_frequency);
     void resume_task_at_directory(const std::string& task_name, const std::string& task_directory);
 
     // Path the recorder should stream the in-flight episode to. Stable across
@@ -26,8 +26,7 @@ public:
 
     // Rename the already-finalized streaming file at `temp_file_path` to its
     // final episode slot and update the dataset metadata.
-    void add_episode(const std::string& temp_file_path,
-                     const std::string& start_timestamp,
+    void add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
                      const std::string& end_timestamp);
 
     void end_task();
@@ -36,18 +35,26 @@ public:
     std::tuple<bool, std::string, std::string> get_task_metadata_by_directory(const std::string& task_directory);
 
     // Accessors
-    const std::string& get_current_task_name() const { return current_task_name_; }
-    const std::string& get_current_task_dir() const { return current_task_dir_; }
-    const nlohmann::json& get_metadata() const { return metadata_; }
-    bool has_metadata() const { return !metadata_.is_null(); }
+    const std::string& get_current_task_name() const {
+        return current_task_name_;
+    }
+    const std::string& get_current_task_dir() const {
+        return current_task_dir_;
+    }
+    const nlohmann::json& get_metadata() const {
+        return metadata_;
+    }
+    bool has_metadata() const {
+        return !metadata_.is_null();
+    }
     int get_number_of_episodes() const;
 
-private:
+   private:
     void save_metadata();
     void load_metadata();
     void cleanup_stale_streaming_files();
-    std::optional<nlohmann::json> get_enriched_metadata_for_task(const std::string& task_directory, 
-                                                                   std::string& error_msg);
+    std::optional<nlohmann::json> get_enriched_metadata_for_task(const std::string& task_directory,
+                                                                 std::string& error_msg);
 
     std::string base_data_directory_;
     std::string current_task_name_;

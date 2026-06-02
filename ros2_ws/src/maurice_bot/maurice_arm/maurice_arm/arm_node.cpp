@@ -21,7 +21,8 @@ std::string discoverArmDevice(const rclcpp::Logger& logger) {
 
     auto read_trim = [](const fs::path& p) -> std::string {
         std::ifstream f(p);
-        if (!f.is_open()) return {};
+        if (!f.is_open())
+            return {};
         std::string s;
         std::getline(f, s);
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) {
@@ -34,7 +35,8 @@ std::string discoverArmDevice(const rclcpp::Logger& logger) {
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(kTtyClass, ec)) {
         const std::string name = entry.path().filename().string();
-        if (name.rfind("ttyACM", 0) != 0) continue;
+        if (name.rfind("ttyACM", 0) != 0)
+            continue;
 
         // /sys/class/tty/ttyACMn/device is a symlink to the USB interface
         // (e.g. .../1-1/1-1:1.0); its parent (..) is the USB device that
@@ -45,8 +47,7 @@ std::string discoverArmDevice(const rclcpp::Logger& logger) {
 
         if (vid == kTargetVid && pid == kTargetPid) {
             const std::string dev_path = "/dev/" + name;
-            RCLCPP_INFO(logger, "Discovered arm device: %s (%s:%s)",
-                        dev_path.c_str(), vid.c_str(), pid.c_str());
+            RCLCPP_INFO(logger, "Discovered arm device: %s (%s:%s)", dev_path.c_str(), vid.c_str(), pid.c_str());
             return dev_path;
         }
         candidates.push_back(name + " [" + (vid.empty() ? "?" : vid) + ":" + (pid.empty() ? "?" : pid) + "]");
@@ -54,13 +55,12 @@ std::string discoverArmDevice(const rclcpp::Logger& logger) {
 
     std::string joined;
     for (const auto& c : candidates) {
-        if (!joined.empty()) joined += ", ";
+        if (!joined.empty())
+            joined += ", ";
         joined += c;
     }
-    RCLCPP_ERROR(logger,
-                 "No ttyACM device with VID:PID %s:%s found. Candidates: %s. Falling back to /dev/ttyACM0.",
-                 kTargetVid, kTargetPid,
-                 joined.empty() ? "(none)" : joined.c_str());
+    RCLCPP_ERROR(logger, "No ttyACM device with VID:PID %s:%s found. Candidates: %s. Falling back to /dev/ttyACM0.",
+                 kTargetVid, kTargetPid, joined.empty() ? "(none)" : joined.c_str());
     return "/dev/ttyACM0";
 }
 
@@ -78,12 +78,12 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     this->declare_parameter("baud_rate", 1000000);
     this->declare_parameter("control_frequency", 100.0);
     this->declare_parameter("trajectory_rate_hz", 30.0);
-    this->declare_parameter("max_jerk", 0.0);  // rad/s³, 0 = disabled
-    this->declare_parameter("stress_enabled", false);      // enable/disable leaky integrator
-    this->declare_parameter("stress_threshold", 100.0);     // score to trigger cooldown
-    this->declare_parameter("stress_cooldown_sec", 2.0);    // seconds to rest
-    this->declare_parameter("stress_multiplier", 1.0);      // A in leaky integrator: A*|PWM| - C
-    this->declare_parameter("stress_leak", 0.0);             // C in leaky integrator: A*|PWM| - C
+    this->declare_parameter("max_jerk", 0.0);             // rad/s³, 0 = disabled
+    this->declare_parameter("stress_enabled", false);     // enable/disable leaky integrator
+    this->declare_parameter("stress_threshold", 100.0);   // score to trigger cooldown
+    this->declare_parameter("stress_cooldown_sec", 2.0);  // seconds to rest
+    this->declare_parameter("stress_multiplier", 1.0);    // A in leaky integrator: A*|PWM| - C
+    this->declare_parameter("stress_leak", 0.0);          // C in leaky integrator: A*|PWM| - C
     this->declare_parameter("joints", std::vector<std::string>{});
 
     int baud_rate = this->get_parameter("baud_rate").as_int();
@@ -124,8 +124,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
 
     auto cmd_qos = rclcpp::QoS(1).best_effort();
     arm_command_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
-        "/mars/arm/commands", cmd_qos,
-        std::bind(&MauriceArmNode::armCommandCallback, this, std::placeholders::_1));
+        "/mars/arm/commands", cmd_qos, std::bind(&MauriceArmNode::armCommandCallback, this, std::placeholders::_1));
 
     arm_torque_on_service_ = this->create_service<std_srvs::srv::Trigger>(
         "/mars/arm/torque_on",
@@ -167,8 +166,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     head_position_pub_ = this->create_publisher<std_msgs::msg::String>("/mars/head/current_position", 10);
     joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
     head_position_sub_ = this->create_subscription<std_msgs::msg::Int32>(
-        "/mars/head/set_position", 10,
-        std::bind(&MauriceArmNode::headPositionCallback, this, std::placeholders::_1));
+        "/mars/head/set_position", 10, std::bind(&MauriceArmNode::headPositionCallback, this, std::placeholders::_1));
 
     head_ai_position_service_ = this->create_service<std_srvs::srv::Trigger>(
         "/mars/head/set_ai_position",
@@ -185,7 +183,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     arm_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
     joint_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"};
 
-    home_position_ = {1.445009902188274, -1.3882526130365052, 1.517106999218899,
+    home_position_ = {1.445009902188274,   -1.3882526130365052,  1.517106999218899,
                       0.44638840927472156, -0.08897088569736719, 0.0015339807878856412};
 
     // Initialize command buffers with current positions
@@ -198,16 +196,14 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     // ── Timers ──
     RCLCPP_INFO(this->get_logger(), "Creating control timer at %.1f Hz", control_frequency_);
     auto period = std::chrono::duration<double>(1.0 / control_frequency_);
-    control_timer_ = this->create_wall_timer(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(period),
-        std::bind(&MauriceArmNode::controlTimerCallback, this),
-        timer_callback_group_);
+    control_timer_ =
+        this->create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period),
+                                std::bind(&MauriceArmNode::controlTimerCallback, this), timer_callback_group_);
 
     RCLCPP_INFO(this->get_logger(), "Creating health monitor timer at 0.2 Hz");
-    health_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(5000),
-        std::bind(&MauriceArmNode::healthMonitorCallback, this),
-        health_callback_group_);
+    health_timer_ =
+        this->create_wall_timer(std::chrono::milliseconds(5000),
+                                std::bind(&MauriceArmNode::healthMonitorCallback, this), health_callback_group_);
 
     // Register parameter change callback for PID hot-reload
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -225,7 +221,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     }
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);

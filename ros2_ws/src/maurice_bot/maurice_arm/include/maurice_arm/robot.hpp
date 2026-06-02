@@ -9,7 +9,7 @@
 namespace maurice_arm {
 
 class Robot {
-public:
+   public:
     Robot(std::shared_ptr<Dynamixel> dynamixel, const std::vector<int>& servo_ids);
     ~Robot();
 
@@ -24,20 +24,19 @@ public:
     long last_read_txrx_us = 0;
     long last_write_txrx_us = 0;
 
-private:
+   private:
     std::shared_ptr<Dynamixel> dynamixel_;
     std::vector<int> servo_ids_;
-    
+
     std::unique_ptr<dynamixel::GroupSyncRead> position_reader_;
     std::unique_ptr<dynamixel::GroupSyncRead> velocity_reader_;
     std::unique_ptr<dynamixel::GroupSyncRead> state_reader_;  // Combined reader for both velocity and position
     std::unique_ptr<dynamixel::GroupSyncWrite> pos_writer_;
-    
+
     static constexpr int ADDR_PRESENT_LOAD = 126;
     static constexpr int ADDR_PRESENT_POSITION = 132;
     static constexpr int ADDR_PRESENT_VELOCITY = 128;
     static constexpr int ADDR_GOAL_POSITION = 116;
 };
 
-} // namespace maurice_arm
-
+}  // namespace maurice_arm

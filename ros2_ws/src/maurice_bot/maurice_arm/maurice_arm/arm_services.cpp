@@ -29,9 +29,9 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
     const auto& config = *config_ptr;
 
     RCLCPP_INFO(this->get_logger(), "Configuring servo %d (%s)", config.servo_id,
-        config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
+                config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
 
-    retryServoOp(config.servo_id, "disableTorque", [&]{ dynamixel_->disableTorque(config.servo_id); });
+    retryServoOp(config.servo_id, "disableTorque", [&] { dynamixel_->disableTorque(config.servo_id); });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     dynamixel_->setReturnDelayTime(config.servo_id, 100);
@@ -53,13 +53,26 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
 
     OperatingMode mode;
     switch (config.control_mode) {
-        case 0:  mode = OperatingMode::CURRENT; break;
-        case 1:  mode = OperatingMode::VELOCITY; break;
-        case 3:  mode = OperatingMode::POSITION; break;
-        case 4:  mode = OperatingMode::EXTENDED_POSITION; break;
-        case 5:  mode = OperatingMode::CURRENT_CONTROLLED_POSITION; break;
-        case 16: mode = OperatingMode::PWM; break;
-        default: throw std::runtime_error("Servo " + std::to_string(config.servo_id) + ": invalid control_mode");
+        case 0:
+            mode = OperatingMode::CURRENT;
+            break;
+        case 1:
+            mode = OperatingMode::VELOCITY;
+            break;
+        case 3:
+            mode = OperatingMode::POSITION;
+            break;
+        case 4:
+            mode = OperatingMode::EXTENDED_POSITION;
+            break;
+        case 5:
+            mode = OperatingMode::CURRENT_CONTROLLED_POSITION;
+            break;
+        case 16:
+            mode = OperatingMode::PWM;
+            break;
+        default:
+            throw std::runtime_error("Servo " + std::to_string(config.servo_id) + ": invalid control_mode");
     }
     dynamixel_->setOperatingMode(config.servo_id, mode);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -89,12 +102,12 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
 
     if (enable_torque) {
         RCLCPP_INFO(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
-        retryServoOp(config.servo_id, "enableTorque", [&]{ dynamixel_->enableTorque(config.servo_id); });
+        retryServoOp(config.servo_id, "enableTorque", [&] { dynamixel_->enableTorque(config.servo_id); });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    RCLCPP_INFO(this->get_logger(), "Servo %d configured and torque %s",
-        config.servo_id, enable_torque ? "enabled" : "disabled");
+    RCLCPP_INFO(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
+                enable_torque ? "enabled" : "disabled");
 }
 
 void MauriceArmNode::configureServosLocked(bool enable_torque) {
@@ -104,8 +117,7 @@ void MauriceArmNode::configureServosLocked(bool enable_torque) {
         try {
             configureServoByIdLocked(config.servo_id, enable_torque);
         } catch (const std::exception& e) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to configure servo %d, skipping: %s",
-                config.servo_id, e.what());
+            RCLCPP_ERROR(this->get_logger(), "Failed to configure servo %d, skipping: %s", config.servo_id, e.what());
         }
     }
 
@@ -122,12 +134,14 @@ void MauriceArmNode::configureServosLocked(bool enable_torque) {
 
 void MauriceArmNode::syncTargetToMotorPositions() {
     auto [positions, velocities, loads] = robot_->readState();
-    (void)velocities; (void)loads;
+    (void)velocities;
+    (void)loads;
     {
         std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
         for (int i = 0; i < 6 && i < static_cast<int>(positions.size()); ++i) {
             double rad = ((positions[i] - 2048) * 2 * M_PI) / 4096.0;
-            if (i == 1 || i == 2 || i == 3 || i == 5) rad = -rad;
+            if (i == 1 || i == 2 || i == 3 || i == 5)
+                rad = -rad;
             latest_target_[i] = rad;
         }
         has_target_ = false;
@@ -160,16 +174,16 @@ void MauriceArmNode::healthMonitorCallback() {
             if (std::abs(static_cast<int>(present_load)) >= kLoadWarningThreshold) {
                 status_msg.is_ok = false;
                 double load_percent = static_cast<double>(present_load) / 10.0;
-                status_msg.error = "Servo " + std::to_string(servo_id) +
-                    " high load (" + std::to_string(load_percent) + "%)";
+                status_msg.error =
+                    "Servo " + std::to_string(servo_id) + " high load (" + std::to_string(load_percent) + "%)";
                 break;
             }
 
             uint8_t temperature = dynamixel_->readPresentTemperature(servo_id);
             if (temperature >= kTemperatureWarningC) {
                 status_msg.is_ok = false;
-                status_msg.error = "Servo " + std::to_string(servo_id) +
-                    " high temperature (" + std::to_string(static_cast<int>(temperature)) + " C)";
+                status_msg.error = "Servo " + std::to_string(servo_id) + " high temperature (" +
+                                   std::to_string(static_cast<int>(temperature)) + " C)";
                 break;
             }
         }
@@ -192,18 +206,29 @@ void MauriceArmNode::healthMonitorCallback() {
 
 std::string MauriceArmNode::describeHardwareError(uint8_t status, int servo_id) const {
     std::vector<std::string> error_bits;
-    if (status & 0x20) { error_bits.emplace_back("overload"); }
-    if (status & 0x10) { error_bits.emplace_back("electrical fault"); }
-    if (status & 0x08) { error_bits.emplace_back("encoder fault"); }
-    if (status & 0x04) { error_bits.emplace_back("overheating"); }
-    if (status & 0x01) { error_bits.emplace_back("input voltage"); }
+    if (status & 0x20) {
+        error_bits.emplace_back("overload");
+    }
+    if (status & 0x10) {
+        error_bits.emplace_back("electrical fault");
+    }
+    if (status & 0x08) {
+        error_bits.emplace_back("encoder fault");
+    }
+    if (status & 0x04) {
+        error_bits.emplace_back("overheating");
+    }
+    if (status & 0x01) {
+        error_bits.emplace_back("input voltage");
+    }
 
     std::ostringstream oss;
     oss << "Servo " << servo_id << " hardware error";
     if (!error_bits.empty()) {
         oss << ": ";
         for (size_t i = 0; i < error_bits.size(); ++i) {
-            if (i > 0) oss << ", ";
+            if (i > 0)
+                oss << ", ";
             oss << error_bits[i];
         }
     } else {
@@ -217,7 +242,8 @@ std::string MauriceArmNode::describeHardwareError(uint8_t status, int servo_id) 
 void MauriceArmNode::armCommandCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
     try {
         if (msg->data.size() != 6) {
-            RCLCPP_ERROR(this->get_logger(), "Action size must match number of servos. Expected 6, got %zu", msg->data.size());
+            RCLCPP_ERROR(this->get_logger(), "Action size must match number of servos. Expected 6, got %zu",
+                         msg->data.size());
             return;
         }
 
@@ -239,9 +265,8 @@ void MauriceArmNode::armCommandCallback(const std_msgs::msg::Float64MultiArray::
 
 // ========== TORQUE / REBOOT / FIX-ERROR SERVICE CALLBACKS ==========
 
-void MauriceArmNode::armTorqueOnCallback(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void MauriceArmNode::armTorqueOnCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/torque_on");
     try {
         std::lock_guard<std::mutex> lock(dynamixel_mutex_);
@@ -251,8 +276,9 @@ void MauriceArmNode::armTorqueOnCallback(
             dynamixel_->enableTorque(id);
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        try { syncTargetToMotorPositions(); }
-        catch (const std::exception& e) {
+        try {
+            syncTargetToMotorPositions();
+        } catch (const std::exception& e) {
             RCLCPP_WARN(this->get_logger(), "Failed to sync on torque on: %s", e.what());
         }
 
@@ -267,9 +293,8 @@ void MauriceArmNode::armTorqueOnCallback(
     }
 }
 
-void MauriceArmNode::armTorqueOffCallback(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void MauriceArmNode::armTorqueOffCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                          std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/torque_off");
     try {
         std::lock_guard<std::mutex> lock(dynamixel_mutex_);
@@ -290,9 +315,8 @@ void MauriceArmNode::armTorqueOffCallback(
     }
 }
 
-void MauriceArmNode::armRebootServosCallback(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void MauriceArmNode::armRebootServosCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                             std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/reboot");
     try {
         std::lock_guard<std::mutex> lock(dynamixel_mutex_);
@@ -318,9 +342,8 @@ void MauriceArmNode::armRebootServosCallback(
     }
 }
 
-void MauriceArmNode::armFixErrorCallback(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void MauriceArmNode::armFixErrorCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/fix_error");
     try {
         std::lock_guard<std::mutex> lock(dynamixel_mutex_);
@@ -330,8 +353,8 @@ void MauriceArmNode::armFixErrorCallback(
         for (const auto& config : joint_configs_) {
             uint8_t hw_status = dynamixel_->readHardwareErrorStatus(config.servo_id);
             if (hw_status != 0) {
-                RCLCPP_WARN(this->get_logger(), "Servo %d has hardware error: %s",
-                    config.servo_id, describeHardwareError(hw_status, config.servo_id).c_str());
+                RCLCPP_WARN(this->get_logger(), "Servo %d has hardware error: %s", config.servo_id,
+                            describeHardwareError(hw_status, config.servo_id).c_str());
                 error_servo_ids.push_back(config.servo_id);
             }
         }
@@ -375,8 +398,7 @@ void MauriceArmNode::armFixErrorCallback(
 
         response->success = true;
         response->message = result.dump();
-        RCLCPP_INFO(this->get_logger(), "Fixed %zu servo(s): %s",
-            error_servo_ids.size(), response->message.c_str());
+        RCLCPP_INFO(this->get_logger(), "Fixed %zu servo(s): %s", error_servo_ids.size(), response->message.c_str());
     } catch (const std::exception& e) {
         response->success = false;
         json err_result;
@@ -437,10 +459,9 @@ void MauriceArmNode::headPositionCallback(const std_msgs::msg::Int32::SharedPtr 
 
         const auto& head_config = joint_configs_[6];  // Index 6 = joint 7
 
-        if (logical_position < head_config.head_min_angle_deg ||
-            logical_position > head_config.head_max_angle_deg) {
-            RCLCPP_ERROR(this->get_logger(), "Head position %f out of range [%f, %f]",
-                logical_position, head_config.head_min_angle_deg, head_config.head_max_angle_deg);
+        if (logical_position < head_config.head_min_angle_deg || logical_position > head_config.head_max_angle_deg) {
+            RCLCPP_ERROR(this->get_logger(), "Head position %f out of range [%f, %f]", logical_position,
+                         head_config.head_min_angle_deg, head_config.head_max_angle_deg);
             return;
         }
 
@@ -455,14 +476,12 @@ void MauriceArmNode::headPositionCallback(const std_msgs::msg::Int32::SharedPtr 
     }
 }
 
-void MauriceArmNode::headAiPositionCallback(
-    const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void MauriceArmNode::headAiPositionCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+                                            std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     try {
         const auto& head_config = joint_configs_[6];  // Index 6 = joint 7
 
-        RCLCPP_INFO(this->get_logger(), "Moving head to AI position (%f deg)",
-            head_config.head_ai_position_deg);
+        RCLCPP_INFO(this->get_logger(), "Moving head to AI position (%f deg)", head_config.head_ai_position_deg);
 
         int head_goal_encoder = logicalAngleToEncoder(head_config.head_ai_position_deg);
 
@@ -480,10 +499,10 @@ void MauriceArmNode::headAiPositionCallback(
     }
 }
 
-void MauriceArmNode::headEnableServoCallback(
-    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-    std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
-    RCLCPP_INFO(this->get_logger(), "Service called: /mars/head/enable_servo (enable=%s)", request->data ? "true" : "false");
+void MauriceArmNode::headEnableServoCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                             std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Service called: /mars/head/enable_servo (enable=%s)",
+                request->data ? "true" : "false");
     try {
         std::lock_guard<std::mutex> lock(dynamixel_mutex_);
 
@@ -502,9 +521,8 @@ void MauriceArmNode::headEnableServoCallback(
     } catch (const std::exception& e) {
         response->success = false;
         response->message = std::string("Failed: ") + e.what();
-        RCLCPP_ERROR(this->get_logger(), "Failed to %s head servo: %s",
-            request->data ? "enable" : "disable", e.what());
+        RCLCPP_ERROR(this->get_logger(), "Failed to %s head servo: %s", request->data ? "enable" : "disable", e.what());
     }
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm
