@@ -28,9 +28,8 @@ def call_service_sync(node, logger, client, request, label, timeout_sec, wait_ti
 
     result = future.result()
     if result is None:
-        logger.warn(f"{label} timed out")
+        logger.warn(f"{label} returned no result")
         return None
-
     if result.success:
         logger.info(f"{label}: {result.message}")
     else:
