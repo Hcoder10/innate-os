@@ -13,7 +13,6 @@ consumes zero CPU when no skill needs camera data.
 
 import base64
 import threading
-import time
 
 import rclpy
 import rclpy.executors
@@ -43,8 +42,6 @@ class CameraProvider(Node):
 
         self._main_camera_raw: bytes | None = None
         self._wrist_camera_raw: bytes | None = None
-        self._main_camera_time: float = 0.0
-        self._wrist_camera_time: float = 0.0
 
         self._main_sub = None
         self._wrist_sub = None
@@ -107,11 +104,9 @@ class CameraProvider(Node):
 
     def _main_camera_cb(self, msg: CompressedImage):
         self._main_camera_raw = bytes(msg.data)
-        self._main_camera_time = time.time()
 
     def _wrist_camera_cb(self, msg: CompressedImage):
         self._wrist_camera_raw = bytes(msg.data)
-        self._wrist_camera_time = time.time()
 
     # ---- lazy base64 properties ----
 
@@ -130,26 +125,6 @@ class CameraProvider(Node):
         if raw is None:
             return None
         return base64.b64encode(raw).decode("utf-8")
-
-    @property
-    def last_main_camera_time(self) -> float:
-        return self._main_camera_time
-
-    @property
-    def last_wrist_camera_time(self) -> float:
-        return self._wrist_camera_time
-
-    # ---- raw access (for saving directly to file without base64 round-trip) ----
-
-    @property
-    def last_main_camera_raw(self) -> bytes | None:
-        """Return the latest main camera JPEG bytes, or None."""
-        return self._main_camera_raw
-
-    @property
-    def last_wrist_camera_raw(self) -> bytes | None:
-        """Return the latest wrist camera JPEG bytes, or None."""
-        return self._wrist_camera_raw
 
     # ---- cleanup ----
 
