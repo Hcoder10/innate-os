@@ -1,6 +1,6 @@
 """WebSocket orchestration, decoupled from any single node.
 
-Owns the connection lifecycle around the :class:`~brain_client.comms.ws_transport.WSClient`
+Owns the connection lifecycle around the :class:`~brain_client.transport.ws_transport.WSClient`
 transport: config validation, the reconnect thread, status publishing, robot-version
 tracking, live backend-config swaps, and routing of outgoing messages (including the
 READY_FOR_CONNECTION connect trigger).
@@ -27,9 +27,9 @@ import time
 
 from std_msgs.msg import String
 
-from brain_client.comms.messages import InternalMessage, InternalMessageType, MessageIn
-from brain_client.comms.ws_config import is_hosted_innate_uri, validate_token_for_uri, validate_ws_uri
-from brain_client.comms.ws_transport import WS_THREAD_STOP_JOIN_SECONDS, WSClient
+from brain_client.transport.messages import InternalMessage, InternalMessageType, MessageIn
+from brain_client.transport.ws_config import is_hosted_innate_uri, validate_token_for_uri, validate_ws_uri
+from brain_client.transport.ws_transport import WS_THREAD_STOP_JOIN_SECONDS, WSClient
 
 
 class WebSocketManager:

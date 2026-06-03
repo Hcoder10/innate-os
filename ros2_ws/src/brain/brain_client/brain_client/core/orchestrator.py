@@ -1,6 +1,6 @@
 """Brain orchestration: the perception loop and cloud-message reactions.
 
-Pulls together the perception (camera, pose, map) and comms collaborators to build
+Pulls together the perception (camera, pose, map) and transport collaborators to build
 and send IMAGE / POSE_IMAGE payloads, and reacts to the cloud agent's control
 messages (ready-for-image, registration ack, memory positions, ws status). The
 heavy data transforms live in the pure ``navigation.payload`` / ``perception``
@@ -16,9 +16,9 @@ import rclpy
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
-from brain_client.comms.messages import InternalMessage, InternalMessageType, MessageIn, MessageInType
 from brain_client.navigation import payload as navpayload
 from brain_client.perception import image_codec
+from brain_client.transport.messages import InternalMessage, InternalMessageType, MessageIn, MessageInType
 
 READY_FOR_CONNECTION_COUNT = 10
 READY_FOR_CONNECTION_INTERVAL_SEC = 1.0

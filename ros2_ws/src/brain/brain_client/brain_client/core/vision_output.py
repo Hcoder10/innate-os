@@ -11,8 +11,8 @@ import json
 import math
 import traceback
 
-from brain_client.comms.messages import VisionAgentOutput
 from brain_client.perception import pose as pose_math
+from brain_client.transport.messages import VisionAgentOutput
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
 

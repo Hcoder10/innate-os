@@ -12,7 +12,7 @@ import time
 
 from std_msgs.msg import String
 
-from brain_client.comms.messages import InternalMessage, InternalMessageType, MessageIn, MessageInType
+from brain_client.transport.messages import InternalMessage, InternalMessageType, MessageIn, MessageInType
 
 
 class BrainLifecycle:

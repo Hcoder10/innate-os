@@ -2,7 +2,7 @@
 """Composition root for the brain client node.
 
 This file does no behaviour of its own: it declares config, builds the perception /
-skills / comms / core collaborators, wires them together, exposes the ROS service
+skills / transport / core collaborators, wires them together, exposes the ROS service
 surface, and spins. All logic lives in the concept modules under ``brain_client/``.
 """
 
@@ -20,11 +20,6 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
 from brain_client.agents.initializer import initialize_agents
-from brain_client.comms.chat import ChatManager
-from brain_client.comms.messages import MessageInType, MessageOutType
-from brain_client.comms.tts import TTSHandler
-from brain_client.comms.websocket import WSBridge
-from brain_client.comms.ws_manager import WebSocketManager
 from brain_client.core.config import BrainConfig
 from brain_client.core.lifecycle import BrainLifecycle
 from brain_client.core.orchestrator import Orchestrator
@@ -37,6 +32,11 @@ from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
+from brain_client.transport.chat import ChatManager
+from brain_client.transport.messages import MessageInType, MessageOutType
+from brain_client.transport.tts import TTSHandler
+from brain_client.transport.websocket import WSBridge
+from brain_client.transport.ws_manager import WebSocketManager
 
 
 class BrainClientNode(Node):
@@ -254,7 +254,7 @@ class BrainClientNode(Node):
         if "image_b64" in payload:
             self.state.pose_at_image_send = self.pose_tracker.current_pose_xyt()
 
-        from brain_client.comms.messages import MessageIn
+        from brain_client.transport.messages import MessageIn
 
         self.ws_bridge.send_message(MessageIn(type=MessageInType.CHAT_IN, payload=payload))
         self.get_logger().info(f"Sent MessageIn: {payload['text']}")
@@ -264,7 +264,7 @@ class BrainClientNode(Node):
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping custom input.")
             return
         try:
-            from brain_client.comms.messages import MessageIn
+            from brain_client.transport.messages import MessageIn
 
             data = json.loads(msg.data)
             self.get_logger().info(f"Received custom input from {data.get('input_device', 'unknown')}")

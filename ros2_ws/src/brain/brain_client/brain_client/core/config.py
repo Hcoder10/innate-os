@@ -2,7 +2,7 @@
 
 PURE module: imports no ``rclpy``. ``BrainConfig.load(node)`` is handed a node so
 it can declare/read ROS parameters, but the dataclass itself is plain data — which
-keeps every consumer (orchestrator, perception, comms) testable without a ROS
+keeps every consumer (orchestrator, perception, transport) testable without a ROS
 runtime and replaces the ~30 repetitions of
 ``self.get_parameter(x).get_parameter_value().y_value`` that used to live in
 ``BrainClientNode.__init__``.

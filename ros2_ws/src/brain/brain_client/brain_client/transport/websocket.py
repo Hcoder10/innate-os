@@ -2,7 +2,7 @@
 """In-process bridge between the brain and the WebSocket transport.
 
 Outgoing: hands message *objects* straight to the
-:class:`~brain_client.comms.ws_manager.WebSocketManager` (one serialization, no
+:class:`~brain_client.transport.ws_manager.WebSocketManager` (one serialization, no
 ROS topic). ``send_message`` is called on the executor thread and the manager uses
 ``run_coroutine_threadsafe`` to reach the socket's asyncio loop, so it is safe.
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import queue
 
-from brain_client.comms.messages import MessageOut, MessageOutType
+from brain_client.transport.messages import MessageOut, MessageOutType
 
 
 def _payload_summary(data):

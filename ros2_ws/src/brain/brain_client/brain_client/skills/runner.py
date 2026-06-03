@@ -13,8 +13,8 @@ import json
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
 
-from brain_client.comms.messages import MessageIn, MessageInType
 from brain_client.skills.types import SkillResult
+from brain_client.transport.messages import MessageIn, MessageInType
 
 
 class PrimitiveRunner:

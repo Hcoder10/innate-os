@@ -17,8 +17,8 @@ PURE_MODULES = [
     "brain_client.perception.image_codec",
     "brain_client.navigation.payload",
     "brain_client.skills.registry",
-    "brain_client.comms.messages",
-    "brain_client.comms.ws_config",
+    "brain_client.transport.messages",
+    "brain_client.transport.ws_config",
     "brain_client.core.config",
 ]
 

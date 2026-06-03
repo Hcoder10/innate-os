@@ -1,7 +1,7 @@
 """The async WebSocket client transport.
 
 Owns the connect/auth/listen/reconnect loop and forwards incoming messages back to
-its host (a :class:`~brain_client.comms.ws_manager.WebSocketManager`). The host
+its host (a :class:`~brain_client.transport.ws_manager.WebSocketManager`). The host
 provides the small interface this relies on: ``get_logger``, ``set_ws_status``,
 ``forward_incoming``, ``exit_event``, ``ws_client``, ``_handle_ws_error`` and the
 last-error bookkeeping.
@@ -16,7 +16,7 @@ import time
 import rclpy
 import websockets
 
-from brain_client.comms.messages import MessageIn, MessageInType
+from brain_client.transport.messages import MessageIn, MessageInType
 
 CONNECTED_GRACE_SECONDS = 2.0
 WS_THREAD_STOP_JOIN_SECONDS = 0.25

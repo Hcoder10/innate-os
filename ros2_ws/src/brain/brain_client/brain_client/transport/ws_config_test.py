@@ -1,6 +1,6 @@
 """Unit tests for pure WebSocket URI/token validation (no ROS required)."""
 
-from brain_client.comms import ws_config
+from brain_client.transport import ws_config
 
 
 def test_validate_ws_uri():

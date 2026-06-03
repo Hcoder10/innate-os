@@ -1,6 +1,6 @@
 # `core/` — the brain's behaviour
 
-The orchestration layer. Knows the perception/skills/comms collaborators and
+The orchestration layer. Knows the perception/skills/transport collaborators and
 coordinates them; it does **not** own ROS transport details (those are in the
 concept folders) and should stay free of `rclpy` message plumbing where possible.
 

@@ -546,7 +546,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     action_server.destroy()
-    # Guard against double-shutdown (see ws_client): avoids a teardown RCLError.
+    # Guard against double-shutdown: avoids a teardown RCLError that exits 1.
     if rclpy.ok():
         rclpy.shutdown()
 
