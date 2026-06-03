@@ -73,11 +73,8 @@ void Dynamixel::writeRegister(int motor_id, uint16_t address, uint32_t value, in
 }
 
 int Dynamixel::toSigned32(uint32_t value) {
-    int signed_value = static_cast<int>(value);
-    if (signed_value > (1LL << 31)) {
-        signed_value -= (1LL << 32);
-    }
-    return signed_value;
+    // Two's-complement reinterpretation: the high bit becomes the sign.
+    return static_cast<int>(value);
 }
 
 void Dynamixel::enableTorque(int motor_id) {
