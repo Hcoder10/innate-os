@@ -7,104 +7,25 @@ from specified directories. It validates that skills inherit from the Skill base
 and can automatically register them with the execution server.
 """
 
-import importlib.util
-import inspect
 import json
+import logging
 import os
-import re
-import sys
 from pathlib import Path
 
 import h5py
 
+from brain_client.common.dynamic_loader import DynamicLoader
 from brain_client.skills.types import Skill
 
 
-class SkillLoader:
+class SkillLoader(DynamicLoader):
     """
     Dynamically loads skill classes from specified directories.
     """
 
-    def __init__(self, logger):
-        self.logger = logger
+    base_class = Skill
 
-    def discover_skills_in_directory(self, directory_path: str) -> dict[str, tuple[type[Skill], Path]]:
-        """Returns {display_name: (class, source_file)} for all code skills in the directory."""
-        skills: dict[str, tuple[type[Skill], Path]] = {}
-        directory = Path(directory_path)
-
-        if not directory.exists():
-            self.logger.warning(f"Skill directory does not exist: {directory_path}")
-            return skills
-
-        if not directory.is_dir():
-            self.logger.warning(f"Path is not a directory: {directory_path}")
-            return skills
-
-        self.logger.info(f"Scanning for skills in: {directory_path}")
-
-        # Look for Python files (excluding __init__.py and __pycache__)
-        python_files = [f for f in directory.glob("*.py") if f.name != "__init__.py" and not f.name.startswith("_")]
-
-        for py_file in python_files:
-            try:
-                discovered = self._load_skills_from_file(py_file)
-                skills.update(discovered)
-            except Exception as e:
-                self.logger.error(f"Error loading skills from {py_file}: {e}")
-
-        self.logger.info(f"Discovered {len(skills)} skills in {directory_path}")
-        return skills
-
-    def _load_skills_from_file(self, file_path: Path) -> dict[str, tuple[type[Skill], Path]]:
-        """Returns {display_name: (class, source_file)} for each Skill subclass in the file."""
-        skills: dict[str, tuple[type[Skill], Path]] = {}
-        module_name = file_path.stem
-
-        # Load the module
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        if spec is None or spec.loader is None:
-            self.logger.warning(f"Could not load spec for {file_path}")
-            return skills
-
-        module = importlib.util.module_from_spec(spec)
-
-        # Add the root directory to sys.path for imports to work
-        maurice_prod_dir = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-        if maurice_prod_dir not in sys.path:
-            sys.path.insert(0, maurice_prod_dir)
-
-        try:
-            spec.loader.exec_module(module)
-        except ModuleNotFoundError as e:
-            missing = e.name or str(e)
-            self.logger.warning(f"Skipping skill module {module_name}: missing dependency '{missing}'")
-            return skills
-        except ImportError as e:
-            self.logger.warning(f"Skipping skill module {module_name}: import failed ({e})")
-            return skills
-        except Exception as e:
-            self.logger.error(f"Error executing module {module_name}: {e}")
-            return skills
-        finally:
-            # Remove from sys.path if we added it
-            if maurice_prod_dir in sys.path:
-                sys.path.remove(maurice_prod_dir)
-
-        # Find all classes in the module that inherit from Skill
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            if obj != Skill and issubclass(obj, Skill) and obj.__module__ == module.__name__:
-                # Validate the skill class
-                if self._validate_skill_class(obj):
-                    skill_name = self._get_skill_name(obj)
-                    skills[skill_name] = (obj, file_path)
-                    self.logger.debug(f"Loaded skill: {skill_name} from {file_path}")
-                else:
-                    self.logger.warning(f"Invalid skill class: {name} in {file_path}")
-
-        return skills
-
-    def _validate_skill_class(self, skill_class: type[Skill]) -> bool:
+    def _validate_class(self, skill_class: type[Skill]) -> bool:
         # Check that required abstract methods are implemented
         required_methods = ["name", "execute", "cancel"]
         for method_name in required_methods:
@@ -119,25 +40,13 @@ class SkillLoader:
 
         return True
 
-    def _get_skill_name(self, skill_class: type[Skill]) -> str:
+    def _get_name(self, skill_class: type[Skill]) -> str:
         try:
-            # Create a temporary logger for this purpose
-            import logging
-
             temp_logger = logging.getLogger(f"temp_{skill_class.__name__}")
-            temp_instance = skill_class(temp_logger)
-            return temp_instance.name
+            return skill_class(temp_logger).name
         except Exception as e:
             self.logger.debug(f"Could not get name from skill {skill_class.__name__}: {e}")
-            # Fallback to class name converted to snake_case
-            fallback_name = self._class_name_to_snake_case(skill_class.__name__)
-            self.logger.debug(f"Using fallback name: {fallback_name}")
-            return fallback_name
-
-    def _class_name_to_snake_case(self, class_name: str) -> str:
-        # Insert underscore before uppercase letters that follow lowercase letters
-        s1 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", class_name)
-        return s1.lower()
+            return self._fallback_name(skill_class)
 
     def reload_skill_by_file_stem(self, file_stem: str, directories: list[str]) -> tuple[type[Skill], Path] | None:
         """
@@ -151,7 +60,7 @@ class SkillLoader:
             if not py_file.exists():
                 continue
             try:
-                discovered = self._load_skills_from_file(py_file)
+                discovered = self.discover_in_file(py_file)
                 # Return the first skill found in the file
                 for _name, entry in discovered.items():
                     self.logger.info(f"Reloaded skill from {py_file}")
@@ -161,29 +70,6 @@ class SkillLoader:
 
         self.logger.warning(f"Could not find code skill file '{file_stem}.py' in any directory")
         return None
-
-    def load_skills_from_directories(self, directories: list[str]) -> dict[str, tuple[type[Skill], Path]]:
-        """Returns {display_name: (class, source_file)} across all directories."""
-        all_skills: dict[str, tuple[type[Skill], Path]] = {}
-
-        for directory in directories:
-            try:
-                discovered = self.discover_skills_in_directory(directory)
-
-                # Check for name conflicts
-                for name, entry in discovered.items():
-                    if name in all_skills:
-                        self.logger.warning(
-                            f"Skill name conflict: '{name}' found in both "
-                            f"{all_skills[name][0].__module__} and {entry[0].__module__}. "
-                            f"Using the latter."
-                        )
-                    all_skills[name] = entry
-
-            except Exception as e:
-                self.logger.error(f"Error loading skills from {directory}: {e}")
-
-        return all_skills
 
     def validate_physical_skill(self, skill_dir: str, metadata: dict) -> tuple:
         """Validate a physical skill.

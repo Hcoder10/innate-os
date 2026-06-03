@@ -126,7 +126,7 @@ class SkillRepository:
 
     # --- loading ---
     def _load_code_skills(self, skills_directories) -> dict[str, tuple[str, Skill]]:
-        discovered_skills = self.skill_loader.load_skills_from_directories(skills_directories)
+        discovered_skills = self.skill_loader.load_from_directories(skills_directories)
         self._logger.info(f"Discovered skills: {list(discovered_skills.keys())} in directories {skills_directories}")
 
         id_keyed: dict[str, tuple[str, type, Path]] = {}
@@ -265,7 +265,7 @@ class SkillRepository:
                 result = self.skill_loader.reload_skill_by_file_stem(basename, self._skills_directories)
                 if result is not None:
                     cls, src_path = result
-                    display_name = self.skill_loader._get_skill_name(cls)
+                    display_name = self.skill_loader._get_name(cls)
                     try:
                         instance = self._instantiate(cls, src_path)
                         with self._skills_lock:

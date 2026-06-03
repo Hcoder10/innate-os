@@ -37,7 +37,7 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
     agents_directories = [str(p) for p in get_agent_directories()]
 
     # Load all agents dynamically from all directories
-    discovered_agent_classes = agent_loader.load_agents_from_directories(agents_directories)
+    discovered_agent_classes = agent_loader.load_from_directories(agents_directories)
 
     # Create agent instances with skill validation and icon loading.
     # The loader stamps `source` per instance based on origin file path.

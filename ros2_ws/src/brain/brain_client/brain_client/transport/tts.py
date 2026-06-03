@@ -253,52 +253,6 @@ class TTSHandler:
         speech_thread = threading.Thread(target=speak_thread, daemon=True)
         speech_thread.start()
 
-    def get_available_voices(self) -> list:
-        """
-        Get list of available voices from Cartesia.
-
-        Note: This method is not yet implemented in the proxy client.
-        Returns empty list for now.
-
-        Returns:
-            List of available voice objects
-        """
-        if not self.is_available():
-            return []
-
-        # TODO: Implement voice listing in proxy client if needed
-        self.logger.warn("⚠️ Voice listing not yet implemented in proxy client")
-        return []
-
-    def set_voice(self, voice_id: str) -> bool:
-        """
-        Set the voice ID for speech synthesis.
-
-        Args:
-            voice_id: New voice ID to use
-
-        Returns:
-            True if voice was set successfully, False otherwise
-        """
-        if not self.is_available():
-            return False
-
-        try:
-            # Verify the voice exists
-            voices = self.get_available_voices()
-            voice_ids = [voice.id for voice in voices]
-
-            if voice_id in voice_ids:
-                self.voice_id = voice_id
-                self.logger.info(f"✅ Voice updated to: {voice_id}")
-                return True
-            else:
-                self.logger.error(f"❌ Voice ID not found: {voice_id}")
-                return False
-        except Exception as e:
-            self.logger.error(f"❌ Failed to set voice: {e}")
-            return False
-
     def close(self):
         """Clean up resources."""
         if self._cartesia_client:

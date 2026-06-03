@@ -8,115 +8,31 @@ and can automatically register them with the brain client.
 """
 
 import base64
-import importlib.util
-import inspect
 import os
-import sys
 from pathlib import Path
 
 from brain_client.agents.types import Agent
+from brain_client.common.dynamic_loader import DynamicLoader
 from brain_client.common.script_paths import classify_source
 
 
-class AgentLoader:
+class AgentLoader(DynamicLoader):
     """
     Dynamically loads agent classes from specified directories.
     """
 
-    def __init__(self, logger):
-        self.logger = logger
-        self._loaded_agents: dict[str, type[Agent]] = {}
+    base_class = Agent
+    name_suffixes = ("Agent", "Directive")
 
-    def discover_agents_in_directory(self, directory_path: str) -> dict[str, tuple[type[Agent], Path]]:
-        """
-        Scans a directory for Python files and attempts to load agent classes.
-
-        Args:
-            directory_path: Path to directory containing agent files
-
-        Returns:
-            Dictionary mapping agent names to (class, source_file) tuples
-        """
-        agents: dict[str, tuple[type[Agent], Path]] = {}
-        directory = Path(directory_path)
-
-        if not directory.exists():
-            self.logger.warning(f"Agent directory does not exist: {directory_path}")
-            return agents
-
-        if not directory.is_dir():
-            self.logger.warning(f"Path is not a directory: {directory_path}")
-            return agents
-
-        self.logger.info(f"Scanning for agents in: {directory_path}")
-
-        # Look for Python files (excluding __init__.py, __pycache__, and types.py)
-        python_files = [
+    def _iter_candidate_files(self, directory: Path) -> list[Path]:
+        # Look for Python files (excluding __init__.py, types.py, and _-prefixed)
+        return [
             f
             for f in directory.glob("*.py")
             if f.name not in ["__init__.py", "types.py"] and not f.name.startswith("_")
         ]
 
-        for py_file in python_files:
-            try:
-                discovered = self._load_agents_from_file(py_file)
-                agents.update(discovered)
-            except Exception as e:
-                self.logger.error(f"Error loading agents from {py_file}: {e}")
-
-        self.logger.info(f"Discovered {len(agents)} agents in {directory_path}")
-        return agents
-
-    def _load_agents_from_file(self, file_path: Path) -> dict[str, tuple[type[Agent], Path]]:
-        """
-        Loads agent classes from a single Python file.
-
-        Args:
-            file_path: Path to the Python file
-
-        Returns:
-            Dictionary mapping agent names to (class, source_file) tuples
-        """
-        agents: dict[str, tuple[type[Agent], Path]] = {}
-        module_name = file_path.stem
-
-        # Load the module
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        if spec is None or spec.loader is None:
-            self.logger.warning(f"Could not load spec for {file_path}")
-            return agents
-
-        module = importlib.util.module_from_spec(spec)
-
-        # Add the root directory to sys.path for imports to work
-        maurice_prod_dir = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-        if maurice_prod_dir not in sys.path:
-            sys.path.insert(0, maurice_prod_dir)
-
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            self.logger.error(f"Error executing module {module_name}: {e}")
-            return agents
-        finally:
-            # Remove from sys.path if we added it
-            if maurice_prod_dir in sys.path:
-                sys.path.remove(maurice_prod_dir)
-
-        # Find all classes in the module that inherit from Agent
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            if obj != Agent and issubclass(obj, Agent) and obj.__module__ == module.__name__:
-                # Validate the agent class
-                if self._validate_agent_class(obj):
-                    agent_name = self._get_agent_name(obj)
-                    agents[agent_name] = (obj, file_path)
-                    self.logger.debug(f"Loaded agent: {agent_name} from {file_path}")
-                else:
-                    self.logger.warning(f"Invalid agent class: {name} in {file_path}")
-
-        return agents
-
-    def _validate_agent_class(self, agent_class: type[Agent]) -> bool:
+    def _validate_class(self, agent_class: type[Agent]) -> bool:
         """
         Validates that an agent class is properly implemented.
 
@@ -150,41 +66,16 @@ class AgentLoader:
             self.logger.error(f"Error validating agent {agent_class.__name__}: {e}")
             return False
 
-    def _get_agent_name(self, agent_class: type[Agent]) -> str:
+    def _get_name(self, agent_class: type[Agent]) -> str:
         """
         Gets the agent name by creating a temporary instance.
         This is needed because the name is a property that requires instantiation.
-
-        Args:
-            agent_class: The agent class
-
-        Returns:
-            The agent's name
         """
         try:
-            temp_instance = agent_class()
-            return temp_instance.id
+            return agent_class().id
         except Exception as e:
             self.logger.debug(f"Could not get name from agent {agent_class.__name__}: {e}")
-            # Fallback to class name converted to snake_case
-            fallback_name = self._class_name_to_snake_case(agent_class.__name__)
-            self.logger.debug(f"Using fallback name: {fallback_name}")
-            return fallback_name
-
-    def _class_name_to_snake_case(self, class_name: str) -> str:
-        """Convert CamelCase to snake_case."""
-        import re
-
-        # Remove "Agent" suffix if present
-        if class_name.endswith("Agent"):
-            class_name = class_name[:-5]  # Remove "Agent"
-        # Also handle legacy "Directive" suffix
-        elif class_name.endswith("Directive"):
-            class_name = class_name[:-9]  # Remove "Directive"
-
-        # Insert underscore before uppercase letters that follow lowercase letters
-        s1 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", class_name)
-        return s1.lower()
+            return self._fallback_name(agent_class)
 
     def reload_agent_by_name(self, agent_name: str, directories: list[str]) -> tuple[type[Agent], Path] | None:
         """
@@ -202,16 +93,9 @@ class AgentLoader:
             if not directory_path.exists():
                 continue
 
-            # Search for python files that might contain this agent
-            python_files = [
-                f
-                for f in directory_path.glob("*.py")
-                if f.name not in ["__init__.py", "types.py"] and not f.name.startswith("_")
-            ]
-
-            for py_file in python_files:
+            for py_file in self._iter_candidate_files(directory_path):
                 try:
-                    discovered = self._load_agents_from_file(py_file)
+                    discovered = self.discover_in_file(py_file)
                     if agent_name in discovered:
                         self.logger.info(f"Reloaded agent '{agent_name}' from {py_file}")
                         return discovered[agent_name]
@@ -220,39 +104,6 @@ class AgentLoader:
 
         self.logger.warning(f"Could not find agent '{agent_name}' in any directory")
         return None
-
-    def load_agents_from_directories(self, directories: list[str]) -> dict[str, tuple[type[Agent], Path]]:
-        """
-        Load agents from multiple directories.
-
-        Args:
-            directories: List of directory paths to scan
-
-        Returns:
-            Dictionary mapping agent names to (class, source_file) tuples
-        """
-        all_agents: dict[str, tuple[type[Agent], Path]] = {}
-
-        for directory in directories:
-            try:
-                discovered = self.discover_agents_in_directory(directory)
-
-                # Check for name conflicts
-                for name, entry in discovered.items():
-                    if name in all_agents:
-                        existing_cls, _existing_path = all_agents[name]
-                        new_cls, _new_path = entry
-                        self.logger.warning(
-                            f"Agent name conflict: '{name}' found in both "
-                            f"{existing_cls.__module__} and {new_cls.__module__}. "
-                            f"Using the latter."
-                        )
-                    all_agents[name] = entry
-
-            except Exception as e:
-                self.logger.error(f"Error loading agents from {directory}: {e}")
-
-        return all_agents
 
     def create_agent_instances(
         self,
