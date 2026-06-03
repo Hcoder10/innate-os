@@ -18,8 +18,8 @@ import time
 
 import sounddevice as sd
 
-from brain_client.input_types import InputDevice
-from brain_client.logging_config import UniversalLogger
+from brain_client.inputs.types import InputDevice
+from brain_client.common.logging import UniversalLogger
 
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1

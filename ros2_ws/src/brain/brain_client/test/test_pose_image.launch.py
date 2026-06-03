@@ -47,7 +47,7 @@ def generate_test_description():
 
     skills_action_server = launch_ros.actions.Node(
         package="brain_client",
-        executable="skills_action_server.py",
+        executable="skills_server.py",
         name="skills_action_server",
         output="screen",
         parameters=[

@@ -4,7 +4,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from maurice_bringup.env_loader import get_env, load_env_file
 
-from brain_client.logging_config import get_logging_env_vars
+from brain_client.common.logging import get_logging_env_vars
 
 
 def generate_launch_description():
@@ -187,7 +187,7 @@ def generate_launch_description():
             # Launch the WSClientNode (handles actual WebSocket connection)
             Node(
                 package="brain_client",
-                executable="ws_client_node.py",
+                executable="ws_client.py",
                 name="ws_client_node",
                 output="screen",
                 parameters=[
@@ -199,7 +199,7 @@ def generate_launch_description():
             ),
             Node(
                 package="brain_client",
-                executable="skills_action_server.py",
+                executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
                 parameters=[

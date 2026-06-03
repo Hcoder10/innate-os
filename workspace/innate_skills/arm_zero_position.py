@@ -5,7 +5,7 @@ Arm Zero Position Skill - Move arm to all-zeros joint position.
 
 import time
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 
 class ArmZeroPosition(Skill):

@@ -17,10 +17,10 @@ ament_python_install_package(${PROJECT_NAME}
 
 # Install Python executables
 install(PROGRAMS
-  brain_client/brain_client_node.py
-  brain_client/ws_client_node.py
-  brain_client/skills_action_server.py
-  brain_client/input_manager_node.py
+  brain_client/nodes/brain_client_node.py
+  brain_client/nodes/ws_client.py
+  brain_client/nodes/skills_server.py
+  brain_client/nodes/input_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

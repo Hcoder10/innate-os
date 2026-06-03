@@ -10,7 +10,7 @@ from pathlib import Path
 
 import google.generativeai as genai
 
-from brain_client.skill_types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 
 def _load_env_file(env_path: Path) -> dict:
