@@ -17,10 +17,18 @@ def _payload_summary(data):
 
 
 class WSBridge:
-    """
-    WSBridge subscribes to a ROS topic (default "ws_messages") where the WSClient node publishes
-    JSON-stringified messages. It parses and validates them, then dispatches to registered handlers.
-    It also publishes outgoing messages (after dumping them to JSON) on a dedicated topic (default "ws_outgoing").
+    """Bridge between the brain and the WebSocket transport.
+
+    Validates incoming backend messages and dispatches them to registered handlers,
+    and serializes/forwards outgoing messages. Two modes:
+
+    - **topic mode** (default): a separate ``ws_client`` process publishes incoming
+      JSON on ``ws_messages`` and reads outgoing JSON from ``ws_outgoing``.
+    - **in-process mode** (``transport`` given): the bridge drives a
+      :class:`~brain_client.comms.ws_manager.WebSocketManager` directly — outgoing
+      message *objects* are handed straight to it (no topic, no re-serialization),
+      and the manager calls :meth:`dispatch` for incoming messages. Wire it up with
+      ``transport.on_incoming = bridge.dispatch`` after construction.
     """
 
     def __init__(
@@ -28,19 +36,22 @@ class WSBridge:
         node,
         incoming_topic: str = "ws_messages",
         outgoing_topic: str = "ws_outgoing",
+        transport=None,
     ):
         self.node = node
-        self.incoming_topic = incoming_topic
-        self.outgoing_topic = outgoing_topic
         self.handlers = {}  # Map from MessageOutType to handler callback
+        self._transport = transport
 
-        # Subscription for incoming messages from the WSClient node.
-        self.incoming_sub = self.node.create_subscription(String, self.incoming_topic, self._ws_callback, 10)
-        # Publisher for outgoing messages to the WSClient node.
-        self.outgoing_pub = self.node.create_publisher(String, self.outgoing_topic, 10)
-        self.node.get_logger().info(
-            f"WSBridge subscribed to '{self.incoming_topic}' and publishing outgoing on '{self.outgoing_topic}'."
-        )
+        if transport is None:
+            self.incoming_sub = self.node.create_subscription(String, incoming_topic, self._ws_callback, 10)
+            self.outgoing_pub = self.node.create_publisher(String, outgoing_topic, 10)
+            self.node.get_logger().info(
+                f"WSBridge subscribed to '{incoming_topic}' and publishing outgoing on '{outgoing_topic}'."
+            )
+        else:
+            self.incoming_sub = None
+            self.outgoing_pub = None
+            self.node.get_logger().info("WSBridge using in-process WebSocket transport (no topic hop).")
 
     def register_handler(self, msg_type: MessageOutType, handler):
         """
@@ -49,12 +60,17 @@ class WSBridge:
         self.handlers[msg_type] = handler
 
     def _ws_callback(self, msg: String):
-        """
-        Callback for incoming JSON-string messages.
-        Optimized for low latency - minimal logging, fast path for common messages.
+        """Topic-mode subscription callback; delegates to :meth:`dispatch`."""
+        self.dispatch(msg.data)
+
+    def dispatch(self, raw: str):
+        """Parse, validate, and dispatch one incoming JSON message string.
+
+        Used as the topic callback in topic mode and as the manager's
+        ``on_incoming`` callback in in-process mode.
         """
         try:
-            data = json.loads(msg.data)
+            data = json.loads(raw)
         except json.JSONDecodeError as e:
             self.node.get_logger().error(f"WSBridge: Failed to parse JSON: {e}")
             return
@@ -86,14 +102,17 @@ class WSBridge:
             self.node.get_logger().warn(f"WSBridge: No handler registered for message type: {ws_msg.type}")
 
     def send_message(self, message):
+        """Forward an outgoing message (a MessageIn / InternalMessage instance).
+
+        In-process mode hands the object straight to the transport (one
+        serialization, no topic). Topic mode JSON-dumps it onto ``ws_outgoing``.
         """
-        Dump the outgoing message to a JSON string and publish it on the outgoing topic.
-        The 'message' is expected to be a MessageIn instance.
-        """
+        if self._transport is not None:
+            self._transport.handle_outgoing(message)
+            return
         try:
             json_str = message.model_dump_json()
         except Exception as e:
             self.node.get_logger().error(f"WSBridge: Failed to dump message to JSON: {e}")
             return
-        outgoing_msg = String(data=json_str)
-        self.outgoing_pub.publish(outgoing_msg)
+        self.outgoing_pub.publish(String(data=json_str))

@@ -82,7 +82,9 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # Guard against double-shutdown on signal teardown (matches the other nodes).
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

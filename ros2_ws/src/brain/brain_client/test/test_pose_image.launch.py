@@ -67,6 +67,10 @@ def generate_test_description():
         parameters=[
             {
                 "simulator_mode": True,
+                # Topic-bridge mode: this test injects on ws_messages and observes
+                # ws_outgoing, so it drives the brain via the topic interface rather
+                # than the (default) in-process transport.
+                "inprocess_websocket": False,
                 "websocket_uri": "",
                 "image_topic": "/test/camera/compressed",
                 "map_topic": "/test/map",

@@ -1,9 +1,10 @@
 """The async WebSocket client transport.
 
 Owns the connect/auth/listen/reconnect loop and forwards incoming messages back to
-its node (which publishes them onto ROS). The node provides the small interface
-this relies on: ``set_ws_status``, ``ws_pub``, ``exit_event``, ``ws_client``,
-``_handle_ws_error`` and the last-error bookkeeping.
+its host (a :class:`~brain_client.comms.ws_manager.WebSocketManager`). The host
+provides the small interface this relies on: ``get_logger``, ``set_ws_status``,
+``forward_incoming``, ``exit_event``, ``ws_client``, ``_handle_ws_error`` and the
+last-error bookkeeping.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ import time
 
 import rclpy
 import websockets
-from std_msgs.msg import String
 
 from brain_client.comms.messages import MessageIn, MessageInType
 
@@ -146,7 +146,7 @@ class WSClient:
                 self.node.get_logger().debug("Dropping incoming message from stale WebSocket client.")
                 continue
             self.node.get_logger().debug(f"Forwarding incoming message: {incoming}")
-            self.node.ws_pub.publish(String(data=incoming))
+            self.node.forward_incoming(incoming)
 
         return "WebSocket listener stopped."
 

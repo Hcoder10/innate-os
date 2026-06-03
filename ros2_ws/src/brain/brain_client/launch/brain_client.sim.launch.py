@@ -106,6 +106,7 @@ def generate_launch_description():
             {
                 "websocket_uri": LaunchConfiguration("websocket_uri"),
                 "token": LaunchConfiguration("token"),
+                "client_version": LaunchConfiguration("client_version"),
                 "image_topic": LaunchConfiguration("image_topic"),
                 "map_topic": LaunchConfiguration("map_topic"),
                 "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
@@ -152,20 +153,8 @@ def generate_launch_description():
             height_cam_arg,
             current_nav_mode_topic_arg,
             brain_client_node,
-            # Launch the WSClientNode (handles actual WebSocket connection)
-            Node(
-                package="brain_client",
-                executable="ws_client.py",
-                name="ws_client_node",
-                output="screen",
-                parameters=[
-                    {
-                        "websocket_uri": LaunchConfiguration("websocket_uri"),
-                        "token": LaunchConfiguration("token"),
-                        "client_version": LaunchConfiguration("client_version"),
-                    }
-                ],
-            ),
+            # The WebSocket connection runs in-process inside brain_client_node
+            # (inprocess_websocket defaults to true); no separate ws_client node.
             Node(
                 package="brain_client",
                 executable="skills_server.py",

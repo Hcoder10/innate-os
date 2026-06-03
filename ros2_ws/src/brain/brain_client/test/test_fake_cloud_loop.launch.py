@@ -8,14 +8,14 @@ asserts on what actually crossed the wire. Because the same ROS2 nodes run in si
 and on hardware, green here is high-confidence evidence about hardware behavior.
 
 What runs (all real, sim mode):
-  - brain_client_node      - orchestration: registration, vision-output handling,
-                             primitive lifecycle, brain activation
-  - ws_client_node         - the WebSocket transport (auth, connect, forward)
+  - brain_client_node      - orchestration + the WebSocket transport in-process
+                             (registration, vision-output handling, primitive
+                             lifecycle, brain activation, auth/connect/forward)
   - skills_action_server   - executes the dispatched primitive (ExecuteSkill)
   - FakeCloud (this test)   - scriptable stand-in for innate-cloud-agent on ws 8765
 
 Why it is self-driving: brain_client_node broadcasts READY_FOR_CONNECTION on
-startup, so ws_client_node connects to FakeCloud on its own; in simulator_mode the
+startup, so its in-process transport connects to FakeCloud on its own; in simulator_mode the
 brain auto-activates after registration (no /brain/set_brain_active needed). The
 test only has to feed a synthetic camera image + TF (no hardware) so the brain has
 perception to send - the same trick test_pose_image.launch.py uses.
@@ -116,13 +116,8 @@ def generate_test_description():
         ],
     )
 
-    ws_client = launch_ros.actions.Node(
-        package="brain_client",
-        executable="ws_client.py",
-        name="ws_client_node",
-        output="screen",
-        parameters=[{"websocket_uri": FAKE.uri, "token": "test-token"}],
-    )
+    # brain_client_node runs the WebSocket transport in-process (inprocess_websocket
+    # defaults to true), so no separate ws_client node is launched.
 
     skills_action_server = launch_ros.actions.Node(
         package="brain_client",
@@ -136,7 +131,6 @@ def generate_test_description():
         launch.LaunchDescription(
             [
                 brain_client,
-                ws_client,
                 skills_action_server,
                 launch.actions.TimerAction(
                     period=5.0,
@@ -146,7 +140,6 @@ def generate_test_description():
         ),
         {
             "brain_client": brain_client,
-            "ws_client_node": ws_client,
             "skills_action_server": skills_action_server,
         },
     )
