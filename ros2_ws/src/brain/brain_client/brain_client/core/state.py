@@ -28,6 +28,9 @@ class BrainState:
     token: str = ""
     pending_reregistration: bool = False
 
+    # --- skill execution (owned by PrimitiveRunner; read by SkillCatalog) ---
+    primitive_running: dict | None = None
+
     # --- skills + directives ---
     registry: SkillRegistry = field(default_factory=SkillRegistry)
     directives: dict = field(default_factory=dict)

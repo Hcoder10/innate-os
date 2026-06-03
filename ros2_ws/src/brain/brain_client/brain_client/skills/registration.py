@@ -23,8 +23,6 @@ class SkillCatalog:
         self._logger = node.get_logger()
         self._ws = ws_bridge
         self._state = state
-        # Set by the node after the runner exists; True while a primitive runs.
-        self.is_busy = lambda: False
 
         qos = QoSProfile(
             depth=1,
@@ -62,7 +60,7 @@ class SkillCatalog:
 
         # Re-register with the cloud agent if we were already registered.
         if self._state.primitives_registered:
-            if not self.is_busy():
+            if self._state.primitive_running is None:
                 self.register()
             else:
                 self._logger.info("Deferring primitives re-registration — a skill is currently running")

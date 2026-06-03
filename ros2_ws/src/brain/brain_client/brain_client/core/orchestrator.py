@@ -37,6 +37,7 @@ class Orchestrator:
         pose_tracker,
         map_state,
         chat,
+        catalog,
         active_inputs_pub,
         memory_positions_pub,
     ):
@@ -49,12 +50,13 @@ class Orchestrator:
         self._pose = pose_tracker
         self._map = map_state
         self._chat = chat
+        self.catalog = catalog
+
+        # Set via set_lifecycle() after construction (mutual cycle with BrainLifecycle).
+        self.lifecycle = None
+
         self._active_inputs_pub = active_inputs_pub
         self._memory_positions_pub = memory_positions_pub
-
-        # Wired by the node after construction.
-        self.lifecycle = None
-        self.catalog = None
 
         self.pose_image_timer = None
         self._ready_for_connection_timer = None
@@ -62,6 +64,10 @@ class Orchestrator:
         self._initial_active_inputs_timer = None
         self._initial_active_inputs_remaining = int(INPUT_MANAGER_WAIT_TIMEOUT_SEC / READY_FOR_CONNECTION_INTERVAL_SEC)
         self._ws_connected = False
+
+    def set_lifecycle(self, lifecycle) -> None:
+        """Inject BrainLifecycle, which can only be built after this object (mutual cycle)."""
+        self.lifecycle = lifecycle
 
     # ================= perception loop =================
     def agent_loop(self) -> None:

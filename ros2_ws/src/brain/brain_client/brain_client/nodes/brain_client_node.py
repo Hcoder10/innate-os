@@ -33,7 +33,7 @@ from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
 from brain_client.transport.chat import ChatManager
-from brain_client.transport.messages import MessageInType, MessageOutType
+from brain_client.transport.messages import MessageIn, MessageInType, MessageOutType
 from brain_client.transport.tts import TTSHandler
 from brain_client.transport.websocket import WSBridge
 from brain_client.transport.ws_manager import WebSocketManager
@@ -81,7 +81,6 @@ class BrainClientNode(Node):
         self._reload_skills_client = self._service_call_node.create_client(ReloadSkillsAgents, "/brain/reload_skills")
 
         self._build_collaborators()
-        self._wire()
         self._register_ws_handlers()
         self._create_always_on_subscriptions()
         self._create_services()
@@ -151,6 +150,7 @@ class BrainClientNode(Node):
             pose_tracker=self.pose_tracker,
             map_state=self.map_state,
             chat=self.chat,
+            catalog=self.catalog,
             active_inputs_pub=self.active_inputs_pub,
             memory_positions_pub=self.memory_positions_pub,
         )
@@ -164,9 +164,14 @@ class BrainClientNode(Node):
             runner=self.runner,
             gaze=self.gaze,
             chat=self.chat,
+            orchestrator=self.orchestrator,
+            catalog=self.catalog,
             active_inputs_pub=self.active_inputs_pub,
             stop_robot=self._stop_robot,
         )
+        # Close the one irreducible cycle: Orchestrator needs the lifecycle that
+        # can only be built after it.
+        self.orchestrator.set_lifecycle(self.lifecycle)
         self.vision_output = VisionOutputHandler(
             self, state, runner=self.runner, chat=self.chat, gaze=self.gaze, pose_tracker=self.pose_tracker
         )
@@ -179,14 +184,6 @@ class BrainClientNode(Node):
             self._reload_primitives_client,
             self._reload_skills_client,
         )
-
-    def _wire(self) -> None:
-        """Resolve the construction cycles between core collaborators."""
-        self.catalog.is_busy = lambda: self.runner.primitive_running is not None
-        self.orchestrator.lifecycle = self.lifecycle
-        self.orchestrator.catalog = self.catalog
-        self.lifecycle.orchestrator = self.orchestrator
-        self.lifecycle.catalog = self.catalog
 
     def _register_ws_handlers(self) -> None:
         b = self.ws_bridge
@@ -254,8 +251,6 @@ class BrainClientNode(Node):
         if "image_b64" in payload:
             self.state.pose_at_image_send = self.pose_tracker.current_pose_xyt()
 
-        from brain_client.transport.messages import MessageIn
-
         self.ws_bridge.send_message(MessageIn(type=MessageInType.CHAT_IN, payload=payload))
         self.get_logger().info(f"Sent MessageIn: {payload['text']}")
 
@@ -264,8 +259,6 @@ class BrainClientNode(Node):
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping custom input.")
             return
         try:
-            from brain_client.transport.messages import MessageIn
-
             data = json.loads(msg.data)
             self.get_logger().info(f"Received custom input from {data.get('input_device', 'unknown')}")
             self.ws_bridge.send_message(MessageIn(type=MessageInType.CUSTOM_INPUT, payload=data))

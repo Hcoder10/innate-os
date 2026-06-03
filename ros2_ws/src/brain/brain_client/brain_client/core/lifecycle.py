@@ -17,7 +17,21 @@ from brain_client.transport.messages import InternalMessage, InternalMessageType
 
 class BrainLifecycle:
     def __init__(
-        self, node, state, config, *, ws_bridge, camera, pose_tracker, runner, gaze, chat, active_inputs_pub, stop_robot
+        self,
+        node,
+        state,
+        config,
+        *,
+        ws_bridge,
+        camera,
+        pose_tracker,
+        runner,
+        gaze,
+        chat,
+        orchestrator,
+        catalog,
+        active_inputs_pub,
+        stop_robot,
     ):
         self._node = node
         self._logger = node.get_logger()
@@ -29,12 +43,10 @@ class BrainLifecycle:
         self._runner = runner
         self._gaze = gaze
         self._chat = chat
+        self.orchestrator = orchestrator
+        self.catalog = catalog
         self._active_inputs_pub = active_inputs_pub
         self._stop_robot = stop_robot
-
-        # Wired by the node after construction (avoids a ctor cycle with Orchestrator/Catalog).
-        self.orchestrator = None
-        self.catalog = None
 
         self.agent_timer = None
         self._memory_timer = None

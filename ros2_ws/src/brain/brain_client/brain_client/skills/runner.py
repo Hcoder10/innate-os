@@ -28,7 +28,6 @@ class PrimitiveRunner:
         self._on_task_finished = on_task_finished
 
         self.action_client = ActionClient(node, ExecuteSkill, "execute_skill")
-        self.primitive_running: dict | None = None
         self._goal_handle = None
         self._pending_next_task = None
 
@@ -46,7 +45,7 @@ class PrimitiveRunner:
         self._chat.publish_task_status(
             primitive_name=skill_name, primitive_id=primitive_id, status="running", skill_id=skill_id
         )
-        self.primitive_running = {
+        self._state.primitive_running = {
             "primitive_name": skill_name,
             "primitive_id": primitive_id,
             "skill_id": skill_id,
@@ -73,35 +72,35 @@ class PrimitiveRunner:
 
     def abort_running(self) -> None:
         """Stop any running primitive without announcing an interruption (used on unregister)."""
-        if self.primitive_running:
+        if self._state.primitive_running:
             if self._goal_handle:
                 self._goal_handle.cancel_goal_async()  # fire-and-forget
                 self._goal_handle = None
-            self.primitive_running = None
+            self._state.primitive_running = None
             self._stop_robot()
         self._pending_next_task = None
 
     def interrupt_for_deactivation(self) -> None:
         """Cancel the running primitive and announce it interrupted (used on deactivate)."""
-        if self.primitive_running and self._goal_handle:
+        if self._state.primitive_running and self._goal_handle:
             self._goal_handle.cancel_goal_async()  # fire-and-forget
             self._ws.send_message(
                 MessageIn(
                     type=MessageInType.PRIMITIVE_INTERRUPTED,
                     payload={
-                        "primitive_name": self.primitive_running["primitive_name"],
-                        "primitive_id": self.primitive_running["primitive_id"],
+                        "primitive_name": self._state.primitive_running["primitive_name"],
+                        "primitive_id": self._state.primitive_running["primitive_id"],
                     },
                 )
             )
             self._chat.publish_task_status(
-                primitive_name=self.primitive_running["primitive_name"],
-                primitive_id=self.primitive_running["primitive_id"],
+                primitive_name=self._state.primitive_running["primitive_name"],
+                primitive_id=self._state.primitive_running["primitive_id"],
                 status="interrupted",
-                skill_id=self.primitive_running.get("skill_id"),
+                skill_id=self._state.primitive_running.get("skill_id"),
             )
             self._goal_handle = None
-        self.primitive_running = None
+        self._state.primitive_running = None
         self._pending_next_task = None
 
     # --- action plumbing ---
@@ -133,15 +132,15 @@ class PrimitiveRunner:
         goal_handle = future.result()
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
-            if self.primitive_running:
+            if self._state.primitive_running:
                 self._chat.publish_task_status(
-                    primitive_name=self.primitive_running["primitive_name"],
-                    primitive_id=self.primitive_running["primitive_id"],
+                    primitive_name=self._state.primitive_running["primitive_name"],
+                    primitive_id=self._state.primitive_running["primitive_id"],
                     status="failed",
-                    skill_id=self.primitive_running.get("skill_id"),
+                    skill_id=self._state.primitive_running.get("skill_id"),
                     reason="Goal rejected by action server",
                 )
-            self.primitive_running = None
+            self._state.primitive_running = None
             self._goal_handle = None
             self._on_task_finished()
             return
@@ -169,13 +168,13 @@ class PrimitiveRunner:
         skill_id = result.skill_type
         primitive_name = self._state.registry.name_for(skill_id)
         primitive_id = None
-        if self.primitive_running:
-            primitive_id = self.primitive_running["primitive_id"]
-            if self.primitive_running.get("skill_id") != skill_id:
+        if self._state.primitive_running:
+            primitive_id = self._state.primitive_running["primitive_id"]
+            if self._state.primitive_running.get("skill_id") != skill_id:
                 self._logger.warn(
-                    f"Skill ID mismatch in result ({skill_id}) and running ({self.primitive_running.get('skill_id')})"
+                    f"Skill ID mismatch in result ({skill_id}) and running ({self._state.primitive_running.get('skill_id')})"
                 )
-        self.primitive_running = None
+        self._state.primitive_running = None
         self._on_task_finished()
 
         outgoing_msg, local_status, local_reason = self._classify_result(result, primitive_name, primitive_id)
