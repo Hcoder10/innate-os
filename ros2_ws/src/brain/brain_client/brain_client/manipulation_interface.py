@@ -275,18 +275,9 @@ class ManipulationInterface:
 
         try:
             future = self._goto_js_client.call_async(request)
-
-            if blocking:
-                # Wait for the service to respond (motion completion)
-                rclpy.spin_until_future_complete(self.node, future, timeout_sec=duration + 1.0)
-                if future.result() is not None:
-                    result = future.result()
-                    if not result.success:
-                        self.logger.error("[ManipulationInterface] GotoJS v2 returned failure")
-                        return False
-                else:
-                    self.logger.error("[ManipulationInterface] GotoJS v2 call timed out")
-                    return False
+            # When blocking, wait for the service to respond (motion completion).
+            if blocking and not self._await_motion_result(future, "GotoJS v2", duration + 1.0):
+                return False
         except Exception as e:
             self.logger.error(f"[ManipulationInterface] Exception calling GotoJS v2: {e}")
             return False
@@ -432,18 +423,24 @@ class ManipulationInterface:
         total_time = sum(seg_durations) + segment_duration  # extra for current->first
         try:
             future = self._goto_js_traj_client.call_async(request)
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=total_time + 5.0)
-            if future.result() is not None:
-                if not future.result().success:
-                    self.logger.error("[ManipulationInterface] GotoJSTrajectory returned failure")
-                    return False
-            else:
-                self.logger.error("[ManipulationInterface] GotoJSTrajectory call timed out")
+            if not self._await_motion_result(future, "GotoJSTrajectory", total_time + 5.0):
                 return False
         except Exception as e:
             self.logger.error(f"[ManipulationInterface] Exception calling GotoJSTrajectory: {e}")
             return False
 
+        return True
+
+    def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
+        """Block on a motion-service future; return True iff it completed successfully."""
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
+        result = future.result()
+        if result is None:
+            self.logger.error(f"[ManipulationInterface] {name} call timed out")
+            return False
+        if not result.success:
+            self.logger.error(f"[ManipulationInterface] {name} returned failure")
+            return False
         return True
 
     def _call_trigger(self, client, action_name: str, success_msg: str, timeout_sec: float = 2.0) -> bool:

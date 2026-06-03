@@ -2209,6 +2209,30 @@ class BrainClientNode(Node):
             response.reloaded_agents = []
         return response
 
+    def _call_service_sync(self, client, request, label: str, timeout_sec: float, wait_timeout_sec: float = 5.0):
+        """Call a service on the helper node and block for the response, logging the outcome.
+
+        Returns the response (which may itself carry ``success == False``), or None if the
+        service was unavailable or the call timed out. Expects a response with ``success``
+        and ``message`` fields.
+        """
+        if not client.wait_for_service(timeout_sec=wait_timeout_sec):
+            self.get_logger().warn(f"{label} service not available")
+            return None
+
+        future = client.call_async(request)
+        rclpy.spin_until_future_complete(self._service_call_node, future, timeout_sec=timeout_sec)
+        if not future.done():
+            self.get_logger().warn(f"{label} timed out")
+            return None
+
+        result = future.result()
+        if result.success:
+            self.get_logger().info(f"{label}: {result.message}")
+        else:
+            self.get_logger().warn(f"{label} failed: {result.message}")
+        return result
+
     def _perform_reload_selective(self, skill_names: list, agent_names: list) -> tuple:
         """
         Perform selective reload of specific skills and agents.
@@ -2229,26 +2253,16 @@ class BrainClientNode(Node):
 
             # Reload specific skills via PEAS
             if skill_names:
-                if self._reload_skills_client.wait_for_service(timeout_sec=5.0):
-                    peas_request = ReloadSkillsAgents.Request()
-                    peas_request.skills = skill_names
-                    peas_request.agents = []  # PEAS doesn't handle agents
+                peas_request = ReloadSkillsAgents.Request()
+                peas_request.skills = skill_names
+                peas_request.agents = []  # PEAS doesn't handle agents
 
-                    future = self._reload_skills_client.call_async(peas_request)
-                    rclpy.spin_until_future_complete(self._service_call_node, future, timeout_sec=15.0)
-
-                    if future.done():
-                        peas_result = future.result()
-                        if peas_result.success:
-                            reloaded_skills = list(peas_result.reloaded_skills)
-                            self.get_logger().info(f"PEAS selective reload: {peas_result.message}")
-                            # primitives_dict updated automatically via /brain/available_skills topic
-                        else:
-                            self.get_logger().warn(f"PEAS selective reload failed: {peas_result.message}")
-                    else:
-                        self.get_logger().warn("PEAS selective reload timed out")
-                else:
-                    self.get_logger().warn("PEAS selective reload service not available")
+                # primitives_dict updates automatically via /brain/available_skills topic
+                peas_result = self._call_service_sync(
+                    self._reload_skills_client, peas_request, "PEAS selective reload", timeout_sec=15.0
+                )
+                if peas_result and peas_result.success:
+                    reloaded_skills = list(peas_result.reloaded_skills)
 
             # Reload specific agents locally
             if agent_names:
@@ -2361,21 +2375,13 @@ class BrainClientNode(Node):
             self.current_directive = None
 
             # Call PEAS to reload primitives (synchronous via helper node)
-            if self._reload_primitives_client.wait_for_service(timeout_sec=10.0):
-                peas_request = Trigger.Request()
-                future = self._reload_primitives_client.call_async(peas_request)
-                rclpy.spin_until_future_complete(self._service_call_node, future, timeout_sec=30.0)
-
-                if future.done():
-                    peas_result = future.result()
-                    if peas_result.success:
-                        self.get_logger().info(f"PEAS reload: {peas_result.message}")
-                    else:
-                        self.get_logger().warn(f"PEAS reload failed: {peas_result.message}")
-                else:
-                    self.get_logger().warn("PEAS reload timed out")
-            else:
-                self.get_logger().warn("PEAS reload service not available")
+            self._call_service_sync(
+                self._reload_primitives_client,
+                Trigger.Request(),
+                "PEAS reload",
+                timeout_sec=30.0,
+                wait_timeout_sec=10.0,
+            )
 
             # Wait briefly for updated skills list via /brain/available_skills topic
             # (SAS publishes after reload, transient_local delivers to our callback)
