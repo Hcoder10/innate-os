@@ -18,6 +18,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
 
+from brain_client.service_utils import await_motion_result, call_trigger
+
 
 class ManipulationInterface:
     """
@@ -276,7 +278,7 @@ class ManipulationInterface:
         try:
             future = self._goto_js_client.call_async(request)
             # When blocking, wait for the service to respond (motion completion).
-            if blocking and not self._await_motion_result(future, "GotoJS v2", duration + 1.0):
+            if blocking and not await_motion_result(self.node, self.logger, future, "GotoJS v2", duration + 1.0):
                 return False
         except Exception as e:
             self.logger.error(f"[ManipulationInterface] Exception calling GotoJS v2: {e}")
@@ -423,7 +425,7 @@ class ManipulationInterface:
         total_time = sum(seg_durations) + segment_duration  # extra for current->first
         try:
             future = self._goto_js_traj_client.call_async(request)
-            if not self._await_motion_result(future, "GotoJSTrajectory", total_time + 5.0):
+            if not await_motion_result(self.node, self.logger, future, "GotoJSTrajectory", total_time + 5.0):
                 return False
         except Exception as e:
             self.logger.error(f"[ManipulationInterface] Exception calling GotoJSTrajectory: {e}")
@@ -431,51 +433,19 @@ class ManipulationInterface:
 
         return True
 
-    def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
-        """Block on a motion-service future; return True iff it completed successfully."""
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
-        result = future.result()
-        if result is None:
-            self.logger.error(f"[ManipulationInterface] {name} call timed out")
-            return False
-        if not result.success:
-            self.logger.error(f"[ManipulationInterface] {name} returned failure")
-            return False
-        return True
-
-    def _call_trigger(self, client, action_name: str, success_msg: str, timeout_sec: float = 2.0) -> bool:
-        """Call a std_srvs/Trigger service, log the outcome, and return whether it succeeded."""
-        if not client.service_is_ready():
-            self.logger.error(f"[ManipulationInterface] {action_name} service not ready")
-            return False
-
-        try:
-            future = client.call_async(Trigger.Request())
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
-            result = future.result()
-            if result is None:
-                self.logger.error(f"{action_name} service call timed out")
-                return False
-            if not result.success:
-                self.logger.error(f"{action_name} failed: {result.message}")
-                return False
-            self.logger.info(success_msg)
-            return True
-        except Exception as e:
-            self.logger.error(f"Exception calling {action_name}: {e}")
-            return False
-
     def torque_on(self) -> bool:
         """Enable torque on all arm motors. Returns True if successful."""
-        return self._call_trigger(self._torque_on_client, "Torque on", "Torque enabled on arm")
+        return call_trigger(self.node, self.logger, self._torque_on_client, "Torque on", "Torque enabled on arm")
 
     def torque_off(self) -> bool:
         """Disable torque on all arm motors (arm will be limp). Returns True if successful."""
-        return self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
+        return call_trigger(self.node, self.logger, self._torque_off_client, "Torque off", "Torque disabled on arm")
 
     def reboot_servos(self) -> bool:
         """Reboot all arm Dynamixel servos, clearing hardware errors. Returns True if successful."""
-        return self._call_trigger(self._reboot_servos_client, "Reboot servos", "Servos rebooted", timeout_sec=10.0)
+        return call_trigger(
+            self.node, self.logger, self._reboot_servos_client, "Reboot servos", "Servos rebooted", timeout_sec=10.0
+        )
 
     # Gripper position constants (radians)
     GRIPPER_CLOSED = 0.0

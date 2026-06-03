@@ -59,6 +59,7 @@ from brain_client.message_types import (  # noqa: E402
     VisionAgentOutput,
 )
 from brain_client.script_paths import get_agent_directories  # noqa: E402
+from brain_client.service_utils import call_service_sync  # noqa: E402
 from brain_client.skill_types import SkillResult  # noqa: E402
 from brain_client.tts_handler import TTSHandler  # noqa: E402
 from brain_client.ws_bridge import WSBridge  # noqa: E402
@@ -2209,30 +2210,6 @@ class BrainClientNode(Node):
             response.reloaded_agents = []
         return response
 
-    def _call_service_sync(self, client, request, label: str, timeout_sec: float, wait_timeout_sec: float = 5.0):
-        """Call a service on the helper node and block for the response, logging the outcome.
-
-        Returns the response (which may itself carry ``success == False``), or None if the
-        service was unavailable or the call timed out. Expects a response with ``success``
-        and ``message`` fields.
-        """
-        if not client.wait_for_service(timeout_sec=wait_timeout_sec):
-            self.get_logger().warn(f"{label} service not available")
-            return None
-
-        future = client.call_async(request)
-        rclpy.spin_until_future_complete(self._service_call_node, future, timeout_sec=timeout_sec)
-        if not future.done():
-            self.get_logger().warn(f"{label} timed out")
-            return None
-
-        result = future.result()
-        if result.success:
-            self.get_logger().info(f"{label}: {result.message}")
-        else:
-            self.get_logger().warn(f"{label} failed: {result.message}")
-        return result
-
     def _perform_reload_selective(self, skill_names: list, agent_names: list) -> tuple:
         """
         Perform selective reload of specific skills and agents.
@@ -2258,8 +2235,13 @@ class BrainClientNode(Node):
                 peas_request.agents = []  # PEAS doesn't handle agents
 
                 # primitives_dict updates automatically via /brain/available_skills topic
-                peas_result = self._call_service_sync(
-                    self._reload_skills_client, peas_request, "PEAS selective reload", timeout_sec=15.0
+                peas_result = call_service_sync(
+                    self._service_call_node,
+                    self.get_logger(),
+                    self._reload_skills_client,
+                    peas_request,
+                    "PEAS selective reload",
+                    timeout_sec=15.0,
                 )
                 if peas_result and peas_result.success:
                     reloaded_skills = list(peas_result.reloaded_skills)
@@ -2375,7 +2357,9 @@ class BrainClientNode(Node):
             self.current_directive = None
 
             # Call PEAS to reload primitives (synchronous via helper node)
-            self._call_service_sync(
+            call_service_sync(
+                self._service_call_node,
+                self.get_logger(),
                 self._reload_primitives_client,
                 Trigger.Request(),
                 "PEAS reload",
