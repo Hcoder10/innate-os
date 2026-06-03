@@ -12,7 +12,7 @@ code, start from what it *does*:
 | `skills/` | The skill system: `registry`, `runner` (action lifecycle), `registration`, `loader`, `hot_reload`, and the public `types` SDK base classes. |
 | `agents/` | Directives/behaviours: `loader`, `initializer`, and the public `types` SDK base class. |
 | `inputs/` | Input-device subsystem and its public `types` SDK base class. |
-| `comms/` | Talking to the cloud + user: `websocket`, `messages` (typed contracts), `chat`, `tts`. |
+| `comms/` | Talking to the cloud + user: the in-process WebSocket transport (`ws_manager` + `ws_transport` + pure `ws_config`), `websocket` (the bridge with the threadsafe asyncio→executor hand-off), `messages` (typed contracts), `chat`, `tts`. |
 | `robot/` | Low-level robot facades: `mobility`, `manipulation`, `head`. |
 | `common/` | Cross-cutting leaf utilities: `logging`, `geometry`, `ros_services`, `script_paths`. |
 

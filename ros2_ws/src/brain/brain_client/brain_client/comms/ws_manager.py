@@ -5,16 +5,17 @@ transport: config validation, the reconnect thread, status publishing, robot-ver
 tracking, live backend-config swaps, and routing of outgoing messages (including the
 READY_FOR_CONNECTION connect trigger).
 
-Used two ways:
-- **standalone** (``nodes/ws_client.py``): ``on_incoming`` republishes onto the
-  ``ws_messages`` topic — the classic separate-process bridge.
-- **in-process** (``nodes/brain_client_node.py``): ``on_incoming`` is the brain's
-  ``WSBridge.dispatch`` and outgoing goes straight through ``handle_outgoing(obj)``,
-  so image/vision payloads never cross a ROS topic or get re-serialized.
+It runs in-process inside ``brain_client_node``: outgoing messages are handed in as
+objects via :meth:`handle_outgoing`, and incoming messages are passed to the
+``on_incoming`` callback (the brain's ``WSBridge.enqueue_incoming``, which hops them
+onto the executor thread). So image/vision payloads never cross a ROS topic or get
+re-serialized.
 
-It implements the small host interface ``WSClient`` expects (``get_logger``,
-``exit_event``, ``ws_client``, ``set_ws_status``, ``_handle_ws_error``,
-``_last_ws_error_*``, ``forward_incoming``).
+The transport runs the socket on its own asyncio thread and calls back via the small
+host interface this implements (``get_logger``, ``exit_event``, ``ws_client``,
+``set_ws_status``, ``_handle_ws_error``, ``_last_ws_error_*``, ``forward_incoming``).
+``forward_incoming`` is therefore invoked on the asyncio thread, so ``on_incoming``
+must only enqueue — never run handlers directly.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import time
 
 from std_msgs.msg import String
 
-from brain_client.comms.messages import InternalMessage, InternalMessageType, MessageIn, MessageInType
+from brain_client.comms.messages import InternalMessage, InternalMessageType, MessageIn
 from brain_client.comms.ws_config import is_hosted_innate_uri, validate_token_for_uri, validate_ws_uri
 from brain_client.comms.ws_transport import WS_THREAD_STOP_JOIN_SECONDS, WSClient
 
@@ -91,23 +92,6 @@ class WebSocketManager:
             self._send(message)
         else:
             self.get_logger().error(f"Unknown outgoing message: {type(message).__name__}")
-
-    def handle_outgoing_json(self, raw: str) -> None:
-        """Route an outgoing message arriving as a JSON string (topic mode)."""
-        try:
-            data = json.loads(raw)
-            if "type" not in data:
-                self.get_logger().error(f"Outgoing message missing 'type': {raw}")
-                return
-            message_type = data.get("type")
-            if message_type in [t.value for t in InternalMessageType]:
-                self.handle_outgoing(InternalMessage.model_validate(data))
-            elif message_type in [t.value for t in MessageInType]:
-                self.handle_outgoing(MessageIn.model_validate(data))
-            else:
-                self.get_logger().error(f"Unknown message type: {message_type}")
-        except Exception as e:
-            self.get_logger().error(f"Error processing outgoing message: {e}")
 
     def _trigger_connect(self) -> None:
         if not self._ws_configured:

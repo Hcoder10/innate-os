@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
-import json
+"""In-process bridge between the brain and the WebSocket transport.
 
-from std_msgs.msg import String
+Outgoing: hands message *objects* straight to the
+:class:`~brain_client.comms.ws_manager.WebSocketManager` (one serialization, no
+ROS topic). ``send_message`` is called on the executor thread and the manager uses
+``run_coroutine_threadsafe`` to reach the socket's asyncio loop, so it is safe.
+
+Incoming: the transport's listener runs on the websocket asyncio thread and calls
+:meth:`enqueue_incoming` — which only puts the raw string on a thread-safe queue and
+triggers an rclpy guard condition. The executor thread then drains the queue and
+runs the handlers via :meth:`dispatch`. This is the critical detail: handlers
+(which touch primitive state, chat history, the action client, …) must never run on
+the websocket thread, or they race the executor thread's timers/callbacks.
+"""
+
+from __future__ import annotations
+
+import json
+import queue
 
 from brain_client.comms.messages import MessageOut, MessageOutType
 
@@ -17,65 +33,44 @@ def _payload_summary(data):
 
 
 class WSBridge:
-    """Bridge between the brain and the WebSocket transport.
-
-    Validates incoming backend messages and dispatches them to registered handlers,
-    and serializes/forwards outgoing messages. Two modes:
-
-    - **topic mode** (default): a separate ``ws_client`` process publishes incoming
-      JSON on ``ws_messages`` and reads outgoing JSON from ``ws_outgoing``.
-    - **in-process mode** (``transport`` given): the bridge drives a
-      :class:`~brain_client.comms.ws_manager.WebSocketManager` directly — outgoing
-      message *objects* are handed straight to it (no topic, no re-serialization),
-      and the manager calls :meth:`dispatch` for incoming messages. Wire it up with
-      ``transport.on_incoming = bridge.dispatch`` after construction.
-    """
-
-    def __init__(
-        self,
-        node,
-        incoming_topic: str = "ws_messages",
-        outgoing_topic: str = "ws_outgoing",
-        transport=None,
-    ):
+    def __init__(self, node, transport):
         self.node = node
-        self.handlers = {}  # Map from MessageOutType to handler callback
+        self.handlers = {}  # MessageOutType -> handler callback
         self._transport = transport
 
-        if transport is None:
-            self.incoming_sub = self.node.create_subscription(String, incoming_topic, self._ws_callback, 10)
-            self.outgoing_pub = self.node.create_publisher(String, outgoing_topic, 10)
-            self.node.get_logger().info(
-                f"WSBridge subscribed to '{incoming_topic}' and publishing outgoing on '{outgoing_topic}'."
-            )
-        else:
-            self.incoming_sub = None
-            self.outgoing_pub = None
-            self.node.get_logger().info("WSBridge using in-process WebSocket transport (no topic hop).")
+        # Thread-safe hand-off: the websocket asyncio thread enqueues raw messages
+        # and triggers the guard; the executor thread drains + dispatches them.
+        self._incoming: queue.SimpleQueue = queue.SimpleQueue()
+        self._incoming_guard = node.create_guard_condition(self._drain_incoming)
+        node.get_logger().info("WSBridge: in-process transport with threadsafe incoming hand-off.")
 
     def register_handler(self, msg_type: MessageOutType, handler):
-        """
-        Register a (synchronous) handler for a given message out type.
-        """
+        """Register a (synchronous) handler for a given outgoing message type."""
         self.handlers[msg_type] = handler
 
-    def _ws_callback(self, msg: String):
-        """Topic-mode subscription callback; delegates to :meth:`dispatch`."""
-        self.dispatch(msg.data)
+    # --- incoming (websocket asyncio thread -> executor thread) ---
+    def enqueue_incoming(self, raw: str):
+        """Called on the websocket thread: queue the message and wake the executor."""
+        self._incoming.put(raw)
+        self._incoming_guard.trigger()
+
+    def _drain_incoming(self):
+        """Guard-condition callback, runs on the executor thread."""
+        while True:
+            try:
+                raw = self._incoming.get_nowait()
+            except queue.Empty:
+                break
+            self.dispatch(raw)
 
     def dispatch(self, raw: str):
-        """Parse, validate, and dispatch one incoming JSON message string.
-
-        Used as the topic callback in topic mode and as the manager's
-        ``on_incoming`` callback in in-process mode.
-        """
+        """Parse, validate, and dispatch one incoming JSON message (executor thread)."""
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
             self.node.get_logger().error(f"WSBridge: Failed to parse JSON: {e}")
             return
 
-        # Fast path: check if we have a handler before full validation
         msg_type_str = data.get("type")
         if msg_type_str is None:
             self.node.get_logger().error("WSBridge: Message missing 'type' field")
@@ -91,7 +86,6 @@ class WSBridge:
             )
             return
 
-        # Dispatch to the registered handler for this message type.
         handler = self.handlers.get(ws_msg.type)
         if handler:
             try:
@@ -101,18 +95,7 @@ class WSBridge:
         else:
             self.node.get_logger().warn(f"WSBridge: No handler registered for message type: {ws_msg.type}")
 
+    # --- outgoing (executor thread) ---
     def send_message(self, message):
-        """Forward an outgoing message (a MessageIn / InternalMessage instance).
-
-        In-process mode hands the object straight to the transport (one
-        serialization, no topic). Topic mode JSON-dumps it onto ``ws_outgoing``.
-        """
-        if self._transport is not None:
-            self._transport.handle_outgoing(message)
-            return
-        try:
-            json_str = message.model_dump_json()
-        except Exception as e:
-            self.node.get_logger().error(f"WSBridge: Failed to dump message to JSON: {e}")
-            return
-        self.outgoing_pub.publish(String(data=json_str))
+        """Forward an outgoing message object (MessageIn / InternalMessage)."""
+        self._transport.handle_outgoing(message)

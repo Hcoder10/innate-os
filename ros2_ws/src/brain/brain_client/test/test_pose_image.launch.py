@@ -1,20 +1,27 @@
 """
-Integration test: Pose image pipeline.
+Integration test: brain_client emits well-formed pose_image messages.
 
-Uses the standard ROS2 launch_testing framework to:
-  - Launch brain_client_node + skills_action_server with simulator_mode=True
-  - Publish fake camera images and TF transforms (no hardware needed)
-  - Trigger the pose-image timer via ws_messages (READY_FOR_IMAGE +
-    PRIMITIVES_AND_DIRECTIVE_REGISTERED)
-  - Assert that a well-formed pose_image message appears on ws_outgoing
+Pose images are how the robot streams its localized camera view to the cloud. This
+test runs the real stack in sim mode against a scripted FakeCloud and asserts on
+the pose_image messages the brain actually sends up:
 
-Run with:
-  colcon test --packages-select brain_client --ctest-args -R test_pose_image
-  colcon test-result --verbose
+  - that a pose_image is sent at all once the handshake completes,
+  - that its payload is well-formed (image + x/y/theta + camera_info) and matches
+    the static TF we publish (x=1, y=2, yaw=90deg -> theta~pi/2),
+  - that pose_image is gated behind registration (not blasted before the brain is
+    ready).
+
+The brain runs the WebSocket transport in-process (no separate ws_client node), so
+the only observation point is the FakeCloud transcript — which is exactly what the
+real cloud would see.
+
+NOTE: requires the ROS2 environment (run inside ci/Dockerfile.test image) and a
+Zenoh router; it launches real ROS nodes.
 """
 
 import base64
-import json
+import os
+import sys
 import time
 import unittest
 
@@ -28,36 +35,27 @@ import numpy as np
 import pytest
 import rclpy
 from geometry_msgs.msg import TransformStamped
-from rclpy.qos import (
-    QoSHistoryPolicy,
-    QoSProfile,
-    QoSReliabilityPolicy,
-)
+from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
-from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 
-# -- Launch description -------------------------------------------------------
+# fake_cloud.py is a sibling module in this test directory.
+sys.path.insert(0, os.path.dirname(__file__))
+from fake_cloud import FakeCloud  # noqa: E402
+
+IMAGE_TOPIC = "/test/camera/compressed"
+
+# Started in generate_test_description, referenced from the test in the same process.
+FAKE = None
 
 
 @pytest.mark.launch_test
 def generate_test_description():
-    """Launch brain_client_node and skills_action_server under test."""
+    global FAKE
+    FAKE = FakeCloud().start()
 
-    skills_action_server = launch_ros.actions.Node(
-        package="brain_client",
-        executable="skills_server.py",
-        name="skills_action_server",
-        output="screen",
-        parameters=[
-            {
-                "simulator_mode": True,
-                "image_topic": "/test/image",
-                "map_topic": "/test/map",
-            }
-        ],
-    )
+    common = {"simulator_mode": True, "image_topic": IMAGE_TOPIC, "map_topic": "/test/map"}
 
     brain_client = launch_ros.actions.Node(
         package="brain_client",
@@ -66,24 +64,27 @@ def generate_test_description():
         output="screen",
         parameters=[
             {
-                "simulator_mode": True,
-                # Topic-bridge mode: this test injects on ws_messages and observes
-                # ws_outgoing, so it drives the brain via the topic interface rather
-                # than the (default) in-process transport.
-                "inprocess_websocket": False,
-                "websocket_uri": "",
-                "image_topic": "/test/camera/compressed",
-                "map_topic": "/test/map",
+                **common,
+                "websocket_uri": FAKE.uri,
+                "token": "test-token",
                 "odom_topic": "/test/odom",
                 "amcl_pose_topic": "/test/amcl_pose",
                 "depth_image_topic": "/test/depth",
-                "arm_camera_image_topic": "/test/arm_camera",
                 "current_nav_mode_topic": "/test/nav_mode",
                 "send_depth": False,
                 "send_arm_camera_image": False,
+                "use_odom_as_amcl_pose": True,
                 "pose_image_interval": 0.5,
             }
         ],
+    )
+
+    skills_action_server = launch_ros.actions.Node(
+        package="brain_client",
+        executable="skills_server.py",
+        name="skills_action_server",
+        output="screen",
+        parameters=[common],
     )
 
     return (
@@ -91,27 +92,14 @@ def generate_test_description():
             [
                 skills_action_server,
                 brain_client,
-                # launch_testing has a hard 15s timeout for process startup.
-                # Fire ReadyToTest quickly; the tests themselves wait for the
-                # node to be ready by polling for its services.
-                launch.actions.TimerAction(
-                    period=5.0,
-                    actions=[launch_testing.actions.ReadyToTest()],
-                ),
+                launch.actions.TimerAction(period=5.0, actions=[launch_testing.actions.ReadyToTest()]),
             ]
         ),
-        {
-            "skills_action_server": skills_action_server,
-            "brain_client": brain_client,
-        },
+        {"skills_action_server": skills_action_server, "brain_client": brain_client},
     )
 
 
-# -- Helpers ------------------------------------------------------------------
-
-
 def _make_compressed_image():
-    """Create a small synthetic JPEG CompressedImage."""
     img = np.zeros((100, 100, 3), dtype=np.uint8)
     img[:, :, 2] = 255  # red
     _, buf = cv2.imencode(".jpg", img)
@@ -122,33 +110,17 @@ def _make_compressed_image():
 
 
 def _make_static_tf(x, y, yaw_z, yaw_w):
-    """Build a map -> base_link static transform."""
     t = TransformStamped()
     t.header.frame_id = "map"
     t.child_frame_id = "base_link"
     t.transform.translation.x = float(x)
     t.transform.translation.y = float(y)
-    t.transform.translation.z = 0.0
-    t.transform.rotation.x = 0.0
-    t.transform.rotation.y = 0.0
     t.transform.rotation.z = float(yaw_z)
     t.transform.rotation.w = float(yaw_w)
     return t
 
 
-def _ws_msg(msg_type, payload):
-    """Wrap a JSON message the way ws_client_node would publish on ws_messages."""
-    s = String()
-    s.data = json.dumps({"type": msg_type, "payload": payload})
-    return s
-
-
-# -- Active tests -------------------------------------------------------------
-
-
 class TestPoseImage(unittest.TestCase):
-    """Active tests that run while brain_client_node is alive."""
-
     @classmethod
     def setUpClass(cls):
         rclpy.init()
@@ -159,162 +131,89 @@ class TestPoseImage(unittest.TestCase):
 
     def setUp(self):
         self.node = rclpy.create_node("test_pose_image")
-        self.received_msgs = []
-
-        # Subscribe to ws_outgoing to capture pose_image messages
-        self.ws_sub = self.node.create_subscription(String, "ws_outgoing", self._ws_callback, 10)
-
-        # Publisher: fake camera images
         image_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        self.image_pub = self.node.create_publisher(CompressedImage, "/test/camera/compressed", image_qos)
-
-        # Publisher: ws_messages (simulate incoming WebSocket messages)
-        self.ws_pub = self.node.create_publisher(String, "ws_messages", 10)
-
-        # Static TF broadcaster: map -> base_link
+        self.image_pub = self.node.create_publisher(CompressedImage, IMAGE_TOPIC, image_qos)
         self.tf_broadcaster = StaticTransformBroadcaster(self.node)
 
     def tearDown(self):
         self.node.destroy_node()
 
-    def _ws_callback(self, msg):
-        self.received_msgs.append(msg.data)
-
     def _spin_for(self, seconds):
-        """Spin the node for a given duration, processing callbacks."""
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(self.node, timeout_sec=0.1)
 
     def _wait_for_brain_client(self, timeout_sec=60.0):
-        """Block until brain_client_node is fully initialized.
-
-        Polls the /brain/set_brain_active service which is one of the last
-        things created in brain_client_node.__init__.
-        """
         client = self.node.create_client(SetBool, "/brain/set_brain_active")
         try:
-            ready = client.wait_for_service(timeout_sec=timeout_sec)
             self.assertTrue(
-                ready,
-                "brain_client_node did not become ready within " + str(timeout_sec) + "s",
+                client.wait_for_service(timeout_sec=timeout_sec),
+                f"brain_client did not become ready within {timeout_sec}s",
             )
         finally:
             self.node.destroy_client(client)
 
-    def _trigger_pose_image(self, send_images=True, tf_x=1.0, tf_y=2.0):
-        """Common setup: broadcast TF, optionally publish images, trigger timer."""
-        # 1. Broadcast a static transform
-        yaw_z = 0.7071
-        yaw_w = 0.7071
-        self.tf_broadcaster.sendTransform(_make_static_tf(tf_x, tf_y, yaw_z, yaw_w))
+    def _pose_images(self):
+        return [m for m in FAKE.transcript if m.get("type") == "pose_image"]
 
-        # 2. Publish fake camera images so brain_client picks them up
-        if send_images:
-            for _ in range(5):
-                self.image_pub.publish(_make_compressed_image())
-                self._spin_for(0.2)
-
-        # 3. Send PRIMITIVES_AND_DIRECTIVE_REGISTERED
-        self.ws_pub.publish(
-            _ws_msg(
-                "primitives_and_directive_registered",
-                {"success": True, "count": 1, "directive_registered": True},
-            )
-        )
-        self._spin_for(0.5)
-
-        # 4. Send READY_FOR_IMAGE -- starts the pose_image timer
-        self.ws_pub.publish(_ws_msg("ready_for_image", {}))
-        self._spin_for(0.5)
-
-    def _collect_pose_images(self, keep_publishing=True, max_wait=15.0):
-        """Spin and optionally keep publishing images; return list of pose_image payloads."""
-        results = []
-        end = time.monotonic() + max_wait
+    def _feed_until(self, predicate, timeout=20.0, tf_x=1.0, tf_y=2.0):
+        """Publish camera + a static map->base_link TF and spin until predicate()."""
+        self.tf_broadcaster.sendTransform(_make_static_tf(tf_x, tf_y, 0.7071, 0.7071))
+        end = time.monotonic() + timeout
         while time.monotonic() < end:
-            if keep_publishing:
-                self.image_pub.publish(_make_compressed_image())
-            self._spin_for(0.5)
-
-            for raw in self.received_msgs:
-                data = json.loads(raw)
-                if data.get("type") == "pose_image":
-                    results.append(data.get("payload", {}))
-            if results:
-                break
-        return results
-
-    def test_pose_image_is_published(self):
-        """After feeding image + TF + trigger messages, a pose_image appears."""
-        self._wait_for_brain_client()
-        self._trigger_pose_image()
-        results = self._collect_pose_images()
-        self.assertGreater(len(results), 0, "No pose_image message received on ws_outgoing")
-
-    def test_pose_image_payload_is_correct(self):
-        """The pose_image payload contains image, x, y, theta with expected values."""
-        self._wait_for_brain_client()
-        self._trigger_pose_image()
-        results = self._collect_pose_images()
-        self.assertGreater(len(results), 0, "No pose_image message received")
-
-        payload = results[0]
-
-        # Verify required fields
-        self.assertIn("image", payload)
-        self.assertIn("x", payload)
-        self.assertIn("y", payload)
-        self.assertIn("theta", payload)
-        self.assertIn("camera_info", payload)
-
-        # Verify position from our TF transform
-        self.assertAlmostEqual(payload["x"], 1.0, places=1)
-        self.assertAlmostEqual(payload["y"], 2.0, places=1)
-
-        # Verify theta ~ pi/2 (~ 1.5708) from the 90-degree yaw quaternion
-        self.assertAlmostEqual(payload["theta"], 1.5708, delta=0.1)
-
-        # Verify image is valid base64-encoded JPEG
-        img_bytes = base64.b64decode(payload["image"])
-        self.assertGreater(len(img_bytes), 0, "Image data is empty")
-        np_arr = np.frombuffer(img_bytes, np.uint8)
-        decoded = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        self.assertIsNotNone(decoded, "Could not decode JPEG from pose_image payload")
-
-    def test_a_pose_image_not_sent_before_trigger(self):
-        """No pose_image appears if READY_FOR_IMAGE has not been sent."""
-        self._wait_for_brain_client()
-
-        # Broadcast TF and publish images, but do NOT send trigger messages
-        self.tf_broadcaster.sendTransform(_make_static_tf(1.0, 2.0, 0.7071, 0.7071))
-        for _ in range(5):
             self.image_pub.publish(_make_compressed_image())
             self._spin_for(0.2)
+            if predicate():
+                return True
+        return predicate()
 
-        # Spin for a few seconds -- timer was never started, no pose_image
-        self._spin_for(3.0)
+    def test_pose_image_is_published(self):
+        """A pose_image reaches the cloud once the handshake completes."""
+        self._wait_for_brain_client()
+        sent = self._feed_until(lambda: len(self._pose_images()) > 0)
+        self.assertTrue(sent, f"No pose_image received. Types: {FAKE.received_types()}")
 
-        pose_msgs = [raw for raw in self.received_msgs if json.loads(raw).get("type") == "pose_image"]
-        self.assertEqual(len(pose_msgs), 0, "pose_image should not be sent before READY_FOR_IMAGE trigger")
+    def test_pose_image_payload_is_correct(self):
+        """The pose_image payload has image + x/y/theta matching the published TF."""
+        self._wait_for_brain_client()
+        self.assertTrue(self._feed_until(lambda: len(self._pose_images()) > 0), "No pose_image received")
 
+        payload = self._pose_images()[0].get("payload", {})
+        for key in ("image", "x", "y", "theta", "camera_info"):
+            self.assertIn(key, payload)
+        self.assertAlmostEqual(payload["x"], 1.0, places=1)
+        self.assertAlmostEqual(payload["y"], 2.0, places=1)
+        self.assertAlmostEqual(payload["theta"], 1.5708, delta=0.1)
 
-# -- Post-shutdown tests ------------------------------------------------------
+        img_bytes = base64.b64decode(payload["image"])
+        self.assertGreater(len(img_bytes), 0, "Image data is empty")
+        decoded = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+        self.assertIsNotNone(decoded, "Could not decode JPEG from pose_image payload")
+
+    def test_pose_image_gated_until_registered(self):
+        """pose_image is not emitted before registration (the readiness trigger)."""
+        self._wait_for_brain_client()
+        self.assertTrue(self._feed_until(lambda: len(self._pose_images()) > 0), "No pose_image received")
+        types = FAKE.received_types()
+        self.assertIn("register_primitives_and_directive", types)
+        self.assertLess(
+            types.index("register_primitives_and_directive"),
+            types.index("pose_image"),
+            "pose_image was sent before registration",
+        )
 
 
 @launch_testing.post_shutdown_test()
 class TestShutdown(unittest.TestCase):
-    """Verify both nodes exited cleanly."""
-
     def test_exit_codes(self, proc_info):
-        # 0 (clean) and -2 (SIGINT on teardown) only. 1 is Python's generic
-        # unhandled-exception code - allowing it would mask real node crashes.
-        # (The former rclpy double-shutdown race is fixed in the nodes' main().)
-        launch_testing.asserts.assertExitCodes(
-            proc_info,
-            allowable_exit_codes=[0, -2],
-        )
+        # 0 (clean) and -2 (SIGINT on teardown) only.
+        launch_testing.asserts.assertExitCodes(proc_info, allowable_exit_codes=[0, -2])
+
+
+def teardown_module(module):
+    if FAKE is not None:
+        FAKE.stop()

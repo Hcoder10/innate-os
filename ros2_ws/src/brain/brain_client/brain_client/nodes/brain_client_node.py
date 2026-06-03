@@ -61,25 +61,19 @@ class BrainClientNode(Node):
         self._proxy = self._init_proxy()
         self._tts_handler = self._init_tts()
 
-        # --- transport ---
-        # Default: run the WebSocket transport in-process so image/vision payloads
-        # never cross a ROS topic or get re-serialized. Set inprocess_websocket:=false
-        # to fall back to a separate ws_client node over ws_messages / ws_outgoing.
-        self.declare_parameter("inprocess_websocket", True)
+        # --- transport (WebSocket runs in-process; no separate ws_client node) ---
+        # Incoming messages arrive on the socket's asyncio thread and are handed to
+        # the executor thread by WSBridge before any handler runs.
         self.declare_parameter("client_version", "")
-        if self.get_parameter("inprocess_websocket").value:
-            self._ws_manager = WebSocketManager(
-                self,
-                uri=self.config.websocket_uri,
-                token=self.config.token,
-                client_version=self.get_parameter("client_version").get_parameter_value().string_value,
-                on_incoming=None,
-            )
-            self.ws_bridge = WSBridge(self, transport=self._ws_manager)
-            self._ws_manager.on_incoming = self.ws_bridge.dispatch
-        else:
-            self._ws_manager = None
-            self.ws_bridge = WSBridge(self, incoming_topic="ws_messages", outgoing_topic="ws_outgoing")
+        self._ws_manager = WebSocketManager(
+            self,
+            uri=self.config.websocket_uri,
+            token=self.config.token,
+            client_version=self.get_parameter("client_version").get_parameter_value().string_value,
+            on_incoming=None,
+        )
+        self.ws_bridge = WSBridge(self, transport=self._ws_manager)
+        self._ws_manager.on_incoming = self.ws_bridge.enqueue_incoming
 
         # --- helper node for synchronous service calls (not spun by the executor) ---
         self._service_call_node = rclpy.create_node("brain_client_service_caller")
@@ -372,8 +366,7 @@ class BrainClientNode(Node):
         if self.lifecycle.agent_timer and not self.lifecycle.agent_timer.is_canceled():
             self.lifecycle.agent_timer.cancel()
         self.reload.stop_watcher()
-        if self._ws_manager is not None:
-            self._ws_manager.shutdown()
+        self._ws_manager.shutdown()
         if self._tts_handler is not None:
             self._tts_handler.close()
         self._service_call_node.destroy_node()

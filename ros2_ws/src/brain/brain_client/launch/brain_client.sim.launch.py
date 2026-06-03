@@ -153,8 +153,7 @@ def generate_launch_description():
             height_cam_arg,
             current_nav_mode_topic_arg,
             brain_client_node,
-            # The WebSocket connection runs in-process inside brain_client_node
-            # (inprocess_websocket defaults to true); no separate ws_client node.
+            # WebSocket runs in-process inside brain_client_node; no separate ws_client node.
             Node(
                 package="brain_client",
                 executable="skills_server.py",
