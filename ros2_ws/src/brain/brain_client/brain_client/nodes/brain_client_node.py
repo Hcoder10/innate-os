@@ -49,16 +49,16 @@ class BrainClientNode(Node):
             f"BrainClient running in {'simulator' if self.config.simulator_mode else 'real robot'} mode"
         )
 
-        self._proxy = self._init_proxy()
-        self._tts_handler = self._init_tts()
-
-        # --- publishers ---
+        # --- publishers (created before TTS, which needs tts_status_pub) ---
         self.cmd_vel_pub = self.create_publisher(Twist, self.config.cmd_vel_topic, 10)
         self.active_inputs_pub = self.create_publisher(String, "/input_manager/active_inputs", 10)
         self.chat_out_pub = self.create_publisher(String, "/brain/chat_out", 10)
         self.task_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
         self.tts_status_pub = self.create_publisher(String, "/tts/is_playing", 10)
         self.memory_positions_pub = self.create_publisher(String, "/brain/memory_positions", 10)
+
+        self._proxy = self._init_proxy()
+        self._tts_handler = self._init_tts()
 
         # --- transport ---
         self.ws_bridge = WSBridge(self, incoming_topic="ws_messages", outgoing_topic="ws_outgoing")
