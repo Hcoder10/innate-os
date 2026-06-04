@@ -16,7 +16,7 @@ from typing import Any
 from std_msgs.msg import String
 
 from brain_client.common.logging import UniversalLogger
-from brain_client.common.script_paths import get_innate_os_root
+from brain_client.common.script_paths import get_input_directories
 from brain_client.inputs.loader import InputLoader
 from brain_client.inputs.types import InputDevice
 
@@ -31,7 +31,7 @@ class InputDeviceManager:
         self._load(proxy)
 
     def _load(self, proxy) -> None:
-        input_directories = [str(get_innate_os_root() / "workspace" / "inputs")]
+        input_directories = [str(p) for p in get_input_directories()]
 
         loader = InputLoader(self._node.get_logger(), proxy=proxy)
         input_classes = loader.load_from_directories(input_directories)
