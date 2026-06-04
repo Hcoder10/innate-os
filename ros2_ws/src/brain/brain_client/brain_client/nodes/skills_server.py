@@ -20,6 +20,7 @@ import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
 from brain_messages.srv import CreatePhysicalSkill, ReloadSkillsAgents
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -78,6 +79,13 @@ class SkillsActionServer(Node):
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
 
+        # ReentrantCallbackGroup so a cancel request can be serviced *while* a
+        # skill's execute_callback is blocked waiting on the behavior result.
+        # With the default MutuallyExclusiveCallbackGroup the cancel callback is
+        # skipped until execute returns, so a running physical/policy skill can't
+        # be interrupted (the cancel never reaches behavior_server). The awaited
+        # result future still completes inside execute's nested spin; only the
+        # separate cancel service callback was being blocked by the group.
         self._action_server = ActionServer(
             self,
             ExecuteSkill,
@@ -85,6 +93,7 @@ class SkillsActionServer(Node):
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
+            callback_group=ReentrantCallbackGroup(),
         )
 
         # CLI skill worker (runs CLI-submitted skills off the main spin thread).
