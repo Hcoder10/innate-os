@@ -66,8 +66,7 @@ class PrimitiveRunner:
         if self._goal_handle is None:
             return None
         future = self._goal_handle.cancel_goal_async()
-        if on_done is not None:
-            future.add_done_callback(on_done)
+        future.add_done_callback(on_done or self._on_cancel_response)
         return future
 
     def abort_running(self) -> None:

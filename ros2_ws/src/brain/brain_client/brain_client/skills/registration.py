@@ -16,6 +16,31 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from brain_client.skills.registry import SkillRegistry
 from brain_client.transport.messages import MessageIn, MessageInType
 
+AVAILABLE_SKILLS_QOS = QoSProfile(
+    depth=1,
+    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+    reliability=QoSReliabilityPolicy.RELIABLE,
+)
+
+
+def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
+    """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message."""
+    metadata = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "type": s.type,
+            "guidelines": s.guidelines,
+            "guidelines_when_running": s.guidelines_when_running,
+            "inputs": json.loads(s.inputs_json) if s.inputs_json else {},
+            "in_training": s.in_training,
+            "episode_count": s.episode_count,
+            "directory": s.directory,
+        }
+        for s in msg.skills
+    ]
+    return SkillRegistry.from_metadata(metadata, on_duplicate=on_duplicate)
+
 
 class SkillCatalog:
     def __init__(self, node, ws_bridge, state):
@@ -24,37 +49,19 @@ class SkillCatalog:
         self._ws = ws_bridge
         self._state = state
 
-        qos = QoSProfile(
-            depth=1,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=QoSReliabilityPolicy.RELIABLE,
+        self._sub = node.create_subscription(
+            AvailableSkills, "/brain/available_skills", self._on_available_skills, AVAILABLE_SKILLS_QOS
         )
-        self._sub = node.create_subscription(AvailableSkills, "/brain/available_skills", self._on_available_skills, qos)
 
     def _on_available_skills(self, msg: AvailableSkills) -> None:
-        metadata = [
-            {
-                "id": s.id,
-                "name": s.name,
-                "type": s.type,
-                "guidelines": s.guidelines,
-                "guidelines_when_running": s.guidelines_when_running,
-                "inputs": json.loads(s.inputs_json) if s.inputs_json else {},
-                "in_training": s.in_training,
-                "episode_count": s.episode_count,
-                "directory": s.directory,
-            }
-            for s in msg.skills
-        ]
-
         def _warn_dup(name, existing_id, new_id):
             self._logger.warn(f"Duplicate skill name '{name}': ID '{existing_id}' overwritten by '{new_id}'")
 
-        self._state.registry = SkillRegistry.from_metadata(metadata, on_duplicate=_warn_dup)
+        self._state.registry = registry_from_skills_msg(msg, on_duplicate=_warn_dup)
 
         counts = {t: sum(1 for s in msg.skills if s.type == t) for t in ("code", "learned", "replay")}
         self._logger.info(
-            f"Received {len(metadata)} skills from topic: "
+            f"Received {len(msg.skills)} skills from topic: "
             f"{counts['code']} code, {counts['learned']} learned, {counts['replay']} replay"
         )
 

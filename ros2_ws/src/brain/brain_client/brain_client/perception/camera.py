@@ -7,6 +7,7 @@ incoming frames and exposes them as ready-to-send blocks via the pure
 
 from __future__ import annotations
 
+import json
 from collections import deque
 
 import cv2
@@ -97,8 +98,6 @@ class CameraCapture:
             self._logger.error(f"Failed to decode depth image: {e}")
 
     def _on_head(self, msg: String) -> None:
-        import json
-
         try:
             self.current_head_pitch = json.loads(msg.data).get("current_position", 0.0)
         except (json.JSONDecodeError, KeyError) as e:

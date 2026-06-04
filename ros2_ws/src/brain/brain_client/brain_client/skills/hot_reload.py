@@ -12,13 +12,16 @@ import threading
 import time
 
 import rclpy
+from brain_messages.msg import AvailableSkills
 from brain_messages.srv import ReloadSkillsAgents
+from rclpy.executors import SingleThreadedExecutor
 from std_srvs.srv import Trigger
 
 from brain_client.agents.initializer import initialize_agents
 from brain_client.common.ros_services import call_service_sync
 from brain_client.common.script_paths import get_agent_directories
 from brain_client.skills.hot_reload_watcher import HotReloadWatcher
+from brain_client.skills.registration import AVAILABLE_SKILLS_QOS, registry_from_skills_msg
 from brain_client.skills.registry import SkillRegistry
 
 
@@ -136,11 +139,11 @@ class ReloadCoordinator:
                 wait_timeout_sec=10.0,
             )
 
-            deadline = time.time() + 5.0
-            while not self._state.registry and time.time() < deadline:
-                rclpy.spin_once(self._node, timeout_sec=0.2)
-            if not self._state.registry:
+            registry = self._await_available_skills(timeout_sec=5.0)
+            if registry is None:
                 self._logger.warn("No primitives received from topic after reload")
+            else:
+                self._state.registry = registry
 
             self._state.directives, self._state.current_directive = initialize_agents(
                 self._logger, self._state.registry.primitives
@@ -156,6 +159,33 @@ class ReloadCoordinator:
                 self._lifecycle.reactivate_brain()
             except Exception:
                 pass
+
+    def _await_available_skills(self, timeout_sec: float):
+        """Wait for the latched /brain/available_skills sample after a reload.
+
+        perform_full runs inside a service callback on the global executor, so it
+        cannot pump the main node from here without re-entering that executor. A
+        throwaway node on its own executor receives the latched message
+        independently. Returns the rebuilt registry, or None on timeout.
+        """
+        received: dict = {}
+        waiter = rclpy.create_node("brain_client_reload_skills_waiter")
+        executor = SingleThreadedExecutor()
+        try:
+            waiter.create_subscription(
+                AvailableSkills,
+                "/brain/available_skills",
+                lambda msg: received.setdefault("registry", registry_from_skills_msg(msg)),
+                AVAILABLE_SKILLS_QOS,
+            )
+            executor.add_node(waiter)
+            deadline = time.time() + timeout_sec
+            while "registry" not in received and time.time() < deadline:
+                executor.spin_once(timeout_sec=0.2)
+            return received.get("registry")
+        finally:
+            executor.remove_node(waiter)
+            waiter.destroy_node()
 
     def _reload_agents(self, agent_names: list) -> list:
         from brain_client.agents.loader import AgentLoader

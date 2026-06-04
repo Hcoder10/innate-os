@@ -8,7 +8,6 @@ state machine that turns the brain's perception loop on and off.
 from __future__ import annotations
 
 import json
-import time
 
 from std_msgs.msg import String
 
@@ -50,6 +49,7 @@ class BrainLifecycle:
 
         self.agent_timer = None
         self._memory_timer = None
+        self._reactivate_timer = None
 
     # --- timers / subscriptions ---
     def start_agent_timer(self) -> None:
@@ -114,6 +114,9 @@ class BrainLifecycle:
             self.agent_timer.cancel()
             self._logger.info("Agent timer cancelled.")
 
+        if self._reactivate_timer is not None and not self._reactivate_timer.is_canceled():
+            self._reactivate_timer.cancel()
+
         self._state.ready_for_image = False
         self._state.primitives_registered = False
 
@@ -141,13 +144,23 @@ class BrainLifecycle:
 
         self._logger.info("[BrainClient] Sending READY_FOR_CONNECTION to server.")
         self._ws.send_message(InternalMessage(type=InternalMessageType.READY_FOR_CONNECTION))
-        time.sleep(0.5)  # give the server time to process before re-registering
 
+        # Re-register after a short delay (lets the server process
+        # READY_FOR_CONNECTION) via a one-shot timer, so we don't block the
+        # executor thread with a sleep.
+        if self._reactivate_timer is not None:
+            self._node.destroy_timer(self._reactivate_timer)
+        self._reactivate_timer = self._node.create_timer(0.5, self._finish_reactivation)
+
+    def _finish_reactivation(self) -> None:
+        self._reactivate_timer.cancel()  # one-shot
+        if not self._state.is_brain_active:
+            return  # deactivated during the wait; nothing to re-register
         self.unregister_primitives()
         self.catalog.register()
         self.activate_directive_inputs()
         self._state.ready_for_image = True
-        self._logger.info("[BrainClient] Brain reactivated and reset initiated.")
+        self._logger.info("[BrainClient] Brain reactivated and skills re-registered.")
 
     # --- directive switching ---
     def set_directive(self, name: str) -> None:

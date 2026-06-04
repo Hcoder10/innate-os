@@ -348,7 +348,7 @@ class BrainClientNode(Node):
                 }
             )
         response.directives = [json.dumps(details)]
-        response.current_directive = self.state.current_directive.id
+        response.current_directive = self.state.current_directive.id if self.state.current_directive else ""
         return response
 
     # ================= teardown =================

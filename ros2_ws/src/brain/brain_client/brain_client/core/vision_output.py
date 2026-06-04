@@ -62,7 +62,7 @@ class VisionOutputHandler:
                     self._logger.info(f"Storing pending task: {payload.next_task.type}")
                     self._runner.store_pending(payload.next_task)
                     execute_now = False
-                self._runner.cancel_active_goal(on_done=self._runner._on_cancel_response)
+                self._runner.cancel_active_goal()
             else:
                 self._logger.info("[BrainClient] Stop received but no goal handle active.")
 

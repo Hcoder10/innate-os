@@ -278,6 +278,9 @@ class Orchestrator:
         if not isinstance(cfg, dict):
             self._logger.warn("[BrainClient] Ignoring /brain/backend_config: payload must be an object.")
             return
+        # Keep state.token in sync for the skills-registration payload (registration.py).
+        # The live WebSocket connection's token is owned separately by WebSocketManager,
+        # which reacts to /brain/backend_config on its own.
         new_token = str(cfg.get("service_key") or cfg.get("token") or self._state.token).strip()
         if new_token != self._state.token:
             self._state.token = new_token
