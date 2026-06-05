@@ -19,7 +19,7 @@ jobs:
 
       - name: Run pre-commit (ruff + clang-format)
         # Single source of truth: hooks and their versions are pinned in
-        # .pre-commit-config.yaml, so CI and local `git commit` agree exactly.
+        # .config/pre-commit-config.yaml, so CI and local `git commit` agree exactly.
         run: |
           pip install pre-commit
-          pre-commit run --all-files --show-diff-on-failure
+          pre-commit run --all-files --show-diff-on-failure -c .config/pre-commit-config.yaml

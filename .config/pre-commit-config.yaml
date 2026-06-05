@@ -1,15 +1,18 @@
 # Pre-commit hooks for innate-os.
 #
 # These are the same checks CI enforces (.github/workflows/format.yml runs
-# `pre-commit run --all-files`), so violations are caught locally before they
-# reach a PR. Hook versions are pinned here, so local and CI results are
-# identical regardless of any system-installed tools.
+# `pre-commit run --all-files -c .config/pre-commit-config.yaml`), so violations
+# are caught locally before they reach a PR. Hook versions are pinned here, so
+# local and CI results are identical regardless of any system-installed tools.
+#
+# This config lives outside the repo root to keep the root tidy, so every
+# pre-commit invocation must point at it with `-c .config/pre-commit-config.yaml`.
 #
 # One-time setup:
 #   pip install pre-commit
-#   pre-commit install            # run automatically on `git commit`
+#   pre-commit install -c .config/pre-commit-config.yaml   # run on `git commit`
 # Run manually across the whole repo:
-#   pre-commit run --all-files
+#   pre-commit run --all-files -c .config/pre-commit-config.yaml
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.15
