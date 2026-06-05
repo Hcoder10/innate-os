@@ -28,17 +28,17 @@ unformatted PR will fail the **Format Check** job. To catch issues locally
 
 ```bash
 pip install pre-commit
-pre-commit install -c .config/pre-commit-config.yaml
+pre-commit install -c .github/pre-commit-config.yaml
 ```
 
 The hook versions are pinned in
-[`.config/pre-commit-config.yaml`](../.config/pre-commit-config.yaml), so local
-and CI results are identical. The `-c` flag is required because the config lives
-under `.config/` rather than the repo root. To run the checks manually across
-the whole repo:
+[`.github/pre-commit-config.yaml`](pre-commit-config.yaml), so local and CI
+results are identical. The `-c` flag is required because the config lives under
+`.github/` rather than the repo root. To run the checks manually across the
+whole repo:
 
 ```bash
-pre-commit run --all-files -c .config/pre-commit-config.yaml
+pre-commit run --all-files -c .github/pre-commit-config.yaml
 ```
 
 ## Releases
