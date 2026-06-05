@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 PieceType = Literal["king", "queen", "rook", "bishop", "knight", "pawn"]

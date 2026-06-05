@@ -15,7 +15,7 @@ from action_msgs.msg import GoalStatus
 from innate_cloud_msgs.action import NavigateInstruction
 from rclpy.action import ActionClient
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 # Human-readable labels for the integer action codes returned by the server.
 _ACTION_LABELS = {

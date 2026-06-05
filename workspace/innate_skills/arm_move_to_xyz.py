@@ -5,7 +5,7 @@ Arm Move To XYZ Skill - Move arm to a Cartesian position using IK.
 
 import time
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 
 class ArmMoveToXYZ(Skill):

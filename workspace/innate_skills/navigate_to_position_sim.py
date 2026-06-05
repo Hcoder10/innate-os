@@ -9,7 +9,7 @@ from nav_msgs.msg import Path
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 
 class SimPathPlanningController:

@@ -4,7 +4,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from maurice_bringup.env_loader import load_env_file
 
-from brain_client.logging_config import get_logging_env_vars
+from brain_client.common.logging import get_logging_env_vars
 
 
 def generate_launch_description():
@@ -47,7 +47,7 @@ def generate_launch_description():
             cartesia_voice_id_arg,
             Node(
                 package="brain_client",
-                executable="input_manager_node.py",
+                executable="input_manager.py",
                 name="input_manager_node",
                 output="screen",
                 parameters=[

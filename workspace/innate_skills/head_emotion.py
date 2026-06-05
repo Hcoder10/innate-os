@@ -6,7 +6,7 @@ Head Emotion Skill - Express emotions through vertical head (tilt) movements.
 import time
 from typing import Literal
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 # Each pose is (angle_degrees, duration_seconds). Duration is the time to
 # interpolate from the previous pose to this one.

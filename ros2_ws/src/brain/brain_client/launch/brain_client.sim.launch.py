@@ -4,7 +4,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from maurice_bringup.env_loader import get_env, load_env_file
 
-from brain_client.logging_config import get_logging_env_vars
+from brain_client.common.logging import get_logging_env_vars
 
 
 def generate_launch_description():
@@ -106,6 +106,7 @@ def generate_launch_description():
             {
                 "websocket_uri": LaunchConfiguration("websocket_uri"),
                 "token": LaunchConfiguration("token"),
+                "client_version": LaunchConfiguration("client_version"),
                 "image_topic": LaunchConfiguration("image_topic"),
                 "map_topic": LaunchConfiguration("map_topic"),
                 "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
@@ -152,23 +153,10 @@ def generate_launch_description():
             height_cam_arg,
             current_nav_mode_topic_arg,
             brain_client_node,
-            # Launch the WSClientNode (handles actual WebSocket connection)
+            # WebSocket runs in-process inside brain_client_node; no separate ws_client node.
             Node(
                 package="brain_client",
-                executable="ws_client_node.py",
-                name="ws_client_node",
-                output="screen",
-                parameters=[
-                    {
-                        "websocket_uri": LaunchConfiguration("websocket_uri"),
-                        "token": LaunchConfiguration("token"),
-                        "client_version": LaunchConfiguration("client_version"),
-                    }
-                ],
-            ),
-            Node(
-                package="brain_client",
-                executable="skills_action_server.py",
+                executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
                 parameters=[

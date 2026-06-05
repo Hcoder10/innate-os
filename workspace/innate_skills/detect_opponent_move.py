@@ -18,7 +18,7 @@ import chess
 from google import genai
 from google.genai import types
 
-from brain_client.skill_types import (
+from brain_client.skills.types import (
     Interface,
     InterfaceType,
     RobotState,
