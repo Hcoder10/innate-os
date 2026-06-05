@@ -10,8 +10,8 @@ Uses self.node (injected by InputManagerNode) to create a ROS subscription.
 
 from maurice_msgs.msg import ArmStatus
 
-from brain_client.inputs.types import InputDevice
 from brain_client.common.logging import UniversalLogger
+from brain_client.inputs.types import InputDevice
 
 
 class ArmVitalsInput(InputDevice):
