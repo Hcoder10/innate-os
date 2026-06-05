@@ -1,3 +1,0 @@
-# Reformat / lint commits to skip in git blame (git config blame.ignoreRevsFile .git-blame-ignore-revs)
-# style: adopt ruff repo-wide and reformat
-0c5898daffaceb62b9ee840bae7b069d8686a80c
