@@ -1,4 +1,4 @@
-from brain_client.agent_types import Agent
+from brain_client.agents.types import Agent
 
 
 class BasicAgent(Agent):

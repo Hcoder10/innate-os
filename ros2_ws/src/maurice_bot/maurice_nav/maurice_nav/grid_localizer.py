@@ -429,7 +429,6 @@ class GridLocalizer(Node):
         angle_offsets = np.linspace(0, 2 * np.pi, n_ang, endpoint=False, dtype=np.float32)
 
         # Compute which positions and angles this batch covers
-        batch_size = end_idx - start_idx  # noqa: F841
         batch_indices = np.arange(start_idx, end_idx, dtype=np.int32)
 
         # Decode position and angle indices

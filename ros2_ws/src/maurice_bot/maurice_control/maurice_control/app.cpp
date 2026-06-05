@@ -123,15 +123,20 @@ std::string get_hostname() {
 }
 
 /**
+ * Get the latest tag by version. Returns empty string if the repo has no tags.
+ */
+std::string get_latest_tag(const std::string& maurice_root) {
+    std::string tags_cmd =
+        "cd \"" + maurice_root + "\" && git tag --list --sort=-version:refname 2>/dev/null | head -1";
+    return exec_command(tags_cmd);
+}
+
+/**
  * Get the subject (first line) of the latest tag's annotation message.
  * Returns empty string if no tags or tag has no message.
  */
 std::string get_tag_subject(const std::string& maurice_root) {
-    // Get latest tag
-    std::string tags_cmd =
-        "cd \"" + maurice_root + "\" && git tag --list --sort=-version:refname 2>/dev/null | head -1";
-    std::string latest_tag = exec_command(tags_cmd);
-
+    std::string latest_tag = get_latest_tag(maurice_root);
     if (latest_tag.empty()) {
         return "";
     }
@@ -147,11 +152,7 @@ std::string get_tag_subject(const std::string& maurice_root) {
  * Returns empty string if no tags or tag has no body.
  */
 std::string get_tag_body(const std::string& maurice_root) {
-    // Get latest tag
-    std::string tags_cmd =
-        "cd \"" + maurice_root + "\" && git tag --list --sort=-version:refname 2>/dev/null | head -1";
-    std::string latest_tag = exec_command(tags_cmd);
-
+    std::string latest_tag = get_latest_tag(maurice_root);
     if (latest_tag.empty()) {
         return "";
     }
@@ -1005,7 +1006,7 @@ int main(int argc, char** argv) {
     try {
         rclcpp::spin(node);
     } catch (const std::exception& e) {
-        // Handle exceptions
+        RCLCPP_ERROR(node->get_logger(), "Unhandled exception in app node: %s", e.what());
     }
     rclcpp::shutdown();
     return 0;

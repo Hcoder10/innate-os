@@ -383,51 +383,6 @@ class ModeManager(Node):
 
         self.get_logger().info(f"Initialized {len(self._service_clients)} service clients")
 
-    def _call_service(self, service_type, service_name: str, request, timeout_sec: float = 2.0):
-        """
-        Generic helper to call any ROS2 service with timeout.
-        Uses pre-created clients from the dictionary.
-        Args:
-            service_type: The service type class (e.g., GetState, ChangeState)
-            service_name: Full service name (e.g., '/node_name/get_state')
-            request: The service request object
-            timeout_sec: Timeout for both service availability and response
-        Returns:
-            The service response if successful, None otherwise
-        """
-        client = self._service_clients[service_name]
-
-        try:
-            if not client.wait_for_service(timeout_sec=timeout_sec):
-                self.get_logger().info(f"Service '{service_name}' not available")
-                return None
-
-            # result = client.call(request)
-            future = client.call_async(request)
-            start_time = time.time()
-            while not future.done():
-                # self.get_logger().info(f"Service not done yet")
-                elapsed = time.time() - start_time
-                if elapsed >= timeout_sec:
-                    self.get_logger().warning(f"Timeout waiting for service '{service_name}' after {elapsed:.2f}s")
-                    return None
-                time.sleep(0.1)
-
-            if future.done():
-                result = future.result()
-                if result is not None:
-                    return result
-                else:
-                    self.get_logger().info(f"Service '{service_name}' returned None")
-                    return None
-            else:
-                self.get_logger().info(f"Timeout calling service '{service_name}'")
-                return None
-
-        except Exception as e:
-            self.get_logger().warning(f"Exception calling service '{service_name}': {e}")
-            return None
-
     def shutdown_mode(self, mode: str) -> None:
         """Shutdown all nodes for a given mode in reverse order using proper lifecycle transitions"""
         if mode not in modes_nodes:
@@ -697,7 +652,6 @@ class ModeManager(Node):
                 return response
 
             # Update the current map
-            old_map = self.current_map  # noqa: F841
             self.current_map = requested_map
 
             # Save the new map choice for persistence

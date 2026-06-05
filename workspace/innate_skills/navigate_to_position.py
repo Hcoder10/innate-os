@@ -5,7 +5,7 @@ import time
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 
 class Nav2Controller:

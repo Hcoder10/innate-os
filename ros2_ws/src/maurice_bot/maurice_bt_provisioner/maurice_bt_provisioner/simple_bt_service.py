@@ -306,24 +306,8 @@ class BleProvisionerServer:
         try:
             value_str = bytes(value).decode("utf-8")
             logger.info(f"Received write: {value_str}")
-
-            # Load JSON data first to get the command, even for error reporting
-            try:
-                data = json.loads(value_str)
-                command = data.get("command")
-            except json.JSONDecodeError:
-                logger.error(f"Failed to decode JSON: {value_str}")
-                # Respond with error, indicating unknown command due to parse failure
-                response = {"command": "unknown", "status": "error", "message": "Invalid JSON format"}
-                # Jump to sending response directly
-                if self._ble_characteristic and self._ble_characteristic.is_notifying:
-                    logger.info(f"Sending notification response: {response}")
-                    try:
-                        response_bytes = bytes(json.dumps(response), "utf-8")
-                        self._ble_characteristic.set_value(list(response_bytes))
-                    except Exception as e:
-                        logger.error(f"Error sending notification: {e}")
-                return bytes(json.dumps(response), "utf-8") if response else b""
+            data = json.loads(value_str)
+            command = data.get("command")
 
             if command == "get_status":
                 response = self.handle_get_status(data)
@@ -340,8 +324,6 @@ class BleProvisionerServer:
 
         except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON: {value_str}")
-            # This block should technically not be reached due to inner try-except,
-            # but included for safety.
             response = {"command": "unknown", "status": "error", "message": "Invalid JSON format"}
         except Exception as e:
             # Try to get command from data if available, otherwise use 'unknown'

@@ -6,7 +6,7 @@ Arm Circle Motion Skill - Move arm in a circular pattern.
 import math
 import time
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 
 class ArmCircleMotion(Skill):

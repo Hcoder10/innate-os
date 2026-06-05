@@ -9,7 +9,6 @@ from tkinter import filedialog
 import cv2
 import numpy as np
 import rosbag2_py
-from cv_bridge import CvBridge
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
@@ -137,7 +136,6 @@ def extract_video(bag_path, output_file, fps=30):
 
     print(f"Found compressed image topics: {list(image_topics.keys())}")
 
-    bridge = CvBridge()  # noqa: F841
     video_writer = None
     frame_count = 0
 

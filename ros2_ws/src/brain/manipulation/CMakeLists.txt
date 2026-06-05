@@ -112,12 +112,7 @@ install(
 # Install Python scripts
 install(
   PROGRAMS
-    manipulation/TestPublisher.py
     manipulation/visualizer.py
-    manipulation/test.py
-    manipulation/policy.py
-    manipulation/trajectory.py
-    manipulation/policyViT.py
     manipulation/manipulation_server.py
     manipulation/recorder_benchmark.py
   DESTINATION lib/${PROJECT_NAME}

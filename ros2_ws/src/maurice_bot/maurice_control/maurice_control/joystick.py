@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-import random
 from collections import deque
 
 import matplotlib.pyplot as plt
 import pygame
 import rclpy
 from geometry_msgs.msg import Twist
-from maurice_msgs.srv import LightCommand
 from rclpy.node import Node
 
 
@@ -253,35 +251,6 @@ class JoystickController(Node):
 
         plt.tight_layout()
         plt.show()
-
-    def send_light_command(self):
-        """Send light command - kept for future use"""
-        # Generate random RGB values
-        r = random.randint(0, 255)
-        g = random.randint(0, 255)
-        b = random.randint(0, 255)
-
-        request = LightCommand.Request()
-        request.r = r
-        request.g = g
-        request.b = b
-
-        # Map current light mode to the service request
-        if self.light_mode == 0:
-            request.mode = LightCommand.Request.OFF
-            request.interval = 0
-        elif self.light_mode == 1:
-            request.mode = LightCommand.Request.SOLID
-            request.interval = 0
-        elif self.light_mode == 2:
-            request.mode = LightCommand.Request.BLINK
-            request.interval = self.blink_interval_ms
-        elif self.light_mode == 3:
-            request.mode = LightCommand.Request.RING
-            request.interval = self.blink_interval_ms
-
-        self.light_client.call_async(request)
-        self.get_logger().info(f"Sent light command: mode={self.light_mode}, RGB=({r},{g},{b})")
 
 
 def main(args=None):

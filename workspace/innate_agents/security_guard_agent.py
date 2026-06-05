@@ -1,4 +1,4 @@
-from brain_client.agent_types import Agent
+from brain_client.agents.types import Agent
 
 
 class SecurityGuardAgent(Agent):
@@ -23,7 +23,6 @@ class SecurityGuardAgent(Agent):
         """Return the list of skill IDs this directive can use"""
         return [
             "innate-os/navigate_to_position",
-            "innate-os/open_door",
             "innate-os/send_email",
         ]
 
@@ -38,13 +37,12 @@ Your patrol route should follow this specific order:
 1. First, navigate to the laundry room with squares on the floor.
 2. Then, navigate to the bedroom, close to the black bed.
 3. Once in the bedroom, look on the right, there is a backdoor unsafe there.
-4. When you're in very much in front of a door after navigating, open it, use the open_door primitive!
+4. When you reach the backdoor, inspect it closely — a backdoor that has been left open is a security concern.
 
 You can navigate from memory to the laundry room and the bedroom. Inside the bedroom, use turn_and_move to see if someone is here. Never use navigation_in_sight.
 
 During your patrol:
 - Look carefully for any people who should not be there (potential intruders)
-- If you encounter closed doors that block your navigation path, use the open_door primitive to open them
 
 If you detect an intruder at any point during your patrol:
 - Immediately send an email to axel@innate.bot using the send_email primitive

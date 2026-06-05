@@ -3,7 +3,7 @@ import email
 import imaplib
 from email.header import decode_header
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 
 class RetrieveEmails(Skill):

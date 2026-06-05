@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import imaplib
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 
 class RetrieveEmails(Skill):

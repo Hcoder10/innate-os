@@ -1,0 +1,37 @@
+"""Helpers for calling ROS services synchronously from brain_client nodes.
+
+Each helper spins the given node while waiting and logs the outcome, so callers
+get a one-line service call instead of repeating the wait/spin/branch ladder.
+``node`` is the node to spin (which may differ from the node that owns
+``logger``), and ``label`` is used to identify the call in log messages.
+"""
+
+import rclpy
+
+
+def call_service_sync(node, logger, client, request, label, timeout_sec, wait_timeout_sec=5.0):
+    """Call a service and block for the response, logging the outcome.
+
+    Returns the response (which may itself carry ``success == False``), or None if
+    the service was unavailable or the call timed out. Expects a response with
+    ``success`` and ``message`` fields.
+    """
+    if not client.wait_for_service(timeout_sec=wait_timeout_sec):
+        logger.warn(f"{label} service not available")
+        return None
+
+    future = client.call_async(request)
+    rclpy.spin_until_future_complete(node, future, timeout_sec=timeout_sec)
+    if not future.done():
+        logger.warn(f"{label} timed out")
+        return None
+
+    result = future.result()
+    if result is None:
+        logger.warn(f"{label} returned no result")
+        return None
+    if result.success:
+        logger.info(f"{label}: {result.message}")
+    else:
+        logger.warn(f"{label} failed: {result.message}")
+    return result

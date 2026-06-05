@@ -5,7 +5,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from brain_client.skill_types import RobotState, RobotStateType, Skill, SkillResult
+from brain_client.skills.types import RobotState, RobotStateType, Skill, SkillResult
 
 
 class SendPictureViaEmail(Skill):
