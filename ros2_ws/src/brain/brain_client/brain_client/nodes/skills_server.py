@@ -345,6 +345,14 @@ class SkillsActionServer(Node):
             self._register_behavior_goal_handle(goal_handle, behavior_goal_handle, skill_type)
             self.get_logger().info("Behavior goal accepted, waiting for result...")
 
+            # Physical skills otherwise publish no feedback. Emit one so the websocket
+            # bridge (rws) relays its assigned goal_id to the app — without it the app
+            # has no id to cancel/interrupt the running policy with.
+            initial_feedback = ExecuteSkill.Feedback()
+            initial_feedback.feedback = "running"
+            initial_feedback.image_b64 = ""
+            goal_handle.publish_feedback(initial_feedback)
+
             result_future = behavior_goal_handle.get_result_async()
             if isinstance(goal_handle, SkillCliGoalHandle):
                 result_wait_state = self._wait_for_cli_future(
