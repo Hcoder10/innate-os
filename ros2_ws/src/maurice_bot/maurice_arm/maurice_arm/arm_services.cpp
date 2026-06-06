@@ -28,8 +28,8 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
     }
     const auto& config = *config_ptr;
 
-    RCLCPP_INFO(this->get_logger(), "Configuring servo %d (%s)", config.servo_id,
-                config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Configuring servo %d (%s)", config.servo_id,
+                 config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
 
     retryServoOp(config.servo_id, "disableTorque", [&] { dynamixel_->disableTorque(config.servo_id); });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -101,13 +101,13 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
     gs_last_applied_[joint_index] = gs_near_[joint_index];
 
     if (enable_torque) {
-        RCLCPP_INFO(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
+        RCLCPP_DEBUG(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
         retryServoOp(config.servo_id, "enableTorque", [&] { dynamixel_->enableTorque(config.servo_id); });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    RCLCPP_INFO(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
-                enable_torque ? "enabled" : "disabled");
+    RCLCPP_DEBUG(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
+                 enable_torque ? "enabled" : "disabled");
 }
 
 void MauriceArmNode::configureServosLocked(bool enable_torque) {

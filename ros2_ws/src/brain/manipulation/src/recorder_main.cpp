@@ -11,7 +11,7 @@ int main(int argc, char** argv) {
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);
 
-    RCLCPP_INFO(node->get_logger(), "Recorder Node (C++) starting with MultiThreadedExecutor");
+    RCLCPP_DEBUG(node->get_logger(), "Recorder Node (C++) starting with MultiThreadedExecutor");
 
     try {
         executor.spin();

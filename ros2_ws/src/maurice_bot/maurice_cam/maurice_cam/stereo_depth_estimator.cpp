@@ -115,18 +115,18 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     // Initialize disparity filter parameters
     initFilterParams();
 
-    RCLCPP_INFO(this->get_logger(), "=== Maurice Stereo Depth Estimator (VPI SGM CUDA) ===");
-    RCLCPP_INFO(this->get_logger(), "Left camera info: %s", left_camera_info_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Right camera info: %s", right_camera_info_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Left topic: %s", left_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Right topic: %s", right_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Depth topic: %s", depth_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Input image dimensions: %dx%d", image_width_, image_height_);
-    RCLCPP_INFO(this->get_logger(), "Max disparity: %d", max_disparity_);
-    RCLCPP_INFO(this->get_logger(), "SGM params: diagonals=%d, p1=%d, p2=%d, confThreshold=%d, uniqueness=%.2f",
-                include_diagonals_, p1_, p2_, confidence_threshold_, uniqueness_);
+    RCLCPP_DEBUG(this->get_logger(), "=== Maurice Stereo Depth Estimator (VPI SGM CUDA) ===");
+    RCLCPP_DEBUG(this->get_logger(), "Left camera info: %s", left_camera_info_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Right camera info: %s", right_camera_info_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Left topic: %s", left_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Right topic: %s", right_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Depth topic: %s", depth_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Input image dimensions: %dx%d", image_width_, image_height_);
+    RCLCPP_DEBUG(this->get_logger(), "Max disparity: %d", max_disparity_);
+    RCLCPP_DEBUG(this->get_logger(), "SGM params: diagonals=%d, p1=%d, p2=%d, confThreshold=%d, uniqueness=%.2f",
+                 include_diagonals_, p1_, p2_, confidence_threshold_, uniqueness_);
     if (max_fps_ > 0.0) {
-        RCLCPP_INFO(this->get_logger(), "Max processing rate: %.1f Hz", max_fps_);
+        RCLCPP_DEBUG(this->get_logger(), "Max processing rate: %.1f Hz", max_fps_);
     } else {
         RCLCPP_INFO(this->get_logger(), "Max processing rate: unlimited");
     }
@@ -170,7 +170,7 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     footprint_mask_pub_ = this->create_publisher<sensor_msgs::msg::Image>(footprint_mask_topic_, sensor_qos);
     footprint_cutout_pub_ = this->create_publisher<sensor_msgs::msg::Image>(footprint_cutout_topic_, sensor_qos);
 
-    RCLCPP_INFO(this->get_logger(), "Publishers created (lazy publishing - only publish when subscribed)");
+    RCLCPP_DEBUG(this->get_logger(), "Publishers created (lazy publishing - only publish when subscribed)");
     RCLCPP_INFO(this->get_logger(), "  Point cloud: %s (decimation: %d)", pointcloud_topic_.c_str(),
                 pointcloud_decimation_);
     RCLCPP_INFO(this->get_logger(), "  Point cloud color: %s", pointcloud_color_topic_.c_str());
@@ -216,8 +216,8 @@ void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstShar
         return;
 
     if (!vpi_initialized_ || !calibration_loaded_) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
-                             "VPI or calibration not ready, skipping frame");
+        RCLCPP_WARN_ONCE(this->get_logger(),
+                         "Depth disabled: waiting for stereo calibration to load (skipping frames until ready)");
         return;
     }
 

@@ -58,6 +58,8 @@ def generate_launch_description():
         name="navigation_map_server",
         output="screen",
         parameters=[{"yaml_filename": ""}],
+        # nav2 boot chatter at WARN to keep `innate view` readable.
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     # Create the AMCL node
@@ -67,6 +69,7 @@ def generate_launch_description():
         name="navigation_amcl",
         output="screen",
         parameters=[LaunchConfiguration("amcl_params_file")],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     # Grid localizer for initial pose estimation
@@ -101,6 +104,7 @@ def generate_launch_description():
             # Remap costmap footprint to global /footprint
             ("/navigation/global_costmap/footprint", "/footprint"),
         ],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     # Create the controller node
@@ -115,6 +119,7 @@ def generate_launch_description():
             # Remap costmap footprint to global /footprint
             ("/local_costmap/footprint", "/footprint"),
         ],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
     # ros2 run --prefix 'valgrind --leak-check=full --track-origins=yes --log-file=valgrind_output.txt' nav2_controller controller_server --ros-args -r __node:=controller_server -r cmd_vel:=cmd_vel_raw -r /local_costmap/footprint:=/footprint --params-file $(ros2 pkg prefix maurice_nav)/share/maurice_nav/config/controller.yaml --params-file $(ros2 pkg prefix maurice_nav)/share/maurice_nav/config/costmap.yaml
 

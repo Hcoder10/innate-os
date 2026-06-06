@@ -75,6 +75,16 @@ def generate_launch_description():
             {"publish_state_updates": True},
             {"publish_transforms_updates": True},
         ],
+        # Mute benign warnings: kdl_parser about the root link's inertia (kept
+        # in the URDF for the physics sim; KDL drops it), and the rosout-plumbing
+        # "Publisher already registered" from MoveIt's internal nodes.
+        arguments=[
+            "--ros-args",
+            "--log-level",
+            "kdl_parser:=ERROR",
+            "--log-level",
+            "rcl.logging_rosout:=ERROR",
+        ],
     )
 
     return LaunchDescription(

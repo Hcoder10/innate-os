@@ -404,7 +404,7 @@ class ModeManager(Node):
                     self.get_logger().warning(f"Failed to get state for {node_name}")
                     continue
 
-                self.get_logger().info(f"{node_name} state {current_state_id}")
+                self.get_logger().debug(f"{node_name} state {current_state_id}")
 
                 # Transition to UNCONFIGURED (handles both ACTIVE and INACTIVE)
                 if current_state_id != State.PRIMARY_STATE_UNCONFIGURED:
@@ -994,7 +994,7 @@ class ModeManager(Node):
         finally:
             self._mode_change_lock.release()
 
-        self.get_logger().info("returning from change mode callback")
+        self.get_logger().debug("returning from change mode callback")
         return response
 
     def __del__(self):

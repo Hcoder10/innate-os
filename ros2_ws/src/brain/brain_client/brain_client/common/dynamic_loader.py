@@ -142,14 +142,14 @@ class DynamicLoader:
             self.logger.warning(f"Path is not a directory: {directory_path}")
             return result
 
-        self.logger.info(f"Scanning for {kind} in: {directory_path}")
+        self.logger.debug(f"Scanning for {kind} in: {directory_path}")
         for py_file in self._iter_candidate_files(directory):
             try:
                 result.update(self.discover_in_file(py_file))
             except Exception as e:
                 self.logger.error(f"Error loading {kind} from {py_file}: {e}")
 
-        self.logger.info(f"Discovered {len(result)} {kind} in {directory_path}")
+        self.logger.debug(f"Discovered {len(result)} {kind} in {directory_path}")
         return result
 
     def load_from_directories(self, directories: list[str]) -> dict:

@@ -123,18 +123,19 @@ MainCameraDriver::MainCameraDriver(const rclcpp::NodeOptions& options) : Node("m
     left_width_ = publish_stereo_width_ / 2;
     left_height_ = publish_stereo_height_;
 
-    RCLCPP_INFO(this->get_logger(), "=== Maurice Main Camera Driver ===");
-    RCLCPP_INFO(this->get_logger(), "Camera pattern: %s", camera_pattern.c_str());
-    RCLCPP_INFO(this->get_logger(), "Camera symlink: %s", symlink_path.c_str());
-    RCLCPP_INFO(this->get_logger(), "Resolved device: %s", camera_device_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Capture resolution: %dx%d (full FOV)", capture_width_, capture_height_);
-    RCLCPP_INFO(this->get_logger(), "Publish stereo: %dx%d (downscaled in GStreamer)", publish_stereo_width_,
-                publish_stereo_height_);
-    RCLCPP_INFO(this->get_logger(), "Publish left: %dx%d (natural split: %dx%d)", publish_left_width_,
-                publish_left_height_, left_width_, left_height_);
-    RCLCPP_INFO(this->get_logger(), "FPS: %.1f", fps_);
-    RCLCPP_INFO(this->get_logger(), "Frame ID: %s", frame_id_.c_str());
-    RCLCPP_INFO(this->get_logger(), "JPEG Quality: %d", jpeg_quality_);
+    RCLCPP_DEBUG(this->get_logger(), "=== Maurice Main Camera Driver ===");
+    RCLCPP_DEBUG(this->get_logger(), "Camera pattern: %s", camera_pattern.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Camera symlink: %s", symlink_path.c_str());
+    RCLCPP_INFO(this->get_logger(), "Resolved device: %s @ %dx%d, %.1f FPS", camera_device_.c_str(), capture_width_,
+                capture_height_, fps_);
+    RCLCPP_DEBUG(this->get_logger(), "Capture resolution: %dx%d (full FOV)", capture_width_, capture_height_);
+    RCLCPP_DEBUG(this->get_logger(), "Publish stereo: %dx%d (downscaled in GStreamer)", publish_stereo_width_,
+                 publish_stereo_height_);
+    RCLCPP_DEBUG(this->get_logger(), "Publish left: %dx%d (natural split: %dx%d)", publish_left_width_,
+                 publish_left_height_, left_width_, left_height_);
+    RCLCPP_DEBUG(this->get_logger(), "FPS: %.1f", fps_);
+    RCLCPP_DEBUG(this->get_logger(), "Frame ID: %s", frame_id_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "JPEG Quality: %d", jpeg_quality_);
 
     // Initialize publishers
     left_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
@@ -155,21 +156,21 @@ MainCameraDriver::MainCameraDriver(const rclcpp::NodeOptions& options) : Node("m
             "/mars/main_camera/stereo", rclcpp::SensorDataQoS().reliability(rclcpp::ReliabilityPolicy::BestEffort));
     }
 
-    RCLCPP_INFO(this->get_logger(), "Publishers created:");
-    RCLCPP_INFO(this->get_logger(), "  - /mars/main_camera/left/image_raw (%dx%d)", left_width_, left_height_);
-    RCLCPP_INFO(this->get_logger(), "  - /mars/main_camera/right/image_raw (%dx%d)", left_width_, left_height_);
+    RCLCPP_DEBUG(this->get_logger(), "Publishers created:");
+    RCLCPP_DEBUG(this->get_logger(), "  - /mars/main_camera/left/image_raw (%dx%d)", left_width_, left_height_);
+    RCLCPP_DEBUG(this->get_logger(), "  - /mars/main_camera/right/image_raw (%dx%d)", left_width_, left_height_);
     if (publish_compressed_) {
-        RCLCPP_INFO(this->get_logger(), "  - /mars/main_camera/left/image_raw/compressed (%dx%d)", left_width_,
-                    left_height_);
+        RCLCPP_DEBUG(this->get_logger(), "  - /mars/main_camera/left/image_raw/compressed (%dx%d)", left_width_,
+                     left_height_);
     }
     if (publish_stereo_) {
-        RCLCPP_INFO(this->get_logger(), "  - /mars/main_camera/stereo (%dx%d)", publish_stereo_width_,
-                    publish_stereo_height_);
+        RCLCPP_DEBUG(this->get_logger(), "  - /mars/main_camera/stereo (%dx%d)", publish_stereo_width_,
+                     publish_stereo_height_);
     }
 
     // Initialize TurboJPEG encoder
     jpeg_encoder_ = std::make_unique<JpegTurboEncoder>();
-    RCLCPP_INFO(this->get_logger(), "TurboJPEG encoder initialized");
+    RCLCPP_DEBUG(this->get_logger(), "TurboJPEG encoder initialized");
 
     // Create camera_info publishers (always — calibration may arrive later via file watch)
     auto sensor_qos = rclcpp::SensorDataQoS().reliability(rclcpp::ReliabilityPolicy::BestEffort);
@@ -700,11 +701,11 @@ void MainCameraDriver::printFrameStats() {
     double expected_interval = 1.0 / fps_;
     double timing_error_ms = (mean_interval - expected_interval) * 1000.0;
 
-    RCLCPP_INFO(this->get_logger(),
-                "Frame Stats - FPS: %.1f (target: %.1f) | Jitter: %.1f ms | Error: %.1f ms | Samples: %zu | Exposure: "
-                "%d | Gain: %d",
-                current_fps, fps_, jitter_ms, timing_error_ms, frame_timestamps_.size(), current_exposure_,
-                current_gain_);
+    RCLCPP_DEBUG(this->get_logger(),
+                 "Frame Stats - FPS: %.1f (target: %.1f) | Jitter: %.1f ms | Error: %.1f ms | Samples: %zu | Exposure: "
+                 "%d | Gain: %d",
+                 current_fps, fps_, jitter_ms, timing_error_ms, frame_timestamps_.size(), current_exposure_,
+                 current_gain_);
 }
 
 void MainCameraDriver::checkCalibrationFile() {
@@ -733,7 +734,7 @@ void MainCameraDriver::checkCalibrationFile() {
 
         RCLCPP_INFO(this->get_logger(), "Stereo calibration (re)loaded: %s", cal->filePath().string().c_str());
     } catch (const std::exception& e) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "Calibration file watch: %s", e.what());
+        RCLCPP_WARN_ONCE(this->get_logger(), "Calibration file watch: %s", e.what());
 
         // Set uncalibrated camera_info (all zeros) if previously loaded (e.g., file was deleted)
         // Per ROS convention: K[0] == 0.0 indicates an uncalibrated camera

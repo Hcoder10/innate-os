@@ -233,15 +233,15 @@ class DynamicFootprint : public rclcpp::Node {
 
                 // Log collision geometry
                 if (!link->collision_array.empty()) {
-                    RCLCPP_INFO(this->get_logger(), "  Link '%s' - Collision objects: %zu", link->name.c_str(),
-                                link->collision_array.size());
+                    RCLCPP_DEBUG(this->get_logger(), "  Link '%s' - Collision objects: %zu", link->name.c_str(),
+                                 link->collision_array.size());
 
                     for (size_t i = 0; i < link->collision_array.size(); ++i) {
                         const auto& collision = link->collision_array[i];
-                        RCLCPP_INFO(this->get_logger(), "    Collision [%zu]: name=%s", i, collision->name.c_str());
+                        RCLCPP_DEBUG(this->get_logger(), "    Collision [%zu]: name=%s", i, collision->name.c_str());
 
-                        RCLCPP_INFO(this->get_logger(), "      Origin: xyz=(%f, %f, %f)", collision->origin.position.x,
-                                    collision->origin.position.y, collision->origin.position.z);
+                        RCLCPP_DEBUG(this->get_logger(), "      Origin: xyz=(%f, %f, %f)", collision->origin.position.x,
+                                     collision->origin.position.y, collision->origin.position.z);
 
                         if (collision->geometry) {
                             const auto& geom = collision->geometry;
@@ -249,27 +249,27 @@ class DynamicFootprint : public rclcpp::Node {
                             if (geom->type == urdf::Geometry::BOX) {
                                 auto box = std::dynamic_pointer_cast<urdf::Box>(geom);
                                 if (box) {
-                                    RCLCPP_INFO(this->get_logger(), "      Geometry: BOX - size=(%f, %f, %f)",
-                                                box->dim.x, box->dim.y, box->dim.z);
+                                    RCLCPP_DEBUG(this->get_logger(), "      Geometry: BOX - size=(%f, %f, %f)",
+                                                 box->dim.x, box->dim.y, box->dim.z);
                                 }
                             } else if (geom->type == urdf::Geometry::CYLINDER) {
                                 auto cyl = std::dynamic_pointer_cast<urdf::Cylinder>(geom);
                                 if (cyl) {
-                                    RCLCPP_INFO(this->get_logger(), "      Geometry: CYLINDER - radius=%f, length=%f",
-                                                cyl->radius, cyl->length);
+                                    RCLCPP_DEBUG(this->get_logger(), "      Geometry: CYLINDER - radius=%f, length=%f",
+                                                 cyl->radius, cyl->length);
                                 }
                             } else if (geom->type == urdf::Geometry::SPHERE) {
                                 auto sphere = std::dynamic_pointer_cast<urdf::Sphere>(geom);
                                 if (sphere) {
-                                    RCLCPP_INFO(this->get_logger(), "      Geometry: SPHERE - radius=%f",
-                                                sphere->radius);
+                                    RCLCPP_DEBUG(this->get_logger(), "      Geometry: SPHERE - radius=%f",
+                                                 sphere->radius);
                                 }
                             } else if (geom->type == urdf::Geometry::MESH) {
                                 auto mesh = std::dynamic_pointer_cast<urdf::Mesh>(geom);
                                 if (mesh) {
-                                    RCLCPP_INFO(this->get_logger(),
-                                                "      Geometry: MESH - filename=%s, scale=(%f, %f, %f)",
-                                                mesh->filename.c_str(), mesh->scale.x, mesh->scale.y, mesh->scale.z);
+                                    RCLCPP_DEBUG(this->get_logger(),
+                                                 "      Geometry: MESH - filename=%s, scale=(%f, %f, %f)",
+                                                 mesh->filename.c_str(), mesh->scale.x, mesh->scale.y, mesh->scale.z);
                                 }
                             }
                         }

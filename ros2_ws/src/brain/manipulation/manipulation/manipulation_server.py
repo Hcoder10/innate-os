@@ -481,7 +481,7 @@ class ManipulationServer(Node):
                     max_inference = np.max(inference_times[-timing_log_interval:]) * 1000
                     actual_hz = 1000.0 / avg_loop if avg_loop > 0 else 0
 
-                    self.get_logger().info(
+                    self.get_logger().debug(
                         f"[TIMING] iter={iteration_count} | "
                         f"loop: avg={avg_loop:.1f}ms, min={min_loop:.1f}ms, max={max_loop:.1f}ms, jitter(std)={std_loop:.2f}ms | "
                         f"inference: avg={avg_inference:.1f}ms, max={max_inference:.1f}ms | "
@@ -500,7 +500,7 @@ class ManipulationServer(Node):
                         avg_cpu = np.mean(cpu_transfer_times[-timing_log_interval:]) * 1000
                         avg_publish = np.mean(publish_times[-timing_log_interval:]) * 1000
 
-                        self.get_logger().info(
+                        self.get_logger().debug(
                             f"[DETAILED TIMING] iter={iteration_count} | "
                             f"preprocess: {avg_preprocess:.1f}ms | "
                             f"tensor_creation: {avg_tensor:.1f}ms | "

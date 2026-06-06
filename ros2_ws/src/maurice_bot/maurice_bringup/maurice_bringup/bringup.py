@@ -156,8 +156,6 @@ class Bringup(Node):
         if self.debug:
             self.get_logger().debug(f"Limited velocities: linear={limited_linear}, angular={limited_angular}")
 
-        self.get_logger().info(f"Limited velocities: linear={limited_linear}, angular={limited_angular}")
-
         # Forward the limited velocities to the I2C manager
         self.i2c_manager.set_speed_command(v=limited_linear, omega=limited_angular)
 

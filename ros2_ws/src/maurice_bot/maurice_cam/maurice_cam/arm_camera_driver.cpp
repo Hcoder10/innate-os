@@ -6,7 +6,7 @@ using namespace std::chrono_literals;
 namespace maurice_cam {
 
 ArmCameraDriver::ArmCameraDriver(const rclcpp::NodeOptions& options) : Node("arm_camera_driver", options) {
-    RCLCPP_INFO(this->get_logger(), "Initializing arm camera driver...");
+    RCLCPP_DEBUG(this->get_logger(), "Initializing arm camera driver...");
 
     // Parameters
     this->declare_parameter<std::string>("camera_symlink", "Arducam");
@@ -78,13 +78,14 @@ ArmCameraDriver::ArmCameraDriver(const rclcpp::NodeOptions& options) : Node("arm
         device_path_ = full_path.string();
     }
 
-    RCLCPP_INFO(this->get_logger(), "=== Maurice Arm Camera Driver (GStreamer) ===");
-    RCLCPP_INFO(this->get_logger(), "Camera pattern: %s", camera_pattern.c_str());
-    RCLCPP_INFO(this->get_logger(), "Camera symlink: %s", symlink_path.c_str());
-    RCLCPP_INFO(this->get_logger(), "Resolved device: %s", device_path_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Resolution: %dx%d", width_, height_);
-    RCLCPP_INFO(this->get_logger(), "FPS: %.1f", fps_);
-    RCLCPP_INFO(this->get_logger(), "Pixel Format: YUYV (via GStreamer)");
+    RCLCPP_DEBUG(this->get_logger(), "=== Maurice Arm Camera Driver (GStreamer) ===");
+    RCLCPP_DEBUG(this->get_logger(), "Camera pattern: %s", camera_pattern.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Camera symlink: %s", symlink_path.c_str());
+    RCLCPP_INFO(this->get_logger(), "Resolved device: %s @ %dx%d, %.1f FPS", device_path_.c_str(), width_, height_,
+                fps_);
+    RCLCPP_DEBUG(this->get_logger(), "Resolution: %dx%d", width_, height_);
+    RCLCPP_DEBUG(this->get_logger(), "FPS: %.1f", fps_);
+    RCLCPP_DEBUG(this->get_logger(), "Pixel Format: YUYV (via GStreamer)");
 
     // Create publishers with sensor data QoS profile
     rclcpp::QoS qos = rclcpp::SensorDataQoS().keep_last(2).best_effort().durability_volatile();
@@ -156,7 +157,7 @@ bool ArmCameraDriver::initializeCamera() {
 
     // Create GStreamer pipeline for YUYV capture
     std::string pipeline = createGStreamerPipeline();
-    RCLCPP_INFO(this->get_logger(), "GStreamer pipeline: %s", pipeline.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "GStreamer pipeline: %s", pipeline.c_str());
 
     // Open camera with GStreamer backend (mutex protected)
     {
@@ -251,8 +252,8 @@ void ArmCameraDriver::frameProcessingLoop() {
 
             // Log every 1000 frames for health monitoring
             if (frame_count % 1000 == 0) {
-                RCLCPP_INFO(this->get_logger(), "Camera health check - Frame %d, Device: %s", frame_count,
-                            device_path_.c_str());
+                RCLCPP_DEBUG(this->get_logger(), "Camera health check - Frame %d, Device: %s", frame_count,
+                             device_path_.c_str());
             }
 
             // Process and publish frame

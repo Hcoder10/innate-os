@@ -27,6 +27,8 @@ def generate_launch_description():
         name="slam_toolbox",
         namespace="",
         output="screen",
+        # slam_toolbox boot chatter at WARN to keep `innate view` readable.
+        arguments=["--ros-args", "--log-level", "warn"],
     )
     ld = LaunchDescription()
 

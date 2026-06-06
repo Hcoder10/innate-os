@@ -318,13 +318,13 @@ class UdpLeaderReceiver : public rclcpp::Node {
         auto current_time = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration<double>(current_time - last_log_time_).count();
         if (elapsed >= log_rate_) {
-            RCLCPP_INFO(this->get_logger(),
-                        "Stats - Packets: %lu, Errors: %lu, Out-of-order: %lu, "
-                        "Last seq: %ld, Timestamp: %.2fms, Positions: [%d, %d, %d, %d, %d, %d]",
-                        packet_count_.load(), error_count_.load(), out_of_order_count_.load(), last_sequence_.load(),
-                        packet->timestamp, packet->servo_positions[0], packet->servo_positions[1],
-                        packet->servo_positions[2], packet->servo_positions[3], packet->servo_positions[4],
-                        packet->servo_positions[5]);
+            RCLCPP_DEBUG(this->get_logger(),
+                         "Stats - Packets: %lu, Errors: %lu, Out-of-order: %lu, "
+                         "Last seq: %ld, Timestamp: %.2fms, Positions: [%d, %d, %d, %d, %d, %d]",
+                         packet_count_.load(), error_count_.load(), out_of_order_count_.load(), last_sequence_.load(),
+                         packet->timestamp, packet->servo_positions[0], packet->servo_positions[1],
+                         packet->servo_positions[2], packet->servo_positions[3], packet->servo_positions[4],
+                         packet->servo_positions[5]);
             last_log_time_ = current_time;
         }
     }

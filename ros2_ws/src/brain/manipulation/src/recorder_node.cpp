@@ -94,15 +94,15 @@ RecorderNode::RecorderNode()
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 10, std::bind(&RecorderNode::odom_callback, this, std::placeholders::_1));
 
-    // Log subscriptions
-    RCLCPP_INFO(this->get_logger(), "Subscribing to image topics:");
+    // Log subscriptions (debug — detail; the "initialized" line below is the summary)
+    RCLCPP_DEBUG(this->get_logger(), "Subscribing to image topics:");
     for (const auto& topic : image_topics_) {
-        RCLCPP_INFO(this->get_logger(), "  %s", topic.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "  %s", topic.c_str());
     }
-    RCLCPP_INFO(this->get_logger(), "Subscribing to arm state topic: %s", arm_state_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Subscribing to leader command topic: %s", leader_command_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Subscribing to velocity topic: %s", velocity_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Subscribing to odom topic: %s", odom_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Subscribing to arm state topic: %s", arm_state_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Subscribing to leader command topic: %s", leader_command_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Subscribing to velocity topic: %s", velocity_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Subscribing to odom topic: %s", odom_topic_.c_str());
 
     // Create service clients
     head_ai_position_client_ = this->create_client<std_srvs::srv::Trigger>("/mars/head/set_ai_position");
@@ -136,14 +136,14 @@ RecorderNode::RecorderNode()
         "brain/recorder/get_task_metadata",
         std::bind(&RecorderNode::handle_get_task_metadata, this, std::placeholders::_1, std::placeholders::_2));
 
-    RCLCPP_INFO(this->get_logger(), "Hosting services:");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/activate_physical_primitive");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/new_episode");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/save_episode");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/cancel_episode");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/stop_episode");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/end_task");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/get_task_metadata");
+    RCLCPP_DEBUG(this->get_logger(), "Hosting services:");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/activate_physical_primitive");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/new_episode");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/save_episode");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/cancel_episode");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/stop_episode");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/end_task");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/get_task_metadata");
 
     // Create status publisher
     status_pub_ = this->create_publisher<brain_messages::msg::RecorderStatus>("/brain/recorder/status", 10);
@@ -178,11 +178,11 @@ RecorderNode::RecorderNode()
         "brain/recorder/stop_replay",
         std::bind(&RecorderNode::handle_stop_replay, this, std::placeholders::_1, std::placeholders::_2));
 
-    RCLCPP_INFO(this->get_logger(), "Replay services initialized:");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/load_episode");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/play_replay");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/pause_replay");
-    RCLCPP_INFO(this->get_logger(), "  brain/recorder/stop_replay");
+    RCLCPP_DEBUG(this->get_logger(), "Replay services initialized:");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/load_episode");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/play_replay");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/pause_replay");
+    RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/stop_replay");
 
     RCLCPP_INFO(this->get_logger(), "Recorder Node initialized in IDLE state.");
 }
@@ -207,7 +207,7 @@ void RecorderNode::image_callback(const sensor_msgs::msg::Image::SharedPtr msg, 
     latest_images_[topic] = msg;
     if (!topics_received_[topic]) {
         topics_received_[topic] = true;
-        RCLCPP_INFO(this->get_logger(), "First message received on image topic: %s", topic.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "First message received on image topic: %s", topic.c_str());
         check_all_topics_received();
     }
 }
@@ -216,7 +216,7 @@ void RecorderNode::arm_state_callback(const sensor_msgs::msg::JointState::Shared
     latest_arm_state_ = msg;
     if (!topics_received_[arm_state_topic_]) {
         topics_received_[arm_state_topic_] = true;
-        RCLCPP_INFO(this->get_logger(), "First message received on arm state topic: %s", arm_state_topic_.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "First message received on arm state topic: %s", arm_state_topic_.c_str());
         check_all_topics_received();
     }
 }
@@ -225,8 +225,8 @@ void RecorderNode::leader_command_callback(const std_msgs::msg::Float64MultiArra
     latest_leader_command_ = msg;
     if (!topics_received_[leader_command_topic_]) {
         topics_received_[leader_command_topic_] = true;
-        RCLCPP_INFO(this->get_logger(), "First message received on leader command topic: %s",
-                    leader_command_topic_.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "First message received on leader command topic: %s",
+                     leader_command_topic_.c_str());
         check_all_topics_received();
     }
 }
@@ -235,7 +235,7 @@ void RecorderNode::cmd_vel_callback(const geometry_msgs::msg::Twist::SharedPtr m
     latest_cmd_vel_ = msg;
     if (!topics_received_[velocity_topic_]) {
         topics_received_[velocity_topic_] = true;
-        RCLCPP_INFO(this->get_logger(), "First message received on velocity topic: %s", velocity_topic_.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "First message received on velocity topic: %s", velocity_topic_.c_str());
         check_all_topics_received();
     }
 }

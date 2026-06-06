@@ -27,9 +27,18 @@ WINDOW_NAMES=(
     "training-uninavid"
 )
 
-DDS_SOURCE_CMD="source $DDS_SETUP_SCRIPT"
-ROS_SOURCE_CMD="source $ROS_WS_PATH/install/setup.zsh"
-RUNTIME_ENV_CMD="${RUNTIME_ENV_EXPORTS:-true}"
+# Collapse the per-pane environment setup (runtime env exports + DDS/ROS
+# sourcing) into one file the panes source. This keeps the command echoed in
+# each pane short and, importantly, keeps the service key off the screen and
+# out of the scrollback. Mode 600 so the key file isn't world-readable.
+PANE_SETUP_FILE="${TMPDIR:-/tmp}/innate_pane_env.zsh"
+{
+    echo "${RUNTIME_ENV_EXPORTS:-true}"
+    echo "source $DDS_SETUP_SCRIPT"
+    echo "source $ROS_WS_PATH/install/setup.zsh"
+} > "$PANE_SETUP_FILE"
+chmod 600 "$PANE_SETUP_FILE"
+PANE_SETUP_CMD="source $PANE_SETUP_FILE"
 
 echo "Launching ROS nodes in tmux session '$SESSION_NAME'..."
 
@@ -65,12 +74,12 @@ process_command_group() {
     sleep 0.1
     
     local first_cmd="${commands[1]}"
-    local first_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $first_cmd"
+    local first_cmd_full="$PANE_SETUP_CMD && $first_cmd"
     tmux send-keys -t $SESSION_NAME:"$window_name".0 "$first_cmd_full" C-m || return 1
     
     if [ ${#commands[@]} -gt 1 ]; then
         local second_cmd="${commands[2]}"
-        local second_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $second_cmd"
+        local second_cmd_full="$PANE_SETUP_CMD && $second_cmd"
         
         tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" || return 1
         sleep 0.1

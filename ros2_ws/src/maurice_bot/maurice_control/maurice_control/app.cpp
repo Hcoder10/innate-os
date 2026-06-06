@@ -656,8 +656,8 @@ class AppControl : public rclcpp::Node {
         twist_msg.angular.y = 0.0;
 
         cmd_vel_pub_->publish(twist_msg);
-        RCLCPP_INFO(this->get_logger(), "Joystick: x=%.2f, y=%.2f -> cmd_vel: linear.x=%.2f, angular.z=%.2f", msg->x,
-                    msg->y, twist_msg.linear.x, twist_msg.angular.z);
+        RCLCPP_DEBUG(this->get_logger(), "Joystick: x=%.2f, y=%.2f -> cmd_vel: linear.x=%.2f, angular.z=%.2f", msg->x,
+                     msg->y, twist_msg.linear.x, twist_msg.angular.z);
     }
 
     /**

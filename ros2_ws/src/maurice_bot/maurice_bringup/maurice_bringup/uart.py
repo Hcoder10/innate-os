@@ -324,8 +324,6 @@ class UartManager:
             self.fault_code = fault
             if self.debug:
                 self.logger.debug(f"Status - Battery: {self.battery_voltage}V, Motor Temp: {temp}°C, Fault: {fault}")
-            self.logger.info(f"Status - Battery: {self.battery_voltage}V, Motor Temp: {temp}°C, Fault: {fault}")
-            self.logger.info(f"Status - Battery: {self.battery_voltage}V, Motor Temp: {temp}°C, Fault: {fault}")
         elif msg_id == self.RESP_CALIBRATE:
             try:
                 # Status (1 byte), Reserved (5 bytes)

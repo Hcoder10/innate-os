@@ -37,8 +37,14 @@ class CameraProvider(Node):
         depth=1,
     )
 
+    # Each skill that needs the camera builds its own provider, so the node name
+    # must be unique — otherwise rcl warns "Publisher already registered for
+    # provided node name" for every collision.
+    _instance_count = 0
+
     def __init__(self):
-        super().__init__("camera_subscriber")
+        CameraProvider._instance_count += 1
+        super().__init__(f"camera_subscriber_{CameraProvider._instance_count}")
 
         self._main_camera_raw: bytes | None = None
         self._wrist_camera_raw: bytes | None = None

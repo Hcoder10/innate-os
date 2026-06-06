@@ -112,12 +112,12 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     initializeServos();
 
     // Create Robot for all 7 servos (IDs 1-7)
-    RCLCPP_INFO(this->get_logger(), "Creating Robot object with servo IDs 1-7");
+    RCLCPP_DEBUG(this->get_logger(), "Creating Robot object with servo IDs 1-7");
     std::vector<int> all_servo_ids = {1, 2, 3, 4, 5, 6, 7};
     robot_ = std::make_unique<Robot>(dynamixel_, all_servo_ids);
 
     // ── ARM publishers / subscribers / services ──
-    RCLCPP_INFO(this->get_logger(), "Setting up ARM publishers/subscribers/services");
+    RCLCPP_DEBUG(this->get_logger(), "Setting up ARM publishers/subscribers/services");
     arm_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/mars/arm/state", 10);
     arm_command_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/mars/arm/command_state", 10);
     arm_status_pub_ = this->create_publisher<maurice_msgs::msg::ArmStatus>("/mars/arm/status", 10);
@@ -162,7 +162,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
         rmw_qos_profile_services_default, service_callback_group_);
 
     // ── HEAD publishers / subscribers / services ──
-    RCLCPP_INFO(this->get_logger(), "Setting up HEAD publishers/subscribers/services");
+    RCLCPP_DEBUG(this->get_logger(), "Setting up HEAD publishers/subscribers/services");
     head_position_pub_ = this->create_publisher<std_msgs::msg::String>("/mars/head/current_position", 10);
     joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
     head_position_sub_ = this->create_subscription<std_msgs::msg::Int32>(
@@ -179,7 +179,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
         rmw_qos_profile_services_default, service_callback_group_);
 
     // ── Initialize messages ──
-    RCLCPP_INFO(this->get_logger(), "Initializing joint state message with 6 joint names");
+    RCLCPP_DEBUG(this->get_logger(), "Initializing joint state message with 6 joint names");
     arm_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
     joint_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"};
 
@@ -187,20 +187,20 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
                       0.44638840927472156, -0.08897088569736719, 0.0015339807878856412};
 
     // Initialize command buffers with current positions
-    RCLCPP_INFO(this->get_logger(), "Initializing command buffers with current positions");
+    RCLCPP_DEBUG(this->get_logger(), "Initializing command buffers with current positions");
     auto [initial_positions, initial_velocities, initial_loads] = robot_->readState();
     (void)initial_loads;
     latest_head_command_ = initial_positions[6];
     syncTargetToMotorPositions();
 
     // ── Timers ──
-    RCLCPP_INFO(this->get_logger(), "Creating control timer at %.1f Hz", control_frequency_);
+    RCLCPP_DEBUG(this->get_logger(), "Creating control timer at %.1f Hz", control_frequency_);
     auto period = std::chrono::duration<double>(1.0 / control_frequency_);
     control_timer_ =
         this->create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period),
                                 std::bind(&MauriceArmNode::controlTimerCallback, this), timer_callback_group_);
 
-    RCLCPP_INFO(this->get_logger(), "Creating health monitor timer at 0.2 Hz");
+    RCLCPP_DEBUG(this->get_logger(), "Creating health monitor timer at 0.2 Hz");
     health_timer_ =
         this->create_wall_timer(std::chrono::milliseconds(5000),
                                 std::bind(&MauriceArmNode::healthMonitorCallback, this), health_callback_group_);
@@ -208,7 +208,7 @@ MauriceArmNode::MauriceArmNode() : Node("maurice_arm") {
     // Register parameter change callback for PID hot-reload
     param_callback_handle_ = this->add_on_set_parameters_callback(
         std::bind(&MauriceArmNode::onParameterChange, this, std::placeholders::_1));
-    RCLCPP_INFO(this->get_logger(), "PID hot-reload enabled (use ros2 param set or pid_hot_reload.py)");
+    RCLCPP_DEBUG(this->get_logger(), "PID hot-reload enabled (use ros2 param set or pid_hot_reload.py)");
 
     RCLCPP_INFO(this->get_logger(), "Maurice Arm Node ready!");
 
