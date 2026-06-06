@@ -44,7 +44,8 @@
       <origin xyz="-0.0587 0 0.0838" rpy="0 0 0"/>
       <geometry>
         <box size="0.1878 0.182 0.1676"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint1 → link1 -->
@@ -74,7 +75,8 @@
       <origin xyz="-0.005 0 0.018" rpy="0 0 0"/>
       <geometry>
         <box size="0.067 0.040 0.082"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint2 → link2 -->
@@ -104,7 +106,8 @@
       <origin xyz="0 0 0.061" rpy="0 0 0"/>
       <geometry>
         <box size="0.037 0.054 0.156"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint3 → link3 -->
@@ -134,7 +137,8 @@
       <origin xyz="0.050 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.134 0.054 0.035"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint4 → link4 -->
@@ -164,7 +168,8 @@
       <origin xyz="0.006 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.032 0.039 0.020"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint5 → link5 -->
@@ -194,7 +199,8 @@
       <origin xyz="0.027 0 0.031" rpy="0 0 0"/>
       <geometry>
         <box size="0.054 0.044 0.093"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint6 → link61 (main gripper finger) -->
@@ -224,7 +230,8 @@
       <origin xyz="0.024 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.048 0.016 0.0389"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- joint6M → link62 (mirrored gripper finger, geared with joint6) -->
@@ -255,7 +262,8 @@
       <origin xyz="0.024 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.048 0.016 0.0389"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- End Effector Link -->
@@ -321,7 +329,8 @@
       <origin xyz="0.007 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.113 0.121 0.036"/>
-      </geometry>    </collision>
+      </geometry>
+    </collision>
   </link>
 
   <!-- Head Camera Left Link -->

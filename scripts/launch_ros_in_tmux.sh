@@ -30,14 +30,21 @@ WINDOW_NAMES=(
 # Collapse the per-pane environment setup (runtime env exports + DDS/ROS
 # sourcing) into one file the panes source. This keeps the command echoed in
 # each pane short and, importantly, keeps the service key off the screen and
-# out of the scrollback. Mode 600 so the key file isn't world-readable.
-PANE_SETUP_FILE="${TMPDIR:-/tmp}/innate_pane_env.zsh"
+# out of the scrollback.
+#
+# The file holds INNATE_SERVICE_KEY, so create it securely: mktemp makes it
+# atomically at mode 0600 with an unpredictable name, closing the umask race
+# (a plain `>` would briefly create it world-readable) and the symlink-attack
+# window on a predictable /tmp path.
+PANE_SETUP_FILE=$(mktemp "${TMPDIR:-/tmp}/innate_pane_env.XXXXXX") || {
+    echo "ERROR: Failed to create pane setup tempfile." >&2
+    exit 1
+}
 {
     echo "${RUNTIME_ENV_EXPORTS:-true}"
     echo "source $DDS_SETUP_SCRIPT"
     echo "source $ROS_WS_PATH/install/setup.zsh"
 } > "$PANE_SETUP_FILE"
-chmod 600 "$PANE_SETUP_FILE"
 PANE_SETUP_CMD="source $PANE_SETUP_FILE"
 
 echo "Launching ROS nodes in tmux session '$SESSION_NAME'..."

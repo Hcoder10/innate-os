@@ -220,6 +220,10 @@ void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstShar
                          "Depth disabled: waiting for stereo calibration to load (skipping frames until ready)");
         return;
     }
+    // Counterpart to the warning above: one line on recovery so the current
+    // state is always distinguishable (disabled-once vs. enabled-once), rather
+    // than going silent after the first boot warning.
+    RCLCPP_INFO_ONCE(this->get_logger(), "Depth enabled: stereo calibration loaded, publishing depth");
 
     // Frame rate control — advance deadline by interval (not snap to now)
     // so leftover time carries forward for accurate average rate.
