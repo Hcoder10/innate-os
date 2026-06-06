@@ -15,7 +15,10 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
       pool_arm_(nullptr),
       current_source_("live"),
       camera_qos_(rclcpp::QoS(1).best_effort()),
-      use_compressed_images_(false) {
+      use_compressed_images_(false),
+      enable_audio_(true),
+      audio_source_element_("alsasrc"),
+      audio_capture_device_("") {
     // Initialize GStreamer
     gst_init(nullptr, nullptr);
 
@@ -26,12 +29,22 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("replay_main_camera_topic", "/brain/recorder/replay/main_camera/left/image_raw");
     this->declare_parameter("replay_arm_camera_topic", "/brain/recorder/replay/arm_camera/image_raw");
 
+    // Robot microphone -> teleoperator audio. enable_audio defaults on; the
+    // source element/device default to the ALSA default capture device, which
+    // is the same audio card the robot already drives for TTS playback.
+    this->declare_parameter("enable_audio", true);
+    this->declare_parameter("audio_source_element", "alsasrc");
+    this->declare_parameter("audio_capture_device", "");
+
     // Get parameters
     use_compressed_images_ = this->get_parameter("use_compressed_images").as_bool();
     live_main_topic_ = this->get_parameter("live_main_camera_topic").as_string();
     live_arm_topic_ = this->get_parameter("live_arm_camera_topic").as_string();
     replay_main_topic_ = this->get_parameter("replay_main_camera_topic").as_string();
     replay_arm_topic_ = this->get_parameter("replay_arm_camera_topic").as_string();
+    enable_audio_ = this->get_parameter("enable_audio").as_bool();
+    audio_source_element_ = this->get_parameter("audio_source_element").as_string();
+    audio_capture_device_ = this->get_parameter("audio_capture_device").as_string();
 
     // Create publishers
     offer_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer", 10);
@@ -54,6 +67,13 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
                 use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Live topics: %s, %s", live_main_topic_.c_str(), live_arm_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  Replay topics: %s, %s", replay_main_topic_.c_str(), replay_arm_topic_.c_str());
+    if (enable_audio_) {
+        RCLCPP_INFO(this->get_logger(), "  Mic audio: enabled (source: %s, device: %s)",
+                    audio_source_element_.c_str(),
+                    audio_capture_device_.empty() ? "default" : audio_capture_device_.c_str());
+    } else {
+        RCLCPP_INFO(this->get_logger(), "  Mic audio: disabled");
+    }
 }
 
 WebRTCStreamer::~WebRTCStreamer() {
@@ -332,9 +352,7 @@ void WebRTCStreamer::on_image_arm_compressed(const sensor_msgs::msg::CompressedI
     gst_object_unref(appsrc);
 }
 
-void WebRTCStreamer::cleanup_pipeline() {
-    std::lock_guard<std::mutex> lock(pipeline_mutex_);
-
+void WebRTCStreamer::teardown_pipeline_locked() {
     // Deactivate and release pools
     if (pool_main_) {
         gst_buffer_pool_set_active(pool_main_, FALSE);
@@ -348,14 +366,23 @@ void WebRTCStreamer::cleanup_pipeline() {
     }
 
     if (pipeline_) {
-        RCLCPP_INFO(this->get_logger(), "Cleaning up pipeline...");
         gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
         webrtc_ = nullptr;
         appsrc_main_ = nullptr;
         appsrc_arm_ = nullptr;
+    }
+}
+
+void WebRTCStreamer::cleanup_pipeline() {
+    std::lock_guard<std::mutex> lock(pipeline_mutex_);
+    if (pipeline_) {
+        RCLCPP_INFO(this->get_logger(), "Cleaning up pipeline...");
+        teardown_pipeline_locked();
         RCLCPP_INFO(this->get_logger(), "Pipeline cleaned up");
+    } else {
+        teardown_pipeline_locked();
     }
 }
 
@@ -385,8 +412,35 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
 
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
 
-    // Create pipeline
-    const char* pipeline_str =
+    // Build and start the pipeline. If the audio branch fails to come up
+    // (no/busy capture device, missing opus plugin, ...), retry video-only so
+    // teleop driving is never blocked by the microphone.
+    bool with_audio = enable_audio_;
+    if (!start_pipeline_locked(with_audio)) {
+        if (with_audio) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Pipeline failed to start with audio; retrying video-only (mic unavailable?)");
+            with_audio = false;
+            if (!start_pipeline_locked(false)) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to start pipeline");
+                return;
+            }
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "Failed to start pipeline");
+            return;
+        }
+    }
+
+    RCLCPP_INFO(this->get_logger(), "Pipeline PLAYING (audio=%s), creating offer...", with_audio ? "on" : "off");
+
+    // Create offer
+    GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, this, nullptr);
+    g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
+}
+
+std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
+    // Two VP8 video tracks: main camera (sink_0) and arm camera (sink_1).
+    std::string desc =
         "webrtcbin name=webrtc bundle-policy=max-bundle "
 
         "appsrc name=src_main is-live=true format=time "
@@ -407,12 +461,44 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
         "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=97 ! "
         "webrtc.sink_1";
 
+    if (with_audio) {
+        // One-way Opus microphone track (sink_2). Mono 48 kHz at a voice
+        // bitrate keeps it light; the leaky queue drops audio rather than
+        // stalling if the network backs up. webrtcbin negotiates this as a
+        // sendonly audio m-line that the phone plays automatically.
+        std::string src = audio_source_element_;
+        if (!audio_capture_device_.empty()) {
+            // Quote the device so ALSA names like hw:1,0 survive gst parsing.
+            src += " device=\"" + audio_capture_device_ + "\"";
+        }
+        desc += " " + src +
+                " do-timestamp=true ! "
+                "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
+                "audioconvert ! audioresample ! "
+                "audio/x-raw,rate=48000,channels=1 ! "
+                "opusenc bitrate=24000 audio-type=voice ! "
+                "rtpopuspay pt=98 ! "
+                "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,payload=98 ! "
+                "webrtc.sink_2";
+    }
+
+    return desc;
+}
+
+bool WebRTCStreamer::start_pipeline_locked(bool with_audio) {
     GError* error = nullptr;
-    pipeline_ = gst_parse_launch(pipeline_str, &error);
+    std::string desc = build_pipeline_description(with_audio);
+    pipeline_ = gst_parse_launch(desc.c_str(), &error);
     if (error) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to create pipeline: %s", error->message);
+        RCLCPP_ERROR(this->get_logger(), "Failed to create pipeline (audio=%s): %s", with_audio ? "on" : "off",
+                     error->message);
         g_error_free(error);
-        return;
+        // gst_parse_launch can hand back a partial pipeline alongside an error.
+        if (pipeline_) {
+            gst_object_unref(pipeline_);
+            pipeline_ = nullptr;
+        }
+        return false;
     }
 
     // Get elements
@@ -435,13 +521,17 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     g_signal_connect(webrtc_, "notify::connection-state", G_CALLBACK(on_connection_state_changed), this);
     g_signal_connect(webrtc_, "notify::ice-gathering-state", G_CALLBACK(on_ice_gathering_state_changed), this);
 
-    // Start pipeline
-    gst_element_set_state(pipeline_, GST_STATE_PLAYING);
-    RCLCPP_INFO(this->get_logger(), "Pipeline PLAYING, creating offer...");
+    // Start pipeline. A synchronous failure here (e.g. missing element) trips
+    // the video-only retry in on_start; an async capture-device error instead
+    // surfaces on the bus and only stalls the independent audio branch.
+    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        RCLCPP_ERROR(this->get_logger(), "Pipeline failed to reach PLAYING (audio=%s)", with_audio ? "on" : "off");
+        teardown_pipeline_locked();
+        return false;
+    }
 
-    // Create offer
-    GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, this, nullptr);
-    g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
+    return true;
 }
 
 void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
