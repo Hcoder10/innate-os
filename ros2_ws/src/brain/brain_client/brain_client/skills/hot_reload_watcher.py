@@ -130,6 +130,7 @@ class HotReloadWatcher:
         agents_directories: list[str],
         on_reload: Callable[[list[str], list[str]], None],
         debounce_seconds: float = 1.0,
+        recursive: bool = False,
     ):
         """
         Initialize the hot reload watcher.
@@ -140,12 +141,17 @@ class HotReloadWatcher:
             agents_directories: List of agent directories to watch
             on_reload: Callback function that takes (skill_names, agent_names)
             debounce_seconds: Time to wait before triggering reload after last change
+            recursive: Watch subdirectories too. Required for physical skills, which
+                live in a per-skill subdirectory (``<root>/<skill>/metadata.json`` and
+                assets); a change to any file in there reloads that skill. Agents are
+                flat ``.py`` files, so they watch non-recursively.
         """
         self.logger = logger
         self.skills_directories = skills_directories
         self.agents_directories = agents_directories
         self.on_reload = on_reload
         self.debounce_seconds = debounce_seconds
+        self.recursive = recursive
 
         self._observer: Observer | None = None
         self._pending_skills: set[str] = set()
@@ -172,14 +178,14 @@ class HotReloadWatcher:
         # Create event handler
         handler = _InternalHandler(
             logger=self.logger,
-            on_file_changed=self._on_file_changed,
+            on_path_changed=self._on_path_changed,
         )
 
         # Watch all directories
         watched_count = 0
         for directory in self.skills_directories + self.agents_directories:
             if os.path.exists(directory):
-                self._observer.schedule(handler, directory, recursive=False)
+                self._observer.schedule(handler, directory, recursive=self.recursive)
                 self.logger.info(f"👁️ Watching for changes: {directory}")
                 watched_count += 1
 
@@ -206,10 +212,12 @@ class HotReloadWatcher:
         self._running = False
         self.logger.info("Hot reload watcher stopped")
 
-    def _on_file_changed(self, file_path: str, is_skill: bool):
-        """Called when a file changes."""
-        path = Path(file_path)
-        item_name = path.stem
+    def _on_path_changed(self, file_path: str):
+        """Called when any watched file changes; resolves it to the skill/agent it belongs to."""
+        resolved = self._resolve(file_path)
+        if resolved is None:
+            return
+        item_name, is_skill = resolved
 
         with self._lock:
             if is_skill:
@@ -223,6 +231,23 @@ class HotReloadWatcher:
 
             self._debounce_timer = threading.Timer(self.debounce_seconds, self._execute_reload)
             self._debounce_timer.start()
+
+    def _resolve(self, file_path: str) -> tuple[str, bool] | None:
+        """Map a changed file to ``(item_name, is_skill)``, or ``None`` if it's noise.
+
+        Skills win over agents when a path matches both (a given watcher only ever
+        schedules one of the two, so in practice there's no overlap).
+        """
+        path = Path(file_path)
+        for root in self.skills_directories:
+            name = _skill_name_for(Path(root), path)
+            if name is not None:
+                return name, True
+        for root in self.agents_directories:
+            name = _flat_py_name_for(Path(root), path)
+            if name is not None:
+                return name, False
+        return None
 
     def _execute_reload(self):
         """Execute pending reloads."""
@@ -240,37 +265,67 @@ class HotReloadWatcher:
                 self.logger.error(f"Hot reload failed: {e}")
 
 
-class _InternalHandler(FileSystemEventHandler):
-    """Internal handler for watchdog events."""
+def _flat_py_name_for(root: Path, path: Path) -> str | None:
+    """A loadable ``.py`` file sitting directly in ``root`` -> its stem, else ``None``.
 
-    def __init__(self, logger, on_file_changed: Callable[[str, bool], None]):
+    Used for agents and for top-level (code) skills, which are flat ``.py`` files.
+    """
+    if path.parent != root:
+        return None
+    if path.suffix != ".py" or path.name == "__init__.py" or path.name.startswith("_"):
+        return None
+    return path.stem
+
+
+def _skill_name_for(root: Path, path: Path) -> str | None:
+    """Map a changed file under a skills ``root`` to the skill it belongs to.
+
+    - ``root/foo.py``            -> ``"foo"``  (code skill; ``.py`` only)
+    - ``root/foo/metadata.json`` -> ``"foo"``  (physical skill; any file type)
+    - ``root/foo/assets/x.png``  -> ``"foo"``
+
+    Returns ``None`` for files outside ``root`` and for editor/build noise
+    (``__pycache__``, dotfiles, temp/swap files) so reloads don't loop on the
+    ``.pyc`` written during a reload.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return None
+    parts = rel.parts
+    if len(parts) == 1:
+        return _flat_py_name_for(root, path)  # top-level code skill
+    if any(part.startswith(".") or part == "__pycache__" for part in parts):
+        return None  # hidden/build dir anywhere in the path (.git, __pycache__, ...)
+    if parts[0].startswith("_") or _is_transient(path.name):
+        return None
+    return parts[0]  # physical-skill subdirectory
+
+
+def _is_transient(filename: str) -> bool:
+    """Editor/atomic-write scratch files that shouldn't drive a reload on their own."""
+    return filename.startswith(".") or filename.endswith((".tmp", ".swp", "~"))
+
+
+class _InternalHandler(FileSystemEventHandler):
+    """Internal handler for watchdog events; forwards raw paths to the watcher's resolver."""
+
+    def __init__(self, logger, on_path_changed: Callable[[str], None]):
         super().__init__()
         self.logger = logger
-        self.on_file_changed = on_file_changed
+        self.on_path_changed = on_path_changed
 
     def on_modified(self, event):
-        self._handle(event)
+        if not event.is_directory:
+            self.on_path_changed(event.src_path)
 
     def on_created(self, event):
-        self._handle(event)
+        if not event.is_directory:
+            self.on_path_changed(event.src_path)
 
-    def _handle(self, event):
-        if event.is_directory:
-            return
-
-        path = Path(event.src_path)
-
-        # Only Python files
-        if path.suffix != ".py":
-            return
-
-        # Skip __init__.py and private files
-        if path.name.startswith("_") or path.name == "__init__.py":
-            return
-
-        # Determine type based on parent directory
-        parent = path.parent.name
-        is_skill = "skill" in parent.lower()
-
-        self.logger.debug(f"File changed: {path.name} (skill={is_skill})")
-        self.on_file_changed(str(path), is_skill)
+    def on_moved(self, event):
+        # Editors that save atomically write a temp file then rename it onto the
+        # target; the final content arrives as a move, not a modify.
+        dest_path = getattr(event, "dest_path", None)
+        if not event.is_directory and dest_path:
+            self.on_path_changed(dest_path)
