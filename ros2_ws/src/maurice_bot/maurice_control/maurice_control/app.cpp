@@ -38,16 +38,11 @@ namespace maurice_control {
 // can be promoted to ROS parameters later for live tuning without a rebuild.
 // ---------------------------------------------------------------------------
 namespace joy_tuning {
-constexpr double DEADZONE = 0.08;          // ignore tiny offsets (touch joystick recenters cleanly)
-constexpr double EXPONENT = 1.5;           // response curve: 1.0 = linear, 2.0 = old (too back-loaded)
-constexpr double MAX_LINEAR = 0.5;         // m/s at full stick
-constexpr double MAX_ANGULAR = 1.0;        // rad/s at full stick
-constexpr double MAX_LINEAR_ACCEL = 0.6;   // m/s^2  slew limit (smoothing)
-constexpr double MAX_ANGULAR_ACCEL = 2.0;  // rad/s^2 slew limit (smoothing)
-constexpr double TIME_CONSTANT = 0.06;     // s, eases the approach toward the target for a soft arrival
-constexpr double CONTROL_DT = 0.02;        // s, 50 Hz control/publish loop
-constexpr double COMMAND_TIMEOUT = 0.4;    // s, stop if joystick messages stop arriving mid-drive (safety)
-constexpr bool REVERSE_STEERING = true;    // car-like: invert turn direction when reversing
+constexpr double DEADZONE = 0.08;        // ignore tiny offsets (touch joystick recenters cleanly)
+constexpr double EXPONENT = 1.5;         // response curve: 1.0 = linear, 2.0 = old (too back-loaded)
+constexpr double MAX_LINEAR = 0.5;       // m/s at full stick
+constexpr double MAX_ANGULAR = 1.0;      // rad/s at full stick
+constexpr bool REVERSE_STEERING = true;  // car-like: invert turn direction when reversing
 }  // namespace joy_tuning
 
 /**
@@ -400,12 +395,6 @@ class AppControl : public rclcpp::Node {
         // Publisher for velocity commands (Twist) on /cmd_vel
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
 
-        // Fixed-rate control loop that smooths joystick teleop into /cmd_vel.
-        last_joystick_time_ = this->now();
-        joystick_control_timer_ = this->create_wall_timer(
-            std::chrono::duration<double>(joy_tuning::CONTROL_DT),
-            std::bind(&AppControl::joystick_control_callback, this));
-
         // Publisher for leader arm commands (Float64MultiArray) on /mars/arm/commands
         cmd_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/mars/arm/commands", 10);
 
@@ -661,107 +650,35 @@ class AppControl : public rclcpp::Node {
     }
 
     /**
-     * Move `current` toward `target` by at most one control step, limited by
-     * `max_accel`, with a time-constant-based ease so arrival is soft rather
-     * than a hard stop. Used to slew-rate-limit (smooth) teleop velocities.
-     */
-    double slew_toward(double current, double target, double max_accel) {
-        double accel = (target - current) / joy_tuning::TIME_CONSTANT;
-        if (accel > max_accel) accel = max_accel;
-        if (accel < -max_accel) accel = -max_accel;
-
-        double next = current + accel * joy_tuning::CONTROL_DT;
-
-        // Guard against overshoot past the target due to discretization.
-        if (target >= current) {
-            if (next > target) next = target;
-        } else {
-            if (next < target) next = target;
-        }
-        return next;
-    }
-
-    /**
-     * Receives raw joystick input and converts it to target velocities:
+     * Converts joystick input to a velocity command and publishes it:
      *   - Deadband + response curve applied per axis (see apply_curve).
      *   - Linear velocity scaled to [-MAX_LINEAR, MAX_LINEAR].
      *   - Angular velocity scaled to [-MAX_ANGULAR, MAX_ANGULAR].
      *   - Car-like reverse steering: turn direction is inverted while reversing
-     *     so the rear (leading) end follows the stick.
-     * Publishing and acceleration smoothing happen in joystick_control_callback(),
-     * which slew-rate-limits toward these targets so driving is not abrupt.
+     *     so the rear (leading) end follows the stick instead of the front
+     *     (otherwise reversing feels inverted to a driver watching the robot).
+     * Published per message; the app sends a zero on release, and the motor
+     * controller's own command timeout stops the robot if input stops arriving.
      */
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
-        // Shape raw stick input (deadband + curve).
         double shaped_x = apply_curve(msg->x);  // steering
         double shaped_y = apply_curve(msg->y);  // throttle
 
-        double target_lin = shaped_y * joy_tuning::MAX_LINEAR;
-        double target_ang = -shaped_x * joy_tuning::MAX_ANGULAR;
+        double linear = shaped_y * joy_tuning::MAX_LINEAR;
+        double angular = -shaped_x * joy_tuning::MAX_ANGULAR;
 
-        // Car-like reverse steering: when backing up, invert the turn direction
-        // so the rear end follows the stick instead of the front (otherwise
-        // reversing feels inverted to a driver watching the robot).
-        if (joy_tuning::REVERSE_STEERING && target_lin < 0.0) {
-            target_ang = -target_ang;
-        }
-
-        target_lin_ = target_lin;
-        target_ang_ = target_ang;
-        last_joystick_time_ = this->now();
-
-        // Activate the smoothing loop on any input (including release-to-zero,
-        // so the robot ramps down to a stop instead of cutting out).
-        teleop_active_ = true;
-    }
-
-    /**
-     * Fixed-rate (50 Hz) teleop smoothing loop. Ramps the published velocity
-     * toward the joystick target with an acceleration limit so manual driving
-     * is smooth rather than stepping instantly between speeds. Only publishes
-     * while teleop is active; once the stick is centered and the robot has
-     * ramped to a stop it yields /cmd_vel so autonomous nav can drive.
-     */
-    void joystick_control_callback() {
-        if (!teleop_active_) {
-            return;
-        }
-
-        double target_lin = target_lin_;
-        double target_ang = target_ang_;
-
-        // Safety: if joystick messages stop arriving mid-drive, command a stop.
-        double age = (this->now() - last_joystick_time_).seconds();
-        if (age > joy_tuning::COMMAND_TIMEOUT) {
-            target_lin = 0.0;
-            target_ang = 0.0;
-        }
-
-        current_lin_ = slew_toward(current_lin_, target_lin, joy_tuning::MAX_LINEAR_ACCEL);
-        current_ang_ = slew_toward(current_ang_, target_ang, joy_tuning::MAX_ANGULAR_ACCEL);
-
-        // Once the stick is centered and we have ramped to a stop, snap to an
-        // exact zero, publish it, and deactivate so we stop publishing.
-        constexpr double eps = 1e-3;
-        bool settled = std::abs(target_lin) < eps && std::abs(target_ang) < eps &&
-                       std::abs(current_lin_) < eps && std::abs(current_ang_) < eps;
-        if (settled) {
-            current_lin_ = 0.0;
-            current_ang_ = 0.0;
+        if (joy_tuning::REVERSE_STEERING && linear < 0.0) {
+            angular = -angular;
         }
 
         geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = current_lin_;
+        twist_msg.linear.x = linear;
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-        twist_msg.angular.z = current_ang_;
+        twist_msg.angular.z = angular;
         cmd_vel_pub_->publish(twist_msg);
-
-        if (settled) {
-            teleop_active_ = false;
-        }
     }
 
     /**
@@ -1094,16 +1011,6 @@ class AppControl : public rclcpp::Node {
     // Timers
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
     rclcpp::TimerBase::SharedPtr hostname_sync_timer_;
-    rclcpp::TimerBase::SharedPtr joystick_control_timer_;
-
-    // Joystick teleop smoothing state (written in joystick_callback, consumed
-    // in joystick_control_callback; both run on the single-threaded executor).
-    double target_lin_ = 0.0;
-    double target_ang_ = 0.0;
-    double current_lin_ = 0.0;
-    double current_ang_ = 0.0;
-    bool teleop_active_ = false;
-    rclcpp::Time last_joystick_time_;
 
     // Services
     rclcpp::Service<maurice_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;
