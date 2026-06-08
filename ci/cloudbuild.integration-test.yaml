@@ -3,10 +3,28 @@
 # `gcloud builds submit` (GitHub Actions authenticates with Workload Identity
 # Federation — same setup as ci/cloudbuild.sim-images.yaml).
 #
-# It builds ci/Dockerfile.test and then runs the *same* test flow as a local
-# `docker compose -f ci/docker-compose.test.yml up`, so there is a single source
-# of truth for what "the tests" are.
+# Two-image strategy for speed (mirrors the sim deps/ros-prebuilt split):
+#   - ci/Dockerfile.test-base  -> a "warm" base (apt+pip deps, rosdep, a full
+#     prebuilt ros2_ws, and a populated ccache). Rebuilt + pushed to ghcr only on
+#     main (_PUBLISH_BASE=true), so it changes rarely.
+#   - ci/Dockerfile.test       -> a thin layer FROM the warm base that overlays
+#     this revision's source and does an INCREMENTAL, ccache-backed colcon build.
+# On a PR this skips the ~180s apt/pip install entirely and only recompiles the
+# packages that actually changed, while still building the whole workspace (so a
+# build error in any package fails CI).
+#
+# NOTE: this build runs on a private worker pool (see the GitHub workflow). The
+# pool must have egress to ghcr.io (external IP or Cloud NAT) for the base
+# pull/push, and the build service account needs read access to the GHCR secrets.
 timeout: 3600s
+
+substitutions:
+  _IMAGE_PREFIX: ghcr.io/innate-inc
+  _BASE_IMAGE_NAME: innate-os-test-base
+  _GHCR_TOKEN_SECRET: innate-os-sim-ghcr-token
+  _GHCR_USERNAME_SECRET: innate-os-sim-ghcr-username
+  # Set to "true" by the GitHub workflow on pushes to main; "false" for PRs.
+  _PUBLISH_BASE: "false"
 
 options:
   machineType: E2_HIGHCPU_8
@@ -16,16 +34,65 @@ options:
 steps:
   - id: build-test-image
     name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    secretEnv:
+      - GHCR_TOKEN
+      - GHCR_USERNAME
     env:
       - DOCKER_BUILDKIT=1
     args:
-      - build
-      - --progress=plain
-      - -t
-      - innate-os-test:latest
-      - -f
-      - ci/Dockerfile.test
-      - .
+      - -ceu
+      - |
+        base_image="${_IMAGE_PREFIX}/${_BASE_IMAGE_NAME}"
+
+        # ghcr login is best-effort: if it fails we simply build the base inline.
+        logged_in="false"
+        if echo "$$GHCR_TOKEN" | docker login ghcr.io -u "$$GHCR_USERNAME" --password-stdin; then
+          logged_in="true"
+        fi
+
+        build_base() {
+          # Full deps + prebuilt workspace + warm ccache. --cache-from reuses the
+          # deps layers; the colcon layer is a full build whenever ros2_ws/src
+          # changed (acceptable on main's cadence).
+          docker pull "$base_image:buildcache" || true
+          docker build \
+            --progress=plain \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from "$base_image:buildcache" \
+            -t "$base_image:main" \
+            -t "$base_image:buildcache" \
+            -f ci/Dockerfile.test-base \
+            .
+        }
+
+        if [[ "${_PUBLISH_BASE}" == "true" ]]; then
+          # main: (re)build and publish the warm base.
+          build_base
+          if [[ "$logged_in" == "true" ]]; then
+            docker push "$base_image:main"
+            docker push "$base_image:buildcache"
+          else
+            echo "WARNING: not logged in to ghcr; base built but not pushed."
+          fi
+        else
+          # PR: reuse the published warm base; only the thin layer rebuilds.
+          # Fall back to an inline base build if it has never been published yet
+          # (e.g. before the first main build after this change).
+          if ! docker pull "$base_image:main"; then
+            echo "Base image $base_image:main unavailable; building it inline."
+            build_base
+          fi
+        fi
+
+        # Thin layer: overlay this revision's source onto the warm base and do an
+        # incremental, ccache-backed colcon build.
+        docker build \
+          --progress=plain \
+          --build-arg "BASE_IMAGE=$base_image:main" \
+          -t innate-os-test:latest \
+          -f ci/Dockerfile.test \
+          .
 
   - id: run-tests
     name: gcr.io/cloud-builders/docker
@@ -43,3 +110,10 @@ steps:
       - SKIP_UPDATE_CHECK=1
       - innate-os-test:latest
       - run_integration_tests.sh
+
+availableSecrets:
+  secretManager:
+    - env: GHCR_USERNAME
+      versionName: projects/$PROJECT_ID/secrets/${_GHCR_USERNAME_SECRET}/versions/latest
+    - env: GHCR_TOKEN
+      versionName: projects/$PROJECT_ID/secrets/${_GHCR_TOKEN_SECRET}/versions/latest

@@ -23,7 +23,10 @@ Build is the broad safety net for refactors (all 19 packages). Tests are the beh
 ## Run it locally
 
 ```bash
-# Build the test image
+# Build the test image. It's split in two: a "warm" base (deps + a full prebuilt
+# ros2_ws + ccache) and a thin layer on top that rebuilds only what changed.
+# CI publishes the base to ghcr from main; locally, build it once yourself first.
+docker build -t ghcr.io/innate-inc/innate-os-test-base:main -f ci/Dockerfile.test-base .
 docker build -t innate-os-test:latest -f ci/Dockerfile.test .
 
 # Run all of Gate 3 exactly as CI does

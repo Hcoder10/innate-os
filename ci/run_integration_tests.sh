@@ -33,8 +33,9 @@ export ZENOH_SESSION_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
 export ZENOH_ROUTER_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
 export ZENOH_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
 
+# The test image already built the workspace at image-build time
+# (ci/Dockerfile.test does an incremental colcon build), so just source it.
 cd /root/innate-os/ros2_ws
-colcon build
 source install/setup.bash
 
 echo "=== unit tests (fast, no ROS) ==="

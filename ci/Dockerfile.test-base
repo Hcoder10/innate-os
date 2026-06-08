@@ -1,0 +1,121 @@
+# syntax=docker/dockerfile:1.7
+#
+# ci/Dockerfile.test-base - Warm base for the CI test image.
+#
+# Bakes the heavy, slow-changing pieces so PR builds (ci/Dockerfile.test) can be
+# fast: OS/apt deps, Python deps, rosdep, AND a full prebuilt ros2_ws (build/ +
+# install/) with a *populated ccache*. Published to ghcr as
+# innate-os-test-base:{main,buildcache} from main (see
+# ci/cloudbuild.integration-test.yaml). ci/Dockerfile.test does `FROM` this image
+# and only rebuilds what changed.
+#
+# Why a published base (vs. `--cache-from` alone): on ephemeral Cloud Build VMs a
+# cache-missed colcon layer cannot see the ccache it would itself produce, so it
+# would always rebuild from scratch. By baking ccache into this image's
+# filesystem, `FROM`-ing it gives the PR build a warm, content-addressed cache —
+# unchanged translation units become cache hits even after a fresh git checkout.
+#
+# Non-Jetson: skips nvidia-*/cuda-* packages.
+
+FROM ros:humble-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ROS_DISTRO=humble \
+    INNATE_OS_ROOT=/root/innate-os \
+    UV_SYSTEM_PYTHON=1 \
+    UV_LINK_MODE=copy \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    CCACHE_DIR=/root/.ccache
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Install base prerequisites + enable universe (for gstreamer, libhdf5-dev, etc.)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+        curl \
+        iputils-ping \
+        gnupg \
+        lsb-release \
+        ca-certificates && \
+    add-apt-repository universe && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        locales \
+        iproute2 \
+        libcairo2-dev \
+        libhdf5-dev \
+        ros-humble-kdl-parser
+
+# Setup locale
+RUN locale-gen en_US en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+
+# Add Innate packages repository (for ros-humble-innate-rws, etc.)
+RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
+    gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ $(lsb_release -cs) main" | \
+    tee /etc/apt/sources.list.d/innate.list > /dev/null
+
+# Copy apt dependencies file first (for better layer caching)
+COPY ros2_ws/apt-dependencies.common.txt /tmp/apt-dependencies.txt
+
+# Install apt dependencies from common list
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && \
+    grep -v '^#' /tmp/apt-dependencies.txt | grep -v '^$' | \
+        xargs apt-get install -y --no-install-recommends && \
+    rm /tmp/apt-dependencies.txt
+
+# Install uv for fast, cached Python package installation.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
+
+# Install Python deps with uv. Test image is non-Jetson, so we drop Jetson-only
+# entries (cupy, jetson-ai-lab index) and runtime-only packages that don't
+# install on CI runners (pynput, bluezero). google-generativeai is required by
+# skills/scan_for_objects.py in integration tests.
+COPY ros2_ws/pip-requirements.txt /tmp/pip-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    grep -v 'pypi.jetson-ai-lab.io' /tmp/pip-requirements.txt | \
+        grep -v -E '^cupy' | \
+        grep -v -E '^pynput' | \
+        grep -v -E '^bluezero' > /tmp/pip-requirements.filtered.txt && \
+    uv pip install --system meson ninja && \
+    uv pip install --system -r /tmp/pip-requirements.filtered.txt && \
+    uv pip install --system google-generativeai && \
+    rm /tmp/pip-requirements.txt /tmp/pip-requirements.filtered.txt
+
+# Initialize rosdep
+RUN rosdep init || true && rosdep update
+
+# Copy the full workspace (+ config/workspace, matching the runtime layout) and
+# import external dependencies (rplidar_ros, topic_tools) so they are baked in.
+WORKDIR /root/innate-os
+COPY ros2_ws /root/innate-os/ros2_ws
+COPY config /root/innate-os/config
+COPY workspace /root/innate-os/workspace
+RUN cd /root/innate-os/ros2_ws/src && \
+    if [ -f dependencies.repos ]; then \
+        echo "Importing external dependencies via vcs..." && \
+        vcs import --input dependencies.repos; \
+    fi
+
+# Full build with ccache. ccache writes to /root/.ccache (a REAL dir, NOT a
+# --mount=type=cache) so the populated cache is baked into the image layer and
+# carried into ci/Dockerfile.test via FROM. --parallel-workers defaults to all
+# cores; cap it if heavy C++ linking OOMs on a small machine.
+# maurice_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
+# guarded by if(VPI_FOUND), nav's only Jetson dep (python3-cupy) is runtime-only.
+WORKDIR /root/innate-os/ros2_ws
+RUN . /opt/ros/humble/setup.sh && \
+    rosdep install --from-paths src --ignore-src -r -y || true && \
+    colcon build --parallel-workers "$(nproc)" --cmake-args \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+WORKDIR /root/innate-os
+CMD ["bash"]
