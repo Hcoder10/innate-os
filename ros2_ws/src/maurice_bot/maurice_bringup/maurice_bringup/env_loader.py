@@ -74,8 +74,29 @@ def _strip_toml_comment(value: str) -> str:
     return "".join(chars).strip()
 
 
+def _parse_toml_array(value: str) -> list[str]:
+    """Parse a single-line inline TOML array of strings, e.g. ``["/a", "/b"]``.
+
+    The hand-rolled fallback parser is line-based, so only single-line arrays are
+    supported (which is all the documented ``[paths]`` usage needs). Without this,
+    a user writing TOML array syntax on Python 3.10 (no tomllib) would get the raw
+    ``["/a", "/b"]`` string and the dirs would silently fail to load.
+    """
+    items: list[str] = []
+    for item in value[1:-1].split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if len(item) >= 2 and item[0] == item[-1] and item[0] in {"'", '"'}:
+            item = item[1:-1]
+        items.append(item)
+    return items
+
+
 def _parse_toml_scalar(raw_value: str):
     value = _strip_toml_comment(raw_value).strip()
+    if len(value) >= 2 and value[0] == "[" and value[-1] == "]":
+        return _parse_toml_array(value)
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     lowered = value.lower()
@@ -139,6 +160,17 @@ def _join_dirs(value) -> str:
     return os.pathsep.join(p.strip() for p in parts if p.strip())
 
 
+def _warn_missing_dirs(joined: str, label: str) -> None:
+    """Warn about configured dirs that don't exist, so a typo in os.toml isn't silent."""
+    for part in joined.split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        expanded = os.path.expandvars(os.path.expanduser(part))
+        if not os.path.isdir(expanded):
+            print(f"[env_loader] Configured {label} directory does not exist: {expanded}", file=sys.stderr)
+
+
 def _load_os_config(path: Path) -> None:
     if not path.exists():
         return
@@ -164,8 +196,10 @@ def _load_os_config(path: Path) -> None:
         os.environ.setdefault("CARTESIA_VOICE_ID", cartesia_voice_id.strip())
     if joined_agent_dirs := _join_dirs(agent_dirs):
         os.environ.setdefault("INNATE_EXTRA_AGENT_DIRS", joined_agent_dirs)
+        _warn_missing_dirs(joined_agent_dirs, "agent")
     if joined_skill_dirs := _join_dirs(skill_dirs):
         os.environ.setdefault("INNATE_EXTRA_SKILL_DIRS", joined_skill_dirs)
+        _warn_missing_dirs(joined_skill_dirs, "skill")
 
 
 def load_env_file(env_path: Path | None = None) -> None:

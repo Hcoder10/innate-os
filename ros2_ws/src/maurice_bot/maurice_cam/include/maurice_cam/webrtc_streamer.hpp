@@ -49,10 +49,12 @@ class WebRTCStreamer : public rclcpp::Node {
     void cleanup_pipeline();
 
     // with_audio appends an Opus mic branch (webrtc.sink_2) to the video pipeline.
-    std::string build_pipeline_description(bool with_audio) const;
+    // It is cleared to false if the audio params are unsafe, so callers log the real state.
+    std::string build_pipeline_description(bool& with_audio) const;
 
     // *_locked: caller must hold pipeline_mutex_. start_ returns false (and tears down) on failure.
-    bool start_pipeline_locked(bool with_audio);
+    // with_audio is updated to reflect whether audio actually made it into the pipeline.
+    bool start_pipeline_locked(bool& with_audio);
     void teardown_pipeline_locked();
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,

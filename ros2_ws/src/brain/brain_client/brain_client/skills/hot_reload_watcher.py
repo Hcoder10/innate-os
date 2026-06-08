@@ -6,12 +6,11 @@ Uses watchdog to monitor file changes and triggers reload via ROS service.
 
 import os
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 try:
-    from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileSystemEventHandler  # noqa: F401
+    from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
 
     WATCHDOG_AVAILABLE = True
@@ -19,102 +18,6 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     Observer = None
     FileSystemEventHandler = object
-
-
-class HotReloadHandler(FileSystemEventHandler):
-    """Handler for file system events that triggers hot reload."""
-
-    def __init__(
-        self,
-        logger,
-        on_skill_changed: Callable[[str], None],
-        on_agent_changed: Callable[[str], None],
-        debounce_seconds: float = 1.0,
-    ):
-        super().__init__()
-        self.logger = logger
-        self.on_skill_changed = on_skill_changed
-        self.on_agent_changed = on_agent_changed
-        self.debounce_seconds = debounce_seconds
-
-        # Track pending reloads with timestamps to debounce
-        self._pending_skills: dict[str, float] = {}
-        self._pending_agents: dict[str, float] = {}
-        self._lock = threading.Lock()
-        self._debounce_timer: threading.Timer | None = None
-
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        self._handle_file_event(event.src_path)
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        self._handle_file_event(event.src_path)
-
-    def _handle_file_event(self, file_path: str):
-        """Process a file change event."""
-        path = Path(file_path)
-
-        # Only handle Python files
-        if path.suffix != ".py":
-            return
-
-        # Skip __init__.py and private files
-        if path.name.startswith("_") or path.name == "__init__.py":
-            return
-
-        # Determine if this is a skill or agent based on parent directory
-        parent_name = path.parent.name
-        item_name = path.stem  # filename without extension
-
-        with self._lock:
-            now = time.time()
-
-            if parent_name == "skills" or "skills" in str(path.parent):
-                self._pending_skills[item_name] = now
-                self.logger.info(f"📝 Skill file changed: {item_name}")
-            elif parent_name == "agents" or "agents" in str(path.parent):
-                self._pending_agents[item_name] = now
-                self.logger.info(f"📝 Agent file changed: {item_name}")
-            else:
-                return  # Not in a watched directory
-
-            # Schedule debounced reload
-            self._schedule_reload()
-
-    def _schedule_reload(self):
-        """Schedule a debounced reload."""
-        if self._debounce_timer is not None:
-            self._debounce_timer.cancel()
-
-        self._debounce_timer = threading.Timer(self.debounce_seconds, self._execute_reload)
-        self._debounce_timer.start()
-
-    def _execute_reload(self):
-        """Execute the pending reloads."""
-        with self._lock:
-            skills_to_reload = list(self._pending_skills.keys())
-            agents_to_reload = list(self._pending_agents.keys())
-            self._pending_skills.clear()
-            self._pending_agents.clear()
-
-        if skills_to_reload:
-            self.logger.info(f"🔄 Hot reloading skills: {skills_to_reload}")
-            for skill_name in skills_to_reload:
-                try:
-                    self.on_skill_changed(skill_name)
-                except Exception as e:
-                    self.logger.error(f"Error reloading skill {skill_name}: {e}")
-
-        if agents_to_reload:
-            self.logger.info(f"🔄 Hot reloading agents: {agents_to_reload}")
-            for agent_name in agents_to_reload:
-                try:
-                    self.on_agent_changed(agent_name)
-                except Exception as e:
-                    self.logger.error(f"Error reloading agent {agent_name}: {e}")
 
 
 class HotReloadWatcher:
@@ -306,8 +209,12 @@ def _skill_name_for(root: Path, path: Path) -> str | None:
 
 
 def _is_transient(filename: str) -> bool:
-    """Editor/atomic-write scratch files that shouldn't drive a reload on their own."""
-    return filename.startswith(".") or filename.endswith((".tmp", ".swp", "~"))
+    """Editor/atomic-write scratch files that shouldn't drive a reload on their own.
+
+    Dotfiles are already filtered by the per-part hidden-path check in
+    ``_skill_name_for`` before this runs, so only the temp/swap suffixes are checked here.
+    """
+    return filename.endswith((".tmp", ".swp", "~"))
 
 
 class _InternalHandler(FileSystemEventHandler):
@@ -326,8 +233,13 @@ class _InternalHandler(FileSystemEventHandler):
         if not event.is_directory:
             self.on_path_changed(event.src_path)
 
+    def on_deleted(self, event):
+        # Deleting a skill's .py or a physical skill's file should reload it so the
+        # catalog drops the stale entry.
+        if not event.is_directory:
+            self.on_path_changed(event.src_path)
+
     def on_moved(self, event):
         # Atomic saves arrive as a rename onto the target, not a modify.
-        dest_path = getattr(event, "dest_path", None)
-        if not event.is_directory and dest_path:
-            self.on_path_changed(dest_path)
+        if not event.is_directory and event.dest_path:
+            self.on_path_changed(event.dest_path)

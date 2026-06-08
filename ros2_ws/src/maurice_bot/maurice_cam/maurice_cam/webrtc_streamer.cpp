@@ -428,7 +428,7 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
             RCLCPP_WARN(this->get_logger(),
                         "Pipeline failed to start with audio; retrying video-only (mic unavailable?)");
             with_audio = false;
-            if (!start_pipeline_locked(false)) {
+            if (!start_pipeline_locked(with_audio)) {
                 RCLCPP_ERROR(this->get_logger(), "Failed to start pipeline");
                 return;
             }
@@ -444,7 +444,7 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
 }
 
-std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
+std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
     // Two VP8 video tracks: main camera (sink_0) and arm camera (sink_1).
     std::string desc =
         "webrtcbin name=webrtc bundle-policy=max-bundle "
@@ -479,6 +479,7 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
             RCLCPP_ERROR(this->get_logger(),
                          "audio_source_element '%s' is not a plain element name; streaming video only",
                          audio_source_element_.c_str());
+            with_audio = false;
             return desc;
         }
 
@@ -493,6 +494,7 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
                 RCLCPP_ERROR(this->get_logger(),
                              "audio_capture_device '%s' has unexpected characters; streaming video only",
                              audio_capture_device_.c_str());
+                with_audio = false;
                 return desc;
             }
             src += " device=\"" + audio_capture_device_ + "\"";
@@ -511,7 +513,7 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
     return desc;
 }
 
-bool WebRTCStreamer::start_pipeline_locked(bool with_audio) {
+bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
     GError* error = nullptr;
     std::string desc = build_pipeline_description(with_audio);
     pipeline_ = gst_parse_launch(desc.c_str(), &error);
@@ -531,6 +533,15 @@ bool WebRTCStreamer::start_pipeline_locked(bool with_audio) {
     appsrc_main_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src_main");
     appsrc_arm_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src_arm");
     webrtc_ = gst_bin_get_by_name(GST_BIN(pipeline_), "webrtc");
+
+    // gst_bin_get_by_name returns null if an element is missing. The pipeline string
+    // always names these, but guard anyway so a malformed/renamed element fails loudly
+    // here instead of segfaulting in the g_object_set/g_signal_connect calls below.
+    if (!appsrc_main_ || !appsrc_arm_ || !webrtc_) {
+        RCLCPP_ERROR(this->get_logger(), "Pipeline is missing expected elements (src_main/src_arm/webrtc)");
+        teardown_pipeline_locked();
+        return false;
+    }
 
     // Create buffer pools (640x480 BGR = 921600 bytes per frame)
     pool_main_ = create_frame_pool(640, 480, 3);
