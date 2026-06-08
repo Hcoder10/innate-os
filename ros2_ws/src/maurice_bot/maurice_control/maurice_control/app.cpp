@@ -38,11 +38,15 @@ namespace maurice_control {
 // can be promoted to ROS parameters later for live tuning without a rebuild.
 // ---------------------------------------------------------------------------
 namespace joy_tuning {
-constexpr double DEADZONE = 0.08;        // ignore tiny offsets (touch joystick recenters cleanly)
-constexpr double EXPONENT = 1.5;         // response curve: 1.0 = linear, 2.0 = old (too back-loaded)
-constexpr double MAX_LINEAR = 0.5;       // m/s at full stick
-constexpr double MAX_ANGULAR = 1.0;      // rad/s at full stick
-constexpr bool REVERSE_STEERING = true;  // car-like: invert turn direction when reversing
+constexpr double DEADZONE = 0.04;            // ignore tiny offsets (touch joystick recenters cleanly)
+constexpr double EXPONENT = 1.5;             // response curve: 1.0 = linear, 2.0 = old (too back-loaded)
+constexpr double MAX_LINEAR = 0.5;           // m/s at full stick
+constexpr double MAX_ANGULAR = 1.0;          // rad/s at full stick
+constexpr bool REVERSE_STEERING = true;      // car-like: invert turn direction when reversing
+constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s of reverse speed over which the steering
+                                             // inversion ramps in, so it doesn't snap at zero throttle
+constexpr double TURN_SPEED_BONUS = 0.5;     // tank-game feel: extra turn rate at full speed, added on top
+                                             // of the full standstill rate (0 = constant, never slower slow)
 }  // namespace joy_tuning
 
 /**
@@ -653,7 +657,8 @@ class AppControl : public rclcpp::Node {
      * Converts joystick input to a velocity command and publishes it:
      *   - Deadband + response curve applied per axis (see apply_curve).
      *   - Linear velocity scaled to [-MAX_LINEAR, MAX_LINEAR].
-     *   - Angular velocity scaled to [-MAX_ANGULAR, MAX_ANGULAR].
+     *   - Angular velocity scaled by MAX_ANGULAR, with a tank-game speed bonus: full rotation rate is
+     *     always available (in-place pivots never slowed) and turn rate grows above it with speed.
      *   - Car-like reverse steering: turn direction is inverted while reversing
      *     so the rear (leading) end follows the stick instead of the front
      *     (otherwise reversing feels inverted to a driver watching the robot).
@@ -665,10 +670,22 @@ class AppControl : public rclcpp::Node {
         double shaped_y = apply_curve(msg->y);  // throttle
 
         double linear = shaped_y * joy_tuning::MAX_LINEAR;
-        double angular = -shaped_x * joy_tuning::MAX_ANGULAR;
+
+        // Tank-game turn authority: full rotation rate is always available (in-place pivots are never
+        // slowed), and steering bites harder the faster you go via an additive speed bonus.
+        // speed_fraction is just |shaped_y| since linear / MAX_LINEAR == shaped_y.
+        double speed_fraction = std::min(1.0, std::abs(shaped_y));
+        double turn_authority = 1.0 + joy_tuning::TURN_SPEED_BONUS * speed_fraction;
+        double angular = -shaped_x * joy_tuning::MAX_ANGULAR * turn_authority;
 
         if (joy_tuning::REVERSE_STEERING && linear < 0.0) {
-            angular = -angular;
+            // Ramp the steering inversion in over a small reverse-speed band rather than
+            // flipping it instantly at zero throttle. Holding full steering while the throttle
+            // grazes zero would otherwise snap the turn from +MAX to -MAX (the jarring direction
+            // change felt when a forward turn drifts into reverse). blend: 0 at linear=0 (matches
+            // the forward convention, no jump) -> 1 once clearly reversing (full car-like invert).
+            double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
+            angular *= (1.0 - 2.0 * blend);
         }
 
         geometry_msgs::msg::Twist twist_msg;
