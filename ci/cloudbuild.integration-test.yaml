@@ -45,7 +45,12 @@ steps:
       - |
         base_image="${_IMAGE_PREFIX}/${_BASE_IMAGE_NAME}"
 
-        # ghcr login is best-effort: if it fails we simply build the base inline.
+        # The GHCR secrets themselves are a hard prerequisite: Cloud Build
+        # resolves secretEnv before this step runs, so a missing secret or a
+        # service account without secretmanager.versions.access fails the build up
+        # front (see the header note). What we guard here is the docker login
+        # *call* (expired token, network blip): on failure we fall back to
+        # building the base inline instead of pulling it.
         logged_in="false"
         if echo "$$GHCR_TOKEN" | docker login ghcr.io -u "$$GHCR_USERNAME" --password-stdin; then
           logged_in="true"

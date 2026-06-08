@@ -33,8 +33,15 @@ COPY workspace /root/innate-os/workspace
 # Incremental rebuild. ccache (warm from the base) turns unchanged translation
 # units into cache hits; only changed packages truly recompile. --parallel-workers
 # defaults to all cores; cap it if heavy C++ linking OOMs on a small machine.
+#
+# rosdep install runs first (as in the base): near-instant when every dep is
+# already satisfied, but if this revision declares a NEW system <depend> it gets
+# installed on top of the base — so such PRs build (and, on a genuinely missing
+# dep, fail with a clear rosdep diagnostic instead of a cryptic compiler error)
+# without waiting for the next base rebuild on main.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
+    rosdep install --from-paths src --ignore-src -r -y || true && \
     colcon build --parallel-workers "$(nproc)" --cmake-args \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
