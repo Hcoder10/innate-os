@@ -149,7 +149,7 @@ class DynamicLoader:
             except Exception as e:
                 self.logger.error(f"Error loading {kind} from {py_file}: {e}")
 
-        self.logger.debug(f"Discovered {len(result)} {kind} in {directory_path}")
+        self.logger.info(f"Discovered {len(result)} {kind} in {directory_path}")
         return result
 
     def load_from_directories(self, directories: list[str]) -> dict:

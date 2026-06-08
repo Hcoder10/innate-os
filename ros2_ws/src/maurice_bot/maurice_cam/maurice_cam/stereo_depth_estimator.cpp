@@ -128,7 +128,7 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     if (max_fps_ > 0.0) {
         RCLCPP_DEBUG(this->get_logger(), "Max processing rate: %.1f Hz", max_fps_);
     } else {
-        RCLCPP_INFO(this->get_logger(), "Max processing rate: unlimited");
+        RCLCPP_DEBUG(this->get_logger(), "Max processing rate: unlimited");
     }
 
     // Subscribe to camera_info topics for calibration.
@@ -171,13 +171,13 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     footprint_cutout_pub_ = this->create_publisher<sensor_msgs::msg::Image>(footprint_cutout_topic_, sensor_qos);
 
     RCLCPP_DEBUG(this->get_logger(), "Publishers created (lazy publishing - only publish when subscribed)");
-    RCLCPP_INFO(this->get_logger(), "  Point cloud: %s (decimation: %d)", pointcloud_topic_.c_str(),
-                pointcloud_decimation_);
-    RCLCPP_INFO(this->get_logger(), "  Point cloud color: %s", pointcloud_color_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "  Footprint overlay: %s (from %s)", footprint_overlay_topic_.c_str(),
-                footprint_cloud_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "  Footprint mask: %s", footprint_mask_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "  Footprint cutout: %s", footprint_cutout_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "  Point cloud: %s (decimation: %d)", pointcloud_topic_.c_str(),
+                 pointcloud_decimation_);
+    RCLCPP_DEBUG(this->get_logger(), "  Point cloud color: %s", pointcloud_color_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "  Footprint overlay: %s (from %s)", footprint_overlay_topic_.c_str(),
+                 footprint_cloud_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "  Footprint mask: %s", footprint_mask_topic_.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "  Footprint cutout: %s", footprint_cutout_topic_.c_str());
 
     logFilterConfig();
 
@@ -192,7 +192,8 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
         std::bind(&StereoDepthEstimator::syncCallback, this, std::placeholders::_1, std::placeholders::_2));
 
     last_stats_time_ = this->now();
-    RCLCPP_INFO(this->get_logger(), "Stereo Depth Estimator initialized successfully");
+    RCLCPP_INFO(this->get_logger(), "Stereo depth estimator running — depth topic: %s (%dx%d, max_disparity=%d)",
+                depth_topic_.c_str(), image_width_, image_height_, max_disparity_);
 }
 
 // =============================================================================

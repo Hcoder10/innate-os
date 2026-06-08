@@ -40,6 +40,10 @@ PANE_SETUP_FILE=$(mktemp "${TMPDIR:-/tmp}/innate_pane_env.XXXXXX") || {
     echo "ERROR: Failed to create pane setup tempfile." >&2
     exit 1
 }
+# Clean up the service-key-bearing tempfile on the error-exit paths below. The
+# normal path can't rely on this trap (the script ends in `exec sleep infinity`,
+# which never fires EXIT) — a backgrounded delete handles that case instead.
+trap 'rm -f "$PANE_SETUP_FILE"' EXIT INT TERM
 {
     echo "${RUNTIME_ENV_EXPORTS:-true}"
     echo "source $DDS_SETUP_SCRIPT"
@@ -126,6 +130,12 @@ echo ""
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
 (sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
+disown
+
+# Every pane has sourced the env file by now, so drop it: the service key should
+# not linger in /tmp. Done in the background because `exec sleep infinity` below
+# never returns, so the EXIT trap can't remove it on the normal path.
+(sleep 15 && rm -f "$PANE_SETUP_FILE") &
 disown
 
 # Keep the script alive so systemd (Type=simple) considers the service running.

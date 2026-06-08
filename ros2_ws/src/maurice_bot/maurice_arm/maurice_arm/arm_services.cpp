@@ -113,12 +113,27 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
 void MauriceArmNode::configureServosLocked(bool enable_torque) {
     RCLCPP_INFO(this->get_logger(), "Configuring all 7 servos...");
 
+    std::vector<int> failed_servos;
     for (const auto& config : joint_configs_) {
         try {
             configureServoByIdLocked(config.servo_id, enable_torque);
         } catch (const std::exception& e) {
+            failed_servos.push_back(config.servo_id);
             RCLCPP_ERROR(this->get_logger(), "Failed to configure servo %d, skipping: %s", config.servo_id, e.what());
         }
+    }
+
+    // Per-servo detail is at debug; this is the one-line outcome summary. Init
+    // failures happen intermittently, so make a partial init impossible to miss.
+    if (failed_servos.empty()) {
+        RCLCPP_INFO(this->get_logger(), "All %zu servos configured successfully", joint_configs_.size());
+    } else {
+        std::string ids;
+        for (int id : failed_servos) {
+            ids += ids.empty() ? std::to_string(id) : ", " + std::to_string(id);
+        }
+        RCLCPP_WARN(this->get_logger(), "Configured %zu/%zu servos; failed: %s",
+                    joint_configs_.size() - failed_servos.size(), joint_configs_.size(), ids.c_str());
     }
 
     // Move head to default position

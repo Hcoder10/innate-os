@@ -517,6 +517,18 @@ void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigg
     RCLCPP_INFO(this->get_logger(), "Task: %s, Episode: %s", current_task_name_.c_str(), episode_str.c_str());
     RCLCPP_INFO(this->get_logger(), "Recording at %d Hz", data_frequency_);
 
+    // Surface what's missing rather than what's available: if recording starts
+    // before every topic has produced data, those timesteps will be skipped.
+    if (!all_topics_received_) {
+        std::string missing;
+        for (const auto& [topic, received] : topics_received_) {
+            if (!received) {
+                missing += missing.empty() ? topic : ", " + topic;
+            }
+        }
+        RCLCPP_WARN(this->get_logger(), "Recording started before data arrived on: %s", missing.c_str());
+    }
+
     publish_status("active", episode_str);
     response->success = true;
     response->message = "Episode started.";

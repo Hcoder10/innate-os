@@ -139,7 +139,7 @@ class SkillRepository:
             try:
                 instance = self._instantiate(skill_class, src_path)
                 code_skills[skill_id] = (display_name, instance)
-                self._logger.debug(f"Loaded code skill: {skill_id} ({display_name}) [source={instance.source}]")
+                self._logger.info(f"Loaded code skill: {skill_id} ({display_name}) [source={instance.source}]")
             except Exception as e:
                 self._logger.error(f"Error instantiating skill {skill_id}: {e}")
         return code_skills
@@ -192,7 +192,7 @@ class SkillRepository:
                         )
                     else:
                         physical_skills[skill_id] = skill_data
-                        self._logger.debug(
+                        self._logger.info(
                             f"Loaded physical skill: {skill_id} (type: {metadata.get('type', 'unknown')})"
                         )
                 except json.JSONDecodeError as e:
