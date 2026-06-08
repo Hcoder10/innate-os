@@ -548,6 +548,12 @@ bool WebRTCStreamer::start_pipeline_locked(bool with_audio) {
     g_signal_connect(webrtc_, "notify::ice-gathering-state", G_CALLBACK(on_ice_gathering_state_changed), this);
 
     GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    if (ret == GST_STATE_CHANGE_ASYNC) {
+        // Live sources (alsasrc/appsrc) open on a background thread and return ASYNC immediately.
+        // Block until the change resolves so a busy/missing mic surfaces as FAILURE here (and trips
+        // the video-only retry) instead of silently dying on the audio branch.
+        ret = gst_element_get_state(pipeline_, nullptr, nullptr, 3 * GST_SECOND);
+    }
     if (ret == GST_STATE_CHANGE_FAILURE) {
         RCLCPP_ERROR(this->get_logger(), "Pipeline failed to reach PLAYING (audio=%s)", with_audio ? "on" : "off");
         teardown_pipeline_locked();
