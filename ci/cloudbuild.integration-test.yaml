@@ -72,14 +72,18 @@ steps:
         }
 
         if [[ "${_PUBLISH_BASE}" == "true" ]]; then
-          # main: (re)build and publish the warm base.
-          build_base
-          if [[ "$logged_in" == "true" ]]; then
-            docker push "$base_image:main"
-            docker push "$base_image:buildcache"
-          else
-            echo "WARNING: not logged in to ghcr; base built but not pushed."
+          # main: (re)build and publish the warm base. Publishing IS the job on
+          # main, so fail fast if we can't push — a silent "built but not pushed"
+          # would leave a stale base on ghcr that quietly degrades every later PR
+          # build (and the thin layer's `rosdep ... || true` would hide the
+          # resulting missing deps). Check before the expensive build_base.
+          if [[ "$logged_in" != "true" ]]; then
+            echo "ERROR: _PUBLISH_BASE=true but ghcr login failed; cannot publish the base." >&2
+            exit 1
           fi
+          build_base
+          docker push "$base_image:main"
+          docker push "$base_image:buildcache"
         else
           # PR: reuse the published warm base; only the thin layer rebuilds.
           # Fall back to an inline base build if it has never been published yet
