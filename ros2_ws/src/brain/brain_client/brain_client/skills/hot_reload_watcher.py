@@ -181,9 +181,7 @@ class HotReloadWatcher:
             on_path_changed=self._on_path_changed,
         )
 
-        # Watch all directories. Skills may live in per-skill subdirectories
-        # (physical skills), so they honor self.recursive; agents are flat
-        # ``.py`` files and are always watched non-recursively.
+        # Skills honor self.recursive (physical skills live in subdirs); agents are flat.
         watched_count = 0
         watch_specs = [(d, self.recursive) for d in self.skills_directories] + [
             (d, False) for d in self.agents_directories
@@ -329,8 +327,7 @@ class _InternalHandler(FileSystemEventHandler):
             self.on_path_changed(event.src_path)
 
     def on_moved(self, event):
-        # Editors that save atomically write a temp file then rename it onto the
-        # target; the final content arrives as a move, not a modify.
+        # Atomic saves arrive as a rename onto the target, not a modify.
         dest_path = getattr(event, "dest_path", None)
         if not event.is_directory and dest_path:
             self.on_path_changed(dest_path)

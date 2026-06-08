@@ -32,21 +32,15 @@ using namespace std::chrono_literals;
 
 namespace maurice_control {
 
-// ---------------------------------------------------------------------------
-// Joystick teleoperation tuning (mobile-app drive joystick -> /cmd_vel).
-// These shape the feel of manual driving. Kept as named constants for clarity;
-// can be promoted to ROS parameters later for live tuning without a rebuild.
-// ---------------------------------------------------------------------------
+// Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
 namespace joy_tuning {
-constexpr double DEADZONE = 0.04;            // ignore tiny offsets (touch joystick recenters cleanly)
-constexpr double EXPONENT = 1.5;             // response curve: 1.0 = linear, 2.0 = old (too back-loaded)
-constexpr double MAX_LINEAR = 0.5;           // m/s at full stick
-constexpr double MAX_ANGULAR = 1.0;          // rad/s at full stick
-constexpr bool REVERSE_STEERING = true;      // car-like: invert turn direction when reversing
-constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s of reverse speed over which the steering
-                                             // inversion ramps in, so it doesn't snap at zero throttle
-constexpr double TURN_SPEED_BONUS = 0.5;     // tank-game feel: extra turn rate at full speed, added on top
-                                             // of the full standstill rate (0 = constant, never slower slow)
+constexpr double DEADZONE = 0.04;
+constexpr double EXPONENT = 1.5;     // 1.0 = linear
+constexpr double MAX_LINEAR = 0.5;   // m/s
+constexpr double MAX_ANGULAR = 1.0;  // rad/s
+constexpr bool REVERSE_STEERING = true;
+constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
+constexpr double TURN_SPEED_BONUS = 0.5;
 }  // namespace joy_tuning
 
 /**
@@ -630,60 +624,31 @@ class AppControl : public rclcpp::Node {
         return _cached_update_available;
     }
 
-    /**
-     * Apply deadband and a power-law response curve to an input value.
-     * - Deadband filters out small inputs near center.
-     * - Exponent shapes the response: 1.0 is linear, >1.0 gives finer control
-     *   near center at the cost of a more back-loaded top end. A gentler
-     *   exponent (joy_tuning::EXPONENT) keeps the usable speed band spread
-     *   across the stick travel instead of crammed into the last bit.
-     */
+    /** Apply deadband and a power-law (joy_tuning::EXPONENT) response curve to a [-1, 1] axis. */
     double apply_curve(double value, double deadband = joy_tuning::DEADZONE) {
         if (std::abs(value) < deadband) {
             return 0.0;
         }
 
-        // Normalize value beyond deadband to range [0, 1] or [-1, 0]
         double sign = (value > 0) ? 1.0 : -1.0;
         double normalized = (std::abs(value) - deadband) / (1.0 - deadband);
-
-        // Apply power-law curve for a smooth, progressive response
         double curved = std::pow(normalized, joy_tuning::EXPONENT);
 
         return sign * curved;
     }
 
-    /**
-     * Converts joystick input to a velocity command and publishes it:
-     *   - Deadband + response curve applied per axis (see apply_curve).
-     *   - Linear velocity scaled to [-MAX_LINEAR, MAX_LINEAR].
-     *   - Angular velocity scaled by MAX_ANGULAR, with a tank-game speed bonus: full rotation rate is
-     *     always available (in-place pivots never slowed) and turn rate grows above it with speed.
-     *   - Car-like reverse steering: turn direction is inverted while reversing
-     *     so the rear (leading) end follows the stick instead of the front
-     *     (otherwise reversing feels inverted to a driver watching the robot).
-     * Published per message; the app sends a zero on release, and the motor
-     * controller's own command timeout stops the robot if input stops arriving.
-     */
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
         double shaped_x = apply_curve(msg->x);  // steering
         double shaped_y = apply_curve(msg->y);  // throttle
 
         double linear = shaped_y * joy_tuning::MAX_LINEAR;
 
-        // Tank-game turn authority: full rotation rate is always available (in-place pivots are never
-        // slowed), and steering bites harder the faster you go via an additive speed bonus.
-        // speed_fraction is just |shaped_y| since linear / MAX_LINEAR == shaped_y.
         double speed_fraction = std::min(1.0, std::abs(shaped_y));
         double turn_authority = 1.0 + joy_tuning::TURN_SPEED_BONUS * speed_fraction;
         double angular = -shaped_x * joy_tuning::MAX_ANGULAR * turn_authority;
 
         if (joy_tuning::REVERSE_STEERING && linear < 0.0) {
-            // Ramp the steering inversion in over a small reverse-speed band rather than
-            // flipping it instantly at zero throttle. Holding full steering while the throttle
-            // grazes zero would otherwise snap the turn from +MAX to -MAX (the jarring direction
-            // change felt when a forward turn drifts into reverse). blend: 0 at linear=0 (matches
-            // the forward convention, no jump) -> 1 once clearly reversing (full car-like invert).
+            // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
             double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
             angular *= (1.0 - 2.0 * blend);
         }

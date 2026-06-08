@@ -48,19 +48,11 @@ class WebRTCStreamer : public rclcpp::Node {
     void destroy_subscriptions();
     void cleanup_pipeline();
 
-    // Build the gst-launch pipeline description. When with_audio is true an
-    // Opus microphone branch (webrtc.sink_2) is appended so the teleoperator
-    // hears the robot. Kept as a single source of truth so the audio-less
-    // fallback reuses the exact same video branches.
+    // with_audio appends an Opus mic branch (webrtc.sink_2) to the video pipeline.
     std::string build_pipeline_description(bool with_audio) const;
 
-    // Build + start the pipeline assuming pipeline_mutex_ is already held.
-    // Returns false (and tears itself down) on failure so the caller can retry
-    // without audio. on_start() owns the lock across the whole start sequence.
+    // *_locked: caller must hold pipeline_mutex_. start_ returns false (and tears down) on failure.
     bool start_pipeline_locked(bool with_audio);
-
-    // Lock-free teardown of pipeline_ and the buffer pools. Caller must hold
-    // pipeline_mutex_ (cleanup_pipeline() is the locking wrapper).
     void teardown_pipeline_locked();
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,
@@ -109,11 +101,7 @@ class WebRTCStreamer : public rclcpp::Node {
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;
 
-    // Robot microphone -> teleoperator audio (one-way, sent over the same
-    // peer connection as the camera tracks). enable_audio_ gates the branch so
-    // robots without a capture device can turn it off; audio_source_element_
-    // and audio_capture_device_ let ops pick the ALSA/PulseAudio source without
-    // a rebuild.
+    // Robot microphone -> teleoperator audio (one-way).
     bool enable_audio_;
     std::string audio_source_element_;
     std::string audio_capture_device_;
