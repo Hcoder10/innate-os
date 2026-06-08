@@ -181,11 +181,16 @@ class HotReloadWatcher:
             on_path_changed=self._on_path_changed,
         )
 
-        # Watch all directories
+        # Watch all directories. Skills may live in per-skill subdirectories
+        # (physical skills), so they honor self.recursive; agents are flat
+        # ``.py`` files and are always watched non-recursively.
         watched_count = 0
-        for directory in self.skills_directories + self.agents_directories:
+        watch_specs = [(d, self.recursive) for d in self.skills_directories] + [
+            (d, False) for d in self.agents_directories
+        ]
+        for directory, recursive in watch_specs:
             if os.path.exists(directory):
-                self._observer.schedule(handler, directory, recursive=self.recursive)
+                self._observer.schedule(handler, directory, recursive=recursive)
                 self.logger.info(f"👁️ Watching for changes: {directory}")
                 watched_count += 1
 

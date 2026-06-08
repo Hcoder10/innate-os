@@ -2,6 +2,7 @@
 
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 
 namespace maurice_cam {
 
@@ -68,8 +69,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     RCLCPP_INFO(this->get_logger(), "  Live topics: %s, %s", live_main_topic_.c_str(), live_arm_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  Replay topics: %s, %s", replay_main_topic_.c_str(), replay_arm_topic_.c_str());
     if (enable_audio_) {
-        RCLCPP_INFO(this->get_logger(), "  Mic audio: enabled (source: %s, device: %s)",
-                    audio_source_element_.c_str(),
+        RCLCPP_INFO(this->get_logger(), "  Mic audio: enabled (source: %s, device: %s)", audio_source_element_.c_str(),
                     audio_capture_device_.empty() ? "default" : audio_capture_device_.c_str());
     } else {
         RCLCPP_INFO(this->get_logger(), "  Mic audio: disabled");
@@ -466,6 +466,22 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
         // bitrate keeps it light; the leaky queue drops audio rather than
         // stalling if the network backs up. webrtcbin negotiates this as a
         // sendonly audio m-line that the phone plays automatically.
+        //
+        // Validate the element name before splicing it into the pipeline string.
+        // GStreamer element names are alphanumeric (plus '-'/'_'); anything else
+        // (spaces, '!', extra properties) would let a misconfigured parameter
+        // inject pipeline syntax and make gst_parse_launch fail with an opaque
+        // error. The device is passed separately and quoted, so it is unaffected.
+        const bool valid_element = !audio_source_element_.empty() &&
+                                   std::all_of(audio_source_element_.begin(), audio_source_element_.end(),
+                                               [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
+        if (!valid_element) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "audio_source_element '%s' is not a plain element name; streaming video only",
+                         audio_source_element_.c_str());
+            return desc;
+        }
+
         std::string src = audio_source_element_;
         if (!audio_capture_device_.empty()) {
             // Quote the device so ALSA names like hw:1,0 survive gst parsing.
