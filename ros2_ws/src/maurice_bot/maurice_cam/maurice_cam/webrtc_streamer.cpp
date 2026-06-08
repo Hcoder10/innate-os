@@ -365,13 +365,28 @@ void WebRTCStreamer::teardown_pipeline_locked() {
         pool_arm_ = nullptr;
     }
 
+    // appsrc_main_/appsrc_arm_/webrtc_ each hold a ref handed back by
+    // gst_bin_get_by_name() in start_pipeline_locked(); release it (the pipeline
+    // keeps its own ref) so the elements don't outlive the pipeline. Otherwise
+    // three element refs leak on every on_start, accumulating across teleop
+    // session restarts.
+    if (webrtc_) {
+        gst_object_unref(webrtc_);
+        webrtc_ = nullptr;
+    }
+    if (appsrc_main_) {
+        gst_object_unref(appsrc_main_);
+        appsrc_main_ = nullptr;
+    }
+    if (appsrc_arm_) {
+        gst_object_unref(appsrc_arm_);
+        appsrc_arm_ = nullptr;
+    }
+
     if (pipeline_) {
         gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
-        webrtc_ = nullptr;
-        appsrc_main_ = nullptr;
-        appsrc_arm_ = nullptr;
     }
 }
 
@@ -471,7 +486,7 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
         // GStreamer element names are alphanumeric (plus '-'/'_'); anything else
         // (spaces, '!', extra properties) would let a misconfigured parameter
         // inject pipeline syntax and make gst_parse_launch fail with an opaque
-        // error. The device is passed separately and quoted, so it is unaffected.
+        // error. The device is validated separately below.
         const bool valid_element = !audio_source_element_.empty() &&
                                    std::all_of(audio_source_element_.begin(), audio_source_element_.end(),
                                                [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
@@ -484,6 +499,22 @@ std::string WebRTCStreamer::build_pipeline_description(bool with_audio) const {
 
         std::string src = audio_source_element_;
         if (!audio_capture_device_.empty()) {
+            // The device is spliced into the pipeline string too. Quoting lets
+            // ALSA names like hw:1,0 survive gst parsing, but a quote embedded in
+            // the value could still close the quote early and inject pipeline
+            // syntax, so restrict it to the punctuation real device names use
+            // (e.g. hw:1,0, plughw:0, sysdefault:CARD=Device).
+            const bool valid_device =
+                std::all_of(audio_capture_device_.begin(), audio_capture_device_.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == ':' || c == ',' || c == '.' || c == '=' || c == '-' || c == '_' ||
+                           c == '/';
+                });
+            if (!valid_device) {
+                RCLCPP_ERROR(this->get_logger(),
+                             "audio_capture_device '%s' has unexpected characters; streaming video only",
+                             audio_capture_device_.c_str());
+                return desc;
+            }
             // Quote the device so ALSA names like hw:1,0 survive gst parsing.
             src += " device=\"" + audio_capture_device_ + "\"";
         }
