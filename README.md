@@ -23,26 +23,51 @@ MARS is designed to get better as AI gets better. Innate OS is built around swap
 
 Innate OS is open source. If you made a robot compatible with it, [let us know](https://github.com/innate-inc/innate-os/issues) and we can reference it here.
 
-| Robot | Status |
-| --- | --- |
-| MARS | First-class Innate OS robot. |
-| Your robot | Open an issue and we can add it here. |
+<table>
+  <tr>
+    <td width="50%" valign="top"><strong>MARS</strong><br>First-class Innate OS robot.</td>
+    <td width="50%" valign="top"><strong>Your robot</strong><br>Open an issue and we can add it here.</td>
+  </tr>
+</table>
 
-| [Skills](#skills) | [Agents](#agents) | [Additional Inputs](#additional-inputs) | [Simulator](#simulator) | [ROS Reference](#ros-reference) |
-| --- | --- | --- | --- | --- |
-| Teach actions. | Run autonomously. | Stream new data. | Test without hardware. | Work below the high-level API. |
+<table>
+  <tr>
+    <td width="20%" valign="top"><a href="#skills"><strong>Skills</strong></a><br><sub>Teach actions.</sub></td>
+    <td width="20%" valign="top"><a href="#agents"><strong>Agents</strong></a><br><sub>Run autonomously.</sub></td>
+    <td width="20%" valign="top"><a href="#additional-inputs"><strong>Additional Inputs</strong></a><br><sub>Stream new data.</sub></td>
+    <td width="20%" valign="top"><a href="#simulator"><strong>Simulator</strong></a><br><sub>Test without hardware.</sub></td>
+    <td width="20%" valign="top"><a href="#ros-reference"><strong>ROS Reference</strong></a><br><sub>Work below the high-level API.</sub></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" width="100%"><br>
+      <sub>Simulator</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" width="100%"><br>
+      <sub>Mobile app</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <img src="docs/assets/readme/screenshot-training-card.png" alt="Innate Training Manager skills view" width="100%"><br>
+      <sub>Training Manager</sub>
+    </td>
+  </tr>
+</table>
 
 ## Skills
 
 Skills are the core unit of action on MARS. A skill can be digital, like calling a tool or service, or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
-Skills can be executed through:
-
-- The `innate` CLI
-- The web app
-- The Innate mobile apps
-
-They can also be run autonomously by agents.
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong>Execute manually</strong><br>Run skills from the <code>innate</code> CLI.</td>
+    <td width="33%" valign="top"><strong>Operate from apps</strong><br>Trigger skills through the web app or Innate mobile apps.</td>
+    <td width="33%" valign="top"><strong>Run autonomously</strong><br>Let agents select and interrupt skills as the world changes.</td>
+  </tr>
+</table>
 
 ```bash
 innate skill list
@@ -51,13 +76,13 @@ innate skill run innate-os/wave
 innate skill run local/my-skill @x=1 @name=alice
 ```
 
-Skills live in the workspace:
-
-| Path | Purpose |
-| --- | --- |
-| [`workspace/innate_skills/`](workspace/innate_skills/) | Built-in skills shipped with Innate OS. |
-| `workspace/custom_skills/` | Your local, recorded, or trained skills. Gitignored and created automatically when needed. |
-| `~/skills/` | Optional personal skills directory, scanned in place when it exists. |
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong><a href="workspace/innate_skills/">workspace/innate_skills/</a></strong><br>Built-in skills shipped with Innate OS.</td>
+    <td width="33%" valign="top"><strong><code>workspace/custom_skills/</code></strong><br>Your local, recorded, or trained skills. Gitignored and created automatically.</td>
+    <td width="33%" valign="top"><strong><code>~/skills/</code></strong><br>Optional personal skills directory, scanned in place when it exists.</td>
+  </tr>
+</table>
 
 Skill IDs show where a skill came from:
 
@@ -78,17 +103,15 @@ An agent is usually a composition of:
 - A system prompt that defines the robot's behavior
 - A harness that connects the model to observations, memory, tools, and robot actions
 
-You can use Innate's harness or bring your own.
+You can use Innate's harness or bring your own. Multimodal robot agents have different constraints than purely digital agents: they need to observe continuously, run at a high enough frequency to react, and interrupt a running skill when the world has changed.
 
-Multimodal robot agents have different constraints than purely digital agents. They need to observe continuously, run at a high enough frequency to react to the world, and interrupt a running skill when the world has changed.
-
-The built-in Innate agent provides boilerplate for creating your own:
-
-| Path | Purpose |
-| --- | --- |
-| [`workspace/innate_agents/`](workspace/innate_agents/) | Built-in agents shipped with Innate OS. |
-| `workspace/custom_agents/` | Your local agents. Gitignored and created automatically when needed. |
-| `~/agents/` | Optional personal agents directory, scanned in place when it exists. |
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong><a href="workspace/innate_agents/">workspace/innate_agents/</a></strong><br>Built-in agents shipped with Innate OS.</td>
+    <td width="33%" valign="top"><strong><code>workspace/custom_agents/</code></strong><br>Your local agents. Gitignored and created automatically.</td>
+    <td width="33%" valign="top"><strong><code>~/agents/</code></strong><br>Optional personal agents directory, scanned in place when it exists.</td>
+  </tr>
+</table>
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
 
@@ -98,7 +121,8 @@ Innate OS provides an SDK for streaming new data into running agents. Innate rob
 
 Input devices live in [`workspace/inputs/`](workspace/inputs/) and are pure Python. They should not import ROS directly.
 
-Below is a minimal thermometer input:
+<details>
+<summary>Thermometer input example</summary>
 
 ```python
 # workspace/inputs/thermometer_input.py
@@ -150,13 +174,13 @@ def get_inputs(self):
     return ["thermometer"]
 ```
 
+</details>
+
 See [`docs/INPUT_DEVICES.md`](docs/INPUT_DEVICES.md) for the full input-device lifecycle.
 
 ## Simulator
 
 Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
-
-From the repo root:
 
 ```bash
 ./innate setup
@@ -164,12 +188,6 @@ From the repo root:
 ```
 
 This starts the Docker-based Innate OS runtime, the simulator, and the built frontend at [http://localhost:8000](http://localhost:8000). The terminal opens a live dashboard with startup logs, simulator logs, brain logs, and runtime health.
-
-<p align="center">
-  <img src="sim/base_occupancy_grid_with_static_objects.png" alt="Innate OS simulator occupancy map with robot, room geometry, and static objects" width="360">
-</p>
-
-Useful simulator commands:
 
 ```bash
 ./innate sim up --vis       # open the native simulator viewer
@@ -184,17 +202,18 @@ See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simula
 
 Innate OS is currently based on ROS 2, the reference framework for robotics operating systems. Most builders should start with skills, agents, inputs, and the simulator. Changing the core OS is not recommended for normal usage, but it is possible.
 
-The reference lives here:
+<table>
+  <tr>
+    <td width="20%" valign="top"><strong><a href="ros2_ws/">ros2_ws/</a></strong><br>Robot runtime workspace.</td>
+    <td width="20%" valign="top"><strong><a href="docs/SYSTEM_OVERVIEW.md">System Overview</a></strong><br>Architecture reference.</td>
+    <td width="20%" valign="top"><strong><a href="scripts/launch_ros_in_tmux.sh">Startup</a></strong><br>Robot node wiring.</td>
+    <td width="20%" valign="top"><strong><a href="scripts/update/README.md">Updates</a></strong><br>Services and CLI commands.</td>
+    <td width="20%" valign="top"><strong><a href="config/">config/</a></strong><br>DDS, systemd, udev, audio, Bluetooth, sounds, and shell setup.</td>
+  </tr>
+</table>
 
-| Path | Purpose |
-| --- | --- |
-| [`ros2_ws/`](ros2_ws/) | ROS 2 workspace for the robot runtime. |
-| [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) | Higher-level system architecture. |
-| [`scripts/launch_ros_in_tmux.sh`](scripts/launch_ros_in_tmux.sh) | Startup wiring for robot ROS nodes. |
-| [`scripts/update/README.md`](scripts/update/README.md) | Updates, services, and skill CLI commands. |
-| [`config/`](config/) | DDS, systemd, udev, audio, Bluetooth, sounds, and shell setup. |
-
-The main runtime packages are:
+<details>
+<summary>Main ROS 2 runtime packages</summary>
 
 - **[maurice_control](ros2_ws/src/maurice_bot/maurice_control)** - top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
 - **[maurice_bringup](ros2_ws/src/maurice_bot/maurice_bringup)** - hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
@@ -206,6 +225,8 @@ The main runtime packages are:
 - **[innate_logger](ros2_ws/src/cloud/innate_logger)** - uploads robot logs and telemetry to the Innate cloud.
 - **[innate_training_node](ros2_ws/src/cloud/innate_training_node)** - collects training episodes and pushes them to the training cloud.
 - **[innate_uninavid](ros2_ws/src/cloud/innate_uninavid)** - UniNaVid vision-language navigation client.
+
+</details>
 
 ## More Docs
 
