@@ -32,11 +32,11 @@ Innate OS is open source. If you made a robot compatible with it, [let us know](
 
 <table>
   <tr>
-    <td width="20%" valign="top"><a href="#skills"><strong>Skills</strong></a><br><sub>Teach actions.</sub></td>
-    <td width="20%" valign="top"><a href="#agents"><strong>Agents</strong></a><br><sub>Run autonomously.</sub></td>
-    <td width="20%" valign="top"><a href="#additional-inputs"><strong>Additional Inputs</strong></a><br><sub>Stream new data.</sub></td>
-    <td width="20%" valign="top"><a href="#simulator"><strong>Simulator</strong></a><br><sub>Test without hardware.</sub></td>
-    <td width="20%" valign="top"><a href="#ros-reference"><strong>ROS Reference</strong></a><br><sub>Work below the high-level API.</sub></td>
+    <td width="20%" valign="top"><a href="#skills"><strong>Skills</strong></a><br><sub>Teach actions.<br>Write code skills.<br>Trigger with one skill ID.</sub></td>
+    <td width="20%" valign="top"><a href="#agents"><strong>Agents</strong></a><br><sub>Run autonomously.<br>Use Innate's harness.<br>Or create your own.</sub></td>
+    <td width="20%" valign="top"><a href="#additional-inputs"><strong>Additional Inputs</strong></a><br><sub>Stream your data.<br>Add sensors.<br>Expose new components.</sub></td>
+    <td width="20%" valign="top"><a href="#simulator"><strong>Simulator</strong></a><br><sub>Test without hardware.<br>Run MARS locally.<br>Try skills and agents.</sub></td>
+    <td width="20%" valign="top"><a href="#ros-reference"><strong>ROS Reference</strong></a><br><sub>Work below the high-level API.<br>Inspect ROS 2 packages.<br>Change core services.</sub></td>
   </tr>
 </table>
 
