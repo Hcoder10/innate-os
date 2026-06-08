@@ -581,9 +581,7 @@ class ManipulationServer(Node):
                 )
                 return "SUCCESS", "Completed early due to progress threshold being reached"
             else:
-                self.get_logger().info(
-                    f"Learned behavior {behavior_name} completed successfully — {run_summary}"
-                )
+                self.get_logger().info(f"Learned behavior {behavior_name} completed successfully — {run_summary}")
                 return "SUCCESS", "Completed full duration successfully"
 
         except Exception as e:
