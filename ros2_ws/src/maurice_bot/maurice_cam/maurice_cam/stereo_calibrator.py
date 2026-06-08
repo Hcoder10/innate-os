@@ -274,20 +274,20 @@ class StereoCalibrator(Node):
             # Check for existing images and ask user
             self.check_existing_images()
 
-        # Print info
-        self.get_logger().info("=" * 60)
-        self.get_logger().info("Stereo Camera Calibrator")
-        self.get_logger().info("=" * 60)
-        self.get_logger().info(f"Left topic: {self.left_topic}")
-        self.get_logger().info(f"Right topic: {self.right_topic}")
-        self.get_logger().info(f"Image size: {self.image_width}x{self.image_height} per camera")
-        self.get_logger().info(f"ChArUco board: {self.squares_x}x{self.squares_y}")
+        # Print info (one concise summary line; full detail at debug)
         self.get_logger().info(
+            f"Stereo Camera Calibrator ready (ChArUco {self.squares_x}x{self.squares_y}, "
+            f"{self.num_images_required} images required)"
+        )
+        self.get_logger().debug("=" * 60)
+        self.get_logger().debug(f"Left topic: {self.left_topic}")
+        self.get_logger().debug(f"Right topic: {self.right_topic}")
+        self.get_logger().debug(f"Image size: {self.image_width}x{self.image_height} per camera")
+        self.get_logger().debug(
             f"Square size: {self.square_size * 1000:.1f}mm, Marker size: {self.marker_size * 1000:.1f}mm"
         )
-        self.get_logger().info(f"Images required: {self.num_images_required}")
         if self.use_legacy_pattern:
-            self.get_logger().info("Legacy pattern enabled (for calib.io boards)")
+            self.get_logger().debug("Legacy pattern enabled (for calib.io boards)")
 
         # Create synchronized subscriptions for left and right images
         self.left_sub = message_filters.Subscriber(self, Image, self.left_topic)

@@ -581,9 +581,9 @@ class GridLocalizer(Node):
                 best_idx = start + batch_best_idx
                 self.get_logger().debug(f"Batch {batch_num + 1}/{n_batches}: new best score {best_score:.4f}")
 
-            # Log progress every 10 batches
+            # Log progress every 10 batches (debug — internal scan detail)
             if (batch_num + 1) % 10 == 0 or (batch_num + 1) == n_batches:
-                self.get_logger().info(
+                self.get_logger().debug(
                     f"Progress: {batch_num + 1}/{n_batches} batches ({100 * (batch_num + 1) / n_batches:.0f}%)"
                 )
 

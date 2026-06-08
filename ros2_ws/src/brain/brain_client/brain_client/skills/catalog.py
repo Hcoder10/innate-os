@@ -216,7 +216,7 @@ class SkillRepository:
         ensure_user_directories()
         directories = [str(p) for p in get_skill_directories()]
         for directory in directories:
-            self._logger.info(f"Scanning skills directory: {directory}")
+            self._logger.debug(f"Scanning skills directory: {directory}")
         return directories
 
     def _apply_sim_swap(self, id_keyed: dict[str, tuple[str, type, Path]]) -> None:

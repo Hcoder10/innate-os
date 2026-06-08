@@ -94,10 +94,10 @@ class InputDeviceManager:
 
     def handle_active_inputs(self, raw: str) -> None:
         """Open/close devices to match an active-inputs message: {"inputs": [...]}."""
-        self._logger.info(f"📥 Received active_inputs message: {raw}")
+        self._logger.debug(f"📥 Received active_inputs message: {raw}")
         try:
             required_inputs = json.loads(raw).get("inputs", [])
-            self._logger.info(f"🎯 Processing inputs: {required_inputs}")
+            self._logger.debug(f"🎯 Processing inputs: {required_inputs}")
             for name, device in self.input_devices.items():
                 self._apply(name, device, name in required_inputs)
         except Exception as e:

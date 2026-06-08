@@ -92,20 +92,20 @@ void MauriceArmNode::controlTimerCallback() {
         ts[5] = std::chrono::steady_clock::now();
 
         // ========== PERIODIC GAIN DUMP (every 2s) ==========
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "Gains: J1[P=%d I=%d D=%d F1=%d F2=%d] J2[P=%d I=%d D=%d F1=%d F2=%d] "
-                             "J3[P=%d I=%d D=%d F1=%d F2=%d] J4[P=%d I=%d D=%d F1=%d F2=%d] "
-                             "J5[P=%d I=%d D=%d F1=%d F2=%d] J6[P=%d I=%d D=%d F1=%d F2=%d] "
-                             "J7[P=%d I=%d D=%d F1=%d F2=%d]",
-                             joint_configs_[0].kp, joint_configs_[0].ki, joint_configs_[0].kd, joint_configs_[0].ff1,
-                             joint_configs_[0].ff2, joint_configs_[1].kp, joint_configs_[1].ki, joint_configs_[1].kd,
-                             joint_configs_[1].ff1, joint_configs_[1].ff2, joint_configs_[2].kp, joint_configs_[2].ki,
-                             joint_configs_[2].kd, joint_configs_[2].ff1, joint_configs_[2].ff2, joint_configs_[3].kp,
-                             joint_configs_[3].ki, joint_configs_[3].kd, joint_configs_[3].ff1, joint_configs_[3].ff2,
-                             joint_configs_[4].kp, joint_configs_[4].ki, joint_configs_[4].kd, joint_configs_[4].ff1,
-                             joint_configs_[4].ff2, joint_configs_[5].kp, joint_configs_[5].ki, joint_configs_[5].kd,
-                             joint_configs_[5].ff1, joint_configs_[5].ff2, joint_configs_[6].kp, joint_configs_[6].ki,
-                             joint_configs_[6].kd, joint_configs_[6].ff1, joint_configs_[6].ff2);
+        RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                              "Gains: J1[P=%d I=%d D=%d F1=%d F2=%d] J2[P=%d I=%d D=%d F1=%d F2=%d] "
+                              "J3[P=%d I=%d D=%d F1=%d F2=%d] J4[P=%d I=%d D=%d F1=%d F2=%d] "
+                              "J5[P=%d I=%d D=%d F1=%d F2=%d] J6[P=%d I=%d D=%d F1=%d F2=%d] "
+                              "J7[P=%d I=%d D=%d F1=%d F2=%d]",
+                              joint_configs_[0].kp, joint_configs_[0].ki, joint_configs_[0].kd, joint_configs_[0].ff1,
+                              joint_configs_[0].ff2, joint_configs_[1].kp, joint_configs_[1].ki, joint_configs_[1].kd,
+                              joint_configs_[1].ff1, joint_configs_[1].ff2, joint_configs_[2].kp, joint_configs_[2].ki,
+                              joint_configs_[2].kd, joint_configs_[2].ff1, joint_configs_[2].ff2, joint_configs_[3].kp,
+                              joint_configs_[3].ki, joint_configs_[3].kd, joint_configs_[3].ff1, joint_configs_[3].ff2,
+                              joint_configs_[4].kp, joint_configs_[4].ki, joint_configs_[4].kd, joint_configs_[4].ff1,
+                              joint_configs_[4].ff2, joint_configs_[5].kp, joint_configs_[5].ki, joint_configs_[5].kd,
+                              joint_configs_[5].ff1, joint_configs_[5].ff2, joint_configs_[6].kp, joint_configs_[6].ki,
+                              joint_configs_[6].kd, joint_configs_[6].ff1, joint_configs_[6].ff2);
 
         // ========== GAIN SCHEDULING ==========
         // TELEOP mode: use flat teleop gains (no extension-based interpolation)
@@ -215,7 +215,7 @@ void MauriceArmNode::controlTimerCallback() {
                                       std::chrono::steady_clock::now() - pid_start)
                                       .count();
                     timing_stats_[8].add(pid_us);
-                    RCLCPP_INFO_THROTTLE(
+                    RCLCPP_DEBUG_THROTTLE(
                         this->get_logger(), *this->get_clock(), 500,
                         "GainSched ext=%.2f (h=%.3fm) | J1 P=%d D=%d | J2 P=%d D=%d | J3 P=%d D=%d | J4 P=%d D=%d",
                         extension, horiz_reach, gs_last_applied_[0].kp, gs_last_applied_[0].kd, gs_last_applied_[1].kp,
@@ -306,18 +306,18 @@ void MauriceArmNode::recordLoopTiming(std::array<std::chrono::steady_clock::time
     msg << "LoopTiming(us avg|max, n=" << timing_stats_[0].samples << "):";
     for (size_t i = 0; i < timing_stats_.size(); ++i)
         msg << ' ' << timing_stats_[i].name << '=' << timing_stats_[i].avg() << '|' << timing_stats_[i].max_us;
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "%s", msg.str().c_str());
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "%s", msg.str().c_str());
 
     std::ostringstream pct;
     pct << std::fixed << std::setprecision(1) << "LoopTiming(%):";
     for (size_t i : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 9u})
         pct << ' ' << timing_stats_[i].name << '='
             << (avg_total > 0 ? 100.0 * timing_stats_[i].avg() / avg_total : 0.0);
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "%s", pct.str().c_str());
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "%s", pct.str().c_str());
 
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                         "SerialBus(us): readState_txrx=%ld  write_txrx=%ld", robot_->last_read_txrx_us,
-                         robot_->last_write_txrx_us);
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                          "SerialBus(us): readState_txrx=%ld  write_txrx=%ld", robot_->last_read_txrx_us,
+                          robot_->last_write_txrx_us);
 }
 
 std::vector<int> MauriceArmNode::applyLimitsAndConvertToEncoder(std::vector<double>& command_data) {

@@ -84,7 +84,7 @@ class WebSocketManager:
     def handle_outgoing(self, message) -> None:
         """Route an outgoing message object (in-process fast path)."""
         if isinstance(message, InternalMessage):
-            self.get_logger().info(f"Internal message: {message}")
+            self.get_logger().debug(f"Internal message: {message}")
             if message.type == InternalMessageType.READY_FOR_CONNECTION:
                 self._trigger_connect()
         elif isinstance(message, MessageIn):

@@ -481,7 +481,7 @@ class ManipulationServer(Node):
                     max_inference = np.max(inference_times[-timing_log_interval:]) * 1000
                     actual_hz = 1000.0 / avg_loop if avg_loop > 0 else 0
 
-                    self.get_logger().info(
+                    self.get_logger().debug(
                         f"[TIMING] iter={iteration_count} | "
                         f"loop: avg={avg_loop:.1f}ms, min={min_loop:.1f}ms, max={max_loop:.1f}ms, jitter(std)={std_loop:.2f}ms | "
                         f"inference: avg={avg_inference:.1f}ms, max={max_inference:.1f}ms | "
@@ -500,7 +500,7 @@ class ManipulationServer(Node):
                         avg_cpu = np.mean(cpu_transfer_times[-timing_log_interval:]) * 1000
                         avg_publish = np.mean(publish_times[-timing_log_interval:]) * 1000
 
-                        self.get_logger().info(
+                        self.get_logger().debug(
                             f"[DETAILED TIMING] iter={iteration_count} | "
                             f"preprocess: {avg_preprocess:.1f}ms | "
                             f"tensor_creation: {avg_tensor:.1f}ms | "
@@ -536,7 +536,7 @@ class ManipulationServer(Node):
                 # Calculate jitter as percentage of target period
                 jitter_percent = (overall_std_loop / (period * 1000)) * 100
 
-                self.get_logger().info(
+                self.get_logger().debug(
                     f"[TIMING SUMMARY] total_iterations={iteration_count} | "
                     f"loop: avg={overall_avg_loop:.1f}ms, min={overall_min_loop:.1f}ms, max={overall_max_loop:.1f}ms | "
                     f"jitter(std)={overall_std_loop:.2f}ms ({jitter_percent:.1f}% of target period) | "
@@ -552,7 +552,7 @@ class ManipulationServer(Node):
                     overall_avg_cpu = np.mean(cpu_transfer_times) * 1000
                     overall_avg_publish = np.mean(publish_times) * 1000
 
-                    self.get_logger().info(
+                    self.get_logger().debug(
                         f"[DETAILED TIMING SUMMARY] total_iterations={iteration_count} | "
                         f"preprocess: avg={overall_avg_preprocess:.1f}ms | "
                         f"tensor_creation: avg={overall_avg_tensor:.1f}ms | "
@@ -570,11 +570,18 @@ class ManipulationServer(Node):
                     self.get_logger().error("Failed to move to end pose")
                     return "FAILURE", "Failed to move arm to end pose"
 
+            # One concise info summary per policy execution (detailed timing is at debug above).
+            total_elapsed = time.time() - start_time
+            actual_hz = iteration_count / total_elapsed if total_elapsed > 0 else 0.0
+            run_summary = f"{iteration_count} iters in {total_elapsed:.1f}s (~{actual_hz:.1f} Hz)"
+
             if early_termination:
-                self.get_logger().info(f"Learned behavior {behavior_name} completed early due to progress threshold")
+                self.get_logger().info(
+                    f"Learned behavior {behavior_name} completed early (progress threshold) — {run_summary}"
+                )
                 return "SUCCESS", "Completed early due to progress threshold being reached"
             else:
-                self.get_logger().info(f"Learned behavior {behavior_name} completed successfully")
+                self.get_logger().info(f"Learned behavior {behavior_name} completed successfully — {run_summary}")
                 return "SUCCESS", "Completed full duration successfully"
 
         except Exception as e:

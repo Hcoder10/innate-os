@@ -696,7 +696,6 @@ class AppControl : public rclcpp::Node {
         twist_msg.angular.y = 0.0;
         twist_msg.angular.z = angular;
         cmd_vel_pub_->publish(twist_msg);
-    }
 
     /**
      * Receives leader positions and converts to radians:
