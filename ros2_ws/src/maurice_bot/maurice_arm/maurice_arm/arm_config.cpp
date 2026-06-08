@@ -59,13 +59,13 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
         config.profile_velocity = static_cast<int>(this->get_parameter(jn + ".profile_velocity").as_int());
         config.profile_acceleration = static_cast<int>(this->get_parameter(jn + ".profile_acceleration").as_int());
 
-        RCLCPP_INFO(this->get_logger(),
-                    "Joint %zu (%s): servo_id=%d, motor=%s, limits=[%.3f, %.3f] rad, pwm=%d, mode=%d, current=%d",
-                    i + 1, jn.c_str(), config.servo_id,
-                    config.motor_type.empty() ? "(unset)" : config.motor_type.c_str(), config.min_pos_rad,
-                    config.max_pos_rad, config.pwm_limit, config.control_mode, config.current_limit);
+        RCLCPP_DEBUG(this->get_logger(),
+                     "Joint %zu (%s): servo_id=%d, motor=%s, limits=[%.3f, %.3f] rad, pwm=%d, mode=%d, current=%d",
+                     i + 1, jn.c_str(), config.servo_id,
+                     config.motor_type.empty() ? "(unset)" : config.motor_type.c_str(), config.min_pos_rad,
+                     config.max_pos_rad, config.pwm_limit, config.control_mode, config.current_limit);
         if (config.homing_offset != 0)
-            RCLCPP_INFO(this->get_logger(), "  Homing offset: %d", config.homing_offset);
+            RCLCPP_DEBUG(this->get_logger(), "  Homing offset: %d", config.homing_offset);
 
         // Gains: gains_near = [kp, ki, kd, ff1, ff2], gains_far = [] means same as near
         auto near_arr = this->get_parameter(jn + ".gains_near").as_integer_array();
@@ -104,16 +104,16 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
         gs_teleop_[i] = has_teleop_gains ? teleop_gains : near_gains;
         gs_last_applied_[i] = near_gains;
 
-        RCLCPP_INFO(this->get_logger(), "  Gains near: [%d, %d, %d, %d, %d]  far: [%d, %d, %d, %d, %d]%s",
-                    near_gains.kp, near_gains.ki, near_gains.kd, near_gains.ff1, near_gains.ff2, far_gains.kp,
-                    far_gains.ki, far_gains.kd, far_gains.ff1, far_gains.ff2,
-                    (near_gains != far_gains) ? "  (gain scheduling active)" : "");
+        RCLCPP_DEBUG(this->get_logger(), "  Gains near: [%d, %d, %d, %d, %d]  far: [%d, %d, %d, %d, %d]%s",
+                     near_gains.kp, near_gains.ki, near_gains.kd, near_gains.ff1, near_gains.ff2, far_gains.kp,
+                     far_gains.ki, far_gains.kd, far_gains.ff1, far_gains.ff2,
+                     (near_gains != far_gains) ? "  (gain scheduling active)" : "");
         if (has_teleop_gains)
-            RCLCPP_INFO(this->get_logger(), "  Gains teleop: [%d, %d, %d, %d, %d]", teleop_gains.kp, teleop_gains.ki,
-                        teleop_gains.kd, teleop_gains.ff1, teleop_gains.ff2);
+            RCLCPP_DEBUG(this->get_logger(), "  Gains teleop: [%d, %d, %d, %d, %d]", teleop_gains.kp, teleop_gains.ki,
+                         teleop_gains.kd, teleop_gains.ff1, teleop_gains.ff2);
         if (config.profile_velocity > 0 || config.profile_acceleration > 0)
-            RCLCPP_INFO(this->get_logger(), "  Profile: vel=%d, accel=%d", config.profile_velocity,
-                        config.profile_acceleration);
+            RCLCPP_DEBUG(this->get_logger(), "  Profile: vel=%d, accel=%d", config.profile_velocity,
+                         config.profile_acceleration);
 
         // Head-specific config for joint 7 (index 6)
         if (i == 6) {
@@ -132,9 +132,9 @@ void MauriceArmNode::loadJointConfigs(const std::vector<std::string>& joint_name
                 config.head_max_angle_deg = config.max_pos_rad * RAD_TO_DEG;
             }
 
-            RCLCPP_INFO(this->get_logger(), "  Head config: range=[%.1f, %.1f] deg, AI pos=%.1f deg, reversed=%s",
-                        config.head_min_angle_deg, config.head_max_angle_deg, config.head_ai_position_deg,
-                        config.head_direction_reversed ? "true" : "false");
+            RCLCPP_DEBUG(this->get_logger(), "  Head config: range=[%.1f, %.1f] deg, AI pos=%.1f deg, reversed=%s",
+                         config.head_min_angle_deg, config.head_max_angle_deg, config.head_ai_position_deg,
+                         config.head_direction_reversed ? "true" : "false");
         }
 
         joint_configs_.push_back(config);

@@ -28,8 +28,8 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
     }
     const auto& config = *config_ptr;
 
-    RCLCPP_INFO(this->get_logger(), "Configuring servo %d (%s)", config.servo_id,
-                config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Configuring servo %d (%s)", config.servo_id,
+                 config.motor_type.empty() ? "unknown" : config.motor_type.c_str());
 
     retryServoOp(config.servo_id, "disableTorque", [&] { dynamixel_->disableTorque(config.servo_id); });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -101,24 +101,39 @@ void MauriceArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) 
     gs_last_applied_[joint_index] = gs_near_[joint_index];
 
     if (enable_torque) {
-        RCLCPP_INFO(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
+        RCLCPP_DEBUG(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
         retryServoOp(config.servo_id, "enableTorque", [&] { dynamixel_->enableTorque(config.servo_id); });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    RCLCPP_INFO(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
-                enable_torque ? "enabled" : "disabled");
+    RCLCPP_DEBUG(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
+                 enable_torque ? "enabled" : "disabled");
 }
 
 void MauriceArmNode::configureServosLocked(bool enable_torque) {
     RCLCPP_INFO(this->get_logger(), "Configuring all 7 servos...");
 
+    std::vector<int> failed_servos;
     for (const auto& config : joint_configs_) {
         try {
             configureServoByIdLocked(config.servo_id, enable_torque);
         } catch (const std::exception& e) {
+            failed_servos.push_back(config.servo_id);
             RCLCPP_ERROR(this->get_logger(), "Failed to configure servo %d, skipping: %s", config.servo_id, e.what());
         }
+    }
+
+    // Per-servo detail is at debug; this is the one-line outcome summary. Init
+    // failures happen intermittently, so make a partial init impossible to miss.
+    if (failed_servos.empty()) {
+        RCLCPP_INFO(this->get_logger(), "All %zu servos configured successfully", joint_configs_.size());
+    } else {
+        std::string ids;
+        for (int id : failed_servos) {
+            ids += ids.empty() ? std::to_string(id) : ", " + std::to_string(id);
+        }
+        RCLCPP_WARN(this->get_logger(), "Configured %zu/%zu servos; failed: %s",
+                    joint_configs_.size() - failed_servos.size(), joint_configs_.size(), ids.c_str());
     }
 
     // Move head to default position

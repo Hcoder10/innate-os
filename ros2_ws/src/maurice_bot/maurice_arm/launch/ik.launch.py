@@ -44,6 +44,16 @@ def generate_launch_description():
                     {"robot_description_kinematics": kin_params["robot_description_kinematics"]},
                     {"use_sim_time": False},
                 ],
+                # Mute benign warnings: kdl_parser about the root link's inertia
+                # (kept for the physics sim; KDL drops it), and the rosout
+                # "Publisher already registered" from MoveIt's internal nodes.
+                arguments=[
+                    "--ros-args",
+                    "--log-level",
+                    "kdl_parser:=ERROR",
+                    "--log-level",
+                    "rcl.logging_rosout:=ERROR",
+                ],
             ),
             # KDL-based IK node
             Node(

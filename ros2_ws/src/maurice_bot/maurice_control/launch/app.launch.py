@@ -15,6 +15,9 @@ def generate_launch_description():
         executable="rws_server",
         name="ros_websocket_server",
         parameters=[{}],
+        # Silence the per-message "Field 'z' is not in json, default: (nil)" INFO spam
+        # from the JSON translator while keeping connect/disconnect logs visible.
+        arguments=["--ros-args", "--log-level", "rws::translate:=WARN"],
         output="screen",
         respawn=True,
         respawn_delay=2.0,

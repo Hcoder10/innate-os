@@ -207,7 +207,6 @@ class I2CManager:
                     self.logger.debug(
                         f"Status - Battery: {self.battery_voltage:.2f}V, Motor Temp: {temp}°C, Fault: {fault}"
                     )
-                self.logger.info(f"Status - Battery: {self.battery_voltage:.2f}V, Motor Temp: {temp}°C, Fault: {fault}")
             except struct.error as e:
                 self.logger.error(f"Failed to unpack status response: {e}")
 

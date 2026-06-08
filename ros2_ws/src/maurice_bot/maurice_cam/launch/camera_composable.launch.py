@@ -105,6 +105,11 @@ def generate_launch_description():
         + throttle_nodes,
         output="screen",
         emulate_tty=True,
+        # Mute the container's per-node "Found class / Instantiate class / Load
+        # Library" chatter (one logger: camera_container). The composable nodes
+        # keep their own loggers, and launch still prints one "Loaded node …"
+        # line per component.
+        arguments=["--ros-args", "--log-level", "camera_container:=WARN"],
     )
 
     stereo_calibration_manager = Node(

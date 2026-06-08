@@ -268,6 +268,21 @@ if [ -d "$REPO_DIR/config/systemd" ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 1b. Install security limits (real-time scheduling for the ROS runtime)
+# -----------------------------------------------------------------------------
+if [ -d "$REPO_DIR/config/security/limits.d" ]; then
+    log "Installing security limits..."
+    for limits_file in "$REPO_DIR/config/security/limits.d"/*.conf; do
+        if [ -f "$limits_file" ]; then
+            limits_name=$(basename "$limits_file")
+            log "  Installing $limits_name"
+            sed "s/jetson1/$ACTUAL_USER/g" \
+                "$limits_file" > /etc/security/limits.d/"$limits_name"
+        fi
+    done
+fi
+
+# -----------------------------------------------------------------------------
 # 2. Update helper scripts in /usr/local/bin
 # -----------------------------------------------------------------------------
 log "Installing helper scripts..."

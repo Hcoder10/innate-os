@@ -97,6 +97,7 @@ def generate_launch_description():
         output="screen",
         parameters=[smoother_params_file],
         remappings=[("cmd_vel", "/cmd_vel_scaled"), ("cmd_vel_smoothed", "/cmd_vel")],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     # Shared BT navigator node
@@ -115,6 +116,9 @@ def generate_launch_description():
                 ("navigate_to_pose", "internal_navigate_to_pose"),
             ]
         ),
+        # nav2 boot chatter at WARN; also mute the benign "Publisher already
+        # registered" rosout-plumbing warning from internal client nodes.
+        arguments=["--ros-args", "--log-level", "warn", "--log-level", "rcl.logging_rosout:=ERROR"],
     )
 
     # Shared behavior server node
@@ -150,6 +154,7 @@ def generate_launch_description():
             # Remap costmap footprint to global /footprint
             ("/mapfree/global_costmap/footprint", "/footprint"),
         ],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     # Null map node for identity map->odom transform
@@ -168,7 +173,14 @@ def generate_launch_description():
             mapfree_planner_node,
             behavior_server_node,
             Node(
-                package="maurice_nav", executable="mode_manager.py", name="mode_manager", output="screen", parameters=[]
+                package="maurice_nav",
+                executable="mode_manager.py",
+                name="mode_manager",
+                output="screen",
+                parameters=[],
+                # nav2's BasicNavigator creates internal nodes that can share a
+                # name; mute the benign "Publisher already registered" warning.
+                arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
             ),
         ]
     )

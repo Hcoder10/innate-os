@@ -93,9 +93,9 @@ void DynamicGoalChecker::initialize(const rclcpp_lifecycle::LifecycleNode::WeakP
 
     RCLCPP_INFO(logger_, "DynamicGoalChecker initialized with %zu tolerance tiers", time_thresholds_.size());
     for (size_t i = 0; i < time_thresholds_.size(); ++i) {
-        RCLCPP_INFO(logger_, "  Tier %zu: xy=%.3fm, yaw=%.3frad, lin_vel=%.3fm/s, ang_vel=%.3frad/s, time=%.2fs", i,
-                    xy_tolerances_[i], yaw_tolerances_[i], linear_vel_tolerances_[i], angular_vel_tolerances_[i],
-                    time_thresholds_[i]);
+        RCLCPP_DEBUG(logger_, "  Tier %zu: xy=%.3fm, yaw=%.3frad, lin_vel=%.3fm/s, ang_vel=%.3frad/s, time=%.2fs", i,
+                     xy_tolerances_[i], yaw_tolerances_[i], linear_vel_tolerances_[i], angular_vel_tolerances_[i],
+                     time_thresholds_[i]);
     }
 
     // Add callback for dynamic parameters

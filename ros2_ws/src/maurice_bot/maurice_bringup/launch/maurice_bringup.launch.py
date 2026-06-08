@@ -24,6 +24,16 @@ def generate_launch_description():
         name="robot_state_publisher",
         output="screen",
         parameters=[{"robot_description": robot_description}],
+        # Mute the per-link "got segment <link>" startup chatter, and the
+        # benign kdl_parser warning about the root link's inertia (KDL drops it,
+        # but we keep it in the URDF for the physics sim).
+        arguments=[
+            "--ros-args",
+            "--log-level",
+            "robot_state_publisher:=WARN",
+            "--log-level",
+            "kdl_parser:=ERROR",
+        ],
     )
 
     # Include the bringup_core launch file

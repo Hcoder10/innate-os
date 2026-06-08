@@ -142,7 +142,7 @@ class DynamicLoader:
             self.logger.warning(f"Path is not a directory: {directory_path}")
             return result
 
-        self.logger.info(f"Scanning for {kind} in: {directory_path}")
+        self.logger.debug(f"Scanning for {kind} in: {directory_path}")
         for py_file in self._iter_candidate_files(directory):
             try:
                 result.update(self.discover_in_file(py_file))

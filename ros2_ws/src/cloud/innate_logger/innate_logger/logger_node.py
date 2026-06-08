@@ -125,13 +125,15 @@ class LoggerNode(Node):
             "cpu_usage": cpu_usage,
         }
 
+        summary = f"cpu {cpu_usage:.0f}%"
+
         if self._latest_battery is not None:
             bat = self._latest_battery
             vitals["battery_voltage"] = bat.voltage
             vitals["battery_percentage"] = bat.percentage
             vitals["battery_status"] = bat.power_supply_status
             vitals["battery_health"] = bat.power_supply_health
-            self.get_logger().info(f"battery: {bat.voltage:.2f}V ({bat.percentage:.1%})")
+            summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
 
         if self._latest_diagnostics is not None:
             diag = self._latest_diagnostics
@@ -141,9 +143,10 @@ class LoggerNode(Node):
                 vitals["diagnostics_status"] = level
                 vitals["diagnostics_message"] = entry.message
                 vitals["diagnostics_hardware_id"] = entry.hardware_id
-                self.get_logger().info(f"diagnostics: [{level}] {entry.name}: {entry.message}")
+                summary += f" | diag [{level}] {entry.name}: {entry.message}"
 
-        self.get_logger().info(f"cpu: {cpu_usage:.1f}%")
+        # One concise health line; full vitals still stream to the cloud every tick.
+        self.get_logger().info(f"vitals: {summary}", throttle_duration_sec=30.0)
 
         if not self._client.log_vitals(vitals):
             self.get_logger().warning(

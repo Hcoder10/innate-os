@@ -154,6 +154,9 @@ def generate_launch_description():
             }
         ],
         output="screen",
+        # Mute the benign "Publisher already registered" rosout-plumbing warning
+        # from in-process helper nodes that can share a name.
+        arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
     )
 
     return LaunchDescription(
@@ -197,6 +200,10 @@ def generate_launch_description():
                         "simulator_mode": LaunchConfiguration("simulator_mode"),
                     }
                 ],
+                # Skill loading spins up short-lived helper nodes (camera, tf,
+                # action clients) that can share a name; mute the benign
+                # "Publisher already registered" rosout-plumbing warning.
+                arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
             ),
             # NOTE: InputManagerNode is launched separately via input_manager.launch.py
         ]
