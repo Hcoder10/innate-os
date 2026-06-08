@@ -1,0 +1,45 @@
+<svg width="1800" height="560" viewBox="0 0 1800 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1800" height="560" fill="#F1EEEE"/>
+  <rect x="0" y="0" width="1800" height="64" fill="#000000"/>
+  <text x="72" y="41" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">INNATE OS README</text>
+  <circle cx="1732" cy="32" r="7" fill="#401FFB"/>
+
+  <g transform="translate(72 112)">
+    <image href="innate-mark-black.svg" x="0" y="0" width="96" height="96"/>
+    <text x="124" y="34" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="800">Innate OS</text>
+    <text x="124" y="72" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="24">Open-source OS for MARS and other teachable robots.</text>
+
+    <text x="0" y="164" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800">Teach skills. Run agents. Stream inputs.</text>
+    <text x="0" y="212" fill="#3B3B3B" font-family="Arial, Helvetica, sans-serif" font-size="29">Simulate MARS locally, then operate the same system on hardware.</text>
+
+    <rect x="0" y="218" width="650" height="40" fill="#000000"/>
+    <text x="22" y="244" fill="#FFFFFF" font-family="Courier New, monospace" font-size="17" font-weight="700">What it is today is the worst it will ever be.</text>
+  </g>
+
+  <g transform="translate(72 390)">
+    <rect x="0" y="0" width="300" height="120" fill="#401FFB"/>
+    <text x="24" y="35" fill="#FFFFFF" font-family="Courier New, monospace" font-size="17" font-weight="700">01 SKILLS</text>
+    <text x="24" y="70" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800">Teach actions</text>
+    <text x="24" y="97" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="17">Write code skills. One ID.</text>
+
+    <rect x="324" y="0" width="300" height="120" fill="#000000"/>
+    <text x="348" y="35" fill="#FFFFFF" font-family="Courier New, monospace" font-size="17" font-weight="700">02 AGENTS</text>
+    <text x="348" y="70" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800">Run autonomously</text>
+    <text x="348" y="97" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="17">Use or create a harness.</text>
+
+    <rect x="648" y="0" width="300" height="120" fill="#FF541F"/>
+    <text x="672" y="35" fill="#000000" font-family="Courier New, monospace" font-size="17" font-weight="700">03 INPUTS</text>
+    <text x="672" y="70" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800">Stream your data</text>
+    <text x="672" y="97" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="17">Add sensors and components.</text>
+
+    <rect x="972" y="0" width="300" height="120" fill="#FFFFFF" stroke="#000000" stroke-width="3"/>
+    <text x="996" y="35" fill="#401FFB" font-family="Courier New, monospace" font-size="17" font-weight="700">04 SIMULATOR</text>
+    <text x="996" y="70" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800">Test without hardware</text>
+    <text x="996" y="97" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="17">Run MARS locally.</text>
+
+    <rect x="1296" y="0" width="300" height="120" fill="#FFFFFF" stroke="#000000" stroke-width="3"/>
+    <text x="1320" y="35" fill="#401FFB" font-family="Courier New, monospace" font-size="17" font-weight="700">05 ROS REFERENCE</text>
+    <text x="1320" y="70" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800">Go below the API</text>
+    <text x="1320" y="97" fill="#000000" font-family="Arial, Helvetica, sans-serif" font-size="17">Inspect the core OS.</text>
+  </g>
+</svg>

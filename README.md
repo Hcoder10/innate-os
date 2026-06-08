@@ -12,7 +12,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/assets/readme/innate-os-readme-hero.png" alt="Innate OS branded README launchpad for simulation, workspace behavior, and robot operation" width="100%">
+  <img src="docs/assets/readme/innate-os-readme-hero.png" alt="Innate OS README hero for skills, agents, inputs, simulator, and ROS reference" width="100%">
 </p>
 
 MARS is a teachable robot: a new type of robot that you can teach to do what you want.
