@@ -6,6 +6,16 @@
 
 namespace maurice_cam {
 
+namespace {
+// The peer is gone (vs. still negotiating); the pipeline can be released.
+bool connection_terminal(GstElement* webrtc) {
+    GstWebRTCPeerConnectionState state;
+    g_object_get(webrtc, "connection-state", &state, nullptr);
+    return state == GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED || state == GST_WEBRTC_PEER_CONNECTION_STATE_FAILED ||
+           state == GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED;
+}
+}  // namespace
+
 WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     : Node("webrtc_streamer", options),
       pipeline_(nullptr),
@@ -62,6 +72,9 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     // Create initial subscriptions for live source
     create_subscriptions("live");
 
+    health_timer_ =
+        this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
+
     RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (source: %s, compressed: %s)", current_source_.c_str(),
                 use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Live topics: %s, %s", live_main_topic_.c_str(), live_arm_topic_.c_str());
@@ -75,6 +88,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
 }
 
 WebRTCStreamer::~WebRTCStreamer() {
+    health_timer_.reset();  // stop the poll before tearing the pipeline down
     cleanup_pipeline();
 }
 
@@ -395,6 +409,36 @@ void WebRTCStreamer::cleanup_pipeline() {
     }
 }
 
+void WebRTCStreamer::drain_bus_locked() {
+    GstBus* bus = gst_element_get_bus(pipeline_);
+    while (GstMessage* msg = gst_bus_pop(bus)) {
+        if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
+            GError* err = nullptr;
+            gst_message_parse_error(msg, &err, nullptr);
+            RCLCPP_ERROR(this->get_logger(), "GStreamer error from %s: %s", GST_OBJECT_NAME(msg->src),
+                         err ? err->message : "unknown");
+            g_clear_error(&err);
+        }
+        gst_message_unref(msg);
+    }
+    gst_object_unref(bus);
+}
+
+void WebRTCStreamer::poll_pipeline_health() {
+    std::lock_guard<std::mutex> lock(pipeline_mutex_);
+    if (!pipeline_) {
+        return;
+    }
+    drain_bus_locked();
+    // Release the pipeline (and the mic) once the peer is gone; the next START rebuilds it.
+    // Tearing down here on the executor thread avoids the deadlock of doing it from webrtcbin's
+    // own connection-state callback, and reading the live state avoids acting on a stale signal.
+    if (webrtc_ && connection_terminal(webrtc_)) {
+        RCLCPP_INFO(this->get_logger(), "Peer disconnected; releasing pipeline");
+        teardown_pipeline_locked();
+    }
+}
+
 void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     // Parse source from message
     std::string source = "live";
@@ -700,6 +744,8 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
             break;
     }
 
+    // Teardown on disconnect/failed/closed is handled by poll_pipeline_health (executor thread),
+    // not here, since set-state-NULL from this callback thread would deadlock the pipeline.
     RCLCPP_INFO(self->get_logger(), "WebRTC connection state: %s", state_str);
 }
 

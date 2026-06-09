@@ -19,6 +19,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <chrono>
 
 namespace maurice_cam {
 
@@ -47,6 +48,11 @@ class WebRTCStreamer : public rclcpp::Node {
     void create_subscriptions(const std::string& source);
     void destroy_subscriptions();
     void cleanup_pipeline();
+
+    // Runs on the executor thread (never a GStreamer thread): drains the bus so runtime
+    // errors are logged, and tears the pipeline down once the peer connection is gone.
+    void poll_pipeline_health();
+    void drain_bus_locked();  // caller must hold pipeline_mutex_
 
     // with_audio appends an Opus mic branch (webrtc.sink_2) to the video pipeline.
     // It is cleared to false if the audio params are unsafe, so callers log the real state.
@@ -99,6 +105,9 @@ class WebRTCStreamer : public rclcpp::Node {
 
     // Thread safety
     std::mutex pipeline_mutex_;
+
+    // Periodic bus drain + disconnect teardown
+    rclcpp::TimerBase::SharedPtr health_timer_;
 
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;

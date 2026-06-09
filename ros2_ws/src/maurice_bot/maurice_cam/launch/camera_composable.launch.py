@@ -71,10 +71,11 @@ def generate_launch_description():
                 "live_arm_camera_topic": "/mars/arm/image_raw",
                 "replay_main_camera_topic": "/brain/recorder/replay/main_camera/left/image_raw",
                 "replay_arm_camera_topic": "/brain/recorder/replay/arm_camera/image_raw",
-                # Mic to teleoperator. hw:0,0 is the Arducam capture card (ALSA "default" isn't capturable here).
+                # Mic to teleoperator. Address the Arducam by stable card name (sysdefault:CARD=)
+                # rather than a positional index, which can shift across boots/USB enumeration.
                 "enable_audio": True,
                 "audio_source_element": "alsasrc",
-                "audio_capture_device": "hw:0,0",
+                "audio_capture_device": "sysdefault:CARD=Light",
             }
         ],
         extra_arguments=[{"use_intra_process_comms": True}],
