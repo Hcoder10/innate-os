@@ -455,20 +455,27 @@ void WebRTCStreamer::poll_pipeline_health() {
 }
 
 void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
-    // Parse source from message
+    // Parse source and the per-connection audio request from the message. Audio is
+    // off by default: the client must explicitly opt in, so the robot mic never
+    // streams (and never grabs the peer's audio session) until a page asks for it.
     std::string source = "live";
+    bool request_audio = false;
     if (!msg->data.empty()) {
         try {
             auto json = nlohmann::json::parse(msg->data);
             if (json.contains("source")) {
                 source = json["source"].get<std::string>();
             }
+            if (json.contains("audio")) {
+                request_audio = json["audio"].get<bool>();
+            }
         } catch (const nlohmann::json::exception&) {
-            // Not JSON, use default
+            // Not JSON, use defaults
         }
     }
 
-    RCLCPP_INFO(this->get_logger(), "START received (source=%s), creating offer...", source.c_str());
+    RCLCPP_INFO(this->get_logger(), "START received (source=%s, audio=%s), creating offer...", source.c_str(),
+                request_audio ? "requested" : "off");
 
     // Switch subscriptions if source changed
     if (source != current_source_) {
@@ -480,8 +487,11 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
 
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
 
+    // enable_audio_ is the master capability switch (e.g. false in sim, which has no mic); the client
+    // must also opt in for this connection. Either off => video-only, so the agent page (audio=false)
+    // gets no audio m-line and leaves the OS audio session free for its speech APIs.
     // If audio fails to start (no/busy mic, missing opus plugin), retry video-only.
-    bool with_audio = enable_audio_;
+    bool with_audio = enable_audio_ && request_audio;
     if (!start_pipeline_locked(with_audio)) {
         if (with_audio) {
             RCLCPP_WARN(this->get_logger(),
