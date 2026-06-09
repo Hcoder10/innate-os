@@ -108,6 +108,7 @@ class WebRTCStreamer : public rclcpp::Node {
 
     // Periodic bus drain + disconnect teardown
     rclcpp::TimerBase::SharedPtr health_timer_;
+    int terminal_polls_ = 0;  // consecutive FAILED/DISCONNECTED polls (grace window before teardown)
 
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;

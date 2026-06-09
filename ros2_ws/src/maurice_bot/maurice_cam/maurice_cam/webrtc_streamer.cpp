@@ -7,13 +7,16 @@
 namespace maurice_cam {
 
 namespace {
-// The peer is gone (vs. still negotiating); the pipeline can be released.
-bool connection_terminal(GstElement* webrtc) {
+GstWebRTCPeerConnectionState peer_connection_state(GstElement* webrtc) {
     GstWebRTCPeerConnectionState state;
     g_object_get(webrtc, "connection-state", &state, nullptr);
-    return state == GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED || state == GST_WEBRTC_PEER_CONNECTION_STATE_FAILED ||
-           state == GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED;
+    return state;
 }
+
+// poll_pipeline_health() runs every 200 ms. A FAILED/DISCONNECTED peer is torn down only after it
+// has stayed down this many consecutive polls (~15 s) — long enough for webrtcbin to recover a
+// transient blip via ICE restart, short enough to free the video encoders + mic on a dead session.
+constexpr int kTeardownGracePolls = 75;
 }  // namespace
 
 WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
@@ -427,15 +430,27 @@ void WebRTCStreamer::drain_bus_locked() {
 void WebRTCStreamer::poll_pipeline_health() {
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
     if (!pipeline_) {
+        terminal_polls_ = 0;
         return;
     }
     drain_bus_locked();
-    // Release the pipeline (and the mic) once the peer is gone; the next START rebuilds it.
-    // Tearing down here on the executor thread avoids the deadlock of doing it from webrtcbin's
-    // own connection-state callback, and reading the live state avoids acting on a stale signal.
-    if (webrtc_ && connection_terminal(webrtc_)) {
-        RCLCPP_INFO(this->get_logger(), "Peer disconnected; releasing pipeline");
+    if (!webrtc_) {
+        return;
+    }
+    // Release the pipeline (and the mic) when the peer is gone; the next START rebuilds it. Done on
+    // the executor thread (not webrtcbin's own callback thread, which would deadlock), reading the
+    // live state. CLOSED is final so tear down at once; FAILED/DISCONNECTED are often transient, so
+    // give webrtcbin a grace window to recover via ICE restart before freeing the encoders + mic.
+    const GstWebRTCPeerConnectionState state = peer_connection_state(webrtc_);
+    const bool closed = state == GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED;
+    const bool down =
+        state == GST_WEBRTC_PEER_CONNECTION_STATE_FAILED || state == GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED;
+    terminal_polls_ = down ? terminal_polls_ + 1 : 0;
+    if (closed || terminal_polls_ >= kTeardownGracePolls) {
+        RCLCPP_INFO(this->get_logger(), "Peer connection %s; releasing pipeline",
+                    closed ? "closed" : "down past grace window");
         teardown_pipeline_locked();
+        terminal_polls_ = 0;
     }
 }
 
@@ -744,8 +759,9 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
             break;
     }
 
-    // Teardown on disconnect/failed/closed is handled by poll_pipeline_health (executor thread),
-    // not here, since set-state-NULL from this callback thread would deadlock the pipeline.
+    // Teardown is handled by poll_pipeline_health (executor thread), not here, since set-state-NULL
+    // from this callback thread would deadlock the pipeline. CLOSED tears down at once; FAILED/
+    // DISCONNECTED only after a grace window, so webrtcbin can first recover via ICE restart.
     RCLCPP_INFO(self->get_logger(), "WebRTC connection state: %s", state_str);
 }
 
