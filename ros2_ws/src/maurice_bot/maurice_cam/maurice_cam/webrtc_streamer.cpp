@@ -575,7 +575,11 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
                 "audio/x-raw,rate=48000,channels=1 ! "
                 "opusenc bitrate=24000 audio-type=voice ! "
                 "rtpopuspay pt=98 ! "
-                "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,payload=98 ! "
+                // encoding-params=2 is mandatory: RFC 7587 requires the Opus rtpmap to be
+                // "opus/48000/2" regardless of the actual channel count. Without it libwebrtc
+                // (the app) finds no matching codec and rejects the audio m-line, which strands
+                // webrtcbin's max-bundle session in "connecting" forever.
+                "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,encoding-params=(string)2,payload=98 ! "
                 "webrtc.sink_2";
     }
 
