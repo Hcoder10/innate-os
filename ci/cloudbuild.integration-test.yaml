@@ -16,6 +16,9 @@
 # NOTE: this build runs on a private worker pool (see the GitHub workflow). The
 # pool must have egress to ghcr.io (external IP or Cloud NAT) for the base
 # pull/push, and the build service account needs read access to the GHCR secrets.
+# The GHCR token (reused from the sim-image secrets) must also be authorized to
+# push the ${_BASE_IMAGE_NAME} package — a token fine-grained to the sim repos
+# only will make the first main build fail at `docker push`.
 timeout: 3600s
 
 substitutions:
@@ -32,7 +35,11 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  - id: build-test-image
+  # Make the warm base available in the local docker daemon: pull it on PRs
+  # (building it inline if it was never published), rebuild + push it on main.
+  # Kept as its own step so the per-step status distinguishes "base
+  # provisioning broke" from "this revision's build broke".
+  - id: prepare-base-image
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
     secretEnv:
@@ -75,7 +82,7 @@ steps:
           # main: (re)build and publish the warm base. Publishing IS the job on
           # main, so fail fast if we can't push — a silent "built but not pushed"
           # would leave a stale base on ghcr that quietly degrades every later PR
-          # build (and the thin layer's `rosdep ... || true` would hide the
+          # build (and the thin layer's `rosdep ... || ...` would hide the
           # resulting missing deps). Check before the expensive build_base.
           if [[ "$logged_in" != "true" ]]; then
             echo "ERROR: _PUBLISH_BASE=true but ghcr login failed; cannot publish the base." >&2
@@ -94,14 +101,23 @@ steps:
           fi
         fi
 
-        # Thin layer: overlay this revision's source onto the warm base and do an
-        # incremental, ccache-backed colcon build.
-        docker build \
-          --progress=plain \
-          --build-arg "BASE_IMAGE=$base_image:main" \
-          -t innate-os-test:latest \
-          -f ci/Dockerfile.test \
-          .
+  # Thin layer: overlay this revision's source onto the warm base and do an
+  # incremental, ccache-backed colcon build. The base tag is in the local daemon
+  # from the previous step (Cloud Build steps share the docker daemon).
+  - id: build-test-image
+    name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --progress=plain
+      - --build-arg
+      - BASE_IMAGE=${_IMAGE_PREFIX}/${_BASE_IMAGE_NAME}:main
+      - -t
+      - innate-os-test:latest
+      - -f
+      - ci/Dockerfile.test
+      - .
 
   - id: run-tests
     name: gcr.io/cloud-builders/docker

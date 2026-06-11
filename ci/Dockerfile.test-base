@@ -30,6 +30,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install base prerequisites + enable universe (for gstreamer, libhdf5-dev, etc.)
+# ccache is installed explicitly (not only via apt-dependencies.common.txt)
+# because the colcon builds here and in ci/Dockerfile.test hard-depend on it.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -43,6 +45,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         locales \
         iproute2 \
+        ccache \
         libcairo2-dev \
         libhdf5-dev \
         ros-humble-kdl-parser
@@ -105,14 +108,15 @@ RUN cd /root/innate-os/ros2_ws/src && \
 
 # Full build with ccache. ccache writes to /root/.ccache (a REAL dir, NOT a
 # --mount=type=cache) so the populated cache is baked into the image layer and
-# carried into ci/Dockerfile.test via FROM. --parallel-workers defaults to all
-# cores; cap it if heavy C++ linking OOMs on a small machine.
+# carried into ci/Dockerfile.test via FROM. --parallel-workers is capped at 4:
+# E2_HIGHCPU_8 has 8 vCPUs but only 8 GB RAM, and >4 concurrent C++ link jobs
+# (maurice_cam etc.) can OOM with no useful error.
 # maurice_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
 # guarded by if(VPI_FOUND), nav's only Jetson dep (python3-cupy) is runtime-only.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
     rosdep install --from-paths src --ignore-src -r -y || true && \
-    colcon build --parallel-workers "$(nproc)" --cmake-args \
+    colcon build --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

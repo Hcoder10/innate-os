@@ -18,31 +18,76 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Inherited from the base, re-declared for clarity. The warm ccache lives here.
 ENV CCACHE_DIR=/root/.ccache
 
-# Overlay this revision's first-party source onto the baked workspace. COPY
-# merges (it does not delete), so the vcs-imported externals (rplidar_ros,
-# topic_tools) baked into the base survive; only first-party packages are
-# updated. config/ and workspace/ are runtime inputs for the tests.
-#
-# Caveat: a PR that *deletes* a source file, or *adds* a new external to
-# dependencies.repos, is not reflected until the base is rebuilt on main. Low
-# risk for a build gate; rebuild the base if it matters.
-COPY ros2_ws/src /root/innate-os/ros2_ws/src
+# If this revision changed the hand-curated dependency lists, apply them on top
+# of the base (which baked the lists as of the last main build) — otherwise a PR
+# adding e.g. a pip package would build against stale deps with no diagnostic.
+# cmp against the copies baked into the base keeps the no-change case free; the
+# baked copies are then updated so the image matches this revision. The pip
+# filter must stay in sync with ci/Dockerfile.test-base.
+COPY ros2_ws/apt-dependencies.common.txt /tmp/pr-apt-deps.txt
+COPY ros2_ws/pip-requirements.txt /tmp/pr-pip-reqs.txt
+RUN if ! cmp -s /tmp/pr-apt-deps.txt /root/innate-os/ros2_ws/apt-dependencies.common.txt; then \
+        echo "apt-dependencies.common.txt changed since the base build; installing..." && \
+        apt-get update && \
+        grep -v '^#' /tmp/pr-apt-deps.txt | grep -v '^$' | \
+            xargs apt-get install -y --no-install-recommends && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi && \
+    if ! cmp -s /tmp/pr-pip-reqs.txt /root/innate-os/ros2_ws/pip-requirements.txt; then \
+        echo "pip-requirements.txt changed since the base build; installing..." && \
+        grep -v 'pypi.jetson-ai-lab.io' /tmp/pr-pip-reqs.txt | \
+            grep -v -E '^cupy' | \
+            grep -v -E '^pynput' | \
+            grep -v -E '^bluezero' > /tmp/pr-pip-reqs.filtered.txt && \
+        uv pip install --system -r /tmp/pr-pip-reqs.filtered.txt && \
+        rm /tmp/pr-pip-reqs.filtered.txt; \
+    fi && \
+    mv /tmp/pr-apt-deps.txt /root/innate-os/ros2_ws/apt-dependencies.common.txt && \
+    mv /tmp/pr-pip-reqs.txt /root/innate-os/ros2_ws/pip-requirements.txt
+
+# REPLACE (not merge) the baked first-party source with this revision's, so file
+# and package deletions take effect instead of leaving stale source behind, then
+# re-import the externals (also picks up changes to dependencies.repos without
+# waiting for a base rebuild). config/ and workspace/ are runtime inputs for the
+# tests; plain COPY-merge is fine there.
+COPY ros2_ws/src /tmp/pr-src
+RUN rm -rf /root/innate-os/ros2_ws/src && \
+    mv /tmp/pr-src /root/innate-os/ros2_ws/src && \
+    cd /root/innate-os/ros2_ws/src && \
+    if [ -f dependencies.repos ]; then \
+        vcs import --input dependencies.repos; \
+    fi
 COPY config /root/innate-os/config
 COPY workspace /root/innate-os/workspace
 
 # Incremental rebuild. ccache (warm from the base) turns unchanged translation
-# units into cache hits; only changed packages truly recompile. --parallel-workers
-# defaults to all cores; cap it if heavy C++ linking OOMs on a small machine.
+# units into cache hits; only changed packages truly recompile.
+# --parallel-workers is capped at 4: E2_HIGHCPU_8 has 8 vCPUs but only 8 GB RAM,
+# and >4 concurrent C++ link jobs can OOM with no useful error.
 #
-# rosdep install runs first (as in the base): near-instant when every dep is
-# already satisfied, but if this revision declares a NEW system <depend> it gets
-# installed on top of the base — so such PRs build (and, on a genuinely missing
-# dep, fail with a clear rosdep diagnostic instead of a cryptic compiler error)
-# without waiting for the next base rebuild on main.
+# Before building, prune build/ + install/ dirs of packages that no longer exist
+# in src — otherwise a deleted package's stale artifacts could keep dependents
+# linking and CI would pass while the post-merge main build breaks. Residual
+# caveat: a file deleted from a package that still exists can leave a stale
+# installed copy (cmake install does not prune) until the next base rebuild.
+#
+# rosdep install is best-effort (-r, ||): it exits non-zero for keys with no
+# installable candidate on this non-Jetson image, so we cannot gate on it. Its
+# value: a NEW system <depend> declared by this revision gets installed without
+# waiting for a base rebuild. A truly missing dep still surfaces as a compiler
+# error in the colcon build below — check the rosdep output above it.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
-    rosdep install --from-paths src --ignore-src -r -y || true && \
-    colcon build --parallel-workers "$(nproc)" --cmake-args \
+    colcon list --names-only --base-paths src > /tmp/current-pkgs.txt && \
+    for d in build/* install/*; do \
+        [ -d "$d" ] || continue; \
+        grep -qx "$(basename "$d")" /tmp/current-pkgs.txt || \
+            { echo "Pruning artifacts of removed package: $d"; rm -rf "$d"; }; \
+    done && \
+    rm /tmp/current-pkgs.txt && \
+    { rosdep install --from-paths src --ignore-src -r -y || \
+        echo "WARNING: rosdep install exited non-zero; if the build below fails on a missing system dep, check the rosdep output above." >&2; } && \
+    colcon build --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
