@@ -98,6 +98,7 @@ class SkillRepository:
             agents_directories=[],  # SAS doesn't handle agents
             on_reload=self._on_skills_file_changed,
             debounce_seconds=1.0,
+            recursive=True,  # physical skills live in subdirs (metadata.json + assets)
         )
         self._hot_reload_watcher.start()
 
@@ -106,7 +107,11 @@ class SkillRepository:
             self._hot_reload_watcher.stop()
 
     def _on_skills_file_changed(self, skill_names: list, _agent_names: list) -> None:
-        """Called by HotReloadWatcher when skill files change (names are file stems)."""
+        """Called by HotReloadWatcher when skill files change.
+
+        Names are code-skill stems (``foo.py`` -> ``foo``) or physical-skill
+        directory names (``foo/metadata.json`` -> ``foo``); both resolve below.
+        """
         self._logger.info(f"Hot reload triggered for skills: {skill_names}")
         if not skill_names:
             self.reload_all()

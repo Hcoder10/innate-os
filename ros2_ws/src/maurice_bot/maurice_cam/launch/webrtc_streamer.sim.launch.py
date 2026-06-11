@@ -13,6 +13,7 @@ def generate_launch_description():
                 parameters=[
                     {
                         "use_compressed_images": True,  # Use compressed images for sim/rosbridge
+                        "enable_audio": False,  # No microphone in simulation
                         "live_main_camera_topic": "/mars/main_camera/left/image_raw",
                         "live_arm_camera_topic": "/mars/arm/image_raw",
                         "replay_main_camera_topic": "/brain/recorder/replay/main_camera/left/image_raw",

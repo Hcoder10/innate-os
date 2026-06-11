@@ -32,6 +32,19 @@ using namespace std::chrono_literals;
 
 namespace maurice_control {
 
+// Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
+namespace joy_tuning {
+// Defaults match the original pre-tuning feel: 15% deadband, quadratic
+// response, 0.5 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
+constexpr double DEADZONE = 0.15;
+constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
+constexpr double MAX_LINEAR = 0.5;   // m/s
+constexpr double MAX_ANGULAR = 1.0;  // rad/s
+// Car-like steering inversion while reversing is the `reverse_steering` ROS
+// parameter (default off); the app's Dev tab toggles it live via set_parameters.
+constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
+}  // namespace joy_tuning
+
 /**
  * Check if running inside a Docker container.
  * Returns true if inside Docker, false otherwise.
@@ -365,6 +378,9 @@ class AppControl : public rclcpp::Node {
         this->declare_parameter("data_directory", maurice_root + "/data");
         this->declare_parameter("robot_name", "");
         this->declare_parameter("default_hardware_revision", "R6");
+        // Joystick: invert steering while reversing (car-like). Off by default;
+        // the app's Dev tab toggles it at runtime through set_parameters.
+        this->declare_parameter("reverse_steering", false);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -613,51 +629,40 @@ class AppControl : public rclcpp::Node {
         return _cached_update_available;
     }
 
-    /**
-     * Apply deadband and quadratic curve to input value.
-     * - Deadband filters out small inputs
-     * - Quadratic curve provides smooth, balanced response
-     */
-    double apply_curve(double value, double deadband = 0.15) {
+    /** Apply deadband and a power-law (joy_tuning::EXPONENT) response curve to a [-1, 1] axis. */
+    double apply_curve(double value, double deadband = joy_tuning::DEADZONE) {
         if (std::abs(value) < deadband) {
             return 0.0;
         }
 
-        // Normalize value beyond deadband to range [0, 1] or [-1, 0]
         double sign = (value > 0) ? 1.0 : -1.0;
         double normalized = (std::abs(value) - deadband) / (1.0 - deadband);
-
-        // Apply quadratic curve for balanced progressive response
-        double curved = normalized * normalized;
+        double curved = std::pow(normalized, joy_tuning::EXPONENT);
 
         return sign * curved;
     }
 
-    /**
-     * Converts joystick input to velocity commands:
-     *   - Linear velocity (x) is scaled from [-1, 1] to [-0.7, 0.7].
-     *   - Angular velocity (z) is scaled from [-1, 1] to [-1.5, 1.5].
-     *   - Applies deadband of 0.15 (15%) to filter out small inputs.
-     *   - Applies cubic curve for smooth, progressive control response.
-     */
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
-        // Apply deadband and curve
-        double x = apply_curve(msg->x, 0.15);
-        double y = apply_curve(msg->y, 0.15);
+        double shaped_x = apply_curve(msg->x);  // steering
+        double shaped_y = apply_curve(msg->y);  // throttle
+
+        double linear = shaped_y * joy_tuning::MAX_LINEAR;
+        double angular = -shaped_x * joy_tuning::MAX_ANGULAR;
+
+        if (this->get_parameter("reverse_steering").as_bool() && linear < 0.0) {
+            // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
+            double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
+            angular *= (1.0 - 2.0 * blend);
+        }
 
         geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = y * 0.5;    // Max forward speed: 0.5 m/s
-        twist_msg.angular.z = -x * 1.0;  // Max angular speed: 1.0 rad/s
-
-        // Set other components to zero.
+        twist_msg.linear.x = linear;
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-
+        twist_msg.angular.z = angular;
         cmd_vel_pub_->publish(twist_msg);
-        RCLCPP_DEBUG(this->get_logger(), "Joystick: x=%.2f, y=%.2f -> cmd_vel: linear.x=%.2f, angular.z=%.2f", msg->x,
-                     msg->y, twist_msg.linear.x, twist_msg.angular.z);
     }
 
     /**
