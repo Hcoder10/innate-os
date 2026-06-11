@@ -568,15 +568,16 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
             }
             src += " device=\"" + audio_capture_device_ + "\"";
         }
-        desc += " " + src +
-                " do-timestamp=true ! "
-                "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
-                "audioconvert ! audioresample ! "
-                "audio/x-raw,rate=48000,channels=1 ! "
-                "opusenc bitrate=24000 audio-type=voice ! "
-                "rtpopuspay pt=98 ! "
-                "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,payload=98 ! "
-                "webrtc.sink_2";
+        desc +=
+            " " + src +
+            " do-timestamp=true ! "
+            "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
+            "audioconvert ! audioresample ! "
+            "audio/x-raw,rate=48000,channels=1 ! "
+            "opusenc bitrate=24000 audio-type=voice ! "
+            "rtpopuspay pt=98 ! "
+            "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,encoding-params=(string)2,payload=98 ! "
+            "webrtc.sink_2";
     }
 
     return desc;
