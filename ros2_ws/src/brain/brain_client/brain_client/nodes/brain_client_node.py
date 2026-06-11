@@ -29,6 +29,7 @@ from brain_client.navigation.map import MapState
 from brain_client.perception.camera import CameraCapture
 from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
+from brain_client.perception.scan_health import ScanHealthMonitor
 from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
@@ -131,6 +132,7 @@ class BrainClientNode(Node):
             use_odom_as_amcl_pose=cfg.use_odom_as_amcl_pose,
         )
         self.map_state = MapState(self, cfg.map_topic)
+        self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic)
         self.gaze = GazeController(self, state)
         self.catalog = SkillCatalog(self, self.ws_bridge, state)
         self.runner = PrimitiveRunner(
@@ -153,6 +155,7 @@ class BrainClientNode(Node):
             catalog=self.catalog,
             active_inputs_pub=self.active_inputs_pub,
             memory_positions_pub=self.memory_positions_pub,
+            scan_health=self.scan_health,
         )
         self.lifecycle = BrainLifecycle(
             self,
