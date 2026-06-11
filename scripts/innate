@@ -1000,7 +1000,7 @@ def _set_volume_via_ros2(level):
     if ws_setup.exists():
         source_chain += f" && source {ws_setup}"
 
-    cmd = f'{source_chain} && ros2 service call /set_volume maurice_msgs/srv/SetVolume "{{volume_percent: {level}}}"'
+    cmd = f'{source_chain} && ros2 service call /set_volume mars_msgs/srv/SetVolume "{{volume_percent: {level}}}"'
     r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=15)
     return r.returncode == 0 and "success=True" in r.stdout
 

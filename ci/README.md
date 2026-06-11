@@ -48,7 +48,7 @@ suspenders: they only matter if SHM is ever re-enabled in CI.
 
 ## Why the build covers every package
 
-The build covers **all** packages (no `--packages-skip`). `maurice_cam`/`nav`/
+The build covers **all** packages (no `--packages-skip`). `mars_cam`/`nav`/
 `control` were once skipped as "Jetson-only", but they compile fine off Jetson
 (cam's VPI stereo is `if(VPI_FOUND)`-guarded; nav's `cupy` is runtime-only).
 Building everything makes the build the broad safety net for structural refactors.

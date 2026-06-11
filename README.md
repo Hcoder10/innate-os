@@ -37,11 +37,11 @@ See [`sim/launcher/README.md`](sim/launcher/README.md) for the full `./innate si
 
 The main ROS packages that make up the runtime. See [scripts/launch_ros_in_tmux.sh](scripts/launch_ros_in_tmux.sh) for how they are wired together at startup.
 
-- **[maurice_control](ros2_ws/src/maurice_bot/maurice_control)** — top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
-- **[maurice_bringup](ros2_ws/src/maurice_bot/maurice_bringup)** — hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
-- **[maurice_arm](ros2_ws/src/maurice_bot/maurice_arm)** — arm + head servo driver, MoveIt `move_group`, and KDL-based IK solver.
-- **[maurice_cam](ros2_ws/src/maurice_bot/maurice_cam)** — stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
-- **[maurice_nav](ros2_ws/src/maurice_bot/maurice_nav)** — Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree` / `mapping` / `navigation`.
+- **[mars_control](ros2_ws/src/mars_bot/mars_control)** — top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
+- **[mars_bringup](ros2_ws/src/mars_bot/mars_bringup)** — hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
+- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** — arm + head servo driver, MoveIt `move_group`, and KDL-based IK solver.
+- **[mars_cam](ros2_ws/src/mars_bot/mars_cam)** — stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
+- **[mars_nav](ros2_ws/src/mars_bot/mars_nav)** — Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree` / `mapping` / `navigation`.
 - **[brain_client](ros2_ws/src/brain/brain_client)** — bridges the robot to the cloud brain (agent-v1.innate.bot): websocket client, skills action server, and the user input manager (STT/TTS).
 - **[manipulation](ros2_ws/src/brain/manipulation)** — records/replays manipulation demonstrations and runs either learned or scripted manipulation policies.
 - **[innate_logger](ros2_ws/src/cloud/innate_logger)** — uploads robot logs and telemetry to the Innate cloud.

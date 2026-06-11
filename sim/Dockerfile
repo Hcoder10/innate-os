@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Dockerfile for Maurice Robot (ROS 2 Humble) with zsh + oh-my-zsh.
+# Dockerfile for Mars Robot (ROS 2 Humble) with zsh + oh-my-zsh.
 #
 # Keep this image focused on OS/runtime dependencies. The ROS workspace source
 # is bind-mounted by sim/docker-compose.dev.yml and built into persistent named

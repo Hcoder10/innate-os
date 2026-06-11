@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mars_control</name>
+  <version>0.0.1</version>
+  <description>Control interface for Mars robot (joystick, keyboard, leader arm)</description>
+  <maintainer email="todo@todo.com">vignesh</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <!-- Core ROS dependencies -->
+  <depend>rclpy</depend>
+  <depend>rclcpp</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- Message dependencies -->
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <!-- C++ dependencies -->
+  <depend>nlohmann-json-dev</depend>
+  <depend>yaml-cpp</depend>
+
+  <!-- Internal package dependencies -->
+  <depend>mars_msgs</depend>
+  <depend>mars_arm</depend>
+  <exec_depend>rws</exec_depend>
+
+  <!-- Python dependencies (installed via pip-requirements.txt) -->
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

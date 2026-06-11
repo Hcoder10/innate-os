@@ -8,7 +8,7 @@ the agent when a servo failure is detected.
 Uses self.node (injected by InputManagerNode) to create a ROS subscription.
 """
 
-from maurice_msgs.msg import ArmStatus
+from mars_msgs.msg import ArmStatus
 
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.types import InputDevice
@@ -18,7 +18,7 @@ class ArmVitalsInput(InputDevice):
     """
     Monitors arm servo health and reports failures to the agent.
 
-    Subscribes to /mars/arm/status (maurice_msgs/ArmStatus) which is
+    Subscribes to /mars/arm/status (mars_msgs/ArmStatus) which is
     published by the arm node's health monitor. When is_ok transitions
     to False, sends the error description to the agent as a chat_in message.
     """

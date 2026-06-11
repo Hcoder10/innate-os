@@ -12,7 +12,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
-from maurice_msgs.srv import GotoJS, GotoJSTrajectory
+from mars_msgs.srv import GotoJS, GotoJSTrajectory
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray

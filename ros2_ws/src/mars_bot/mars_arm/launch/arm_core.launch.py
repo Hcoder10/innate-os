@@ -1,0 +1,61 @@
+import os
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def load_yaml(package_name, file_path):
+    """Load a yaml file from package share directory"""
+    package_path = get_package_share_directory(package_name)
+    absolute_file_path = os.path.join(package_path, file_path)
+
+    try:
+        with open(absolute_file_path) as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Error loading {absolute_file_path}: {e}")
+        return {}
+
+
+def generate_launch_description():
+    # Get package directories
+    mars_arm_share = get_package_share_directory("mars_arm")  # noqa: F841
+    mars_sim_share = get_package_share_directory("mars_sim")
+
+    # Get the path to the arm config file (ROS 2 param format)
+    arm_config_file = PathJoinSubstitution([FindPackageShare("mars_arm"), "config", "arm_config.yaml"])
+
+    # Load URDF file
+    urdf_file = os.path.join(mars_sim_share, "urdf", "mars.urdf")
+    with open(urdf_file) as f:
+        robot_description = f.read()
+
+    # Load SRDF file
+    srdf_file = os.path.join(mars_sim_share, "urdf", "arm.srdf")
+    with open(srdf_file) as f:
+        robot_description_semantic = f.read()
+
+    # Load MoveIt config (MoveIt format, will be added as dict)
+    moveit_config = load_yaml("mars_arm", "config/moveit.yaml")
+
+    # Create the arm node (C++ - includes arm + head servo 7)
+    mars_arm_node = Node(
+        package="mars_arm",
+        executable="arm",
+        name="mars_arm",
+        parameters=[
+            arm_config_file,
+            {
+                "robot_description": robot_description,
+                "robot_description_semantic": robot_description_semantic,
+            },
+            moveit_config,
+        ],
+        output="screen",
+    )
+
+    return LaunchDescription([mars_arm_node])

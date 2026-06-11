@@ -20,7 +20,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["maurice_nav", "maurice_control", "maurice_cam", "maurice_arm", "brain_client", "manipulation"]
+known-first-party = ["mars_nav", "mars_control", "mars_cam", "mars_arm", "brain_client", "manipulation"]
 
 [tool.ruff.format]
 quote-style = "double"

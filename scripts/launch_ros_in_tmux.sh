@@ -8,12 +8,12 @@ RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --s
 
 # ROS launch commands grouped into windows (pipe-delimited for 2 panes)
 ROS_COMMAND_GROUPS=(
-    "ros2 launch maurice_control app.launch.py|ros2 launch maurice_bringup maurice_bringup.launch.py"
-    "ros2 launch maurice_arm arm.launch.py|ros2 launch manipulation recorder.launch.py"
-    "ros2 launch brain_client brain_client.launch.py|sleep 5 && ros2 service call /calibrate std_srvs/srv/Trigger && sleep 5 && ros2 launch maurice_nav mode_manager.launch.py"
+    "ros2 launch mars_control app.launch.py|ros2 launch mars_bringup mars_bringup.launch.py"
+    "ros2 launch mars_arm arm.launch.py|ros2 launch manipulation recorder.launch.py"
+    "ros2 launch brain_client brain_client.launch.py|sleep 5 && ros2 service call /calibrate std_srvs/srv/Trigger && sleep 5 && ros2 launch mars_nav mode_manager.launch.py"
     "ros2 launch manipulation behavior.launch.py|ros2 launch brain_client input_manager.launch.py"
-    "ros2 launch maurice_cam camera_composable.launch.py|ros2 launch maurice_control udp_leader_receiver.launch.py"
-    "ros2 launch maurice_arm ik.launch.py|cd ~/innate-os && ros2 launch innate_logger logger.launch.py"
+    "ros2 launch mars_cam camera_composable.launch.py|ros2 launch mars_control udp_leader_receiver.launch.py"
+    "ros2 launch mars_arm ik.launch.py|cd ~/innate-os && ros2 launch innate_logger logger.launch.py"
     "cd ~/innate-os && ros2 run innate_training_node training_node|cd ~/innate-os && ros2 launch innate_uninavid uninavid.launch.py"
 )
 

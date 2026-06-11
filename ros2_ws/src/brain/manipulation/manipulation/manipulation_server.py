@@ -12,7 +12,7 @@ import torch
 from brain_messages.action import ExecuteBehavior
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Twist
-from maurice_msgs.srv import GotoJS
+from mars_msgs.srv import GotoJS
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -122,10 +122,10 @@ class ManipulationServer(Node):
         self.get_logger().info("Behavior server started.")
 
         # Use environment variable if set, otherwise construct from HOME
-        maurice_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
+        mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
 
         # Get data directory from recorder config
-        default_data_dir = os.path.join(maurice_root, "data")
+        default_data_dir = os.path.join(mars_root, "data")
         try:
             self.declare_parameter("data_directory", default_data_dir)
             self.data_directory = os.path.expanduser(self.get_parameter("data_directory").value)

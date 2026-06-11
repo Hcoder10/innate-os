@@ -110,8 +110,8 @@ RUN cd /root/innate-os/ros2_ws/src && \
 # --mount=type=cache) so the populated cache is baked into the image layer and
 # carried into ci/Dockerfile.test via FROM. --parallel-workers is capped at 4:
 # E2_HIGHCPU_8 has 8 vCPUs but only 8 GB RAM, and >4 concurrent C++ link jobs
-# (maurice_cam etc.) can OOM with no useful error.
-# maurice_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
+# (mars_cam etc.) can OOM with no useful error.
+# mars_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
 # guarded by if(VPI_FOUND), nav's only Jetson dep (python3-cupy) is runtime-only.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
