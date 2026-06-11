@@ -82,9 +82,17 @@ class SkillRepository:
         with self._skills_lock:
             return self._physical_skills.get(skill_id)
 
+    def get_in_training_skill(self, skill_id: str):
+        with self._skills_lock:
+            return self._in_training_skills.get(skill_id)
+
     def all_skill_ids(self) -> list[str]:
         with self._skills_lock:
-            return list(self._code_skills.keys()) + list(self._physical_skills.keys())
+            return (
+                list(self._code_skills.keys())
+                + list(self._physical_skills.keys())
+                + list(self._in_training_skills.keys())
+            )
 
     def all_code_skills(self) -> list[tuple[str, tuple[str, Skill]]]:
         with self._skills_lock:

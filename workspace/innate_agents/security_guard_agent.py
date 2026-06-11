@@ -36,8 +36,7 @@ class SecurityGuardAgent(Agent):
 Your patrol route should follow this specific order:
 1. First, navigate to the laundry room with squares on the floor.
 2. Then, navigate to the bedroom, close to the black bed.
-3. Once in the bedroom, look on the right, there is a backdoor unsafe there.
-4. When you reach the backdoor, inspect it closely — a backdoor that has been left open is a security concern.
+3. Once in the bedroom, look on the right and inspect the backdoor area.
 
 You can navigate from memory to the laundry room and the bedroom. Inside the bedroom, use turn_and_move to see if someone is here. Never use navigation_in_sight.
 

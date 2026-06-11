@@ -3,12 +3,14 @@
 Skill that rotates the robot 360 degrees while scanning for objects using Gemini.
 """
 
+import base64
 import json
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
@@ -44,11 +46,12 @@ class ScanForObjects(Skill):
 
         self.api_key = env_vars.get("GEMINI_API_KEY", "")
         if self.api_key and self.api_key != "your_gemini_api_key_here":
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-2.0-flash")
+            self.client = genai.Client(api_key=self.api_key)
+            self.model_name = "gemini-2.0-flash"
             self.logger.info("[ScanForObjects] Gemini configured")
         else:
-            self.model = None
+            self.client = None
+            self.model_name = None
             self.logger.warn(f"[ScanForObjects] GEMINI_API_KEY not set in {env_path}")
 
         # Scan parameters
@@ -76,7 +79,7 @@ class ScanForObjects(Skill):
         Returns:
             tuple: (result_message, result_status)
         """
-        if not self.model:
+        if not self.client:
             self.logger.error("[ScanForObjects] GEMINI_API_KEY not set")
             return "Gemini API key not configured", SkillResult.FAILURE
 
@@ -177,7 +180,7 @@ class ScanForObjects(Skill):
 
     def _detect_objects(self, image_b64: str, target_object: str = None) -> list:
         """Send image to Gemini and return detected objects."""
-        if not self.model:
+        if not self.client:
             return []
 
         try:
@@ -201,12 +204,16 @@ Respond with ONLY a JSON array. Each object should have:
 Example: [{"class": "laptop", "confidence": 0.95, "position": "center"}, {"class": "coffee mug", "confidence": 0.8, "position": "right"}]"""  # noqa: W291
 
             # Create image part for Gemini
-            image_part = {"mime_type": "image/jpeg", "data": image_b64}
+            image_part = types.Part.from_bytes(
+                data=base64.b64decode(image_b64),
+                mime_type="image/jpeg",
+            )
 
             # Call Gemini
-            response = self.model.generate_content(
-                [prompt, image_part],
-                generation_config=genai.GenerationConfig(
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[prompt, image_part],
+                config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                 ),
             )
