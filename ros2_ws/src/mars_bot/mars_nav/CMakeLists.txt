@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(mars_nav)
 
 # Find the ament_cmake package and any dependencies you need
