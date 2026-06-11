@@ -19,7 +19,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Generator
+from collections.abc import Generator
 
 import httpx
 
@@ -34,9 +34,7 @@ class InnateBearerAuth(httpx.Auth):
 
     # -- Sync flow (httpx.Client) ---------------------------------------------
 
-    def auth_flow(
-        self, request: httpx.Request
-    ) -> Generator[httpx.Request, httpx.Response, None]:
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         request.headers["Authorization"] = f"Bearer {self._provider.token}"
         response = yield request
 

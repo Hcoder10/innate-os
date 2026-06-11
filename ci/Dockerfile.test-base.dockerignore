@@ -1,0 +1,12 @@
+# CI base image bakes deps + a full prebuilt ros2_ws (incl. vcs-imported
+# externals), config, and workspace at build time. Allow what
+# Dockerfile.test-base COPYs from; without this file BuildKit would fall back to
+# the restrictive root .dockerignore and the build would have no source.
+**
+
+!ros2_ws/
+!ros2_ws/**
+!config/
+!config/**
+!workspace/
+!workspace/**

@@ -3,7 +3,6 @@ import re
 import sys
 import threading
 
-
 SIM_LOG_MODE_DEBUG = "debug"
 SIM_LOG_MODE_QUIET = "quiet"
 SIM_LOG_MODES = (SIM_LOG_MODE_DEBUG, SIM_LOG_MODE_QUIET)

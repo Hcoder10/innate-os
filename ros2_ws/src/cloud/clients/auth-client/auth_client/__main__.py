@@ -12,7 +12,7 @@ import os
 import sys
 import time
 
-from auth_client.provider import AuthProvider, AuthError
+from auth_client.provider import AuthError, AuthProvider
 
 _MIN_SLEEP: float = 5.0
 _FALLBACK_SLEEP: float = 60.0
@@ -50,7 +50,7 @@ def main() -> None:
                 _fetch_and_print(auth)
     except AuthError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1)  # noqa: B904
 
 
 if __name__ == "__main__":

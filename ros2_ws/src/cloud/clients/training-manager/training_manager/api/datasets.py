@@ -88,15 +88,17 @@ async def list_datasets(request: Request) -> list[dict[str, Any]]:
         episode_count = ds_meta.get("number_of_episodes", 0) if ds_meta else 0
         dataset_type = ds_meta.get("dataset_type", "h5") if ds_meta else "unknown"
 
-        datasets.append({
-            "dir_name": child.name,
-            "name": meta.get("name", child.name),
-            "type": meta.get("type", "learned"),
-            "episode_count": episode_count,
-            "dataset_type": dataset_type,
-            "status": _dataset_status(child),
-            "training_skill_id": meta.get("training_skill_id"),
-        })
+        datasets.append(
+            {
+                "dir_name": child.name,
+                "name": meta.get("name", child.name),
+                "type": meta.get("type", "learned"),
+                "episode_count": episode_count,
+                "dataset_type": dataset_type,
+                "status": _dataset_status(child),
+                "training_skill_id": meta.get("training_skill_id"),
+            }
+        )
 
     return datasets
 
@@ -132,9 +134,7 @@ async def get_dataset(request: Request, skill_name: str) -> dict[str, Any]:
 
 
 @router.get("/{skill_name}/episodes/{episode_id}/video")
-async def get_episode_video(
-    request: Request, skill_name: str, episode_id: int, camera: int = 0
-) -> FileResponse:
+async def get_episode_video(request: Request, skill_name: str, episode_id: int, camera: int = 0) -> FileResponse:
     """Stream an episode MP4 file."""
     skill_path = resolve_skill_dir(request, skill_name)
     ds_meta = _read_dataset_metadata(skill_path)
@@ -164,9 +164,7 @@ class SubmitRequest(BaseModel):
 
 
 @router.post("/{skill_name}/submit")
-async def submit_skill(
-    request: Request, skill_name: str, body: SubmitRequest
-) -> dict[str, str]:
+async def submit_skill(request: Request, skill_name: str, body: SubmitRequest) -> dict[str, str]:
     """Trigger skill submission and upload in the background.
 
     Uses SkillManager.submit() + SkillManager.upload_files() from the
@@ -220,8 +218,7 @@ def _run_submit(
         config = ClientConfig(
             server_url=params.server_url or os.environ.get("TRAINING_SERVER_URL", ""),
             auth_token=params.auth_token or os.environ.get("INNATE_SERVICE_KEY", ""),
-            auth_issuer_url=params.auth_issuer_url
-            or os.environ.get("INNATE_AUTH_ISSUER_URL", ""),
+            auth_issuer_url=params.auth_issuer_url or os.environ.get("INNATE_AUTH_ISSUER_URL", ""),
         )
         manager = SkillManager(config)
 
@@ -257,9 +254,7 @@ def _run_submit(
         logger.error("[%s] Submit failed: %s", skill_name, e)
 
 
-def _apply_progress(
-    job: dict[str, Any], update: ProgressUpdate, skill_name: str
-) -> None:
+def _apply_progress(job: dict[str, Any], update: ProgressUpdate, skill_name: str) -> None:
     """Apply a ProgressUpdate from SkillManager to the job dict."""
     job["stage"] = update.stage.value
     job["message"] = update.message
@@ -293,9 +288,7 @@ class CopyRequest(BaseModel):
 
 
 @router.post("/{skill_name}/copy")
-async def copy_dataset(
-    request: Request, skill_name: str, body: CopyRequest
-) -> dict[str, str]:
+async def copy_dataset(request: Request, skill_name: str, body: CopyRequest) -> dict[str, str]:
     """Copy a dataset excluding certain episodes (the "delete episodes" operation).
 
     Creates a new skill directory with all files except the excluded
@@ -373,9 +366,7 @@ async def copy_dataset(
                 "number_of_episodes": len(kept_episodes),
                 "episodes": kept_episodes,
             }
-            (data_dest / "dataset_metadata.json").write_text(
-                json.dumps(new_ds_meta, indent=4) + "\n"
-            )
+            (data_dest / "dataset_metadata.json").write_text(json.dumps(new_ds_meta, indent=4) + "\n")
     except Exception:
         shutil.rmtree(dest, ignore_errors=True)
         raise
@@ -441,8 +432,7 @@ async def merge_datasets(request: Request, body: MergeRequest) -> dict[str, str]
             if src_type != "h264":
                 raise HTTPException(
                     400,
-                    f"Source {src.skill_name} has dataset_type '{src_type}'; "
-                    "only h264 datasets can be merged",
+                    f"Source {src.skill_name} has dataset_type '{src_type}'; only h264 datasets can be merged",
                 )
 
             with _locked_metadata(src_path) as src_meta_path:
@@ -493,9 +483,7 @@ async def merge_datasets(request: Request, body: MergeRequest) -> dict[str, str]
             "number_of_episodes": len(merged_episodes),
             "episodes": merged_episodes,
         }
-        (data_dest / "dataset_metadata.json").write_text(
-            json.dumps(new_ds_meta, indent=4) + "\n"
-        )
+        (data_dest / "dataset_metadata.json").write_text(json.dumps(new_ds_meta, indent=4) + "\n")
 
         # Inherit execution-block knob keys from the source skills (union)
         # so the merged skill exposes the same set of optional overrides as
@@ -503,10 +491,7 @@ async def merge_datasets(request: Request, body: MergeRequest) -> dict[str, str]
         # they're populated by run-activation, not by skill creation.
         # Values are always null -> manipulation_server falls back to its
         # built-in defaults at execution time.
-        exec_block: dict[str, Any] = {
-            k: None
-            for k in sorted(inherited_exec_keys - _NON_INHERITABLE_EXECUTION_KEYS)
-        }
+        exec_block: dict[str, Any] = {k: None for k in sorted(inherited_exec_keys - _NON_INHERITABLE_EXECUTION_KEYS)}
 
         meta: dict[str, Any] = {
             "name": body.new_name,

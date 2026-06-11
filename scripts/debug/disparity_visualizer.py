@@ -33,53 +33,52 @@ from stereo_msgs.msg import DisparityImage
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Bi3D Node Visualizer')
-    parser.add_argument('--save_image', action='store_true', help='Save output or display it',
-                        default=False)
-    parser.add_argument('--enable_rosbag', action='store_true', help='Save output or display it',
-                        default=False)
-    parser.add_argument('--max_disparity_value', type=int,
-                        help='Maximium disparity value given to Bi3D Node', default=18)
-    parser.add_argument('--result_path', default='/workspaces/isaac_ros-dev/src/bi3d_output.png',
-                        help='Absolute path to save your result.')
-    parser.add_argument('--disparity_topic', default='bi3d_node/bi3d_output',
-                        help='Topic name for disparity output.')
-    parser.add_argument('--rosbag_path',
-                        default='/workspaces/isaac_ros-dev/src/'
-                                'isaac_ros_depth_segmentation/resources/'
-                                'rosbags/bi3dnode_rosbag',
-                        help='Absolute path to your rosbag.')
+    parser = argparse.ArgumentParser(description="Bi3D Node Visualizer")
+    parser.add_argument("--save_image", action="store_true", help="Save output or display it", default=False)
+    parser.add_argument("--enable_rosbag", action="store_true", help="Save output or display it", default=False)
+    parser.add_argument(
+        "--max_disparity_value", type=int, help="Maximium disparity value given to Bi3D Node", default=18
+    )
+    parser.add_argument(
+        "--result_path",
+        default="/workspaces/isaac_ros-dev/src/bi3d_output.png",
+        help="Absolute path to save your result.",
+    )
+    parser.add_argument("--disparity_topic", default="bi3d_node/bi3d_output", help="Topic name for disparity output.")
+    parser.add_argument(
+        "--rosbag_path",
+        default="/workspaces/isaac_ros-dev/src/isaac_ros_depth_segmentation/resources/rosbags/bi3dnode_rosbag",
+        help="Absolute path to your rosbag.",
+    )
     args = parser.parse_args()
     return args
 
 
 class Bi3DVisualizer(Node):
-
     def __init__(self, args):
-        super().__init__('bi3d_visualizer')
+        super().__init__("bi3d_visualizer")
         self.args = args
-        self.encoding = 'rgb8'
+        self.encoding = "rgb8"
         self._bridge = cv_bridge.CvBridge()
-        self._bi3d_sub = self.create_subscription(
-            DisparityImage, self.args.disparity_topic, self.bi3d_callback, 1)
+        self._bi3d_sub = self.create_subscription(DisparityImage, self.args.disparity_topic, self.bi3d_callback, 1)
         if self.args.enable_rosbag:
-            subprocess.Popen('ros2 bag play --loop ' + self.args.rosbag_path, shell=True)
+            subprocess.Popen("ros2 bag play --loop " + self.args.rosbag_path, shell=True)
         self.image_scale = 255.0
 
     def bi3d_callback(self, data):
-        self.get_logger().info('Receiving Bi3D output')
+        self.get_logger().info("Receiving Bi3D output")
         bi3d_image = self._bridge.imgmsg_to_cv2(data.image)
-        bi3d_image = bi3d_image/self.args.max_disparity_value
-        
+        bi3d_image = bi3d_image / self.args.max_disparity_value
+
         # Create RGB visualization with invalid values in red
         invalid_mask = (bi3d_image == 0) | ~np.isfinite(bi3d_image)
-        vis_image = cv2.cvtColor((bi3d_image*self.image_scale).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        vis_image = cv2.cvtColor((bi3d_image * self.image_scale).astype(np.uint8), cv2.COLOR_GRAY2BGR)
         vis_image[invalid_mask] = [0, 0, 255]  # Red for invalid values
-        
+
         if self.args.save_image:
             cv2.imwrite(self.args.result_path, vis_image)
         else:
-            cv2.imshow('bi3d_output', vis_image)
+            cv2.imshow("bi3d_output", vis_image)
         cv2.waitKey(1)
 
 
@@ -89,5 +88,5 @@ def main():
     rclpy.spin(Bi3DVisualizer(args))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

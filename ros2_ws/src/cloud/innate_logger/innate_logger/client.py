@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -33,7 +33,7 @@ class TelemetryClient:
         self.timeout: float = timeout
         self.enabled: bool = bool(self.base_url)
 
-    def _post(self, endpoint: str, data: Dict[str, Any]) -> bool:
+    def _post(self, endpoint: str, data: dict[str, Any]) -> bool:
         """POST JSON to the telemetry service with auth header.
 
         Retries once on 401 after forcing a token renewal.
@@ -72,7 +72,7 @@ class TelemetryClient:
             break
         return False
 
-    def log_vitals(self, vitals: Dict[str, Any]) -> bool:
+    def log_vitals(self, vitals: dict[str, Any]) -> bool:
         """Log all vitals in a single call."""
         return self._post("/log/vitals", vitals)
 

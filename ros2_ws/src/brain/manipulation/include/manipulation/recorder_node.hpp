@@ -30,27 +30,16 @@
 namespace manipulation {
 
 class RecorderNode : public rclcpp::Node {
-public:
+   public:
     RecorderNode();
     ~RecorderNode() override = default;
 
-private:
+   private:
     // State enum
-    enum class State {
-        IDLE,
-        TASK_ACTIVE,
-        EPISODE_ACTIVE,
-        EPISODE_STOPPED
-    };
+    enum class State { IDLE, TASK_ACTIVE, EPISODE_ACTIVE, EPISODE_STOPPED };
 
     // Replay state enum
-    enum class ReplayState {
-        IDLE,
-        READY,
-        PLAYING,
-        PAUSED,
-        FINISHED
-    };
+    enum class ReplayState { IDLE, READY, PLAYING, PAUSED, FINISHED };
 
     // Callbacks
     void image_callback(const sensor_msgs::msg::Image::SharedPtr msg, const std::string& topic);
@@ -64,38 +53,28 @@ private:
     void activate_physical_primitive(
         const std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Request> request,
         std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Response> response);
-    void handle_new_episode(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_save_episode(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_cancel_episode(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_stop_episode(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_end_task(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_get_task_metadata(
-        const std::shared_ptr<brain_messages::srv::GetTaskMetadata::Request> request,
-        std::shared_ptr<brain_messages::srv::GetTaskMetadata::Response> response);
+    void handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                            std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_save_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_cancel_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                               std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_stop_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_end_task(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_get_task_metadata(const std::shared_ptr<brain_messages::srv::GetTaskMetadata::Request> request,
+                                  std::shared_ptr<brain_messages::srv::GetTaskMetadata::Response> response);
 
     // Replay service handlers
-    void handle_load_episode(
-        const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
-        std::shared_ptr<brain_messages::srv::LoadEpisode::Response> response);
-    void handle_play_replay(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_pause_replay(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-    void handle_stop_replay(
-        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-        std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_load_episode(const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
+                             std::shared_ptr<brain_messages::srv::LoadEpisode::Response> response);
+    void handle_play_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                            std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_pause_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_stop_replay(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                            std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
     // Helper methods
     void check_all_topics_received();

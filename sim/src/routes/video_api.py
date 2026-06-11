@@ -1,17 +1,12 @@
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse, JSONResponse
 import asyncio
 import time
+
 import cv2
-from typing import Optional
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from src.agent.types import (
-    ActiveSkillsCmd,
-    DirectiveCmd,
-    BrainActiveCmd,
-    RefreshAgentsCmd,
-)
+from src.agent.types import ActiveSkillsCmd, BrainActiveCmd, DirectiveCmd, RefreshAgentsCmd
 
 router = APIRouter()
 AGENT_REFRESH_TIMEOUT_SECONDS = 5.0
@@ -20,9 +15,9 @@ AGENT_REFRESH_POLL_SECONDS = 0.05
 
 # Create a model for the reset robot request
 class ResetRobotRequest(BaseModel):
-    memory_state: Optional[str] = None
-    position: Optional[list[float]] = None
-    orientation: Optional[list[float]] = None
+    memory_state: str | None = None
+    position: list[float] | None = None
+    orientation: list[float] | None = None
 
 
 # Create a model for the brain activation request
@@ -31,7 +26,7 @@ class SetBrainActiveRequest(BaseModel):
 
 
 class SetActiveSkillsRequest(BaseModel):
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     skills: list[str]
 
 
@@ -115,10 +110,7 @@ def mjpeg_generator(shared_queues, camera_name="first_person"):
         if not success:
             continue
 
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + encoded_image.tobytes() + b"\r\n"
-        )
+        yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + encoded_image.tobytes() + b"\r\n")
 
 
 @router.get("/video_feeds_ready")
@@ -135,9 +127,7 @@ def video_feeds_ready(request: Request):
     return JSONResponse(
         {
             "ready": is_ready,
-            "message": (
-                "Simulation is running" if is_ready else "Simulation not initialized"
-            ),
+            "message": ("Simulation is running" if is_ready else "Simulation not initialized"),
         }
     )
 
@@ -273,9 +263,7 @@ async def set_directive(request: Request, directive: dict):
     shared_queues = request.app.state.SHARED_QUEUES
     if shared_queues is not None:
         try:
-            shared_queues.sim_to_agent.put_nowait(
-                DirectiveCmd(directive=directive["text"])
-            )
+            shared_queues.sim_to_agent.put_nowait(DirectiveCmd(directive=directive["text"]))
         except Exception:
             return {"status": "queue_full"}
         return {"status": "directive_enqueued"}
@@ -312,9 +300,7 @@ async def set_brain_active(request: Request, brain_request: SetBrainActiveReques
     shared_queues = request.app.state.SHARED_QUEUES
     if shared_queues is not None:
         try:
-            shared_queues.sim_to_agent.put_nowait(
-                BrainActiveCmd(active=brain_request.active)
-            )
+            shared_queues.sim_to_agent.put_nowait(BrainActiveCmd(active=brain_request.active))
             shared_queues.set_brain_active(brain_request.active)
             return {"status": "brain_command_enqueued"}
         except Exception:
@@ -336,18 +322,12 @@ async def reload_available_agents(request: Request):
     try:
         previous_updated_at = shared_queues.get_available_agents_updated_at()
         shared_queues.sim_to_agent.put_nowait(RefreshAgentsCmd())
-        refreshed = await wait_for_available_agents_update(
-            shared_queues, previous_updated_at
-        )
+        refreshed = await wait_for_available_agents_update(shared_queues, previous_updated_at)
         payload = available_agents_payload(shared_queues)
-        payload["status"] = (
-            "agent_refresh_completed" if refreshed else "agent_refresh_pending"
-        )
+        payload["status"] = "agent_refresh_completed" if refreshed else "agent_refresh_pending"
         payload["refresh_pending"] = not refreshed
         if not refreshed:
-            payload["error"] = (
-                "Agent refresh was queued, but no updated directives arrived yet."
-            )
+            payload["error"] = "Agent refresh was queued, but no updated directives arrived yet."
         return JSONResponse(payload)
     except Exception:
         return JSONResponse(

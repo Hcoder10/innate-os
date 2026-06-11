@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -83,15 +82,13 @@ def compress_file(
     logger.info("Compressing %s → %s", source, tmp_path)
 
     try:
-        result = subprocess.run(
-            cmd, check=True, capture_output=True, text=True, timeout=3600
-        )
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=3600)  # noqa: F841
     except subprocess.CalledProcessError as e:
         tmp_path.unlink(missing_ok=True)
         raise CompressionError(f"zstd failed: {e.stderr}") from e
     except subprocess.TimeoutExpired:
         tmp_path.unlink(missing_ok=True)
-        raise CompressionError("zstd compression timed out (1h)")
+        raise CompressionError("zstd compression timed out (1h)")  # noqa: B904
 
     # Atomic rename: if we crash between here and the rename, recovery
     # will see the .tmp and re-compress.

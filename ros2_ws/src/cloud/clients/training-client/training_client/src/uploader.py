@@ -9,8 +9,8 @@ Each file goes through:
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 from .client import OrchestratorClient
 from .types import (
@@ -99,10 +99,7 @@ def upload_data_files(
             ):
                 yield ProgressUpdate(
                     stage=ProgressStage.UPLOADING,
-                    message=(
-                        f"[{idx}/{total}] Uploading {fname}: "
-                        f"{sent / 1e6:.1f}/{total_bytes / 1e6:.1f} MB"
-                    ),
+                    message=(f"[{idx}/{total}] Uploading {fname}: {sent / 1e6:.1f}/{total_bytes / 1e6:.1f} MB"),
                     file_progress=FileProgress(
                         filename=name,
                         index=idx,
@@ -144,7 +141,7 @@ def upload_data_files(
         message="Verifying all uploads…",
     )
 
-    for idx, name in enumerate(filenames, start=file_offset + 1):
+    for idx, name in enumerate(filenames, start=file_offset + 1):  # noqa: B007
         download_url = download_urls.get(name)
 
         if not download_url:

@@ -22,21 +22,19 @@ import os
 import statistics
 import threading
 import time
-from typing import Optional
 
 import rclpy
 from auth_client import AuthProvider
 from dotenv import find_dotenv, load_dotenv
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import CompressedImage
-from std_msgs.msg import Int32MultiArray, String
+from innate_cloud_msgs.action import NavigateInstruction
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-
-from innate_cloud_msgs.action import NavigateInstruction
+from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Int32MultiArray, String
 
 from .ws_client import Action, ClientState, UninavidWsClient
 
@@ -55,16 +53,16 @@ PLACEHOLDER_SERVICE_KEYS = {
 }
 
 _CMD_VEL: dict[int, tuple[float, float]] = {
-    Action.STOP:    (0.0,  0.0),
-    Action.FORWARD: (0.3,  0.0),
-    Action.LEFT:    (0.0,  0.8),
-    Action.RIGHT:   (0.0, -0.8),
+    Action.STOP: (0.0, 0.0),
+    Action.FORWARD: (0.3, 0.0),
+    Action.LEFT: (0.0, 0.8),
+    Action.RIGHT: (0.0, -0.8),
 }
 
 _STOP = Twist()
 
 
-def _twist(action: int) -> Optional[Twist]:
+def _twist(action: int) -> Twist | None:
     if action not in _CMD_VEL:
         return None
     t = Twist()
@@ -73,7 +71,6 @@ def _twist(action: int) -> Optional[Twist]:
 
 
 class UninavidNode(Node):
-
     def __init__(self) -> None:
         super().__init__("uninavid_node")
 
@@ -97,9 +94,7 @@ class UninavidNode(Node):
         self._config_lock = threading.Lock()
         self._service_key = service_key.strip()
 
-        self._auth: Optional[AuthProvider] = self._make_auth_provider(
-            self._service_key
-        )
+        self._auth: AuthProvider | None = self._make_auth_provider(self._service_key)
         if self._auth is None:
             self.get_logger().warn(
                 "UniNavid service key is missing or placeholder. "
@@ -107,7 +102,7 @@ class UninavidNode(Node):
                 "configured or a runtime service key update is received."
             )
 
-        self._client: Optional[UninavidWsClient] = None
+        self._client: UninavidWsClient | None = None
         self._goal_handle = None
         self._last_rtt_report: float = 0.0
 
@@ -115,8 +110,7 @@ class UninavidNode(Node):
             CompressedImage,
             "/mars/main_camera/left/image_raw/compressed",
             self._on_image,
-            QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
-                       history=HistoryPolicy.KEEP_LAST, depth=1),
+            QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1),
             callback_group=MutuallyExclusiveCallbackGroup(),
         )
         self._cmd = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -144,7 +138,7 @@ class UninavidNode(Node):
             return False
         return normalized.lower() not in PLACEHOLDER_SERVICE_KEYS
 
-    def _make_auth_provider(self, service_key: str) -> Optional[AuthProvider]:
+    def _make_auth_provider(self, service_key: str) -> AuthProvider | None:
         if not self._is_configured_service_key(service_key):
             return None
         return AuthProvider(issuer_url=self._auth_issuer, service_key=service_key)
@@ -215,14 +209,11 @@ class UninavidNode(Node):
             return
         s = msg.header.stamp
         now = self.get_clock().now().nanoseconds
-        last = getattr(self, '_last_image_ns', 0)
+        last = getattr(self, "_last_image_ns", 0)
         cam_dt = (now - last) / 1e9 if last > 0 else -1.0
         self._last_image_ns = now
-        self.get_logger().info(
-            f"push_frame stamp={s.sec}.{s.nanosec:09d} ({len(msg.data)} bytes) cam_dt={cam_dt:.3f}s"
-        )
-        c.push_frame(format=msg.format, stamp_sec=s.sec,
-                     stamp_nanosec=s.nanosec, data=bytes(msg.data))
+        self.get_logger().info(f"push_frame stamp={s.sec}.{s.nanosec:09d} ({len(msg.data)} bytes) cam_dt={cam_dt:.3f}s")
+        c.push_frame(format=msg.format, stamp_sec=s.sec, stamp_nanosec=s.nanosec, data=bytes(msg.data))
 
     # ── Goal execution ────────────────────────────────────────────────────
 
@@ -294,8 +285,7 @@ class UninavidNode(Node):
                 while code is not None:
                     if not goal_handle.is_active or goal_handle.is_cancel_requested:
                         break
-                    if client.state in (ClientState.FAILED, ClientState.DISCONNECTED,
-                                        ClientState.COMPLETED):
+                    if client.state in (ClientState.FAILED, ClientState.DISCONNECTED, ClientState.COMPLETED):
                         break
 
                     executed_action = code
@@ -326,7 +316,6 @@ class UninavidNode(Node):
                             f"RTT (n={len(samples)}): min={min(samples):.3f}s "
                             f"med={statistics.median(samples):.3f}s max={max(samples):.3f}s"
                         )
-
 
                 # Feedback
                 feedback.latest_action = executed_action if executed_action is not None else 0

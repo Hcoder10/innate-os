@@ -7,3 +7,4 @@ repositories:
   topic_tools:
     type: git
     url: https://github.com/ros-tooling/topic_tools
+    version: humble

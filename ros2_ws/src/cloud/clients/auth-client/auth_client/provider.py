@@ -25,10 +25,10 @@ import json
 import logging
 import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class AuthError(Exception):
         super().__init__(message)
 
 
-def _is_transient_auth_error(exc: "AuthError") -> bool:
+def _is_transient_auth_error(exc: AuthError) -> bool:
     """Return True when ``exc`` represents a retryable condition.
 
     Treated as transient:
@@ -154,7 +154,7 @@ class AuthProvider:
         timeout: float | None = None,
         initial_delay: float = 2.0,
         max_delay: float = 30.0,
-        on_retry: Callable[[int, "AuthError", float], None] | None = None,
+        on_retry: Callable[[int, AuthError, float], None] | None = None,
     ) -> str:
         """Block until a JWT can be obtained, retrying transient failures.
 
@@ -302,8 +302,7 @@ class AuthProvider:
             jwt_token: str | None = data.get("token")
             if not jwt_token:
                 raise AuthError(
-                    "Auth response missing 'token' field; "
-                    f"got keys: {list(data.keys())}",
+                    f"Auth response missing 'token' field; got keys: {list(data.keys())}",
                 )
 
             # Parse timing claims from the freshly-received JWT
@@ -346,9 +345,7 @@ class AuthProvider:
         url = f"{self._issuer_url}/.well-known/openid-configuration"
         logger.debug("Discovering OIDC config from %s", url)
         try:
-            disco_req = urllib.request.Request(
-                url, headers={"User-Agent": "innate-robot"}
-            )
+            disco_req = urllib.request.Request(url, headers={"User-Agent": "innate-robot"})
             with urllib.request.urlopen(disco_req, timeout=10) as resp:
                 discovery: dict[str, object] = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
@@ -362,8 +359,7 @@ class AuthProvider:
         endpoint: str | None = discovery.get("token_endpoint")
         if not endpoint:
             raise AuthError(
-                "OIDC discovery response missing 'token_endpoint'; "
-                f"got keys: {list(discovery.keys())}",
+                f"OIDC discovery response missing 'token_endpoint'; got keys: {list(discovery.keys())}",
             )
 
         # Rebase: keep only the path portion and prepend our issuer URL.

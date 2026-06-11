@@ -1,9 +1,10 @@
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from brain_client.logging_config import get_logging_env_vars
-from maurice_bringup.env_loader import load_env_file, get_env
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from maurice_bringup.env_loader import get_env, load_env_file
+
+from brain_client.common.logging import get_logging_env_vars
 
 
 def generate_launch_description():
@@ -45,17 +46,13 @@ def generate_launch_description():
     amcl_pose_topic_arg = DeclareLaunchArgument(
         "amcl_pose_topic", default_value="/amcl_pose", description="AMCL pose topic"
     )
-    map_topic_arg = DeclareLaunchArgument(
-        "map_topic", default_value="/map", description="Map topic"
-    )
+    map_topic_arg = DeclareLaunchArgument("map_topic", default_value="/map", description="Map topic")
     send_depth_arg = DeclareLaunchArgument(
         "send_depth",
         default_value="False",
         description="Flag to enable sending depth images",
     )
-    vertical_fov_arg = DeclareLaunchArgument(
-        "vertical_fov", default_value="80.0", description="Vertical field of view"
-    )
+    vertical_fov_arg = DeclareLaunchArgument("vertical_fov", default_value="80.0", description="Vertical field of view")
     horizontal_resolution_arg = DeclareLaunchArgument(
         "horizontal_resolution",
         default_value="640",
@@ -69,9 +66,7 @@ def generate_launch_description():
         default_value="0.0",
         description="Camera x position relative to robot base",
     )
-    height_cam_arg = DeclareLaunchArgument(
-        "height_cam", default_value="0.2", description="Camera height above ground"
-    )
+    height_cam_arg = DeclareLaunchArgument("height_cam", default_value="0.2", description="Camera height above ground")
     pose_image_interval_arg = DeclareLaunchArgument(
         "pose_image_interval",
         default_value="0.5",
@@ -111,6 +106,7 @@ def generate_launch_description():
             {
                 "websocket_uri": LaunchConfiguration("websocket_uri"),
                 "token": LaunchConfiguration("token"),
+                "client_version": LaunchConfiguration("client_version"),
                 "image_topic": LaunchConfiguration("image_topic"),
                 "map_topic": LaunchConfiguration("map_topic"),
                 "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
@@ -157,23 +153,10 @@ def generate_launch_description():
             height_cam_arg,
             current_nav_mode_topic_arg,
             brain_client_node,
-            # Launch the WSClientNode (handles actual WebSocket connection)
+            # WebSocket runs in-process inside brain_client_node; no separate ws_client node.
             Node(
                 package="brain_client",
-                executable="ws_client_node.py",
-                name="ws_client_node",
-                output="screen",
-                parameters=[
-                    {
-                        "websocket_uri": LaunchConfiguration("websocket_uri"),
-                        "token": LaunchConfiguration("token"),
-                        "client_version": LaunchConfiguration("client_version"),
-                    }
-                ],
-            ),
-            Node(
-                package="brain_client",
-                executable="skills_action_server.py",
+                executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
                 parameters=[

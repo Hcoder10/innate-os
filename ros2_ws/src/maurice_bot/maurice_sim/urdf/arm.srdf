@@ -5,7 +5,7 @@
 -->
 <robot name="maurice_bot">
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint connecting the robot to the world frame-->
-    <virtual_joint name="virtual_joint" type="fixed" parent_frame="world" child_link="base_root"/>
+    <virtual_joint name="virtual_joint" type="fixed" parent_frame="world" child_link="base_link"/>
     
     <!--GROUPS: Representation of a set of joints and links. This can be useful for specifying DOF to plan for, defining arms, end effectors, etc-->
     <!--LINKS: When a link is specified, the parent joint of that link (if it exists) is automatically included-->
@@ -24,10 +24,6 @@
         <joint name="joint5" value="0"/>
         <joint name="joint6" value="0"/>
     </group_state>
-    <!--PASSIVE JOINT: Purpose: this element is used to mark joints that are not actuated-->
-    <passive_joint name="base_x"/>
-    <passive_joint name="base_y"/>
-    <passive_joint name="base_yaw"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
     
     <!-- ================================================================ -->

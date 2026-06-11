@@ -10,11 +10,10 @@ namespace fs = std::filesystem;
 
 namespace manipulation {
 
-TaskManager::TaskManager(const std::string& base_data_directory)
-    : base_data_directory_(base_data_directory) {}
+TaskManager::TaskManager(const std::string& base_data_directory) : base_data_directory_(base_data_directory) {}
 
 void TaskManager::start_new_task_at_directory(const std::string& task_name, const std::string& task_directory,
-                                               double data_frequency) {
+                                              double data_frequency) {
     current_task_name_ = task_name;
     current_task_dir_ = task_directory;
     std::string data_dir = current_task_dir_ + "/data";
@@ -31,12 +30,10 @@ void TaskManager::start_new_task_at_directory(const std::string& task_name, cons
     cleanup_stale_streaming_files();
 
     // Initialize metadata
-    metadata_ = {
-        {"data_frequency", data_frequency},
-        {"dataset_type", "h5"},
-        {"number_of_episodes", 0},
-        {"episodes", nlohmann::json::array()}
-    };
+    metadata_ = {{"data_frequency", data_frequency},
+                 {"dataset_type", "h5"},
+                 {"number_of_episodes", 0},
+                 {"episodes", nlohmann::json::array()}};
     save_metadata();
 }
 
@@ -47,12 +44,10 @@ void TaskManager::resume_task_at_directory(const std::string& task_name, const s
 
     if (!fs::exists(metadata_path)) {
         std::cerr << "No dataset_metadata.json for '" << task_name << "'. Starting fresh." << std::endl;
-        metadata_ = {
-            {"data_frequency", 0},
-            {"dataset_type", "h5"},
-            {"number_of_episodes", 0},
-            {"episodes", nlohmann::json::array()}
-        };
+        metadata_ = {{"data_frequency", 0},
+                     {"dataset_type", "h5"},
+                     {"number_of_episodes", 0},
+                     {"episodes", nlohmann::json::array()}};
         save_metadata();
         cleanup_stale_streaming_files();
         return;
@@ -80,15 +75,13 @@ void TaskManager::cleanup_stale_streaming_files() {
     }
 }
 
-void TaskManager::add_episode(const std::string& temp_file_path,
-                               const std::string& start_timestamp,
-                               const std::string& end_timestamp) {
+void TaskManager::add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
+                              const std::string& end_timestamp) {
     std::string data_dir = current_task_dir_ + "/data";
     fs::create_directories(data_dir);
 
     if (!fs::exists(temp_file_path)) {
-        throw std::runtime_error("TaskManager::add_episode: streaming file does not exist: " +
-                                 temp_file_path);
+        throw std::runtime_error("TaskManager::add_episode: streaming file does not exist: " + temp_file_path);
     }
 
     int episode_id = metadata_["number_of_episodes"].get<int>();
@@ -101,26 +94,22 @@ void TaskManager::add_episode(const std::string& temp_file_path,
     // restore-from-git, partial crash, etc.). Better to fail loudly here and
     // let the operator reconcile than to lose an episode silently.
     if (fs::exists(file_path)) {
-        throw std::runtime_error(
-            "TaskManager::add_episode: destination already exists; refusing to overwrite '" +
-            file_path + "' (metadata/disk out of sync?)");
+        throw std::runtime_error("TaskManager::add_episode: destination already exists; refusing to overwrite '" +
+                                 file_path + "' (metadata/disk out of sync?)");
     }
 
     // Atomic-ish rename (same filesystem) of finalized streaming file into slot.
     std::error_code ec;
     fs::rename(temp_file_path, file_path, ec);
     if (ec) {
-        throw std::runtime_error("TaskManager::add_episode: failed to rename '" +
-                                 temp_file_path + "' -> '" + file_path + "': " +
-                                 ec.message());
+        throw std::runtime_error("TaskManager::add_episode: failed to rename '" + temp_file_path + "' -> '" +
+                                 file_path + "': " + ec.message());
     }
 
-    nlohmann::json episode_info = {
-        {"episode_id", episode_id},
-        {"file_name", file_name},
-        {"start_timestamp", start_timestamp},
-        {"end_timestamp", end_timestamp}
-    };
+    nlohmann::json episode_info = {{"episode_id", episode_id},
+                                   {"file_name", file_name},
+                                   {"start_timestamp", start_timestamp},
+                                   {"end_timestamp", end_timestamp}};
     metadata_["episodes"].push_back(episode_info);
     metadata_["number_of_episodes"] = episode_id + 1;
     save_metadata();
@@ -147,7 +136,7 @@ void TaskManager::save_metadata() {
     std::string data_dir = current_task_dir_ + "/data";
     fs::create_directories(data_dir);
     std::string metadata_path = data_dir + "/dataset_metadata.json";
-    
+
     std::ofstream file(metadata_path);
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open metadata file for writing: " + metadata_path);
@@ -160,16 +149,14 @@ void TaskManager::load_metadata() {
         throw std::runtime_error("No active task directory to load metadata from.");
     }
     std::string metadata_path = current_task_dir_ + "/data/dataset_metadata.json";
-    
+
     std::ifstream file(metadata_path);
     if (!file.is_open()) {
         std::cerr << "Cannot open " << metadata_path << ". Reinitializing metadata." << std::endl;
-        metadata_ = {
-            {"data_frequency", 0},
-            {"dataset_type", "h5"},
-            {"number_of_episodes", 0},
-            {"episodes", nlohmann::json::array()}
-        };
+        metadata_ = {{"data_frequency", 0},
+                     {"dataset_type", "h5"},
+                     {"number_of_episodes", 0},
+                     {"episodes", nlohmann::json::array()}};
         save_metadata();
         return;
     }
@@ -177,26 +164,23 @@ void TaskManager::load_metadata() {
 }
 
 std::optional<nlohmann::json> TaskManager::get_enriched_metadata_for_task(const std::string& task_directory,
-                                                                            std::string& error_msg) {
+                                                                          std::string& error_msg) {
     std::string data_dir = task_directory + "/data";
     std::string metadata_file_path = data_dir + "/dataset_metadata.json";
     std::string task_name = fs::path(task_directory).filename().string();
 
     // Helper: return a zero-episode response for any "no data yet" state.
     auto empty_metadata = [&]() -> nlohmann::json {
-        return {
-            {"task_name", task_name},
-            {"task_directory", task_directory},
-            {"data_frequency", 0},
-            {"number_of_episodes", 0},
-            {"episodes", nlohmann::json::array()}
-        };
+        return {{"task_name", task_name},
+                {"task_directory", task_directory},
+                {"data_frequency", 0},
+                {"number_of_episodes", 0},
+                {"episodes", nlohmann::json::array()}};
     };
 
     // No data yet — folder missing, no data/ subfolder, no metadata file, or empty file.
-    if (!fs::exists(task_directory) || !fs::is_directory(task_directory) ||
-        !fs::exists(data_dir) || !fs::is_directory(data_dir) ||
-        !fs::exists(metadata_file_path) || fs::file_size(metadata_file_path) == 0) {
+    if (!fs::exists(task_directory) || !fs::is_directory(task_directory) || !fs::exists(data_dir) ||
+        !fs::is_directory(data_dir) || !fs::exists(metadata_file_path) || fs::file_size(metadata_file_path) == 0) {
         return empty_metadata();
     }
 
@@ -240,29 +224,27 @@ std::optional<nlohmann::json> TaskManager::get_enriched_metadata_for_task(const 
                 }
             }
 
-            processed_episodes.push_back({
-                {"episode_id", "episode_" + std::to_string(episode_info.value("episode_id", 0))},
-                {"start_time", episode_info.value("start_timestamp", "N/A")},
-                {"end_time", episode_info.value("end_timestamp", "N/A")},
-                {"num_timesteps", num_timesteps},
-                {"file_name", episode_file_name}
-            });
+            processed_episodes.push_back(
+                {{"episode_id", "episode_" + std::to_string(episode_info.value("episode_id", 0))},
+                 {"start_time", episode_info.value("start_timestamp", "N/A")},
+                 {"end_time", episode_info.value("end_timestamp", "N/A")},
+                 {"num_timesteps", num_timesteps},
+                 {"file_name", episode_file_name}});
         }
     }
 
-    nlohmann::json enriched_metadata = {
-        {"task_name", task_name},
-        {"task_directory", task_directory},
-        {"data_frequency", dataset_metadata.value("data_frequency", 0)},
-        {"dataset_type", dataset_metadata.value("dataset_type", "h5")},
-        {"number_of_episodes", dataset_metadata.value("number_of_episodes", 0)},
-        {"episodes", processed_episodes}
-    };
+    nlohmann::json enriched_metadata = {{"task_name", task_name},
+                                        {"task_directory", task_directory},
+                                        {"data_frequency", dataset_metadata.value("data_frequency", 0)},
+                                        {"dataset_type", dataset_metadata.value("dataset_type", "h5")},
+                                        {"number_of_episodes", dataset_metadata.value("number_of_episodes", 0)},
+                                        {"episodes", processed_episodes}};
 
     return enriched_metadata;
 }
 
-std::tuple<bool, std::string, std::string> TaskManager::get_task_metadata_by_directory(const std::string& task_directory) {
+std::tuple<bool, std::string, std::string> TaskManager::get_task_metadata_by_directory(
+    const std::string& task_directory) {
     std::string error_msg;
     auto metadata_opt = get_enriched_metadata_for_task(task_directory, error_msg);
 

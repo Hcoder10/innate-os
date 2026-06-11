@@ -5,7 +5,7 @@ Arm Utils Skill - Torque on, torque off, or reboot the arm servos.
 
 from typing import Literal
 
-from brain_client.skill_types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
 VALID_COMMANDS = ("torque_on", "torque_off", "reboot_arm")
 ArmCommand = Literal["torque_on", "torque_off", "reboot_arm"]

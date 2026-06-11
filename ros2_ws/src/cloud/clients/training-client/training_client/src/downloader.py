@@ -5,8 +5,8 @@ Download run results (outputs/checkpoints) and skill input data.
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 from .client import OrchestratorClient
 from .compression import decompress_file
@@ -57,10 +57,7 @@ def download_files(
             ):
                 yield ProgressUpdate(
                     stage=ProgressStage.DOWNLOADING,
-                    message=(
-                        f"[{idx}/{total}] Downloading {fname}: "
-                        f"{received / 1e6:.1f}/{file_total / 1e6:.1f} MB"
-                    ),
+                    message=(f"[{idx}/{total}] Downloading {fname}: {received / 1e6:.1f}/{file_total / 1e6:.1f} MB"),
                     file_progress=FileProgress(
                         filename=filename,
                         index=idx,

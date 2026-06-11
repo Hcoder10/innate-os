@@ -6,7 +6,6 @@ non-standard representations in the occupancy grid.
 """
 
 import numpy as np
-from typing import Tuple, List, Optional
 from scipy.spatial.transform import Rotation as R
 
 
@@ -37,7 +36,7 @@ class SpecialObjectHandler:
         self.map_width = map_width
         self.map_height = map_height
 
-    def world_to_grid(self, world_x: float, world_y: float) -> Tuple[int, int]:
+    def world_to_grid(self, world_x: float, world_y: float) -> tuple[int, int]:
         """Convert world coordinates to grid coordinates."""
         grid_x = int((world_x - self.map_origin_x) / self.map_resolution)
         grid_y = int((world_y - self.map_origin_y) / self.map_resolution)
@@ -50,7 +49,7 @@ class SpecialObjectHandler:
     def apply_special_treatment(
         self,
         object_name: str,
-        position: List[float],
+        position: list[float],
         rotation: R,
         occupancy_grid: np.ndarray,
     ) -> bool:
@@ -76,9 +75,7 @@ class SpecialObjectHandler:
 
         return False
 
-    def _handle_table_feet(
-        self, position: List[float], rotation: R, occupancy_grid: np.ndarray
-    ) -> bool:
+    def _handle_table_feet(self, position: list[float], rotation: R, occupancy_grid: np.ndarray) -> bool:
         """
         Handle the table by adding 4 small squares for the feet instead of a full rectangle.
 
@@ -118,9 +115,7 @@ class SpecialObjectHandler:
                 foot_world_pos = table_center + foot_pos_local[:2]
 
                 # Convert to grid coordinates
-                foot_grid_x, foot_grid_y = self.world_to_grid(
-                    foot_world_pos[0], foot_world_pos[1]
-                )
+                foot_grid_x, foot_grid_y = self.world_to_grid(foot_world_pos[0], foot_world_pos[1])
 
                 # Calculate foot size in grid cells
                 foot_size_cells = max(1, int(foot_size / self.map_resolution))

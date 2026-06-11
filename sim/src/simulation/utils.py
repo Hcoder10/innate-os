@@ -1,7 +1,4 @@
 import numpy as np
-import trimesh
-from trimesh.ray import ray_triangle
-import genesis as gs
 
 
 def quaternion_to_matrix(q):

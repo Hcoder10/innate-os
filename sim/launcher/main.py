@@ -6,11 +6,31 @@ import os
 import subprocess
 import sys
 
-if sys.version_info < (3, 10):
+if sys.version_info < (3, 10):  # noqa: UP036
     print("Error: the Innate launcher requires Python 3.10 or newer.", file=sys.stderr)
     raise SystemExit(1)
 
 from assets import pack_assets, publish_assets, validate_assets
+from config import (
+    CLI_ROOT,
+    CLI_SIM,
+    ENV_PATH,
+    HOSTED_MODE,
+    LOCAL_MODES,
+    LOG_TARGETS,
+    OS_CONFIG_PATH,
+    OS_SESSION_LOG_PATH,
+    SHOW_LIVE_DASHBOARD_DEFAULT,
+    SIM_CONFIG_PATH,
+    STATE_DIR,
+    StackError,
+    build_cloud_env,
+    build_os_env,
+    get_config,
+    log,
+    success,
+    warn,
+)
 from dashboard import (
     BOLD,
     NC,
@@ -20,26 +40,6 @@ from dashboard import (
     print_status,
     watch_dashboard,
 )
-from config import (
-    CLI_ROOT,
-    CLI_SIM,
-    ENV_PATH,
-    LOG_TARGETS,
-    OS_CONFIG_PATH,
-    OS_SESSION_LOG_PATH,
-    SIM_CONFIG_PATH,
-    SHOW_LIVE_DASHBOARD_DEFAULT,
-    STATE_DIR,
-    HOSTED_MODE,
-    LOCAL_MODES,
-    StackError,
-    build_cloud_env,
-    build_os_env,
-    get_config,
-    log,
-    success,
-    warn,
-)
 from runtime import (
     available_agent_count,
     capture_agent_logs,
@@ -47,6 +47,8 @@ from runtime import (
     capture_simulator_logs,
     collect_status_snapshot,
     config_simulator_port,
+    down_cloud_agent,
+    down_os,
     ensure_docker_available,
     ensure_os_container,
     ensure_sim_data,
@@ -57,8 +59,6 @@ from runtime import (
     start_cloud_agent,
     start_simulator,
     stop_simulator,
-    down_cloud_agent,
-    down_os,
     tail_file,
     wait_for_brain_directives,
     wait_for_os_runtime_ready,
@@ -87,9 +87,7 @@ def dashboard_callbacks() -> DashboardCallbacks:
 
 def show_runtime_dashboard(config: dict[str, object], *, watch: bool) -> None:
     if watch and sys.stdout.isatty():
-        dashboard_result = watch_dashboard(
-            config, dashboard_callbacks(), DASHBOARD_OPTIONS
-        )
+        dashboard_result = watch_dashboard(config, dashboard_callbacks(), DASHBOARD_OPTIONS)
         if dashboard_result == "shutdown":
             print()
             log("Ctrl+C received. Stopping the Innate runtime...")
@@ -235,10 +233,7 @@ def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="innate",
-        description="Innate local development CLI."
-    )
+    parser = argparse.ArgumentParser(prog="innate", description="Innate local development CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser(
         "setup",
@@ -297,7 +292,18 @@ def build_parser() -> argparse.ArgumentParser:
         "target",
         nargs="?",
         default="simulator",
-        choices=["startup", "bootstrap", "frontend", "compose", "cloud-agent", "os-build", "os-session", "simulator", "brain", "down"],
+        choices=[
+            "startup",
+            "bootstrap",
+            "frontend",
+            "compose",
+            "cloud-agent",
+            "os-build",
+            "os-session",
+            "simulator",
+            "brain",
+            "down",
+        ],
         help="Which log stream to show",
     )
     assets_parser = sim_subparsers.add_parser(

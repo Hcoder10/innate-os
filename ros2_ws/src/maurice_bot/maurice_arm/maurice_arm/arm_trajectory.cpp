@@ -5,12 +5,9 @@ namespace maurice_arm {
 
 // ========== CUBIC SPLINE (QUINTIC SMOOTHERSTEP) ==========
 
-std::vector<std::vector<double>> MauriceArmNode::computeCubicSplineTrajectory(
-    const std::vector<double>& start,
-    const std::vector<double>& goal,
-    double duration,
-    double dt) {
-
+std::vector<std::vector<double>> MauriceArmNode::computeCubicSplineTrajectory(const std::vector<double>& start,
+                                                                              const std::vector<double>& goal,
+                                                                              double duration, double dt) {
     std::vector<std::vector<double>> trajectory;
 
     if (start.size() != goal.size() || start.empty()) {
@@ -29,14 +26,15 @@ std::vector<std::vector<double>> MauriceArmNode::computeCubicSplineTrajectory(
         double min_duration = std::cbrt(60.0 * max_delta / max_jerk);
         if (min_duration > duration) {
             RCLCPP_INFO(this->get_logger(),
-                "Jerk limit %.1f rad/s³: extending trajectory %.2fs → %.2fs (Δθ_max=%.3f rad)",
-                max_jerk, duration, min_duration, max_delta);
+                        "Jerk limit %.1f rad/s³: extending trajectory %.2fs → %.2fs (Δθ_max=%.3f rad)", max_jerk,
+                        duration, min_duration, max_delta);
             duration = min_duration;
         }
     }
 
     int num_steps = static_cast<int>(duration / dt);
-    if (num_steps < 1) num_steps = 1;
+    if (num_steps < 1)
+        num_steps = 1;
 
     for (int step = 0; step <= num_steps; ++step) {
         double t = step * dt;
@@ -57,7 +55,7 @@ std::vector<std::vector<double>> MauriceArmNode::computeCubicSplineTrajectory(
 // ========== PLAN AND EXECUTE ==========
 
 bool MauriceArmNode::planAndExecuteTrajectory(const std::vector<double>& target_positions, double trajectory_time,
-                                               GainMode trajectory_gain_mode) {
+                                              GainMode trajectory_gain_mode) {
     // Switch gains for trajectory execution
     if (gain_mode_ != trajectory_gain_mode) {
         gain_mode_ = trajectory_gain_mode;
@@ -95,7 +93,8 @@ bool MauriceArmNode::planAndExecuteTrajectory(const std::vector<double>& target_
     // Use simple cubic spline planning (fast, smooth trajectory)
     RCLCPP_INFO(this->get_logger(), "Planning with cubic spline for 6-DOF arm (including gripper)...");
     const double dt = 1.0 / this->get_parameter("trajectory_rate_hz").as_double();
-    auto interpolated_trajectory = computeCubicSplineTrajectory(current_positions, target_positions, trajectory_time, dt);
+    auto interpolated_trajectory =
+        computeCubicSplineTrajectory(current_positions, target_positions, trajectory_time, dt);
 
     if (interpolated_trajectory.empty()) {
         RCLCPP_ERROR(this->get_logger(), "Cubic spline trajectory computation failed");
@@ -105,10 +104,8 @@ bool MauriceArmNode::planAndExecuteTrajectory(const std::vector<double>& target_
     // Detect if jerk limiting extended the duration
     double actual_duration = (interpolated_trajectory.size() - 1) * dt;
     if (actual_duration > trajectory_time * 1.01) {
-        RCLCPP_WARN(this->get_logger(),
-            "Jerk-limited: requested %.2fs but executing %.2fs (+%.0f%%)",
-            trajectory_time, actual_duration,
-            100.0 * (actual_duration - trajectory_time) / trajectory_time);
+        RCLCPP_WARN(this->get_logger(), "Jerk-limited: requested %.2fs but executing %.2fs (+%.0f%%)", trajectory_time,
+                    actual_duration, 100.0 * (actual_duration - trajectory_time) / trajectory_time);
     }
 
     RCLCPP_INFO(this->get_logger(), "Executing trajectory with %zu waypoints over %.2f seconds",
@@ -145,10 +142,8 @@ bool MauriceArmNode::planAndExecuteTrajectory(const std::vector<double>& target_
     return true;
 }
 
-bool MauriceArmNode::planAndExecuteMultiWaypointTrajectory(
-    const std::vector<std::vector<double>>& waypoints,
-    const std::vector<double>& segment_durations) {
-
+bool MauriceArmNode::planAndExecuteMultiWaypointTrajectory(const std::vector<std::vector<double>>& waypoints,
+                                                           const std::vector<double>& segment_durations) {
     // Switch to scheduled gains for planned trajectories
     if (gain_mode_ != GainMode::SCHEDULED) {
         gain_mode_ = GainMode::SCHEDULED;
@@ -161,7 +156,7 @@ bool MauriceArmNode::planAndExecuteMultiWaypointTrajectory(
     }
     if (segment_durations.size() != waypoints.size() - 1) {
         RCLCPP_ERROR(this->get_logger(), "segment_durations size (%zu) must equal waypoints-1 (%zu)",
-                    segment_durations.size(), waypoints.size() - 1);
+                     segment_durations.size(), waypoints.size() - 1);
         return false;
     }
 
@@ -237,7 +232,6 @@ bool MauriceArmNode::planAndExecuteMultiWaypointTrajectory(
 void MauriceArmNode::armGotoJSTrajectoryCallback(
     const std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Request> request,
     std::shared_ptr<maurice_msgs::srv::GotoJSTrajectory::Response> response) {
-
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/goto_js_trajectory");
 
     int num_joints = request->num_joints;
@@ -245,8 +239,8 @@ void MauriceArmNode::armGotoJSTrajectoryCallback(
     const auto& seg_durs = request->segment_durations;
 
     if (num_joints <= 0 || flat.size() % num_joints != 0) {
-        RCLCPP_ERROR(this->get_logger(), "Invalid waypoints: %zu values not divisible by %d joints",
-                    flat.size(), num_joints);
+        RCLCPP_ERROR(this->get_logger(), "Invalid waypoints: %zu values not divisible by %d joints", flat.size(),
+                     num_joints);
         response->success = false;
         return;
     }
@@ -255,14 +249,12 @@ void MauriceArmNode::armGotoJSTrajectoryCallback(
     size_t num_waypoints = flat.size() / num_joints;
     std::vector<std::vector<double>> waypoints;
     for (size_t i = 0; i < num_waypoints; ++i) {
-        waypoints.emplace_back(flat.begin() + i * num_joints,
-                               flat.begin() + (i + 1) * num_joints);
+        waypoints.emplace_back(flat.begin() + i * num_joints, flat.begin() + (i + 1) * num_joints);
     }
 
     std::vector<double> durations(seg_durs.begin(), seg_durs.end());
 
-    RCLCPP_INFO(this->get_logger(), "Trajectory: %zu waypoints, %zu segments",
-                waypoints.size(), durations.size());
+    RCLCPP_INFO(this->get_logger(), "Trajectory: %zu waypoints, %zu segments", waypoints.size(), durations.size());
 
     // Prepend current position as waypoint[0] so the arm starts from where it is
     {
@@ -280,10 +272,8 @@ void MauriceArmNode::armGotoJSTrajectoryCallback(
     response->success = planAndExecuteMultiWaypointTrajectory(waypoints, durations);
 }
 
-void MauriceArmNode::armGotoJSCallback(
-    const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
-    std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response) {
-
+void MauriceArmNode::armGotoJSCallback(const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
+                                       std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/goto_js (TELEOP gains)");
 
     // Extract target positions and time from request
@@ -296,8 +286,7 @@ void MauriceArmNode::armGotoJSCallback(
                 target_positions.size() > 2 ? target_positions[2] : 0.0,
                 target_positions.size() > 3 ? target_positions[3] : 0.0,
                 target_positions.size() > 4 ? target_positions[4] : 0.0,
-                target_positions.size() > 5 ? target_positions[5] : 0.0,
-                trajectory_time);
+                target_positions.size() > 5 ? target_positions[5] : 0.0, trajectory_time);
 
     // goto_js uses teleop gains (flat, no extension-based interpolation)
     response->success = planAndExecuteTrajectory(target_positions, trajectory_time, GainMode::TELEOP);
@@ -309,10 +298,8 @@ void MauriceArmNode::armGotoJSCallback(
     }
 }
 
-void MauriceArmNode::armGotoJSV2Callback(
-    const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
-    std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response) {
-
+void MauriceArmNode::armGotoJSV2Callback(const std::shared_ptr<maurice_msgs::srv::GotoJS::Request> request,
+                                         std::shared_ptr<maurice_msgs::srv::GotoJS::Response> response) {
     RCLCPP_INFO(this->get_logger(), "Service called: /mars/arm/goto_js_v2 (SCHEDULED gains)");
 
     // Extract target positions and time from request
@@ -325,8 +312,7 @@ void MauriceArmNode::armGotoJSV2Callback(
                 target_positions.size() > 2 ? target_positions[2] : 0.0,
                 target_positions.size() > 3 ? target_positions[3] : 0.0,
                 target_positions.size() > 4 ? target_positions[4] : 0.0,
-                target_positions.size() > 5 ? target_positions[5] : 0.0,
-                trajectory_time);
+                target_positions.size() > 5 ? target_positions[5] : 0.0, trajectory_time);
 
     // goto_js_v2 uses scheduled gains (near/far interpolated by extension)
     response->success = planAndExecuteTrajectory(target_positions, trajectory_time, GainMode::SCHEDULED);
@@ -338,4 +324,4 @@ void MauriceArmNode::armGotoJSV2Callback(
     }
 }
 
-} // namespace maurice_arm
+}  // namespace maurice_arm

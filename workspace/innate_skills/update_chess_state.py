@@ -11,7 +11,7 @@ from pathlib import Path
 
 import chess
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 

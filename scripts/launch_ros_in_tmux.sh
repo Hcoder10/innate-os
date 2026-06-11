@@ -27,9 +27,29 @@ WINDOW_NAMES=(
     "training-uninavid"
 )
 
-DDS_SOURCE_CMD="source $DDS_SETUP_SCRIPT"
-ROS_SOURCE_CMD="source $ROS_WS_PATH/install/setup.zsh"
-RUNTIME_ENV_CMD="${RUNTIME_ENV_EXPORTS:-true}"
+# Collapse the per-pane environment setup (runtime env exports + DDS/ROS
+# sourcing) into one file the panes source. This keeps the command echoed in
+# each pane short and, importantly, keeps the service key off the screen and
+# out of the scrollback.
+#
+# The file holds INNATE_SERVICE_KEY, so create it securely: mktemp makes it
+# atomically at mode 0600 with an unpredictable name, closing the umask race
+# (a plain `>` would briefly create it world-readable) and the symlink-attack
+# window on a predictable /tmp path.
+PANE_SETUP_FILE=$(mktemp "${TMPDIR:-/tmp}/innate_pane_env.XXXXXX") || {
+    echo "ERROR: Failed to create pane setup tempfile." >&2
+    exit 1
+}
+# Clean up the service-key-bearing tempfile on the error-exit paths below. The
+# normal path can't rely on this trap (the script ends in `exec sleep infinity`,
+# which never fires EXIT) — a backgrounded delete handles that case instead.
+trap 'rm -f "$PANE_SETUP_FILE"' EXIT INT TERM
+{
+    echo "${RUNTIME_ENV_EXPORTS:-true}"
+    echo "source $DDS_SETUP_SCRIPT"
+    echo "source $ROS_WS_PATH/install/setup.zsh"
+} > "$PANE_SETUP_FILE"
+PANE_SETUP_CMD="source $PANE_SETUP_FILE"
 
 echo "Launching ROS nodes in tmux session '$SESSION_NAME'..."
 
@@ -65,12 +85,12 @@ process_command_group() {
     sleep 0.1
     
     local first_cmd="${commands[1]}"
-    local first_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $first_cmd"
+    local first_cmd_full="$PANE_SETUP_CMD && $first_cmd"
     tmux send-keys -t $SESSION_NAME:"$window_name".0 "$first_cmd_full" C-m || return 1
     
     if [ ${#commands[@]} -gt 1 ]; then
         local second_cmd="${commands[2]}"
-        local second_cmd_full="$RUNTIME_ENV_CMD && $DDS_SOURCE_CMD && $ROS_SOURCE_CMD && $second_cmd"
+        local second_cmd_full="$PANE_SETUP_CMD && $second_cmd"
         
         tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" || return 1
         sleep 0.1
@@ -110,6 +130,12 @@ echo ""
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
 (sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
+disown
+
+# Every pane has sourced the env file by now, so drop it: the service key should
+# not linger in /tmp. Done in the background because `exec sleep infinity` below
+# never returns, so the EXIT trap can't remove it on the normal path.
+(sleep 15 && rm -f "$PANE_SETUP_FILE") &
 disown
 
 # Keep the script alive so systemd (Type=simple) considers the service running.

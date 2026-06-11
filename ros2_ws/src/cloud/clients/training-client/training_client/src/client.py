@@ -6,12 +6,13 @@ import logging
 import os
 import queue
 import threading
-from typing import Any, Generator
+from collections.abc import Generator
+from typing import Any
 
 import requests
-
 from auth_client import AuthProvider
-from .types import ClientConfig, SkillInfo, RunInfo
+
+from .types import ClientConfig, RunInfo, SkillInfo
 
 logger = logging.getLogger(__name__)
 
@@ -216,9 +217,7 @@ class OrchestratorClient:
                     timeout=self._config.upload_timeout_seconds,
                 )
                 if resp.status_code not in (200, 201):
-                    q.put(
-                        APIError(resp.status_code, f"Upload failed: {resp.text[:500]}")
-                    )
+                    q.put(APIError(resp.status_code, f"Upload failed: {resp.text[:500]}"))
                     return
             except BaseException as e:
                 q.put(e)

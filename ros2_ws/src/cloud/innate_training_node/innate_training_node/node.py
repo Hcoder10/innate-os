@@ -17,25 +17,24 @@ import logging
 import os
 import threading
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-
 from innate_cloud_msgs.msg import TrainingJobList, TrainingParams, TransferProgress
 from innate_cloud_msgs.srv import CreateRun, DownloadResults, GetTrainingStatus, SubmitSkill
-
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from training_client.src.skill_manager import (
     SkillManager,
     read_skill_id,
+)
+from training_client.src.skill_manager import (
     read_uploaded_episode_count as _read_ep_count_from_disk,
 )
 from training_client.src.types import (
-    ClientConfig,
     DEFAULT_AUTH_ISSUER_URL,
     DEFAULT_SERVER_URL,
+    ClientConfig,
     SkillInfo,
 )
 
@@ -81,7 +80,7 @@ def _build_training_params(
     return (params or None), None
 
 
-from dotenv import find_dotenv, load_dotenv
+from dotenv import find_dotenv, load_dotenv  # noqa: E402
 
 
 def _require_absolute(skill_dir: str) -> str | None:
@@ -193,9 +192,7 @@ class TrainingNode(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
-        self._pub: rclpy.publisher.Publisher = self.create_publisher(
-            TrainingJobList, "~/job_statuses", qos
-        )
+        self._pub: rclpy.publisher.Publisher = self.create_publisher(TrainingJobList, "~/job_statuses", qos)
 
         # ── Services ────────────────────────────────────────────────
         self.create_service(SubmitSkill, "~/submit_skill", self._on_submit)
@@ -208,9 +205,7 @@ class TrainingNode(Node):
         self._poller = Poller(self._mgr, self._store, poll_sec)
         self._poller.start()
 
-        self.get_logger().info(
-            f"Training node ready — server={server_url} poll={poll_sec}s pub={pub_sec}s"
-        )
+        self.get_logger().info(f"Training node ready — server={server_url} poll={poll_sec}s pub={pub_sec}s")
 
     def destroy_node(self) -> None:
         self._poller.stop()
@@ -232,10 +227,7 @@ class TrainingNode(Node):
         for sid in sorted(all_skill_ids):
             upload_xfer = transfers.get((TransferProgress.UPLOAD, sid, -1))
             # upload_done: in-memory completed set OR persisted ep count exists
-            upload_done = (
-                (TransferProgress.UPLOAD, sid, -1) in completed
-                or ep_counts.get(sid, -1) >= 0
-            )
+            upload_done = (TransferProgress.UPLOAD, sid, -1) in completed or ep_counts.get(sid, -1) >= 0
 
             dl_xfers: dict[int, TransferProgress] = {}
             dl_done: set[int] = set()
@@ -289,8 +281,9 @@ class TrainingNode(Node):
 
         res.found = False
         for skill in self._build_skill_statuses():
-            if (lookup_skill_id and skill.training_skill_id == lookup_skill_id) or \
-               (req.skill_name and skill.skill_name == req.skill_name):
+            if (lookup_skill_id and skill.training_skill_id == lookup_skill_id) or (
+                req.skill_name and skill.skill_name == req.skill_name
+            ):
                 res.found = True
                 res.skill_status = skill
                 break
@@ -298,9 +291,7 @@ class TrainingNode(Node):
 
     # ── Service: submit_skill ───────────────────────────────────────
 
-    def _on_submit(
-        self, req: SubmitSkill.Request, res: SubmitSkill.Response
-    ) -> SubmitSkill.Response:
+    def _on_submit(self, req: SubmitSkill.Request, res: SubmitSkill.Response) -> SubmitSkill.Response:
         """Submit (create-or-reuse) a skill **and** start uploading its data."""
         err = _require_absolute(req.skill_dir)
         if err:
@@ -330,8 +321,7 @@ class TrainingNode(Node):
 
             # Start upload in a background thread.
             self.get_logger().info(
-                f"Skill {skill.skill_id[:8]} ({skill.name}) submitted "
-                f"— upload started from {req.skill_dir}"
+                f"Skill {skill.skill_id[:8]} ({skill.name}) submitted — upload started from {req.skill_dir}"
             )
             threading.Thread(
                 target=do_upload,
@@ -349,9 +339,7 @@ class TrainingNode(Node):
 
     # ── Service: create_run ─────────────────────────────────────────
 
-    def _on_create_run(
-        self, req: CreateRun.Request, res: CreateRun.Response
-    ) -> CreateRun.Response:
+    def _on_create_run(self, req: CreateRun.Request, res: CreateRun.Response) -> CreateRun.Response:
         err = _require_absolute(req.skill_dir)
         if err:
             res.success, res.message = False, err
@@ -371,9 +359,7 @@ class TrainingNode(Node):
             return res
 
         try:
-            data = self._mgr.client.create_run(
-                skill_id, training_params=training_params
-            )
+            data = self._mgr.client.create_run(skill_id, training_params=training_params)
             rid = int(data["run_id"])
             self._store.put_job(self._mgr.run_status(skill_id, rid))
             self._store.register_dir(skill_id, req.skill_dir)
@@ -390,9 +376,7 @@ class TrainingNode(Node):
 
     # ── Service: download_results ───────────────────────────────────
 
-    def _on_download(
-        self, req: DownloadResults.Request, res: DownloadResults.Response
-    ) -> DownloadResults.Response:
+    def _on_download(self, req: DownloadResults.Request, res: DownloadResults.Response) -> DownloadResults.Response:
         err = _require_absolute(req.skill_dir)
         if err:
             res.success, res.message = False, err
@@ -410,9 +394,7 @@ class TrainingNode(Node):
             return res
 
         self._store.register_dir(skill_id, req.skill_dir)
-        self.get_logger().info(
-            f"Download started for {skill_id}/{req.run_id} → {req.skill_dir}"
-        )
+        self.get_logger().info(f"Download started for {skill_id}/{req.run_id} → {req.skill_dir}")
         maybe_auto_download(self._mgr, self._store, skill_id, req.run_id, req.skill_dir)
         res.success, res.message = True, f"Download started → {req.skill_dir}"
         return res

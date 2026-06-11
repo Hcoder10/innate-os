@@ -1,9 +1,10 @@
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from brain_client.logging_config import get_logging_env_vars
-from maurice_bringup.env_loader import load_env_file, get_env
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from maurice_bringup.env_loader import get_env, load_env_file
+
+from brain_client.common.logging import get_logging_env_vars
 
 
 def generate_launch_description():
@@ -48,9 +49,7 @@ def generate_launch_description():
         default_value="False",
         description="Flag to enable sending depth images",
     )
-    vertical_fov_arg = DeclareLaunchArgument(
-        "vertical_fov", default_value="80.0", description="Vertical field of view"
-    )
+    vertical_fov_arg = DeclareLaunchArgument("vertical_fov", default_value="80.0", description="Vertical field of view")
     horizontal_resolution_arg = DeclareLaunchArgument(
         "horizontal_resolution",
         default_value="1280",
@@ -151,12 +150,13 @@ def generate_launch_description():
                 "cartesia_voice_id": LaunchConfiguration("cartesia_voice_id"),
                 "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
                 "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
-                "openai_transcribe_model": LaunchConfiguration(
-                    "openai_transcribe_model"
-                ),
+                "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
             }
         ],
         output="screen",
+        # Mute the benign "Publisher already registered" rosout-plumbing warning
+        # from in-process helper nodes that can share a name.
+        arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
     )
 
     return LaunchDescription(
@@ -187,22 +187,10 @@ def generate_launch_description():
             openai_realtime_url_arg,
             openai_transcribe_model_arg,
             brain_client_node,
-            # Launch the WSClientNode (handles actual WebSocket connection)
+            # WebSocket runs in-process inside brain_client_node; no separate ws_client node.
             Node(
                 package="brain_client",
-                executable="ws_client_node.py",
-                name="ws_client_node",
-                output="screen",
-                parameters=[
-                    {
-                        "websocket_uri": LaunchConfiguration("websocket_uri"),
-                        "token": LaunchConfiguration("token"),
-                    }
-                ],
-            ),
-            Node(
-                package="brain_client",
-                executable="skills_action_server.py",
+                executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
                 parameters=[
@@ -212,6 +200,10 @@ def generate_launch_description():
                         "simulator_mode": LaunchConfiguration("simulator_mode"),
                     }
                 ],
+                # Skill loading spins up short-lived helper nodes (camera, tf,
+                # action clients) that can share a name; mute the benign
+                # "Publisher already registered" rosout-plumbing warning.
+                arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
             ),
             # NOTE: InputManagerNode is launched separately via input_manager.launch.py
         ]

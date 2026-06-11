@@ -14,7 +14,7 @@ sim/.venv/
 !.dockerignore
 !.github/
 !ci/
-!ci/cloudbuild.sim-images.yaml
+!ci/**
 !sim/
 !sim/Dockerfile
 !sim/Dockerfile.ros-prebuilt
@@ -23,7 +23,13 @@ sim/.venv/
 !ros2_ws/
 !ros2_ws/apt-dependencies.common.txt
 !ros2_ws/apt-dependencies.hardware.txt
+!ros2_ws/pip-requirements.txt
 !ros2_ws/src/
 !ros2_ws/src/**
+# Needed by ci/Dockerfile.test (COPY config/ and workspace/).
+!config/
+!config/**
+!workspace/
+!workspace/**
 __pycache__/
 *.pyc

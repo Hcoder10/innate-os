@@ -9,9 +9,9 @@ Usage::
     from innate_proxy import ProxyClient, ProxyCartesiaClient, ProxyOpenAIClient
 """
 
-from innate_proxy.client import ProxyClient
 from innate_proxy.adapters.cartesia import ProxyCartesiaClient
 from innate_proxy.adapters.openai import ProxyOpenAIClient, SyncRealtimeConnection
+from innate_proxy.client import ProxyClient
 
 __all__: list[str] = [
     "ProxyClient",

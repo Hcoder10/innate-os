@@ -21,8 +21,7 @@ inline void h5_check(long long result, const std::string& what) {
 
 // Wrapper around H5Dcreate2 that creates a chunked, extendable dataset with
 // auto-created intermediate groups. Returns the dataset hid.
-hid_t create_chunked_dataset(hid_t file, const std::string& path, hid_t dtype,
-                             int rank, const hsize_t* init_dims,
+hid_t create_chunked_dataset(hid_t file, const std::string& path, hid_t dtype, int rank, const hsize_t* init_dims,
                              const hsize_t* max_dims, const hsize_t* chunk_dims) {
     hid_t fspace = H5Screate_simple(rank, init_dims, max_dims);
     hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
@@ -58,8 +57,7 @@ EpisodeData::EpisodeData()
       qvel_dset_(-1),
       arm_ts_dset_(-1) {}
 
-EpisodeData::EpisodeData(const std::vector<std::string>& camera_names)
-    : EpisodeData() {
+EpisodeData::EpisodeData(const std::vector<std::string>& camera_names) : EpisodeData() {
     camera_names_ = camera_names;
     camera_names_set_ = true;
 }
@@ -149,12 +147,8 @@ void EpisodeData::open_file(const std::string& path) {
     timestep_count_ = 0;
 }
 
-void EpisodeData::create_file_and_datasets(
-    const std::vector<double>& action,
-    const std::vector<double>& qpos,
-    const std::vector<double>& qvel,
-    const std::vector<cv::Mat>& images) {
-
+void EpisodeData::create_file_and_datasets(const std::vector<double>& action, const std::vector<double>& qpos,
+                                           const std::vector<double>& qvel, const std::vector<cv::Mat>& images) {
     if (file_path_.empty()) {
         throw std::runtime_error("EpisodeData: open_file() must be called before add_timestep()");
     }
@@ -169,9 +163,8 @@ void EpisodeData::create_file_and_datasets(
         }
         camera_names_set_ = true;
     } else if (images.size() != camera_names_.size()) {
-        throw std::runtime_error(
-            "EpisodeData: expected " + std::to_string(camera_names_.size()) +
-            " images, but got " + std::to_string(images.size()));
+        throw std::runtime_error("EpisodeData: expected " + std::to_string(camera_names_.size()) + " images, but got " +
+                                 std::to_string(images.size()));
     }
 
     if (!images.empty()) {
@@ -198,8 +191,8 @@ void EpisodeData::create_file_and_datasets(
         const hsize_t init_dims[2] = {0, action_dim_ + 2};
         const hsize_t max_dims[2] = {H5S_UNLIMITED, action_dim_ + 2};
         const hsize_t chunk_dims[2] = {30, action_dim_ + 2};
-        action_dset_ = create_chunked_dataset(file_id_, "/action", H5T_NATIVE_DOUBLE,
-                                              2, init_dims, max_dims, chunk_dims);
+        action_dset_ =
+            create_chunked_dataset(file_id_, "/action", H5T_NATIVE_DOUBLE, 2, init_dims, max_dims, chunk_dims);
     }
 
     // /timestamps/arm
@@ -207,24 +200,24 @@ void EpisodeData::create_file_and_datasets(
         const hsize_t init_dims[1] = {0};
         const hsize_t max_dims[1] = {H5S_UNLIMITED};
         const hsize_t chunk_dims[1] = {30};
-        arm_ts_dset_ = create_chunked_dataset(file_id_, "/timestamps/arm", H5T_NATIVE_DOUBLE,
-                                              1, init_dims, max_dims, chunk_dims);
+        arm_ts_dset_ =
+            create_chunked_dataset(file_id_, "/timestamps/arm", H5T_NATIVE_DOUBLE, 1, init_dims, max_dims, chunk_dims);
     }
 
     if (qpos_dim_ > 0) {
         const hsize_t init_dims[2] = {0, qpos_dim_};
         const hsize_t max_dims[2] = {H5S_UNLIMITED, qpos_dim_};
         const hsize_t chunk_dims[2] = {30, qpos_dim_};
-        qpos_dset_ = create_chunked_dataset(file_id_, "/observations/qpos", H5T_NATIVE_DOUBLE,
-                                            2, init_dims, max_dims, chunk_dims);
+        qpos_dset_ = create_chunked_dataset(file_id_, "/observations/qpos", H5T_NATIVE_DOUBLE, 2, init_dims, max_dims,
+                                            chunk_dims);
     }
 
     if (qvel_dim_ > 0) {
         const hsize_t init_dims[2] = {0, qvel_dim_};
         const hsize_t max_dims[2] = {H5S_UNLIMITED, qvel_dim_};
         const hsize_t chunk_dims[2] = {30, qvel_dim_};
-        qvel_dset_ = create_chunked_dataset(file_id_, "/observations/qvel", H5T_NATIVE_DOUBLE,
-                                            2, init_dims, max_dims, chunk_dims);
+        qvel_dset_ = create_chunked_dataset(file_id_, "/observations/qvel", H5T_NATIVE_DOUBLE, 2, init_dims, max_dims,
+                                            chunk_dims);
     }
 
     // Per-camera image and timestamp datasets. One image per chunk keeps each
@@ -235,42 +228,34 @@ void EpisodeData::create_file_and_datasets(
         const hsize_t img_init[4] = {0, (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
         const hsize_t img_max[4] = {H5S_UNLIMITED, (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
         const hsize_t img_chunk[4] = {1, (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
-        image_dsets_[cam] = create_chunked_dataset(file_id_, img_path, H5T_NATIVE_UINT8,
-                                                   4, img_init, img_max, img_chunk);
+        image_dsets_[cam] =
+            create_chunked_dataset(file_id_, img_path, H5T_NATIVE_UINT8, 4, img_init, img_max, img_chunk);
 
         const std::string ts_path = "/timestamps/images/" + cam;
         const hsize_t ts_init[1] = {0};
         const hsize_t ts_max[1] = {H5S_UNLIMITED};
         const hsize_t ts_chunk[1] = {30};
-        image_ts_dsets_[cam] = create_chunked_dataset(file_id_, ts_path, H5T_NATIVE_DOUBLE,
-                                                      1, ts_init, ts_max, ts_chunk);
+        image_ts_dsets_[cam] =
+            create_chunked_dataset(file_id_, ts_path, H5T_NATIVE_DOUBLE, 1, ts_init, ts_max, ts_chunk);
     }
 
     file_created_ = true;
 }
 
-void EpisodeData::add_timestep(
-    const std::vector<double>& action,
-    const std::vector<double>& qpos,
-    const std::vector<double>& qvel,
-    const std::vector<cv::Mat>& images,
-    double arm_timestamp,
-    const std::vector<double>& image_timestamps) {
-
+void EpisodeData::add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
+                               const std::vector<double>& qvel, const std::vector<cv::Mat>& images,
+                               double arm_timestamp, const std::vector<double>& image_timestamps) {
     if (!file_created_) {
         create_file_and_datasets(action, qpos, qvel, images);
     } else if (images.size() != camera_names_.size()) {
-        throw std::runtime_error(
-            "EpisodeData: image count changed mid-episode (expected " +
-            std::to_string(camera_names_.size()) + ", got " +
-            std::to_string(images.size()) + ")");
+        throw std::runtime_error("EpisodeData: image count changed mid-episode (expected " +
+                                 std::to_string(camera_names_.size()) + ", got " + std::to_string(images.size()) + ")");
     }
 
     const hsize_t t = static_cast<hsize_t>(timestep_count_);
     const hsize_t new_t = t + 1;
 
-    auto write_2d_row = [&](hid_t dset, hsize_t width, const double* data,
-                            const std::string& name) {
+    auto write_2d_row = [&](hid_t dset, hsize_t width, const double* data, const std::string& name) {
         const hsize_t new_extent[2] = {new_t, width};
         h5_check(H5Dset_extent(dset, new_extent), "H5Dset_extent(" + name + ")");
 
@@ -337,9 +322,7 @@ void EpisodeData::add_timestep(
         if (arm_ts_dset_ >= 0) {
             // Always extend so its row count matches timestep_count_; use 0.0
             // as a sentinel when no timestamp was given.
-            write_1d_scalar(arm_ts_dset_,
-                            arm_timestamp >= 0.0 ? arm_timestamp : 0.0,
-                            "/timestamps/arm");
+            write_1d_scalar(arm_ts_dset_, arm_timestamp >= 0.0 ? arm_timestamp : 0.0, "/timestamps/arm");
         }
 
         for (size_t c = 0; c < camera_names_.size(); ++c) {
@@ -352,8 +335,7 @@ void EpisodeData::add_timestep(
 
             const std::string img_name = "/observations/images/" + cam;
             const hsize_t new_extent[4] = {new_t, (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
-            h5_check(H5Dset_extent(image_dsets_[cam], new_extent),
-                     "H5Dset_extent(" + img_name + ")");
+            h5_check(H5Dset_extent(image_dsets_[cam], new_extent), "H5Dset_extent(" + img_name + ")");
 
             hid_t fspace = H5Dget_space(image_dsets_[cam]);
             h5_check(fspace, "H5Dget_space(" + img_name + ")");
@@ -368,8 +350,7 @@ void EpisodeData::add_timestep(
                 H5Sclose(fspace);
                 h5_check(mspace, "H5Screate_simple(" + img_name + " mem)");
             }
-            herr_t wr = H5Dwrite(image_dsets_[cam], H5T_NATIVE_UINT8, mspace, fspace,
-                                 H5P_DEFAULT, continuous.data);
+            herr_t wr = H5Dwrite(image_dsets_[cam], H5T_NATIVE_UINT8, mspace, fspace, H5P_DEFAULT, continuous.data);
             H5Sclose(mspace);
             H5Sclose(fspace);
             h5_check(wr, "H5Dwrite(" + img_name + ")");
@@ -391,24 +372,28 @@ void EpisodeData::add_timestep(
 
 void EpisodeData::truncate_datasets_to(size_t rows) noexcept {
     auto shrink_1d = [&](hid_t dset) {
-        if (dset < 0) return;
+        if (dset < 0)
+            return;
         const hsize_t extent[1] = {static_cast<hsize_t>(rows)};
         H5Dset_extent(dset, extent);
     };
     auto shrink_2d = [&](hid_t dset, hsize_t width) {
-        if (dset < 0) return;
+        if (dset < 0)
+            return;
         const hsize_t extent[2] = {static_cast<hsize_t>(rows), width};
         H5Dset_extent(dset, extent);
     };
 
     shrink_2d(action_dset_, action_dim_ + 2);
-    if (qpos_dset_ >= 0) shrink_2d(qpos_dset_, qpos_dim_);
-    if (qvel_dset_ >= 0) shrink_2d(qvel_dset_, qvel_dim_);
+    if (qpos_dset_ >= 0)
+        shrink_2d(qpos_dset_, qpos_dim_);
+    if (qvel_dset_ >= 0)
+        shrink_2d(qvel_dset_, qvel_dim_);
     shrink_1d(arm_ts_dset_);
     for (auto& [name, dset] : image_dsets_) {
-        if (dset < 0) continue;
-        const hsize_t extent[4] = {static_cast<hsize_t>(rows),
-                                   (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
+        if (dset < 0)
+            continue;
+        const hsize_t extent[4] = {static_cast<hsize_t>(rows), (hsize_t)img_h_, (hsize_t)img_w_, (hsize_t)img_c_};
         H5Dset_extent(dset, extent);
     }
     for (auto& [name, dset] : image_ts_dsets_) {
@@ -450,8 +435,7 @@ void EpisodeData::finalize() {
         H5Sclose(fspace);
         h5_check(mspace, "H5Screate_simple(/action finalize mem)");
     }
-    herr_t wr = H5Dwrite(action_dset_, H5T_NATIVE_DOUBLE, mspace, fspace,
-                         H5P_DEFAULT, term.data());
+    herr_t wr = H5Dwrite(action_dset_, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, term.data());
     H5Sclose(mspace);
     H5Sclose(fspace);
     h5_check(wr, "H5Dwrite(/action finalize)");

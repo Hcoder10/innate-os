@@ -20,8 +20,8 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import h5py
 import numpy as np
@@ -76,9 +76,7 @@ def convert_episodes_to_h264(
                 yield ProgressUpdate(
                     stage=ProgressStage.COMPRESSING,
                     message=f"[{idx}/{total}] {item['filename']} already exists, skipping",
-                    file_progress=FileProgress(
-                        filename=item["filename"], index=idx, total=total, done=True
-                    ),
+                    file_progress=FileProgress(filename=item["filename"], index=idx, total=total, done=True),
                 )
                 continue
 
@@ -89,9 +87,7 @@ def convert_episodes_to_h264(
             yield ProgressUpdate(
                 stage=ProgressStage.COMPRESSING,
                 message=f"[{idx}/{total}] Encoding {item['filename']}…",
-                file_progress=FileProgress(
-                    filename=item["filename"], index=idx, total=total
-                ),
+                file_progress=FileProgress(filename=item["filename"], index=idx, total=total),
             )
 
             try:
@@ -117,9 +113,7 @@ def convert_episodes_to_h264(
             yield ProgressUpdate(
                 stage=ProgressStage.COMPRESSING,
                 message=f"[{idx}/{total}] Stripping images from {item['filename']}…",
-                file_progress=FileProgress(
-                    filename=item["filename"], index=idx, total=total
-                ),
+                file_progress=FileProgress(filename=item["filename"], index=idx, total=total),
             )
 
             try:
@@ -146,9 +140,7 @@ def convert_episodes_to_h264(
     )
 
 
-def _build_work_list(
-    data_dir: Path, raw_dir: Path, episodes: list[dict]
-) -> list[dict]:
+def _build_work_list(data_dir: Path, raw_dir: Path, episodes: list[dict]) -> list[dict]:
     """Build a flat list of work items (MP4 encodes + H5 strips)."""
     items: list[dict] = []
     for ep in episodes:
@@ -180,12 +172,14 @@ def _build_work_list(
                 mp4_name = f"{stem}_{cam_name}.mp4"
                 if not (data_dir / mp4_name).exists():
                     all_mp4s_exist = False
-                cam_items.append({
-                    "kind": "mp4",
-                    "filename": mp4_name,
-                    "h5_file": h5_file,
-                    "camera": cam_name,
-                })
+                cam_items.append(
+                    {
+                        "kind": "mp4",
+                        "filename": mp4_name,
+                        "h5_file": h5_file,
+                        "camera": cam_name,
+                    }
+                )
 
         if all_mp4s_exist and cam_items:
             if h5_path.exists():
@@ -196,10 +190,12 @@ def _build_work_list(
             continue
 
         items.extend(cam_items)
-        items.append({
-            "kind": "strip",
-            "filename": h5_file,
-        })
+        items.append(
+            {
+                "kind": "strip",
+                "filename": h5_file,
+            }
+        )
 
     return items
 
@@ -216,15 +212,34 @@ def _encode_camera_to_mp4(
         num_frames, height, width, channels = dset.shape
 
         gst_args = [
-            "nice", "-n", "0", "gst-launch-1.0", "-e",
-            "fdsrc", "fd=0", "!",
-            "rawvideoparse", f"width={width}", f"height={height}",
-            "format=bgr", f"framerate={fps}/1", "!",
-            "videoconvert", "!",
-            "x264enc", "pass=qual", "quantizer=23", "speed-preset=ultrafast", "threads=4", "!",
-            "h264parse", "!",
-            "mp4mux", "!",
-            "filesink", f"location={mp4_path}",
+            "nice",
+            "-n",
+            "0",
+            "gst-launch-1.0",
+            "-e",
+            "fdsrc",
+            "fd=0",
+            "!",
+            "rawvideoparse",
+            f"width={width}",
+            f"height={height}",
+            "format=bgr",
+            f"framerate={fps}/1",
+            "!",
+            "videoconvert",
+            "!",
+            "x264enc",
+            "pass=qual",
+            "quantizer=23",
+            "speed-preset=ultrafast",
+            "threads=4",
+            "!",
+            "h264parse",
+            "!",
+            "mp4mux",
+            "!",
+            "filesink",
+            f"location={mp4_path}",
         ]
 
         proc = subprocess.Popen(
@@ -256,9 +271,7 @@ def _encode_camera_to_mp4(
         if proc.returncode != 0:
             stderr = stderr_bytes.decode(errors="replace")
             mp4_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"gst-launch-1.0 exited with code {proc.returncode}: {stderr}"
-            )
+            raise RuntimeError(f"gst-launch-1.0 exited with code {proc.returncode}: {stderr}")
 
     raw_size = num_frames * height * width * channels
     mp4_size = mp4_path.stat().st_size
@@ -302,9 +315,7 @@ def _strip_images_from_h5(raw_path: Path, dest_path: Path) -> None:
     )
 
 
-def _update_metadata(
-    data_dir: Path, meta: dict, episodes: list[dict]
-) -> None:
+def _update_metadata(data_dir: Path, meta: dict, episodes: list[dict]) -> None:
     """Update dataset_metadata.json with dataset_type and per-episode video_files."""
     meta_path = data_dir / DATASET_METADATA
 
@@ -315,11 +326,7 @@ def _update_metadata(
         if not h5_file:
             continue
         stem = Path(h5_file).stem
-        video_files = sorted(
-            p.name
-            for p in data_dir.iterdir()
-            if p.name.startswith(stem + "_") and p.suffix == ".mp4"
-        )
+        video_files = sorted(p.name for p in data_dir.iterdir() if p.name.startswith(stem + "_") and p.suffix == ".mp4")
         if video_files:
             ep["video_files"] = video_files
 

@@ -12,7 +12,7 @@ Usage::
     print(auth.expires_at)      # when the JWT expires
 """
 
-from auth_client.provider import AuthProvider, AuthError
 from auth_client.httpx_auth import InnateBearerAuth
+from auth_client.provider import AuthError, AuthProvider
 
 __all__: list[str] = ["AuthProvider", "AuthError", "InnateBearerAuth"]

@@ -10,14 +10,14 @@ Uses self.node (injected by InputManagerNode) to create a ROS subscription.
 
 from maurice_msgs.msg import ArmStatus
 
-from brain_client.input_types import InputDevice
-from brain_client.logging_config import UniversalLogger
+from brain_client.common.logging import UniversalLogger
+from brain_client.inputs.types import InputDevice
 
 
 class ArmVitalsInput(InputDevice):
     """
     Monitors arm servo health and reports failures to the agent.
-    
+
     Subscribes to /mars/arm/status (maurice_msgs/ArmStatus) which is
     published by the arm node's health monitor. When is_ok transitions
     to False, sends the error description to the agent as a chat_in message.
@@ -45,12 +45,7 @@ class ArmVitalsInput(InputDevice):
             return
 
         self._last_is_ok = True
-        self._sub = self.node.create_subscription(
-            ArmStatus,
-            '/mars/arm/status',
-            self._on_arm_status,
-            10
-        )
+        self._sub = self.node.create_subscription(ArmStatus, "/mars/arm/status", self._on_arm_status, 10)
         self.logger.info("Subscribed to /mars/arm/status")
 
     def on_close(self):

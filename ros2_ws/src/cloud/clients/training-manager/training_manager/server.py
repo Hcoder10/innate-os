@@ -6,7 +6,6 @@ REST API routers for skills, datasets, and training.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -16,7 +15,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse
 
@@ -95,7 +94,7 @@ def main() -> None:
     app = create_app(skills_dir=skills_dir)
 
     host_ip = _get_lan_ip()
-    print(f"\n  Training Manager running at:")
+    print("\n  Training Manager running at:")
     print(f"    Local:   http://localhost:{port}")
     if host_ip:
         print(f"    Network: http://{host_ip}:{port}")

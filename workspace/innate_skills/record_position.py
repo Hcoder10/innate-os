@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from brain_client.skill_types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CORNER_CAPTURES_DIR = Path("/home/jetson1/innate-os/captures/corners")

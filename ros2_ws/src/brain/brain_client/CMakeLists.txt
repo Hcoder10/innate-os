@@ -17,10 +17,9 @@ ament_python_install_package(${PROJECT_NAME}
 
 # Install Python executables
 install(PROGRAMS
-  brain_client/brain_client_node.py
-  brain_client/ws_client_node.py
-  brain_client/skills_action_server.py
-  brain_client/input_manager_node.py
+  brain_client/nodes/brain_client_node.py
+  brain_client/nodes/skills_server.py
+  brain_client/nodes/input_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -42,9 +41,11 @@ if(BUILD_TESTING)
     add_launch_test("${path}" RUNNER "${RUNNER}" ${ARGN})
   endfunction()
 
-  add_ros_isolated_launch_test(test/test_skill_integration.launch.py)
   add_ros_isolated_launch_test(test/test_pose_image.launch.py
     TIMEOUT 180
+  )
+  add_ros_isolated_launch_test(test/test_fake_cloud_loop.launch.py
+    TIMEOUT 240
   )
 endif()
 

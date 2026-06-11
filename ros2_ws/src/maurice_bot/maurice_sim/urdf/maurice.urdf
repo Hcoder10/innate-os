@@ -7,9 +7,6 @@
   <material name="bright_orange">
     <color rgba="1.0 0.5 0.0 1.0"/>
   </material>
-  <material name="collision_material">
-    <color rgba="0.0 1.0 0.0 0.3"/>  <!-- Semi-transparent green -->
-  </material>
 
   <!-- base_footprint: ground-plane frame (identity with base_link) -->
   <link name="base_footprint"/>
@@ -48,7 +45,6 @@
       <geometry>
         <box size="0.1878 0.182 0.1676"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -80,7 +76,6 @@
       <geometry>
         <box size="0.067 0.040 0.082"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -112,7 +107,6 @@
       <geometry>
         <box size="0.037 0.054 0.156"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -144,7 +138,6 @@
       <geometry>
         <box size="0.134 0.054 0.035"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -176,7 +169,6 @@
       <geometry>
         <box size="0.032 0.039 0.020"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -208,7 +200,6 @@
       <geometry>
         <box size="0.054 0.044 0.093"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -240,7 +231,6 @@
       <geometry>
         <box size="0.048 0.016 0.0389"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -273,7 +263,6 @@
       <geometry>
         <box size="0.048 0.016 0.0389"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 
@@ -341,7 +330,6 @@
       <geometry>
         <box size="0.113 0.121 0.036"/>
       </geometry>
-      <material name="collision_material"/>
     </collision>
   </link>
 

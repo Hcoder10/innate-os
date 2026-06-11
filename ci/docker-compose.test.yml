@@ -6,25 +6,9 @@ services:
       - INNATE_OS_ROOT=/root/innate-os
       - SKIP_UPDATE_CHECK=1
 
+    # 2 GB /dev/shm: rmw_zenoh pre-allocates ~48 MiB of POSIX shm per node, which
+    # overflows the 64 MB container default. (Honored locally; on Cloud Build the
+    # build step passes --shm-size=2g explicitly — see ci/cloudbuild.integration-test.yaml.)
     shm_size: "2g"
-    # Test image already contains ros2_ws and workspace from ci/Dockerfile.test.
-    # Rebuild once in-container to keep behavior aligned with current test workflow.
-    command: >
-      zsh -lc '
-        set -e
-        cleanup() {
-          if [ -n "$$ROUTER_PID" ]; then
-            kill "$$ROUTER_PID" >/dev/null 2>&1 || true
-            wait "$$ROUTER_PID" >/dev/null 2>&1 || true
-          fi
-        }
-        trap cleanup EXIT
-        cd /root/innate-os/ros2_ws &&
-        colcon build &&
-        source install/setup.zsh &&
-        ros2 run rmw_zenoh_cpp rmw_zenohd &
-        ROUTER_PID=$$! &&
-        sleep 2 &&
-        colcon test --packages-select brain_client --ctest-args -R "test_skill_integration|test_pose_image" --event-handlers console_direct+ &&
-        colcon test-result --verbose
-      '
+    # Single source of truth for the test flow, baked into the image.
+    command: run_integration_tests.sh

@@ -19,6 +19,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <chrono>
 
 namespace maurice_cam {
 
@@ -47,6 +48,20 @@ class WebRTCStreamer : public rclcpp::Node {
     void create_subscriptions(const std::string& source);
     void destroy_subscriptions();
     void cleanup_pipeline();
+
+    // Runs on the executor thread (never a GStreamer thread): drains the bus so runtime
+    // errors are logged, and tears the pipeline down once the peer connection is gone.
+    void poll_pipeline_health();
+    void drain_bus_locked();  // caller must hold pipeline_mutex_
+
+    // with_audio appends an Opus mic branch (webrtc.sink_2) to the video pipeline.
+    // It is cleared to false if the audio params are unsafe, so callers log the real state.
+    std::string build_pipeline_description(bool& with_audio) const;
+
+    // *_locked: caller must hold pipeline_mutex_. start_ returns false (and tears down) on failure.
+    // with_audio is updated to reflect whether audio actually made it into the pipeline.
+    bool start_pipeline_locked(bool& with_audio);
+    void teardown_pipeline_locked();
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,
                                      int target_height);
@@ -91,8 +106,17 @@ class WebRTCStreamer : public rclcpp::Node {
     // Thread safety
     std::mutex pipeline_mutex_;
 
+    // Periodic bus drain + disconnect teardown
+    rclcpp::TimerBase::SharedPtr health_timer_;
+    int terminal_polls_ = 0;  // consecutive FAILED/DISCONNECTED polls (grace window before teardown)
+
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;
+
+    // Robot microphone -> teleoperator audio (one-way).
+    bool enable_audio_;
+    std::string audio_source_element_;
+    std::string audio_capture_device_;
 };
 
 }  // namespace maurice_cam

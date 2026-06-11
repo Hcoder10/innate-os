@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from typing import Any, Dict
+from typing import Any
 
 from innate_proxy import ProxyClient
 
@@ -39,7 +39,7 @@ async def chat_once(client: ProxyClient, message: str) -> None:
             "max_tokens": 256,
         },
     )
-    result: Dict[str, Any] = resp.json()
+    result: dict[str, Any] = resp.json()
 
     content: str = result["choices"][0]["message"]["content"]
     usage = result.get("usage", {})

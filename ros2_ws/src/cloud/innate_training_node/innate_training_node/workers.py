@@ -15,7 +15,6 @@ import time
 
 import rclpy.logging
 from innate_cloud_msgs.msg import TransferProgress
-
 from training_client.src.skill_manager import (
     SkillManager,
     read_local_episode_count,
@@ -102,10 +101,7 @@ class Poller:
             except Exception as e:
                 _ros.warning(f"list_runs({skill.skill_id[:8]}) failed: {e}")
 
-        _ros.info(
-            f"Startup fetch complete: {len(skills)} skill(s), "
-            f"{total_runs} run(s) ({done_runs} done)"
-        )
+        _ros.info(f"Startup fetch complete: {len(skills)} skill(s), {total_runs} run(s) ({done_runs} done)")
 
     def _poll_active(self) -> None:
         for (skill_id, run_id), old in self._store.active_jobs():
@@ -130,9 +126,7 @@ class Poller:
                     _ros.info(" | ".join(parts))
 
                     if new.error_message:
-                        _ros.warning(
-                            f"Run {sid}/{run_id} error: {new.error_message}"
-                        )
+                        _ros.warning(f"Run {sid}/{run_id} error: {new.error_message}")
 
                 if new.status == "done" and old.status != "done":
                     _ros.info(f"Run {sid}/{run_id} done → auto-download")
@@ -146,9 +140,7 @@ class Poller:
                             dest,
                         )
                     else:
-                        _ros.warning(
-                            f"No skill dir known for {sid} — skipping auto-download"
-                        )
+                        _ros.warning(f"No skill dir known for {sid} — skipping auto-download")
             except Exception as e:
                 _ros.warning(f"Poll {sid}/{run_id} failed: {e}")
 
@@ -235,8 +227,7 @@ def do_download(
             fp = update.file_progress
             if fp and fp.bytes_done == 0 and not fp.done:
                 _ros.debug(
-                    f"Download {sid}/{run_id}: file [{fp.index}/{fp.total}] "
-                    f"{fp.filename} ({fp.bytes_total} bytes)"
+                    f"Download {sid}/{run_id}: file [{fp.index}/{fp.total}] {fp.filename} ({fp.bytes_total} bytes)"
                 )
         # Clear finished transfer entry.
         store.update_transfer(
@@ -260,19 +251,13 @@ def do_download(
         try:
             result = manager.activate_run(dest_dir, run_id)
             _ros.info(
-                f"Activated run {sid}/{run_id}: "
-                f"checkpoint={result['checkpoint']} stats_file={result['stats_file']}"
+                f"Activated run {sid}/{run_id}: checkpoint={result['checkpoint']} stats_file={result['stats_file']}"
             )
         except Exception as e:
-            _ros.warning(
-                f"Download OK but activation failed for {sid}/{run_id}: {e}"
-            )
+            _ros.warning(f"Download OK but activation failed for {sid}/{run_id}: {e}")
 
         elapsed = time.monotonic() - t0
-        _ros.info(
-            f"Download finished for {sid}/{run_id} → {dest_dir} "
-            f"({elapsed:.1f}s)"
-        )
+        _ros.info(f"Download finished for {sid}/{run_id} → {dest_dir} ({elapsed:.1f}s)")
     except Exception as e:
         _ros.error(f"Download failed for {sid}/{run_id}: {e}")
         store.update_transfer(

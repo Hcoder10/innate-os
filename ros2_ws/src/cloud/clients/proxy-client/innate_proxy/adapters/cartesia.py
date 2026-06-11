@@ -10,7 +10,8 @@ This is satisfied by :class:`innate_proxy.ProxyClient`.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,8 @@ class ProxyCartesiaClient:
             self,
             model_id: str,
             transcript: str,
-            voice: Dict[str, Any],
-            output_format: Dict[str, Any],
+            voice: dict[str, Any],
+            output_format: dict[str, Any],
         ) -> Iterator[bytes]:
             """Generate speech audio as a streaming iterator of byte chunks.
 
@@ -63,7 +64,7 @@ class ProxyCartesiaClient:
     def close(self) -> None:
         self._parent.close()
 
-    def __enter__(self) -> "ProxyCartesiaClient":
+    def __enter__(self) -> ProxyCartesiaClient:
         return self
 
     def __exit__(self, *exc: Any) -> None:

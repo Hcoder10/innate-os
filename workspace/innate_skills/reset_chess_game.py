@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from brain_client.skill_types import Skill, SkillResult
+from brain_client.skills.types import Skill, SkillResult
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"

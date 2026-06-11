@@ -96,9 +96,7 @@ class SkillUpdate(BaseModel):
 
 
 @router.put("/{skill_name}")
-async def update_skill(
-    request: Request, skill_name: str, body: SkillUpdate
-) -> dict[str, Any]:
+async def update_skill(request: Request, skill_name: str, body: SkillUpdate) -> dict[str, Any]:
     """Update editable fields in a skill's metadata.json.
 
     Uses the training client's locked metadata pattern for safe

@@ -10,3 +10,12 @@
 
 [voice]
 # cartesia_voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+
+[paths]
+# Extra directories to scan for agents and skills, in addition to workspace/.
+# Use absolute paths anywhere on this machine. Separate multiple dirs with ":"
+# (the OS path separator). These dirs are watched for hot reload just like
+# workspace/ — edits/new files reload live, provided the dir exists at launch.
+# In a Docker/sim setup, host paths must also be mounted into the container.
+# agent_dirs = "/home/me/my-agents:/opt/team/agents"
+# skill_dirs = "/home/me/my-skills"

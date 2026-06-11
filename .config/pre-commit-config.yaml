@@ -1,0 +1,35 @@
+# Pre-commit hooks for innate-os.
+#
+# These are the same checks CI enforces (.github/workflows/format.yml runs
+# `pre-commit run --all-files -c .config/pre-commit-config.yaml`), so violations
+# are caught locally before they reach a PR. Hook versions are pinned here, so
+# local and CI results are identical regardless of any system-installed tools.
+#
+# This config lives outside the repo root to keep the root tidy, so every
+# pre-commit invocation must point at it with `-c .config/pre-commit-config.yaml`.
+#
+# One-time setup:
+#   pip install pre-commit
+#   pre-commit install -c .config/pre-commit-config.yaml   # run on `git commit`
+# Run manually across the whole repo:
+#   pre-commit run --all-files -c .config/pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.15
+    hooks:
+      # Lint (auto-fixes what it safely can, then fails so you re-stage).
+      - id: ruff
+        args: [--fix]
+      # Format.
+      - id: ruff-format
+
+  # C++ formatting. The mirror installs clang-format from pip at this pinned
+  # version, so every contributor (and CI) uses the exact same formatter,
+  # independent of any system clang-format.
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.3
+    hooks:
+      - id: clang-format
+        # C/C++ only. The hook otherwise also targets json/js/java, which the
+        # C++-only .clang-format can't format.
+        types_or: [c, c++]

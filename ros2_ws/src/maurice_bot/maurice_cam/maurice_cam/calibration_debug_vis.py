@@ -40,7 +40,7 @@ def generate_debug_mosaic(node, result):
 
         h, w = node.image_height, node.image_width
         status_color = (0, 255, 0) if capture_success else (0, 0, 255)
-        status_text = 'OK' if capture_success else 'FAIL'
+        status_text = "OK" if capture_success else "FAIL"
 
         # --- Row 1: Raw images with ArUco marker outlines overlaid ---
         left_markers_panel = left_img.copy()
@@ -54,12 +54,33 @@ def generate_debug_mosaic(node, result):
         if marker_corners_right is not None and marker_ids_right is not None:
             cv2.aruco.drawDetectedMarkers(right_markers_panel, marker_corners_right, marker_ids_right)
 
-        cv2.putText(left_markers_panel, f'LEFT {status_text} - {n_markers_left} markers', (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-        cv2.putText(left_markers_panel, f'[{node.images_captured}/{node.num_images_required}]', (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        cv2.putText(right_markers_panel, f'RIGHT {status_text} - {n_markers_right} markers', (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+        cv2.putText(
+            left_markers_panel,
+            f"LEFT {status_text} - {n_markers_left} markers",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            status_color,
+            2,
+        )
+        cv2.putText(
+            left_markers_panel,
+            f"[{node.images_captured}/{node.num_images_required}]",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+        )
+        cv2.putText(
+            right_markers_panel,
+            f"RIGHT {status_text} - {n_markers_right} markers",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            status_color,
+            2,
+        )
 
         # --- Row 2: Raw images with ChArUco corners overlaid ---
         # Common corners are drawn darker, non-common lighter
@@ -79,8 +100,9 @@ def generate_debug_mosaic(node, result):
                     # Dark red = common, bright red = this camera only
                     color = (0, 0, 150) if cid in common_ids else (100, 100, 255)
                     cv2.circle(left_charuco_panel, (x, y), 4, color, -1)
-                    cv2.putText(left_charuco_panel, str(cid),
-                                (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1)
+                    cv2.putText(
+                        left_charuco_panel, str(cid), (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1
+                    )
 
         if charuco_corners_right is not None and charuco_ids_right is not None:
             for i, corner in enumerate(charuco_corners_right):
@@ -90,15 +112,28 @@ def generate_debug_mosaic(node, result):
                     # Dark green = common, bright green = this camera only
                     color = (0, 150, 0) if cid in common_ids else (100, 255, 100)
                     cv2.circle(right_charuco_panel, (x, y), 4, color, -1)
-                    cv2.putText(right_charuco_panel, str(cid),
-                                (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1)
+                    cv2.putText(
+                        right_charuco_panel, str(cid), (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1
+                    )
 
-        cv2.putText(left_charuco_panel,
-                    f'LEFT - {n_corners_left} corners ({n_common} common)', (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        cv2.putText(right_charuco_panel,
-                    f'RIGHT - {n_corners_right} corners ({n_common} common)', (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(
+            left_charuco_panel,
+            f"LEFT - {n_corners_left} corners ({n_common} common)",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
+        cv2.putText(
+            right_charuco_panel,
+            f"RIGHT - {n_corners_right} corners ({n_common} common)",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
+        )
 
         # --- Row 3: Common corners and object points ---
         corners_panel = np.zeros((h, w, 3), dtype=np.uint8)
@@ -114,11 +149,17 @@ def generate_debug_mosaic(node, result):
                 if 0 <= x < w and 0 <= y < h:
                     cv2.circle(corners_panel, (x, y), 4, (0, 255, 0), -1)
             n_common = len(corners_left_filtered)
-            cv2.putText(corners_panel, f'Common corners: {n_common} (red=L, green=R)', (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(
+                corners_panel,
+                f"Common corners: {n_common} (red=L, green=R)",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1,
+            )
         else:
-            cv2.putText(corners_panel, 'No common corners', (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(corners_panel, "No common corners", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         if obj_pts is not None and len(obj_pts) > 0:
             pts = obj_pts.reshape(-1, 3)
@@ -135,11 +176,17 @@ def generate_debug_mosaic(node, result):
                 py = int((pt[1] - y_min) * scale + margin)
                 if 0 <= px < w and 0 <= py < h:
                     cv2.circle(obj_panel, (px, py), 4, (0, 165, 255), -1)
-            cv2.putText(obj_panel, f'Object points: {len(pts)} (3D->2D)', (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+            cv2.putText(
+                obj_panel,
+                f"Object points: {len(pts)} (3D->2D)",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 165, 255),
+                2,
+            )
         else:
-            cv2.putText(obj_panel, 'No object points', (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(obj_panel, "No object points", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         # Assemble 3x2 mosaic
         row1 = np.hstack([left_markers_panel, right_markers_panel])
@@ -148,14 +195,14 @@ def generate_debug_mosaic(node, result):
         mosaic = np.vstack([row1, row2, row3])
 
         # Save mosaic
-        mosaic_path = node.tmp_image_dir / f'debug_mosaic_{node.capture_attempts:03d}.png'
+        mosaic_path = node.tmp_image_dir / f"debug_mosaic_{node.capture_attempts:03d}.png"
         cv2.imwrite(str(mosaic_path), mosaic)
-        mosaic_path = node.tmp_image_dir / 'debug_mosaic.png'  # for live viewing
+        mosaic_path = node.tmp_image_dir / "debug_mosaic.png"  # for live viewing
         cv2.imwrite(str(mosaic_path), mosaic)
-        node.get_logger().info(f'Debug mosaic saved: {mosaic_path}')
+        node.get_logger().info(f"Debug mosaic saved: {mosaic_path}")
 
     except Exception as e:
-        node.get_logger().warn(f'Failed to generate debug mosaic: {e}')
+        node.get_logger().warn(f"Failed to generate debug mosaic: {e}")
 
 
 def generate_visualizations(node):
@@ -200,22 +247,22 @@ def generate_visualizations(node):
                 if 0 <= x < w and 0 <= y < h:
                     cv2.circle(corners_viz, (x, y), 3, (0, 150, 0), -1)
 
-        corners_path = node.tmp_image_dir / 'corners_visualization.png'
+        corners_path = node.tmp_image_dir / "corners_visualization.png"
         cv2.imwrite(str(corners_path), corners_viz)
-        node.get_logger().info(f'  Saved corners visualization: {corners_path}')
+        node.get_logger().info(f"  Saved corners visualization: {corners_path}")
 
         # --- Rectified corner scatter ---
         # Uses individual (all) corners per camera with per-camera undistortion
         rectified_viz = np.zeros((h, w, 3), dtype=np.uint8)
 
-        K1 = node.calibration_data['K1']
-        D1 = node.calibration_data['D1']
-        K2 = node.calibration_data['K2']
-        D2 = node.calibration_data['D2']
-        R1 = node.calibration_data['R1']
-        R2 = node.calibration_data['R2']
-        P1 = node.calibration_data['P1']
-        P2 = node.calibration_data['P2']
+        K1 = node.calibration_data["K1"]
+        D1 = node.calibration_data["D1"]
+        K2 = node.calibration_data["K2"]
+        D2 = node.calibration_data["D2"]
+        R1 = node.calibration_data["R1"]
+        R2 = node.calibration_data["R2"]
+        P1 = node.calibration_data["P1"]
+        P2 = node.calibration_data["P2"]
 
         for corners in node.indiv_corners_left:
             rectified = cv2.undistortPoints(corners, K1, D1, R=R1, P=P1)
@@ -246,9 +293,9 @@ def generate_visualizations(node):
                 if 0 <= x < w and 0 <= y < h:
                     cv2.circle(rectified_viz, (x, y), 3, (0, 150, 0), -1)
 
-        rectified_path = node.tmp_image_dir / 'corners_rectified_visualization.png'
+        rectified_path = node.tmp_image_dir / "corners_rectified_visualization.png"
         cv2.imwrite(str(rectified_path), rectified_viz)
-        node.get_logger().info(f'  Saved rectified corners visualization: {rectified_path}')
+        node.get_logger().info(f"  Saved rectified corners visualization: {rectified_path}")
 
     except Exception as e:
-        node.get_logger().warn(f'Failed to generate visualizations: {e}')
+        node.get_logger().warn(f"Failed to generate visualizations: {e}")

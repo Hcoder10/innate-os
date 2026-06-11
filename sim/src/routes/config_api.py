@@ -1,21 +1,22 @@
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
-from typing import Dict, Any, Optional
-from pydantic import BaseModel, root_validator
-import time  # Add time import for timestamp
-import os  # Need os for path joining
-import json  # Need json for loading file
 import asyncio
+import json  # Need json for loading file
+import os  # Need os for path joining
+import time  # Add time import for timestamp
 import uuid
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, root_validator
 
 # ResetRobotCmd is used by the reset routes
 # SetEnvironmentCmd is used to send the config to the simulation node
 # BrainActiveCmd is used to activate/deactivate the brain via rosbridge
 from src.agent.types import (
-    ResetRobotCmd,
-    SetEnvironmentCmd,
     BrainActiveCmd,
     BrainBackendConfigCmd,
+    ResetRobotCmd,
+    SetEnvironmentCmd,
 )
 from src.runtime_logging import SIM_LOG_MODES
 
@@ -26,24 +27,24 @@ SET_ENV_APPLY_POLL_INTERVAL_S = 0.02
 
 # Pydantic model for the reset request body (copied from video_api)
 class ResetRobotRequest(BaseModel):
-    memory_state: Optional[str] = None
-    position: Optional[list[float]] = None
-    orientation: Optional[list[float]] = None
+    memory_state: str | None = None
+    position: list[float] | None = None
+    orientation: list[float] | None = None
 
 
 class ResetBrainRequest(BaseModel):
-    memory_state: Optional[str] = None
+    memory_state: str | None = None
 
 
 class ResetPositionRequest(BaseModel):
-    position: Optional[list[float]] = None
-    orientation: Optional[list[float]] = None
+    position: list[float] | None = None
+    orientation: list[float] | None = None
 
 
 # Pydantic model for the set environment request body
 class SetEnvironmentRequest(BaseModel):
-    config: Optional[Dict[str, Any]] = None
-    config_name: Optional[str] = None
+    config: dict[str, Any] | None = None
+    config_name: str | None = None
 
     @root_validator(pre=True)
     def check_config_or_name_provided(cls, values):
@@ -60,8 +61,8 @@ class SetSimLogConfigRequest(BaseModel):
 
 
 class BrainBackendConfigRequest(BaseModel):
-    websocket_uri: Optional[str] = None
-    service_key: Optional[str] = None
+    websocket_uri: str | None = None
+    service_key: str | None = None
 
     @root_validator(pre=True)
     def check_backend_config_provided(cls, values):
@@ -72,17 +73,13 @@ class BrainBackendConfigRequest(BaseModel):
         return values
 
 
-def build_reset_pose(
-    position: Optional[list[float]], orientation: Optional[list[float]]
-):
+def build_reset_pose(position: list[float] | None, orientation: list[float] | None):
     if position is None or orientation is None:
         return None
     return (tuple(position), tuple(orientation))
 
 
-async def wait_for_environment_apply_result(
-    shared_queues, request_id: str, timeout_s: float = SET_ENV_APPLY_TIMEOUT_S
-):
+async def wait_for_environment_apply_result(shared_queues, request_id: str, timeout_s: float = SET_ENV_APPLY_TIMEOUT_S):
     """Wait for SimulationNode to report set_environment success/failure."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -121,27 +118,23 @@ async def set_environment(request: Request, body: SetEnvironmentRequest):
         try:
             # Construct path relative to project root
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            config_path = os.path.join(
-                project_root, "data", "environments", f"{config_name}.json"
-            )
+            config_path = os.path.join(project_root, "data", "environments", f"{config_name}.json")
 
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 env_config = json.load(f)
             print(f"[ConfigAPI] Successfully loaded config from {config_path}")
         except FileNotFoundError:
-            raise HTTPException(
+            raise HTTPException(  # noqa: B904
                 status_code=400,
                 detail=f"Configuration file '{config_name}.json' not found.",
             )
         except json.JSONDecodeError:
-            raise HTTPException(
+            raise HTTPException(  # noqa: B904
                 status_code=400,
                 detail=f"Invalid JSON in configuration file '{config_name}.json'.",
             )
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Error loading configuration file: {e}"
-            )
+            raise HTTPException(status_code=500, detail=f"Error loading configuration file: {e}")  # noqa: B904
 
     elif body.config:
         print("[ConfigAPI] Using direct environment configuration from request body.")
@@ -158,18 +151,14 @@ async def set_environment(request: Request, body: SetEnvironmentRequest):
     request_id = str(uuid.uuid4())
 
     try:
-        set_env_cmd = SetEnvironmentCmd(
-            config=env_config, timestamp=time.time(), request_id=request_id
-        )
+        set_env_cmd = SetEnvironmentCmd(config=env_config, timestamp=time.time(), request_id=request_id)
         shared_queues.agent_to_sim.put_nowait(set_env_cmd)
         # Don't log full config here for brevity/security
         print("[ConfigAPI] Enqueued SetEnvironmentCmd")
 
     except Exception as e:
         # Re-raise as HTTPException for consistent API error handling
-        raise HTTPException(
-            status_code=500, detail=f"Failed to queue environment update: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to queue environment update: {e}")  # noqa: B904
 
     apply_result = await wait_for_environment_apply_result(shared_queues, request_id)
     if apply_result is None:
@@ -190,11 +179,7 @@ async def set_environment(request: Request, body: SetEnvironmentRequest):
             "message": "Environment configuration applied.",
             "request_id": request_id,
             # Optionally include name if loaded from file
-            "source": (
-                f"file: {body.config_name}.json"
-                if body.config_name
-                else "direct config"
-            ),
+            "source": (f"file: {body.config_name}.json" if body.config_name else "direct config"),
         }
     )
 
@@ -214,9 +199,7 @@ def set_brain_backend_config(request: Request, body: BrainBackendConfigRequest):
 
     websocket_uri = (body.websocket_uri or "").strip() or None
     service_key = (body.service_key or "").strip() or None
-    if websocket_uri and not (
-        websocket_uri.startswith("ws://") or websocket_uri.startswith("wss://")
-    ):
+    if websocket_uri and not (websocket_uri.startswith("ws://") or websocket_uri.startswith("wss://")):
         raise HTTPException(
             status_code=400,
             detail="websocket_uri must start with ws:// or wss://",
@@ -230,9 +213,7 @@ def set_brain_backend_config(request: Request, body: BrainBackendConfigRequest):
             )
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=503, detail=f"Failed to queue brain backend update: {e}"
-        )
+        raise HTTPException(status_code=503, detail=f"Failed to queue brain backend update: {e}")  # noqa: B904
 
     status_message = "Brain backend config update queued."
     if websocket_uri:
@@ -303,9 +284,7 @@ def set_sim_log_config(request: Request, body: SetSimLogConfigRequest):
 
 
 @router.post("/reset_robot")
-async def reset_robot(
-    request: Request, reset_request: Optional[ResetRobotRequest] = None
-):
+async def reset_robot(request: Request, reset_request: ResetRobotRequest | None = None):
     """
     Legacy combined reset.
 
@@ -346,9 +325,7 @@ async def reset_robot(
 
 
 @router.post("/reset_brain")
-async def reset_brain(
-    request: Request, reset_request: Optional[ResetBrainRequest] = None
-):
+async def reset_brain(request: Request, reset_request: ResetBrainRequest | None = None):
     """Request a brain reset without resetting simulator position."""
     shared_queues = request.app.state.SHARED_QUEUES
     memory_state = reset_request.memory_state if reset_request is not None else None
@@ -365,15 +342,11 @@ async def reset_brain(
     except Exception:
         return JSONResponse({"status": "queue_full"}, status_code=503)
 
-    return JSONResponse(
-        {"status": "reset_brain_enqueued", "memory_state": memory_state}
-    )
+    return JSONResponse({"status": "reset_brain_enqueued", "memory_state": memory_state})
 
 
 @router.post("/reset_position")
-async def reset_position(
-    request: Request, reset_request: Optional[ResetPositionRequest] = None
-):
+async def reset_position(request: Request, reset_request: ResetPositionRequest | None = None):
     """Reset simulator position without requesting a brain reset."""
     shared_queues = request.app.state.SHARED_QUEUES
     pose = None

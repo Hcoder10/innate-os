@@ -29,7 +29,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import Annotated, Any, Optional, Union
+from typing import Annotated, Any, Union
 
 from pydantic import (
     BaseModel,
@@ -133,13 +133,13 @@ class LearnedExecCfg(_BaseExecCfg):
     action_dim: int = Field(10, ge=1, le=64)
     duration: float = Field(120.0, gt=0)
     progress_threshold: float = Field(2.0, ge=0)
-    start_pose: Optional[Pose6] = None
-    end_pose: Optional[Pose6] = None
+    start_pose: Pose6 | None = None
+    end_pose: Pose6 | None = None
     start_pose_time: float = Field(1.0, gt=0)
     end_pose_time: float = Field(1.0, gt=0)
     # chunk_size-aware clamping happens inside create_act_config once the
     # checkpoint is loaded; the schema only enforces ``>= 1``.
-    n_action_steps: Optional[int] = Field(None, ge=1)
+    n_action_steps: int | None = Field(None, ge=1)
 
     @field_validator("start_pose", "end_pose", mode="before")
     @classmethod
@@ -169,7 +169,7 @@ class PosesExecCfg(_BaseExecCfg):
     # ``steps`` is the per-pose duration in seconds that the task manager
     # holds between waypoints. ``None`` => defer to ``len(poses)`` in the
     # caller (preserves the legacy default).
-    steps: Optional[float] = Field(None, gt=0)
+    steps: float | None = Field(None, gt=0)
 
     @field_validator("steps", mode="before")
     @classmethod
@@ -183,8 +183,8 @@ class ReplayExecCfg(_BaseExecCfg):
     """``execution`` block for ``type: replay`` skills."""
 
     replay_file: str = Field(..., min_length=1)
-    start_pose: Optional[Pose6] = None
-    end_pose: Optional[Pose6] = None
+    start_pose: Pose6 | None = None
+    end_pose: Pose6 | None = None
     start_pose_time: float = Field(1.0, gt=0)
     end_pose_time: float = Field(1.0, gt=0)
     replay_frequency: float = Field(12.0, gt=0)
@@ -207,7 +207,7 @@ class ReplayExecCfg(_BaseExecCfg):
         return _finite_number(value)
 
 
-ExecCfg = Union[LearnedExecCfg, PosesExecCfg, ReplayExecCfg]
+ExecCfg = Union[LearnedExecCfg, PosesExecCfg, ReplayExecCfg]  # noqa: UP007
 
 
 _MODEL_FOR_TYPE: dict[str, type[_BaseExecCfg]] = {
@@ -231,7 +231,7 @@ class ValidatedBehavior:
     # Absolute path to the on-disk asset referenced by the config
     # (``checkpoint`` for learned, ``replay_file`` for replay). ``None`` for
     # poses skills, which don't reference any file.
-    resolved_path: Optional[str] = None
+    resolved_path: str | None = None
 
 
 def _format_validation_error(exc: ValidationError, prefix: str = "execution") -> str:
@@ -252,7 +252,7 @@ def _format_validation_error(exc: ValidationError, prefix: str = "execution") ->
 
 
 def validate_behavior_config(
-    behavior_config: Union[str, dict],
+    behavior_config: str | dict,
     skill_dir: str,
     *,
     check_files_exist: bool = True,
@@ -287,37 +287,25 @@ def validate_behavior_config(
         try:
             payload = json.loads(behavior_config)
         except json.JSONDecodeError as exc:
-            raise BehaviorConfigError(
-                f"behavior_config is not valid JSON: {exc}"
-            ) from exc
+            raise BehaviorConfigError(f"behavior_config is not valid JSON: {exc}") from exc
     elif isinstance(behavior_config, dict):
         payload = behavior_config
     else:
         raise BehaviorConfigError(
-            f"behavior_config must be a JSON string or dict, got "
-            f"{type(behavior_config).__name__}"
+            f"behavior_config must be a JSON string or dict, got {type(behavior_config).__name__}"
         )
 
     if not isinstance(payload, dict):
-        raise BehaviorConfigError(
-            f"behavior_config must decode to a JSON object, got "
-            f"{type(payload).__name__}"
-        )
+        raise BehaviorConfigError(f"behavior_config must decode to a JSON object, got {type(payload).__name__}")
 
     # 2. Top-level shape.
     behavior_type = payload.get("type")
     if behavior_type not in KNOWN_BEHAVIOR_TYPES:
-        raise BehaviorConfigError(
-            f"type: must be one of {list(KNOWN_BEHAVIOR_TYPES)}, got "
-            f"{behavior_type!r}"
-        )
+        raise BehaviorConfigError(f"type: must be one of {list(KNOWN_BEHAVIOR_TYPES)}, got {behavior_type!r}")
 
     exec_dict = payload.get("execution")
     if not isinstance(exec_dict, dict):
-        raise BehaviorConfigError(
-            f"execution: must be a JSON object, got "
-            f"{type(exec_dict).__name__}"
-        )
+        raise BehaviorConfigError(f"execution: must be a JSON object, got {type(exec_dict).__name__}")
 
     # 3. Per-type schema validation.
     model_cls = _MODEL_FOR_TYPE[behavior_type]
@@ -327,23 +315,17 @@ def validate_behavior_config(
         raise BehaviorConfigError(_format_validation_error(exc)) from exc
 
     # 4. Asset existence checks.
-    resolved_path: Optional[str] = None
+    resolved_path: str | None = None
     if behavior_type == "learned":
         assert isinstance(params, LearnedExecCfg)  # for type checkers
         resolved_path = os.path.join(skill_dir, params.checkpoint)
         if check_files_exist and not os.path.isfile(resolved_path):
-            raise BehaviorConfigError(
-                f"execution.checkpoint: file does not exist at "
-                f"{resolved_path!r}"
-            )
+            raise BehaviorConfigError(f"execution.checkpoint: file does not exist at {resolved_path!r}")
     elif behavior_type == "replay":
         assert isinstance(params, ReplayExecCfg)
         resolved_path = os.path.join(skill_dir, params.replay_file)
         if check_files_exist and not os.path.isfile(resolved_path):
-            raise BehaviorConfigError(
-                f"execution.replay_file: file does not exist at "
-                f"{resolved_path!r}"
-            )
+            raise BehaviorConfigError(f"execution.replay_file: file does not exist at {resolved_path!r}")
 
     return ValidatedBehavior(
         behavior_type=behavior_type,

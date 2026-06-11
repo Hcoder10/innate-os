@@ -1,6 +1,6 @@
-from stl import mesh
-from PIL import Image, ImageDraw
 import numpy as np
+from PIL import Image, ImageDraw
+from stl import mesh
 
 
 def slice_stl(stl_path, height, output_path, pixel_size=0.05):
@@ -25,9 +25,7 @@ def slice_stl(stl_path, height, output_path, pixel_size=0.05):
     max_y = model.y.max()
 
     if height < min_z or height > max_z:
-        raise ValueError(
-            f"Height {height}m is outside model bounds ({min_z}m to {max_z}m)"
-        )
+        raise ValueError(f"Height {height}m is outside model bounds ({min_z}m to {max_z}m)")
 
     # Compute the world dimensions in meters
     world_width = max_x - min_x
