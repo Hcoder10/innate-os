@@ -1,0 +1,50 @@
+name: Publish Simulator Assets
+
+# Manually-triggered republish of the simulator asset pack. Pulls the pack
+# currently pinned in sim/assets.lock.json, renames maurice.urdf -> mars.urdf
+# if the pack still carries the old name, and publishes a new content-addressed
+# tag via `innate sim assets publish`. The regenerated lock is uploaded as an
+# artifact; commit it to the branch to pin the new pack.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up multi-platform builder
+        run: docker buildx create --use
+
+      - name: Extract currently pinned asset pack
+        run: |
+          image_ref=$(python3 -c 'import json; print(json.load(open("sim/assets.lock.json"))["image_ref"])')
+          docker pull "$image_ref"
+          cid=$(docker create "$image_ref" /noop)
+          docker cp "$cid:/sim-data/." sim/
+          docker rm -f "$cid"
+
+      - name: Rename URDF if the pack still carries the old name
+        run: |
+          if [ -f sim/data/urdf/maurice.urdf ] && [ ! -f sim/data/urdf/mars.urdf ]; then
+            mv sim/data/urdf/maurice.urdf sim/data/urdf/mars.urdf
+          fi
+          ls -l sim/data/urdf/
+
+      - name: Publish asset pack
+        run: ./innate sim assets publish
+
+      - name: Upload regenerated lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-lock
+          path: sim/assets.lock.json
