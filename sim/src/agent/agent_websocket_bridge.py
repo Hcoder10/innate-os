@@ -251,6 +251,16 @@ async def _send_service_response(ws, service_name: str, values: dict, call_id: s
     await ws.send(json.dumps(response))
 
 
+def _arm_trajectory_target_durations(waypoints: list[list[float]], durations: list[float]) -> list[float] | None:
+    if not waypoints:
+        return []
+    if not durations:
+        return [1.0] * len(waypoints)
+    if len(durations) != len(waypoints) - 1:
+        return None
+    return [durations[0], *durations]
+
+
 async def _run_arm_trajectory_service(
     ws,
     shared_queues,
@@ -259,7 +269,11 @@ async def _run_arm_trajectory_service(
     waypoints: list[list[float]],
     durations: list[float],
 ):
-    initial_duration = durations[0] if durations else 1.0
+    target_durations = _arm_trajectory_target_durations(waypoints, durations)
+    if target_durations is None:
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+        return
+
     try:
         for index, waypoint in enumerate(waypoints):
             if not is_arm_torque_enabled(shared_queues):
@@ -271,13 +285,7 @@ async def _run_arm_trajectory_service(
                 )
                 return
 
-            if index == 0:
-                duration = initial_duration
-            elif index - 1 < len(durations):
-                duration = durations[index - 1]
-            else:
-                duration = initial_duration
-
+            duration = target_durations[index]
             shared_queues.agent_to_sim.put_nowait(ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration)))
             await asyncio.sleep(max(0.0, duration))
 
