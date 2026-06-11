@@ -236,19 +236,27 @@ setup_swap() {
         return 0
     fi
 
-    # Create the backing file if missing. fallocate works on the ext4 NVMe root;
-    # fall back to dd for filesystems where it produces a sparse file.
-    if [ ! -f "$SWAP_FILE" ]; then
-        log "  Creating ${SWAP_SIZE_GB}G swap file at $SWAP_FILE..."
-        if ! fallocate -l "${SWAP_SIZE_GB}G" "$SWAP_FILE"; then
-            log "  fallocate unavailable; falling back to dd"
-            dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none || return 1
-        fi
+    # Not active. Any existing file may be a partial leftover from an interrupted
+    # run (power loss, disk-full, OOM-killed dd); a truncated file would make
+    # mkswap fail on every future update. So never trust an existing file:
+    # rebuild from scratch, and remove it on any failure so a botched run can't
+    # permanently block swap setup on later updates.
+    rm -f "$SWAP_FILE"
+    log "  Creating ${SWAP_SIZE_GB}G swap file at $SWAP_FILE..."
+
+    # Create with mode 600 up front (never world-readable), then allocate.
+    # fallocate works on the ext4 NVMe root; fall back to dd where unsupported.
+    install -m 600 /dev/null "$SWAP_FILE" || return 1
+    if ! fallocate -l "${SWAP_SIZE_GB}G" "$SWAP_FILE"; then
+        log "  fallocate unavailable; falling back to dd"
+        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none \
+            || { rm -f "$SWAP_FILE"; return 1; }
     fi
 
-    chmod 600 "$SWAP_FILE"
-    mkswap "$SWAP_FILE" >/dev/null || return 1
-    swapon "$SWAP_FILE" || return 1
+    if ! mkswap "$SWAP_FILE" >/dev/null || ! swapon "$SWAP_FILE"; then
+        rm -f "$SWAP_FILE"
+        return 1
+    fi
     log "  Swap enabled ($SWAP_FILE)"
 
     # Persist across reboots.
