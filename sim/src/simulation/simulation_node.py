@@ -197,6 +197,7 @@ class SimulationNode:
         self.robot_camera_vfov = 80
         self.robot_camera_hfov = degrees(2 * atan(tan(radians(self.robot_camera_vfov) / 2) * 640 / 480))
         self.robot_camera_res = (640, 480)
+        self.robot_camera_near = _env_float("SIM_CAMERA_NEAR", 0.03)
         self.physics_collision_enabled = _env_bool("SIM_ENABLE_COLLISION", True)
         self.camera_mode = os.getenv("SIM_CAMERA_MODE", "all").strip().lower()
         self.cameras_enabled = self.camera_mode != "none"
@@ -219,6 +220,7 @@ class SimulationNode:
         print(
             f"Robot camera FOV (vfov, hfov, res): {self.robot_camera_vfov}, {self.robot_camera_hfov}, {self.robot_camera_res}"
         )
+        print(f"Robot camera near clipping plane: {self.robot_camera_near:g} m")
         self._startup_mark("initial state")
 
         # Initialize core components
@@ -1133,6 +1135,7 @@ class SimulationNode:
             pos=(0, 0, 0),
             lookat=(1, 0, 0),
             fov=self.robot_camera_vfov,
+            near=self.robot_camera_near,
         )
 
         if self.camera_mode in {"first-person", "first_person", "primary"}:
@@ -1153,6 +1156,7 @@ class SimulationNode:
             pos=(0, 0, 0),
             lookat=(1, 0, 0),
             fov=self.robot_camera_vfov,
+            near=self.robot_camera_near,
         )
 
         # Add chase camera

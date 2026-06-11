@@ -690,6 +690,8 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
         env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
     if config.get("sim_scene_dt") is not None:
         env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
+    if config.get("sim_camera_near") is not None:
+        env["SIM_CAMERA_NEAR"] = str(config["sim_camera_near"])
 
     sim_args = shlex.split(str(config["sim_args"]))
     if config.get("sim_visualization") and "--vis" not in sim_args and "-v" not in sim_args:
