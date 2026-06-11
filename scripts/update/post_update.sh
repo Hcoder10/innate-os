@@ -230,38 +230,44 @@ SWAP_FILE="/swapfile"
 SWAP_SIZE_GB=8
 
 setup_swap() {
-    # Already active? Nothing to do (the common case on every update after the first).
     if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$SWAP_FILE"; then
+        # Already active (the common case on every update after the first).
+        # Still fall through to the fstab check below: an earlier run interrupted
+        # between swapon and the fstab append leaves swap active but unpersisted.
         log "  Swap file already active ($SWAP_FILE)"
-        return 0
-    fi
-
-    # Not active. Any existing file may be a partial leftover from an interrupted
-    # run (power loss, disk-full, OOM-killed dd); a truncated file would make
-    # mkswap fail on every future update. So never trust an existing file:
-    # rebuild from scratch, and remove it on any failure so a botched run can't
-    # permanently block swap setup on later updates.
-    rm -f "$SWAP_FILE"
-    log "  Creating ${SWAP_SIZE_GB}G swap file at $SWAP_FILE..."
-
-    # Create with mode 600 up front (never world-readable), then allocate.
-    # fallocate works on the ext4 NVMe root; fall back to dd where unsupported.
-    install -m 600 /dev/null "$SWAP_FILE" || return 1
-    if ! fallocate -l "${SWAP_SIZE_GB}G" "$SWAP_FILE"; then
-        log "  fallocate unavailable; falling back to dd"
-        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none \
-            || { rm -f "$SWAP_FILE"; return 1; }
-    fi
-
-    if ! mkswap "$SWAP_FILE" >/dev/null || ! swapon "$SWAP_FILE"; then
+    else
+        # Not active. Any existing file may be a partial leftover from an
+        # interrupted run (power loss, disk-full, OOM-killed dd); a truncated
+        # file would make mkswap fail on every future update. So never trust an
+        # existing file: rebuild from scratch, and remove it on any failure so a
+        # botched run can't permanently block swap setup on later updates.
         rm -f "$SWAP_FILE"
-        return 1
-    fi
-    log "  Swap enabled ($SWAP_FILE)"
+        log "  Creating ${SWAP_SIZE_GB}G swap file at $SWAP_FILE..."
 
-    # Persist across reboots.
+        # Create with mode 600 up front (never world-readable), then allocate.
+        # fallocate works on the ext4 NVMe root; fall back to dd where unsupported.
+        install -m 600 /dev/null "$SWAP_FILE" || return 1
+        if ! fallocate -l "${SWAP_SIZE_GB}G" "$SWAP_FILE"; then
+            log "  fallocate unavailable; falling back to dd"
+            dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none \
+                || { rm -f "$SWAP_FILE"; return 1; }
+        fi
+
+        if ! mkswap "$SWAP_FILE" >/dev/null || ! swapon "$SWAP_FILE"; then
+            rm -f "$SWAP_FILE"
+            return 1
+        fi
+        log "  Swap enabled ($SWAP_FILE)"
+    fi
+
+    # Persist across reboots. nofail keeps boot clean if the file is ever
+    # missing (e.g. removed by a failed re-setup); the entry then just waits
+    # for the next successful run instead of producing a degraded swap unit.
     if ! grep -qE "^${SWAP_FILE}[[:space:]]" /etc/fstab; then
-        echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
+        # Guard against an fstab without a trailing newline: a bare append
+        # would glue the swap entry onto the previous mount line.
+        [ -n "$(tail -c1 /etc/fstab)" ] && echo >> /etc/fstab
+        echo "$SWAP_FILE none swap sw,nofail 0 0" >> /etc/fstab
         log "  Added $SWAP_FILE to /etc/fstab"
     fi
     return 0
