@@ -7,6 +7,7 @@
 #
 # This script handles:
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
+#   0b. Enable a disk-backed swap file (INN-530)
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -214,6 +215,70 @@ fi
 # shellcheck source=scripts/update/migrate_user_data.sh
 source "$SCRIPT_DIR/migrate_user_data.sh"
 MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
+
+# -----------------------------------------------------------------------------
+# 0b. Enable a disk-backed swap file (INN-530)
+# Jetson ships only zram (compressed RAM swap), which adds no real headroom once
+# physical RAM is exhausted — the cause of OOM kills during memory-heavy work
+# like the colcon rebuild further down. A small NVMe-backed swap file adds a
+# genuine overflow tier; the kernel fills high-priority zram first, then spills
+# here. Enabled before the build so this very update run already benefits.
+# Idempotent: created/enabled once, then persisted in /etc/fstab.
+# Non-fatal: swap must never block an update, so failures only warn.
+# -----------------------------------------------------------------------------
+SWAP_FILE="/swapfile"
+SWAP_SIZE_GB=8
+
+setup_swap() {
+    if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$SWAP_FILE"; then
+        # Already active (the common case on every update after the first).
+        # Still fall through to the fstab check below: an earlier run interrupted
+        # between swapon and the fstab append leaves swap active but unpersisted.
+        log "  Swap file already active ($SWAP_FILE)"
+    else
+        # Not active. Any existing file may be a partial leftover from an
+        # interrupted run (power loss, disk-full, OOM-killed dd); a truncated
+        # file would make mkswap fail on every future update. So never trust an
+        # existing file: rebuild from scratch, and remove it on any failure so a
+        # botched run can't permanently block swap setup on later updates.
+        rm -f "$SWAP_FILE"
+        log "  Creating ${SWAP_SIZE_GB}G swap file at $SWAP_FILE..."
+
+        # Create with mode 600 up front (never world-readable), then allocate.
+        # fallocate works on the ext4 NVMe root; fall back to dd where unsupported.
+        install -m 600 /dev/null "$SWAP_FILE" || return 1
+        if ! fallocate -l "${SWAP_SIZE_GB}G" "$SWAP_FILE"; then
+            log "  fallocate unavailable; falling back to dd"
+            dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none \
+                || { rm -f "$SWAP_FILE"; return 1; }
+        fi
+
+        if ! mkswap "$SWAP_FILE" >/dev/null || ! swapon "$SWAP_FILE"; then
+            rm -f "$SWAP_FILE"
+            return 1
+        fi
+        log "  Swap enabled ($SWAP_FILE)"
+    fi
+
+    # Persist across reboots. nofail keeps boot clean if the file is ever
+    # missing (e.g. removed by a failed re-setup); the entry then just waits
+    # for the next successful run instead of producing a degraded swap unit.
+    if ! grep -qE "^${SWAP_FILE}[[:space:]]" /etc/fstab; then
+        # Guard against an fstab without a trailing newline: a bare append
+        # would glue the swap entry onto the previous mount line.
+        [ -n "$(tail -c1 /etc/fstab)" ] && echo >> /etc/fstab
+        echo "$SWAP_FILE none swap sw,nofail 0 0" >> /etc/fstab
+        log "  Added $SWAP_FILE to /etc/fstab"
+    fi
+    return 0
+}
+
+log "Configuring swap..."
+if setup_swap; then
+    log "  Swap configuration complete"
+else
+    log "  WARNING: swap configuration failed (continuing without disk swap)"
+fi
 
 # Stop running services before updating (keep app.cpp alive during build)
 log "Stopping services to begin update..."

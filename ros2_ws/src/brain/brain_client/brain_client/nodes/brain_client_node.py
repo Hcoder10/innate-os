@@ -234,7 +234,16 @@ class BrainClientNode(Node):
 
     # ================= always-on subscription callbacks =================
     def _on_chat_in(self, msg: String) -> None:
-        data = json.loads(msg.data)
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            self.get_logger().warn("[BrainClient] Ignoring /brain/chat_in: invalid JSON payload.")
+            return
+        if not isinstance(data, dict) or "text" not in data:
+            self.get_logger().warn(
+                "[BrainClient] Ignoring /brain/chat_in: payload must be a JSON object with a 'text' field."
+            )
+            return
         if not self.state.is_brain_active:
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping chat_in message.")
             return
