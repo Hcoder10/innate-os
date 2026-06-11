@@ -178,15 +178,11 @@ std::string get_tag_body(const std::string& maurice_root) {
 
 /**
  * Get the current robot version.
- * - If on main branch and there are tags, returns the latest tag
- * - If in development (not on main), returns dev version using latest tag
+ * - If HEAD is exactly on a tag (branch or detached), returns that tag
+ * - Otherwise (development or detached HEAD), returns latest tag + "-dev"
  * - Throws runtime_error if no tags exist (this should not happen)
  */
 std::string get_robot_version(const std::string& maurice_root) {
-    // Get current branch (empty if detached HEAD, e.g. tag checkout)
-    std::string branch_cmd = "cd \"" + maurice_root + "\" && git branch --show-current 2>/dev/null";
-    std::string current_branch = exec_command(branch_cmd);
-
     // Check if we're exactly on a tag (works for both branch and detached HEAD)
     std::string exact_cmd = "cd \"" + maurice_root + "\" && git describe --exact-match --tags HEAD 2>/dev/null";
     std::string exact_tag = exec_command(exact_cmd);
@@ -196,10 +192,9 @@ std::string get_robot_version(const std::string& maurice_root) {
         return exact_tag;
     }
 
-    // If not on a branch and not on a tag, we're in an unknown state
-    if (current_branch.empty()) {
-        throw std::runtime_error("Detached HEAD but not on a tag - checkout a branch or tag");
-    }
+    // Detached HEAD not exactly on a tag (e.g. interrupted update or manual
+    // checkout) is treated like any development state: fall through to the
+    // latest-tag "-dev" fallback instead of failing the version check.
 
     // Get all tags sorted by version
     std::string tags_cmd = "cd \"" + maurice_root + "\" && git tag --list --sort=-version:refname 2>/dev/null";
