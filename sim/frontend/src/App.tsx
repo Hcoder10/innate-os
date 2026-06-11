@@ -3,6 +3,7 @@ import { AlternativeSimDashboard } from "./components/AlternativeSimDashboard";
 import {
   AvailableAgentsResponse,
   BrainBackendStatus,
+  ExecuteSkillResult,
   RobotAgent,
   RobotSkill,
   StackMetricsResponse,
@@ -620,6 +621,18 @@ export default function App() {
     const primitiveId = `manual_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const skillName = skill.name || skill.id;
     let terminalManualEventPublished = false;
+    const postSimulatorManualEvent = async (
+      event: Record<string, string | undefined>,
+    ) => {
+      const response = await fetch(`${simBaseUrl}/manual_skill_event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(event),
+      });
+      if (!response.ok) {
+        throw new Error(`Manual skill event failed (HTTP ${response.status})`);
+      }
+    };
     const publishManualEvent = (
       status: "running" | "completed" | "failed" | "interrupted",
       reason?: string,
@@ -644,7 +657,7 @@ export default function App() {
           },
         }),
       );
-      void publishManualSkillEventDirect(robotWsUrl, {
+      const event = {
         status,
         skill_id: skill.id,
         skill_name: skillName,
@@ -652,13 +665,38 @@ export default function App() {
         inputs: inputsJson,
         reason,
         source: "sim_ui",
-      }).catch((error) => {
+      };
+      const publishEvent = useDirectRobot
+        ? publishManualSkillEventDirect(robotWsUrl, event)
+        : postSimulatorManualEvent(event);
+      void publishEvent.catch((error) => {
         console.warn("Failed to publish manual skill event:", error);
       });
     };
 
     publishManualEvent("running");
-    const action = startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson);
+    const action = useDirectRobot
+      ? startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson)
+      : {
+          cancel: () => {
+            void fetch(`${simBaseUrl}/cancel_skill_execution`, {
+              method: "POST",
+            }).catch((error) => {
+              console.error("Failed to cancel skill execution:", error);
+            });
+          },
+          promise: fetch(`${simBaseUrl}/execute_skill`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ skill_type: skill.id, inputs: inputsJson }),
+          }).then(async (response) => {
+            const result = (await response.json()) as ExecuteSkillResult;
+            if (!response.ok) {
+              throw new Error(result.message || `HTTP ${response.status}`);
+            }
+            return result;
+          }),
+        };
     return {
       cancel: action.cancel,
       promise: action.promise

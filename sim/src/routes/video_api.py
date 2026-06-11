@@ -1,7 +1,11 @@
 import asyncio
+import json
+import os
 import time
+import uuid
 
 import cv2
+import websockets
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -10,6 +14,11 @@ from src.agent.types import ActiveSkillsCmd, BrainActiveCmd, DirectiveCmd, Refre
 router = APIRouter()
 AGENT_REFRESH_TIMEOUT_SECONDS = 5.0
 AGENT_REFRESH_POLL_SECONDS = 0.05
+ROSBRIDGE_SERVICE_TIMEOUT_SECONDS = 10.0
+ROSBRIDGE_ACTION_TIMEOUT_SECONDS = 300.0
+ROSBRIDGE_PUBLISH_LINGER_SECONDS = 0.12
+EXECUTE_SKILL_ACTION = "/execute_skill"
+EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill"
 
 
 # Create a model for the reset robot request
@@ -27,6 +36,114 @@ class SetBrainActiveRequest(BaseModel):
 class SetActiveSkillsRequest(BaseModel):
     agent_id: str | None = None
     skills: list[str]
+
+
+class ExecuteSkillRequest(BaseModel):
+    skill_type: str
+    inputs: str = "{}"
+
+
+class ManualSkillEventRequest(BaseModel):
+    status: str
+    skill_id: str
+    skill_name: str
+    primitive_id: str
+    inputs: str | None = None
+    reason: str | None = None
+    source: str | None = None
+
+
+def rosbridge_uri() -> str:
+    return os.getenv("ROSBRIDGE_URI", "ws://localhost:9090")
+
+
+def make_rosbridge_id(prefix: str) -> str:
+    return f"{prefix}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+def is_terminal_action_status(status) -> bool:
+    if status is None:
+        return True
+    if status in (4, 5, 6):
+        return True
+    if isinstance(status, str):
+        return status.lower() in {"succeeded", "canceled", "cancelled", "aborted"}
+    return False
+
+
+def normalize_action_result(skill_type: str, status, values: dict | None) -> dict:
+    result = dict(values or {})
+    if status == 5 or (isinstance(status, str) and status.lower() in {"canceled", "cancelled"}):
+        result.setdefault("success", False)
+        result.setdefault("skill_type", skill_type)
+        result.setdefault("success_type", "cancelled")
+        result.setdefault("message", "Action was cancelled")
+    elif status == 6 or (isinstance(status, str) and status.lower() == "aborted"):
+        result.setdefault("success", False)
+        result.setdefault("skill_type", skill_type)
+        result.setdefault("success_type", "failure")
+        result.setdefault("message", "Action was aborted")
+    return result
+
+
+async def publish_rosbridge_topic(topic: str, msg: dict) -> None:
+    async with websockets.connect(rosbridge_uri()) as ws:
+        await ws.send(json.dumps({"op": "publish", "topic": topic, "msg": msg}))
+        await asyncio.sleep(ROSBRIDGE_PUBLISH_LINGER_SECONDS)
+
+
+async def call_rosbridge_service(service: str, args: dict) -> dict:
+    call_id = make_rosbridge_id("svc")
+    deadline = time.monotonic() + ROSBRIDGE_SERVICE_TIMEOUT_SECONDS
+    async with websockets.connect(rosbridge_uri()) as ws:
+        await ws.send(json.dumps({"op": "call_service", "id": call_id, "service": service, "args": args}))
+        while time.monotonic() < deadline:
+            timeout = max(0.0, deadline - time.monotonic())
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if message.get("op") != "service_response" or message.get("id") != call_id:
+                continue
+            if message.get("result") is False:
+                raise RuntimeError(f"Service {service} returned result=false")
+            return message.get("values") or {}
+    raise TimeoutError(f"Service {service} timed out")
+
+
+async def execute_rosbridge_action(skill_type: str, inputs: str) -> dict:
+    call_id = make_rosbridge_id("action")
+    goal_id = str(uuid.uuid4())
+    deadline = time.monotonic() + ROSBRIDGE_ACTION_TIMEOUT_SECONDS
+    async with websockets.connect(rosbridge_uri()) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "op": "send_action_goal",
+                    "id": call_id,
+                    "action": EXECUTE_SKILL_ACTION,
+                    "action_type": EXECUTE_SKILL_ACTION_TYPE,
+                    "args": {"skill_type": skill_type, "inputs": inputs},
+                    "feedback": True,
+                    "goal_id": goal_id,
+                }
+            )
+        )
+        while time.monotonic() < deadline:
+            timeout = max(0.0, deadline - time.monotonic())
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if message.get("op") != "action_result" or message.get("id") != call_id:
+                continue
+            status = message.get("status")
+            if not is_terminal_action_status(status):
+                continue
+            return normalize_action_result(skill_type, status, message.get("values"))
+    raise TimeoutError(f"Action {EXECUTE_SKILL_ACTION} timed out")
 
 
 def available_agents_payload(shared_queues, error: str | None = None) -> dict:
@@ -306,6 +423,91 @@ async def set_brain_active(request: Request, brain_request: SetBrainActiveReques
             return {"status": "queue_full"}
     else:
         return {"status": "no_shared_queues"}
+
+
+@router.post("/manual_skill_event")
+async def manual_skill_event(request: Request, event: ManualSkillEventRequest):
+    """Publish a manual skill lifecycle event through the simulator host."""
+    shared_queues = request.app.state.SHARED_QUEUES
+    if shared_queues is None:
+        return JSONResponse(
+            {"status": "no_shared_queues", "error": "Simulation not initialized"},
+            status_code=503,
+        )
+
+    try:
+        payload = event.dict()
+        payload["timestamp"] = time.time()
+        await publish_rosbridge_topic("/brain/manual_skill_event", {"data": json.dumps(payload)})
+        return {"status": "manual_skill_event_published"}
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "status": "rosbridge_unavailable",
+                "error": f"Failed to publish manual skill event: {exc}",
+            },
+            status_code=502,
+        )
+
+
+@router.post("/execute_skill")
+async def execute_skill(request: Request, skill_request: ExecuteSkillRequest):
+    """Execute a skill via the simulator host's local ROSBridge connection."""
+    shared_queues = request.app.state.SHARED_QUEUES
+    if shared_queues is None:
+        return JSONResponse(
+            {"success": False, "success_type": "failure", "message": "Simulation not initialized"},
+            status_code=503,
+        )
+
+    try:
+        result = await execute_rosbridge_action(skill_request.skill_type, skill_request.inputs)
+        return JSONResponse(result)
+    except TimeoutError as exc:
+        return JSONResponse(
+            {"success": False, "success_type": "failure", "message": str(exc)},
+            status_code=504,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "success": False,
+                "success_type": "failure",
+                "message": f"Failed to execute skill through ROSBridge: {exc}",
+            },
+            status_code=502,
+        )
+
+
+@router.post("/cancel_skill_execution")
+async def cancel_skill_execution(request: Request):
+    """Cancel currently running skill actions through the simulator host."""
+    shared_queues = request.app.state.SHARED_QUEUES
+    if shared_queues is None:
+        return JSONResponse(
+            {"status": "no_shared_queues", "error": "Simulation not initialized"},
+            status_code=503,
+        )
+
+    try:
+        values = await call_rosbridge_service(
+            "/execute_skill/_action/cancel_goal",
+            {
+                "goal_info": {
+                    "goal_id": {"uuid": [0] * 16},
+                    "stamp": {"sec": 0, "nanosec": 0},
+                }
+            },
+        )
+        return {"status": "skill_cancel_requested", "values": values}
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "status": "rosbridge_unavailable",
+                "error": f"Failed to cancel skill execution: {exc}",
+            },
+            status_code=502,
+        )
 
 
 @router.post("/reload_available_agents")
