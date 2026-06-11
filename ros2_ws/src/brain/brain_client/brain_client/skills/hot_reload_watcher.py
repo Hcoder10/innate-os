@@ -143,14 +143,18 @@ class HotReloadWatcher:
 
         Skills win over agents when a path matches both (a given watcher only ever
         schedules one of the two, so in practice there's no overlap).
+
+        Both sides are realpath-normalized: watchdog may report resolved paths while
+        a configured root is a symlink (e.g. macOS /var -> /private/var), which would
+        otherwise break the relative_to matching and silently drop the event.
         """
-        path = Path(file_path)
+        path = Path(os.path.realpath(file_path))
         for root in self.skills_directories:
-            name = _skill_name_for(Path(root), path)
+            name = _skill_name_for(Path(os.path.realpath(root)), path)
             if name is not None:
                 return name, True
         for root in self.agents_directories:
-            name = _flat_py_name_for(Path(root), path)
+            name = _flat_py_name_for(Path(os.path.realpath(root)), path)
             if name is not None:
                 return name, False
         return None
