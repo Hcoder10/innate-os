@@ -7,8 +7,9 @@ gate-by-gate breakdown of what runs, see [`../docs/TESTING.md`](../docs/TESTING.
 
 | File | Role |
 |---|---|
-| `Dockerfile.test` | The CI image: builds the whole `ros2_ws` (all packages) + bakes in `config/`, `workspace/`, and the test script. |
-| `Dockerfile.test.dockerignore` | Build context for the above (allowlist of what the image COPYs). |
+| `Dockerfile.test-base` | **Warm base** (published to ghcr from main): apt/pip deps, rosdep, a full prebuilt `ros2_ws` (`build/`+`install/`), and a *populated ccache*. Changes rarely. |
+| `Dockerfile.test` | Thin CI image, `FROM` the warm base: overlays this revision's source + `config/`/`workspace/` and does an **incremental, ccache-backed** `colcon build` (only changed packages recompile; the whole tree is still built). |
+| `Dockerfile.test-base.dockerignore` / `Dockerfile.test.dockerignore` | Build contexts for the two images (allowlist of what each COPYs). Each Dockerfile needs its own — BuildKit otherwise falls back to the restrictive root `.dockerignore`. |
 | `run_integration_tests.sh` | **Single source of truth for "the tests."** Runs unit (pytest) + integration (`colcon test`) inside the image. |
 | `docker-compose.test.yml` | Runs `run_integration_tests.sh` locally / on a self-hosted box. |
 | `cloudbuild.integration-test.yaml` | Runs the *same* script on Google Cloud Build. |
@@ -47,15 +48,36 @@ suspenders: they only matter if SHM is ever re-enabled in CI.
 
 ## Why the build covers every package
 
-`Dockerfile.test` builds **all** packages (no `--packages-skip`). `maurice_cam`/
-`nav`/`control` were once skipped as "Jetson-only", but they compile fine off
-Jetson (cam's VPI stereo is `if(VPI_FOUND)`-guarded; nav's `cupy` is runtime-only).
+The build covers **all** packages (no `--packages-skip`). `maurice_cam`/`nav`/
+`control` were once skipped as "Jetson-only", but they compile fine off Jetson
+(cam's VPI stereo is `if(VPI_FOUND)`-guarded; nav's `cupy` is runtime-only).
 Building everything makes the build the broad safety net for structural refactors.
+
+## Why the image is split into a base + thin layer
+
+Cloud Build VMs are ephemeral, so without help every run paid ~180s to apt/pip
+install ~1000 packages **and** a full `colcon build` from scratch. The split fixes
+both while still building the whole tree:
+
+- `Dockerfile.test-base` bakes the deps + a full prebuilt `ros2_ws` + a populated
+  ccache, and is pushed to `ghcr.io/innate-inc/innate-os-test-base:{main,buildcache}`
+  **only on main** (`_PUBLISH_BASE=true`).
+- PR builds `FROM` that base, so they skip apt/pip entirely and the ccache (which
+  is content-addressed, so it survives a fresh checkout) turns unchanged
+  translation units into hits — only changed packages do real compile work.
+
+A cache-missed `colcon` layer can never see the ccache it would itself produce, so
+`--cache-from` alone can't make it incremental — the *published* base is the load-
+bearing piece. See `cloudbuild.integration-test.yaml` for the main-vs-PR flow.
 
 ## Running it locally
 
 ```bash
+# Build the warm base once (deps + full prebuilt ros2_ws + ccache), then the thin
+# image on top. CI publishes the base from main; locally you build it yourself.
+docker build -t ghcr.io/innate-inc/innate-os-test-base:main -f ci/Dockerfile.test-base .
+docker build -t innate-os-test:latest -f ci/Dockerfile.test .
+
 INNATE_TEST_IMAGE=innate-os-test:latest docker compose -f ci/docker-compose.test.yml up \
   --abort-on-container-exit --exit-code-from integration-test
-# (build the image first: docker build -f ci/Dockerfile.test -t innate-os-test:latest .)
 ```

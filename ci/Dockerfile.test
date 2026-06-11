@@ -1,106 +1,96 @@
 # syntax=docker/dockerfile:1.7
 #
-# ci/Dockerfile.test - Test image for CI on non-Jetson platforms.
-# Skips Jetson-specific packages (nvidia-*, cuda-*, etc.)
+# ci/Dockerfile.test - Thin CI test image (built per PR/commit).
 #
+# Builds on the warm base (ci/Dockerfile.test-base, published as
+# ghcr.io/innate-inc/innate-os-test-base:main): apt/pip deps, rosdep, a full
+# prebuilt ros2_ws (build/ + install/), and a populated ccache are all baked in.
+# This layer overlays the current revision's source and does an INCREMENTAL,
+# ccache-backed colcon build, so only packages that actually changed do real
+# compile work. The whole workspace is still built, so a build error in any
+# package fails CI (the build gate is preserved).
 
-FROM ros:humble-ros-base
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    ROS_DISTRO=humble \
-    INNATE_OS_ROOT=/root/innate-os \
-    UV_SYSTEM_PYTHON=1 \
-    UV_LINK_MODE=copy \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ARG BASE_IMAGE=ghcr.io/innate-inc/innate-os-test-base:main
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install base prerequisites + enable universe (for gstreamer, libhdf5-dev, etc.)
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
-        curl \
-        iputils-ping \
-        gnupg \
-        lsb-release \
-        ca-certificates && \
-    add-apt-repository universe && \
-    apt-get update && apt-get install -y --no-install-recommends \
-        locales \
-        iproute2 \
-        libcairo2-dev \
-        libhdf5-dev \
-        ros-humble-kdl-parser
+# Inherited from the base, re-declared for clarity. The warm ccache lives here.
+ENV CCACHE_DIR=/root/.ccache
 
-# Setup locale
-RUN locale-gen en_US en_US.UTF-8 && \
-    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-ENV LANG=en_US.UTF-8
+# If this revision changed the hand-curated dependency lists, apply them on top
+# of the base (which baked the lists as of the last main build) — otherwise a PR
+# adding e.g. a pip package would build against stale deps with no diagnostic.
+# cmp against the copies baked into the base keeps the no-change case free; the
+# baked copies are then updated so the image matches this revision. The pip
+# filter must stay in sync with ci/Dockerfile.test-base.
+COPY ros2_ws/apt-dependencies.common.txt /tmp/pr-apt-deps.txt
+COPY ros2_ws/pip-requirements.txt /tmp/pr-pip-reqs.txt
+RUN if ! cmp -s /tmp/pr-apt-deps.txt /root/innate-os/ros2_ws/apt-dependencies.common.txt; then \
+        echo "apt-dependencies.common.txt changed since the base build; installing..." && \
+        apt-get update && \
+        grep -v '^#' /tmp/pr-apt-deps.txt | grep -v '^$' | \
+            xargs apt-get install -y --no-install-recommends && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi && \
+    if ! cmp -s /tmp/pr-pip-reqs.txt /root/innate-os/ros2_ws/pip-requirements.txt; then \
+        echo "pip-requirements.txt changed since the base build; installing..." && \
+        grep -v 'pypi.jetson-ai-lab.io' /tmp/pr-pip-reqs.txt | \
+            grep -v -E '^cupy' | \
+            grep -v -E '^pynput' | \
+            grep -v -E '^bluezero' > /tmp/pr-pip-reqs.filtered.txt && \
+        uv pip install --system -r /tmp/pr-pip-reqs.filtered.txt && \
+        rm /tmp/pr-pip-reqs.filtered.txt; \
+    fi && \
+    mv /tmp/pr-apt-deps.txt /root/innate-os/ros2_ws/apt-dependencies.common.txt && \
+    mv /tmp/pr-pip-reqs.txt /root/innate-os/ros2_ws/pip-requirements.txt
 
-# Add Innate packages repository (for ros-humble-innate-rws, etc.)
-RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
-    gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ $(lsb_release -cs) main" | \
-    tee /etc/apt/sources.list.d/innate.list > /dev/null
-
-# Copy apt dependencies file first (for better layer caching)
-COPY ros2_ws/apt-dependencies.common.txt /tmp/apt-dependencies.txt
-
-# Install apt dependencies from common list
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && \
-    grep -v '^#' /tmp/apt-dependencies.txt | grep -v '^$' | \
-        xargs apt-get install -y --no-install-recommends && \
-    rm /tmp/apt-dependencies.txt
-
-# Install uv for fast, cached Python package installation.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -sf /root/.local/bin/uv /usr/local/bin/uv
-
-# Install Python deps with uv. Test image is non-Jetson, so we drop Jetson-only
-# entries (cupy, jetson-ai-lab index) and runtime-only packages that don't
-# install on CI runners (pynput, bluezero). google-generativeai is required by
-# skills/scan_for_objects.py in integration tests.
-COPY ros2_ws/pip-requirements.txt /tmp/pip-requirements.txt
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    grep -v 'pypi.jetson-ai-lab.io' /tmp/pip-requirements.txt | \
-        grep -v -E '^cupy' | \
-        grep -v -E '^pynput' | \
-        grep -v -E '^bluezero' > /tmp/pip-requirements.filtered.txt && \
-    uv pip install --system meson ninja && \
-    uv pip install --system -r /tmp/pip-requirements.filtered.txt && \
-    uv pip install --system google-generativeai && \
-    rm /tmp/pip-requirements.txt /tmp/pip-requirements.filtered.txt
-
-# Initialize rosdep
-RUN rosdep init || true && rosdep update
-
-# Set up workspace directory
-WORKDIR /root/innate-os
-
-# Copy workspace source
-COPY ros2_ws /root/innate-os/ros2_ws
-
-# Copy additional directories needed at runtime
+# REPLACE (not merge) the baked first-party source with this revision's, so file
+# and package deletions take effect instead of leaving stale source behind, then
+# re-import the externals (also picks up changes to dependencies.repos without
+# waiting for a base rebuild). config/ and workspace/ are runtime inputs for the
+# tests; plain COPY-merge is fine there.
+COPY ros2_ws/src /tmp/pr-src
+RUN rm -rf /root/innate-os/ros2_ws/src && \
+    mv /tmp/pr-src /root/innate-os/ros2_ws/src && \
+    cd /root/innate-os/ros2_ws/src && \
+    if [ -f dependencies.repos ]; then \
+        vcs import --input dependencies.repos; \
+    fi
 COPY config /root/innate-os/config
 COPY workspace /root/innate-os/workspace
 
-# Import external dependencies using vcs
-RUN cd /root/innate-os/ros2_ws/src && \
-    if [ -f dependencies.repos ]; then \
-        echo "Importing external dependencies via vcs..." && \
-        vcs import --input dependencies.repos; \
-    fi
-
-# Install ROS dependencies and build the whole workspace.
-# maurice_cam/nav/control build fine on non-Jetson: cam's VPI stereo component is
-# guarded by if(VPI_FOUND), nav's only Jetson dep (python3-cupy) is runtime-only.
+# Incremental rebuild. ccache (warm from the base) turns unchanged translation
+# units into cache hits; only changed packages truly recompile.
+# --parallel-workers is capped at 4: E2_HIGHCPU_8 has 8 vCPUs but only 8 GB RAM,
+# and >4 concurrent C++ link jobs can OOM with no useful error.
+#
+# Before building, prune build/ + install/ dirs of packages that no longer exist
+# in src — otherwise a deleted package's stale artifacts could keep dependents
+# linking and CI would pass while the post-merge main build breaks. Residual
+# caveat: a file deleted from a package that still exists can leave a stale
+# installed copy (cmake install does not prune) until the next base rebuild.
+#
+# rosdep install is best-effort (-r, ||): it exits non-zero for keys with no
+# installable candidate on this non-Jetson image, so we cannot gate on it. Its
+# value: a NEW system <depend> declared by this revision gets installed without
+# waiting for a base rebuild. A truly missing dep still surfaces as a compiler
+# error in the colcon build below — check the rosdep output above it.
 WORKDIR /root/innate-os/ros2_ws
 RUN . /opt/ros/humble/setup.sh && \
-    rosdep install --from-paths src --ignore-src -r -y || true && \
-    colcon build --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release
+    colcon list --names-only --base-paths src > /tmp/current-pkgs.txt && \
+    for d in build/* install/*; do \
+        [ -d "$d" ] || continue; \
+        grep -qx "$(basename "$d")" /tmp/current-pkgs.txt || \
+            { echo "Pruning artifacts of removed package: $d"; rm -rf "$d"; }; \
+    done && \
+    rm /tmp/current-pkgs.txt && \
+    { rosdep install --from-paths src --ignore-src -r -y || \
+        echo "WARNING: rosdep install exited non-zero; if the build below fails on a missing system dep, check the rosdep output above." >&2; } && \
+    colcon build --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
 # Shared test entrypoint script (used by docker-compose.test.yml and Cloud Build).
 # Placed after the build so editing it does not invalidate the colcon build cache.
