@@ -151,7 +151,6 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
         agents,
         skills,
         current_agent_id,
-        startup_agent_id,
         active_skill_ids,
         brain_active,
     ) = shared_queues.get_available_agents()
@@ -186,7 +185,6 @@ def available_agents_payload(shared_queues, error: str | None = None) -> dict:
         "agents": agents_data,
         "skills": skills_data,
         "current_agent_id": current_agent_id,
-        "startup_agent_id": startup_agent_id,
         "active_skill_ids": active_skill_ids,
         "brain_active": brain_active,
         "brain_backend_status": brain_backend_status,
@@ -291,7 +289,6 @@ def available_agents(request: Request):
                 "agents": [],
                 "skills": [],
                 "current_agent_id": None,
-                "startup_agent_id": None,
                 "active_skill_ids": [],
                 "error": "Simulation not initialized",
                 "brain_backend_status": {

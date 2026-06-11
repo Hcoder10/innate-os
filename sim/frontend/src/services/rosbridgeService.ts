@@ -58,7 +58,6 @@ export interface AvailableAgentsResponse {
   agents: RobotAgent[];
   skills?: RobotSkill[];
   current_agent_id: string | null;
-  startup_agent_id: string | null;
   active_skill_ids?: string[];
   brain_active?: boolean;
   brain_backend_status?: BrainBackendStatus;
@@ -72,7 +71,6 @@ export interface StackMetricsResponse {
 interface GetAvailableDirectivesValues {
   directives?: unknown;
   current_directive?: string | null;
-  startup_directive?: string | null;
   brain_active?: boolean;
 }
 
@@ -592,7 +590,6 @@ export async function getAvailableAgentsDirect(
     agents,
     skills,
     current_agent_id: currentAgentId,
-    startup_agent_id: values.startup_directive ?? null,
     active_skill_ids:
       hasActiveSkillIds ? activeSkillIds : currentAgent?.skills ?? [],
     brain_active: brainActive,

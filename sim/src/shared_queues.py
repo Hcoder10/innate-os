@@ -98,7 +98,6 @@ class SharedQueues:
         self.available_agents: list[AgentInfo] = []
         self.available_skills: list[SkillInfo] = []
         self.current_agent_id: str | None = None
-        self.startup_agent_id: str | None = None
         self.active_skill_ids: list[str] = []
         self.brain_active: bool = False
         self.available_agents_updated_at: float = 0.0
@@ -184,7 +183,6 @@ class SharedQueues:
         self,
         agents: list[AgentInfo],
         current_agent_id: str | None = None,
-        startup_agent_id: str | None = None,
         active_skill_ids: list[str] | None = None,
         brain_active: bool | None = None,
     ):
@@ -193,7 +191,6 @@ class SharedQueues:
             previous_agent_id = self.current_agent_id
             self.available_agents = agents
             self.current_agent_id = current_agent_id
-            self.startup_agent_id = startup_agent_id
             if active_skill_ids is not None:
                 self.active_skill_ids = active_skill_ids
             elif current_agent_id and (current_agent_id != previous_agent_id or not self.active_skill_ids):
@@ -243,14 +240,13 @@ class SharedQueues:
 
     def get_available_agents(
         self,
-    ) -> tuple[list[AgentInfo], list[SkillInfo], str | None, str | None, list[str], bool]:
+    ) -> tuple[list[AgentInfo], list[SkillInfo], str | None, list[str], bool]:
         """Thread-safe method to get available agents, skills, and active IDs."""
         with self.agents_lock:
             return (
                 self.available_agents.copy(),
                 self.available_skills.copy(),
                 self.current_agent_id,
-                self.startup_agent_id,
                 self.active_skill_ids.copy(),
                 self.brain_active,
             )

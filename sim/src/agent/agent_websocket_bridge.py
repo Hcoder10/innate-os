@@ -630,7 +630,6 @@ async def inbound_service_loop(ws, shared_queues):
                 values = inbound_data.get("values", {})
                 directives_raw = values.get("directives", "[]")
                 current_directive = values.get("current_directive", "")
-                startup_directive = values.get("startup_directive", "")
 
                 agents = []
                 skills = []
@@ -710,7 +709,6 @@ async def inbound_service_loop(ws, shared_queues):
                 shared_queues.update_available_agents(
                     agents=agents,
                     current_agent_id=current_directive,
-                    startup_agent_id=startup_directive,
                     active_skill_ids=active_skill_ids,
                     brain_active=brain_active,
                 )
