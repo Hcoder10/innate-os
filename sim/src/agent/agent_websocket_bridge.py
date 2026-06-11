@@ -13,10 +13,10 @@ import numpy as np
 import websockets
 from src.agent.navigation_controller import NavigationController
 from src.agent.types import (
+    ActiveSkillsCmd,
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
-    ActiveSkillsCmd,
     BrainActiveCmd,
     BrainBackendConfigCmd,
     DirectiveCmd,
@@ -108,11 +108,7 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
         if not inputs:
             inputs_json = skill.get("inputs_json", "")
             try:
-                parsed_inputs = (
-                    json.loads(inputs_json)
-                    if isinstance(inputs_json, str) and inputs_json
-                    else {}
-                )
+                parsed_inputs = json.loads(inputs_json) if isinstance(inputs_json, str) and inputs_json else {}
             except json.JSONDecodeError:
                 parsed_inputs = {}
             if isinstance(parsed_inputs, dict):
@@ -123,9 +119,7 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
                 name=skill.get("name", skill.get("id", "")),
                 type=skill.get("type", ""),
                 guidelines=str(skill.get("guidelines", "")),
-                guidelines_when_running=str(
-                    skill.get("guidelines_when_running", "")
-                ),
+                guidelines_when_running=str(skill.get("guidelines_when_running", "")),
                 inputs=inputs,
                 in_training=bool(skill.get("in_training", False)),
                 episode_count=int(skill.get("episode_count", 0) or 0),
@@ -171,10 +165,7 @@ def rosbridge_service_response(service: str, result: dict, call_id: str = None) 
 
 
 def arm_service_advertisements() -> list[dict]:
-    adverts = [
-        rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS")
-        for service in sorted(ARM_GOTO_SERVICES)
-    ]
+    adverts = [rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS") for service in sorted(ARM_GOTO_SERVICES)]
     adverts.append(
         rosbridge_advertise_service(
             "/mars/arm/goto_js_trajectory",
@@ -182,8 +173,7 @@ def arm_service_advertisements() -> list[dict]:
         )
     )
     adverts.extend(
-        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
-        for service in sorted(ARM_TRIGGER_SERVICES)
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(ARM_TRIGGER_SERVICES)
     )
     return adverts
 
@@ -234,9 +224,7 @@ def _parse_arm_trajectory_args(args: dict) -> tuple[list[list[float]], list[floa
         return None
 
     try:
-        flat_waypoints = [
-            float(value) for value in _multi_array_data(args.get("waypoints", {}))
-        ]
+        flat_waypoints = [float(value) for value in _multi_array_data(args.get("waypoints", {}))]
     except (TypeError, ValueError):
         return None
 
@@ -290,9 +278,7 @@ async def _run_arm_trajectory_service(
             else:
                 duration = initial_duration
 
-            shared_queues.agent_to_sim.put_nowait(
-                ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration))
-            )
+            shared_queues.agent_to_sim.put_nowait(ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration)))
             await asyncio.sleep(max(0.0, duration))
 
         await _send_service_response(ws, service_name, {"success": True}, call_id)
@@ -361,9 +347,7 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
         else:
             set_arm_torque_enabled(shared_queues, True)
             message = (
-                "Sim arm rebooted; torque enabled."
-                if service_name == "/mars/arm/reboot"
-                else "Sim arm torque enabled."
+                "Sim arm rebooted; torque enabled." if service_name == "/mars/arm/reboot" else "Sim arm torque enabled."
             )
 
         print(f"[ROSBridge] {message}")
@@ -421,14 +405,10 @@ async def inbound_data_loop(ws, shared_queues):
                 arm_cmd = parse_arm_command(msg_data)
                 if arm_cmd:
                     if not is_arm_torque_enabled(shared_queues):
-                        last_log = getattr(
-                            shared_queues, "_last_arm_torque_disabled_log_at", 0.0
-                        )
+                        last_log = getattr(shared_queues, "_last_arm_torque_disabled_log_at", 0.0)
                         now = time.time()
                         if now - last_log > 5.0:
-                            print(
-                                "[ROSBridge] Ignoring arm command: sim arm torque is disabled"
-                            )
+                            print("[ROSBridge] Ignoring arm command: sim arm torque is disabled")
                             shared_queues._last_arm_torque_disabled_log_at = now
                         continue
                     print(f"[ROSBridge] Received arm command: {arm_cmd.joint_positions}")
@@ -449,25 +429,17 @@ async def inbound_data_loop(ws, shared_queues):
                         text=text,
                         timestamp=timestamp,
                         timestamp_put_in_queue=time.time(),
-                        task_status=payload.get("taskStatus")
-                        or payload.get("task_status"),
-                        primitive_id=payload.get("primitiveId")
-                        or payload.get("primitive_id"),
+                        task_status=payload.get("taskStatus") or payload.get("task_status"),
+                        primitive_id=payload.get("primitiveId") or payload.get("primitive_id"),
                         skill_id=payload.get("skillId") or payload.get("skill_id"),
-                        failure_reason=payload.get("failureReason")
-                        or payload.get("reason"),
+                        failure_reason=payload.get("failureReason") or payload.get("reason"),
                     )
                     # Forward to sim/UI without allowing stale history to pile up.
                     shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/skill_status_update":
                 payload = json.loads(msg_data.get("data", ""))
-                text = (
-                    payload.get("primitive_name")
-                    or payload.get("skill_name")
-                    or payload.get("skill_id")
-                    or ""
-                )
+                text = payload.get("primitive_name") or payload.get("skill_name") or payload.get("skill_id") or ""
                 status = payload.get("status")
                 if text and status:
                     chat_msg = ChatMessage(
@@ -641,13 +613,10 @@ async def inbound_service_loop(ws, shared_queues):
                             text=chat.get("text", ""),
                             timestamp=chat.get("timestamp", time.time()),
                             timestamp_put_in_queue=time.time(),
-                            task_status=chat.get("taskStatus")
-                            or chat.get("task_status"),
-                            primitive_id=chat.get("primitiveId")
-                            or chat.get("primitive_id"),
+                            task_status=chat.get("taskStatus") or chat.get("task_status"),
+                            primitive_id=chat.get("primitiveId") or chat.get("primitive_id"),
                             skill_id=chat.get("skillId") or chat.get("skill_id"),
-                            failure_reason=chat.get("failureReason")
-                            or chat.get("reason"),
+                            failure_reason=chat.get("failureReason") or chat.get("reason"),
                         )
                         shared_queues.enqueue_chat_from_bridge(chat_msg)
                     except Exception as e:
@@ -686,9 +655,7 @@ async def inbound_service_loop(ws, shared_queues):
                         raw_active_skill_ids = directives_payload.get("active_skills")
                         if isinstance(raw_active_skill_ids, list):
                             active_skill_ids = [
-                                skill_id
-                                for skill_id in raw_active_skill_ids
-                                if isinstance(skill_id, str)
+                                skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)
                             ]
                     else:
                         agents_list = directives_payload
@@ -713,10 +680,7 @@ async def inbound_service_loop(ws, shared_queues):
                                 inputs_json = skill.get("inputs_json", "")
                                 try:
                                     parsed_inputs = (
-                                        json.loads(inputs_json)
-                                        if isinstance(inputs_json, str)
-                                        and inputs_json
-                                        else {}
+                                        json.loads(inputs_json) if isinstance(inputs_json, str) and inputs_json else {}
                                     )
                                 except json.JSONDecodeError:
                                     parsed_inputs = {}
@@ -727,9 +691,7 @@ async def inbound_service_loop(ws, shared_queues):
                                 name=str(skill.get("name", skill.get("id", ""))),
                                 type=str(skill.get("type", "")),
                                 guidelines=str(skill.get("guidelines", "")),
-                                guidelines_when_running=str(
-                                    skill.get("guidelines_when_running", "")
-                                ),
+                                guidelines_when_running=str(skill.get("guidelines_when_running", "")),
                                 inputs=inputs,
                                 in_training=bool(skill.get("in_training", False)),
                                 episode_count=int(skill.get("episode_count", 0) or 0),
@@ -945,19 +907,12 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 shared_queues.set_current_agent(msg.directive)
                 print(f"[ROSBridge] Published directive: {msg.directive}")
             elif isinstance(msg, ActiveSkillsCmd):
-                active_skills_msg = {
-                    "data": json.dumps(
-                        {"agent_id": msg.agent_id, "skills": msg.skills}
-                    )
-                }
-                outbound = rosbridge_publish(
-                    "/brain/set_active_skills", active_skills_msg
-                )
+                active_skills_msg = {"data": json.dumps({"agent_id": msg.agent_id, "skills": msg.skills})}
+                outbound = rosbridge_publish("/brain/set_active_skills", active_skills_msg)
                 await ws.send(json.dumps(outbound))
                 shared_queues.update_active_skill_ids(msg.skills)
                 print(
-                    "[ROSBridge] Published active skills "
-                    f"for {msg.agent_id or 'current directive'}: {len(msg.skills)}"
+                    f"[ROSBridge] Published active skills for {msg.agent_id or 'current directive'}: {len(msg.skills)}"
                 )
             elif isinstance(msg, ResetRobotCmd):
                 reset_srv = rosbridge_call_service("/brain/reset_brain", "brain_messages/srv/ResetBrain")
@@ -1028,27 +983,18 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             # no messages to publish right now
             pass
 
-        clock_msg, arm_state_msg, nav_feedback_msg = (
-            shared_queues.pop_latest_agent_updates()
-        )
+        clock_msg, arm_state_msg, nav_feedback_msg = shared_queues.pop_latest_agent_updates()
         updates_now = time.time()
-        if (
-            clock_msg is not None
-            and updates_now - last_clock_publish_time >= CLOCK_PUBLISH_INTERVAL_SEC
-        ):
+        if clock_msg is not None and updates_now - last_clock_publish_time >= CLOCK_PUBLISH_INTERVAL_SEC:
             outbound = rosbridge_publish("/clock", clock_msg)
             await ws.send(json.dumps(outbound))
             last_clock_publish_time = updates_now
-        if (
-            arm_state_msg is not None
-            and updates_now - last_arm_state_publish_time >= ARM_STATE_PUBLISH_INTERVAL_SEC
-        ):
+        if arm_state_msg is not None and updates_now - last_arm_state_publish_time >= ARM_STATE_PUBLISH_INTERVAL_SEC:
             await publish_arm_state(ws, arm_state_msg)
             last_arm_state_publish_time = updates_now
         if (
             nav_feedback_msg is not None
-            and updates_now - last_nav_feedback_publish_time
-            >= NAV_FEEDBACK_PUBLISH_INTERVAL_SEC
+            and updates_now - last_nav_feedback_publish_time >= NAV_FEEDBACK_PUBLISH_INTERVAL_SEC
         ):
             feedback_msg = {
                 "x": nav_feedback_msg.distance_to_goal,

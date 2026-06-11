@@ -177,8 +177,7 @@ class UninavidNode(Node):
             self.get_logger().info(message)
         else:
             self.get_logger().warn(
-                "UniNavid received an empty or placeholder service key; "
-                "vision navigation remains unavailable."
+                "UniNavid received an empty or placeholder service key; vision navigation remains unavailable."
             )
 
     # ── Preemption (Nav2 pattern) ─────────────────────────────────────────
@@ -245,7 +244,8 @@ class UninavidNode(Node):
         consecutive_stops = int(self.get_parameter("consecutive_stops_to_complete").value)
 
         client = UninavidWsClient(
-            url=ws_url, auth_provider=auth,
+            url=ws_url,
+            auth_provider=auth,
             logger=self.get_logger(),
             image_send_hz=image_send_hz,
             consecutive_stops_to_complete=consecutive_stops,

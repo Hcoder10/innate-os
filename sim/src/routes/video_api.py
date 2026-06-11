@@ -5,7 +5,6 @@ import cv2
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-
 from src.agent.types import ActiveSkillsCmd, BrainActiveCmd, DirectiveCmd, RefreshAgentsCmd
 
 router = APIRouter()

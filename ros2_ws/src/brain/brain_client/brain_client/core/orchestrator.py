@@ -253,8 +253,7 @@ class Orchestrator:
             f"{msg.payload.get('directive_registered', False)}"
         )
         is_empty_directive = (
-            self._state.current_directive is not None
-            and self._state.current_directive.id == "empty_directive"
+            self._state.current_directive is not None and self._state.current_directive.id == "empty_directive"
         )
         if (
             self._config.simulator_mode

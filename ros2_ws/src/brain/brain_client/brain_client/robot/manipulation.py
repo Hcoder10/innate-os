@@ -8,8 +8,8 @@ This interface allows skills to:
 3. Get current end-effector pose (forward kinematics)
 """
 
-import time
 import threading
+import time
 
 from geometry_msgs.msg import PoseStamped, Twist
 from maurice_msgs.srv import GotoJS, GotoJSTrajectory

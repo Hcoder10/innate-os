@@ -26,7 +26,6 @@ from enum import IntEnum, auto
 import websockets
 
 
-
 class Action(IntEnum):
     STOP = 0
     FORWARD = 1
@@ -208,9 +207,7 @@ class UninavidWsClient:
                 # Start periodic send timer + run recv loop
                 self._ws = ws
                 self._send_count = 0
-                send_task = asyncio.create_task(
-                    self._send_loop(1.0 / self._image_send_hz)
-                )
+                send_task = asyncio.create_task(self._send_loop(1.0 / self._image_send_hz))
                 try:
                     await self._recv_loop(ws)
                 finally:

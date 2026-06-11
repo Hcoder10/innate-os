@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from brain_client.agent_types import Agent
 
 
@@ -14,8 +12,8 @@ class EmptyDirective(Agent):
     def display_name(self) -> str:
         return "No Prompt"
 
-    def get_skills(self) -> List[str]:
+    def get_skills(self) -> list[str]:
         return []
 
-    def get_prompt(self) -> Optional[str]:
+    def get_prompt(self) -> str | None:
         return None

@@ -363,7 +363,7 @@ class SimulationNode:
             raise FileNotFoundError(f"Robot URDF not found: {source_path}")
 
         package_root = os.path.dirname(os.path.dirname(source_path))
-        with open(source_path, "r", encoding="utf-8") as source_file:
+        with open(source_path, encoding="utf-8") as source_file:
             urdf_text = source_file.read()
         urdf_text = urdf_text.replace(
             "package://maurice_sim/",
@@ -400,11 +400,7 @@ class SimulationNode:
             color.set("rgba", rgba)
 
         for link in root.findall("link"):
-            material_name = (
-                "bright_orange"
-                if link.attrib.get("name") in SIM_ROBOT_ORANGE_LINKS
-                else "matt_black"
-            )
+            material_name = "bright_orange" if link.attrib.get("name") in SIM_ROBOT_ORANGE_LINKS else "matt_black"
             for visual in link.findall("visual"):
                 material = visual.find("material")
                 if material is None:
@@ -887,17 +883,13 @@ class SimulationNode:
         self.base_pose_joint_names = ("base_x", "base_y", "base_yaw")
         try:
             self.base_pose_dof_indices = [
-                self.robot.get_joint(name).dofs_idx_local[0]
-                for name in self.base_pose_joint_names
+                self.robot.get_joint(name).dofs_idx_local[0] for name in self.base_pose_joint_names
             ]
             self.base_pose_mode = "dofs"
         except Exception:
             self.base_pose_dof_indices = []
             self.base_pose_mode = "root"
-            print(
-                "[SimulationNode] Robot URDF has no sim planar base joints; "
-                "driving the Genesis root pose directly."
-            )
+            print("[SimulationNode] Robot URDF has no sim planar base joints; driving the Genesis root pose directly.")
 
     def _init_camera_link_refs(self):
         """Pick camera links from the loaded robot URDF."""
@@ -931,10 +923,7 @@ class SimulationNode:
                 self.main_camera_forward = forward
                 self.main_camera_up = up
                 self.main_camera_frame_id = frame_id
-                print(
-                    "[SimulationNode] Main camera follows URDF frame: "
-                    f"{link_name} (anchor={mount['anchor_link']})"
-                )
+                print(f"[SimulationNode] Main camera follows URDF frame: {link_name} (anchor={mount['anchor_link']})")
                 break
 
         self.arm_camera_mount = None
@@ -953,10 +942,7 @@ class SimulationNode:
                 self.arm_camera_mount = mount
                 self.arm_camera_forward = forward
                 self.arm_camera_up = up
-                print(
-                    "[SimulationNode] Wrist camera follows URDF frame: "
-                    f"{link_name} (anchor={mount['anchor_link']})"
-                )
+                print(f"[SimulationNode] Wrist camera follows URDF frame: {link_name} (anchor={mount['anchor_link']})")
                 break
 
     def _resolve_urdf_frame_mount(self, frame_name: str):
@@ -1005,9 +991,7 @@ class SimulationNode:
 
     def _quat_wxyz_from_rpy(self, rpy: np.ndarray) -> np.ndarray:
         quat_xyzw = R.from_euler("xyz", rpy).as_quat()
-        return np.array(
-            [quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]], dtype=float
-        )
+        return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]], dtype=float)
 
     def _quat_wxyz_multiply(self, q1, q2) -> np.ndarray:
         w1, x1, y1, z1 = np.asarray(q1, dtype=float)
@@ -1026,9 +1010,7 @@ class SimulationNode:
         if getattr(self, "base_pose_mode", "dofs") != "dofs":
             pos, quat = self._get_robot_base_pose()
             return np.array([pos[0], pos[1], self._yaw_from_wxyz(quat)], dtype=float)
-        return (
-            self.robot.get_dofs_position(self.base_pose_dof_indices).cpu().numpy().astype(float)
-        )
+        return self.robot.get_dofs_position(self.base_pose_dof_indices).cpu().numpy().astype(float)
 
     def _set_robot_base_dofs(self, x: float, y: float, yaw: float):
         if getattr(self, "base_pose_mode", "dofs") != "dofs":
@@ -2073,20 +2055,13 @@ class SimulationNode:
             self.shared_queues.set_latest_clock_msg(clock_msg)
 
             # Check if enough time has passed since last render
-            if (
-                self.cameras_enabled
-                and sim_time - self.last_render_time >= self.render_interval - 1e-9
-            ):
+            if self.cameras_enabled and sim_time - self.last_render_time >= self.render_interval - 1e-9:
                 if self.robot_camera is not None and self.main_camera_mount is not None:
-                    camera_pos, camera_quat = self._camera_world_pose(
-                        self.main_camera_mount
-                    )
+                    camera_pos, camera_quat = self._camera_world_pose(self.main_camera_mount)
                     look_dir = rotate_vector(self.main_camera_forward, camera_quat)
                     lookat = camera_pos + look_dir
                     up_dir = rotate_vector(self.main_camera_up, camera_quat)
-                    self.robot_camera.set_pose(
-                        pos=camera_pos, lookat=lookat, up=up_dir
-                    )
+                    self.robot_camera.set_pose(pos=camera_pos, lookat=lookat, up=up_dir)
 
                 # Update arm wrist camera from the URDF camera link when available.
                 if self.arm_wrist_camera is not None and self.arm_camera_mount is not None:
@@ -2094,9 +2069,7 @@ class SimulationNode:
                     arm_look_dir = rotate_vector(self.arm_camera_forward, arm_quat)
                     arm_lookat = arm_pos + arm_look_dir
                     arm_up_dir = rotate_vector(self.arm_camera_up, arm_quat)
-                    self.arm_wrist_camera.set_pose(
-                        pos=arm_pos, lookat=arm_lookat, up=arm_up_dir
-                    )
+                    self.arm_wrist_camera.set_pose(pos=arm_pos, lookat=arm_lookat, up=arm_up_dir)
 
                 # Update chase camera to follow robot
                 if self.chase_camera is not None:
@@ -2156,8 +2129,7 @@ class SimulationNode:
             # ROSBridge serializes image payloads as JSON; keep those frames lower
             # rate than the local UI stream so control/status traffic stays snappy.
             publish_ros_images = (
-                rgb_to_send is not None
-                and sim_time - self.last_ros_image_time >= self.ros_image_interval - 1e-9
+                rgb_to_send is not None and sim_time - self.last_ros_image_time >= self.ros_image_interval - 1e-9
             )
             if publish_ros_images:
                 ros_rgb_to_send = rgb_to_send

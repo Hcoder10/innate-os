@@ -83,9 +83,7 @@ class SharedQueues:
         self.chat_to_bridge = queue.Queue(maxsize=5000)
         self.chat_from_bridge = queue.Queue(maxsize=200)
         self.chat_from_bridge_lock = threading.Lock()
-        self._recent_chat_from_bridge_keys: deque[tuple[str, str, float]] = deque(
-            maxlen=300
-        )
+        self._recent_chat_from_bridge_keys: deque[tuple[str, str, float]] = deque(maxlen=300)
         self._recent_chat_from_bridge_key_set: set[tuple[str, str, float]] = set()
 
         # Store the latest robot position and orientation for direct access
@@ -197,9 +195,7 @@ class SharedQueues:
             self.startup_agent_id = startup_agent_id
             if active_skill_ids is not None:
                 self.active_skill_ids = active_skill_ids
-            elif current_agent_id and (
-                current_agent_id != previous_agent_id or not self.active_skill_ids
-            ):
+            elif current_agent_id and (current_agent_id != previous_agent_id or not self.active_skill_ids):
                 current_agent = next(
                     (agent for agent in agents if agent.id == current_agent_id),
                     None,
@@ -311,8 +307,7 @@ class SharedQueues:
 
             if (
                 self._recent_chat_from_bridge_keys.maxlen is not None
-                and len(self._recent_chat_from_bridge_keys)
-                >= self._recent_chat_from_bridge_keys.maxlen
+                and len(self._recent_chat_from_bridge_keys) >= self._recent_chat_from_bridge_keys.maxlen
             ):
                 old_key = self._recent_chat_from_bridge_keys.popleft()
                 self._recent_chat_from_bridge_key_set.discard(old_key)
