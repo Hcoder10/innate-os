@@ -8,6 +8,13 @@ name: Publish Simulator Assets
 
 on:
   workflow_dispatch:
+  # Temporary trigger so the first run can happen before this workflow exists
+  # on the default branch (workflow_dispatch only registers from main).
+  # Remove once the run has published the renamed pack.
+  push:
+    branches: [chore/rename-maurice-to-mars]
+    paths:
+      - .github/workflows/sim-assets-publish.yml
 
 permissions:
   contents: read
