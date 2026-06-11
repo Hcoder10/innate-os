@@ -34,13 +34,15 @@ namespace maurice_control {
 
 // Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
 namespace joy_tuning {
-constexpr double DEADZONE = 0.04;
-constexpr double EXPONENT = 1.5;     // 1.0 = linear
+// Defaults match the original pre-tuning feel: 15% deadband, quadratic
+// response, 0.5 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
+constexpr double DEADZONE = 0.15;
+constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
 constexpr double MAX_LINEAR = 0.5;   // m/s
 constexpr double MAX_ANGULAR = 1.0;  // rad/s
-constexpr bool REVERSE_STEERING = true;
+// Car-like steering inversion while reversing is the `reverse_steering` ROS
+// parameter (default off); the app's Dev tab toggles it live via set_parameters.
 constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
-constexpr double TURN_SPEED_BONUS = 0.5;
 }  // namespace joy_tuning
 
 /**
@@ -376,6 +378,9 @@ class AppControl : public rclcpp::Node {
         this->declare_parameter("data_directory", maurice_root + "/data");
         this->declare_parameter("robot_name", "");
         this->declare_parameter("default_hardware_revision", "R6");
+        // Joystick: invert steering while reversing (car-like). Off by default;
+        // the app's Dev tab toggles it at runtime through set_parameters.
+        this->declare_parameter("reverse_steering", false);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -642,12 +647,9 @@ class AppControl : public rclcpp::Node {
         double shaped_y = apply_curve(msg->y);  // throttle
 
         double linear = shaped_y * joy_tuning::MAX_LINEAR;
+        double angular = -shaped_x * joy_tuning::MAX_ANGULAR;
 
-        double speed_fraction = std::min(1.0, std::abs(shaped_y));
-        double turn_authority = 1.0 + joy_tuning::TURN_SPEED_BONUS * speed_fraction;
-        double angular = -shaped_x * joy_tuning::MAX_ANGULAR * turn_authority;
-
-        if (joy_tuning::REVERSE_STEERING && linear < 0.0) {
+        if (this->get_parameter("reverse_steering").as_bool() && linear < 0.0) {
             // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
             double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
             angular *= (1.0 - 2.0 * blend);

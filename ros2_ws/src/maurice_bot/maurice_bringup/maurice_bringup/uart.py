@@ -35,14 +35,18 @@ class UartManager:
         timeout=0.1,
         update_frequency=30.0,
         debug=False,
-        speed_command_timeout=5.0,
+        # Deadman for /cmd_vel: every producer streams continuously (nav
+        # smoother 40Hz, app joystick heartbeat ~7Hz, skills 25Hz), so going
+        # this long without a command means the operator/controller is gone
+        # and the base must stop, not coast on the last latched velocity.
+        speed_command_timeout=0.5,
     ):
         self.node = node
         self.debug = debug
         self.logger = self.node.get_logger()
 
         # Add speed command timeout (in seconds)
-        self.speed_command_timeout = speed_command_timeout  # Default 5 seconds timeout
+        self.speed_command_timeout = speed_command_timeout
 
         # Add timestamp for last speed command
         self.last_speed_command_time = 0.0
