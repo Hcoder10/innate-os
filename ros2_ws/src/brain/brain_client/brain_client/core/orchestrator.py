@@ -81,11 +81,14 @@ class Orchestrator:
         message per disconnect episode and one on recovery.
         """
         if self._scan_health is None or self._config.simulator_mode or self._pose.is_mapfree:
+            # Reset so a recovery message is never emitted for an error episode
+            # that ended while the check was suppressed (e.g. in mapfree mode).
+            self._lidar_error_reported = False
             return
-        if self._scan_health.is_stale():
+        problem = self._scan_health.stale_problem()
+        if problem is not None:
             if not self._lidar_error_reported:
                 self._lidar_error_reported = True
-                problem = self._scan_health.describe_problem()
                 self._logger.error(f"[BrainClient] LiDAR not responding: {problem}")
                 self._chat.emit_system(
                     f"⚠️ LiDAR is not responding ({problem}). The robot cannot localize or navigate "

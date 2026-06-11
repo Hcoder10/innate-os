@@ -1,7 +1,7 @@
 """LiDAR scan health: detects when laser scans stop arriving (e.g. lidar unplugged).
 
 Keeps an always-on subscription to the scan topic and records when the last
-message arrived. The orchestrator polls :meth:`is_stale` from the agent loop to
+message arrived. The orchestrator polls :meth:`stale_problem` from the agent loop to
 surface a clear error instead of failing silently when the lidar is
 disconnected (no scans -> AMCL never localizes -> no pose -> agent skips every
 loop with nothing reaching the app).
@@ -30,12 +30,18 @@ class ScanHealthMonitor:
     def _on_scan(self, _msg: LaserScan) -> None:
         self._last_scan_at = time.monotonic()
 
-    def is_stale(self) -> bool:
-        """True when no scan has arrived for ``stale_after_sec`` (or ever)."""
-        reference = self._last_scan_at if self._last_scan_at is not None else self._started_at
-        return time.monotonic() - reference > self._stale_after_sec
+    def stale_problem(self) -> str | None:
+        """Describe why scans are stale, or None when healthy.
 
-    def describe_problem(self) -> str:
-        if self._last_scan_at is None:
+        Reads ``_last_scan_at`` once so the staleness check and the message
+        agree even if a scan arrives mid-call (the subscription callback runs
+        on another executor thread).
+        """
+        last_scan_at = self._last_scan_at
+        reference = last_scan_at if last_scan_at is not None else self._started_at
+        elapsed = time.monotonic() - reference
+        if elapsed <= self._stale_after_sec:
+            return None
+        if last_scan_at is None:
             return "no laser scan data has been received since startup"
-        return f"laser scan data stopped {time.monotonic() - self._last_scan_at:.0f}s ago"
+        return f"laser scan data stopped {elapsed:.0f}s ago"
