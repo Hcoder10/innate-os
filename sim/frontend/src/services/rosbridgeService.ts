@@ -73,6 +73,7 @@ interface GetAvailableDirectivesValues {
   directives?: unknown;
   current_directive?: string | null;
   startup_directive?: string | null;
+  brain_active?: boolean;
 }
 
 interface RosbridgeServiceResponse<T> {
@@ -575,6 +576,12 @@ export async function getAvailableAgentsDirect(
   const hasActiveSkillIds =
     parsedPayload !== null && Array.isArray(parsedPayload.active_skills);
   const activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
+  const brainActive =
+    typeof parsedPayload?.brain_active === "boolean"
+      ? parsedPayload.brain_active
+      : typeof values.brain_active === "boolean"
+        ? values.brain_active
+        : undefined;
   try {
     skills = await getAvailableSkillsFromTopicDirect(wsUrl);
   } catch (error) {
@@ -588,6 +595,7 @@ export async function getAvailableAgentsDirect(
     startup_agent_id: values.startup_directive ?? null,
     active_skill_ids:
       hasActiveSkillIds ? activeSkillIds : currentAgent?.skills ?? [],
+    brain_active: brainActive,
   };
 }
 

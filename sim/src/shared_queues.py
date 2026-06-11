@@ -186,6 +186,7 @@ class SharedQueues:
         current_agent_id: str | None = None,
         startup_agent_id: str | None = None,
         active_skill_ids: list[str] | None = None,
+        brain_active: bool | None = None,
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
@@ -201,6 +202,8 @@ class SharedQueues:
                     None,
                 )
                 self.active_skill_ids = current_agent.skills.copy() if current_agent else []
+            if brain_active is not None:
+                self.brain_active = brain_active
             self.available_agents_updated_at = time.time()
 
     def update_available_skills(

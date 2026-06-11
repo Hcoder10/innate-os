@@ -635,6 +635,7 @@ async def inbound_service_loop(ws, shared_queues):
                 agents = []
                 skills = []
                 active_skill_ids = None
+                brain_active = None
 
                 try:
                     if isinstance(directives_raw, list) and len(directives_raw) > 0:
@@ -657,6 +658,9 @@ async def inbound_service_loop(ws, shared_queues):
                             active_skill_ids = [
                                 skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)
                             ]
+                        raw_brain_active = directives_payload.get("brain_active")
+                        if isinstance(raw_brain_active, bool):
+                            brain_active = raw_brain_active
                     else:
                         agents_list = directives_payload
                         skills_list = []
@@ -708,6 +712,7 @@ async def inbound_service_loop(ws, shared_queues):
                     current_agent_id=current_directive,
                     startup_agent_id=startup_directive,
                     active_skill_ids=active_skill_ids,
+                    brain_active=brain_active,
                 )
                 if skills:
                     shared_queues.update_available_skills(skills)

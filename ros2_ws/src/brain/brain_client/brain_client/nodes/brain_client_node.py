@@ -482,6 +482,7 @@ class BrainClientNode(Node):
                     "agents": details,
                     "skills": self.state.registry.metadata,
                     "active_skills": self.catalog.active_skill_ids_for_registration(),
+                    "brain_active": self.state.is_brain_active,
                 }
             )
         ]
