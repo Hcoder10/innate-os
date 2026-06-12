@@ -918,9 +918,12 @@ class AppControl : public rclcpp::Node {
      * Apply volume to ALSA default playback device.
      * This updates the system volume immediately, affecting any currently
      * playing audio (e.g. TTS via aplay) in real time.
+     * -M maps the percentage on alsamixer's perceptual (dB-normalized)
+     * scale instead of the raw register scale, so e.g. 30% is clearly
+     * audible rather than ~-70dB (INN-467).
      */
     void apply_alsa_volume(int percent) {
-        std::string cmd = "amixer sset Master " + std::to_string(percent) + "% 2>/dev/null";
+        std::string cmd = "amixer -M sset Master " + std::to_string(percent) + "% 2>/dev/null";
         int ret = std::system(cmd.c_str());
         if (ret != 0) {
             RCLCPP_WARN(this->get_logger(), "amixer sset Master failed (rc=%d)", ret);
