@@ -329,7 +329,7 @@ def nmcli_connect(ssid, ifname=DEFAULT_WIFI_INTERFACE):
             return True, confirmation  # Success, return confirmation message
 
         last_error = stderr or "Unknown error"
-        if "could not be found" not in last_error:
+        if "could not be found" not in last_error.lower():
             break
 
     # Provide more context in the error
