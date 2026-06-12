@@ -2343,6 +2343,37 @@ class _UpdateManager:
 
     # -- status ---------------------------------------------------------------
 
+    def _systemd_unit_drift(self) -> list:
+        """Unit files in config/systemd that differ from what's installed.
+
+        A manual `git pull` updates the checkout without re-running
+        post_update.sh, so /etc/systemd/system keeps serving stale unit files
+        — after a path rename that means a service silently crash-looping
+        (e.g. ble-provisioner pointing at a script that no longer exists).
+        Compares each repo unit, rendered with the same user/home templating
+        post_update.sh applies, against the installed copy.
+        """
+        repo_units = self.config.repo_dir / "config" / "systemd"
+        if not repo_units.is_dir():
+            return []
+
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or "jetson1"
+        home = str(Path.home())
+        drifted = []
+        for unit in sorted(repo_units.glob("*.service")):
+            installed = Path("/etc/systemd/system") / unit.name
+            try:
+                rendered = (
+                    unit.read_text()
+                    .replace("User=jetson1", f"User={user}")
+                    .replace("/home/jetson1", home)
+                )
+                if not installed.exists() or installed.read_text() != rendered:
+                    drifted.append(unit.name)
+            except OSError:
+                drifted.append(unit.name)
+        return drifted
+
     def status(self) -> int:
         self._check_repo()
 
@@ -2381,6 +2412,15 @@ class _UpdateManager:
         if svc_status["update_running"]:
             print(f"  {C.YELLOW}●{C.NC} Update: in progress (lock: {self.config.update_lock})")
         print()
+
+        drifted = self._systemd_unit_drift()
+        if drifted:
+            self.logger.warning(
+                f"Installed systemd units differ from this checkout: {', '.join(drifted)}"
+            )
+            print("  Services may be running stale paths (a manual `git pull` skips")
+            print("  unit installation). Run 'innate update reinstall' to fix.")
+            print()
 
         cached = self._read_cache()
         if cached:
