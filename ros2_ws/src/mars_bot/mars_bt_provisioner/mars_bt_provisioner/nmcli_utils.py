@@ -117,6 +117,39 @@ def nmcli_connection_exists(ssid):
     return True, ssid in existing_connections, None
 
 
+def nmcli_get_ap_security(ssid):
+    """Lists the SECURITY field of every visible AP broadcasting *ssid*.
+
+    Reads NetworkManager's scan cache (no rescan): callers run during
+    provisioning, right after the app-driven scan that surfaced the SSID.
+    Returns e.g. ["WPA3"] or ["WPA2 WPA3", "WPA2"]; empty when the SSID
+    isn't in the cache or the query fails.
+    """
+    success, stdout, stderr = _run_nmcli(
+        ["nmcli", "-t", "-f", "SSID,SECURITY", "device", "wifi", "list"], use_sudo=True
+    )
+    if not success:
+        nm_logger.warning(f"Could not read AP security for '{ssid}': {stderr or 'Unknown error'}")
+        return []
+    securities = []
+    try:
+        for line in (stdout or "").strip().split("\n"):
+            if not line:
+                continue
+            # Terse mode escapes ':' inside fields as '\:'
+            sentinel = "\x00"
+            parts = line.replace("\\:", sentinel).split(":")
+            if len(parts) != 2:
+                continue
+            line_ssid, security = (p.replace(sentinel, ":") for p in parts)
+            if line_ssid == ssid:
+                securities.append(security)
+    except Exception as e:
+        nm_logger.error(f"Error parsing wifi list output: {e}", exc_info=True)
+        return []
+    return securities
+
+
 def nmcli_add_or_modify_connection(ssid, password, priority, autoconnect=True):
     """Adds a new Wi-Fi connection or modifies an existing one.
 
@@ -196,7 +229,17 @@ def nmcli_add_or_modify_connection(ssid, password, priority, autoconnect=True):
             DEFAULT_WIFI_INTERFACE,
         ]
         if password:
-            cmd.extend(["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password])
+            # NM matches profiles to APs by security: a wpa-psk profile never
+            # matches a WPA3-only AP, and activation fails with "The Wi-Fi
+            # network could not be found" even though the SSID is in the scan
+            # results. Mixed WPA2/WPA3 APs accept wpa-psk (transition mode),
+            # so SAE is only used when every visible AP is WPA3-only.
+            securities = nmcli_get_ap_security(ssid)
+            wpa3_only = bool(securities) and all(
+                "WPA3" in s and "WPA2" not in s and "WPA1" not in s for s in securities
+            )
+            key_mgmt = "sae" if wpa3_only else "wpa-psk"
+            cmd.extend(["wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", password])
 
         success, _, stderr = _run_nmcli(cmd, timeout=10, use_sudo=True)
         if not success:

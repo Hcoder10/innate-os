@@ -266,6 +266,59 @@ class TestNmcliConnectRetry:
 
 
 # ---------------------------------------------------------------------------
+# WPA3 profile creation
+# ---------------------------------------------------------------------------
+
+
+class TestWpa3ProfileCreation:
+    """Save-only profiles pick SAE for WPA3-only APs, wpa-psk otherwise."""
+
+    def _key_mgmt_of_add(self, mock_run):
+        for c in mock_run.call_args_list:
+            cmd_list = c.args[0]
+            if "add" in cmd_list and "connection" in cmd_list:
+                return cmd_list[cmd_list.index("wifi-sec.key-mgmt") + 1]
+        return None
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_wpa3_only_ap_gets_sae(self, mock_run):
+        def side_effect(cmd_list, **kwargs):
+            if "SSID,SECURITY" in " ".join(cmd_list):
+                return (True, "INNATE_WIFI_SUPER:WPA3\nOther:WPA2\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("INNATE_WIFI_SUPER", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "sae"
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_mixed_wpa2_wpa3_ap_stays_wpa_psk(self, mock_run):
+        def side_effect(cmd_list, **kwargs):
+            if "SSID,SECURITY" in " ".join(cmd_list):
+                return (True, "Innate_WIFI_FAST:WPA2 WPA3\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("Innate_WIFI_FAST", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "wpa-psk"
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_unknown_ap_defaults_to_wpa_psk(self, mock_run):
+        mock_run.return_value = (True, "", None)
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("HiddenNet", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "wpa-psk"
+
+
+# ---------------------------------------------------------------------------
 # update_network
 # ---------------------------------------------------------------------------
 
