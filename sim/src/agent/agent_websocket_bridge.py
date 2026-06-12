@@ -165,11 +165,11 @@ def rosbridge_service_response(service: str, result: dict, call_id: str = None) 
 
 
 def arm_service_advertisements() -> list[dict]:
-    adverts = [rosbridge_advertise_service(service, "maurice_msgs/srv/GotoJS") for service in sorted(ARM_GOTO_SERVICES)]
+    adverts = [rosbridge_advertise_service(service, "mars_msgs/srv/GotoJS") for service in sorted(ARM_GOTO_SERVICES)]
     adverts.append(
         rosbridge_advertise_service(
             "/mars/arm/goto_js_trajectory",
-            "maurice_msgs/srv/GotoJSTrajectory",
+            "mars_msgs/srv/GotoJSTrajectory",
         )
     )
     adverts.extend(

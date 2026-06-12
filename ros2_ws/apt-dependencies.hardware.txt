@@ -2,7 +2,7 @@
 # These are only required when running on physical robot hardware
 # Install with: xargs -a apt-dependencies.hardware.txt sudo apt-get install -y
 
-# NVIDIA VPI (for stereo depth estimation in maurice_cam)
+# NVIDIA VPI (for stereo depth estimation in mars_cam)
 nvidia-vpi-dev
 
 # NVIDIA GStreamer plugins (for nvvidconv hardware acceleration on Jetson)

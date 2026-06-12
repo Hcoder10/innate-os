@@ -10,15 +10,15 @@ tmux send-keys -t discovery:fastdds "fastdds discovery -i 0 -p 11811" C-m
 sleep 5
 # --- Window for Arm node ---
 tmux new-window -t discovery -n arm
-tmux send-keys -t discovery:arm "ros2 launch maurice_arm arm.launch.py" C-m
+tmux send-keys -t discovery:arm "ros2 launch mars_arm arm.launch.py" C-m
 
 # --- Window for Control node ---
 tmux new-window -t discovery -n control
-tmux send-keys -t discovery:control "ros2 launch maurice_control app.launch.py" C-m
+tmux send-keys -t discovery:control "ros2 launch mars_control app.launch.py" C-m
 
 # --- Window for Bringup node ---
 tmux new-window -t discovery -n bringup
-tmux send-keys -t discovery:bringup "ros2 launch maurice_bringup maurice_bringup.launch.py" C-m
+tmux send-keys -t discovery:bringup "ros2 launch mars_bringup mars_bringup.launch.py" C-m
 
 # --- Window for Recorder node ---
 tmux new-window -t discovery -n recorder
@@ -27,12 +27,12 @@ tmux send-keys -t discovery:recorder "ros2 launch manipulation recorder.launch.p
 # --- Window for navigation ---
 sleep 5
 tmux new-window -t discovery -n navigation
-tmux send-keys -t discovery:navigation "ros2 launch maurice_nav navigation.launch.py" C-m
+tmux send-keys -t discovery:navigation "ros2 launch mars_nav navigation.launch.py" C-m
 
 # --- Window for Service Call ---
 sleep 5
 tmux new-window -t discovery -n service
-tmux send-keys -t discovery:service "ros2 service call /maurice_arm/goto_js maurice_msgs/srv/GotoJS '{data: {data: [0.8528933180644165, -0.45712627478992107, 1.2946797849754812, -0.9326603190344698, -0.04908738521234052, 0.8881748761857863]}, time: 5}'" C-m
+tmux send-keys -t discovery:service "ros2 service call /mars_arm/goto_js mars_msgs/srv/GotoJS '{data: {data: [0.8528933180644165, -0.45712627478992107, 1.2946797849754812, -0.9326603190344698, -0.04908738521234052, 0.8881748761857863]}, time: 5}'" C-m
 
 # --- Window for brain ---
 sleep 5

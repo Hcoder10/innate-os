@@ -40,6 +40,7 @@ class Orchestrator:
         catalog,
         active_inputs_pub,
         memory_positions_pub,
+        scan_health=None,
     ):
         self._node = node
         self._logger = node.get_logger()
@@ -50,6 +51,8 @@ class Orchestrator:
         self._pose = pose_tracker
         self._map = map_state
         self._chat = chat
+        self._scan_health = scan_health
+        self._lidar_error_reported = False
         self.catalog = catalog
 
         # Set via set_lifecycle() after construction (mutual cycle with BrainLifecycle).
@@ -70,10 +73,37 @@ class Orchestrator:
         self.lifecycle = lifecycle
 
     # ================= perception loop =================
+    def check_lidar_health(self) -> None:
+        """Surface a clear error when the lidar stops publishing (INN-474).
+
+        Without scans AMCL never localizes, so the agent loop skips forever with
+        nothing reaching the app. Runs every agent tick; emits one system chat
+        message per disconnect episode and one on recovery.
+        """
+        if self._scan_health is None or self._config.simulator_mode or self._pose.is_mapfree:
+            # Reset so a recovery message is never emitted for an error episode
+            # that ended while the check was suppressed (e.g. in mapfree mode).
+            self._lidar_error_reported = False
+            return
+        problem = self._scan_health.stale_problem()
+        if problem is not None:
+            if not self._lidar_error_reported:
+                self._lidar_error_reported = True
+                self._logger.error(f"[BrainClient] LiDAR not responding: {problem}")
+                self._chat.emit_system(
+                    f"⚠️ LiDAR is not responding ({problem}). The robot cannot localize or navigate "
+                    "until it recovers. Check that the LiDAR is connected and spinning."
+                )
+        elif self._lidar_error_reported:
+            self._lidar_error_reported = False
+            self._logger.info("[BrainClient] LiDAR scan data restored.")
+            self._chat.emit_system("✅ LiDAR is publishing again. Localization should recover shortly.")
+
     def agent_loop(self) -> None:
         if not self._state.is_brain_active:
             self._logger.debug("[BrainClient] Brain not active. Skipping agent_loop.")
             return
+        self.check_lidar_health()
         if not self._state.primitives_registered:
             self._logger.info("[BrainClient] Primitives not registered. Skipping agent_loop.")
             return

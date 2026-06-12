@@ -53,6 +53,7 @@ python3-serial
 python3-numpy
 python3-opencv
 python3-pydantic
+python3-pytest
 
 # ROS2 Humble packages - Core
 ros-humble-rclcpp

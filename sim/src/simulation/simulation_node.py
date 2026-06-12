@@ -349,10 +349,10 @@ class SimulationNode:
                 repo_root,
                 "ros2_ws",
                 "src",
-                "maurice_bot",
-                "maurice_sim",
+                "mars_bot",
+                "mars_sim",
                 "urdf",
-                "maurice.urdf",
+                "mars.urdf",
             )
         else:
             source_path = requested
@@ -366,14 +366,14 @@ class SimulationNode:
         with open(source_path, encoding="utf-8") as source_file:
             urdf_text = source_file.read()
         urdf_text = urdf_text.replace(
-            "package://maurice_sim/",
+            "package://mars_sim/",
             package_root.rstrip("/") + "/",
         )
         urdf_text = self._apply_sim_robot_visual_palette(urdf_text)
 
         generated_dir = os.path.join(self.project_root, "launcher", ".state", "urdf")
         os.makedirs(generated_dir, exist_ok=True)
-        generated_path = os.path.join(generated_dir, "maurice_ros_resolved.urdf")
+        generated_path = os.path.join(generated_dir, "mars_ros_resolved.urdf")
         with open(generated_path, "w", encoding="utf-8") as generated_file:
             generated_file.write(urdf_text)
 
@@ -878,7 +878,7 @@ class SimulationNode:
         self.robot = self.scene.add_entity(gs.morphs.URDF(**urdf_kwargs))
 
     def _init_robot_base_pose_control(self):
-        """Cache the planar base DOFs used to drive Maurice in world space."""
+        """Cache the planar base DOFs used to drive Mars in world space."""
         self.robot_base_root_pos = np.array(ROBOT_ROOT_POS, dtype=float)
         self.base_pose_joint_names = ("base_x", "base_y", "base_yaw")
         try:
@@ -1181,7 +1181,7 @@ class SimulationNode:
         )
 
     def init_movement(self):
-        """Initialize robot movement - no-op for Maurice"""
+        """Initialize robot movement - no-op for Mars"""
         pass
 
     def _update_navigation_movement(self, dt, sim_time=0.0):
