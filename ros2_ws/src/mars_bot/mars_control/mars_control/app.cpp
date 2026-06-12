@@ -430,14 +430,11 @@ class AppControl : public rclcpp::Node {
             "/set_microphone",
             std::bind(&AppControl::set_microphone_callback, this, std::placeholders::_1, std::placeholders::_2));
 
-        // Latched microphone state so the input manager picks it up at startup
-        // and reacts immediately when it changes
+        // Latched publisher for microphone state
         mic_enabled_pub_ =
             this->create_publisher<std_msgs::msg::Bool>("/microphone_enabled", rclcpp::QoS(1).transient_local());
 
-        // Sync mic state and ALSA volume from robot_info.json on startup. Mic
-        // state is published first so a volume-sync failure can't leave a muted
-        // robot listening (the input manager defaults to mic enabled).
+        // Sync mic state and ALSA volume from robot_info.json on startup
         try {
             json robot_info = get_robot_info();
             publish_mic_enabled(robot_info.value("microphone_enabled", true));

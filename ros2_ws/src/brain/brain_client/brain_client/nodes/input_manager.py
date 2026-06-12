@@ -35,7 +35,6 @@ class InputManagerNode(Node):
         self.create_subscription(String, "/tts/is_playing", self._on_tts_status, 10)
         self.create_service(SetBool, "/input_manager/set_input_active", self._svc_set_input_active)
 
-        # Latched mic toggle published by app_control (persisted in robot_info.json)
         mic_state_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(Bool, "/microphone_enabled", self._on_mic_enabled, mic_state_qos)
 

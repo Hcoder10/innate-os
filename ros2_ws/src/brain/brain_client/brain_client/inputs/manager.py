@@ -20,8 +20,6 @@ from brain_client.common.script_paths import get_input_directories
 from brain_client.inputs.loader import InputLoader
 from brain_client.inputs.types import InputDevice
 
-# Device name of the microphone input (workspace/inputs/micro_input.py), gated
-# by the user-facing microphone toggle persisted in robot_info.json.
 MIC_DEVICE_NAME = "micro"
 
 
@@ -92,8 +90,7 @@ class InputDeviceManager:
 
     # --- activation ---
     def _apply(self, name: str, device: InputDevice, should_be_active: bool) -> bool:
-        """Open/close one device. Contains device hook failures so one bad device
-        can't abort applying the rest. Returns False if the hook raised."""
+        """Open/close one device. Returns False if its hook raised."""
         try:
             was_active = device.is_active()
             if should_be_active and not was_active:
@@ -110,7 +107,6 @@ class InputDeviceManager:
             return False
 
     def _is_allowed(self, name: str) -> bool:
-        """The mic toggle vetoes the micro device; everything else is always allowed."""
         return self._mic_enabled or name != MIC_DEVICE_NAME
 
     def handle_active_inputs(self, raw: str) -> None:
@@ -138,8 +134,7 @@ class InputDeviceManager:
         return True, f"All inputs {'activated' if active else 'deactivated'}"
 
     def set_mic_enabled(self, enabled: bool) -> None:
-        """Apply the robot-level microphone toggle: close the mic device when
-        disabled, reopen it when re-enabled if it's currently requested."""
+        """Apply the robot-level microphone toggle."""
         if enabled == self._mic_enabled:
             return
         self._mic_enabled = enabled
