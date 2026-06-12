@@ -32,6 +32,9 @@ I2C_BUS = 1
 I2C_ADDRESS = 0x42
 SPEAKER_SOUND = "/usr/share/sounds/sound-icons/electric-piano-3.wav"
 
+TMUX_SESSION = "ros_nodes"
+SYSTEMD_SERVICE = "ros-app.service"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # OUTPUT FORMATTING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -63,8 +66,67 @@ def header(msg):
 
 
 def is_innate_service_running():
-    r = subprocess.run(["tmux", "has-session", "-t", "ros_nodes"], capture_output=True)
+    r = subprocess.run(["tmux", "has-session", "-t", TMUX_SESSION], capture_output=True)
     return r.returncode == 0
+
+
+def stop_innate_service():
+    """Stop the ROS nodes (systemd service and/or bare tmux session)."""
+    import time
+
+    r = subprocess.run(["systemctl", "is-active", "--quiet", SYSTEMD_SERVICE])
+    if r.returncode == 0:
+        # Inherit stdio so a sudo password prompt (if any) reaches the user
+        if subprocess.run(["sudo", "systemctl", "stop", SYSTEMD_SERVICE]).returncode != 0:
+            return False
+    if is_innate_service_running():
+        subprocess.run(["tmux", "kill-session", "-t", TMUX_SESSION], capture_output=True)
+
+    for _ in range(20):
+        if not is_innate_service_running():
+            break
+        time.sleep(0.5)
+    else:
+        return False
+
+    # Give the dying nodes a moment to release the serial port and cameras
+    time.sleep(2.0)
+    return True
+
+
+def ensure_services_stopped():
+    """Offer to stop running ROS nodes — diagnostics needs exclusive hardware access.
+
+    Returns True if the nodes were stopped here, False if they were not running.
+    Exits if the user declines or the nodes cannot be stopped.
+    """
+    if not is_innate_service_running():
+        return False
+
+    warn("ROS nodes are running — diagnostics needs exclusive access to the")
+    warn("hardware (serial port, cameras), so most checks would fail.")
+
+    if not sys.stdin.isatty():
+        fail("Stop the nodes first:  innate service stop")
+        sys.exit(1)
+
+    try:
+        answer = input("\n  Stop all ROS nodes and run diagnostics? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(1)
+
+    if answer not in ("", "y", "yes"):
+        fail("Aborted — stop the nodes first:  innate service stop")
+        sys.exit(1)
+
+    print("  Stopping ROS nodes...")
+    if not stop_innate_service():
+        fail("Failed to stop the ROS nodes — try manually:  innate service stop")
+        sys.exit(1)
+
+    ok("ROS nodes stopped")
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -407,6 +469,8 @@ def main():
     print("║              MARS SYSTEM CHECK                           ║")
     print(f"╚══════════════════════════════════════════════════════════╝{Colors.END}")
 
+    nodes_stopped = ensure_services_stopped()
+
     results = {}
 
     # Wrap check_servos to catch any unhandled exceptions from SDK
@@ -453,6 +517,10 @@ def main():
         print(f"\n{Colors.GREEN}{Colors.BOLD}All systems detected! ✓{Colors.END}\n")
     else:
         print(f"\n{Colors.RED}{Colors.BOLD}Some components missing.{Colors.END}\n")
+
+    if nodes_stopped:
+        warn("ROS nodes were stopped for diagnostics — restart them with:  innate service start")
+        print()
 
     return 0 if all_ok else 1
 
