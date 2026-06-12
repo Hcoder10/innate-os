@@ -179,8 +179,11 @@ class BleProvisionerServer:
         active_ssid = nmcli_get_active_wifi_ssid()
         # Note: nmcli_get_active_wifi_ssid handles its own logging/errors, returns None on failure
 
-        # Get active IPv4 address
-        active_ip = nmcli_get_active_ipv4_address()
+        # Get active IPv4 address — Wi-Fi only: with Wi-Fi forgotten the
+        # static ethernet interface still has an IP (192.168.50.2), and the
+        # app would present the robot as network-connected and try to reach
+        # an address the phone has no route to.
+        active_ip = nmcli_get_active_ipv4_address(wifi_only=True)
         # Note: nmcli_get_active_ipv4_address handles its own logging/errors, returns None on failure
 
         if success_list:

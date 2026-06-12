@@ -304,21 +304,37 @@ def nmcli_connect(ssid, ifname=DEFAULT_WIFI_INTERFACE):
     if target_interface:
         cmd.extend(["ifname", target_interface])
 
-    # Use sudo for privileged operations
-    success, stdout, stderr = _run_nmcli(
-        cmd,  # Use the constructed command list
-        timeout=30,
-        use_sudo=True,
-    )
-    if not success:
-        # Provide more context in the error
-        error_iface_part = f" on interface {target_interface}" if target_interface else ""
-        return False, f"Connection attempt for '{ssid}'{error_iface_part} failed: {stderr or 'Unknown error'}"
+    # NetworkManager activates from its AP scan cache, and "The Wi-Fi network
+    # could not be found" regularly fires for networks that ARE in range: the
+    # cache expired between our scan and the activation, or the AP (e.g. on a
+    # 5GHz DFS channel) needs another scan pass to show up. Refresh the cache
+    # and retry once before reporting failure. Other errors (bad password,
+    # secrets required) are terminal and not retried.
+    last_error = None
+    for attempt in range(2):
+        if attempt > 0:
+            nm_logger.warning(f"'{ssid}' not found in NM scan cache; rescanning and retrying activation")
+            nmcli_scan_for_visible_ssids()
 
-    # Check stdout for confirmation message (optional, but can be useful)
-    confirmation = stdout.strip() if stdout else "No output."
-    nm_logger.info(f"Connection attempt output: {confirmation}")
-    return True, confirmation  # Success, return confirmation message
+        # Use sudo for privileged operations
+        success, stdout, stderr = _run_nmcli(
+            cmd,  # Use the constructed command list
+            timeout=30,
+            use_sudo=True,
+        )
+        if success:
+            # Check stdout for confirmation message (optional, but can be useful)
+            confirmation = stdout.strip() if stdout else "No output."
+            nm_logger.info(f"Connection attempt output: {confirmation}")
+            return True, confirmation  # Success, return confirmation message
+
+        last_error = stderr or "Unknown error"
+        if "could not be found" not in last_error:
+            break
+
+    # Provide more context in the error
+    error_iface_part = f" on interface {target_interface}" if target_interface else ""
+    return False, f"Connection attempt for '{ssid}'{error_iface_part} failed: {last_error}"
 
 
 def nmcli_get_active_wifi_ssid():
@@ -379,8 +395,15 @@ def nmcli_scan_for_visible_ssids(timeout=15):
     return True, visible_ssids, None  # Success, list of SSIDs, no error message
 
 
-def nmcli_get_active_ipv4_address():
-    """Gets the IPv4 address of the currently active network connection device."""
+def nmcli_get_active_ipv4_address(wifi_only=False):
+    """Gets the IPv4 address of the currently active network connection device.
+
+    wifi_only: only consider Wi-Fi devices. The BLE get_status payload uses
+    this so the reported IP is always the Wi-Fi one: the static ethernet
+    interface stays up when Wi-Fi is forgotten (and can enumerate before
+    Wi-Fi when both are connected), and advertising its IP sends the phone
+    to an address it can't reach.
+    """
     # Step 1: Find the active device
     success_dev, stdout_dev, stderr_dev = _run_nmcli(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
     if not success_dev:
@@ -396,8 +419,9 @@ def nmcli_get_active_ipv4_address():
             parts = line.split(":")
             if len(parts) == 3:
                 device, type, state = parts
-                # Look for a connected Wi-Fi or Ethernet device
-                if state.lower() == "connected" and ("wifi" in type.lower() or "ethernet" in type.lower()):
+                # Look for a connected Wi-Fi (or, unless wifi_only, Ethernet) device
+                type_ok = "wifi" in type.lower() or (not wifi_only and "ethernet" in type.lower())
+                if state.lower() == "connected" and type_ok:
                     active_device = device
                     nm_logger.info(f"Found active device: {active_device} (Type: {type})")
                     break  # Found the first connected device
