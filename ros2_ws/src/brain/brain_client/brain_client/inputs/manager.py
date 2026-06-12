@@ -20,6 +20,10 @@ from brain_client.common.script_paths import get_input_directories
 from brain_client.inputs.loader import InputLoader
 from brain_client.inputs.types import InputDevice
 
+# Device name of the microphone input (workspace/inputs/micro_input.py), gated
+# by the user-facing microphone toggle persisted in robot_info.json.
+MIC_DEVICE_NAME = "micro"
+
 
 class InputDeviceManager:
     def __init__(self, node, proxy, *, chat_in_pub, custom_pub):
@@ -28,6 +32,8 @@ class InputDeviceManager:
         self._chat_in_pub = chat_in_pub
         self._custom_pub = custom_pub
         self.input_devices: dict[str, InputDevice] = {}
+        self._mic_enabled = True
+        self._requested_inputs: set[str] = set()
         self._load(proxy)
 
     def _load(self, proxy) -> None:
@@ -92,26 +98,43 @@ class InputDeviceManager:
             device.set_active(False)
             self._logger.info(f"💤 Closed input device: {name}")
 
+    def _is_allowed(self, name: str) -> bool:
+        """The mic toggle vetoes the micro device; everything else is always allowed."""
+        return self._mic_enabled or name != MIC_DEVICE_NAME
+
     def handle_active_inputs(self, raw: str) -> None:
         """Open/close devices to match an active-inputs message: {"inputs": [...]}."""
         self._logger.debug(f"📥 Received active_inputs message: {raw}")
         try:
             required_inputs = json.loads(raw).get("inputs", [])
             self._logger.debug(f"🎯 Processing inputs: {required_inputs}")
+            self._requested_inputs = set(required_inputs)
             for name, device in self.input_devices.items():
-                self._apply(name, device, name in required_inputs)
+                self._apply(name, device, name in self._requested_inputs and self._is_allowed(name))
         except Exception as e:
             self._logger.error(f"Error handling active inputs: {e}")
 
     def set_all_active(self, active: bool) -> tuple[bool, str]:
         """Activate or deactivate every device (manual control). Returns (ok, msg)."""
         try:
+            self._requested_inputs = set(self.input_devices) if active else set()
             for name, device in self.input_devices.items():
-                self._apply(name, device, active)
+                self._apply(name, device, active and self._is_allowed(name))
             return True, f"All inputs {'activated' if active else 'deactivated'}"
         except Exception as e:
             self._logger.error(f"Error in set_input_active: {e}")
             return False, str(e)
+
+    def set_mic_enabled(self, enabled: bool) -> None:
+        """Apply the robot-level microphone toggle: close the mic device when
+        disabled, reopen it when re-enabled if it's currently requested."""
+        if enabled == self._mic_enabled:
+            return
+        self._mic_enabled = enabled
+        self._logger.info(f"🎙️ Microphone {'enabled' if enabled else 'disabled'}")
+        device = self.input_devices.get(MIC_DEVICE_NAME)
+        if device is not None:
+            self._apply(MIC_DEVICE_NAME, device, enabled and MIC_DEVICE_NAME in self._requested_inputs)
 
     def handle_tts_status(self, raw: str) -> None:
         """Notify ducking-capable devices when the robot starts/stops speaking."""

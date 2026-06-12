@@ -17,6 +17,7 @@ find_package(ament_cmake_python REQUIRED)
 find_package(mars_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -34,14 +35,13 @@ ament_target_dependencies(app.cpp
   rclcpp
   geometry_msgs
   std_msgs
+  std_srvs
   mars_msgs
 )
 
 # ============================================================================
 # C++ Executable: udp_leader_receiver.cpp
 # ============================================================================
-find_package(std_srvs REQUIRED)
-
 add_executable(udp_leader_receiver mars_control/udp_leader_receiver.cpp)
 
 ament_target_dependencies(udp_leader_receiver

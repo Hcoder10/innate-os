@@ -13,6 +13,8 @@
 #include <mars_msgs/srv/trigger_update.hpp>
 #include <mars_msgs/srv/shutdown.hpp>
 #include <mars_msgs/srv/set_volume.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
@@ -423,12 +425,23 @@ class AppControl : public rclcpp::Node {
             "/set_volume",
             std::bind(&AppControl::set_volume_callback, this, std::placeholders::_1, std::placeholders::_2));
 
+        // Service for enabling/disabling the robot microphone
+        set_microphone_srv_ = this->create_service<std_srvs::srv::SetBool>(
+            "/set_microphone",
+            std::bind(&AppControl::set_microphone_callback, this, std::placeholders::_1, std::placeholders::_2));
+
+        // Latched microphone state so the input manager picks it up at startup
+        // and reacts immediately when it changes
+        mic_enabled_pub_ =
+            this->create_publisher<std_msgs::msg::Bool>("/microphone_enabled", rclcpp::QoS(1).transient_local());
+
         // Sync ALSA volume from robot_info.json on startup
         try {
             json robot_info = get_robot_info();
             int startup_vol = robot_info.value("volume_percent", 80);
             apply_alsa_volume(startup_vol);
             RCLCPP_INFO(this->get_logger(), "ALSA volume synced to %d%%", startup_vol);
+            publish_mic_enabled(robot_info.value("microphone_enabled", true));
         } catch (const std::exception& e) {
             RCLCPP_WARN(this->get_logger(), "Failed to sync startup volume: %s", e.what());
         }
@@ -499,11 +512,9 @@ class AppControl : public rclcpp::Node {
 
         // Define default robot info values
         std::string default_hw_rev = this->get_parameter("default_hardware_revision").as_string();
-        json default_robot_info = {{"robot_name", "MARS"},
-                                   {"robot_id", nullptr},
-                                   {"hardware_revision", default_hw_rev},
-                                   {"color_variant", "black"},
-                                   {"volume_percent", 80}};
+        json default_robot_info = {
+            {"robot_name", "MARS"},     {"robot_id", nullptr},  {"hardware_revision", default_hw_rev},
+            {"color_variant", "black"}, {"volume_percent", 80}, {"microphone_enabled", true}};
 
         json robot_info;
 
@@ -725,6 +736,7 @@ class AppControl : public rclcpp::Node {
             data_to_publish_dict["hardware_revision"] = robot_info.value("hardware_revision", default_hw_rev);
             data_to_publish_dict["color_variant"] = robot_info.value("color_variant", "black");
             data_to_publish_dict["volume_percent"] = robot_info.value("volume_percent", 80);
+            data_to_publish_dict["microphone_enabled"] = robot_info.value("microphone_enabled", true);
 
             // Read minimum_app_version from os_config.json
             if (app_config_.contains("minimum_app_version")) {
@@ -967,6 +979,42 @@ class AppControl : public rclcpp::Node {
         }
     }
 
+    void publish_mic_enabled(bool enabled) {
+        std_msgs::msg::Bool msg;
+        msg.data = enabled;
+        mic_enabled_pub_->publish(msg);
+    }
+
+    /**
+     * Service callback to enable/disable the robot microphone.
+     * Stores microphone_enabled in robot_info.json and broadcasts the new
+     * state on the latched /microphone_enabled topic; the input manager
+     * closes/reopens the mic input device accordingly.
+     */
+    void set_microphone_callback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                 std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+        try {
+            json robot_info = get_robot_info();
+            robot_info["microphone_enabled"] = request->data;
+
+            if (!set_robot_info(robot_info)) {
+                response->success = false;
+                response->message = "Failed to save robot_info.json";
+                return;
+            }
+
+            publish_mic_enabled(request->data);
+
+            response->success = true;
+            response->message = std::string("Microphone ") + (request->data ? "enabled" : "disabled");
+            RCLCPP_INFO(this->get_logger(), "%s", response->message.c_str());
+        } catch (const std::exception& e) {
+            response->success = false;
+            response->message = std::string("Failed to set microphone: ") + e.what();
+            RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+        }
+    }
+
     // Member variables
     json app_config_;
 
@@ -988,6 +1036,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr cmd_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr robot_info_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mic_enabled_pub_;
 
     // Timers
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
@@ -998,6 +1047,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::Service<mars_msgs::srv::TriggerUpdate>::SharedPtr trigger_update_srv_;
     rclcpp::Service<mars_msgs::srv::Shutdown>::SharedPtr shutdown_srv_;
     rclcpp::Service<mars_msgs::srv::SetVolume>::SharedPtr set_volume_srv_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_microphone_srv_;
 };
 
 }  // namespace mars_control
