@@ -2371,11 +2371,7 @@ class _UpdateManager:
         for unit in sorted(repo_units.glob("*.service")):
             installed = Path("/etc/systemd/system") / unit.name
             try:
-                rendered = (
-                    unit.read_text()
-                    .replace("User=jetson1", f"User={user}")
-                    .replace("/home/jetson1", home)
-                )
+                rendered = unit.read_text().replace("User=jetson1", f"User={user}").replace("/home/jetson1", home)
                 if not installed.exists() or installed.read_text() != rendered:
                     drifted.append(unit.name)
             except OSError:
@@ -2423,9 +2419,7 @@ class _UpdateManager:
 
         drifted = self._systemd_unit_drift()
         if drifted:
-            self.logger.warning(
-                f"Installed systemd units differ from this checkout: {', '.join(drifted)}"
-            )
+            self.logger.warning(f"Installed systemd units differ from this checkout: {', '.join(drifted)}")
             print("  Services may be running stale paths (a manual `git pull` skips")
             print("  unit installation). Run 'innate update reinstall' to fix.")
             print()
