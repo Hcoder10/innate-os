@@ -12,7 +12,7 @@ def generate_launch_description():
     config_file = os.path.join(pkg_share, "config", "recorder.yaml")
 
     # Get the URDF file path
-    urdf_file = os.path.join(get_package_share_directory("maurice_sim"), "urdf", "maurice.urdf")
+    urdf_file = os.path.join(get_package_share_directory("mars_sim"), "urdf", "mars.urdf")
 
     # Create a temporary RViz config file
     rviz_config = os.path.join(pkg_share, "config", "visualizer.rviz")

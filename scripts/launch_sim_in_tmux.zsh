@@ -70,21 +70,21 @@ settle_after_launch
 
 # === Window 1: Rosbridge + App ===
 tmux new-window -t "$SESSION_NAME" -n rosbridge-app
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app" "ros2 launch maurice_sim_bringup sim_rosbridge.launch.py" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app" "ros2 launch mars_sim_bringup sim_rosbridge.launch.py" C-m
 echo "Started rosbridge..."
 settle_after_launch
 # Split and run app
 tmux split-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app" -h
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch maurice_control app.sim.launch.py" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch mars_control app.sim.launch.py" C-m
 echo "Started app control..."
 # === Window 2: WebRTC Streamer ===
 tmux new-window -t "$SESSION_NAME" -n webrtc
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch maurice_cam webrtc_streamer.sim.launch.py" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
 echo "Started webrtc streamer (sim mode with compressed images)..."
 
 # === Window 3: Nav + Brain ===
 tmux new-window -t "$SESSION_NAME" -n nav-brain
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain" "ros2 launch maurice_nav navigation_sim.launch.py" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain" "ros2 launch mars_nav navigation_sim.launch.py" C-m
 echo "Started navigation system..."
 settle_after_launch
 # Split and run brain client

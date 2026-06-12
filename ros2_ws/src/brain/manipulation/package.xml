@@ -3,7 +3,7 @@
 <package format="3">
   <name>manipulation</name>
   <version>0.0.0</version>
-  <description>Manipulation, behavior recording and policy execution for Maurice robot</description>
+  <description>Manipulation, behavior recording and policy execution for Mars robot</description>
   <maintainer email="vignesh.anand.1503@gmail.com">vignesh</maintainer>
   <license>TODO: License declaration</license>
 
@@ -23,7 +23,7 @@
 
   <!-- Internal packages -->
   <depend>brain_messages</depend>
-  <depend>maurice_msgs</depend>
+  <depend>mars_msgs</depend>
 
   <!-- Image processing -->
   <depend>cv_bridge</depend>

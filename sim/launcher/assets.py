@@ -22,7 +22,7 @@ DEFAULT_ASSET_FILES = (
     "data/assets/walking_man/man.mtl",
     "data/assets/walking_man/man.obj",
     "data/replica_scene.stl",
-    "data/urdf/maurice.urdf",
+    "data/urdf/mars.urdf",
     "data/urdf/meshes/base.STL",
     "data/urdf/meshes/link1.STL",
     "data/urdf/meshes/link2.STL",

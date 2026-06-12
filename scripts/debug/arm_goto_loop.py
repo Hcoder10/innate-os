@@ -67,7 +67,7 @@ def _check_reload():
 def goto_js(joints, t):
     data_str = ",".join(f"{v}" for v in joints)
     msg = f"{{data: {{data: [{data_str}]}}, time: {t}}}"
-    cmd = ["ros2", "service", "call", "/mars/arm/goto_js_v2", "maurice_msgs/srv/GotoJS", msg]
+    cmd = ["ros2", "service", "call", "/mars/arm/goto_js_v2", "mars_msgs/srv/GotoJS", msg]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     ok = "success=True" in r.stdout
     return ok

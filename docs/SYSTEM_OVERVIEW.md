@@ -1,9 +1,9 @@
-# Maurice Robot System Documentation
+# Mars Robot System Documentation
 
-This repository contains the code, configuration, and documentation for the Maurice robot system. The system can run in two modes:
+This repository contains the code, configuration, and documentation for the Mars robot system. The system can run in two modes:
 
 1. **Simulation Mode**: Where a simulator publishes mock sensor data (images, LiDAR, etc.) to ROS, and we run the same ROS nodes that would run on the real robot.
-2. **Real-World Mode**: Where the Maurice robot hardware (via UART/TCP or actual hardware drivers) publishes real sensor data, and receives real actuation commands.
+2. **Real-World Mode**: Where the Mars robot hardware (via UART/TCP or actual hardware drivers) publishes real sensor data, and receives real actuation commands.
 
 Below is an overview of each major component, the communication protocols, and relevant message/service definitions.
 
@@ -13,7 +13,7 @@ Below is an overview of each major component, the communication protocols, and r
 
 - [Overall Architecture](#overall-architecture)
 - [Components](#components)
-  - [Maurice Robot / Simulation](#maurice-robot--simulation)
+  - [Mars Robot / Simulation](#mars-robot--simulation)
   - [ROS 2 Nodes & Packages](#ros-2-nodes--packages)
   - [Cloud Agent](#cloud-agent)
   - [Zenoh Discovery & Networking](#zenoh-networking)
@@ -46,16 +46,16 @@ A **cloud agent** connects via WebSockets to our `brain_client_node` (or similar
 
 Below is a brief description of each major piece. In the repository, these are located in various subfolders inside `ros2_ws/src`.
 
-### Maurice Robot / Simulation
+### Mars Robot / Simulation
 
-- **Maurice Robot**: A physical platform running ROS 2 (e.g. on a Jetson or SBC). Publishes topics like `/odom`, `/battery_state`, and receives `/cmd_vel`.  
+- **Mars Robot**: A physical platform running ROS 2 (e.g. on a Jetson or SBC). Publishes topics like `/odom`, `/battery_state`, and receives `/cmd_vel`.  
 - **Simulation**: A software environment mimicking the robot's sensors (camera, LiDAR, etc.) and actuators. Publishes the same ROS 2 topics so that the rest of the system thinks it's dealing with a real robot.
 
 ### ROS 2 Nodes & Packages
 
-1. **`maurice_msgs`**: Custom message/service definitions (e.g. `LightCommand.srv`).
-2. **`maurice_bringup`**: Launch files and nodes for the real robot (UART drivers, battery manager).
-3. **`maurice_sim_bringup`**: Launch files and nodes for simulation (TCP manager or direct rosbridge).
+1. **`mars_msgs`**: Custom message/service definitions (e.g. `LightCommand.srv`).
+2. **`mars_bringup`**: Launch files and nodes for the real robot (UART drivers, battery manager).
+3. **`mars_sim_bringup`**: Launch files and nodes for simulation (TCP manager or direct rosbridge).
 4. **`brain_client`**: A node that connects to the cloud agent via WebSocket. This sends images, receives commands, etc.
 5. **`config/dds/`** scripts: Facilitates DDS discovery server usage (setup scripts, XML templates).
 
@@ -92,7 +92,7 @@ Below is a summary of the main ROS 2 topics and services used. They are standard
 | `/camera/color/image_raw`| `sensor_msgs/msg/Image`           | RGB camera feed from either real or simulated source                   |
 | `/cmd_vel`               | `geometry_msgs/msg/Twist`         | Velocity commands to drive the robot                                  |
 | `/battery_state`         | `sensor_msgs/msg/BatteryState`    | Battery information                                                    |
-| `/light_command`         | `maurice_msgs/srv/LightCommand`   | Custom service for controlling robot lights                            |
+| `/light_command`         | `mars_msgs/srv/LightCommand`   | Custom service for controlling robot lights                            |
 | …                        | …                                  | (Add more as needed)                                                   |
 
 ### Custom WebSocket Protocol
@@ -132,7 +132,7 @@ flowchart LR
     end
 
     subgraph "ROS 2 Container"
-        B["maurice_sim_bringup
+        B["mars_sim_bringup
         (Launch + Nodes)"]
         C["brain_client_node
         (WebSocket Bridge)"]
@@ -159,8 +159,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph "Maurice Robot"
-        A["maurice_bringup
+    subgraph "Mars Robot"
+        A["mars_bringup
         (UART Manager)"]
         B["brain_client_node
         (WebSocket Bridge)"]

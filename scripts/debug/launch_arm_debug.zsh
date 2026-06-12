@@ -6,7 +6,7 @@
 SESSION_NAME="arm_debug"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
 DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
-PID_HOT_RELOAD="$ROS_WS_PATH/src/maurice_bot/maurice_arm/maurice_arm/pid_hot_reload.py"
+PID_HOT_RELOAD="$ROS_WS_PATH/src/mars_bot/mars_arm/mars_arm/pid_hot_reload.py"
 ARM_GOTO_LOOP="$INNATE_OS_ROOT/scripts/debug/arm_goto_loop.py"
 
 DDS_SOURCE_CMD="source $DDS_SETUP_SCRIPT"
@@ -25,7 +25,7 @@ sleep 0.5
 
 # === Window 1: Arm node ===
 tmux new-session -d -s ${SESSION_NAME} -n arm -c ~
-tmux send-keys -t ${SESSION_NAME}:arm "$ENV_CMD && ros2 launch maurice_arm arm.launch.py" C-m
+tmux send-keys -t ${SESSION_NAME}:arm "$ENV_CMD && ros2 launch mars_arm arm.launch.py" C-m
 echo "  ✓ arm node"
 
 # === Window 2: PID Hot Reload ===

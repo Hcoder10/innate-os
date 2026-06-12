@@ -1,14 +1,14 @@
 {
   "container_path": "/sim-data",
-  "content_sha256": "2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "content_sha256": "cd9d4a90c56fba9c329a50dbd65a4424b688f5bd87ba592502017b447f32c9c8",
   "image": "ghcr.io/innate-inc/innate-os-sim-assets",
-  "image_ref": "ghcr.io/innate-inc/innate-os-sim-assets:assets-2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "image_ref": "ghcr.io/innate-inc/innate-os-sim-assets:assets-cd9d4a90c56fba9c329a50dbd65a4424b688f5bd87ba592502017b447f32c9c8",
   "required_files": [
     "data/assets/walking_man/man.jpg",
     "data/assets/walking_man/man.mtl",
     "data/assets/walking_man/man.obj",
     "data/replica_scene.stl",
-    "data/urdf/maurice.urdf",
+    "data/urdf/mars.urdf",
     "data/urdf/meshes/base.STL",
     "data/urdf/meshes/link1.STL",
     "data/urdf/meshes/link2.STL",
@@ -18,6 +18,6 @@
     "data/urdf/meshes/link61.STL",
     "data/urdf/meshes/link62.STL"
   ],
-  "tag": "assets-2ea44fa2f8449003704b80b13ec00a2e37ed352484edf25fa119fa5f156b31ee",
+  "tag": "assets-cd9d4a90c56fba9c329a50dbd65a4424b688f5bd87ba592502017b447f32c9c8",
   "version": 1
 }

@@ -446,7 +446,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
-    adv_arm_goto_service = rosbridge_advertise_service("/mars/arm/goto_js", "maurice_msgs/srv/GotoJS")  # noqa: F841
+    adv_arm_goto_service = rosbridge_advertise_service("/mars/arm/goto_js", "mars_msgs/srv/GotoJS")  # noqa: F841
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))

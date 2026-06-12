@@ -727,7 +727,7 @@ class SimulationNode:
     def _init_robot(self):
         """Initialize robot and its parameters"""
         urdf_kwargs = {
-            "file": "data/urdf/maurice.urdf",
+            "file": "data/urdf/mars.urdf",
             # Keep the articulation root fixed and drive the planar base joints directly.
             "pos": ROBOT_ROOT_POS,
             "quat": (1.0, 0.0, 0.0, 0.0),
@@ -742,7 +742,7 @@ class SimulationNode:
         self.robot = self.scene.add_entity(gs.morphs.URDF(**urdf_kwargs))
 
     def _init_robot_base_pose_control(self):
-        """Cache the planar base DOFs used to drive Maurice in world space."""
+        """Cache the planar base DOFs used to drive Mars in world space."""
         self.robot_base_root_pos = np.array(ROBOT_ROOT_POS, dtype=float)
         self.base_pose_joint_names = ("base_x", "base_y", "base_yaw")
         self.base_pose_dof_indices = [
@@ -909,7 +909,7 @@ class SimulationNode:
         )
 
     def init_movement(self):
-        """Initialize robot movement - no-op for Maurice"""
+        """Initialize robot movement - no-op for Mars"""
         pass
 
     def _update_navigation_movement(self, dt, sim_time=0.0):

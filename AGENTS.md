@@ -36,10 +36,10 @@ Run `innate` with no arguments to print the current system status (version, mode
 
 | Package | Role |
 |---|---|
-| `maurice_control` | Top-level app node, rosbridge websocket, teleop receiver |
-| `maurice_bringup` | Motor/IMU/LiDAR hardware drivers, TF tree |
-| `maurice_arm` | Arm + head servos, MoveIt, IK solver |
-| `maurice_cam` | Stereo cameras, depth estimation, WebRTC stream |
-| `maurice_nav` | Nav2 navigation, SLAM, mode manager |
+| `mars_control` | Top-level app node, rosbridge websocket, teleop receiver |
+| `mars_bringup` | Motor/IMU/LiDAR hardware drivers, TF tree |
+| `mars_arm` | Arm + head servos, MoveIt, IK solver |
+| `mars_cam` | Stereo cameras, depth estimation, WebRTC stream |
+| `mars_nav` | Nav2 navigation, SLAM, mode manager |
 | `brain_client` | Cloud brain bridge (STT/TTS, skills action server) |
 | `manipulation` | Records/replays and runs manipulation policies |

@@ -47,6 +47,6 @@ pytest ros2_ws/src/brain/brain_client/test/test_fake_cloud_selftest.py \
 
 ## Known gaps (not yet wired — honest list, not coverage)
 
-- `maurice_bt_provisioner/test/test_command_layer.py` — needs system `gi`/GLib; verify it's in the image, then add to `--packages-select` + `-R`.
+- `mars_bt_provisioner/test/test_command_layer.py` — needs system `gi`/GLib; verify it's in the image, then add to `--packages-select` + `-R`.
 - `innate_training_node/test/test_training_node.py` — needs `rclpy`/a live node; wire as a launch test once verified.
 - **Untested behaviorally:** teleop (joystick/UDP/arm), nav, camera. Same recipe — fake the seam, assert the ROS output. For these, Gates 1–2 (lint + build) are the only net today.
