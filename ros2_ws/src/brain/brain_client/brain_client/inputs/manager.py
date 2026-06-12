@@ -139,10 +139,13 @@ class InputDeviceManager:
 
     def set_mic_enabled(self, enabled: bool) -> None:
         """Apply the robot-level microphone toggle."""
-        if enabled == self._mic_enabled:
-            return
+        if enabled != self._mic_enabled:
+            self._logger.info(f"🎙️ Microphone {'enabled' if enabled else 'disabled'}")
+        # Track the user's intent unconditionally (it gates handle_active_inputs
+        # via _is_allowed), and re-apply even when unchanged: _apply is a no-op
+        # when state already matches, so a re-publish of the same value retries
+        # a previously failed open/close instead of being swallowed.
         self._mic_enabled = enabled
-        self._logger.info(f"🎙️ Microphone {'enabled' if enabled else 'disabled'}")
         device = self.input_devices.get(MIC_DEVICE_NAME)
         if device is not None:
             self._apply(MIC_DEVICE_NAME, device, enabled and MIC_DEVICE_NAME in self._requested_inputs)
