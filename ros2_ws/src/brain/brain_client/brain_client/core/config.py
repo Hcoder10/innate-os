@@ -29,6 +29,7 @@ class BrainConfig:
     arm_camera_image_topic: str
     odom_topic: str
     current_nav_mode_topic: str
+    scan_topic: str
 
     # --- Feature flags ---
     send_depth: bool
@@ -107,6 +108,7 @@ class BrainConfig:
             "arm_camera_image_topic": "/mars/arm/image_raw/compressed",
             "odom_topic": "/odom",
             "current_nav_mode_topic": "/nav/current_mode",
+            "scan_topic": "/scan",
             "cartesia_voice_id": "9fdaae0b-f885-4813-b589-3c07cf9d5fea",
             "openai_realtime_model": "gpt-4o-realtime-preview",
             "openai_realtime_url": "wss://api.openai.com/v1/realtime",
@@ -161,6 +163,7 @@ class BrainConfig:
             arm_camera_image_topic=s("arm_camera_image_topic"),
             odom_topic=s("odom_topic"),
             current_nav_mode_topic=s("current_nav_mode_topic"),
+            scan_topic=s("scan_topic"),
             send_depth=b("send_depth"),
             send_arm_camera_image=b("send_arm_camera_image"),
             use_odom_as_amcl_pose=b("use_odom_as_amcl_pose"),
