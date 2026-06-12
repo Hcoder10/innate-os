@@ -435,15 +435,17 @@ class AppControl : public rclcpp::Node {
         mic_enabled_pub_ =
             this->create_publisher<std_msgs::msg::Bool>("/microphone_enabled", rclcpp::QoS(1).transient_local());
 
-        // Sync ALSA volume from robot_info.json on startup
+        // Sync mic state and ALSA volume from robot_info.json on startup. Mic
+        // state is published first so a volume-sync failure can't leave a muted
+        // robot listening (the input manager defaults to mic enabled).
         try {
             json robot_info = get_robot_info();
+            publish_mic_enabled(robot_info.value("microphone_enabled", true));
             int startup_vol = robot_info.value("volume_percent", 80);
             apply_alsa_volume(startup_vol);
             RCLCPP_INFO(this->get_logger(), "ALSA volume synced to %d%%", startup_vol);
-            publish_mic_enabled(robot_info.value("microphone_enabled", true));
         } catch (const std::exception& e) {
-            RCLCPP_WARN(this->get_logger(), "Failed to sync startup volume: %s", e.what());
+            RCLCPP_WARN(this->get_logger(), "Failed to sync startup volume/mic state: %s", e.what());
         }
 
         RCLCPP_INFO(this->get_logger(), "AppControl node started. [C++]");
