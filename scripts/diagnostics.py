@@ -80,7 +80,11 @@ def stop_innate_service():
         if subprocess.run(["sudo", "systemctl", "stop", SYSTEMD_SERVICE]).returncode != 0:
             return False
     if is_innate_service_running():
-        subprocess.run(["tmux", "kill-session", "-t", TMUX_SESSION], capture_output=True)
+        r = subprocess.run(["tmux", "kill-session", "-t", TMUX_SESSION], capture_output=True)
+        # Non-zero can also mean the session died on its own between the check
+        # and the kill, so only fail if it is actually still alive
+        if r.returncode != 0 and is_innate_service_running():
+            return False
 
     for _ in range(20):
         if not is_innate_service_running():
