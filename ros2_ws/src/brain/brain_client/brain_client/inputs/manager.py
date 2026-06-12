@@ -103,6 +103,10 @@ class InputDeviceManager:
                 self._logger.info(f"💤 Closed input device: {name}")
             return True
         except Exception as e:
+            if should_be_active:
+                # Roll back the flag: a failed open left as "active" would make
+                # every later open attempt a no-op (stuck half-open until restart).
+                device.set_active(False)
             self._logger.error(f"Error {'opening' if should_be_active else 'closing'} input device '{name}': {e}")
             return False
 
