@@ -3,6 +3,7 @@
 
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
@@ -2358,7 +2359,14 @@ class _UpdateManager:
             return []
 
         user = os.environ.get("USER") or os.environ.get("LOGNAME") or "jetson1"
-        home = str(Path.home())
+        # Resolve home from passwd, matching post_update.sh's `eval echo
+        # ~$ACTUAL_USER` — Path.home() prefers $HOME, which a container or
+        # custom SSH environment can point elsewhere and false-positive
+        # every unit.
+        try:
+            home = pwd.getpwnam(user).pw_dir
+        except KeyError:
+            home = str(Path.home())
         drifted = []
         for unit in sorted(repo_units.glob("*.service")):
             installed = Path("/etc/systemd/system") / unit.name
