@@ -163,6 +163,160 @@ class TestGetStatus:
         assert resp["active_ssid"] is None
         assert resp["active_ip"] is None
 
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_status_ethernet_only_reports_no_ip(self, mock_run):
+        """WiFi forgotten, static ethernet still up: the status must not
+        advertise the ethernet IP as if it were a reachable WiFi address."""
+
+        def side_effect(cmd_list, **kwargs):
+            cmd = " ".join(cmd_list)
+            if "connection" in cmd and "NAME,TYPE,UUID" in cmd:
+                return (True, "", None)
+            if "ACTIVE,SSID" in cmd:
+                return (True, "", None)
+            if "DEVICE,TYPE,STATE" in cmd:
+                return (True, "eth0:ethernet:connected\nwlP1p1s0:wifi:disconnected\n", None)
+            if "IP4.ADDRESS" in cmd:
+                return (True, "IP4.ADDRESS:192.168.50.2/24\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+        server = _make_server()
+
+        resp = _send_command(server, {"command": "get_status"})
+
+        assert resp["status"] == "success"
+        assert resp["active_ssid"] is None
+        assert resp["active_ip"] is None
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_status_prefers_wifi_ip_over_ethernet(self, mock_run):
+        """Ethernet enumerates before WiFi while both are connected: the
+        reported IP must be the WiFi one, not the unroutable ethernet IP."""
+
+        def side_effect(cmd_list, **kwargs):
+            cmd = " ".join(cmd_list)
+            if "connection" in cmd and "NAME,TYPE,UUID" in cmd:
+                return (True, "FBI_VAN_6:802-11-wireless:uuid-1\n", None)
+            if "autoconnect-priority" in cmd:
+                return (True, "connection.autoconnect-priority:10\n", None)
+            if "ACTIVE,SSID" in cmd:
+                return (True, "yes:FBI_VAN_6\n", None)
+            if "DEVICE,TYPE,STATE" in cmd:
+                return (True, "eth0:ethernet:connected\nwlP1p1s0:wifi:connected\n", None)
+            if "IP4.ADDRESS" in cmd and "eth0" in cmd:
+                return (True, "IP4.ADDRESS:192.168.50.2/24\n", None)
+            if "IP4.ADDRESS" in cmd:
+                return (True, "IP4.ADDRESS:192.168.1.42/24\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+        server = _make_server()
+
+        resp = _send_command(server, {"command": "get_status"})
+
+        assert resp["status"] == "success"
+        assert resp["active_ssid"] == "FBI_VAN_6"
+        assert resp["active_ip"] == "192.168.1.42"
+
+
+# ---------------------------------------------------------------------------
+# nmcli_connect retry
+# ---------------------------------------------------------------------------
+
+
+class TestNmcliConnectRetry:
+    """Activation 'could not be found' failures get one rescan-and-retry."""
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_retries_after_rescan_when_ap_not_found(self, mock_run):
+        calls = []
+
+        def side_effect(cmd_list, **kwargs):
+            cmd = " ".join(cmd_list)
+            calls.append(cmd)
+            if "connection up" in cmd:
+                if sum("connection up" in c for c in calls) == 1:
+                    return (False, None, "Error: Connection activation failed: The Wi-Fi network could not be found")
+                return (True, "Connection successfully activated", None)
+            if "wifi list" in cmd:
+                return (True, "INNATE_WIFI_SUPER\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+
+        ok, msg = nmcli_utils.nmcli_connect("INNATE_WIFI_SUPER")
+
+        assert ok
+        # A rescan ran between the failed and successful activations
+        up_indices = [i for i, c in enumerate(calls) if "connection up" in c]
+        scan_indices = [i for i, c in enumerate(calls) if "wifi list" in c]
+        assert len(up_indices) == 2
+        assert any(up_indices[0] < s < up_indices[1] for s in scan_indices)
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_no_retry_on_terminal_errors(self, mock_run):
+        mock_run.return_value = (False, None, "Error: Secrets were required, but not provided")
+
+        ok, msg = nmcli_utils.nmcli_connect("INNATE_WIFI_SUPER")
+
+        assert not ok
+        up_calls = [c for c in mock_run.call_args_list if "up" in " ".join(c.args[0])]
+        assert len(up_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# WPA3 profile creation
+# ---------------------------------------------------------------------------
+
+
+class TestWpa3ProfileCreation:
+    """Save-only profiles pick SAE for WPA3-only APs, wpa-psk otherwise."""
+
+    def _key_mgmt_of_add(self, mock_run):
+        for c in mock_run.call_args_list:
+            cmd_list = c.args[0]
+            if "add" in cmd_list and "connection" in cmd_list:
+                return cmd_list[cmd_list.index("wifi-sec.key-mgmt") + 1]
+        return None
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_wpa3_only_ap_gets_sae(self, mock_run):
+        def side_effect(cmd_list, **kwargs):
+            if "SSID,SECURITY" in " ".join(cmd_list):
+                return (True, "INNATE_WIFI_SUPER:WPA3\nOther:WPA2\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("INNATE_WIFI_SUPER", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "sae"
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_mixed_wpa2_wpa3_ap_stays_wpa_psk(self, mock_run):
+        def side_effect(cmd_list, **kwargs):
+            if "SSID,SECURITY" in " ".join(cmd_list):
+                return (True, "Innate_WIFI_FAST:WPA2 WPA3\n", None)
+            return (True, "", None)
+
+        mock_run.side_effect = side_effect
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("Innate_WIFI_FAST", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "wpa-psk"
+
+    @patch.object(nmcli_utils, "_run_nmcli")
+    def test_unknown_ap_defaults_to_wpa_psk(self, mock_run):
+        mock_run.return_value = (True, "", None)
+
+        ok, err = nmcli_utils.nmcli_add_or_modify_connection("HiddenNet", "pw", 10, autoconnect=False)
+
+        assert ok
+        assert self._key_mgmt_of_add(mock_run) == "wpa-psk"
+
 
 # ---------------------------------------------------------------------------
 # update_network
