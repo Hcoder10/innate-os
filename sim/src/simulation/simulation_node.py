@@ -339,9 +339,9 @@ class SimulationNode:
         requested = os.getenv("SIM_ROBOT_URDF", "ros").strip()
         if requested.lower() in {"legacy", "sim"}:
             print("[SimulationNode] Using legacy sim robot URDF.")
-            self.robot_urdf_path = self._resolve_project_path("data/urdf/maurice.urdf")
+            self.robot_urdf_path = self._resolve_project_path("data/urdf/mars.urdf")
             self._load_urdf_fixed_joints(self.robot_urdf_path)
-            return "data/urdf/maurice.urdf"
+            return "data/urdf/mars.urdf"
 
         repo_root = os.path.dirname(self.project_root)
         if requested.lower() in {"", "ros"}:
