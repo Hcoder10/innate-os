@@ -203,6 +203,21 @@ def _multi_array_data(value) -> list:
     return []
 
 
+def _parse_json_object_topic(topic: str, msg_data: dict) -> dict | None:
+    raw_payload = msg_data.get("data", "")
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        print(f"[ROSBridge] Failed to parse {topic} JSON payload: {exc}; raw={str(raw_payload)[:300]!r}")
+        return None
+
+    if not isinstance(payload, dict):
+        print(f"[ROSBridge] Ignoring {topic}: expected JSON object, got {type(payload).__name__}")
+        return None
+
+    return payload
+
+
 def _parse_arm_goto_args(args: dict) -> tuple[list[float] | None, float]:
     joint_data = _multi_array_data(args.get("data", {}))
     if len(joint_data) < ARM_JOINT_COUNT:
@@ -427,7 +442,9 @@ async def inbound_data_loop(ws, shared_queues):
 
             # 2) /chat_out
             elif topic == "/brain/chat_out":
-                payload = json.loads(msg_data.get("data", ""))
+                payload = _parse_json_object_topic(topic, msg_data)
+                if payload is None:
+                    continue
                 sender = payload.get("sender", "")
                 text = payload.get("text", "")
                 timestamp = payload.get("timestamp", time.time())
@@ -446,7 +463,9 @@ async def inbound_data_loop(ws, shared_queues):
                     shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/skill_status_update":
-                payload = json.loads(msg_data.get("data", ""))
+                payload = _parse_json_object_topic(topic, msg_data)
+                if payload is None:
+                    continue
                 text = payload.get("primitive_name") or payload.get("skill_name") or payload.get("skill_id") or ""
                 status = payload.get("status")
                 if text and status:
@@ -463,14 +482,10 @@ async def inbound_data_loop(ws, shared_queues):
                     shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/websocket_status":
-                raw_status = msg_data.get("data", "{}")
-                try:
-                    status = json.loads(raw_status)
-                    if isinstance(status, dict):
-                        shared_queues.update_brain_backend_status(status)
-                        log_brain_backend_status(shared_queues, status)
-                except json.JSONDecodeError:
-                    print(f"[ROSBridge] Failed to parse /brain/websocket_status JSON: {raw_status}")
+                status = _parse_json_object_topic(topic, msg_data)
+                if status is not None:
+                    shared_queues.update_brain_backend_status(status)
+                    log_brain_backend_status(shared_queues, status)
 
             elif topic == "/brain/available_skills":
                 skills = parse_available_skills_message(msg_data)
