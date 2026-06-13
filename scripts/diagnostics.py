@@ -16,6 +16,7 @@ import glob
 import os
 import subprocess
 import sys
+import time
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -72,8 +73,6 @@ def is_innate_service_running():
 
 def stop_innate_service():
     """Stop the ROS nodes (systemd service and/or bare tmux session)."""
-    import time
-
     r = subprocess.run(["systemctl", "is-active", "--quiet", SYSTEMD_SERVICE])
     if r.returncode == 0:
         # Inherit stdio so a sudo password prompt (if any) reaches the user
@@ -192,8 +191,6 @@ def check_servos():
         return False
 
     ok(f"Serial port opened at {DYNAMIXEL_BAUDRATE} baud")
-
-    import time
 
     detected = []
     missing = []
@@ -414,8 +411,6 @@ def check_pcb():
 
     try:
         bus.write_i2c_block_data(I2C_ADDRESS, 0x00, message)
-        import time
-
         time.sleep(0.01)
         response = bus.read_i2c_block_data(I2C_ADDRESS, 0x00, 8)
         bus.close()
