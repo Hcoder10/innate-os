@@ -101,6 +101,7 @@ class SharedQueues:
         self.active_skill_ids: list[str] = []
         self.brain_active: bool = False
         self.available_agents_updated_at: float = 0.0
+        self.available_agent_state_updated_at: float = 0.0
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
         # Store the brain client's cloud/local-agent websocket state for the UI.
@@ -201,7 +202,9 @@ class SharedQueues:
                 self.active_skill_ids = current_agent.skills.copy() if current_agent else []
             if brain_active is not None:
                 self.brain_active = brain_active
-            self.available_agents_updated_at = time.time()
+            updated_at = time.time()
+            self.available_agents_updated_at = updated_at
+            self.available_agent_state_updated_at = updated_at
 
     def update_available_skills(
         self,
@@ -213,7 +216,7 @@ class SharedQueues:
             self.available_skills = skills
             if active_skill_ids is not None:
                 self.active_skill_ids = active_skill_ids
-            self.available_agents_updated_at = time.time()
+            self.available_agent_state_updated_at = time.time()
 
     def set_current_agent(self, agent_id: str):
         """Track the selected agent locally for API responses."""
@@ -224,19 +227,19 @@ class SharedQueues:
                 None,
             )
             self.active_skill_ids = current_agent.skills.copy() if current_agent else []
-            self.available_agents_updated_at = time.time()
+            self.available_agent_state_updated_at = time.time()
 
     def update_active_skill_ids(self, skill_ids: list[str]):
         """Track the active skill subset locally for API responses."""
         with self.agents_lock:
             self.active_skill_ids = skill_ids.copy()
-            self.available_agents_updated_at = time.time()
+            self.available_agent_state_updated_at = time.time()
 
     def set_brain_active(self, active: bool):
         """Track whether the brain is currently accepting user input."""
         with self.agents_lock:
             self.brain_active = active
-            self.available_agents_updated_at = time.time()
+            self.available_agent_state_updated_at = time.time()
 
     def get_available_agents(
         self,
@@ -380,6 +383,7 @@ class SharedQueues:
         with self.agents_lock:
             available_agent_count = len(self.available_agents)
             available_agents_updated_at = self.available_agents_updated_at
+            available_agent_state_updated_at = self.available_agent_state_updated_at
 
         with self.latest_agent_update_lock:
             latest_agent_updates = {
@@ -402,5 +406,6 @@ class SharedQueues:
             "latest_frame_age_by_camera": latest_frame_age_by_camera,
             "available_agent_count": available_agent_count,
             "available_agents_updated_at": available_agents_updated_at,
+            "available_agent_state_updated_at": available_agent_state_updated_at,
             "sim_log_mode": self.get_sim_log_mode(),
         }
