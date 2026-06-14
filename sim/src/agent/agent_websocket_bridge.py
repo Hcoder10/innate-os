@@ -266,14 +266,14 @@ async def _send_service_response(ws, service_name: str, values: dict, call_id: s
     await ws.send(json.dumps(response))
 
 
-def _arm_trajectory_target_durations(waypoints: list[list[float]], durations: list[float]) -> list[float] | None:
-    if not waypoints:
-        return []
+def _arm_trajectory_segment_durations(waypoints: list[list[float]], durations: list[float]) -> list[float] | None:
+    if len(waypoints) < 2:
+        return None
     if not durations:
-        return [1.0] * len(waypoints)
+        return [1.0] * (len(waypoints) - 1)
     if len(durations) != len(waypoints) - 1:
         return None
-    return [durations[0], *durations]
+    return durations
 
 
 async def _run_arm_trajectory_service(
@@ -284,13 +284,19 @@ async def _run_arm_trajectory_service(
     waypoints: list[list[float]],
     durations: list[float],
 ):
-    target_durations = _arm_trajectory_target_durations(waypoints, durations)
-    if target_durations is None:
+    segment_durations = _arm_trajectory_segment_durations(waypoints, durations)
+    if segment_durations is None:
         await _send_service_response(ws, service_name, {"success": False}, call_id)
         return
 
     try:
-        for index, waypoint in enumerate(waypoints):
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        shared_queues.agent_to_sim.put_nowait(ArmCmd(joint_positions=waypoints[0]))
+
+        for index, duration in enumerate(segment_durations):
             if not is_arm_torque_enabled(shared_queues):
                 await _send_service_response(
                     ws,
@@ -300,7 +306,7 @@ async def _run_arm_trajectory_service(
                 )
                 return
 
-            duration = target_durations[index]
+            waypoint = waypoints[index + 1]
             shared_queues.agent_to_sim.put_nowait(ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration)))
             await asyncio.sleep(max(0.0, duration))
 
