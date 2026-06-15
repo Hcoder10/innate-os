@@ -215,11 +215,11 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 <details>
 <summary>Main ROS 2 runtime packages</summary>
 
-- **[maurice_control](ros2_ws/src/maurice_bot/maurice_control)** - top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
-- **[maurice_bringup](ros2_ws/src/maurice_bot/maurice_bringup)** - hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
-- **[maurice_arm](ros2_ws/src/maurice_bot/maurice_arm)** - arm and head servo driver, MoveIt `move_group`, and KDL-based IK solver.
-- **[maurice_cam](ros2_ws/src/maurice_bot/maurice_cam)** - stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
-- **[maurice_nav](ros2_ws/src/maurice_bot/maurice_nav)** - Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree`, `mapping`, and `navigation`.
+- **[mars_control](ros2_ws/src/mars_bot/mars_control)** - top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
+- **[mars_bringup](ros2_ws/src/mars_bot/mars_bringup)** - hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
+- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** - arm and head servo driver, MoveIt `move_group`, and KDL-based IK solver.
+- **[mars_cam](ros2_ws/src/mars_bot/mars_cam)** - stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
+- **[mars_nav](ros2_ws/src/mars_bot/mars_nav)** - Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree`, `mapping`, and `navigation`.
 - **[brain_client](ros2_ws/src/brain/brain_client)** - bridge to the Innate cloud brain, websocket client, skills action server, and user input manager.
 - **[manipulation](ros2_ws/src/brain/manipulation)** - records and replays manipulation demonstrations and runs learned or scripted manipulation policies.
 - **[innate_logger](ros2_ws/src/cloud/innate_logger)** - uploads robot logs and telemetry to the Innate cloud.
