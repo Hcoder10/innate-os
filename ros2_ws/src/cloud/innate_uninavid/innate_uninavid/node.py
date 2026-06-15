@@ -42,16 +42,6 @@ DEFAULT_WS_URL = "wss://nav-v1.innate.bot"
 DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
 RUNTIME_BACKEND_CONFIG_TOPIC = "/brain/backend_config"
 
-PLACEHOLDER_SERVICE_KEYS = {
-    "my_hardcoded_token",
-    "your_service_key_here",
-    "your-service-key-here",
-    "replace_me",
-    "changeme",
-    "change_me",
-    "todo",
-}
-
 _CMD_VEL: dict[int, tuple[float, float]] = {
     Action.STOP: (0.0, 0.0),
     Action.FORWARD: (0.3, 0.0),
@@ -97,7 +87,7 @@ class UninavidNode(Node):
         self._auth: AuthProvider | None = self._make_auth_provider(self._service_key)
         if self._auth is None:
             self.get_logger().warn(
-                "UniNavid service key is missing or placeholder. "
+                "UniNavid service key is missing. "
                 "Vision navigation goals will fail until INNATE_SERVICE_KEY is "
                 "configured or a runtime service key update is received."
             )
@@ -133,10 +123,7 @@ class UninavidNode(Node):
 
     @staticmethod
     def _is_configured_service_key(service_key: str) -> bool:
-        normalized = (service_key or "").strip()
-        if not normalized:
-            return False
-        return normalized.lower() not in PLACEHOLDER_SERVICE_KEYS
+        return bool((service_key or "").strip())
 
     def _make_auth_provider(self, service_key: str) -> AuthProvider | None:
         if not self._is_configured_service_key(service_key):
@@ -168,9 +155,7 @@ class UninavidNode(Node):
                 message += " The new key will be used by the next navigation goal."
             self.get_logger().info(message)
         else:
-            self.get_logger().warn(
-                "UniNavid received an empty or placeholder service key; vision navigation remains unavailable."
-            )
+            self.get_logger().warn("UniNavid received an empty service key; vision navigation remains unavailable.")
 
     # ── Preemption (Nav2 pattern) ─────────────────────────────────────────
 
@@ -225,7 +210,7 @@ class UninavidNode(Node):
             return self._result(
                 result,
                 False,
-                "Missing or placeholder INNATE_SERVICE_KEY for UniNavid.",
+                "Missing INNATE_SERVICE_KEY for UniNavid.",
             )
 
         cmd_duration = float(self.get_parameter("cmd_duration_sec").value)

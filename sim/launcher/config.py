@@ -75,17 +75,6 @@ ENV_KEYS_MOVED_TO_OS_CONFIG = {
     "CARTESIA_VOICE_ID",
 }
 SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY",)
-SECRET_ENV_PLACEHOLDERS = {
-    "INNATE_SERVICE_KEY": {
-        "",
-        "your_service_key_here",
-        "your-innate-service-key",
-        "your-generated-token-here",
-    },
-}
-SECRET_ENV_MIN_LENGTHS = {
-    "INNATE_SERVICE_KEY": 16,
-}
 LOG_TARGETS = {
     "bootstrap": BOOTSTRAP_LOG_PATH,
     "frontend": FRONTEND_LOG_PATH,
@@ -167,14 +156,10 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return env
 
 
-def is_configured_secret_value(key: str, value: str | None) -> bool:
+def is_configured_secret_value(_key: str, value: str | None) -> bool:
     if value is None:
         return False
-    stripped = value.strip()
-    if stripped in SECRET_ENV_PLACEHOLDERS.get(key, {""}):
-        return False
-    minimum_length = SECRET_ENV_MIN_LENGTHS.get(key, 1)
-    return len(stripped) >= minimum_length
+    return bool(value.strip())
 
 
 def parse_toml_file(path: Path) -> dict[str, object]:

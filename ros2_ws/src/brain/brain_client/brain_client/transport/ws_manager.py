@@ -100,12 +100,9 @@ class WebSocketManager:
             return
         if not self._token_configured:
             self._log_invalid_config_once(
-                "Hosted Innate agent selected but INNATE_SERVICE_KEY is missing or a placeholder. "
-                "Skipping websocket connection."
+                "Hosted Innate agent selected but INNATE_SERVICE_KEY is missing. Skipping websocket connection."
             )
-            self.set_ws_status(
-                "invalid_config", False, "Missing or placeholder INNATE_SERVICE_KEY for hosted Innate agent."
-            )
+            self.set_ws_status("invalid_config", False, "Missing INNATE_SERVICE_KEY for hosted Innate agent.")
             return
         self.get_logger().debug("Received ready for connection message.")
         if self.ws_thread and self.ws_thread.is_alive():
@@ -117,7 +114,7 @@ class WebSocketManager:
         if not self.ws_client:
             self._log_invalid_config_once(
                 "Cannot send websocket message: hosted Innate agent is not configured "
-                "(missing or placeholder INNATE_SERVICE_KEY)."
+                "(missing INNATE_SERVICE_KEY)."
             )
         elif self.ws_client.loop and self.ws_client.loop.is_running():
             try:
@@ -147,13 +144,11 @@ class WebSocketManager:
         if not self._token_configured:
             if log_invalid:
                 self._log_invalid_config_once(
-                    "❌ Missing or placeholder INNATE_SERVICE_KEY for hosted Innate agent. "
-                    "Set a real service key before connecting to the hosted agent."
+                    "❌ Missing INNATE_SERVICE_KEY for hosted Innate agent. "
+                    "Set a service key before connecting to the hosted agent."
                 )
             self.ws_client = None
-            self.set_ws_status(
-                "invalid_config", False, "Missing or placeholder INNATE_SERVICE_KEY for hosted Innate agent."
-            )
+            self.set_ws_status("invalid_config", False, "Missing INNATE_SERVICE_KEY for hosted Innate agent.")
             return
         self.ws_client = WSClient(self.ws_uri, self.token, self, self._ws_stop_event, self._robot_version)
         if publish_configured_status:
