@@ -85,7 +85,7 @@ class SkillCatalog:
         reg_msg = MessageIn(
             type=MessageInType.REGISTER_PRIMITIVES_AND_DIRECTIVE,
             payload={
-                "primitives": included if included else None,
+                "primitives": included,
                 "directive": directive.get_prompt(),
                 "token": self._state.token,
             },
@@ -96,7 +96,7 @@ class SkillCatalog:
         self._ws.send_message(reg_msg)
 
     def available_skill_ids(self) -> list[str]:
-        return [p["id"] for p in self._state.registry.metadata if isinstance(p.get("id"), str)]
+        return [p["id"] for p in self._state.registry.metadata]
 
     def active_skill_ids_for_registration(self) -> list[str]:
         if self._state.current_directive is None:

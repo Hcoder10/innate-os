@@ -290,14 +290,7 @@ class BrainClientNode(Node):
 
     def _on_set_active_skills(self, msg: String) -> None:
         """Update which primitives are registered for the current directive."""
-        try:
-            payload = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self.get_logger().error("Invalid /brain/set_active_skills payload JSON")
-            return
-        if not isinstance(payload, dict):
-            self.get_logger().error("/brain/set_active_skills payload must be an object")
-            return
+        payload = json.loads(msg.data)
         if self.state.current_directive is None:
             self.get_logger().warn("No directive selected; ignoring active skills update")
             return
@@ -310,12 +303,7 @@ class BrainClientNode(Node):
             )
             return
 
-        requested_skills = payload.get("skills")
-        if not isinstance(requested_skills, list) or not all(isinstance(skill, str) for skill in requested_skills):
-            self.get_logger().error("/brain/set_active_skills skills must be a list of strings")
-            return
-
-        unknown_skills = self.catalog.set_active_skill_ids(requested_skills)
+        unknown_skills = self.catalog.set_active_skill_ids(payload.get("skills", []))
         if unknown_skills:
             self.get_logger().warn(
                 f"Ignoring unavailable skills for directive '{self.state.current_directive.id}': {unknown_skills}"
@@ -339,9 +327,7 @@ class BrainClientNode(Node):
             "interrupted": MessageInType.PRIMITIVE_INTERRUPTED,
             "failed": MessageInType.PRIMITIVE_FAILED,
         }
-        message_type = message_type_by_status.get(status)
-        if message_type is None:
-            return
+        message_type = message_type_by_status[status]
         payload = {"primitive_name": primitive_name, "primitive_id": primitive_id}
         if reason and status == "failed":
             payload["reason"] = reason
@@ -355,35 +341,12 @@ class BrainClientNode(Node):
 
     def _on_manual_skill_event(self, msg: String) -> None:
         """Record manually-triggered simulator skill runs in brain/agent history."""
-        try:
-            payload = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self.get_logger().error("Invalid /brain/manual_skill_event payload JSON")
-            return
-        if not isinstance(payload, dict):
-            self.get_logger().error("/brain/manual_skill_event payload must be an object")
-            return
-
-        status = payload.get("status")
-        if status not in {"running", "completed", "failed", "interrupted"}:
-            self.get_logger().error(
-                "/brain/manual_skill_event status must be one of: running, completed, failed, interrupted"
-            )
-            return
-        skill_id = payload.get("skill_id")
-        if not isinstance(skill_id, str) or not skill_id:
-            self.get_logger().error("/brain/manual_skill_event skill_id is required")
-            return
-
-        primitive_name = payload.get("skill_name")
-        if not isinstance(primitive_name, str) or not primitive_name:
-            primitive_name = self._skill_name_for_id(skill_id)
-        primitive_id = payload.get("primitive_id")
-        if not isinstance(primitive_id, str) or not primitive_id:
-            primitive_id = f"manual_{skill_id}_{int(time.time() * 1000)}"
+        payload = json.loads(msg.data)
+        status = payload["status"]
+        skill_id = payload["skill_id"]
+        primitive_name = payload.get("skill_name") or self._skill_name_for_id(skill_id)
+        primitive_id = payload.get("primitive_id") or f"manual_{skill_id}_{int(time.time() * 1000)}"
         reason = payload.get("reason")
-        if not isinstance(reason, str):
-            reason = None
 
         self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
         if self.state.is_brain_active:
@@ -489,14 +452,14 @@ class BrainClientNode(Node):
                 }
             )
         response.directives = [
+            json.dumps(details),
             json.dumps(
                 {
-                    "agents": details,
                     "skills": self.state.registry.metadata,
                     "active_skills": self.catalog.active_skill_ids_for_registration(),
                     "brain_active": self.state.is_brain_active,
                 }
-            )
+            ),
         ]
         response.current_directive = self.state.current_directive.id if self.state.current_directive else ""
         return response

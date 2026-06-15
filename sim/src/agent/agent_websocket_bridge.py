@@ -666,32 +666,38 @@ async def inbound_service_loop(ws, shared_queues):
                 brain_active = None
 
                 try:
-                    if isinstance(directives_raw, list) and len(directives_raw) > 0:
-                        json_string = directives_raw[0]
+                    if isinstance(directives_raw, list):
+                        directive_entries = directives_raw
                     elif isinstance(directives_raw, str):
-                        json_string = directives_raw
+                        directive_entries = [directives_raw]
                     else:
-                        json_string = "[]"
+                        directive_entries = []
 
+                    json_string = directive_entries[0] if directive_entries else "[]"
                     directives_payload = json.loads(json_string)
                     if isinstance(directives_payload, dict):
                         agents_list = directives_payload.get("agents", [])
-                        skills_list = directives_payload.get("skills", [])
-                        if not isinstance(agents_list, list):
-                            agents_list = []
-                        if not isinstance(skills_list, list):
-                            skills_list = []
-                        raw_active_skill_ids = directives_payload.get("active_skills")
-                        if isinstance(raw_active_skill_ids, list):
-                            active_skill_ids = [
-                                skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)
-                            ]
-                        raw_brain_active = directives_payload.get("brain_active")
-                        if isinstance(raw_brain_active, bool):
-                            brain_active = raw_brain_active
+                        metadata_payload = directives_payload
                     else:
                         agents_list = directives_payload
+                        metadata_payload = {}
+
+                    if len(directive_entries) > 1:
+                        metadata_payload = json.loads(directive_entries[1])
+
+                    if not isinstance(agents_list, list):
+                        agents_list = []
+                    skills_list = metadata_payload.get("skills", []) if isinstance(metadata_payload, dict) else []
+                    if not isinstance(skills_list, list):
                         skills_list = []
+                    raw_active_skill_ids = (
+                        metadata_payload.get("active_skills") if isinstance(metadata_payload, dict) else None
+                    )
+                    if isinstance(raw_active_skill_ids, list):
+                        active_skill_ids = [skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)]
+                    raw_brain_active = metadata_payload.get("brain_active") if isinstance(metadata_payload, dict) else None
+                    if isinstance(raw_brain_active, bool):
+                        brain_active = raw_brain_active
 
                     for directive in agents_list:
                         if isinstance(directive, dict):

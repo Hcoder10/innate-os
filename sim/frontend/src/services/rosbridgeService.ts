@@ -535,6 +535,10 @@ function getAvailableSkillsFromTopicDirect(
     ws.onerror = () => {
       finish(() => reject(new Error(`Failed to subscribe via ${wsUrl}`)));
     };
+
+    ws.onclose = () => {
+      finish(() => reject(new Error(`Closed before /brain/available_skills was received from ${wsUrl}`)));
+    };
   });
 }
 
@@ -547,43 +551,56 @@ export async function getAvailableAgentsDirect(
     {},
   );
 
-  let directivesJson = "[]";
-  if (Array.isArray(values.directives) && typeof values.directives[0] === "string") {
-    directivesJson = values.directives[0];
-  } else if (typeof values.directives === "string") {
-    directivesJson = values.directives;
-  }
+  const directiveEntries = Array.isArray(values.directives)
+    ? values.directives.filter((entry): entry is string => typeof entry === "string")
+    : typeof values.directives === "string"
+      ? [values.directives]
+      : [];
 
   let parsedDirectives: unknown = [];
+  let parsedMetadata: unknown = {};
   try {
-    parsedDirectives = JSON.parse(directivesJson);
+    parsedDirectives = JSON.parse(directiveEntries[0] ?? "[]");
   } catch {
     parsedDirectives = [];
   }
+  try {
+    parsedMetadata = JSON.parse(directiveEntries[1] ?? "{}");
+  } catch {
+    parsedMetadata = {};
+  }
 
-  const parsedPayload =
+  const legacyPayload =
     parsedDirectives && typeof parsedDirectives === "object" && !Array.isArray(parsedDirectives)
       ? (parsedDirectives as Record<string, unknown>)
       : null;
-  const parsedAgents = parsedPayload?.agents ?? parsedDirectives;
+  const metadataPayload =
+    parsedMetadata && typeof parsedMetadata === "object" && !Array.isArray(parsedMetadata)
+      ? (parsedMetadata as Record<string, unknown>)
+      : {};
+  const parsedAgents = legacyPayload?.agents ?? parsedDirectives;
   const agents = parseRobotAgents(parsedAgents);
 
-  let skills = parseRobotSkills(parsedPayload?.skills);
+  let skills = parseRobotSkills(metadataPayload.skills ?? legacyPayload?.skills);
   const currentAgentId = values.current_directive ?? null;
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const hasActiveSkillIds =
-    parsedPayload !== null && Array.isArray(parsedPayload.active_skills);
-  const activeSkillIds = parseSkillIds(parsedPayload?.active_skills);
+    Array.isArray(metadataPayload.active_skills) || Array.isArray(legacyPayload?.active_skills);
+  const activeSkillIds = parseSkillIds(metadataPayload.active_skills ?? legacyPayload?.active_skills);
   const brainActive =
-    typeof parsedPayload?.brain_active === "boolean"
-      ? parsedPayload.brain_active
+    typeof metadataPayload.brain_active === "boolean"
+      ? metadataPayload.brain_active
+      : typeof legacyPayload?.brain_active === "boolean"
+        ? legacyPayload.brain_active
       : typeof values.brain_active === "boolean"
         ? values.brain_active
         : undefined;
-  try {
-    skills = await getAvailableSkillsFromTopicDirect(wsUrl);
-  } catch (error) {
-    console.warn("Unable to load available skills topic directly:", error);
+  if (skills.length === 0) {
+    try {
+      skills = await getAvailableSkillsFromTopicDirect(wsUrl);
+    } catch (error) {
+      console.warn("Unable to load available skills topic directly:", error);
+    }
   }
 
   return {
