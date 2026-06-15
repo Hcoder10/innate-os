@@ -1045,24 +1045,6 @@ function parseInputValue(value: string, type: string) {
   return trimmed;
 }
 
-function stringifyInputsWithFloatHints(
-  values: Record<string, unknown>,
-  schemas: Record<string, SkillInputSchema>,
-) {
-  const parts = Object.entries(values).map(([key, value]) => {
-    const type = getInputType(schemas[key] ?? "string").toLowerCase();
-    if (
-      ["float", "double", "number"].includes(type) &&
-      typeof value === "number"
-    ) {
-      const formatted = Number.isInteger(value) ? `${value}.0` : String(value);
-      return `"${key}":${formatted}`;
-    }
-    return `"${key}":${JSON.stringify(value)}`;
-  });
-  return `{${parts.join(",")}}`;
-}
-
 function initialInputValues(skill: RobotSkill) {
   const inputs = getSkillInputs(skill);
   return Object.fromEntries(
@@ -1170,10 +1152,7 @@ export function AlternativeSimDashboard({
       [skill.id]: { text: "Running skill..." },
     }));
     try {
-      const run = onRunSkill(
-        skill,
-        stringifyInputsWithFloatHints(parsedInputs, schemas),
-      );
+      const run = onRunSkill(skill, JSON.stringify(parsedInputs));
       setRunningSkillCancel(() => run.cancel);
       const message = await run.promise;
       setSkillRunMessages((previous) => ({
