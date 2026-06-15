@@ -1,5 +1,10 @@
 <div align="center">
 
+<p>
+  <img src="docs/assets/readme/innate-mark-black.svg" alt="Innate mark" width="60">
+  <img src="docs/assets/readme/innate-wordmark-black.svg" alt="Innate wordmark" width="86">
+</p>
+
 # Innate OS
 
 **A lightweight, AI-native operating system for general-purpose robots.**
@@ -13,19 +18,6 @@
 
 Innate OS is compatible with [MARS](https://docs.innate.bot/robots/mars) today, with more robots coming soon.
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/assets/readme/mars-compatible.png" alt="MARS robot, the first robot compatible with Innate OS" width="100%"><br>
-      <sub><strong>MARS</strong>, Innate's first compatible robot.</sub>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/assets/readme/mars-in-action.gif" alt="MARS running physical AI demos including manipulation, chess, and navigation" width="100%"><br>
-      <sub>Website demo footage: manipulation, chess, navigation.</sub>
-    </td>
-  </tr>
-</table>
-
 MARS is a teachable robot: a new type of robot that you can teach to do what you want.
 
 MARS is designed to get better as AI gets better. Innate OS is built around swappable model-driven components, including VLMs for observation and VLAs for action.
@@ -33,6 +25,19 @@ MARS is designed to get better as AI gets better. Innate OS is built around swap
 > What it is today is the worst it will ever be.
 
 Innate OS is open source. If you made a robot compatible with it, [let us know](https://github.com/innate-inc/innate-os/issues) and we can reference it here.
+
+<table>
+  <tr>
+    <td width="34%" align="center" valign="middle">
+      <img src="docs/assets/readme/mars-compatible.png" alt="MARS robot, the first robot compatible with Innate OS" width="78%"><br>
+      <sub><strong>MARS</strong>, Innate's first compatible robot.</sub>
+    </td>
+    <td width="66%" align="center" valign="middle">
+      <img src="docs/assets/readme/mars-in-action.gif" alt="MARS running physical AI demos including manipulation, chess, and navigation" width="100%"><br>
+      <sub>Website demo footage: manipulation, chess, navigation.</sub>
+    </td>
+  </tr>
+</table>
 
 Start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
 
