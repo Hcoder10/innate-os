@@ -196,12 +196,7 @@ class PrimitiveRunner:
         """Surface a successful code skill's output in the chat (never spoken)."""
         stub = self._state.registry.primitives.get(skill_id)
         is_code = stub is not None and stub.metadata.get("type") == "code"
-        if (
-            is_code
-            and result.success
-            and result.success_type == SkillResult.SUCCESS.value
-            and result.message.strip()
-        ):
+        if is_code and result.success and result.success_type == SkillResult.SUCCESS.value and result.message.strip():
             self._chat.emit("skill_output", result.message, speak=False)
 
     def _classify_result(self, result, primitive_name, primitive_id):
