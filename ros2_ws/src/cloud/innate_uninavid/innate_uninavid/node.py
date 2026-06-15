@@ -144,15 +144,7 @@ class UninavidNode(Node):
         return AuthProvider(issuer_url=self._auth_issuer, service_key=service_key)
 
     def _backend_config_callback(self, msg: String) -> None:
-        try:
-            payload = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self.get_logger().error("Invalid /brain/backend_config payload JSON.")
-            return
-        if not isinstance(payload, dict):
-            self.get_logger().error("/brain/backend_config payload must be an object.")
-            return
-
+        payload = json.loads(msg.data)
         service_key = payload.get("service_key") or payload.get("token")
         if service_key is None:
             return

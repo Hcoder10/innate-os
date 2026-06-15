@@ -62,23 +62,17 @@ def make_rosbridge_id(prefix: str) -> str:
 
 
 def is_terminal_action_status(status) -> bool:
-    if status is None:
-        return True
-    if status in (4, 5, 6):
-        return True
-    if isinstance(status, str):
-        return status.lower() in {"succeeded", "canceled", "cancelled", "aborted"}
-    return False
+    return status in (4, 5, 6)
 
 
 def normalize_action_result(skill_type: str, status, values: dict | None) -> dict:
     result = dict(values or {})
-    if status == 5 or (isinstance(status, str) and status.lower() in {"canceled", "cancelled"}):
+    if status == 5:
         result.setdefault("success", False)
         result.setdefault("skill_type", skill_type)
         result.setdefault("success_type", "cancelled")
         result.setdefault("message", "Action was cancelled")
-    elif status == 6 or (isinstance(status, str) and status.lower() == "aborted"):
+    elif status == 6:
         result.setdefault("success", False)
         result.setdefault("skill_type", skill_type)
         result.setdefault("success_type", "failure")
@@ -100,10 +94,7 @@ async def call_rosbridge_service(service: str, args: dict) -> dict:
         while time.monotonic() < deadline:
             timeout = max(0.0, deadline - time.monotonic())
             raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+            message = json.loads(raw)
             if message.get("op") != "service_response" or message.get("id") != call_id:
                 continue
             if message.get("result") is False:
@@ -133,10 +124,7 @@ async def execute_rosbridge_action(skill_type: str, inputs: str) -> dict:
         while time.monotonic() < deadline:
             timeout = max(0.0, deadline - time.monotonic())
             raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
+            message = json.loads(raw)
             if message.get("op") != "action_result" or message.get("id") != call_id:
                 continue
             status = message.get("status")
