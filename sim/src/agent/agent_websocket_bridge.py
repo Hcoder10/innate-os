@@ -695,7 +695,9 @@ async def inbound_service_loop(ws, shared_queues):
                     )
                     if isinstance(raw_active_skill_ids, list):
                         active_skill_ids = [skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)]
-                    raw_brain_active = metadata_payload.get("brain_active") if isinstance(metadata_payload, dict) else None
+                    raw_brain_active = (
+                        metadata_payload.get("brain_active") if isinstance(metadata_payload, dict) else None
+                    )
                     if isinstance(raw_brain_active, bool):
                         brain_active = raw_brain_active
 
