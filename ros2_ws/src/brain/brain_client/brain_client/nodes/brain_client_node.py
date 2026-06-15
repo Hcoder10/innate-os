@@ -31,6 +31,7 @@ from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.perception.scan_health import ScanHealthMonitor
 from brain_client.skills.hot_reload import ReloadCoordinator
+from brain_client.skills.lifecycle import primitive_lifecycle_message
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
 from brain_client.transport.chat import ChatManager
@@ -313,26 +314,6 @@ class BrainClientNode(Node):
         )
         self.catalog.register()
 
-    def _send_primitive_lifecycle_message(
-        self,
-        *,
-        status: str,
-        primitive_name: str,
-        primitive_id: str,
-        reason: str | None = None,
-    ) -> None:
-        message_type_by_status = {
-            "running": MessageInType.PRIMITIVE_ACTIVATED,
-            "completed": MessageInType.PRIMITIVE_COMPLETED,
-            "interrupted": MessageInType.PRIMITIVE_INTERRUPTED,
-            "failed": MessageInType.PRIMITIVE_FAILED,
-        }
-        message_type = message_type_by_status[status]
-        payload = {"primitive_name": primitive_name, "primitive_id": primitive_id}
-        if reason and status == "failed":
-            payload["reason"] = reason
-        self.ws_bridge.send_message(MessageIn(type=message_type, payload=payload))
-
     def _skill_name_for_id(self, skill_id: str) -> str:
         for metadata in self.state.registry.metadata:
             if metadata.get("id") == skill_id:
@@ -350,11 +331,13 @@ class BrainClientNode(Node):
 
         self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
         if self.state.is_brain_active:
-            self._send_primitive_lifecycle_message(
-                status=status,
-                primitive_name=primitive_name,
-                primitive_id=primitive_id,
-                reason=reason,
+            self.ws_bridge.send_message(
+                primitive_lifecycle_message(
+                    status=status,
+                    primitive_name=primitive_name,
+                    primitive_id=primitive_id,
+                    reason=reason,
+                )
             )
         self.chat.publish_task_status(
             primitive_name=primitive_name,

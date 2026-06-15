@@ -13,6 +13,7 @@ import json
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
 
+from brain_client.skills.lifecycle import primitive_lifecycle_message
 from brain_client.skills.types import SkillResult
 from brain_client.transport.messages import MessageIn, MessageInType
 
@@ -37,9 +38,10 @@ class PrimitiveRunner:
         skill_name = self._state.registry.name_for(skill_id)
         self._send_goal(skill_id, inputs)
         self._ws.send_message(
-            MessageIn(
-                type=MessageInType.PRIMITIVE_ACTIVATED,
-                payload={"primitive_name": skill_name, "primitive_id": primitive_id},
+            primitive_lifecycle_message(
+                status="running",
+                primitive_name=skill_name,
+                primitive_id=primitive_id,
             )
         )
         self._chat.publish_task_status(
@@ -84,12 +86,10 @@ class PrimitiveRunner:
         if self._state.primitive_running and self._goal_handle:
             self._goal_handle.cancel_goal_async()  # fire-and-forget
             self._ws.send_message(
-                MessageIn(
-                    type=MessageInType.PRIMITIVE_INTERRUPTED,
-                    payload={
-                        "primitive_name": self._state.primitive_running["primitive_name"],
-                        "primitive_id": self._state.primitive_running["primitive_id"],
-                    },
+                primitive_lifecycle_message(
+                    status="interrupted",
+                    primitive_name=self._state.primitive_running["primitive_name"],
+                    primitive_id=self._state.primitive_running["primitive_id"],
                 )
             )
             self._chat.publish_task_status(
@@ -194,21 +194,25 @@ class PrimitiveRunner:
     def _classify_result(self, result, primitive_name, primitive_id):
         """Map an action result to (ws message, local status, reason)."""
         if result.success and result.success_type == SkillResult.SUCCESS.value:
-            msg = MessageIn(
-                type=MessageInType.PRIMITIVE_COMPLETED,
-                payload={"primitive_name": primitive_name, "primitive_id": primitive_id},
+            msg = primitive_lifecycle_message(
+                status="completed",
+                primitive_name=primitive_name,
+                primitive_id=primitive_id,
             )
             return msg, "completed", None
         if result.success_type == SkillResult.CANCELLED.value:
-            msg = MessageIn(
-                type=MessageInType.PRIMITIVE_INTERRUPTED,
-                payload={"primitive_name": primitive_name, "primitive_id": primitive_id},
+            msg = primitive_lifecycle_message(
+                status="interrupted",
+                primitive_name=primitive_name,
+                primitive_id=primitive_id,
             )
             return msg, "interrupted", None
         if not result.success or result.success_type == SkillResult.FAILURE.value:
-            msg = MessageIn(
-                type=MessageInType.PRIMITIVE_FAILED,
-                payload={"primitive_name": primitive_name, "reason": result.message, "primitive_id": primitive_id},
+            msg = primitive_lifecycle_message(
+                status="failed",
+                primitive_name=primitive_name,
+                primitive_id=primitive_id,
+                reason=result.message,
             )
             return msg, "failed", result.message
         self._logger.error(
