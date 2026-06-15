@@ -11,7 +11,8 @@ from __future__ import annotations
 import rclpy
 from innate_proxy import ProxyClient
 from rclpy.node import Node
-from std_msgs.msg import String
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile
+from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 
 from brain_client.common.logging import UniversalLogger
@@ -33,6 +34,9 @@ class InputManagerNode(Node):
         self.create_subscription(String, "/input_manager/active_inputs", self._on_active_inputs, 10)
         self.create_subscription(String, "/tts/is_playing", self._on_tts_status, 10)
         self.create_service(SetBool, "/input_manager/set_input_active", self._svc_set_input_active)
+
+        mic_state_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Bool, "/microphone_enabled", self._on_mic_enabled, mic_state_qos)
 
         self.logger.info("✅ Input Manager Node started successfully")
 
@@ -63,6 +67,9 @@ class InputManagerNode(Node):
 
     def _on_tts_status(self, msg: String) -> None:
         self.manager.handle_tts_status(msg.data)
+
+    def _on_mic_enabled(self, msg: Bool) -> None:
+        self.manager.set_mic_enabled(msg.data)
 
     def _svc_set_input_active(self, request, response):
         response.success, response.message = self.manager.set_all_active(request.data)

@@ -20,6 +20,8 @@ from brain_client.common.script_paths import get_input_directories
 from brain_client.inputs.loader import InputLoader
 from brain_client.inputs.types import InputDevice
 
+MIC_DEVICE_NAME = "micro"
+
 
 class InputDeviceManager:
     def __init__(self, node, proxy, *, chat_in_pub, custom_pub):
@@ -28,6 +30,8 @@ class InputDeviceManager:
         self._chat_in_pub = chat_in_pub
         self._custom_pub = custom_pub
         self.input_devices: dict[str, InputDevice] = {}
+        self._mic_enabled = True
+        self._requested_inputs: set[str] = set()
         self._load(proxy)
 
     def _load(self, proxy) -> None:
@@ -41,6 +45,10 @@ class InputDeviceManager:
             self._logger.warning("⚠️ No input devices found!")
         else:
             self._logger.info(f"✅ Loaded {len(self.input_devices)} input devices: {list(self.input_devices.keys())}")
+            if MIC_DEVICE_NAME not in self.input_devices:
+                self._logger.warning(
+                    f"⚠️ No input device named '{MIC_DEVICE_NAME}' — the microphone toggle will not gate anything"
+                )
 
         for device in self.input_devices.values():
             device.set_data_callback(self._handle_device_data)
@@ -81,16 +89,29 @@ class InputDeviceManager:
             self._logger.error(f"Error handling data from device '{device_name}': {e}")
 
     # --- activation ---
-    def _apply(self, name: str, device: InputDevice, should_be_active: bool) -> None:
-        was_active = device.is_active()
-        if should_be_active and not was_active:
-            device.set_active(True)
-            device.on_open()
-            self._logger.info(f"🔌 Opened input device: {name}")
-        elif not should_be_active and was_active:
-            device.on_close()
-            device.set_active(False)
-            self._logger.info(f"💤 Closed input device: {name}")
+    def _apply(self, name: str, device: InputDevice, should_be_active: bool) -> bool:
+        """Open/close one device. Returns False if its hook raised."""
+        try:
+            was_active = device.is_active()
+            if should_be_active and not was_active:
+                device.set_active(True)
+                device.on_open()
+                self._logger.info(f"🔌 Opened input device: {name}")
+            elif not should_be_active and was_active:
+                device.on_close()
+                device.set_active(False)
+                self._logger.info(f"💤 Closed input device: {name}")
+            return True
+        except Exception as e:
+            if should_be_active:
+                # Roll back the flag: a failed open left as "active" would make
+                # every later open attempt a no-op (stuck half-open until restart).
+                device.set_active(False)
+            self._logger.error(f"Error {'opening' if should_be_active else 'closing'} input device '{name}': {e}")
+            return False
+
+    def _is_allowed(self, name: str) -> bool:
+        return self._mic_enabled or name != MIC_DEVICE_NAME
 
     def handle_active_inputs(self, raw: str) -> None:
         """Open/close devices to match an active-inputs message: {"inputs": [...]}."""
@@ -98,20 +119,36 @@ class InputDeviceManager:
         try:
             required_inputs = json.loads(raw).get("inputs", [])
             self._logger.debug(f"🎯 Processing inputs: {required_inputs}")
+            self._requested_inputs = set(required_inputs)
             for name, device in self.input_devices.items():
-                self._apply(name, device, name in required_inputs)
+                self._apply(name, device, name in self._requested_inputs and self._is_allowed(name))
         except Exception as e:
             self._logger.error(f"Error handling active inputs: {e}")
 
     def set_all_active(self, active: bool) -> tuple[bool, str]:
         """Activate or deactivate every device (manual control). Returns (ok, msg)."""
-        try:
-            for name, device in self.input_devices.items():
-                self._apply(name, device, active)
-            return True, f"All inputs {'activated' if active else 'deactivated'}"
-        except Exception as e:
-            self._logger.error(f"Error in set_input_active: {e}")
-            return False, str(e)
+        self._requested_inputs = set(self.input_devices) if active else set()
+        failed = [
+            name
+            for name, device in self.input_devices.items()
+            if not self._apply(name, device, active and self._is_allowed(name))
+        ]
+        if failed:
+            return False, f"Failed to {'activate' if active else 'deactivate'} inputs: {', '.join(failed)}"
+        return True, f"All inputs {'activated' if active else 'deactivated'}"
+
+    def set_mic_enabled(self, enabled: bool) -> None:
+        """Apply the robot-level microphone toggle."""
+        if enabled != self._mic_enabled:
+            self._logger.info(f"🎙️ Microphone {'enabled' if enabled else 'disabled'}")
+        # Track the user's intent unconditionally (it gates handle_active_inputs
+        # via _is_allowed), and re-apply even when unchanged: _apply is a no-op
+        # when state already matches, so a re-publish of the same value retries
+        # a previously failed open/close instead of being swallowed.
+        self._mic_enabled = enabled
+        device = self.input_devices.get(MIC_DEVICE_NAME)
+        if device is not None:
+            self._apply(MIC_DEVICE_NAME, device, enabled and MIC_DEVICE_NAME in self._requested_inputs)
 
     def handle_tts_status(self, raw: str) -> None:
         """Notify ducking-capable devices when the robot starts/stops speaking."""

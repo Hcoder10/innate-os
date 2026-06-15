@@ -18,8 +18,11 @@ def primitive_lifecycle_message(
     primitive_name: str,
     primitive_id: str | None,
     reason: str | None = None,
+    output: str | None = None,
 ) -> MessageIn:
     payload = {"primitive_name": primitive_name, "primitive_id": primitive_id}
     if reason and status == "failed":
         payload["reason"] = reason
+    if output and status == "completed":
+        payload["output"] = output
     return MessageIn(type=PRIMITIVE_LIFECYCLE_MESSAGE_TYPES[status], payload=payload)
