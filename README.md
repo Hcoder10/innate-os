@@ -2,7 +2,7 @@
 
 # Innate OS
 
-**The open-source operating system for MARS and other teachable robots.**
+**A lightweight, AI-native operating system for general-purpose robots.**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
 [![Documentation](https://img.shields.io/badge/Docs-Read%20the%20docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.innate.bot)
@@ -11,15 +11,20 @@
 
 </div>
 
-<!-- Split into linked images because GitHub README markdown does not support reliable image hotspots. -->
-<p align="center">
-  <img src="docs/assets/readme/innate-os-readme-hero-intro.png" alt="Innate OS: open-source OS for MARS and other teachable robots. Teach skills, run agents, stream inputs." width="100%"><br>
-  <a href="#skills"><img src="docs/assets/readme/innate-os-readme-hero-skills.png" alt="Skills: teach actions, write code skills, trigger with one skill ID" width="19%"></a>
-  <a href="#agents"><img src="docs/assets/readme/innate-os-readme-hero-agents.png" alt="Agents: run autonomously, use or create a harness" width="19%"></a>
-  <a href="#additional-inputs"><img src="docs/assets/readme/innate-os-readme-hero-inputs.png" alt="Additional inputs: stream your data, add sensors and components" width="19%"></a>
-  <a href="#simulator"><img src="docs/assets/readme/innate-os-readme-hero-simulator.png" alt="Simulator: test without hardware, run MARS locally" width="19%"></a>
-  <a href="#ros-reference"><img src="docs/assets/readme/innate-os-readme-hero-ros-reference.png" alt="ROS reference: go below the high-level API and inspect the core OS" width="19%"></a>
-</p>
+Innate OS is compatible with [MARS](https://docs.innate.bot/robots/mars) today, with more robots coming soon.
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/assets/readme/mars-compatible.png" alt="MARS robot, the first robot compatible with Innate OS" width="100%"><br>
+      <sub><strong>MARS</strong>, Innate's first compatible robot.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/assets/readme/mars-in-action.gif" alt="MARS running physical AI demos including manipulation, chess, and navigation" width="100%"><br>
+      <sub>Website demo footage: manipulation, chess, navigation.</sub>
+    </td>
+  </tr>
+</table>
 
 MARS is a teachable robot: a new type of robot that you can teach to do what you want.
 
@@ -29,12 +34,7 @@ MARS is designed to get better as AI gets better. Innate OS is built around swap
 
 Innate OS is open source. If you made a robot compatible with it, [let us know](https://github.com/innate-inc/innate-os/issues) and we can reference it here.
 
-<table>
-  <tr>
-    <td width="50%" valign="top"><strong>MARS</strong><br>First-class Innate OS robot.</td>
-    <td width="50%" valign="top"><strong>Your robot</strong><br>Open an issue and we can add it here.</td>
-  </tr>
-</table>
+Start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
 
 <table>
   <tr>
