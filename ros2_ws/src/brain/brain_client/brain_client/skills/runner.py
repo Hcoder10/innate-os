@@ -176,7 +176,8 @@ class PrimitiveRunner:
         self._state.primitive_running = None
         self._on_task_finished()
 
-        outgoing_msg, local_status, local_reason = self._classify_result(result, primitive_name, primitive_id)
+        is_code = self._is_code_skill(skill_id)
+        outgoing_msg, local_status, local_reason = self._classify_result(result, primitive_name, primitive_id, is_code)
         if outgoing_msg:
             self._ws.send_message(outgoing_msg)
             self._logger.info(f"Sent primitive status message: {outgoing_msg.type.name}")
@@ -189,27 +190,25 @@ class PrimitiveRunner:
                 reason=local_reason,
             )
 
-        self._emit_skill_output(result, skill_id)
+        self._emit_skill_output(result, is_code)
         self._maybe_run_pending(result)
 
-    def _emit_skill_output(self, result, skill_id: str) -> None:
-        """Surface a successful code skill's output in the chat (never spoken)."""
+    def _is_code_skill(self, skill_id: str) -> bool:
         stub = self._state.registry.primitives.get(skill_id)
-        is_code = stub is not None and stub.metadata.get("type") == "code"
+        return stub is not None and stub.metadata.get("type") == "code"
+
+    def _emit_skill_output(self, result, is_code: bool) -> None:
+        """Surface a successful code skill's output in the chat (never spoken)."""
         if is_code and result.success and result.success_type == SkillResult.SUCCESS.value and result.message.strip():
             self._chat.emit("skill_output", result.message, speak=False)
 
-    def _classify_result(self, result, primitive_name, primitive_id):
+    def _classify_result(self, result, primitive_name, primitive_id, is_code):
         """Map an action result to (ws message, local status, reason)."""
         if result.success and result.success_type == SkillResult.SUCCESS.value:
-            msg = MessageIn(
-                type=MessageInType.PRIMITIVE_COMPLETED,
-                payload={
-                    "primitive_name": primitive_name,
-                    "primitive_id": primitive_id,
-                    "output": result.message,
-                },
-            )
+            payload = {"primitive_name": primitive_name, "primitive_id": primitive_id}
+            if is_code and result.message.strip():
+                payload["output"] = result.message
+            msg = MessageIn(type=MessageInType.PRIMITIVE_COMPLETED, payload=payload)
             return msg, "completed", None
         if result.success_type == SkillResult.CANCELLED.value:
             msg = MessageIn(
