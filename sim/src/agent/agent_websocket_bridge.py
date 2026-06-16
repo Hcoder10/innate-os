@@ -276,6 +276,34 @@ def _arm_trajectory_segment_durations(waypoints: list[list[float]], durations: l
     return durations
 
 
+def _replace_active_arm_trajectory(shared_queues, task: asyncio.Task) -> None:
+    lock = getattr(shared_queues, "arm_trajectory_task_lock", None)
+    if lock is None:
+        previous = getattr(shared_queues, "arm_trajectory_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        shared_queues.arm_trajectory_task = task
+        return
+
+    with lock:
+        previous = getattr(shared_queues, "arm_trajectory_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        shared_queues.arm_trajectory_task = task
+
+
+def _clear_active_arm_trajectory(shared_queues, task: asyncio.Task) -> None:
+    lock = getattr(shared_queues, "arm_trajectory_task_lock", None)
+    if lock is None:
+        if getattr(shared_queues, "arm_trajectory_task", None) is task:
+            shared_queues.arm_trajectory_task = None
+        return
+
+    with lock:
+        if getattr(shared_queues, "arm_trajectory_task", None) is task:
+            shared_queues.arm_trajectory_task = None
+
+
 async def _run_arm_trajectory_service(
     ws,
     shared_queues,
@@ -311,6 +339,13 @@ async def _run_arm_trajectory_service(
             await asyncio.sleep(max(0.0, duration))
 
         await _send_service_response(ws, service_name, {"success": True}, call_id)
+    except asyncio.CancelledError:
+        await _send_service_response(
+            ws,
+            service_name,
+            {"success": False, "message": "Trajectory cancelled by a newer request."},
+            call_id,
+        )
     except queue.Full:
         await _send_service_response(ws, service_name, {"success": False}, call_id)
     except Exception as exc:
@@ -357,7 +392,7 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
             return
 
         waypoints, durations = parsed
-        asyncio.create_task(
+        task = asyncio.create_task(
             _run_arm_trajectory_service(
                 ws,
                 shared_queues,
@@ -367,6 +402,8 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
                 durations,
             )
         )
+        _replace_active_arm_trajectory(shared_queues, task)
+        task.add_done_callback(lambda done_task: _clear_active_arm_trajectory(shared_queues, done_task))
         return
 
     if service_name in ARM_TRIGGER_SERVICES:

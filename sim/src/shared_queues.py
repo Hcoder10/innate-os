@@ -71,6 +71,8 @@ class SharedQueues:
         self.latest_arm_state_msg: Any | None = None
         self.arm_torque_enabled: bool = True
         self.arm_torque_lock = threading.Lock()
+        self.arm_trajectory_task: Any | None = None
+        self.arm_trajectory_task_lock = threading.Lock()
         self.latest_nav_feedback_msg: Any | None = None
         self.latest_agent_update_lock = threading.Lock()
 
