@@ -283,13 +283,11 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 0c. Headless (no-GUI) boot, with a display-aware opt back in.
+# 0c. Headless (no-GUI) boot.
 # The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
-# renders on a display-less robot. Make multi-user the default (cheap) boot;
-# the companion display-autostart.service (config/systemd/, enabled below)
-# pulls up graphical.target at boot when a DRM connector reports a connected
-# display, so a robot on a monitor still gets a desktop. Reversible:
-# `systemctl set-default graphical.target`.
+# renders on the robot. Switch the default target to multi-user; the GUI stays
+# one `systemctl set-default graphical.target` away, and takes effect on the
+# next boot.
 # -----------------------------------------------------------------------------
 log "Configuring boot target..."
 if systemctl set-default multi-user.target >/dev/null 2>&1; then
@@ -895,12 +893,6 @@ fi
 # Add shutdown-sound if the service file exists (enable only, runs at shutdown)
 if [ -f "/etc/systemd/system/shutdown-sound.service" ]; then
     SERVICES+=("shutdown-sound.service")
-fi
-
-# Add display-autostart if the service file exists (brings up the GUI at boot
-# only when a display is connected; see section 0c)
-if [ -f "/etc/systemd/system/display-autostart.service" ]; then
-    SERVICES+=("display-autostart.service")
 fi
 
 # Add bluetooth if available
