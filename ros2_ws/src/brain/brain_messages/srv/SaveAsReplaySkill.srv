@@ -3,7 +3,7 @@
 string task_directory     # Absolute path of the scratch task dir holding the recording (under data/)
 string name               # Display name for the replay skill (e.g. "Wave hello")
 string guidelines         # Optional: when the agent should use this skill (its LLM hint)
-int32 episode_id          # Episode to convert (usually 0)
+int32 episode_id          # Episode to convert; -1 (or any negative) = most recent
 ---
 # Response
 bool success

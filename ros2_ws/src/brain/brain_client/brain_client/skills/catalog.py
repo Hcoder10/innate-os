@@ -435,14 +435,25 @@ class SkillRepository:
         skill_dir = get_custom_skills_dir() / dir_name
         in_place = skill_dir.resolve() == Path(task_directory).resolve()  # name-first flow
         metadata_path = skill_dir / "metadata.json"
-        if not in_place and metadata_path.exists():
-            if json.loads(metadata_path.read_text()).get("type") != "replay":
+        if metadata_path.exists():
+            existing = json.loads(metadata_path.read_text())
+            if existing.get("type") == "replay":
+                self._logger.warning(f"Overwriting existing replay skill at {skill_dir}")
+            elif self._has_trained_model(skill_dir, existing) or not in_place:
+                # Never clobber a trained model, or a different skill that happens to share
+                # this name. In place only ever converts our own fresh recording scratch.
                 raise ValueError(f"A non-replay skill named '{display_name}' already exists.")
-            self._logger.warning(f"Overwriting existing replay skill at {skill_dir}")
+            else:
+                self._logger.info(f"Converting recording scratch into a replay skill at {skill_dir}")
 
+        # Write the trajectory atomically so a failed/overwritten save never leaves a
+        # truncated episode_0.h5 that metadata.json still references.
         skill_dir.mkdir(parents=True, exist_ok=True)
-        with h5py.File(skill_dir / "episode_0.h5", "w") as f:
+        replay_h5 = skill_dir / "episode_0.h5"
+        tmp_h5 = skill_dir / "episode_0.h5.tmp"
+        with h5py.File(tmp_h5, "w") as f:
             f.create_dataset("action", data=replay_action)
+        os.replace(tmp_h5, replay_h5)
         self._write_json_atomic(
             metadata_path,
             {
@@ -462,17 +473,16 @@ class SkillRepository:
             },
         )
 
-        # Drop the raw recording: just data/ in place, else the whole scratch dir
-        # (only when it really is a custom_skills scratch dir, never an arbitrary path).
+        # Drop the raw recording: just data/ in place, else the whole scratch dir — but
+        # only when it really is a throwaway recording scratch, never a real skill.
         if in_place:
             shutil.rmtree(skill_dir / "data", ignore_errors=True)
         else:
-            custom_root = get_custom_skills_dir().resolve()
             scratch = Path(task_directory).resolve()
-            if scratch != custom_root and scratch.is_relative_to(custom_root):
+            if self._is_recording_scratch(scratch):
                 shutil.rmtree(scratch, ignore_errors=True)
             else:
-                self._logger.warning(f"Not deleting recording dir outside custom_skills: {scratch}")
+                self._logger.warning(f"Not deleting recording dir (not a safe scratch): {scratch}")
 
         skill_id = self._compute_skill_id(str(skill_dir))
         self._logger.info(f"Saved replay skill '{display_name}' at {skill_dir} (wheeled={wheeled})")
@@ -488,6 +498,28 @@ class SkillRepository:
         shutil.rmtree(target)
         self._logger.info(f"Deleted skill {target}")
         self.reload_all()
+
+    @staticmethod
+    def _has_trained_model(skill_dir: Path, meta: dict) -> bool:
+        """True if skill_dir holds a trained learned-policy checkpoint we must not destroy."""
+        checkpoint = (meta.get("execution") or {}).get("checkpoint")
+        return bool(checkpoint) and (skill_dir / checkpoint).exists()
+
+    def _is_recording_scratch(self, d: Path) -> bool:
+        """True only for a throwaway recording dir under custom_skills: recorded episodes
+        under data/, no trained model, and not a finished replay skill — so cleanup can
+        never delete a real skill if a caller passes the wrong path."""
+        custom_root = get_custom_skills_dir().resolve()
+        if d == custom_root or not d.is_relative_to(custom_root) or not (d / "data").is_dir():
+            return False
+        meta_path = d / "metadata.json"
+        if not meta_path.exists():
+            return True
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return False
+        return meta.get("type") != "replay" and not self._has_trained_model(d, meta)
 
     # --- publishing ---
     def publish_skills_list(self) -> None:
