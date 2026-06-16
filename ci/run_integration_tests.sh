@@ -22,6 +22,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+run_ros_integration_tests() {
+  # Launch-based tests: these actually start nodes (e.g. brain_client_node.py),
+  # so a node whose installed executable is missing or non-runnable fails here.
+  ros2 run rmw_zenoh_cpp rmw_zenohd &
+  ROUTER_PID=$!
+  sleep 2
+  colcon test --packages-select brain_client \
+    --ctest-args -R "test_pose_image|test_fake_cloud_loop" \
+    --event-handlers console_direct+
+  colcon test-result --verbose
+  kill "${ROUTER_PID}" >/dev/null 2>&1 || true
+  wait "${ROUTER_PID}" >/dev/null 2>&1 || true
+  ROUTER_PID=""
+}
+
 echo "=== /dev/shm ==="
 df -h /dev/shm || true
 
@@ -44,11 +59,20 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
   src/brain/brain_client/test/test_backwards_compat.py \
   src/brain/manipulation/test/test_config_validation.py
 
-echo "=== integration tests (ROS launch) ==="
-ros2 run rmw_zenoh_cpp rmw_zenohd &
-ROUTER_PID=$!
-sleep 2
-colcon test --packages-select brain_client \
-  --ctest-args -R "test_pose_image|test_fake_cloud_loop" \
-  --event-handlers console_direct+
-colcon test-result --verbose
+# Run the launch tests under both install modes. The copy build baked into the
+# image (ci/Dockerfile.test) masks missing exec bits by installing 0755 copies;
+# the --symlink-install build (what the local sim launcher uses) symlinks the
+# install executable straight at the source, so a node script that lost its exec
+# bit fails to launch. Running both catches bugs specific to either mode.
+echo "=== integration tests: regular (copy) install ==="
+run_ros_integration_tests
+
+echo "=== integration tests: --symlink-install ==="
+rm -rf build install log
+colcon build --symlink-install \
+  --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+source install/setup.bash
+run_ros_integration_tests
