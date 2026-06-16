@@ -425,7 +425,10 @@ class SkillRepository:
             raise FileNotFoundError(f"Recorded episode not found: {episode_path}")
 
         with h5py.File(episode_path, "r") as f:
-            replay_action, wheeled = recording_action_to_replay(f["action"][:])
+            # head_command lives in its own dataset (replay-only — never in /action),
+            # so older recordings without it simply produce an arm+base trajectory.
+            head = f["head_command"][:] if "head_command" in f else None
+            replay_action, wheeled = recording_action_to_replay(f["action"][:], head=head)
         if len(replay_action) == 0:
             raise ValueError("Recorded episode has no timesteps.")
 

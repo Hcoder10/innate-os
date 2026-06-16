@@ -72,3 +72,27 @@ def test_rejects_too_narrow_action(width):
     # Width < 10 would make the arm slice (0:6) overlap the cmd_vel slice (-4:-2).
     with pytest.raises(ValueError):
         recording_action_to_replay(np.zeros((5, width)))
+
+
+def test_head_appended_as_ninth_column_in_degrees():
+    # Head is recorded separately and folded in as the 9th replay column,
+    # preserved verbatim (degrees) — it must never touch arm/cmd_vel cols.
+    rec = _make_recording(cmd_vel=(0.3, 0.0))
+    head = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    replay, wheeled = recording_action_to_replay(rec, head=head)
+    assert replay.shape == (5, 9)
+    assert wheeled is True
+    np.testing.assert_array_equal(replay[:, 0:6], rec[:, 0:6])
+    np.testing.assert_array_equal(replay[:, 6], np.full(5, 0.3))
+    np.testing.assert_array_equal(replay[:, 8], head)
+
+
+def test_no_head_stays_width_eight():
+    # Backward compatible: recordings without head produce the arm+base layout.
+    replay, _ = recording_action_to_replay(_make_recording())
+    assert replay.shape == (5, 8)
+
+
+def test_head_length_mismatch_rejected():
+    with pytest.raises(ValueError):
+        recording_action_to_replay(_make_recording(n=5), head=np.zeros(4))

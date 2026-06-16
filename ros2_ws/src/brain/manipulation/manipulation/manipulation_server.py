@@ -18,7 +18,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Int32
 from std_srvs.srv import Trigger
 
 # Enable CUDNN for better performance
@@ -170,6 +170,8 @@ class ManipulationServer(Node):
         # Publishers
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.arm_state_pub = self.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
+        # Head position command (degrees) — only published for head-enabled replay skills.
+        self.head_set_position_pub = self.create_publisher(Int32, "/mars/head/set_position", 10)
         # Service clients
         self.head_ai_position_client = self.create_client(Trigger, "/mars/head/set_ai_position")
         self.arm_goto_client = self.create_client(GotoJS, "/mars/arm/goto_js")
@@ -708,6 +710,13 @@ class ManipulationServer(Node):
                 twist_msg.linear.x = float(action[6]) / 2.0
                 twist_msg.angular.z = float(action[7]) / 2.0
                 self.cmd_vel_pub.publish(twist_msg)
+
+                # Extract head command (element 8 = head angle in degrees), present only
+                # for head-enabled replay skills; arm/base-only skills have width 8.
+                if len(action) > 8:
+                    head_msg = Int32()
+                    head_msg.data = int(round(float(action[8])))
+                    self.head_set_position_pub.publish(head_msg)
 
                 # Send feedback
                 elapsed_time = loop_start - start_time
