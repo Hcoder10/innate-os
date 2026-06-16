@@ -171,7 +171,7 @@ class TTSHandler:
 
                 t_api = time.perf_counter()
                 for chunk in self._cartesia_client.tts.bytes_stream(
-                    model_id="sonic-3",
+                    model_id="sonic-3.5",
                     transcript=text,
                     voice=voice,
                     output_format={
