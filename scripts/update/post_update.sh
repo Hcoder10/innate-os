@@ -9,6 +9,7 @@
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
 #   0b. Enable a disk-backed swap file (INN-530)
 #   0c. Use a headless (no-GUI) boot when no display is attached
+#   0d. Disable desktop/update daemons with no robot function
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -332,6 +333,50 @@ if configure_headless_boot; then
     log "  Boot target configuration complete"
 else
     log "  WARNING: failed to set headless boot target (continuing)"
+fi
+
+# -----------------------------------------------------------------------------
+# 0d. Disable desktop/update daemons with no robot function
+# These ship with the Ubuntu desktop image and serve no purpose on a headless
+# robot — they only consume RAM and wake the CPU to poll (package/firmware
+# update checkers, printing, colour management, crash uploaders, etc.). Freeing
+# them compounds the headless-boot savings above.
+# Fleet-safe: each unit is disabled only if present on this image (idempotent,
+# tolerant of image variants) and non-fatal (a failure only warns, never blocks
+# an update). snapd is disabled only when no snaps are installed, so a robot
+# that ships something as a snap is never broken.
+# Reversible: `systemctl enable --now <unit>` restores any of these.
+# -----------------------------------------------------------------------------
+disable_unit() {
+    local unit="$1"
+    # Skip units that don't exist on this image (keeps logs clean, avoids errors).
+    [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
+    if systemctl disable --now "$unit" >/dev/null 2>&1; then
+        log "  Disabled $unit"
+    else
+        log "  Could not disable $unit (continuing)"
+    fi
+}
+
+log "Disabling desktop/update daemons with no robot function..."
+for unit in \
+    packagekit.service \
+    fwupd.service \
+    ModemManager.service \
+    cups.service cups.socket cups-browsed.service lpd.service \
+    colord.service \
+    switcheroo-control.service \
+    kerneloops.service \
+    ubuntu-advantage.service; do
+    disable_unit "$unit"
+done
+
+# snapd: only disable when nothing is installed as a snap (else we'd break it).
+if command -v snap >/dev/null 2>&1 && [ -n "$(snap list 2>/dev/null | tail -n +2)" ]; then
+    log "  Keeping snapd (installed snaps present)"
+else
+    disable_unit snapd.service
+    disable_unit snapd.socket
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
