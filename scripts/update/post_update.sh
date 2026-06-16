@@ -283,27 +283,15 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 0c. Headless (no-GUI) boot when no display is attached.
+# 0c. Headless (no-GUI) boot.
 # The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
-# renders on a display-less robot. Switch the default target to multi-user when
-# no DRM connector reports a connected display (a monitored kit keeps its GUI);
-# the GUI stays one `systemctl set-default graphical.target` away. The saving
-# takes effect on the next boot.
+# renders on the robot. Switch the default target to multi-user; the GUI stays
+# one `systemctl set-default graphical.target` away, and takes effect on the
+# next boot.
 # -----------------------------------------------------------------------------
-display_connected() {
-    local status_file
-    for status_file in /sys/class/drm/*/status; do
-        [ -e "$status_file" ] || continue
-        [ "$(cat "$status_file" 2>/dev/null)" = "connected" ] && return 0
-    done
-    return 1
-}
-
 log "Configuring boot target..."
-if display_connected; then
-    log "  Display connected — keeping graphical boot target"
-elif systemctl set-default multi-user.target >/dev/null 2>&1; then
-    log "  No display — set headless (multi-user) boot for next boot"
+if systemctl set-default multi-user.target >/dev/null 2>&1; then
+    log "  Set headless (multi-user) boot for next boot"
 else
     log "  WARNING: failed to set headless boot target (continuing)"
 fi
