@@ -549,6 +549,7 @@ class SkillsActionServer(Node):
         self._cli_skill_worker_stop.set()
         self._cli_skill_tasks.put(None)
         self._cli_skill_worker.join(timeout=1.0)
+        self.manipulation.shutdown()
         self._camera_node.shutdown()
         self._action_server.destroy()
         super().destroy_node()

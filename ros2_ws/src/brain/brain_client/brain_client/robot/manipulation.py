@@ -11,6 +11,8 @@ This interface allows skills to:
 import threading
 import time
 
+import rclpy
+import rclpy.executors
 from geometry_msgs.msg import PoseStamped, Twist
 from mars_msgs.srv import GotoJS, GotoJSTrajectory
 from rclpy.node import Node
@@ -36,8 +38,13 @@ class ManipulationInterface:
             logger: Logger for status messages
             lazy: If True, defer subscription creation until start() is called
         """
-        self.node = node
+        self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
+        self._executor = rclpy.executors.SingleThreadedExecutor()
+        self._executor.add_node(self.node)
+        self._executor_thread = threading.Thread(target=self._spin_executor, daemon=True)
+        self._executor_thread.start()
+        self._ik_lock = threading.Lock()
 
         # Publishers
         self._ik_target_pub = self.node.create_publisher(Twist, "/ik_delta", 10)
@@ -71,6 +78,12 @@ class ManipulationInterface:
 
         self.logger.info("ManipulationInterface initialized")
 
+    def _spin_executor(self):
+        try:
+            self._executor.spin()
+        except Exception as e:
+            self.logger.error(f"[ManipulationInterface] Executor stopped unexpectedly: {e}")
+
     def start(self):
         """Create all subscriptions. Safe to call multiple times."""
         if self._arm_state_sub is not None:
@@ -98,13 +111,15 @@ class ManipulationInterface:
         self._fk_pose = None
         self._arm_state = None
 
-    def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
-        """Yield briefly while the node's executor processes callbacks.
+    def shutdown(self):
+        """Stop the manipulation helper node and its private executor."""
+        self.stop()
+        self._executor.shutdown()
+        self._executor_thread.join(timeout=2.0)
+        self.node.destroy_node()
 
-        The skills action server already owns this node in a MultiThreadedExecutor.
-        Calling rclpy.spin_once/spin_until_future_complete here can remove the node
-        from that executor, making later skill goals or cancels hang.
-        """
+    def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
+        """Yield briefly while the manipulation helper executor processes callbacks."""
         for _ in range(count):
             time.sleep(timeout_sec)
 
@@ -215,38 +230,39 @@ class ManipulationInterface:
         Returns:
             List of joint angles in radians, or None if IK fails
         """
-        # Clear previous solution
-        self._ik_solution = None
-        self._ik_solution_fk = None
+        with self._ik_lock:
+            # Clear previous solution
+            self._ik_solution = None
+            self._ik_solution_fk = None
 
-        # Publish target pose to IK node
-        target = Twist()
-        target.linear.x = x
-        target.linear.y = y
-        target.linear.z = z
-        target.angular.x = roll
-        target.angular.y = pitch
-        target.angular.z = yaw
+            # Publish target pose to IK node
+            target = Twist()
+            target.linear.x = x
+            target.linear.y = y
+            target.linear.z = z
+            target.angular.x = roll
+            target.angular.y = pitch
+            target.angular.z = yaw
 
-        self._ik_target_pub.publish(target)
+            self._ik_target_pub.publish(target)
 
-        # Wait for the executor thread to deliver the IK solution callback.
-        start_time = time.time()
-        iteration = 0
-        while time.time() - start_time < timeout:
-            self.spin_node_to_refresh_topics(count=1, timeout_sec=0.01)
+            # Wait for the private executor thread to deliver the IK solution callback.
+            start_time = time.time()
+            iteration = 0
+            while time.time() - start_time < timeout:
+                self.spin_node_to_refresh_topics(count=1, timeout_sec=0.01)
 
-            if self._ik_solution is not None:
-                joint_positions = list(self._ik_solution.position)
+                if self._ik_solution is not None:
+                    joint_positions = list(self._ik_solution.position)
 
-                # Validate that we received a non-empty solution
-                if len(joint_positions) == 0:
-                    self.logger.error("[ManipulationInterface] IK solver returned empty solution (IK failed)")
-                    return None
+                    # Validate that we received a non-empty solution
+                    if len(joint_positions) == 0:
+                        self.logger.error("[ManipulationInterface] IK solver returned empty solution (IK failed)")
+                        return None
 
-                return joint_positions
+                    return joint_positions
 
-            iteration += 1
+                iteration += 1
 
         self.logger.error(f"[ManipulationInterface] IK solution timeout after {timeout}s ({iteration} iterations)")
         return None
