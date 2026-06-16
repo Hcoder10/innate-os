@@ -8,6 +8,8 @@
 # This script handles:
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
 #   0b. Enable a disk-backed swap file (INN-530)
+#   0c. Use a headless (no-GUI) boot when no display is attached
+#   0d. Disable desktop/update daemons with no robot function
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -278,6 +280,59 @@ if setup_swap; then
     log "  Swap configuration complete"
 else
     log "  WARNING: swap configuration failed (continuing without disk swap)"
+fi
+
+# -----------------------------------------------------------------------------
+# 0c. Headless (no-GUI) boot.
+# The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
+# renders on the robot. Switch the default target to multi-user; the GUI stays
+# one `systemctl set-default graphical.target` away, and takes effect on the
+# next boot.
+# -----------------------------------------------------------------------------
+log "Configuring boot target..."
+if systemctl set-default multi-user.target >/dev/null 2>&1; then
+    log "  Set headless (multi-user) boot for next boot"
+else
+    log "  WARNING: failed to set headless boot target (continuing)"
+fi
+
+# -----------------------------------------------------------------------------
+# 0d. Disable desktop/update daemons with no robot function.
+# These ship with the desktop image and only cost RAM + periodic CPU wakeups on
+# a headless robot. Each is disabled only if present (non-fatal); snapd only
+# when no snaps are installed. Reversible via `systemctl enable --now <unit>`.
+# -----------------------------------------------------------------------------
+disable_unit() {
+    local unit="$1"
+    # Skip units not present on this image.
+    [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
+    if systemctl disable --now "$unit" >/dev/null 2>&1; then
+        log "  Disabled $unit"
+    else
+        log "  Could not disable $unit (continuing)"
+    fi
+}
+
+# fwupd is intentionally left enabled — it's the channel for LVFS firmware
+# updates, the one disabled daemon that removes a real capability.
+log "Disabling desktop/update daemons with no robot function..."
+for unit in \
+    packagekit.service \
+    ModemManager.service \
+    cups.service cups.socket cups-browsed.service lpd.service \
+    colord.service \
+    switcheroo-control.service \
+    kerneloops.service \
+    ubuntu-advantage.service; do
+    disable_unit "$unit"
+done
+
+# snapd: only disable when nothing is installed as a snap (else we'd break it).
+if command -v snap >/dev/null 2>&1 && [ -n "$(snap list 2>/dev/null | tail -n +2)" ]; then
+    log "  Keeping snapd (installed snaps present)"
+else
+    disable_unit snapd.service
+    disable_unit snapd.socket
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
