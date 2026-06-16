@@ -42,8 +42,10 @@ class Agent(ABC):
     @abstractmethod
     def get_skills(self) -> list[str]:
         """
-        Returns a list of skill names that should be available
-        when this agent is active.
+        Returns a list of skill IDs that should be available
+        when this agent is active (e.g. "innate-os/navigate_to_position"
+        or "local/wave-hello"). IDs are matched exactly against each
+        available skill's id during registration — not by display name.
 
         Subclasses must implement this method.
         """
