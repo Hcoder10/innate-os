@@ -188,10 +188,14 @@ bool ArmCameraDriver::initializeCamera() {
 }
 
 std::string ArmCameraDriver::createGStreamerPipeline() {
-    // GStreamer pipeline for YUYV capture
+    // GStreamer pipeline for YUYV capture.
     // v4l2src: capture from V4L2 device
     // video/x-raw,format=YUY2: YUYV format (YUY2 is GStreamer's name for YUYV)
-    // videoconvert: convert to BGR for OpenCV
+    // nvvidconv: hardware YUY2->BGRx colorspace conversion on the Jetson VIC
+    //   engine, moving the per-pixel YUV->RGB math off the CPU (the software
+    //   videoconvert below was a full-frame hotspot at this resolution/fps).
+    // videoconvert: final BGRx->BGR for OpenCV — a cheap stride drop (removing
+    //   the padding byte), not a colorspace conversion.
     // appsink: output to application
     //   max-buffers=1: only keep newest frame
     //   drop=true: drop old frames if not consumed
@@ -203,9 +207,12 @@ std::string ArmCameraDriver::createGStreamerPipeline() {
                            std::to_string(width_) + ",height=" + std::to_string(height_) +
                            ",framerate=" + std::to_string(static_cast<int>(fps_)) +
                            "/1 ! "
+                           "nvvidconv ! video/x-raw,format=BGRx ! "
                            "videoconvert ! video/x-raw,format=BGR ! "
                            "appsink max-buffers=1 drop=true sync=false";
 
+    // Alternative pipeline (fallback if nvvidconv is unavailable): replace the
+    // nvvidconv + BGRx stage with a single software "videoconvert ! BGR".
     return pipeline;
 }
 
