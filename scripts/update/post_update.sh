@@ -283,17 +283,12 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 0c. Use a headless (no-GUI) boot when no display is attached
-# Robots ship on the stock Ubuntu *desktop* image and boot into a full GNOME
-# session (gnome-shell, Xorg, gdm, ~25 gsd-* daemons, gvfs, tracker) that costs
-# ~0.8 GB RAM plus idle CPU — on a machine where RAM is the binding constraint
-# and nothing renders the desktop. Switching the default target to multi-user
-# frees that memory for the ROS stack with no functional impact (nothing in the
-# runtime depends on an X session).
-# Guarded: only switches when no DRM connector reports a connected display, so
-# an engineering kit attached to a monitor at update time keeps its GUI.
-# Reversible: `systemctl set-default graphical.target` restores it — gdm is
-# stopped, never masked. Idempotent and non-fatal: never blocks an update.
+# 0c. Headless (no-GUI) boot when no display is attached.
+# The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
+# renders on a display-less robot. Switch the default target to multi-user when
+# no DRM connector reports a connected display (a monitored kit keeps its GUI).
+# Reversible via `systemctl set-default graphical.target`; gdm is stopped, not
+# masked. Idempotent and non-fatal.
 # -----------------------------------------------------------------------------
 display_connected() {
     local status_file
@@ -317,10 +312,8 @@ configure_headless_boot() {
         systemctl set-default multi-user.target >/dev/null 2>&1 || return 1
     fi
 
-    # Reclaim the desktop's memory now instead of waiting for the next reboot.
-    # Stopping (not masking) gdm tears down the unused :0 session while leaving
-    # the GUI one command away. SSH/tmux are independent of gdm, so the running
-    # update is unaffected.
+    # Reclaim the memory now rather than waiting for the next reboot. SSH/tmux
+    # are independent of gdm, so the running update is unaffected.
     if systemctl is-active --quiet gdm.service 2>/dev/null; then
         log "  Stopping gdm.service to reclaim memory now"
         systemctl stop gdm.service 2>/dev/null || true
@@ -336,20 +329,14 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 0d. Disable desktop/update daemons with no robot function
-# These ship with the Ubuntu desktop image and serve no purpose on a headless
-# robot — they only consume RAM and wake the CPU to poll (package/firmware
-# update checkers, printing, colour management, crash uploaders, etc.). Freeing
-# them compounds the headless-boot savings above.
-# Fleet-safe: each unit is disabled only if present on this image (idempotent,
-# tolerant of image variants) and non-fatal (a failure only warns, never blocks
-# an update). snapd is disabled only when no snaps are installed, so a robot
-# that ships something as a snap is never broken.
-# Reversible: `systemctl enable --now <unit>` restores any of these.
+# 0d. Disable desktop/update daemons with no robot function.
+# These ship with the desktop image and only cost RAM + periodic CPU wakeups on
+# a headless robot. Each is disabled only if present (non-fatal); snapd only
+# when no snaps are installed. Reversible via `systemctl enable --now <unit>`.
 # -----------------------------------------------------------------------------
 disable_unit() {
     local unit="$1"
-    # Skip units that don't exist on this image (keeps logs clean, avoids errors).
+    # Skip units not present on this image.
     [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
     if systemctl disable --now "$unit" >/dev/null 2>&1; then
         log "  Disabled $unit"
