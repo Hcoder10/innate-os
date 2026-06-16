@@ -286,9 +286,9 @@ fi
 # 0c. Headless (no-GUI) boot when no display is attached.
 # The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
 # renders on a display-less robot. Switch the default target to multi-user when
-# no DRM connector reports a connected display (a monitored kit keeps its GUI).
-# Reversible via `systemctl set-default graphical.target`; gdm is stopped, not
-# masked. Idempotent and non-fatal.
+# no DRM connector reports a connected display (a monitored kit keeps its GUI);
+# the GUI stays one `systemctl set-default graphical.target` away. The saving
+# takes effect on the next boot.
 # -----------------------------------------------------------------------------
 display_connected() {
     local status_file
@@ -299,31 +299,11 @@ display_connected() {
     return 1
 }
 
-configure_headless_boot() {
-    if display_connected; then
-        log "  Display connected — keeping graphical boot target"
-        return 0
-    fi
-
-    if [ "$(systemctl get-default 2>/dev/null)" = "multi-user.target" ]; then
-        log "  Already set to multi-user.target (headless)"
-    else
-        log "  No display connected — setting default boot target to multi-user.target"
-        systemctl set-default multi-user.target >/dev/null 2>&1 || return 1
-    fi
-
-    # Reclaim the memory now rather than waiting for the next reboot. SSH/tmux
-    # are independent of gdm, so the running update is unaffected.
-    if systemctl is-active --quiet gdm.service 2>/dev/null; then
-        log "  Stopping gdm.service to reclaim memory now"
-        systemctl stop gdm.service 2>/dev/null || true
-    fi
-    return 0
-}
-
 log "Configuring boot target..."
-if configure_headless_boot; then
-    log "  Boot target configuration complete"
+if display_connected; then
+    log "  Display connected — keeping graphical boot target"
+elif systemctl set-default multi-user.target >/dev/null 2>&1; then
+    log "  No display — set headless (multi-user) boot for next boot"
 else
     log "  WARNING: failed to set headless boot target (continuing)"
 fi
