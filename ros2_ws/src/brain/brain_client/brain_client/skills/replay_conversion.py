@@ -18,15 +18,19 @@ def recording_action_to_replay(action, wheel_threshold: float = WHEEL_MOTION_THR
     """Transform a recorder ``/action`` array into the replay player's layout.
 
     Recorder layout per row: ``[arm joints (0:6), <leader extras>, cmd_vel.x,
-    cmd_vel.z, progress, termination]`` — base velocity is always the two columns
-    before the two trailing termination columns (both are always appended). The
-    replay player reads arm joints at cols ``0:6`` and base cmd_vel at cols ``6:8``.
+    cmd_vel.z, term0, term1]`` — base velocity is always the two columns before
+    the two trailing termination columns (both are always appended). The replay
+    player reads arm joints at cols ``0:6`` and base cmd_vel at cols ``6:8``.
+
+    Minimum width is 10 (6 arm + 2 cmd_vel + 2 termination); below that the arm
+    slice ``0:6`` and the cmd_vel slice ``-4:-2`` would overlap.
 
     Returns ``(replay_action, wheeled)`` where ``replay_action`` is ``(N, 8)`` and
     ``wheeled`` is ``False`` (with cmd_vel zeroed) when the base never moved.
     """
     action = np.asarray(action, dtype=float)
-    assert action.ndim == 2 and action.shape[1] >= 8, f"Unusable recorder action shape {action.shape}."
+    if action.ndim != 2 or action.shape[1] < 10:
+        raise ValueError(f"Unusable recorder action shape {action.shape}; expected (N, >=10).")
     arm, cmd_vel = action[:, :6], action[:, -4:-2]
     wheeled = bool(np.any(np.abs(cmd_vel) > wheel_threshold))
     if not wheeled:

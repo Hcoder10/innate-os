@@ -67,6 +67,8 @@ def test_cmd_vel_read_before_termination_regardless_of_leader_width():
     np.testing.assert_array_equal(replay[:, 6:8], np.full((5, 2), 0.4))
 
 
-def test_rejects_too_narrow_action():
-    with pytest.raises(AssertionError):
-        recording_action_to_replay(np.zeros((5, 6)))
+@pytest.mark.parametrize("width", [6, 8, 9])
+def test_rejects_too_narrow_action(width):
+    # Width < 10 would make the arm slice (0:6) overlap the cmd_vel slice (-4:-2).
+    with pytest.raises(ValueError):
+        recording_action_to_replay(np.zeros((5, width)))
