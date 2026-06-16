@@ -113,8 +113,7 @@ class WebSocketManager:
     def _send(self, message_in) -> None:
         if not self.ws_client:
             self._log_invalid_config_once(
-                "Cannot send websocket message: hosted Innate agent is not configured "
-                "(missing INNATE_SERVICE_KEY)."
+                "Cannot send websocket message: hosted Innate agent is not configured (missing INNATE_SERVICE_KEY)."
             )
         elif self.ws_client.loop and self.ws_client.loop.is_running():
             try:
