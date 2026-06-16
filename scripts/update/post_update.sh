@@ -8,6 +8,7 @@
 # This script handles:
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
 #   0b. Enable a disk-backed swap file (INN-530)
+#   0c. Use a headless (no-GUI) boot when no display is attached
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -278,6 +279,59 @@ if setup_swap; then
     log "  Swap configuration complete"
 else
     log "  WARNING: swap configuration failed (continuing without disk swap)"
+fi
+
+# -----------------------------------------------------------------------------
+# 0c. Use a headless (no-GUI) boot when no display is attached
+# Robots ship on the stock Ubuntu *desktop* image and boot into a full GNOME
+# session (gnome-shell, Xorg, gdm, ~25 gsd-* daemons, gvfs, tracker) that costs
+# ~0.8 GB RAM plus idle CPU — on a machine where RAM is the binding constraint
+# and nothing renders the desktop. Switching the default target to multi-user
+# frees that memory for the ROS stack with no functional impact (nothing in the
+# runtime depends on an X session).
+# Guarded: only switches when no DRM connector reports a connected display, so
+# an engineering kit attached to a monitor at update time keeps its GUI.
+# Reversible: `systemctl set-default graphical.target` restores it — gdm is
+# stopped, never masked. Idempotent and non-fatal: never blocks an update.
+# -----------------------------------------------------------------------------
+display_connected() {
+    local status_file
+    for status_file in /sys/class/drm/*/status; do
+        [ -e "$status_file" ] || continue
+        [ "$(cat "$status_file" 2>/dev/null)" = "connected" ] && return 0
+    done
+    return 1
+}
+
+configure_headless_boot() {
+    if display_connected; then
+        log "  Display connected — keeping graphical boot target"
+        return 0
+    fi
+
+    if [ "$(systemctl get-default 2>/dev/null)" = "multi-user.target" ]; then
+        log "  Already set to multi-user.target (headless)"
+    else
+        log "  No display connected — setting default boot target to multi-user.target"
+        systemctl set-default multi-user.target >/dev/null 2>&1 || return 1
+    fi
+
+    # Reclaim the desktop's memory now instead of waiting for the next reboot.
+    # Stopping (not masking) gdm tears down the unused :0 session while leaving
+    # the GUI one command away. SSH/tmux are independent of gdm, so the running
+    # update is unaffected.
+    if systemctl is-active --quiet gdm.service 2>/dev/null; then
+        log "  Stopping gdm.service to reclaim memory now"
+        systemctl stop gdm.service 2>/dev/null || true
+    fi
+    return 0
+}
+
+log "Configuring boot target..."
+if configure_headless_boot; then
+    log "  Boot target configuration complete"
+else
+    log "  WARNING: failed to set headless boot target (continuing)"
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
