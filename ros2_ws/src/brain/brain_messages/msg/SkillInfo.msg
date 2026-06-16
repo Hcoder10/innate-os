@@ -9,3 +9,4 @@ string inputs_json              # JSON-encoded inputs dict, e.g. {"x": "float", 
 bool in_training                # True if skill is still in training (missing checkpoint)
 int32 episode_count             # Number of recorded episodes (0 for code skills)
 string directory                # Absolute path to skill directory (empty for code skills)
+bool wheeled                    # Replay skills: True if the base moved during the recording
