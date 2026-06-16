@@ -301,6 +301,19 @@ function makeGoalId() {
   });
 }
 
+function normalizeExecuteSkillResult(
+  skillType: string,
+  result: ExecuteSkillResult | undefined,
+): ExecuteSkillResult {
+  return {
+    success: true,
+    skill_type: skillType,
+    success_type: "success",
+    message: "Action completed",
+    ...(result ?? {}),
+  };
+}
+
 export function callRosbridgeAction<T = Record<string, unknown>>(
   wsUrl: string,
   action: string,
@@ -326,22 +339,26 @@ export function startRosbridgeAction<T = Record<string, unknown>>(
 ): CancelableAction<T> {
   let ws: WebSocket | null = null;
   let cancelRequested = false;
+  let cancelSent = false;
+  let activeGoalId: string | null = null;
   const callId = `action_${action.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}_${Math.floor(
     Math.random() * 1e5,
   )}`;
   const goalId = makeGoalId();
 
   const sendCancel = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !activeGoalId || cancelSent) {
       cancelRequested = true;
       return;
     }
+    cancelRequested = true;
+    cancelSent = true;
     ws.send(
       JSON.stringify({
         op: "cancel_action_goal",
         id: callId,
         action,
-        goal_id: goalId,
+        goal_id: activeGoalId,
       }),
     );
   };
@@ -398,9 +415,23 @@ export function startRosbridgeAction<T = Record<string, unknown>>(
           op?: string;
           id?: string;
           status?: number | string;
+          goal_id?: string;
           values?: T;
         };
-        if (message.op !== "action_result" || message.id !== callId) {
+        if (message.id !== callId) {
+          return;
+        }
+        if (
+          message.op === "action_feedback" &&
+          typeof message.goal_id === "string" &&
+          message.goal_id
+        ) {
+          activeGoalId = message.goal_id;
+          if (cancelRequested) {
+            sendCancel();
+          }
+        }
+        if (message.op !== "action_result") {
           return;
         }
 
@@ -678,7 +709,7 @@ export async function executeSkillDirect(
   skillType: string,
   inputsJson: string,
 ): Promise<ExecuteSkillResult> {
-  return callRosbridgeAction<ExecuteSkillResult>(
+  const result = await callRosbridgeAction<ExecuteSkillResult>(
     wsUrl,
     "/execute_skill",
     "brain_messages/action/ExecuteSkill",
@@ -687,15 +718,7 @@ export async function executeSkillDirect(
       inputs: inputsJson,
     },
   );
-}
-
-export async function cancelSkillExecutionDirect(wsUrl: string): Promise<void> {
-  await callRosbridgeService(wsUrl, "/execute_skill/_action/cancel_goal", {
-    goal_info: {
-      goal_id: { uuid: Array(16).fill(0) },
-      stamp: { sec: 0, nanosec: 0 },
-    },
-  });
+  return normalizeExecuteSkillResult(skillType, result);
 }
 
 export function startSkillExecutionDirect(
@@ -713,12 +736,9 @@ export function startSkillExecutionDirect(
     },
   );
   return {
-    promise: action.promise,
-    cancel: () => {
-      action.cancel();
-      void cancelSkillExecutionDirect(wsUrl).catch((error) => {
-        console.error("Failed to cancel skill execution:", error);
-      });
-    },
+    promise: action.promise.then((result) =>
+      normalizeExecuteSkillResult(skillType, result),
+    ),
+    cancel: action.cancel,
   };
 }

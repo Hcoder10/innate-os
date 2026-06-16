@@ -15,5 +15,5 @@ class EmptyDirective(Agent):
     def get_skills(self) -> list[str]:
         return []
 
-    def get_prompt(self) -> str | None:
-        return None
+    def get_prompt(self) -> str:
+        return ""

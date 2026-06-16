@@ -23,5 +23,5 @@ class BasicAgent(Agent):
         """Enable microphone input to hear user"""
         return ["micro"]
 
-    def get_prompt(self) -> None:
-        return None
+    def get_prompt(self) -> str:
+        return ""

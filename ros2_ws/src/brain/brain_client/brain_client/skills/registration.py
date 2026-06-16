@@ -86,7 +86,7 @@ class SkillCatalog:
             type=MessageInType.REGISTER_PRIMITIVES_AND_DIRECTIVE,
             payload={
                 "primitives": included,
-                "directive": directive.get_prompt(),
+                "directive": directive.get_prompt() or "",
                 "token": self._state.token,
             },
         )
