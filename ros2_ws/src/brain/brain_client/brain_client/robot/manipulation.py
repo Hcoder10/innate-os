@@ -517,9 +517,14 @@ class ManipulationInterface:
 
     def reboot_servos(self) -> bool:
         """Reboot all arm Dynamixel servos, clearing hardware errors. Returns True if successful."""
-        success = self._call_trigger(self._reboot_servos_client, "Reboot servos", "Servos rebooted", timeout_sec=10.0)
+        success = self._call_trigger(
+            self._reboot_servos_client,
+            "Reboot servos",
+            "Servos rebooted; arm torque is disabled",
+            timeout_sec=10.0,
+        )
         if success:
-            self._torque_enabled = True
+            self._torque_enabled = False
         return success
 
     # Gripper position constants (radians)

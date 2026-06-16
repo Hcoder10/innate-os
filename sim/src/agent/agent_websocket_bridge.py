@@ -410,11 +410,12 @@ async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, arg
         if service_name == "/mars/arm/torque_off":
             set_arm_torque_enabled(shared_queues, False)
             message = "Sim arm torque disabled; motion commands will be rejected."
+        elif service_name == "/mars/arm/reboot":
+            set_arm_torque_enabled(shared_queues, False)
+            message = "Sim arm rebooted; torque disabled. Run torque_on before moving."
         else:
             set_arm_torque_enabled(shared_queues, True)
-            message = (
-                "Sim arm rebooted; torque enabled." if service_name == "/mars/arm/reboot" else "Sim arm torque enabled."
-            )
+            message = "Sim arm torque enabled."
 
         print(f"[ROSBridge] {message}")
         await _send_service_response(

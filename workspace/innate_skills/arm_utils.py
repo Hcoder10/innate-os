@@ -64,7 +64,10 @@ class ArmUtils(Skill):
         # reboot_arm
         success = self.manipulation.reboot_servos()
         if success:
-            return "Arm servos rebooted and reinitialized", SkillResult.SUCCESS
+            return (
+                "Arm servos rebooted and reinitialized; torque is disabled. Run torque_on before moving.",
+                SkillResult.SUCCESS,
+            )
         return "Failed to reboot arm servos", SkillResult.FAILURE
 
     def cancel(self):
