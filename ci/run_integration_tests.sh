@@ -68,6 +68,12 @@ echo "=== integration tests: regular (copy) install ==="
 run_ros_integration_tests
 
 echo "=== integration tests: --symlink-install ==="
+# colcon --symlink-install installs Python entry points via `setup.py develop
+# --editable`, which setuptools >= 80 removed (this image ships 82; the local sim
+# image is older, which is why symlink builds work there but not here). Pin an
+# older setuptools for this build pass only — it's build-time tooling, so already
+# installed packages and Pass 1 are unaffected.
+python3 -m pip install --quiet 'setuptools<80'
 rm -rf build install log
 colcon build --symlink-install \
   --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
