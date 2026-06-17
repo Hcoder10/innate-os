@@ -391,74 +391,29 @@ class SkillRepository:
     ) -> tuple[str, str, bool]:
         """Promote a recorded teleop episode into a deterministic replay skill.
 
-        Transforms the recorder's action layout into the replay layout (6 arm
-        joints + 2 base cmd_vel), auto-classifies the base motion, writes a
-        ``type: "replay"`` skill under ``custom_skills/``, cleans up the raw
-        recording, and republishes. Returns ``(skill_dir, skill_id, wheeled)``.
+        Reads the recording, converts it to the replay layout (6 arm joints + 2
+        base cmd_vel, plus an optional head channel), writes a ``type: "replay"``
+        skill under ``custom_skills/``, drops the raw recording, and republishes.
+        Returns ``(skill_dir, skill_id, wheeled)``.
         """
         display_name = display_name.strip()
         if not display_name:
             raise ValueError("Skill name cannot be empty.")
 
-        data_dir = Path(task_directory) / "data"
-        meta_path = data_dir / "dataset_metadata.json"
-        if not meta_path.exists():
-            raise FileNotFoundError(f"No recording metadata at {meta_path}; nothing to save.")
-        try:
-            meta = json.loads(meta_path.read_text())
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Recording metadata at {meta_path} is corrupt: {e}") from e
-
-        # episode_id < 0 means "the most recent recording" so the app never tracks indices.
-        episode_id = int(episode_id)
-        if episode_id < 0:
-            episode_id = int(meta.get("number_of_episodes", 0)) - 1
-        if episode_id < 0:
-            raise ValueError("No recorded episode to save.")
-        names = {
-            int(e["episode_id"]): e["file_name"]
-            for e in meta.get("episodes", [])
-            if e.get("episode_id") is not None and e.get("file_name")
-        }
-        episode_path = data_dir / names.get(episode_id, f"episode_{episode_id}.h5")
-        if not episode_path.exists():
-            raise FileNotFoundError(f"Recorded episode not found: {episode_path}")
-
+        recorder_meta, episode_path = self._resolve_recording_episode(task_directory, episode_id)
         with h5py.File(episode_path, "r") as f:
-            # head_command lives in its own dataset (replay-only — never in /action),
-            # so older recordings without it simply produce an arm+base trajectory.
+            # head_command is its own dataset (replay-only, never in /action); older
+            # recordings without it just yield an arm+base trajectory.
             head = f["head_command"][:] if "head_command" in f else None
-            replay_action, wheeled = recording_action_to_replay(f["action"][:], head=head)
-        if len(replay_action) == 0:
+            action, wheeled = recording_action_to_replay(f["action"][:], head=head)
+        if len(action) == 0:
             raise ValueError("Recorded episode has no timesteps.")
 
-        dir_name = self._slugify(display_name)
-        if not dir_name:
-            raise ValueError(f"Cannot derive a directory name from '{display_name}'.")
-        skill_dir = get_custom_skills_dir() / dir_name
-        in_place = skill_dir.resolve() == Path(task_directory).resolve()  # name-first flow
-        metadata_path = skill_dir / "metadata.json"
-        if metadata_path.exists():
-            existing = json.loads(metadata_path.read_text())
-            if existing.get("type") == "replay":
-                self._logger.warning(f"Overwriting existing replay skill at {skill_dir}")
-            elif self._has_trained_model(skill_dir, existing) or not in_place:
-                # Never clobber a trained model, or a different skill that happens to share
-                # this name. In place only ever converts our own fresh recording scratch.
-                raise ValueError(f"A non-replay skill named '{display_name}' already exists.")
-            else:
-                self._logger.info(f"Converting recording scratch into a replay skill at {skill_dir}")
-
-        # Write the trajectory atomically so a failed/overwritten save never leaves a
-        # truncated episode_0.h5 that metadata.json still references.
+        skill_dir, in_place = self._resolve_replay_skill_dir(display_name, task_directory)
         skill_dir.mkdir(parents=True, exist_ok=True)
-        replay_h5 = skill_dir / "episode_0.h5"
-        tmp_h5 = skill_dir / "episode_0.h5.tmp"
-        with h5py.File(tmp_h5, "w") as f:
-            f.create_dataset("action", data=replay_action)
-        os.replace(tmp_h5, replay_h5)
+        self._write_h5_atomic(skill_dir / "episode_0.h5", action)
         self._write_json_atomic(
-            metadata_path,
+            skill_dir / "metadata.json",
             {
                 "name": display_name,
                 "type": "replay",
@@ -469,28 +424,92 @@ class SkillRepository:
                 "execution": {
                     "model_type": "replay",
                     "replay_file": "episode_0.h5",
-                    "replay_frequency": float(meta.get("data_frequency", 10.0)),
-                    "start_pose": replay_action[0, :6].tolist(),
-                    "end_pose": replay_action[-1, :6].tolist(),
+                    "replay_frequency": float(recorder_meta.get("data_frequency", 10.0)),
+                    "start_pose": action[0, :6].tolist(),
+                    "end_pose": action[-1, :6].tolist(),
                 },
             },
         )
-
-        # Drop the raw recording: just data/ in place, else the whole scratch dir — but
-        # only when it really is a throwaway recording scratch, never a real skill.
-        if in_place:
-            shutil.rmtree(skill_dir / "data", ignore_errors=True)
-        else:
-            scratch = Path(task_directory).resolve()
-            if self._is_recording_scratch(scratch):
-                shutil.rmtree(scratch, ignore_errors=True)
-            else:
-                self._logger.warning(f"Not deleting recording dir (not a safe scratch): {scratch}")
+        self._drop_raw_recording(task_directory, skill_dir, in_place)
 
         skill_id = self._compute_skill_id(str(skill_dir))
         self._logger.info(f"Saved replay skill '{display_name}' at {skill_dir} (wheeled={wheeled})")
         self.reload_all()
         return str(skill_dir), skill_id, wheeled
+
+    def _resolve_recording_episode(self, task_directory: str, episode_id: int) -> tuple[dict, Path]:
+        """Load recorder metadata and resolve which episode_*.h5 to convert (episode_id < 0 = most recent)."""
+        data_dir = Path(task_directory) / "data"
+        meta_path = data_dir / "dataset_metadata.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(f"No recording metadata at {meta_path}; nothing to save.")
+        try:
+            meta = json.loads(meta_path.read_text())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Recording metadata at {meta_path} is corrupt: {e}") from e
+
+        episode_id = int(episode_id)
+        if episode_id < 0:
+            episode_id = int(meta.get("number_of_episodes", 0)) - 1
+        if episode_id < 0:
+            raise ValueError("No recorded episode to save.")
+
+        file_by_id = {
+            int(e["episode_id"]): e["file_name"]
+            for e in meta.get("episodes", [])
+            if e.get("episode_id") is not None and e.get("file_name")
+        }
+        episode_path = data_dir / file_by_id.get(episode_id, f"episode_{episode_id}.h5")
+        if not episode_path.exists():
+            raise FileNotFoundError(f"Recorded episode not found: {episode_path}")
+        return meta, episode_path
+
+    def _resolve_replay_skill_dir(self, display_name: str, task_directory: str) -> tuple[Path, bool]:
+        """Pick custom_skills/<slug>, enforce the overwrite policy, and return (skill_dir, in_place).
+
+        Overwriting our own replay skill is fine; refuse a trained model or a different
+        existing skill — only the in-place name-first flow converts its own scratch.
+        Writes nothing.
+        """
+        dir_name = self._slugify(display_name)
+        if not dir_name:
+            raise ValueError(f"Cannot derive a directory name from '{display_name}'.")
+        skill_dir = get_custom_skills_dir() / dir_name
+        in_place = skill_dir.resolve() == Path(task_directory).resolve()  # name-first flow
+
+        existing = skill_dir / "metadata.json"
+        if existing.exists():
+            meta = json.loads(existing.read_text())
+            if meta.get("type") == "replay":
+                self._logger.warning(f"Overwriting existing replay skill at {skill_dir}")
+            elif self._has_trained_model(skill_dir, meta) or not in_place:
+                raise ValueError(f"A non-replay skill named '{display_name}' already exists.")
+            else:
+                self._logger.info(f"Converting recording scratch into a replay skill at {skill_dir}")
+        return skill_dir, in_place
+
+    @staticmethod
+    def _write_h5_atomic(path: Path, action) -> None:
+        """Write the replay trajectory via tmp file + os.replace (never a truncated episode_0.h5)."""
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        try:
+            with h5py.File(tmp_path, "w") as f:
+                f.create_dataset("action", data=action)
+            os.replace(tmp_path, path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    def _drop_raw_recording(self, task_directory: str, skill_dir: Path, in_place: bool) -> None:
+        """Delete the converted recording: data/ in place, else the whole scratch dir if it's a safe scratch."""
+        if in_place:
+            shutil.rmtree(skill_dir / "data", ignore_errors=True)
+            return
+        scratch = Path(task_directory).resolve()
+        if self._is_recording_scratch(scratch):
+            shutil.rmtree(scratch, ignore_errors=True)
+        else:
+            self._logger.warning(f"Not deleting recording dir (not a safe scratch): {scratch}")
 
     def delete_skill(self, skill_directory: str) -> None:
         """Delete a user-created skill directory. Refuses anything outside custom_skills."""
