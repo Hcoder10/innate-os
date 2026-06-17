@@ -36,6 +36,7 @@ def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRe
             "in_training": s.in_training,
             "episode_count": s.episode_count,
             "directory": s.directory,
+            "wheeled": s.wheeled,
         }
         for s in msg.skills
     ]

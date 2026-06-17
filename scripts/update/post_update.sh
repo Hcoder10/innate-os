@@ -900,15 +900,26 @@ if systemctl list-unit-files bluetooth.service &>/dev/null; then
     SERVICES+=("bluetooth.service")
 fi
 
+# zenoh-router and ros-app must be *restarted* (not just started) after a
+# rebuild: `systemctl start` is a no-op when they're already running, which
+# leaves the long-lived Zenoh router holding stale liveliness tokens from the
+# previous node generation and the old node binaries in place — surfacing as
+# `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
+# the router before the nodes so the fresh graph comes up against a fresh router.
+RESTART_SERVICES=("zenoh-router.service" "ros-app.service")
+
 # Always enable services (so they start on boot after reboot)
-# But only start them if reboot is not required
+# But only start/restart them if reboot is not required
 for service in "${SERVICES[@]}"; do
     if [ -f "/etc/systemd/system/$service" ] || systemctl list-unit-files "$service" &>/dev/null; then
         log "  Enabling $service"
         systemctl enable "$service" 2>/dev/null || true
-        
+
         if [ "$HARDWARE_REBOOT_REQUIRED" = true ]; then
             log "  Skipping start of $service (reboot required - will start after reboot)"
+        elif [[ " ${RESTART_SERVICES[*]} " == *" $service "* ]]; then
+            log "  Restarting $service"
+            systemctl restart "$service" 2>/dev/null || true
         else
             log "  Starting $service"
             systemctl start "$service" 2>/dev/null || true

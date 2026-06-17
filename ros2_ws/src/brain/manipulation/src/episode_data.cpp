@@ -1,6 +1,7 @@
 #include "manipulation/episode_data.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -55,7 +56,8 @@ EpisodeData::EpisodeData()
       action_dset_(-1),
       qpos_dset_(-1),
       qvel_dset_(-1),
-      arm_ts_dset_(-1) {}
+      arm_ts_dset_(-1),
+      head_dset_(-1) {}
 
 EpisodeData::EpisodeData(const std::vector<std::string>& camera_names) : EpisodeData() {
     camera_names_ = camera_names;
@@ -83,6 +85,7 @@ void EpisodeData::steal_from(EpisodeData& other) noexcept {
     qpos_dset_ = other.qpos_dset_;
     qvel_dset_ = other.qvel_dset_;
     arm_ts_dset_ = other.arm_ts_dset_;
+    head_dset_ = other.head_dset_;
     image_dsets_ = std::move(other.image_dsets_);
     image_ts_dsets_ = std::move(other.image_ts_dsets_);
 
@@ -93,6 +96,7 @@ void EpisodeData::steal_from(EpisodeData& other) noexcept {
     other.qpos_dset_ = -1;
     other.qvel_dset_ = -1;
     other.arm_ts_dset_ = -1;
+    other.head_dset_ = -1;
 }
 
 EpisodeData::EpisodeData(EpisodeData&& other) noexcept : EpisodeData() {
@@ -118,6 +122,7 @@ void EpisodeData::close_handles() {
     safe_close(qpos_dset_);
     safe_close(qvel_dset_);
     safe_close(arm_ts_dset_);
+    safe_close(head_dset_);
     for (auto& [name, h] : image_dsets_) {
         if (h >= 0) {
             H5Dclose(h);
@@ -148,7 +153,8 @@ void EpisodeData::open_file(const std::string& path) {
 }
 
 void EpisodeData::create_file_and_datasets(const std::vector<double>& action, const std::vector<double>& qpos,
-                                           const std::vector<double>& qvel, const std::vector<cv::Mat>& images) {
+                                           const std::vector<double>& qvel, const std::vector<cv::Mat>& images,
+                                           double head_command) {
     if (file_path_.empty()) {
         throw std::runtime_error("EpisodeData: open_file() must be called before add_timestep()");
     }
@@ -204,6 +210,17 @@ void EpisodeData::create_file_and_datasets(const std::vector<double>& action, co
             create_chunked_dataset(file_id_, "/timestamps/arm", H5T_NATIVE_DOUBLE, 1, init_dims, max_dims, chunk_dims);
     }
 
+    // /head_command (optional): one head-servo angle (degrees) per timestep. Only
+    // created when a head value is present on the first timestep; replay-only, so
+    // the learned-policy /action layout is untouched.
+    if (!std::isnan(head_command)) {
+        const hsize_t init_dims[1] = {0};
+        const hsize_t max_dims[1] = {H5S_UNLIMITED};
+        const hsize_t chunk_dims[1] = {30};
+        head_dset_ =
+            create_chunked_dataset(file_id_, "/head_command", H5T_NATIVE_DOUBLE, 1, init_dims, max_dims, chunk_dims);
+    }
+
     if (qpos_dim_ > 0) {
         const hsize_t init_dims[2] = {0, qpos_dim_};
         const hsize_t max_dims[2] = {H5S_UNLIMITED, qpos_dim_};
@@ -244,9 +261,9 @@ void EpisodeData::create_file_and_datasets(const std::vector<double>& action, co
 
 void EpisodeData::add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
                                const std::vector<double>& qvel, const std::vector<cv::Mat>& images,
-                               double arm_timestamp, const std::vector<double>& image_timestamps) {
+                               double arm_timestamp, const std::vector<double>& image_timestamps, double head_command) {
     if (!file_created_) {
-        create_file_and_datasets(action, qpos, qvel, images);
+        create_file_and_datasets(action, qpos, qvel, images, head_command);
     } else if (images.size() != camera_names_.size()) {
         throw std::runtime_error("EpisodeData: image count changed mid-episode (expected " +
                                  std::to_string(camera_names_.size()) + ", got " + std::to_string(images.size()) + ")");
@@ -325,6 +342,11 @@ void EpisodeData::add_timestep(const std::vector<double>& action, const std::vec
             write_1d_scalar(arm_ts_dset_, arm_timestamp >= 0.0 ? arm_timestamp : 0.0, "/timestamps/arm");
         }
 
+        if (head_dset_ >= 0) {
+            // Row count must track timestep_count_; treat a missing reading as 0.0.
+            write_1d_scalar(head_dset_, std::isnan(head_command) ? 0.0 : head_command, "/head_command");
+        }
+
         for (size_t c = 0; c < camera_names_.size(); ++c) {
             const auto& cam = camera_names_[c];
             const cv::Mat& img = images[c];
@@ -390,6 +412,7 @@ void EpisodeData::truncate_datasets_to(size_t rows) noexcept {
     if (qvel_dset_ >= 0)
         shrink_2d(qvel_dset_, qvel_dim_);
     shrink_1d(arm_ts_dset_);
+    shrink_1d(head_dset_);
     for (auto& [name, dset] : image_dsets_) {
         if (dset < 0)
             continue;
