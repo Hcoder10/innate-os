@@ -9,6 +9,8 @@
 # render_fps = 25
 # Genesis simulation timestep in seconds. Default: 0.04 (25 Hz).
 # scene_dt = 0.04
+# Near clipping plane for first-person and wrist cameras, in meters. Default: 0.03.
+# camera_near = 0.03
 
 [simulator]
 # Seconds to wait for the simulator HTTP endpoint on first scene load.

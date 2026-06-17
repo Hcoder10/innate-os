@@ -31,6 +31,7 @@ from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.perception.scan_health import ScanHealthMonitor
 from brain_client.skills.hot_reload import ReloadCoordinator
+from brain_client.skills.lifecycle import primitive_lifecycle_message
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
 from brain_client.transport.chat import ChatManager
@@ -201,6 +202,8 @@ class BrainClientNode(Node):
         self.create_subscription(String, "/input_manager/custom", self._on_custom_input, 10)
         self.create_subscription(String, "/brain/tts", self._on_tts, 10)
         self.create_subscription(String, "/brain/set_directive", lambda m: self.lifecycle.set_directive(m.data), 10)
+        self.create_subscription(String, "/brain/set_active_skills", self._on_set_active_skills, 10)
+        self.create_subscription(String, "/brain/manual_skill_event", self._on_manual_skill_event, 10)
         self.create_subscription(String, "/brain/backend_config", self.orchestrator.on_backend_config, 10)
         self.create_subscription(String, "/brain/websocket_status", self.orchestrator.on_ws_status, 10)
 
@@ -224,6 +227,9 @@ class BrainClientNode(Node):
 
         self.state.directives, self.state.current_directive = initialize_agents(
             self.get_logger(), self.state.registry.primitives
+        )
+        self.state.active_skill_ids = (
+            list(self.state.current_directive.get_skills()) if self.state.current_directive else []
         )
         if self.state.current_directive:
             self.lifecycle.activate_directive_inputs()
@@ -282,6 +288,75 @@ class BrainClientNode(Node):
         if text and text.strip():
             self.get_logger().info(f"TTS request received: {text[:50]}...")
             self.chat.speak(text)
+
+    def _on_set_active_skills(self, msg: String) -> None:
+        """Update which primitives are registered for the current directive."""
+        payload = json.loads(msg.data)
+        if self.state.current_directive is None:
+            self.get_logger().warn("No directive selected; ignoring active skills update")
+            return
+
+        requested_agent_id = payload.get("agent_id")
+        if requested_agent_id and requested_agent_id != self.state.current_directive.id:
+            self.get_logger().warn(
+                "Ignoring active skills update for stale directive "
+                f"'{requested_agent_id}'; current is '{self.state.current_directive.id}'"
+            )
+            return
+
+        unknown_skills = self.catalog.set_active_skill_ids(payload.get("skills", []))
+        if unknown_skills:
+            self.get_logger().warn(
+                f"Ignoring unavailable skills for directive '{self.state.current_directive.id}': {unknown_skills}"
+            )
+        self.get_logger().info(
+            f"Active skills for directive '{self.state.current_directive.id}': {self.state.active_skill_ids}"
+        )
+        self.catalog.register()
+
+    def _skill_name_for_id(self, skill_id: str) -> str:
+        for metadata in self.state.registry.metadata:
+            if metadata.get("id") == skill_id:
+                return str(metadata.get("name") or skill_id)
+        return skill_id
+
+    def _on_manual_skill_event(self, msg: String) -> None:
+        """Record manually-triggered simulator skill runs in brain/agent history."""
+        payload = json.loads(msg.data)
+        status = payload["status"]
+        skill_id = payload["skill_id"]
+        primitive_name = payload.get("skill_name") or self._skill_name_for_id(skill_id)
+        primitive_id = payload.get("primitive_id") or f"manual_{skill_id}_{int(time.time() * 1000)}"
+        reason = payload.get("reason")
+
+        self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
+        if self.state.is_brain_active:
+            self.ws_bridge.send_message(
+                primitive_lifecycle_message(
+                    status=status,
+                    primitive_name=primitive_name,
+                    primitive_id=primitive_id,
+                    reason=reason,
+                )
+            )
+        self.chat.publish_task_status(
+            primitive_name=primitive_name,
+            primitive_id=primitive_id,
+            status=status,
+            skill_id=skill_id,
+            reason=reason,
+        )
+        self.chat.history.append(
+            {
+                "sender": "task_activated",
+                "text": primitive_name,
+                "timestamp": payload.get("timestamp", time.time()),
+                "taskStatus": status,
+                "primitiveId": primitive_id,
+                "skillId": skill_id,
+                **({"failureReason": reason} if reason else {}),
+            }
+        )
 
     # ================= service handlers =================
     def _svc_get_chat_history(self, request, response):
@@ -359,7 +434,16 @@ class BrainClientNode(Node):
                     "source": getattr(directive, "source", "user"),
                 }
             )
-        response.directives = [json.dumps(details)]
+        response.directives = [
+            json.dumps(details),
+            json.dumps(
+                {
+                    "skills": self.state.registry.metadata,
+                    "active_skills": self.catalog.active_skill_ids_for_registration(),
+                    "brain_active": self.state.is_brain_active,
+                }
+            ),
+        ]
         response.current_directive = self.state.current_directive.id if self.state.current_directive else ""
         return response
 

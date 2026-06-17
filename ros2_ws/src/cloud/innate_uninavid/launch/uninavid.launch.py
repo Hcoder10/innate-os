@@ -18,6 +18,11 @@ def generate_launch_description() -> LaunchDescription:
         default_value=default_params,
         description="Full path to the parameter YAML file",
     )
+    cmd_vel_topic_arg = DeclareLaunchArgument(
+        "cmd_vel_topic",
+        default_value="/cmd_vel_scaled",
+        description="Velocity topic UniNavid commands should publish to",
+    )
 
     node = Node(
         package="innate_uninavid",
@@ -26,8 +31,8 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[LaunchConfiguration("params_file")],
         remappings=[
-            ("/cmd_vel", "/cmd_vel_scaled"),
+            ("/cmd_vel", LaunchConfiguration("cmd_vel_topic")),
         ],
     )
 
-    return LaunchDescription([params_arg, node])
+    return LaunchDescription([params_arg, cmd_vel_topic_arg, node])

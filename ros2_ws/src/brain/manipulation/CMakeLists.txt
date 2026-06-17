@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -35,6 +36,8 @@ include_directories(
   ${HDF5_INCLUDE_DIRS}
   ${MPI_C_INCLUDE_DIRS}
 )
+
+ament_python_install_package(${PROJECT_NAME})
 
 # Reduce optimization on memory-constrained platforms (e.g. Jetson)
 # to prevent OOM during compilation of template-heavy translation units

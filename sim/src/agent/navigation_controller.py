@@ -264,11 +264,7 @@ class NavigationController:
         now = time.time()
         if now - self.last_feedback_publish >= (1.0 / self.feedback_rate):
             feedback_msg = NavigationFeedbackMsg(distance_to_goal=distance_to_goal)
-            try:
-                # Add to sim_to_agent queue for bridge to pick up
-                self.shared_queues.sim_to_agent.put_nowait(feedback_msg)
-            except:  # noqa: E722
-                pass
+            self.shared_queues.set_latest_nav_feedback_msg(feedback_msg)
             self.last_feedback_publish = now
 
     def get_current_status(self) -> str:

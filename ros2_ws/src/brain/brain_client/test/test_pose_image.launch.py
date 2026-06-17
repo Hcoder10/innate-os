@@ -37,6 +37,7 @@ import rclpy
 from geometry_msgs.msg import TransformStamped
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 
@@ -45,6 +46,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fake_cloud import FakeCloud  # noqa: E402
 
 IMAGE_TOPIC = "/test/camera/compressed"
+TEST_DIRECTIVE = "security_guard_agent"
+TEST_DIRECTIVE_SKILL = "innate-os/send_email"
 
 # Started in generate_test_description, referenced from the test in the same process.
 FAKE = None
@@ -137,6 +140,7 @@ class TestPoseImage(unittest.TestCase):
             depth=10,
         )
         self.image_pub = self.node.create_publisher(CompressedImage, IMAGE_TOPIC, image_qos)
+        self.directive_pub = self.node.create_publisher(String, "/brain/set_directive", 10)
         self.tf_broadcaster = StaticTransformBroadcaster(self.node)
 
     def tearDown(self):
@@ -157,6 +161,41 @@ class TestPoseImage(unittest.TestCase):
         finally:
             self.node.destroy_client(client)
 
+    def _has_registered_test_directive(self):
+        for message in FAKE.transcript:
+            if message.get("type") != "register_primitives_and_directive":
+                continue
+            primitives = (message.get("payload") or {}).get("primitives") or []
+            if any(primitive.get("id") == TEST_DIRECTIVE_SKILL for primitive in primitives):
+                return True
+        return False
+
+    def _activate_test_directive(self, timeout_sec=30.0):
+        """Opt into an active prompt before expecting pose images."""
+        self._wait_for_brain_client()
+        end = time.monotonic() + timeout_sec
+        while time.monotonic() < end:
+            self.directive_pub.publish(String(data=TEST_DIRECTIVE))
+            self._spin_for(0.2)
+            if self._has_registered_test_directive():
+                break
+        else:
+            self.fail(f"Directive '{TEST_DIRECTIVE}' was never registered with {TEST_DIRECTIVE_SKILL}")
+
+        client = self.node.create_client(SetBool, "/brain/set_brain_active")
+        try:
+            self.assertTrue(client.wait_for_service(timeout_sec=timeout_sec), "/brain/set_brain_active not ready")
+            request = SetBool.Request()
+            request.data = True
+            future = client.call_async(request)
+            service_end = time.monotonic() + timeout_sec
+            while time.monotonic() < service_end and not future.done():
+                rclpy.spin_once(self.node, timeout_sec=0.1)
+            self.assertTrue(future.done(), "Timed out activating brain")
+            self.assertTrue(future.result().success, future.result().message)
+        finally:
+            self.node.destroy_client(client)
+
     def _pose_images(self):
         return [m for m in FAKE.transcript if m.get("type") == "pose_image"]
 
@@ -173,13 +212,13 @@ class TestPoseImage(unittest.TestCase):
 
     def test_pose_image_is_published(self):
         """A pose_image reaches the cloud once the handshake completes."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         sent = self._feed_until(lambda: len(self._pose_images()) > 0)
         self.assertTrue(sent, f"No pose_image received. Types: {FAKE.received_types()}")
 
     def test_pose_image_payload_is_correct(self):
         """The pose_image payload has image + x/y/theta matching the published TF."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         self.assertTrue(self._feed_until(lambda: len(self._pose_images()) > 0), "No pose_image received")
 
         payload = self._pose_images()[0].get("payload", {})
@@ -196,7 +235,7 @@ class TestPoseImage(unittest.TestCase):
 
     def test_pose_image_gated_until_registered(self):
         """pose_image is not emitted before registration (the readiness trigger)."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         self.assertTrue(self._feed_until(lambda: len(self._pose_images()) > 0), "No pose_image received")
         types = FAKE.received_types()
         self.assertIn("register_primitives_and_directive", types)

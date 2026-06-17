@@ -6,9 +6,15 @@ export interface Message {
     | "robot_thoughts"
     | "robot_anticipation"
     | "system"
-    | "vision_agent_output";
+    | "vision_agent_output"
+    | "task_activated";
   timestamp: number;
   isError?: boolean;
+  taskStatus?: "running" | "completed" | "failed" | "interrupted" | string;
+  primitiveName?: string;
+  primitiveId?: string;
+  skillId?: string;
+  failureReason?: string;
 }
 
 export interface GroupedMessage {
@@ -46,8 +52,8 @@ export function groupMessages(messages: Message[]): DisplayMessage[] {
       lastMessageTimestamp = msg.timestamp;
       i++;
 
-      // For system messages, add and update the timestamp.
-    } else if (msg.sender === "system") {
+      // For system and task messages, add and update the timestamp.
+    } else if (msg.sender === "system" || msg.sender === "task_activated") {
       grouped.push(msg);
       lastMessageTimestamp = msg.timestamp;
       i++;

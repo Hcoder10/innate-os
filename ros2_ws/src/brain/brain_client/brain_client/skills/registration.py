@@ -80,18 +80,41 @@ class SkillCatalog:
             return
         directive = self._state.current_directive
         primitives = self._state.registry.metadata
-        included = [p for p in primitives if p["id"] in directive.get_skills()]
+        active_skill_ids = set(self.active_skill_ids_for_registration())
+        included = [p for p in primitives if p["id"] in active_skill_ids]
 
         reg_msg = MessageIn(
             type=MessageInType.REGISTER_PRIMITIVES_AND_DIRECTIVE,
             payload={
-                "primitives": included if included else None,
-                "directive": directive.get_prompt(),
+                "primitives": included,
+                "directive": directive.get_prompt() or "",
                 "token": self._state.token,
             },
         )
-        self._logger.info(f"Registering {len(primitives)} primitives and directive '{directive.id}' with server")
+        self._logger.info(
+            f"Registering {len(included)}/{len(primitives)} primitives and directive '{directive.id}' with server"
+        )
         self._ws.send_message(reg_msg)
+
+    def available_skill_ids(self) -> list[str]:
+        return [p["id"] for p in self._state.registry.metadata]
+
+    def active_skill_ids_for_registration(self) -> list[str]:
+        if self._state.current_directive is None:
+            return []
+        current_skill_ids = (
+            self._state.active_skill_ids
+            if self._state.active_skill_ids is not None
+            else list(self._state.current_directive.get_skills())
+        )
+        current_skill_set = set(current_skill_ids)
+        return [skill_id for skill_id in self.available_skill_ids() if skill_id in current_skill_set]
+
+    def set_active_skill_ids(self, requested_skills: list[str]) -> list[str]:
+        available_skill_ids = self.available_skill_ids()
+        requested_skill_set = set(requested_skills)
+        self._state.active_skill_ids = [skill_id for skill_id in available_skill_ids if skill_id in requested_skill_set]
+        return sorted(requested_skill_set - set(available_skill_ids))
 
     def drain_pending_reregistration(self) -> None:
         """Re-register if a re-registration was deferred during skill execution."""

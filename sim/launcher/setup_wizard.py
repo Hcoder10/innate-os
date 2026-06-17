@@ -151,4 +151,4 @@ def configure_hosted_service_key(config: dict[str, object]) -> None:
             _save_service_key(config, service_key)
             print(f"{GREEN}Hosted brain credentials are ready.{NC}")
             return
-        warn("That does not look like a service key. Press Ctrl+C to cancel.")
+        warn("Service key cannot be empty. Press Ctrl+C to cancel.")

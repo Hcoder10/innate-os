@@ -16,14 +16,14 @@ What runs (all real, sim mode):
 
 Why it is self-driving: brain_client_node broadcasts READY_FOR_CONNECTION on
 startup, so its in-process transport connects to FakeCloud on its own; in simulator_mode the
-brain auto-activates after registration (no /brain/set_brain_active needed). The
-test only has to feed a synthetic camera image + TF (no hardware) so the brain has
-perception to send - the same trick test_pose_image.launch.py uses.
+test selects a real directive/prompt before expecting active-brain traffic. The
+test only has to feed a synthetic camera image + TF (no hardware) so the brain
+has perception to send - the same trick test_pose_image.launch.py uses.
 
 The loop (verified against brain_client_node.py):
   ws_client connect -> auth -> FakeCloud: ready_for_image
   brain: register_primitives_and_directive -> FakeCloud: ...registered (ack)
-  sim auto-activates brain -> brain: image -> FakeCloud: vision_agent_output{next_task}
+  test activates prompt -> brain: image -> FakeCloud: vision_agent_output{next_task}
   brain: ExecuteSkill -> skills_action_server runs primitive -> SUCCEEDED
   brain: primitive_completed -> FakeCloud records it
 
@@ -72,6 +72,7 @@ SCRIPTED_INPUTS = {
     "message": "Dispatched by test_fake_cloud_loop.",
     "recipients": ["test@example.com"],
 }
+TEST_DIRECTIVE = "security_guard_agent"
 
 IMAGE_TOPIC = "/test/camera/compressed"
 
@@ -184,6 +185,7 @@ class TestFakeCloudLoop(unittest.TestCase):
         )
         self.image_pub = self.node.create_publisher(CompressedImage, IMAGE_TOPIC, image_qos)
         self.chat_pub = self.node.create_publisher(String, "/brain/chat_in", 10)
+        self.directive_pub = self.node.create_publisher(String, "/brain/set_directive", 10)
         self.tf_broadcaster = StaticTransformBroadcaster(self.node)
 
     def tearDown(self):
@@ -201,6 +203,46 @@ class TestFakeCloudLoop(unittest.TestCase):
                 client.wait_for_service(timeout_sec=timeout_sec),
                 f"brain_client_node not ready within {timeout_sec}s",
             )
+        finally:
+            self.node.destroy_client(client)
+
+    def _has_registered_scripted_skill(self):
+        for message in FAKE.transcript:
+            if message.get("type") != "register_primitives_and_directive":
+                continue
+            primitives = (message.get("payload") or {}).get("primitives") or []
+            if any(primitive.get("id") == SCRIPTED_SKILL for primitive in primitives):
+                return True
+        return False
+
+    def _activate_test_directive(self, timeout_sec=30.0):
+        """Select a real directive before tests expect brain traffic.
+
+        Runtime sim UX intentionally starts on empty_directive. These tests cover
+        the active brain loop, so they opt into a directive with a real prompt and
+        the scripted skill used below.
+        """
+        self._wait_for_brain_client()
+        end = time.monotonic() + timeout_sec
+        while time.monotonic() < end:
+            self.directive_pub.publish(String(data=TEST_DIRECTIVE))
+            self._spin_for(0.2)
+            if self._has_registered_scripted_skill():
+                break
+        else:
+            self.fail(f"Directive '{TEST_DIRECTIVE}' was never registered with {SCRIPTED_SKILL}")
+
+        client = self.node.create_client(SetBool, "/brain/set_brain_active")
+        try:
+            self.assertTrue(client.wait_for_service(timeout_sec=timeout_sec), "/brain/set_brain_active not ready")
+            request = SetBool.Request()
+            request.data = True
+            future = client.call_async(request)
+            service_end = time.monotonic() + timeout_sec
+            while time.monotonic() < service_end and not future.done():
+                rclpy.spin_once(self.node, timeout_sec=0.1)
+            self.assertTrue(future.done(), "Timed out activating brain")
+            self.assertTrue(future.result().success, future.result().message)
         finally:
             self.node.destroy_client(client)
 
@@ -227,14 +269,13 @@ class TestFakeCloudLoop(unittest.TestCase):
     def test_connection_and_registration(self):
         """The stack connects and registers without manual intervention:
         auth -> ready_for_image -> register_primitives_and_directive."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         FAKE.wait_for("auth", timeout=30.0)
         FAKE.wait_for("register_primitives_and_directive", timeout=30.0)
 
     def test_brain_sends_perception(self):
-        """Once registered + auto-activated (sim mode), the brain sends imagery."""
-        self._wait_for_brain_client()
-        FAKE.wait_for("register_primitives_and_directive", timeout=30.0)
+        """Once a real directive is active, the brain sends imagery."""
+        self._activate_test_directive()
         before = len(FAKE.transcript)
         sent = self._feed_until(lambda: bool(self._since(before, "image", "pose_image")), timeout=20.0)
         self.assertTrue(sent, f"Brain never sent perception. Types: {FAKE.received_types()}")
@@ -243,7 +284,7 @@ class TestFakeCloudLoop(unittest.TestCase):
         """A scripted next_task is dispatched, executed by the skills server, and
         reported complete - a full directive->primitive->completion cycle. Scripts
         its own task and asserts only on its own slice, so it is order-independent."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         before = len(FAKE.transcript)
         pid = FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
 
@@ -279,7 +320,7 @@ class TestFakeCloudLoop(unittest.TestCase):
     def test_loop_continues_after_completion(self):
         """After one primitive completes the brain requests and runs the next -
         the post-completion continuation path. Scripts two of its own tasks."""
-        self._wait_for_brain_client()
+        self._activate_test_directive()
         before = len(FAKE.transcript)
         FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
         FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
@@ -292,9 +333,7 @@ class TestFakeCloudLoop(unittest.TestCase):
     def test_chat_in_is_forwarded_to_cloud(self):
         """A chat message on /brain/chat_in is forwarded up as chat_in - the fast
         path that bypasses the image queue (brain_client_node.py:1155)."""
-        self._wait_for_brain_client()
-        # Registration -> brain auto-activates in sim mode; chat_in needs that.
-        FAKE.wait_for("register_primitives_and_directive", timeout=30.0)
+        self._activate_test_directive()
         before = len(FAKE.transcript)
         end = time.monotonic() + 15.0
         forwarded = False

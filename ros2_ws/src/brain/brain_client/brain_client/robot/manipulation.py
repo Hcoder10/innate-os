@@ -8,9 +8,11 @@ This interface allows skills to:
 3. Get current end-effector pose (forward kinematics)
 """
 
+import threading
 import time
 
 import rclpy
+import rclpy.executors
 from geometry_msgs.msg import PoseStamped, Twist
 from mars_msgs.srv import GotoJS, GotoJSTrajectory
 from rclpy.node import Node
@@ -36,8 +38,13 @@ class ManipulationInterface:
             logger: Logger for status messages
             lazy: If True, defer subscription creation until start() is called
         """
-        self.node = node
+        self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
+        self._executor = rclpy.executors.SingleThreadedExecutor()
+        self._executor.add_node(self.node)
+        self._executor_thread = threading.Thread(target=self._spin_executor, daemon=True)
+        self._executor_thread.start()
+        self._ik_lock = threading.Lock()
 
         # Publishers
         self._ik_target_pub = self.node.create_publisher(Twist, "/ik_delta", 10)
@@ -47,6 +54,7 @@ class ManipulationInterface:
         self._ik_solution_fk = None
         self._fk_pose = None
         self._arm_state = None
+        self._torque_enabled = None
 
         # Subscription handles (created in start(), destroyed in stop())
         self._ik_solution_sub = None
@@ -69,6 +77,12 @@ class ManipulationInterface:
         self._reboot_servos_client = self.node.create_client(Trigger, "/mars/arm/reboot")
 
         self.logger.info("ManipulationInterface initialized")
+
+    def _spin_executor(self):
+        try:
+            self._executor.spin()
+        except Exception as e:
+            self.logger.error(f"[ManipulationInterface] Executor stopped unexpectedly: {e}")
 
     def start(self):
         """Create all subscriptions. Safe to call multiple times."""
@@ -97,15 +111,26 @@ class ManipulationInterface:
         self._fk_pose = None
         self._arm_state = None
 
-    def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
-        """Spin the underlying ROS node to process pending callbacks.
+    def shutdown(self):
+        """Stop the manipulation helper node and its private executor."""
+        self.stop()
+        self._executor.shutdown()
+        self._executor_thread.join(timeout=2.0)
+        self.node.destroy_node()
 
-        Args:
-            count: Number of spin iterations.
-            timeout_sec: Timeout per iteration.
-        """
+    def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
+        """Yield briefly while the manipulation helper executor processes callbacks."""
         for _ in range(count):
-            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+            time.sleep(timeout_sec)
+
+    def _wait_for_future(self, future, timeout_sec: float | None = None) -> bool:
+        """Wait for a ROS future without spinning or re-adding this node."""
+        if future.done():
+            return True
+
+        done_event = threading.Event()
+        future.add_done_callback(lambda _future: done_event.set())
+        return done_event.wait(timeout=timeout_sec)
 
     def _ik_solution_callback(self, msg: JointState):
         """Store the latest IK solution."""
@@ -205,38 +230,39 @@ class ManipulationInterface:
         Returns:
             List of joint angles in radians, or None if IK fails
         """
-        # Clear previous solution
-        self._ik_solution = None
-        self._ik_solution_fk = None
+        with self._ik_lock:
+            # Clear previous solution
+            self._ik_solution = None
+            self._ik_solution_fk = None
 
-        # Publish target pose to IK node
-        target = Twist()
-        target.linear.x = x
-        target.linear.y = y
-        target.linear.z = z
-        target.angular.x = roll
-        target.angular.y = pitch
-        target.angular.z = yaw
+            # Publish target pose to IK node
+            target = Twist()
+            target.linear.x = x
+            target.linear.y = y
+            target.linear.z = z
+            target.angular.x = roll
+            target.angular.y = pitch
+            target.angular.z = yaw
 
-        self._ik_target_pub.publish(target)
+            self._ik_target_pub.publish(target)
 
-        # Wait for solution - use spin_once to process callbacks
-        start_time = time.time()
-        iteration = 0
-        while time.time() - start_time < timeout:
-            self.spin_node_to_refresh_topics(count=1, timeout_sec=0.01)
+            # Wait for the private executor thread to deliver the IK solution callback.
+            start_time = time.time()
+            iteration = 0
+            while time.time() - start_time < timeout:
+                self.spin_node_to_refresh_topics(count=1, timeout_sec=0.01)
 
-            if self._ik_solution is not None:
-                joint_positions = list(self._ik_solution.position)
+                if self._ik_solution is not None:
+                    joint_positions = list(self._ik_solution.position)
 
-                # Validate that we received a non-empty solution
-                if len(joint_positions) == 0:
-                    self.logger.error("[ManipulationInterface] IK solver returned empty solution (IK failed)")
-                    return None
+                    # Validate that we received a non-empty solution
+                    if len(joint_positions) == 0:
+                        self.logger.error("[ManipulationInterface] IK solver returned empty solution (IK failed)")
+                        return None
 
-                return joint_positions
+                    return joint_positions
 
-            iteration += 1
+                iteration += 1
 
         self.logger.error(f"[ManipulationInterface] IK solution timeout after {timeout}s ({iteration} iterations)")
         return None
@@ -255,6 +281,9 @@ class ManipulationInterface:
         """
         if len(joint_positions) != 6:
             self.logger.error(f"Expected 6 joint positions, got {len(joint_positions)}")
+            return False
+        if self._torque_enabled is False:
+            self.logger.error("[ManipulationInterface] Arm torque is disabled")
             return False
 
         # Ensure GotoJS client is available
@@ -313,7 +342,7 @@ class ManipulationInterface:
             True if successful, False otherwise
         """
         # Reintroduce IK solving, but with solve_ik no longer performing
-        # rclpy.spin_once inside the loop.
+        # nested ROS spins inside the loop.
         joint_positions = self.solve_ik(x, y, z, roll, pitch, yaw, timeout=ik_timeout)
         if joint_positions is None:
             self.logger.error("Failed to solve IK for target pose")
@@ -365,6 +394,9 @@ class ManipulationInterface:
         """
         if len(poses) < 2:
             self.logger.error("[ManipulationInterface] Need at least 2 poses for trajectory")
+            return False
+        if self._torque_enabled is False:
+            self.logger.error("[ManipulationInterface] Arm torque is disabled")
             return False
 
         # Resolve gripper position once
@@ -433,7 +465,9 @@ class ManipulationInterface:
 
     def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
         """Block on a motion-service future; return True iff it completed successfully."""
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
+        if not self._wait_for_future(future, timeout_sec=timeout_sec):
+            self.logger.error(f"[ManipulationInterface] {name} call timed out")
+            return False
         result = future.result()
         if result is None:
             self.logger.error(f"[ManipulationInterface] {name} call timed out")
@@ -451,7 +485,9 @@ class ManipulationInterface:
 
         try:
             future = client.call_async(Trigger.Request())
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout_sec)
+            if not self._wait_for_future(future, timeout_sec=timeout_sec):
+                self.logger.error(f"{action_name} service call timed out")
+                return False
             result = future.result()
             if result is None:
                 self.logger.error(f"{action_name} service call timed out")
@@ -467,15 +503,29 @@ class ManipulationInterface:
 
     def torque_on(self) -> bool:
         """Enable torque on all arm motors. Returns True if successful."""
-        return self._call_trigger(self._torque_on_client, "Torque on", "Torque enabled on arm")
+        success = self._call_trigger(self._torque_on_client, "Torque on", "Torque enabled on arm")
+        if success:
+            self._torque_enabled = True
+        return success
 
     def torque_off(self) -> bool:
         """Disable torque on all arm motors (arm will be limp). Returns True if successful."""
-        return self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
+        success = self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
+        if success:
+            self._torque_enabled = False
+        return success
 
     def reboot_servos(self) -> bool:
         """Reboot all arm Dynamixel servos, clearing hardware errors. Returns True if successful."""
-        return self._call_trigger(self._reboot_servos_client, "Reboot servos", "Servos rebooted", timeout_sec=10.0)
+        success = self._call_trigger(
+            self._reboot_servos_client,
+            "Reboot servos",
+            "Servos rebooted; arm torque is disabled",
+            timeout_sec=10.0,
+        )
+        if success:
+            self._torque_enabled = False
+        return success
 
     # Gripper position constants (radians)
     GRIPPER_CLOSED = 0.0
