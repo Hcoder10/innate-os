@@ -2,8 +2,8 @@
 #  Innate OS — tunable parameter registry
 # ============================================================================
 #  The single source of truth for every parameter exposed to users. Each entry
-#  defines ONE knob once; the `innate config` CLI (and later the web app) are
-#  generated from this file, so users never need to know ROS node names, YAML
+#  defines ONE knob once; the friendly `overrides.yaml` (and later the web app)
+#  are generated from this file, so users never need to know ROS node names, YAML
 #  nesting, or which file a default lives in.
 #
 #  Fields:
@@ -15,8 +15,9 @@
 #    min/max numeric bounds (float/int)                  (optional)
 #    choices allowed values (enum)                       (optional)
 #    default package default, shown for reference
-#    live    true  -> `ros2 param set` applies instantly, no restart
-#            false -> value is saved; takes effect on `innate config apply`
+#    live    advisory only (reserved for a future live-apply path): true = the
+#            node accepts this param at runtime. Today every edit to
+#            overrides.yaml takes effect on the next robot-app restart.
 #    desc    one-line human description
 # ============================================================================
 

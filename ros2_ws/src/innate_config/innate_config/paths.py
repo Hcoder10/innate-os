@@ -1,33 +1,53 @@
-"""Resolve the path to the central parameter override file.
+"""Filesystem paths for the central parameter override system.
 
-The override file is read from the live source tree under ``INNATE_OS_ROOT`` so
-edits take effect on the next node start without a ``colcon build``. Production
-updates run a plain ``colcon build`` (no ``--symlink-install``), which copies
-configs into ``install/``; resolving from source avoids that stale copy shadowing
-a live edit. The installed share copy is only used as a fallback when the source
-tree is unavailable (e.g. a packaged/container deploy without the repo mounted).
+Single source of truth for where the override + registry files live; both the
+ROS-free registry module and the launch helper import from here.
+
+Files resolve from the live source tree under ``INNATE_OS_ROOT`` first, so a
+hand-edit to ``overrides.yaml`` takes effect on the next node start without a
+``colcon build``. The installed ``share/`` copy is only a fallback for packaged
+deploys where the repo is not mounted.
 """
 
 import os
 from pathlib import Path
 
 _OVERRIDES_REL = "ros2_ws/src/innate_config/config/overrides.yaml"
+_REGISTRY_REL = "ros2_ws/src/innate_config/config/registry.yaml"
+
+# Internal, machine-generated ROS params file derived from overrides.yaml.
+# Not user-edited (dotfile) and git-ignored; lives next to overrides.yaml.
+_GENERATED_NAME = ".overrides.generated.yaml"
 
 
-def _innate_os_root() -> Path:
-    return Path(os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")))
+def innate_os_root() -> Path:
+    return Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
 
 
-def overrides_path() -> str:
-    """Absolute path to the central ``overrides.yaml``.
-
-    Prefers the live source file under ``INNATE_OS_ROOT``; falls back to the
-    installed ``share/innate_config/config/overrides.yaml``.
-    """
-    source = _innate_os_root() / _OVERRIDES_REL
+def _resolve(rel: str, share_name: str) -> Path:
+    source = innate_os_root() / rel
     if source.is_file():
-        return str(source)
+        return source
 
     from ament_index_python.packages import get_package_share_directory
 
-    return os.path.join(get_package_share_directory("innate_config"), "config", "overrides.yaml")
+    return Path(get_package_share_directory("innate_config")) / "config" / share_name
+
+
+def overrides_path() -> Path:
+    """User-edited friendly overrides file (``nav.max_speed: 0.3``)."""
+    return _resolve(_OVERRIDES_REL, "overrides.yaml")
+
+
+def registry_path() -> Path:
+    """Read-only knob registry (friendly name -> ROS node/param + metadata)."""
+    return _resolve(_REGISTRY_REL, "registry.yaml")
+
+
+def generated_path() -> Path:
+    """Preferred location for the machine-generated node-keyed ROS params file.
+
+    Sits next to whichever ``overrides.yaml`` resolved. The launch helper falls
+    back to a temp dir if that directory is read-only.
+    """
+    return overrides_path().parent / _GENERATED_NAME

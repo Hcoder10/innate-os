@@ -104,3 +104,6 @@ data/.last_mode
 arm_wave/
 
 .vscode
+
+# innate_config: machine-generated ROS params (derived from overrides.yaml)
+ros2_ws/src/innate_config/config/.overrides.generated.yaml

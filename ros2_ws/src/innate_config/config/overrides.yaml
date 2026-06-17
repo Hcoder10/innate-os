@@ -1,10 +1,62 @@
 # ============================================================================
-#  Innate OS — active parameter overrides   (managed by `innate config`)
+#  Innate OS — robot settings
 # ============================================================================
-#  Prefer the CLI:  `innate config`  (list)  ·  `innate config set <name> <v>`
-#  It validates values and hides ROS node names. Hand-edits are allowed but
-#  the CLI rewrites this file, so comments here are not preserved.
-#  Browse everything tunable + descriptions with `innate config`.
+#  Uncomment a line and change its value to override a default.
+#  Anything left commented keeps the package default shown.
+#  After editing, restart the robot app for changes to take effect.
+#
+#  Format:   name: value     # [range]  description
 # ============================================================================
-/**:
-  ros__parameters: {}
+
+# ── Arm ───────────────────────────────────────────────────────
+# arm.max_jerk:          150.0      # [0, 500]  Trajectory jerk limit, rad/s³ (0 = off)
+# arm.stress_cutoff:     false      # Enable over-stress torque cutoff
+# arm.stress_threshold:  100.0      # [0, 1000]  Stress score that triggers a cooldown
+# arm.stress_cooldown:   2.0        # [0, 30]  Seconds of torque-off rest after a trip
+
+# ── Camera ────────────────────────────────────────────────────
+# camera.main_fps:       15.0       # [1, 60]  Main camera capture rate (Hz)
+# camera.jpeg_quality:   80         # [1, 100]  Streamed JPEG quality
+# camera.auto_exposure:  0          # {0, 1, 2}  0=hardware AE, 1=PID AE, 2=manual
+# camera.exposure:       -1         # [-1, 100000]  Manual exposure (auto_exposure=2); -1=auto
+# camera.gain:           -1         # [-1, 1000]  Manual gain (auto_exposure=2); -1=auto
+# camera.target_bright:  128.0      # [0, 255]  Brightness setpoint for PID AE (mode 1)
+# camera.arm_fps:        30.0       # [1, 60]  Arm camera capture rate (Hz)
+
+# ── Base ──────────────────────────────────────────────────────
+# base.battery_warning:  20         # [0, 100]  Low-battery warning level (%)
+# base.battery_critical: 10         # [0, 100]  Critical shutdown level (%)
+# base.max_speed:        0.4        # [0, 2]  Robot-wide linear speed cap (m/s)
+# base.max_turn_speed:   2.5        # [0, 5]  Robot-wide angular speed cap (rad/s)
+
+# ── Teleop ────────────────────────────────────────────────────
+# teleop.max_speed:      0.6        # [0, 2]  Teleop linear speed cap (m/s)
+# teleop.max_accel:      0.6        # [0, 3]  Teleop linear acceleration (m/s²)
+# teleop.deadzone:       0.3        # [0, 1]  Stick deadzone fraction
+# teleop.speed_curve:    2.0        # [1, 4]  Stick response curve (1 = linear)
+# teleop.slow_factor:    0.25       # [0, 1]  Speed multiplier in slow mode
+
+# ── Navigation ────────────────────────────────────────────────
+# nav.max_particles:     6000       # [100, 20000]  Localization particle-filter upper bound
+# nav.min_particles:     1000       # [50, 10000]  Localization particle-filter lower bound
+# nav.laser_max_range:   10.0       # [1, 30]  Max lidar range used for localization (m)
+# nav.tf_tolerance:      1.0        # [0, 5]  map→odom TF post-date tolerance (s)
+# nav.frequency:         20.0       # [5, 50]  Navigation control loop rate (Hz)
+# nav.max_speed:         0.45       # [0, 1]  Autonomous nav forward top speed (m/s)
+# nav.reverse_speed:     -0.2       # [-1, 0]  Autonomous nav reverse top speed (m/s)
+# nav.max_turn_speed:    0.6        # [0, 3]  Autonomous nav angular top speed (rad/s)
+
+# ── Recording ─────────────────────────────────────────────────
+# record.frequency:      30         # [1, 120]  Skill recording rate (Hz)
+# record.max_timesteps:  1800       # [1, 100000]  Auto-stop a recording after N timesteps
+
+# ── Cloud ─────────────────────────────────────────────────────
+# cloud.cmd_hz:          50.0       # [1, 200]  cmd_vel publish rate to the robot (Hz)
+# cloud.image_hz:        49.0       # [1, 120]  Image upload rate to the cloud nav service (Hz)
+# cloud.stops_to_done:   30         # [1, 200]  Stop-votes before a nav goal is complete
+
+# ── System ────────────────────────────────────────────────────
+# system.brain_ws:       wss://agent-v1.innate.bot  # Hosted brain websocket URI
+# system.voice_id:       6ccbfb76-1fc6-48f7-b71d-91ac6298247b  # Cartesia TTS voice id (brain)
+# system.input_voice_id: 6ccbfb76-1fc6-48f7-b71d-91ac6298247b  # Cartesia TTS voice id (input manager)
+# system.telemetry_url:  https://logs-v1.innate.bot  # Telemetry logging endpoint

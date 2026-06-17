@@ -1,30 +1,16 @@
-"""Tunable-parameter registry: the single source of truth for user-facing config.
+"""Tunable-parameter registry: maps friendly knob names to ROS nodes/params.
 
-This module is intentionally ROS-free so it can be imported by the `innate
-config` CLI and, later, the web app. It maps friendly knob names
-(e.g. ``nav.max_speed``) to the underlying ROS node + parameter, validates
-values against the registry, and reads/writes the central ``overrides.yaml``
-that the launch files load.
+ROS-free on purpose so it can be imported by the launch system today and a web
+app later. Users tune the robot by hand-editing the friendly ``overrides.yaml``
+(``nav.max_speed: 0.3``); at launch :func:`build_node_params` translates those
+friendly names into the node-keyed ROS parameter structure the launch files
+load. :func:`render_template` regenerates the self-documenting overrides file
+from the registry.
 """
-
-import os
-from pathlib import Path
 
 import yaml
 
-_REGISTRY_REL = "ros2_ws/src/innate_config/config/registry.yaml"
-_OVERRIDES_REL = "ros2_ws/src/innate_config/config/overrides.yaml"
-
-_OVERRIDES_HEADER = """\
-# ============================================================================
-#  Innate OS — active parameter overrides   (managed by `innate config`)
-# ============================================================================
-#  Prefer the CLI:  `innate config`  (list)  ·  `innate config set <name> <v>`
-#  It validates values and hides ROS node names. Hand-edits are allowed but
-#  the CLI rewrites this file, so comments here are not preserved.
-#  Browse everything tunable + descriptions with `innate config`.
-# ============================================================================
-"""
+from innate_config.paths import overrides_path, registry_path
 
 _BASELINE_NODE = "/**"
 
@@ -33,26 +19,13 @@ class ConfigError(Exception):
     """Raised for unknown knobs or invalid values (carries a user-facing message)."""
 
 
-def innate_os_root() -> Path:
-    return Path(os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os")))
-
-
-def registry_path() -> Path:
-    return innate_os_root() / _REGISTRY_REL
-
-
-def overrides_path() -> Path:
-    return innate_os_root() / _OVERRIDES_REL
-
-
 # --------------------------------------------------------------------------- #
 # Registry loading
 # --------------------------------------------------------------------------- #
 def load_registry() -> list:
     """Return the list of knob definitions, ordered as written in the file."""
     with open(registry_path()) as f:
-        entries = yaml.safe_load(f) or []
-    return entries
+        return yaml.safe_load(f) or []
 
 
 def registry_by_name() -> dict:
@@ -63,7 +36,7 @@ def entry(name: str) -> dict:
     try:
         return registry_by_name()[name]
     except KeyError:
-        raise ConfigError(f"Unknown parameter '{name}'. Run `innate config` to list them.")
+        raise ConfigError(f"Unknown parameter '{name}'. See overrides.yaml for the full list.")
 
 
 # --------------------------------------------------------------------------- #
@@ -99,52 +72,18 @@ def coerce(e: dict, raw) -> object:
         return value
 
     if t == "enum":
-        choices = e.get("choices", [])
-        for c in choices:
+        for c in e.get("choices", []):
             if str(raw) == str(c):
                 return c
-        raise ConfigError(f"{name}: must be one of {choices}, got '{raw}'")
+        raise ConfigError(f"{name}: must be one of {e.get('choices', [])}, got '{raw}'")
 
     # str
     return str(raw)
 
 
 # --------------------------------------------------------------------------- #
-# Overrides file read / write
+# Friendly overrides file -> node-keyed ROS params
 # --------------------------------------------------------------------------- #
-def _read_overrides() -> dict:
-    path = overrides_path()
-    if not path.is_file():
-        return {}
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_overrides(data: dict) -> None:
-    """Write the overrides file: header + `/**` baseline + active node sections.
-
-    Nodes whose ``ros__parameters`` ended up empty are dropped (an empty
-    ``ros__parameters:`` is a ROS parse error); the ``/**`` baseline keeps the
-    file a valid, non-empty parameter source.
-    """
-    out = {_BASELINE_NODE: {"ros__parameters": {}}}
-    for node, body in data.items():
-        if node == _BASELINE_NODE:
-            continue
-        params = (body or {}).get("ros__parameters") or {}
-        if params:
-            out[node] = {"ros__parameters": params}
-
-    with open(overrides_path(), "w") as f:
-        f.write(_OVERRIDES_HEADER)
-        yaml.safe_dump(out, f, default_flow_style=False, sort_keys=True)
-
-
-def _node_params(data: dict, node: str) -> dict:
-    return data.setdefault(node, {}).setdefault("ros__parameters", {})
-
-
 def _set_nested(params: dict, dotted: str, value) -> None:
     keys = dotted.split(".")
     d = params
@@ -155,62 +94,111 @@ def _set_nested(params: dict, dotted: str, value) -> None:
     d[keys[-1]] = value
 
 
-def _get_nested(params: dict, dotted: str):
-    d = params
-    for k in dotted.split("."):
-        if not isinstance(d, dict) or k not in d:
-            return (False, None)
-        d = d[k]
-    return (True, d)
+def load_overrides() -> dict:
+    """Parse the friendly overrides file into ``{friendly_name: raw_value}``.
+
+    Commented lines are ignored by the YAML parser, so only uncommented
+    ``name: value`` entries are returned.
+    """
+    path = overrides_path()
+    if not path.is_file():
+        return {}
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return data if isinstance(data, dict) else {}
 
 
-def _unset_nested(params: dict, dotted: str) -> None:
-    keys = dotted.split(".")
-    stack = [params]
-    for k in keys[:-1]:
-        if not isinstance(stack[-1], dict) or k not in stack[-1]:
-            return
-        stack.append(stack[-1][k])
-    stack[-1].pop(keys[-1], None)
-    # prune now-empty parent groups
-    for k, parent in zip(reversed(keys[:-1]), reversed(stack[:-1])):
-        child = parent.get(k)
-        if isinstance(child, dict) and not child:
-            parent.pop(k, None)
+def build_node_params():
+    """Translate the friendly overrides into node-keyed ROS parameters.
+
+    Returns ``(node_params, warnings)`` where ``node_params`` is
+    ``{node: {"ros__parameters": {...}}}`` — always including a ``/**`` baseline
+    so the file stays a valid, non-empty parameter source — and ``warnings`` is a
+    list of human-readable strings for entries that were skipped (unknown name or
+    a value that failed validation). Skipping keeps a single bad line from
+    blocking the whole robot launch.
+    """
+    by_name = registry_by_name()
+    out = {_BASELINE_NODE: {"ros__parameters": {}}}
+    warnings = []
+    for name, raw in load_overrides().items():
+        e = by_name.get(name)
+        if e is None:
+            warnings.append(f"unknown parameter '{name}' — ignored")
+            continue
+        try:
+            value = coerce(e, raw)
+        except ConfigError as exc:
+            warnings.append(f"{exc} — ignored, using default")
+            continue
+        node_params = out.setdefault(e["node"], {"ros__parameters": {}})["ros__parameters"]
+        _set_nested(node_params, e["param"], value)
+    return out, warnings
 
 
 # --------------------------------------------------------------------------- #
-# Public read/write API (by friendly name)
+# Self-documenting overrides file rendering
 # --------------------------------------------------------------------------- #
-def get_override(name: str):
-    """Return ``(is_set, value)`` for the current override of ``name``."""
-    e = entry(name)
-    data = _read_overrides()
-    body = data.get(e["node"], {})
-    params = body.get("ros__parameters", {}) if isinstance(body, dict) else {}
-    return _get_nested(params, e["param"])
+_TEMPLATE_HEADER = """\
+# ============================================================================
+#  Innate OS — robot settings
+# ============================================================================
+#  Uncomment a line and change its value to override a default.
+#  Anything left commented keeps the package default shown.
+#  After editing, restart the robot app for changes to take effect.
+#
+#  Format:   name: value     # [range]  description
+# ============================================================================
+"""
 
 
-def current_value(name: str):
-    is_set, value = get_override(name)
-    return value if is_set else entry(name).get("default")
+def _fmt(v) -> str:
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    return str(v)
 
 
-def set_value(name: str, raw) -> object:
-    """Validate and persist an override. Returns the typed value written."""
-    e = entry(name)
-    value = coerce(e, raw)
-    data = _read_overrides()
-    _set_nested(_node_params(data, e["node"]), e["param"], value)
-    _write_overrides(data)
-    return value
+def _range_str(e: dict) -> str:
+    if "min" in e and "max" in e:
+        return f"[{_fmt(e['min'])}, {_fmt(e['max'])}]"
+    if e.get("choices"):
+        return "{" + ", ".join(_fmt(c) for c in e["choices"]) + "}"
+    return ""
 
 
-def unset_value(name: str) -> None:
-    """Remove an override so the knob falls back to its package default."""
-    e = entry(name)
-    data = _read_overrides()
-    body = data.get(e["node"])
-    if isinstance(body, dict):
-        _unset_nested(body.get("ros__parameters", {}), e["param"])
-    _write_overrides(data)
+def render_template(active: dict = None) -> str:
+    """Render the self-documenting friendly overrides file from the registry.
+
+    Every knob is emitted as a commented line showing its default, range, and
+    description. Names present in ``active`` (a ``{name: value}`` mapping) are
+    emitted uncommented so existing overrides survive a regeneration.
+    """
+    active = active or {}
+    entries = load_registry()
+    name_w = max((len(e["name"]) for e in entries), default=0) + 1  # + ':'
+    # Cap so a single long string value (a URL/UUID) does not pad every numeric
+    # row; longer values simply overflow and push their own comment right.
+    val_w = min(max((len(_fmt(e.get("default"))) for e in entries), default=0), 9)
+
+    lines = [_TEMPLATE_HEADER.rstrip("\n")]
+    last_group = None
+    for e in entries:
+        group = e["group"]
+        if group != last_group:
+            lines.append("")
+            lines.append(f"# ── {group} " + "─" * max(1, 58 - len(group)))
+            last_group = group
+
+        key = (e["name"] + ":").ljust(name_w)
+        rng = _range_str(e)
+        comment = f"# {rng + '  ' if rng else ''}{e['desc']}".rstrip()
+        if e["name"] in active:
+            value = _fmt(active[e["name"]]).ljust(val_w)
+            lines.append(f"{key} {value}  {comment}")
+        else:
+            value = _fmt(e.get("default")).ljust(val_w)
+            lines.append(f"# {key} {value}  {comment}")
+
+    return "\n".join(lines) + "\n"
