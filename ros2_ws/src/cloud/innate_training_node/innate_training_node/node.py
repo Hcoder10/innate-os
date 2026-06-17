@@ -21,7 +21,15 @@ from typing import Any
 
 import rclpy
 from innate_cloud_msgs.msg import TrainingJobList, TrainingParams, TransferProgress
-from innate_cloud_msgs.srv import CreateRun, DownloadResults, GetTrainingStatus, SubmitSkill
+from innate_cloud_msgs.srv import (
+    CancelRun,
+    CreateRun,
+    DownloadResults,
+    GetRunLogs,
+    GetTrainingStatus,
+    StartTraining,
+    SubmitSkill,
+)
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from training_client.src.skill_manager import (
@@ -197,8 +205,16 @@ class TrainingNode(Node):
         # ── Services ────────────────────────────────────────────────
         self.create_service(SubmitSkill, "~/submit_skill", self._on_submit)
         self.create_service(CreateRun, "~/create_run", self._on_create_run)
+        self.create_service(StartTraining, "~/start_training", self._on_start_training)
+        self.create_service(CancelRun, "~/cancel_run", self._on_cancel_run)
+        self.create_service(GetRunLogs, "~/get_run_logs", self._on_get_run_logs)
         self.create_service(DownloadResults, "~/download_results", self._on_download)
         self.create_service(GetTrainingStatus, "~/get_training_status", self._on_get_training_status)
+
+        # Map cloud skill_ids back to their local directories from disk, so the
+        # published status carries skill_dir even after a restart (the registry
+        # is in-memory; without this, locally-recorded skills look "foreign").
+        self._register_local_skill_dirs()
 
         # ── Timer + poller ──────────────────────────────────────────
         self.create_timer(pub_sec, self._publish)
@@ -206,6 +222,29 @@ class TrainingNode(Node):
         self._poller.start()
 
         self.get_logger().info(f"Training node ready — server={server_url} poll={poll_sec}s pub={pub_sec}s")
+
+    def _register_local_skill_dirs(self) -> None:
+        """Scan custom_skills/ and register every skill_id → local dir, so the
+        status carries skill_dir for locally-recorded skills after a restart."""
+        root = os.path.join(
+            os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os")),
+            "workspace",
+            "custom_skills",
+        )
+        try:
+            entries = list(os.scandir(root))
+        except OSError:
+            return
+        n = 0
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            skill_id = read_skill_id(entry.path)
+            if skill_id:
+                self._store.register_dir(skill_id, entry.path)
+                n += 1
+        if n:
+            self.get_logger().info(f"Registered {n} local skill dir(s) from {root}")
 
     def destroy_node(self) -> None:
         self._poller.stop()
@@ -372,6 +411,115 @@ class TrainingNode(Node):
         except Exception as e:
             self.get_logger().error(f"create_run failed: {e}")
             res.success, res.message = False, str(e)
+        return res
+
+    # ── Service: start_training ─────────────────────────────────────
+
+    def _on_start_training(self, req: StartTraining.Request, res: StartTraining.Response) -> StartTraining.Response:
+        """Submit the skill and create a run once the upload finishes — all on
+        the robot, so the caller can disconnect immediately after this returns."""
+        err = _require_absolute(req.skill_dir)
+        if err:
+            res.success, res.message = False, err
+            return res
+
+        # Validate hyperparameters up front so bad input fails fast.
+        training_params, params_err = _build_training_params(req.run_params)
+        if params_err:
+            res.success, res.message = False, params_err
+            return res
+
+        try:
+            gen = self._mgr.submit(req.skill_dir)
+            skill: SkillInfo | None = None
+            try:
+                while True:
+                    next(gen)
+            except StopIteration as e:
+                skill = e.value
+            if skill is None:
+                res.success, res.message = False, "submit returned no skill"
+                return res
+
+            self._store.put_skill(skill)
+            self._store.register_dir(skill.skill_id, req.skill_dir)
+            self._store.mark_upload_pending(skill.skill_id)
+
+            threading.Thread(
+                target=self._upload_then_run,
+                args=(skill.skill_id, req.skill_dir, training_params),
+                daemon=True,
+                name=f"train-{skill.skill_id[:8]}",
+            ).start()
+
+            res.success = True
+            res.message = f"Skill {skill.skill_id} submitted — run will start after upload"
+            self.get_logger().info(f"start_training: {skill.skill_id[:8]} submitted — syncing then creating a run")
+        except Exception as e:
+            self.get_logger().error(f"start_training failed: {e}")
+            res.success, res.message = False, str(e)
+        return res
+
+    def _upload_then_run(self, skill_id: str, skill_dir: str, training_params: dict | None) -> None:
+        """Background: (re-)upload the dataset, then create the run. The upload is
+        idempotent — it only transfers files that actually changed (new/edited
+        episodes, deletions, re-labels) and HEAD-skips the rest — so running it
+        every time is cheap and keeps the cloud dataset current."""
+        if not do_upload(self._mgr, self._store, skill_id, skill_dir):
+            self.get_logger().error(f"start_training: upload failed for {skill_id[:8]} — run not created")
+            return
+        try:
+            data = self._mgr.client.create_run(skill_id, training_params=training_params)
+            rid = int(data["run_id"])
+            self._store.put_job(self._mgr.run_status(skill_id, rid))
+            self._store.register_dir(skill_id, skill_dir)
+            self.get_logger().info(f"start_training: run {skill_id[:8]}/{rid} created after upload")
+        except Exception as e:
+            self.get_logger().error(f"start_training: create_run failed for {skill_id[:8]}: {e}")
+
+    # ── Service: cancel_run ─────────────────────────────────────────
+
+    def _on_cancel_run(self, req: CancelRun.Request, res: CancelRun.Response) -> CancelRun.Response:
+        err = _require_absolute(req.skill_dir)
+        if err:
+            res.success, res.message = False, err
+            return res
+        skill_id = read_skill_id(req.skill_dir)
+        if not skill_id:
+            res.success, res.message = False, f"No training_skill_id in {req.skill_dir}/metadata.json"
+            return res
+        try:
+            self._mgr.client.update_run(skill_id, req.run_id, status="cancelled")
+            # Reflect immediately so the dashboard updates before the next poll.
+            self._store.put_job(self._mgr.run_status(skill_id, req.run_id))
+            res.success = True
+            res.message = f"Run {skill_id[:8]}/{req.run_id} cancelled"
+            self.get_logger().info(res.message)
+        except Exception as e:
+            res.success, res.message = False, str(e)
+            self.get_logger().error(f"cancel_run failed for {skill_id[:8]}/{req.run_id}: {e}")
+        return res
+
+    # ── Service: get_run_logs ───────────────────────────────────────
+
+    def _on_get_run_logs(self, req: GetRunLogs.Request, res: GetRunLogs.Response) -> GetRunLogs.Response:
+        """Fetch the live training-log tail for a run from the orchestrator.
+        Best-effort: only populated while the run is actively training."""
+        err = _require_absolute(req.skill_dir)
+        if err:
+            res.success, res.message = False, err
+            return res
+        skill_id = read_skill_id(req.skill_dir)
+        if not skill_id:
+            res.success, res.message = False, f"No training_skill_id in {req.skill_dir}/metadata.json"
+            return res
+        try:
+            res.lines = self._mgr.client.get_run_logs(skill_id, req.run_id)
+            res.success = True
+            res.message = f"{len(res.lines)} log line(s)"
+        except Exception as e:
+            res.success, res.message = False, str(e)
+            self.get_logger().warning(f"get_run_logs failed for {skill_id[:8]}/{req.run_id}: {e}")
         return res
 
     # ── Service: download_results ───────────────────────────────────

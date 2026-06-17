@@ -1,0 +1,9 @@
+# Submit a skill (sync its data to the cloud) and create a training run once the
+# upload finishes — orchestrated entirely on the robot, so the client can
+# disconnect right after calling. The run still gets created after the upload.
+
+string skill_dir            # absolute path to skill directory
+innate_cloud_msgs/TrainingParams run_params
+---
+bool success                # accepted (submitted + run queued to start after upload)
+string message

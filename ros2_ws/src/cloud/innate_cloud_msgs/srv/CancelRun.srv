@@ -1,0 +1,7 @@
+# Cancel a training run (owner-initiated). Transitions the run to "cancelled";
+# the orchestrator reaps the GPU instance if one was running.
+string skill_dir            # absolute path to skill directory
+int32 run_id
+---
+bool success
+string message

@@ -1,0 +1,149 @@
+// @ts-check
+// Robot-facing topic names and protocol constants. Ported subset of the
+// mobile app's rosConstants.ts — keep names identical to the robot's.
+
+export const ROSBRIDGE_PORT = 9090;
+
+// Drive: {x, y} in [-1, 1], y > 0 = forward. The robot's mars_app node maps
+// every /joystick message straight to one /cmd_vel publish.
+export const JOYSTICK_TOPIC = "/joystick";
+
+// Head tilt: std_msgs/Int32 degrees in [HEAD_MIN_DEG, HEAD_MAX_DEG].
+export const HEAD_SET_POSITION_TOPIC = "/mars/head/set_position";
+// Current position: std_msgs/String carrying JSON (HeadPosition).
+export const HEAD_CURRENT_POSITION_TOPIC = "/mars/head/current_position";
+
+export const TTS_TOPIC = "/brain/tts";
+
+export const BATTERY_STATE_TOPIC = "/battery_state";
+// std_msgs/String carrying JSON (RobotInfo).
+export const ROBOT_INFO_TOPIC = "/robot/info";
+
+// WebRTC signaling over rosbridge. START payload is a std_msgs/String whose
+// data is JSON: {"source":"live","audio":bool}. The robot rebuilds its whole
+// pipeline on every START, so any config change means a full re-handshake.
+export const WEBRTC_START_TOPIC = "/webrtc/start";
+export const WEBRTC_OFFER_TOPIC = "/webrtc/offer";
+export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer";
+export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in";
+export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out";
+
+// Leader-arm teleop: raw Dynamixel ticks (Int32MultiArray, 6 servos) — the
+// robot's mars_app converts (tick - 2048) * 2π/4096 into /mars/arm/commands.
+// Same topic the mobile app uses for its non-UDP fallback path.
+export const LEADER_POSITIONS_TOPIC = "/leader_positions";
+
+// Reboot the arm servos (std_srvs/Trigger → {success, message}). Power-cycles
+// and reconfigures all 7 servos (6 arm joints + head), recenters the head to
+// 0°, re-torques the head, and leaves the *arm* limp. Same service the mobile
+// app's "Reboot Arm Servos" button calls.
+export const ARM_REBOOT_SERVICE = "/mars/arm/reboot";
+
+// Enable/disable torque on the 6 arm servos (std_srvs/Trigger). torque_on syncs
+// the target to the current pose first, so the arm holds where it is rather
+// than snapping. A reboot leaves the arm torque-off.
+export const ARM_TORQUE_ON_SERVICE = "/mars/arm/torque_on";
+export const ARM_TORQUE_OFF_SERVICE = "/mars/arm/torque_off";
+
+// Arm health/torque state (mars_msgs/ArmStatus → {is_ok, error,
+// is_torque_enabled}), published ~0.2 Hz. Drives the live torque toggle.
+export const ARM_STATUS_TOPIC = "/mars/arm/status";
+
+export const HEAD_MIN_DEG = -40;
+export const HEAD_MAX_DEG = 70;
+
+// ---- Debugging page -------------------------------------------------------
+// innate_console bridge (see innate-os/.../innate_console): raw tmux pane
+// stdout live, plus on-request backlog replay. String payloads carrying JSON.
+// This is the single log source — the Debugging page parses node identity and
+// severity out of the rcl lines, so /rosout (incomplete) isn't used.
+export const CONSOLE_TOPIC = "/innate/console";
+export const CONSOLE_REQUEST_TOPIC = "/innate/console/request";
+export const CONSOLE_BACKFILL_TOPIC = "/innate/console/backfill";
+// rosapi (rws): live node roster for the health panel.
+export const NODES_SERVICE = "/rosapi/nodes";
+
+// ---- Datasets page --------------------------------------------------------
+// Live roster of skills the robot knows about (innate_msgs, JSON via rws):
+// {skills: Skill[]}. Same topic the mobile app's SkillsContext subscribes to.
+// Physical (recordable) skills carry a `directory` and an `episode_count`.
+export const AVAILABLE_SKILLS_TOPIC = "/brain/available_skills";
+// Per-skill dataset metadata: request {task_directory}, response
+// {success, json_metadata, message} where json_metadata is a JSON-encoded
+// TaskSummary (episodes[]). Mirrors the mobile app's getTaskMetadata.
+export const GET_TASK_METADATA_SERVICE = "/brain/recorder/get_task_metadata";
+
+// Background episode → H.264 encoder (dataset_encoder node). The service queues
+// a raw episode for conversion ({task_directory, episode_id}); the latched topic
+// reports progress (EncodeStatusMsg). Episode MP4s and joint data are then
+// fetched as plain same-origin HTTP from the front door: GET /episode and
+// GET /episode/joints (see proxy/https_server.py).
+export const ENCODE_EPISODE_SERVICE = "/datasets/encode_episode";
+export const ENCODE_STATUS_TOPIC = "/datasets/encode_status";
+
+// Episode curation (recorder services). Outcome is a per-episode label
+// ("success"/"failure"/"" to clear); delete is a hard delete of files+metadata.
+export const SET_EPISODE_OUTCOME_SERVICE = "/brain/recorder/set_episode_outcome";
+export const DELETE_EPISODE_SERVICE = "/brain/recorder/delete_episode";
+
+// ---- Collect page ---------------------------------------------------------
+// Live recording, mirroring the mobile app's RecordEpisodeScreen flow. The
+// operator picks (or creates) a physical skill, the recorder is pointed at its
+// dataset directory once via activate_physical_primitive, then the four
+// new/stop/save/cancel services drive one episode at a time (empty bodies —
+// activation already set the target directory server-side).
+//
+// create_physical_skill ({name} → {success, message, skill_directory, skill_id})
+// makes a fresh dataset; available_skills then lists it. recorder/status is a
+// latched live state topic ({skill_id, episode_number, status}).
+export const RECORDER_STATUS_TOPIC = "/brain/recorder/status";
+export const CREATE_PHYSICAL_SKILL_SERVICE = "/brain/create_physical_skill";
+export const ACTIVATE_PHYSICAL_PRIMITIVE_SERVICE = "/brain/recorder/activate_physical_primitive";
+export const RECORDER_NEW_EPISODE_SERVICE = "/brain/recorder/new_episode";
+export const RECORDER_STOP_EPISODE_SERVICE = "/brain/recorder/stop_episode";
+export const RECORDER_SAVE_EPISODE_SERVICE = "/brain/recorder/save_episode";
+export const RECORDER_CANCEL_EPISODE_SERVICE = "/brain/recorder/cancel_episode";
+
+// Recorded-movement ("replay"/"mimic") skills — record one motion and the robot
+// plays it back deterministically, no training. The draft is a normal physical
+// skill (create_physical_skill + activate, then one new/stop/save episode);
+// save_as_replay_skill promotes it in place ({task_directory, name, guidelines,
+// episode_id:-1} → {success, skill_directory, skill_id}). delete_skill removes an
+// abandoned draft ({skill_directory}). Gated on RobotInfo.supports_digital_skills.
+export const SAVE_AS_REPLAY_SKILL_SERVICE = "/brain/recorder/save_as_replay_skill";
+export const DELETE_SKILL_SERVICE = "/brain/delete_skill";
+
+// ---- Training page --------------------------------------------------------
+// Cloud training via the innate_training node (auth handled on the robot). The
+// job_statuses topic is latched (TrainingJobList): every submitted skill + its
+// runs + transfer progress. Services mirror the mobile app's training flow.
+export const JOB_STATUSES_TOPIC = "/innate_training/job_statuses";
+export const SUBMIT_SKILL_SERVICE = "/innate_training/submit_skill";
+export const CREATE_RUN_SERVICE = "/innate_training/create_run";
+// Robot-owned: submit + create the run after upload, so the page can be closed
+// right after calling. Preferred over orchestrating submit→create client-side.
+export const START_TRAINING_SERVICE = "/innate_training/start_training";
+export const DOWNLOAD_RESULTS_SERVICE = "/innate_training/download_results";
+export const CANCEL_RUN_SERVICE = "/innate_training/cancel_run";
+export const GET_TRAINING_STATUS_SERVICE = "/innate_training/get_training_status";
+// Live training-log tail (GetRunLogs). Best-effort, only while a run is training.
+export const GET_RUN_LOGS_SERVICE = "/innate_training/get_run_logs";
+// Reload the brain so a freshly downloaded checkpoint goes live.
+export const BRAIN_RELOAD_SERVICE = "/brain/reload";
+
+// Friendly subpane names per tmux window — index = pane (0 = left, 1 = right).
+// Mirrors innate-os/scripts/launch_ros_in_tmux.sh ROS_COMMAND_GROUPS; keep the
+// two in sync. Labels the Debugging page's subpane picker by launch file.
+/** @type {Record<string, string[]>} */
+export const PANE_LAUNCH_LABELS = {
+  "app-bringup": ["app.launch.py", "mars_bringup.launch.py"],
+  "arm-recorder": ["arm.launch.py", "recorder.launch.py"],
+  "brain-nav": ["brain_client.launch.py", "mode_manager.launch.py"],
+  "behaviors-inputs": ["behavior.launch.py", "input_manager.launch.py"],
+  "cam-leader": ["camera_composable.launch.py", "udp_leader_receiver.launch.py"],
+  "ik-logger": ["ik.launch.py", "logger.launch.py"],
+  "training-uninavid": ["training_node", "uninavid.launch.py"],
+  "console": ["console.launch.py", "dataset_encoder.launch.py"],
+};
+
+export const LAST_IP_KEY = "innate.lastRobotIP";

@@ -1,0 +1,9 @@
+# Request — permanently delete one recorded episode: its metadata entry and all
+# derived files (h5, per-camera MP4s, raw_data original, cached thumbnails).
+# Remaining episodes keep their ids (gaps are fine; ids are never renumbered).
+string task_directory   # Absolute path to the skill directory
+int32 episode_id        # Episode to delete
+---
+# Response
+bool success
+string message

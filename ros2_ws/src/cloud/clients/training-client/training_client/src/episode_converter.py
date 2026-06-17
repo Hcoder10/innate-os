@@ -36,11 +36,20 @@ RAW_DATA_DIR = "raw_data"
 
 def convert_episodes_to_h264(
     data_dir: Path,
+    *,
+    nice_level: int = 0,
+    threads: int = 4,
+    idle_io: bool = False,
 ) -> Generator[ProgressUpdate, None, None]:
     """Convert all episodes under *data_dir* from raw-image HDF5 to H.264.
 
     Yields :class:`ProgressUpdate` with ``stage=COMPRESSING`` matching the
     existing upload progress pattern.
+
+    ``nice_level``/``threads``/``idle_io`` tune the encoder's system priority.
+    Defaults reproduce the original behavior (normal priority, 4 threads); the
+    background ``dataset_encoder`` node passes a high nice level, fewer threads,
+    and idle I/O so encoding never hiccups recording or live streaming.
     """
     meta_path = data_dir / DATASET_METADATA
     if not meta_path.is_file():
@@ -91,7 +100,15 @@ def convert_episodes_to_h264(
             )
 
             try:
-                _encode_camera_to_mp4(raw_path, cam_name, mp4_path, fps)
+                _encode_camera_to_mp4(
+                    raw_path,
+                    cam_name,
+                    mp4_path,
+                    fps,
+                    nice_level=nice_level,
+                    threads=threads,
+                    idle_io=idle_io,
+                )
             except Exception as e:
                 yield ProgressUpdate(
                     stage=ProgressStage.ERROR,
@@ -205,16 +222,25 @@ def _encode_camera_to_mp4(
     camera_name: str,
     mp4_path: Path,
     fps: int,
+    *,
+    nice_level: int = 0,
+    threads: int = 4,
+    idle_io: bool = False,
 ) -> None:
     """Read images for *camera_name* from *h5_path* and encode to MP4."""
     with h5py.File(str(h5_path), "r") as f:
         dset = f[f"observations/images/{camera_name}"]
         num_frames, height, width, channels = dset.shape
 
+        # Optional idle I/O class (best-effort; ionice may be absent on minimal
+        # systems, in which case we just skip it rather than fail the encode).
+        io_prefix = ["ionice", "-c", "3"] if (idle_io and shutil.which("ionice")) else []
+
         gst_args = [
+            *io_prefix,
             "nice",
             "-n",
-            "0",
+            str(nice_level),
             "gst-launch-1.0",
             "-e",
             "fdsrc",
@@ -228,15 +254,29 @@ def _encode_camera_to_mp4(
             "!",
             "videoconvert",
             "!",
+            # Force 4:2:0 chroma. Without this, BGR input negotiates to H.264
+            # 4:4:4 (profile High 4:4:4 Predictive), which hardware decoders —
+            # phones and the Jetson's own nvv4l2decoder — cannot decode and
+            # render black. I420 yields a universally decodable 4:2:0 stream.
+            "video/x-raw,format=I420",
+            "!",
             "x264enc",
             "pass=qual",
             "quantizer=23",
             "speed-preset=ultrafast",
-            "threads=4",
+            f"threads={threads}",
+            # One keyframe per second. Default x264 keyint (250) leaves a short
+            # episode as a single GOP, so seeking to any time decodes from frame
+            # 0 — making scrubbing and the app's two-camera resync stall. A ~1s
+            # GOP keeps seeks cheap.
+            f"key-int-max={fps}",
             "!",
             "h264parse",
             "!",
+            # faststart: moov atom at the front so the file streams/seeks over
+            # HTTP Range without first fetching the tail.
             "mp4mux",
+            "faststart=true",
             "!",
             "filesink",
             f"location={mp4_path}",

@@ -8,6 +8,8 @@ Each file goes through:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 from collections.abc import Generator
 from pathlib import Path
@@ -136,9 +138,14 @@ def upload_data_files(
         )
 
     # ── Verify all uploads ───────────────────────────────────────
+    # Carry the high-water file position (files done through this batch) so the
+    # progress bar holds at that spot during verify instead of dropping to 0 —
+    # uploads run in batches, so verify happens mid-progress (e.g. 25/200).
+    verified_through = file_offset + len(filenames)
     yield ProgressUpdate(
         stage=ProgressStage.VERIFYING,
-        message="Verifying all uploads…",
+        message="Verifying uploads…",
+        file_progress=FileProgress(filename="", index=verified_through, total=total),
     )
 
     for idx, name in enumerate(filenames, start=file_offset + 1):  # noqa: B007
@@ -149,7 +156,7 @@ def upload_data_files(
             continue
 
         if not _is_already_uploaded(client, source_dir / name, download_url):
-            err = f"Verification failed for {name}: remote size mismatch"
+            err = f"Verification failed for {name}: content mismatch"
             yield ProgressUpdate(
                 stage=ProgressStage.ERROR,
                 message=err,
@@ -160,6 +167,7 @@ def upload_data_files(
     yield ProgressUpdate(
         stage=ProgressStage.VERIFYING,
         message=f"All {len(filenames)} files verified",
+        file_progress=FileProgress(filename="", index=verified_through, total=total, done=True),
     )
 
 
@@ -169,16 +177,33 @@ def _is_already_uploaded(
     download_url: str,
 ) -> bool:
     """
-    Check if a file is already uploaded by comparing remote Content-Length
-    to the local file size.
+    Check if a file is already uploaded by content, not just size.
+
+    Compares the local size to the remote Content-Length first (cheap, and a
+    mismatch means it definitely changed). Only when sizes match does it hash
+    the local file and compare MD5s, so a *same-size* edit — e.g. relabeling
+    success/failure in ``dataset_metadata.json`` — is still detected and
+    re-uploaded. Falls back to a size-only match if GCS reported no MD5.
     """
     if not source_path.exists():
         return False
 
-    local_size = source_path.stat().st_size
-    remote_size = client.head_signed_url(download_url)
-
-    if remote_size is None:
+    remote = client.head_signed_url(download_url)
+    if remote is None:
         return False
 
-    return remote_size == local_size
+    remote_size, remote_md5 = remote
+    if remote_size != source_path.stat().st_size:
+        return False
+    if not remote_md5:
+        return True  # no remote hash to compare against; size match is all we have
+    return remote_md5 == _local_md5_b64(source_path)
+
+
+def _local_md5_b64(path: Path, chunk_size: int = 1 << 20) -> str:
+    """Base64-encoded MD5 of *path*, matching GCS's ``x-goog-hash`` md5 form."""
+    h = hashlib.md5()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk_size), b""):
+            h.update(block)
+    return base64.b64encode(h.digest()).decode("ascii")

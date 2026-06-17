@@ -229,7 +229,13 @@ std::optional<nlohmann::json> TaskManager::get_enriched_metadata_for_task(const 
                  {"start_time", episode_info.value("start_timestamp", "N/A")},
                  {"end_time", episode_info.value("end_timestamp", "N/A")},
                  {"num_timesteps", num_timesteps},
-                 {"file_name", episode_file_name}});
+                 {"file_name", episode_file_name},
+                 // Per-episode H.264 MP4s (one per camera) once converted; absent
+                 // for raw episodes. Lets clients show replay vs "prepare video".
+                 {"video_files", episode_info.value("video_files", nlohmann::json::array())},
+                 // Curation label ("success"/"failure"/""); absent => unlabeled,
+                 // which clients treat as success by default.
+                 {"outcome", episode_info.value("outcome", "")}});
         }
     }
 
@@ -256,6 +262,126 @@ std::tuple<bool, std::string, std::string> TaskManager::get_task_metadata_by_dir
         }
         return {false, error_msg, "{}"};
     }
+}
+
+std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string& task_directory, int episode_id,
+                                                               const std::string& outcome) {
+    if (outcome != "success" && outcome != "failure" && !outcome.empty()) {
+        return {false, "Invalid outcome '" + outcome + "' (expected success|failure|\"\")"};
+    }
+    std::string metadata_path = task_directory + "/data/dataset_metadata.json";
+    if (!fs::exists(metadata_path)) {
+        return {false, "No dataset metadata at " + metadata_path};
+    }
+
+    nlohmann::json meta;
+    try {
+        std::ifstream in(metadata_path);
+        in >> meta;
+    } catch (const std::exception& e) {
+        return {false, std::string("Failed to parse metadata: ") + e.what()};
+    }
+    if (!meta.is_object() || !meta.contains("episodes") || !meta["episodes"].is_array()) {
+        return {false, "Metadata has no episodes array"};
+    }
+
+    bool found = false;
+    for (auto& ep : meta["episodes"]) {
+        if (ep.value("episode_id", -1) == episode_id) {
+            if (outcome.empty()) {
+                ep.erase("outcome");
+            } else {
+                ep["outcome"] = outcome;
+            }
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return {false, "Episode " + std::to_string(episode_id) + " not found"};
+    }
+
+    try {
+        std::ofstream out(metadata_path);
+        out << meta.dump(4);
+    } catch (const std::exception& e) {
+        return {false, std::string("Failed to write metadata: ") + e.what()};
+    }
+
+    // Keep the in-memory copy fresh if we just edited the active task.
+    if (task_directory == current_task_dir_) {
+        metadata_ = meta;
+    }
+    return {true, "Episode " + std::to_string(episode_id) + " outcome set to '" +
+                      (outcome.empty() ? "unlabeled" : outcome) + "'"};
+}
+
+std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& task_directory, int episode_id) {
+    std::string data_dir = task_directory + "/data";
+    std::string metadata_path = data_dir + "/dataset_metadata.json";
+    if (!fs::exists(metadata_path)) {
+        return {false, "No dataset metadata at " + metadata_path};
+    }
+
+    nlohmann::json meta;
+    try {
+        std::ifstream in(metadata_path);
+        in >> meta;
+    } catch (const std::exception& e) {
+        return {false, std::string("Failed to parse metadata: ") + e.what()};
+    }
+    if (!meta.is_object() || !meta.contains("episodes") || !meta["episodes"].is_array()) {
+        return {false, "Metadata has no episodes array"};
+    }
+
+    auto& episodes = meta["episodes"];
+    auto before = episodes.size();
+    for (auto it = episodes.begin(); it != episodes.end(); ++it) {
+        if (it->value("episode_id", -1) == episode_id) {
+            episodes.erase(it);
+            break;
+        }
+    }
+    if (episodes.size() == before) {
+        return {false, "Episode " + std::to_string(episode_id) + " not found"};
+    }
+
+    // number_of_episodes doubles as the next-id counter (see add_episode); leave
+    // it untouched so future ids never collide with a deleted slot.
+    try {
+        std::ofstream out(metadata_path);
+        out << meta.dump(4);
+    } catch (const std::exception& e) {
+        return {false, std::string("Failed to write metadata: ") + e.what()};
+    }
+
+    // Remove derived files across data/, raw_data/, thumbs/. Match the episode's
+    // own h5 exactly and any "episode_<id>_*" siblings (mp4s, thumbs) — the
+    // trailing underscore prevents id 1 from matching episode_10_*.
+    const std::string exact_h5 = "episode_" + std::to_string(episode_id) + ".h5";
+    const std::string sibling_prefix = "episode_" + std::to_string(episode_id) + "_";
+    int removed = 0;
+    for (const char* sub : {"/data", "/raw_data", "/thumbs"}) {
+        fs::path dir = fs::path(task_directory + sub);
+        std::error_code ec;
+        if (!fs::is_directory(dir, ec)) {
+            continue;
+        }
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            const std::string name = entry.path().filename().string();
+            if (name == exact_h5 || name.rfind(sibling_prefix, 0) == 0) {
+                std::error_code rm_ec;
+                if (fs::remove(entry.path(), rm_ec)) {
+                    removed++;
+                }
+            }
+        }
+    }
+
+    if (task_directory == current_task_dir_) {
+        metadata_ = meta;
+    }
+    return {true, "Deleted episode " + std::to_string(episode_id) + " (" + std::to_string(removed) + " files)"};
 }
 
 }  // namespace manipulation

@@ -142,6 +142,14 @@ RecorderNode::RecorderNode()
         "brain/recorder/get_task_metadata",
         std::bind(&RecorderNode::handle_get_task_metadata, this, std::placeholders::_1, std::placeholders::_2));
 
+    set_episode_outcome_srv_ = this->create_service<brain_messages::srv::SetEpisodeOutcome>(
+        "brain/recorder/set_episode_outcome",
+        std::bind(&RecorderNode::handle_set_episode_outcome, this, std::placeholders::_1, std::placeholders::_2));
+
+    delete_episode_srv_ = this->create_service<brain_messages::srv::DeleteEpisode>(
+        "brain/recorder/delete_episode",
+        std::bind(&RecorderNode::handle_delete_episode, this, std::placeholders::_1, std::placeholders::_2));
+
     RCLCPP_DEBUG(this->get_logger(), "Hosting services:");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/activate_physical_primitive");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/new_episode");
@@ -746,6 +754,56 @@ void RecorderNode::handle_get_task_metadata(
         response->success = false;
         response->message = std::string("Error retrieving task metadata: ") + e.what();
         response->json_metadata = "{}";
+    }
+}
+
+void RecorderNode::handle_set_episode_outcome(
+    const std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Request> request,
+    std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Set outcome '%s' for episode %d in %s", request->outcome.c_str(),
+                request->episode_id, request->task_directory.c_str());
+    try {
+        auto [success, message] =
+            task_manager_->set_episode_outcome(request->task_directory, request->episode_id, request->outcome);
+        response->success = success;
+        response->message = message;
+        if (!success) {
+            RCLCPP_WARN(this->get_logger(), "set_episode_outcome failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error setting episode outcome: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+    }
+}
+
+void RecorderNode::handle_delete_episode(const std::shared_ptr<brain_messages::srv::DeleteEpisode::Request> request,
+                                         std::shared_ptr<brain_messages::srv::DeleteEpisode::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Delete episode %d in %s", request->episode_id, request->task_directory.c_str());
+
+    // Guard: don't delete out from under an in-flight episode of this task.
+    // (TASK_ACTIVE between episodes is fine; only refuse mid-episode.)
+    const bool mid_episode = state_ == State::EPISODE_ACTIVE || state_ == State::EPISODE_STOPPED;
+    if (mid_episode && task_manager_->get_current_task_dir() == request->task_directory) {
+        response->success = false;
+        response->message = "Refusing to delete while this skill is actively recording.";
+        RCLCPP_WARN(this->get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    try {
+        auto [success, message] = task_manager_->delete_episode(request->task_directory, request->episode_id);
+        response->success = success;
+        response->message = message;
+        if (success) {
+            RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
+        } else {
+            RCLCPP_WARN(this->get_logger(), "delete_episode failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error deleting episode: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
     }
 }
 

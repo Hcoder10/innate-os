@@ -153,8 +153,9 @@ def do_upload(
     store: JobStore,
     skill_id: str,
     skill_dir: str,
-) -> None:
-    """Upload data files for *skill_id*."""
+) -> bool:
+    """Upload data files for *skill_id*. Returns True on success, False if the
+    upload failed (lets callers gate a follow-up action like creating a run)."""
     sid = skill_id[:8]
     prev_stage: str | None = None
     prev_msg: str | None = None
@@ -180,7 +181,7 @@ def do_upload(
                 error=str(e),
             ),
         )
-        return
+        return False
 
     # Persist the episode count at the time of this successful upload.
     try:
@@ -201,6 +202,7 @@ def do_upload(
             skill_id=skill_id,
         ),
     )
+    return True
 
 
 # ── Download worker ─────────────────────────────────────────────────

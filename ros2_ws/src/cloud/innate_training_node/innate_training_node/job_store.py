@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime
 
@@ -28,6 +29,7 @@ _STATUS_MAP: dict[str, int] = {
     "running": TrainingRunStatus.STATUS_RUNNING,
     "done": TrainingRunStatus.STATUS_DONE,
     "downloaded": TrainingRunStatus.STATUS_DOWNLOADED,
+    "cancelled": TrainingRunStatus.STATUS_CANCELLED,
 }
 
 _STAGE_MAP: dict[str, int] = {
@@ -206,6 +208,10 @@ def build_run_status(
     s.started_at = parse_iso_to_ros(run.started_at)
     s.finished_at = parse_iso_to_ros(run.finished_at)
     s.instance_type = run.instance_type or ""
+    s.wandb_url = run.wandb_run_url or ""
+    s.current_step = run.current_step or 0
+    s.total_step = run.total_steps or 0
+    s.training_params_json = json.dumps(run.training_params or {})
     s.transfer_done = transfer_done
     if transfer is not None:
         s.has_active_transfer = True

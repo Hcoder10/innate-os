@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 _UPLOAD_CHUNK = 1024 * 1024  # 1 MB — callback fires once per chunk
 
 
+def _parse_goog_md5(goog_hash: str) -> str | None:
+    """Extract the base64 MD5 from a GCS ``x-goog-hash`` header.
+
+    Header form: ``crc32c=<b64>,md5=<b64>``. Returns ``None`` if no md5 part
+    is present (composite objects carry only crc32c).
+    """
+    for part in goog_hash.split(","):
+        part = part.strip()
+        if part.startswith("md5="):
+            return part[len("md5=") :]
+    return None
+
+
 class APIError(Exception):
     """Raised when the orchestrator returns a non-2xx response."""
 
@@ -136,6 +149,16 @@ class OrchestratorClient:
         data = self._get(f"/skills/{skill_id}/runs")
         return [RunInfo.from_api(r) for r in data]
 
+    def get_run_logs(self, skill_id: str, run_id: int) -> list[str]:
+        """GET /skills/{skill_id}/runs/{run_id}/logs — live training log tail.
+
+        Best-effort, in-memory on the orchestrator: only populated while the run
+        is training. Returns the most recent log lines (oldest first), or [].
+        """
+        data = self._get(f"/skills/{skill_id}/runs/{run_id}/logs")
+        lines = data.get("lines") if isinstance(data, dict) else None
+        return [str(x) for x in lines] if lines else []
+
     def update_run(
         self,
         skill_id: str,
@@ -240,11 +263,14 @@ class OrchestratorClient:
 
         t.join()
 
-    def head_signed_url(self, signed_url: str) -> int | None:
+    def head_signed_url(self, signed_url: str) -> tuple[int, str | None] | None:
         """
         HEAD request on a signed download URL.
 
-        Returns Content-Length or None if the file doesn't exist.
+        Returns ``(size, md5_b64)`` — the Content-Length and the object's
+        base64-encoded MD5 from the ``x-goog-hash`` header (``None`` for that
+        slot if GCS reported no MD5, e.g. composite objects). Returns ``None``
+        for the whole tuple if the object doesn't exist (non-200).
         """
         try:
             resp = requests.head(
@@ -254,7 +280,8 @@ class OrchestratorClient:
             )
             if resp.status_code == 200:
                 cl = resp.headers.get("Content-Length")
-                return int(cl) if cl else None
+                size = int(cl) if cl else 0
+                return size, _parse_goog_md5(resp.headers.get("x-goog-hash", ""))
             return None
         except Exception as e:
             logger.warning("HEAD request failed for signed URL: %s", e)

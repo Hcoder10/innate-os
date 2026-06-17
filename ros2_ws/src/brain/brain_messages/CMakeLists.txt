@@ -30,6 +30,9 @@ set(srv_files
   "srv/CreatePhysicalSkill.srv"
   "srv/SaveAsReplaySkill.srv"
   "srv/DeleteSkill.srv"
+  "srv/EncodeEpisode.srv"
+  "srv/SetEpisodeOutcome.srv"
+  "srv/DeleteEpisode.srv"
 )
 
 set(msg_files
@@ -37,6 +40,7 @@ set(msg_files
   "msg/ReplayStatus.msg"
   "msg/SkillInfo.msg"
   "msg/AvailableSkills.msg"
+  "msg/EncodeStatus.msg"
 )
 
 set(action_files

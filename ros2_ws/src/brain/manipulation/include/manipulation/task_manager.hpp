@@ -34,6 +34,17 @@ class TaskManager {
     // Metadata accessors
     std::tuple<bool, std::string, std::string> get_task_metadata_by_directory(const std::string& task_directory);
 
+    // Curation: set/clear an episode's `outcome` label ("success"/"failure"/"").
+    // Operates directly on the given task's dataset_metadata.json (any skill,
+    // not just the active one). Returns {success, message}.
+    std::tuple<bool, std::string> set_episode_outcome(const std::string& task_directory, int episode_id,
+                                                      const std::string& outcome);
+
+    // Hard-delete an episode: remove its metadata entry and all derived files
+    // (h5, per-camera mp4s, raw_data original, cached thumbnails). Episode ids
+    // are not renumbered. Returns {success, message}.
+    std::tuple<bool, std::string> delete_episode(const std::string& task_directory, int episode_id);
+
     // Accessors
     const std::string& get_current_task_name() const {
         return current_task_name_;
