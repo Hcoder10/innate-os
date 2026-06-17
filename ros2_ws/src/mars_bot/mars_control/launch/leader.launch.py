@@ -1,6 +1,7 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -14,7 +15,7 @@ def generate_launch_description():
 
     # Create the node
     leader_node = Node(
-        package="mars_control", executable="leader.py", name="leader_arm", parameters=[config_file], output="screen"
+        package="mars_control", executable="leader.py", name="leader_arm", parameters=apply_overrides([config_file]), output="screen"
     )
 
     return LaunchDescription([leader_node])

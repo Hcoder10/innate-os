@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -39,7 +40,7 @@ def generate_launch_description():
         executable="arm_camera_driver",
         name="arm_camera_driver",
         output="screen",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "camera_symlink": LaunchConfiguration("camera_symlink"),
                 "width": LaunchConfiguration("width"),
@@ -50,7 +51,7 @@ def generate_launch_description():
                 "compressed_frame_interval": LaunchConfiguration("compressed_frame_interval"),
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
-        ],
+        ]),
         remappings=[
             # You can add remappings here if needed
         ],

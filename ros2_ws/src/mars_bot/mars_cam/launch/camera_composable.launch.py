@@ -16,6 +16,7 @@ Usage:
     ros2 launch mars_cam camera_composable.launch.py
 """
 
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -48,7 +49,7 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::MainCameraDriver",
         name="main_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=apply_overrides([LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}]),
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -56,7 +57,7 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::ArmCameraDriver",
         name="arm_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=apply_overrides([LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}]),
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -64,7 +65,7 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::WebRTCStreamer",
         name="webrtc_streamer",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
                 "live_main_camera_topic": "/mars/main_camera/left/image_raw",
@@ -77,7 +78,7 @@ def generate_launch_description():
                 "audio_source_element": "alsasrc",
                 "audio_capture_device": "sysdefault:CARD=Light",
             }
-        ],
+        ]),
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -85,7 +86,7 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::StereoDepthEstimator",
         name="stereo_depth_estimator",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=apply_overrides([LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}]),
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -122,14 +123,14 @@ def generate_launch_description():
         executable="stereo_calibrator",
         name="stereo_calibration_manager",
         output="screen",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
                 "interactive": False,
                 "auto_start": False,
                 "playback": False,
             }
-        ],
+        ]),
         condition=IfCondition(LaunchConfiguration("start_calibration_manager")),
     )
 

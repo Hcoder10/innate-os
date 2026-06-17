@@ -22,6 +22,7 @@ even if it starts later.
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -57,7 +58,7 @@ def generate_launch_description():
         executable="map_server",
         name="navigation_map_server",
         output="screen",
-        parameters=[{"yaml_filename": ""}],
+        parameters=apply_overrides([{"yaml_filename": ""}]),
         # nav2 boot chatter at WARN to keep `innate view` readable.
         arguments=["--ros-args", "--log-level", "warn"],
     )
@@ -68,7 +69,7 @@ def generate_launch_description():
         executable="amcl",
         name="navigation_amcl",
         output="screen",
-        parameters=[LaunchConfiguration("amcl_params_file")],
+        parameters=apply_overrides([LaunchConfiguration("amcl_params_file")]),
         arguments=["--ros-args", "--log-level", "warn"],
     )
 
@@ -80,13 +81,13 @@ def generate_launch_description():
         executable="grid_localizer.py",
         name="navigation_grid_localizer",
         output="screen",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "auto_localize": True,
                 "auto_localize_timeout": 30.0,
                 "max_score_threshold": 0.3,
             }
-        ],
+        ]),
     )
 
     # Create the planner node
@@ -96,7 +97,7 @@ def generate_launch_description():
         name="planner_server",
         namespace="navigation",
         output="screen",
-        parameters=[planner_params_file, costmap_params_file],
+        parameters=apply_overrides([planner_params_file, costmap_params_file]),
         remappings=[
             # TF remappings - critical for namespaced nodes
             ("tf", "/tf"),
@@ -113,7 +114,7 @@ def generate_launch_description():
         executable="controller_server",
         name="controller_server",
         output="screen",
-        parameters=[controller_params_file, costmap_params_file],
+        parameters=apply_overrides([controller_params_file, costmap_params_file]),
         remappings=[
             ("cmd_vel", "cmd_vel_raw"),
             # Remap costmap footprint to global /footprint

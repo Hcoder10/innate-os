@@ -1,5 +1,6 @@
 """Launch file for the innate_logger node."""
 
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -12,7 +13,7 @@ def generate_launch_description() -> LaunchDescription:
                 executable="logger_node",
                 name="logger_node",
                 output="screen",
-                parameters=[],
+                parameters=apply_overrides([]),
             ),
         ]
     )

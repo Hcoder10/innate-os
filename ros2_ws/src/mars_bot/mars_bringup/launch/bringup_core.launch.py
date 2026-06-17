@@ -1,6 +1,7 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -14,7 +15,7 @@ def generate_launch_description():
 
     # Create the nodes
     bringup_node = Node(
-        package="mars_bringup", executable="bringup.py", name="bringup", parameters=[config_file], output="screen"
+        package="mars_bringup", executable="bringup.py", name="bringup", parameters=apply_overrides([config_file]), output="screen"
     )
 
     # base_link -> base_footprint static TF is now published by

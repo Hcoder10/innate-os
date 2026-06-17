@@ -1,5 +1,6 @@
 import os
 
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -14,7 +15,7 @@ def generate_launch_description():
         package="rws",
         executable="rws_server",
         name="ros_websocket_server",
-        parameters=[{}],
+        parameters=apply_overrides([{}]),
         # Silence the per-message "Field 'z' is not in json, default: (nil)" INFO spam
         # from the JSON translator while keeping connect/disconnect logs visible.
         arguments=["--ros-args", "--log-level", "rws::translate:=WARN"],
@@ -38,12 +39,12 @@ def generate_launch_description():
         executable="app.cpp",
         name="mars_app",
         output="screen",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "data_directory": data_directory,
                 "default_hardware_revision": default_hardware_revision,
             }
-        ],
+        ]),
     )
 
     return LaunchDescription(

@@ -1,0 +1,146 @@
+# ============================================================================
+#  Innate OS — central parameter overrides
+# ============================================================================
+#
+#  This single file is the curated surface of the parameters you are most
+#  likely to want to change. It layers ON TOP of each package's default config:
+#  a value set here wins; anything left commented falls back to the package
+#  default. Obscure / rarely-touched defaults stay in their own packages.
+#
+#  HOW TO USE
+#    1. Find the topic section below.
+#    2. Uncomment the node block (the `/node:` line, `ros__parameters:`, and the
+#       knob lines you want). Set your value.
+#    3. Restart the affected node. No `colcon build` is needed — this file is
+#       read live from the source tree.
+#
+#  GOTCHAS
+#    - Node keys must match a node's fully-qualified runtime name exactly (the
+#      `name=`/`namespace=` from its launch file). An override under the wrong
+#      name is silently ignored.
+#    - A node block's `ros__parameters:` must never be left empty — that is a
+#      parse error. So keep whole blocks commented until you use them; uncomment
+#      the `ros__parameters:` line together with at least one knob.
+#    - Defaults shown in comments are the package defaults at time of writing —
+#      verify against the package config if in doubt.
+# ============================================================================
+
+# No-op baseline so the file is always a valid, non-empty parameter source.
+# Do not add params here (it would apply them to every node).
+/**:
+  ros__parameters: {}
+
+
+# ── ARM ─────────────────────────────────────────────────────────────────────
+# defaults: ros2_ws/src/mars_bot/mars_arm/config/arm_config.yaml
+# Per-joint PID gains (gains_near / gains_far / gains_teleop) are edited directly
+# in arm_config.yaml and hot-reload instantly when pid_hot_reload.py is running.
+#
+# /mars_arm:
+#   ros__parameters:
+#     max_jerk: 150.0            # default 150.0; rad/s³ trajectory jerk limit (0 = off)
+#     stress_enabled: false      # default false; enable over-stress torque cutoff
+#     stress_threshold: 100.0    # default 100.0; leaky-integrator score that triggers cooldown
+#     stress_cooldown_sec: 2.0   # default 2.0; seconds of torque-off rest after a trip
+
+
+# ── CAMERA ──────────────────────────────────────────────────────────────────
+# defaults: ros2_ws/src/mars_bot/mars_cam/config/stereo_depth_estimator.yaml
+#
+# /main_camera_driver:
+#   ros__parameters:
+#     fps: 15.0                  # default 15.0; main camera capture rate
+#     jpeg_quality: 80           # default 80; streamed JPEG quality (1-100)
+#     auto_exposure_mode: 0      # default 0; 0=hardware AE, 1=custom PID AE, 2=manual
+#     exposure: -1               # default -1 (auto); manual exposure when auto_exposure_mode=2
+#     gain: -1                   # default -1 (auto); manual gain when auto_exposure_mode=2
+#     target_brightness: 128.0   # default 128.0; setpoint for custom PID AE (mode 1)
+#
+# /arm_camera_driver:
+#   ros__parameters:
+#     fps: 30.0                  # default 30.0; arm camera capture rate
+
+
+# ── BASE / TELEOP ───────────────────────────────────────────────────────────
+# defaults: ros2_ws/src/mars_bot/mars_bringup/config/robot_config.yaml
+#           ros2_ws/src/mars_bot/mars_control/config/motion_control.yaml
+#
+# Robot-wide base limits + battery thresholds (bringup node):
+# /bringup:
+#   ros__parameters:
+#     battery:
+#       warning_percentage: 20   # default 20; low-battery warning level (%)
+#       critical_percentage: 10  # default 10; critical shutdown level (%)
+#     motion_control:
+#       max_speed: 0.4           # default 0.4; base linear speed cap (m/s)
+#       max_angular_speed: 2.5   # default 2.5; base angular speed cap (rad/s)
+#
+# Joystick teleop feel (keyboard_controller mirrors these knobs):
+# /joystick_controller:
+#   ros__parameters:
+#     motion_control:
+#       max_speed: 0.6           # default 0.6; teleop linear speed cap (m/s)
+#       max_acceleration: 0.6    # default 0.6; teleop linear accel (m/s²)
+#     joystick:
+#       speed_deadzone: 0.3      # default 0.3; stick deadzone fraction
+#       speed_exponent: 2.0      # default 2.0; stick response curve (1=linear)
+#       slow_mode_factor: 0.25   # default 0.25; speed multiplier in slow mode
+
+
+# ── NAVIGATION ──────────────────────────────────────────────────────────────
+# defaults: ros2_ws/src/mars_bot/mars_nav/config/{amcl,controller,...}.yaml
+# NOTE: amcl.yaml keys its section `amcl:`, but the running node is
+# `navigation_amcl` — override by the runtime name below.
+#
+# /navigation_amcl:
+#   ros__parameters:
+#     max_particles: 6000        # default 6000; particle-filter upper bound (lower = cheaper)
+#     min_particles: 1000        # default 1000; particle-filter lower bound
+#     laser_max_range: 10.0      # default 10.0; max lidar range used for localization (m)
+#     transform_tolerance: 1.0   # default 1.0; map→odom TF post-date tolerance (s)
+#
+# /controller_server:
+#   ros__parameters:
+#     controller_frequency: 20.0 # default 20.0; control loop rate (Hz)
+#     InnateFollowPath:
+#       vx_max: 0.45             # default 0.45; nav forward top speed (m/s)
+#       vx_min: -0.2             # default -0.2; nav reverse top speed (m/s)
+#       wz_max: 0.6              # default 0.6; nav angular top speed (rad/s)
+
+
+# ── MANIPULATION / RECORDING ────────────────────────────────────────────────
+# defaults: ros2_ws/src/brain/manipulation/config/recorder.yaml
+#
+# /recorder_node:
+#   ros__parameters:
+#     data_frequency: 30         # default 30; skill recording rate (Hz)
+#     max_timesteps: 1800        # default 1800; auto-stop after N timesteps
+
+
+# ── CLOUD ───────────────────────────────────────────────────────────────────
+# defaults: ros2_ws/src/cloud/innate_uninavid/config/params.yaml
+#
+# /uninavid_node:
+#   ros__parameters:
+#     cmd_publish_hz: 50.0       # default 50.0; cmd_vel publish rate to the robot
+#     image_send_hz: 49.0        # default 49.0; image upload rate to the cloud nav service
+#     consecutive_stops_to_complete: 30  # default 30; stop-votes before a goal is done
+
+
+# ── SYSTEM / SERVICES (non-secret) ──────────────────────────────────────────
+# These are the non-secret service endpoints / IDs that previously lived only in
+# config/os.toml (loaded via env_loader.py). Setting them here overrides os.toml.
+# SECRETS (INNATE_SERVICE_KEY, auth/proxy keys) stay in .env — never put them here.
+#
+# /brain_client_node:
+#   ros__parameters:
+#     websocket_uri: "wss://agent-v1.innate.bot"      # hosted brain websocket
+#     cartesia_voice_id: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"  # TTS voice
+#
+# /input_manager_node:
+#   ros__parameters:
+#     cartesia_voice_id: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"  # TTS voice
+#
+# /logger_node:
+#   ros__parameters:
+#     telemetry_url: "https://logs-v1.innate.bot"     # telemetry logging endpoint

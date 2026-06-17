@@ -3,6 +3,7 @@
 Launch file for UDP Leader Receiver node
 """
 
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -31,14 +32,14 @@ def generate_launch_description():
         executable="udp_leader_receiver",
         name="udp_leader_receiver",
         output="screen",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "port": LaunchConfiguration("port"),
                 "buffer_size": LaunchConfiguration("buffer_size"),
                 "auto_start": LaunchConfiguration("auto_start"),
                 "log_rate": LaunchConfiguration("log_rate"),
             }
-        ],
+        ]),
     )
 
     return LaunchDescription(

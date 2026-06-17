@@ -15,6 +15,7 @@
   <depend>ament_index_python</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
+  <exec_depend>innate_config</exec_depend>
 
   <!-- Message dependencies -->
   <depend>std_msgs</depend>

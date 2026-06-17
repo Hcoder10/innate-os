@@ -1,3 +1,4 @@
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -50,14 +51,14 @@ def generate_launch_description():
                 executable="input_manager.py",
                 name="input_manager_node",
                 output="screen",
-                parameters=[
+                parameters=apply_overrides([
                     {
                         "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
                         "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
                         "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
                         "cartesia_voice_id": LaunchConfiguration("cartesia_voice_id"),
                     }
-                ],
+                ]),
             ),
         ]
     )

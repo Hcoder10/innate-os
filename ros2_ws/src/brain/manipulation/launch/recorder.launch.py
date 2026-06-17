@@ -2,6 +2,7 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -23,7 +24,7 @@ def generate_launch_description():
         executable="recorder_node_cpp",
         name="recorder_node",
         output="screen",
-        parameters=[config_file, {"data_directory": data_directory}],
+        parameters=apply_overrides([config_file, {"data_directory": data_directory}]),
     )
 
     return LaunchDescription([recorder_node])

@@ -1,3 +1,4 @@
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -125,7 +126,7 @@ def generate_launch_description():
         package="brain_client",
         executable="brain_client_node.py",
         name="brain_client_node",
-        parameters=[
+        parameters=apply_overrides([
             {
                 "websocket_uri": LaunchConfiguration("websocket_uri"),
                 "token": LaunchConfiguration("token"),
@@ -152,7 +153,7 @@ def generate_launch_description():
                 "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
                 "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
             }
-        ],
+        ]),
         output="screen",
         # Mute the benign "Publisher already registered" rosout-plumbing warning
         # from in-process helper nodes that can share a name.
@@ -193,13 +194,13 @@ def generate_launch_description():
                 executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
-                parameters=[
+                parameters=apply_overrides([
                     {
                         "image_topic": LaunchConfiguration("image_topic"),
                         "map_topic": LaunchConfiguration("map_topic"),
                         "simulator_mode": LaunchConfiguration("simulator_mode"),
                     }
-                ],
+                ]),
                 # Skill loading spins up short-lived helper nodes (camera, tf,
                 # action clients) that can share a name; mute the benign
                 # "Publisher already registered" rosout-plumbing warning.

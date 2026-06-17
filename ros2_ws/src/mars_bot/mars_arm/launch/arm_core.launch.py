@@ -2,6 +2,7 @@ import os
 
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from innate_config.launch import apply_overrides
 from launch import LaunchDescription
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
@@ -47,14 +48,16 @@ def generate_launch_description():
         package="mars_arm",
         executable="arm",
         name="mars_arm",
-        parameters=[
-            arm_config_file,
-            {
-                "robot_description": robot_description,
-                "robot_description_semantic": robot_description_semantic,
-            },
-            moveit_config,
-        ],
+        parameters=apply_overrides(
+            [
+                arm_config_file,
+                {
+                    "robot_description": robot_description,
+                    "robot_description_semantic": robot_description_semantic,
+                },
+                moveit_config,
+            ]
+        ),
         output="screen",
     )
 
