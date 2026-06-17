@@ -1,0 +1,74 @@
+# ============================================================================
+#  Innate OS — tunable parameter registry
+# ============================================================================
+#  The single source of truth for every parameter exposed to users. Each entry
+#  defines ONE knob once; the `innate config` CLI (and later the web app) are
+#  generated from this file, so users never need to know ROS node names, YAML
+#  nesting, or which file a default lives in.
+#
+#  Fields:
+#    name    friendly dotted id the user types          (e.g. nav.max_speed)
+#    group   human topic heading                         (Navigation, Arm, ...)
+#    node    ROS node fully-qualified name               (hidden from users)
+#    param   ROS parameter (dotted for nested)           (hidden from users)
+#    type    float | int | bool | str | enum
+#    min/max numeric bounds (float/int)                  (optional)
+#    choices allowed values (enum)                       (optional)
+#    default package default, shown for reference
+#    live    true  -> `ros2 param set` applies instantly, no restart
+#            false -> value is saved; takes effect on `innate config apply`
+#    desc    one-line human description
+# ============================================================================
+
+# ── Arm ─────────────────────────────────────────────────────────────────────
+- {name: arm.max_jerk,          group: Arm, node: /mars_arm, param: max_jerk,            type: float, min: 0,   max: 500,  default: 150.0, live: true,  desc: "Trajectory jerk limit, rad/s³ (0 = off)"}
+- {name: arm.stress_cutoff,     group: Arm, node: /mars_arm, param: stress_enabled,      type: bool,             default: false, live: true,  desc: "Enable over-stress torque cutoff"}
+- {name: arm.stress_threshold,  group: Arm, node: /mars_arm, param: stress_threshold,    type: float, min: 0,   max: 1000, default: 100.0, live: true,  desc: "Stress score that triggers a cooldown"}
+- {name: arm.stress_cooldown,   group: Arm, node: /mars_arm, param: stress_cooldown_sec, type: float, min: 0,   max: 30,   default: 2.0,   live: true,  desc: "Seconds of torque-off rest after a trip"}
+
+# ── Camera ──────────────────────────────────────────────────────────────────
+- {name: camera.main_fps,       group: Camera, node: /main_camera_driver, param: fps,                type: float, min: 1, max: 60,  default: 15.0, live: false, desc: "Main camera capture rate (Hz)"}
+- {name: camera.jpeg_quality,   group: Camera, node: /main_camera_driver, param: jpeg_quality,       type: int,   min: 1, max: 100, default: 80,   live: false, desc: "Streamed JPEG quality"}
+- {name: camera.auto_exposure,  group: Camera, node: /main_camera_driver, param: auto_exposure_mode, type: enum,  choices: [0, 1, 2], default: 0, live: false, desc: "0=hardware AE, 1=PID AE, 2=manual"}
+- {name: camera.exposure,       group: Camera, node: /main_camera_driver, param: exposure,           type: int,   min: -1, max: 100000, default: -1, live: false, desc: "Manual exposure (auto_exposure=2); -1=auto"}
+- {name: camera.gain,           group: Camera, node: /main_camera_driver, param: gain,               type: int,   min: -1, max: 1000,   default: -1, live: false, desc: "Manual gain (auto_exposure=2); -1=auto"}
+- {name: camera.target_bright,  group: Camera, node: /main_camera_driver, param: target_brightness,  type: float, min: 0, max: 255, default: 128.0, live: false, desc: "Brightness setpoint for PID AE (mode 1)"}
+- {name: camera.arm_fps,        group: Camera, node: /arm_camera_driver,  param: fps,                type: float, min: 1, max: 60,  default: 30.0, live: false, desc: "Arm camera capture rate (Hz)"}
+
+# ── Base / Driving ──────────────────────────────────────────────────────────
+- {name: base.battery_warning,  group: Base, node: /bringup, param: battery.warning_percentage,  type: int,   min: 0, max: 100, default: 20, live: false, desc: "Low-battery warning level (%)"}
+- {name: base.battery_critical, group: Base, node: /bringup, param: battery.critical_percentage, type: int,   min: 0, max: 100, default: 10, live: false, desc: "Critical shutdown level (%)"}
+- {name: base.max_speed,        group: Base, node: /bringup, param: motion_control.max_speed,         type: float, min: 0, max: 2, default: 0.4, live: false, desc: "Robot-wide linear speed cap (m/s)"}
+- {name: base.max_turn_speed,   group: Base, node: /bringup, param: motion_control.max_angular_speed, type: float, min: 0, max: 5, default: 2.5, live: false, desc: "Robot-wide angular speed cap (rad/s)"}
+
+# ── Teleop (joystick feel) ──────────────────────────────────────────────────
+- {name: teleop.max_speed,      group: Teleop, node: /joystick_controller, param: motion_control.max_speed,        type: float, min: 0, max: 2, default: 0.6, live: false, desc: "Teleop linear speed cap (m/s)"}
+- {name: teleop.max_accel,      group: Teleop, node: /joystick_controller, param: motion_control.max_acceleration, type: float, min: 0, max: 3, default: 0.6, live: false, desc: "Teleop linear acceleration (m/s²)"}
+- {name: teleop.deadzone,       group: Teleop, node: /joystick_controller, param: joystick.speed_deadzone,         type: float, min: 0, max: 1, default: 0.3, live: false, desc: "Stick deadzone fraction"}
+- {name: teleop.speed_curve,    group: Teleop, node: /joystick_controller, param: joystick.speed_exponent,         type: float, min: 1, max: 4, default: 2.0, live: false, desc: "Stick response curve (1 = linear)"}
+- {name: teleop.slow_factor,    group: Teleop, node: /joystick_controller, param: joystick.slow_mode_factor,       type: float, min: 0, max: 1, default: 0.25, live: false, desc: "Speed multiplier in slow mode"}
+
+# ── Navigation ──────────────────────────────────────────────────────────────
+- {name: nav.max_particles,     group: Navigation, node: /navigation_amcl,    param: max_particles,            type: int,   min: 100, max: 20000, default: 6000, live: false, desc: "Localization particle-filter upper bound"}
+- {name: nav.min_particles,     group: Navigation, node: /navigation_amcl,    param: min_particles,            type: int,   min: 50,  max: 10000, default: 1000, live: false, desc: "Localization particle-filter lower bound"}
+- {name: nav.laser_max_range,   group: Navigation, node: /navigation_amcl,    param: laser_max_range,          type: float, min: 1,   max: 30,    default: 10.0, live: false, desc: "Max lidar range used for localization (m)"}
+- {name: nav.tf_tolerance,      group: Navigation, node: /navigation_amcl,    param: transform_tolerance,      type: float, min: 0,   max: 5,     default: 1.0,  live: false, desc: "map→odom TF post-date tolerance (s)"}
+- {name: nav.frequency,         group: Navigation, node: /controller_server, param: controller_frequency,     type: float, min: 5,   max: 50,    default: 20.0, live: false, desc: "Navigation control loop rate (Hz)"}
+- {name: nav.max_speed,         group: Navigation, node: /controller_server, param: InnateFollowPath.vx_max,   type: float, min: 0,   max: 1,     default: 0.45, live: false, desc: "Autonomous nav forward top speed (m/s)"}
+- {name: nav.reverse_speed,     group: Navigation, node: /controller_server, param: InnateFollowPath.vx_min,   type: float, min: -1,  max: 0,     default: -0.2, live: false, desc: "Autonomous nav reverse top speed (m/s)"}
+- {name: nav.max_turn_speed,    group: Navigation, node: /controller_server, param: InnateFollowPath.wz_max,   type: float, min: 0,   max: 3,     default: 0.6,  live: false, desc: "Autonomous nav angular top speed (rad/s)"}
+
+# ── Recording ───────────────────────────────────────────────────────────────
+- {name: record.frequency,      group: Recording, node: /recorder_node, param: data_frequency, type: int, min: 1, max: 120,    default: 30,   live: false, desc: "Skill recording rate (Hz)"}
+- {name: record.max_timesteps,  group: Recording, node: /recorder_node, param: max_timesteps,  type: int, min: 1, max: 100000, default: 1800, live: false, desc: "Auto-stop a recording after N timesteps"}
+
+# ── Cloud ───────────────────────────────────────────────────────────────────
+- {name: cloud.cmd_hz,          group: Cloud, node: /uninavid_node, param: cmd_publish_hz,                 type: float, min: 1, max: 200, default: 50.0, live: false, desc: "cmd_vel publish rate to the robot (Hz)"}
+- {name: cloud.image_hz,        group: Cloud, node: /uninavid_node, param: image_send_hz,                  type: float, min: 1, max: 120, default: 49.0, live: false, desc: "Image upload rate to the cloud nav service (Hz)"}
+- {name: cloud.stops_to_done,   group: Cloud, node: /uninavid_node, param: consecutive_stops_to_complete,  type: int,   min: 1, max: 200, default: 30,   live: false, desc: "Stop-votes before a nav goal is complete"}
+
+# ── System / Services (non-secret; secrets stay in .env) ─────────────────────
+- {name: system.brain_ws,       group: System, node: /brain_client_node,  param: websocket_uri,      type: str, default: "wss://agent-v1.innate.bot", live: false, desc: "Hosted brain websocket URI"}
+- {name: system.voice_id,       group: System, node: /brain_client_node,  param: cartesia_voice_id,  type: str, default: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", live: false, desc: "Cartesia TTS voice id (brain)"}
+- {name: system.input_voice_id, group: System, node: /input_manager_node, param: cartesia_voice_id,  type: str, default: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", live: false, desc: "Cartesia TTS voice id (input manager)"}
+- {name: system.telemetry_url,  group: System, node: /logger_node,        param: telemetry_url,      type: str, default: "https://logs-v1.innate.bot", live: false, desc: "Telemetry logging endpoint"}

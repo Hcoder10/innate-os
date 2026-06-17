@@ -12,7 +12,7 @@ setup(
             ["resource/" + package_name],
         ),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", ["config/overrides.yaml"]),
+        ("share/" + package_name + "/config", ["config/overrides.yaml", "config/registry.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

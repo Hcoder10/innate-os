@@ -2641,6 +2641,180 @@ def volume(level):
     sys.exit(_volume(level))
 
 
+# -- config -------------------------------------------------------------------
+
+
+def _load_param_registry():
+    """Import the ROS-free parameter registry from the innate_config source tree."""
+    src = str(INNATE_OS_ROOT / "ros2_ws" / "src" / "innate_config")
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    from innate_config import registry as reg
+
+    return reg
+
+
+def _fmt_cfg_value(v):
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    return str(v)
+
+
+def _cfg_range(e):
+    if "min" in e and "max" in e:
+        return f"[{_fmt_cfg_value(e['min'])}-{_fmt_cfg_value(e['max'])}]"
+    if e.get("choices"):
+        return "{" + ",".join(str(c) for c in e["choices"]) + "}"
+    return ""
+
+
+def _config_list():
+    try:
+        reg = _load_param_registry()
+        entries = reg.load_registry()
+    except Exception as exc:
+        fail(f"Could not load parameter registry: {exc}")
+        return 1
+
+    groups = {}
+    for e in entries:
+        groups.setdefault(e["group"], []).append(e)
+
+    print()
+    for group, items in groups.items():
+        print(f"  {C.BOLD}{group}{C.NC}")
+        for e in items:
+            is_set, val = reg.get_override(e["name"])
+            cur = val if is_set else e.get("default")
+            mark = f"{C.GREEN}*{C.NC}" if is_set else " "
+            print(
+                f"  {mark} {e['name']:<22} {C.CYAN}{_fmt_cfg_value(cur):<14}{C.NC}"
+                f"{C.DIM}{_cfg_range(e):<13}{C.NC} {e['desc']}"
+            )
+        print()
+    print(
+        f"  {C.DIM}* = overridden   ·   set:{C.NC} innate config set <name> <value>"
+        f"   {C.DIM}·   apply:{C.NC} innate config apply {C.DIM}(restart){C.NC}"
+    )
+    return 0
+
+
+def _config_get(name):
+    try:
+        reg = _load_param_registry()
+        e = reg.entry(name)
+        is_set, val = reg.get_override(name)
+    except Exception as exc:
+        fail(str(exc))
+        return 1
+    cur = val if is_set else e.get("default")
+    origin = "overridden" if is_set else "default"
+    print(f"  {C.BOLD}{name}{C.NC} = {C.CYAN}{_fmt_cfg_value(cur)}{C.NC}  ({origin})")
+    print(f"  {e['desc']}  {C.DIM}{_cfg_range(e)}{C.NC}")
+    return 0
+
+
+def _config_set(name, value):
+    try:
+        reg = _load_param_registry()
+        e = reg.entry(name)
+        typed = reg.set_value(name, value)
+    except Exception as exc:
+        fail(str(exc))
+        return 1
+
+    ok(f"{name} = {_fmt_cfg_value(typed)}  (saved)")
+    if e.get("live") and not is_sim_mode() and _try_live_param_set(e, typed):
+        ok("applied live - no restart needed")
+    else:
+        print(f"  Run {C.BOLD}innate config apply{C.NC} to restart and apply.")
+    return 0
+
+
+def _config_reset(name):
+    try:
+        reg = _load_param_registry()
+        e = reg.entry(name)
+        reg.unset_value(name)
+    except Exception as exc:
+        fail(str(exc))
+        return 1
+    ok(f"{name} reset to default ({_fmt_cfg_value(e.get('default'))})")
+    print(f"  Run {C.BOLD}innate config apply{C.NC} to restart and apply.")
+    return 0
+
+
+def _try_live_param_set(e, value):
+    """Best-effort `ros2 param set` so live-capable knobs apply without a restart."""
+    setup = ROS_WS / "install" / "setup.bash"
+    if not setup.exists():
+        return False
+    val = _fmt_cfg_value(value)
+    cmd = (
+        "source /opt/ros/humble/setup.bash && "
+        f"source {shlex.quote(str(setup))} && "
+        f"ros2 param set {shlex.quote(e['node'])} {shlex.quote(e['param'])} {shlex.quote(val)}"
+    )
+    try:
+        r = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True, timeout=15)
+    except Exception:
+        return False
+    return r.returncode == 0 and "successful" in (r.stdout + r.stderr).lower()
+
+
+@cli.group("config", invoke_without_command=True)
+@click.pass_context
+def config_cli(ctx):
+    """View and change tunable robot parameters.
+
+    \b
+    Examples:
+      innate config                        List everything tunable
+      innate config get nav.max_speed      Show one value + range
+      innate config set nav.max_speed 0.3  Change a value (validated)
+      innate config reset nav.max_speed    Back to default
+      innate config apply                  Restart so changes take effect
+    """
+    if ctx.invoked_subcommand is None:
+        sys.exit(_config_list())
+
+
+@config_cli.command("list")
+def config_list_cmd():
+    """List all tunable parameters, grouped by topic."""
+    sys.exit(_config_list())
+
+
+@config_cli.command("get")
+@click.argument("name")
+def config_get_cmd(name):
+    """Show the current value (and range) of a parameter."""
+    sys.exit(_config_get(name))
+
+
+@config_cli.command("set")
+@click.argument("name")
+@click.argument("value")
+def config_set_cmd(name, value):
+    """Set a parameter; the value is validated against its type and range."""
+    sys.exit(_config_set(name, value))
+
+
+@config_cli.command("reset")
+@click.argument("name")
+def config_reset_cmd(name):
+    """Reset a parameter back to its package default."""
+    sys.exit(_config_reset(name))
+
+
+@config_cli.command("apply")
+def config_apply_cmd():
+    """Restart the robot app so saved (non-live) changes take effect."""
+    sys.exit(_service_restart())
+
+
 # -- skill --------------------------------------------------------------------
 
 
