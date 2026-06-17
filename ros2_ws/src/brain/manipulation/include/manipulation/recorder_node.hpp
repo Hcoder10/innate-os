@@ -14,6 +14,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
@@ -45,6 +46,7 @@ class RecorderNode : public rclcpp::Node {
     void image_callback(const sensor_msgs::msg::Image::SharedPtr msg, const std::string& topic);
     void arm_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg);
     void leader_command_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
+    void head_position_callback(const std_msgs::msg::String::SharedPtr msg);
     void cmd_vel_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void timer_callback();
@@ -95,6 +97,7 @@ class RecorderNode : public rclcpp::Node {
     std::vector<std::string> image_topics_;
     std::string arm_state_topic_;
     std::string leader_command_topic_;
+    std::string head_position_topic_;
     std::string velocity_topic_;
     std::string odom_topic_;
     std::vector<int64_t> image_size_;
@@ -116,6 +119,10 @@ class RecorderNode : public rclcpp::Node {
     std_msgs::msg::Float64MultiArray::SharedPtr latest_leader_command_;
     geometry_msgs::msg::Twist::SharedPtr latest_cmd_vel_;
     nav_msgs::msg::Odometry::SharedPtr latest_odom_;
+    // Head angle (degrees) from /mars/head/current_position; recorded separately
+    // for replay skills only. head_received_ stays false until the first reading.
+    double latest_head_position_ = 0.0;
+    bool head_received_ = false;
 
     // Topic tracking
     std::map<std::string, bool> topics_received_;
@@ -125,6 +132,7 @@ class RecorderNode : public rclcpp::Node {
     std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> image_subs_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_state_sub_;
     rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr leader_command_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr head_position_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 

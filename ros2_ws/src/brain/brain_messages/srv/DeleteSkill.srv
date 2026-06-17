@@ -1,0 +1,8 @@
+# Delete a user-created skill directory. Only directories under custom_skills are
+# eligible; shipped skills are refused.
+# Request
+string skill_directory    # Absolute path of the skill directory to delete
+---
+# Response
+bool success
+string message

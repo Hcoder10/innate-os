@@ -16,9 +16,13 @@ goal completes, is cancelled, or an error occurs.
 ros2 launch innate_uninavid uninavid.launch.py
 # Override the config file:
 ros2 launch innate_uninavid uninavid.launch.py params_file:=/path/to/custom.yaml
+# In simulator mode, publish directly to /cmd_vel:
+ros2 launch innate_uninavid uninavid.launch.py cmd_vel_topic:=/cmd_vel
 ```
 
-The launch file applies a `/cmd_vel` → `/cmd_vel_scaled` remapping.
+By default, the launch file applies a `/cmd_vel` → `/cmd_vel_scaled`
+remapping.  The simulator overrides this to `/cmd_vel` because its bridge
+subscribes directly to that topic.
 
 ### ROS parameters
 
@@ -36,6 +40,15 @@ config file at `config/params.yaml` or overridden on the command line.
 | `latency_report_sec` | float | 5.0 | Interval between RTT summary log messages |
 | `image_send_hz` | float | 49.0 | Target rate for streaming images to the server |
 | `consecutive_stops_to_complete` | int | 20 | Number of consecutive STOP actions before the goal succeeds |
+
+### Runtime service-key update
+
+The node also listens to `/brain/backend_config` for JSON payloads containing
+`service_key` or `token`.  This is intentionally shared with the simulator's
+runtime backend override path, so a service key provided from the simulator URL
+can enable future UniNavid goals without restarting the ROS process.  Active
+WebSocket sessions keep their current auth provider; a changed key is used by
+the next navigation goal.
 
 ---
 

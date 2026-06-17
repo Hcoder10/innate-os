@@ -4,6 +4,7 @@
 #include <fstream>
 #include <ctime>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <thread>
 #include <hdf5.h>
@@ -28,6 +29,7 @@ RecorderNode::RecorderNode()
     this->declare_parameter("image_topics", std::vector<std::string>{"/camera/image_raw", "/camera/image_processed"});
     this->declare_parameter("arm_state_topic", "/arm/state");
     this->declare_parameter("leader_command_topic", "/leader/command");
+    this->declare_parameter("head_position_topic", "/mars/head/current_position");
     this->declare_parameter("velocity_topic", "/cmd_vel");
     this->declare_parameter("odom_topic", "/odom");
     this->declare_parameter("image_size", std::vector<int64_t>{640, 480});
@@ -51,6 +53,7 @@ RecorderNode::RecorderNode()
     image_topics_ = this->get_parameter("image_topics").as_string_array();
     arm_state_topic_ = this->get_parameter("arm_state_topic").as_string();
     leader_command_topic_ = this->get_parameter("leader_command_topic").as_string();
+    head_position_topic_ = this->get_parameter("head_position_topic").as_string();
     velocity_topic_ = this->get_parameter("velocity_topic").as_string();
     odom_topic_ = this->get_parameter("odom_topic").as_string();
     image_size_ = this->get_parameter("image_size").as_integer_array();
@@ -87,6 +90,9 @@ RecorderNode::RecorderNode()
 
     leader_command_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
         leader_command_topic_, 10, std::bind(&RecorderNode::leader_command_callback, this, std::placeholders::_1));
+
+    head_position_sub_ = this->create_subscription<std_msgs::msg::String>(
+        head_position_topic_, 10, std::bind(&RecorderNode::head_position_callback, this, std::placeholders::_1));
 
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
         velocity_topic_, 10, std::bind(&RecorderNode::cmd_vel_callback, this, std::placeholders::_1));
@@ -231,6 +237,21 @@ void RecorderNode::leader_command_callback(const std_msgs::msg::Float64MultiArra
     }
 }
 
+void RecorderNode::head_position_callback(const std_msgs::msg::String::SharedPtr msg) {
+    // /mars/head/current_position publishes JSON {"current_position": <deg>, ...}.
+    // Head is optional and never a required topic, so failures here only skip the
+    // head channel for the current recording — they never block recording.
+    try {
+        const auto data = nlohmann::json::parse(msg->data);
+        if (data.contains("current_position")) {
+            latest_head_position_ = data["current_position"].get<double>();
+            head_received_ = true;
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "Could not parse head position '%s': %s", msg->data.c_str(), e.what());
+    }
+}
+
 void RecorderNode::cmd_vel_callback(const geometry_msgs::msg::Twist::SharedPtr msg) {
     latest_cmd_vel_ = msg;
     if (!topics_received_[velocity_topic_]) {
@@ -321,7 +342,9 @@ void RecorderNode::timer_callback() {
     }
 
     try {
-        current_episode_->add_timestep(action_data, qpos, qvel, images_converted, arm_timestamp, image_timestamps);
+        current_episode_->add_timestep(
+            action_data, qpos, qvel, images_converted, arm_timestamp, image_timestamps,
+            head_received_ ? latest_head_position_ : std::numeric_limits<double>::quiet_NaN());
         size_t timestep_count = current_episode_->get_episode_length();
 
         // Check if timestep limit reached

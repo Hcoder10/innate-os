@@ -35,6 +35,7 @@ class BrainState:
     registry: SkillRegistry = field(default_factory=SkillRegistry)
     directives: dict = field(default_factory=dict)
     current_directive: object | None = None
+    active_skill_ids: list[str] | None = None
 
     # --- pose stamping for local-nav compensation ---
     pose_at_image_send: tuple[float, float, float] | None = None

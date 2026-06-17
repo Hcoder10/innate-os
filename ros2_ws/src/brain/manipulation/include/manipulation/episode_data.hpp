@@ -1,6 +1,7 @@
 #ifndef MANIPULATION_EPISODE_DATA_HPP_
 #define MANIPULATION_EPISODE_DATA_HPP_
 
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -38,9 +39,15 @@ class EpisodeData {
 
     // Append one timestep to the file. On the first call we create the
     // HDF5 file and all chunked extendable datasets sized from the inputs.
+    //
+    // head_command is an optional head-servo angle (degrees) stored in its own
+    // /head_command dataset — kept out of /action so the learned-policy action
+    // space is unaffected. Pass NaN (the default) to omit head recording; if it
+    // is NaN on the first timestep the dataset is never created.
     void add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
                       const std::vector<double>& qvel, const std::vector<cv::Mat>& images, double arm_timestamp = -1.0,
-                      const std::vector<double>& image_timestamps = {});
+                      const std::vector<double>& image_timestamps = {},
+                      double head_command = std::numeric_limits<double>::quiet_NaN());
 
     // Write the termination columns of /action, then close the file.
     // Safe to call when no timesteps were written; in that case behaves
@@ -62,7 +69,8 @@ class EpisodeData {
 
    private:
     void create_file_and_datasets(const std::vector<double>& action, const std::vector<double>& qpos,
-                                  const std::vector<double>& qvel, const std::vector<cv::Mat>& images);
+                                  const std::vector<double>& qvel, const std::vector<cv::Mat>& images,
+                                  double head_command);
     void close_handles();
     // Best-effort rollback: shrink every streaming dataset back to `rows`
     // along its time axis. Used to recover from a partial failed timestep.
@@ -88,6 +96,7 @@ class EpisodeData {
     hid_t qpos_dset_;
     hid_t qvel_dset_;
     hid_t arm_ts_dset_;
+    hid_t head_dset_;  // optional 1D /head_command (degrees); -1 when not recorded
     std::map<std::string, hid_t> image_dsets_;
     std::map<std::string, hid_t> image_ts_dsets_;
 };

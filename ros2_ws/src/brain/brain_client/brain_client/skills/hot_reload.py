@@ -128,6 +128,7 @@ class ReloadCoordinator:
             self._state.directives = {}
             self._state.registry = SkillRegistry()
             self._state.current_directive = None
+            self._state.active_skill_ids = []
 
             call_service_sync(
                 self._service_call_node,
@@ -147,6 +148,9 @@ class ReloadCoordinator:
 
             self._state.directives, self._state.current_directive = initialize_agents(
                 self._logger, self._state.registry.primitives
+            )
+            self._state.active_skill_ids = (
+                list(self._state.current_directive.get_skills()) if self._state.current_directive else []
             )
             self._catalog.register()
             self._logger.info(
@@ -210,6 +214,10 @@ class ReloadCoordinator:
                 reloaded.append(agent_name)
                 if self._state.current_directive and self._state.current_directive.id == agent_name:
                     self._state.current_directive = agent_instance
+                    previous_skill_ids = set(self._state.active_skill_ids or agent_instance.get_skills())
+                    self._state.active_skill_ids = [
+                        skill_id for skill_id in agent_instance.get_skills() if skill_id in previous_skill_ids
+                    ]
                     self._logger.info(f"Updated current directive: {agent_name}")
                 self._logger.info(f"Reloaded agent: {agent_name} [source={agent_instance.source}]")
             except Exception as e:

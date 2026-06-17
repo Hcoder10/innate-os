@@ -13,6 +13,7 @@ import numpy as np
 import websockets
 from src.agent.navigation_controller import NavigationController
 from src.agent.types import (
+    ActiveSkillsCmd,
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
@@ -30,7 +31,7 @@ from src.agent.types import (
     RobotStateMsg,
     VelocityCmd,
 )
-from src.shared_queues import AgentInfo, ChatMessage, ChatSignal
+from src.shared_queues import AgentInfo, ChatMessage, ChatSignal, SkillInfo
 
 BACKEND_WARMUP_STATES = {
     "unknown",
@@ -40,6 +41,17 @@ BACKEND_WARMUP_STATES = {
     "authenticating",
 }
 BACKEND_STATUS_LOG_INTERVAL_SEC = 30.0
+SENSOR_PUBLISH_INTERVAL_SEC = 0.10
+CLOCK_PUBLISH_INTERVAL_SEC = 0.05
+ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
+NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
+ARM_JOINT_COUNT = 6
+ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
+ARM_TRIGGER_SERVICES = {
+    "/mars/arm/torque_on",
+    "/mars/arm/torque_off",
+    "/mars/arm/reboot",
+}
 
 
 def np_encoder(obj):
@@ -81,6 +93,42 @@ def log_brain_backend_status(shared_queues, status: dict):
     shared_queues._last_brain_backend_log_at = now
 
 
+def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
+    """Parse brain_messages/msg/AvailableSkills as forwarded by rosbridge."""
+    skills_raw = msg_data.get("skills", [])
+    if not isinstance(skills_raw, list):
+        return []
+
+    skills = []
+    for skill in skills_raw:
+        if not isinstance(skill, dict):
+            continue
+        raw_inputs = skill.get("inputs", {})
+        inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
+        if not inputs:
+            inputs_json = skill.get("inputs_json", "")
+            try:
+                parsed_inputs = json.loads(inputs_json) if isinstance(inputs_json, str) and inputs_json else {}
+            except json.JSONDecodeError:
+                parsed_inputs = {}
+            if isinstance(parsed_inputs, dict):
+                inputs = parsed_inputs
+        skills.append(
+            SkillInfo(
+                id=skill.get("id", ""),
+                name=skill.get("name", skill.get("id", "")),
+                type=skill.get("type", ""),
+                guidelines=str(skill.get("guidelines", "")),
+                guidelines_when_running=str(skill.get("guidelines_when_running", "")),
+                inputs=inputs,
+                in_training=bool(skill.get("in_training", False)),
+                episode_count=int(skill.get("episode_count", 0) or 0),
+                directory=str(skill.get("directory", "")),
+            )
+        )
+    return skills
+
+
 #
 # Rosbridge Utility Methods
 #
@@ -116,11 +164,273 @@ def rosbridge_service_response(service: str, result: dict, call_id: str = None) 
     return resp
 
 
+def arm_service_advertisements() -> list[dict]:
+    adverts = [rosbridge_advertise_service(service, "mars_msgs/srv/GotoJS") for service in sorted(ARM_GOTO_SERVICES)]
+    adverts.append(
+        rosbridge_advertise_service(
+            "/mars/arm/goto_js_trajectory",
+            "mars_msgs/srv/GotoJSTrajectory",
+        )
+    )
+    adverts.extend(
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(ARM_TRIGGER_SERVICES)
+    )
+    return adverts
+
+
+def is_arm_torque_enabled(shared_queues) -> bool:
+    lock = getattr(shared_queues, "arm_torque_lock", None)
+    if lock is None:
+        return bool(getattr(shared_queues, "arm_torque_enabled", True))
+    with lock:
+        return bool(getattr(shared_queues, "arm_torque_enabled", True))
+
+
+def set_arm_torque_enabled(shared_queues, enabled: bool) -> None:
+    lock = getattr(shared_queues, "arm_torque_lock", None)
+    if lock is None:
+        shared_queues.arm_torque_enabled = enabled
+        return
+    with lock:
+        shared_queues.arm_torque_enabled = enabled
+
+
+def _multi_array_data(value) -> list:
+    if isinstance(value, dict):
+        value = value.get("data", [])
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _parse_json_object_topic(topic: str, msg_data: dict) -> dict | None:
+    raw_payload = msg_data.get("data", "")
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        print(f"[ROSBridge] Failed to parse {topic} JSON payload: {exc}; raw={str(raw_payload)[:300]!r}")
+        return None
+
+    if not isinstance(payload, dict):
+        print(f"[ROSBridge] Ignoring {topic}: expected JSON object, got {type(payload).__name__}")
+        return None
+
+    return payload
+
+
+def _parse_arm_goto_args(args: dict) -> tuple[list[float] | None, float]:
+    joint_data = _multi_array_data(args.get("data", {}))
+    if len(joint_data) < ARM_JOINT_COUNT:
+        return None, 1.0
+    try:
+        joint_positions = [float(value) for value in joint_data[:ARM_JOINT_COUNT]]
+        duration = float(args.get("time", 1.0))
+    except (TypeError, ValueError):
+        return None, 1.0
+    return joint_positions, max(0.0, duration)
+
+
+def _parse_arm_trajectory_args(args: dict) -> tuple[list[list[float]], list[float]] | None:
+    try:
+        num_joints = int(args.get("num_joints") or ARM_JOINT_COUNT)
+    except (TypeError, ValueError):
+        return None
+    if num_joints <= 0:
+        return None
+
+    try:
+        flat_waypoints = [float(value) for value in _multi_array_data(args.get("waypoints", {}))]
+    except (TypeError, ValueError):
+        return None
+
+    if len(flat_waypoints) < num_joints or len(flat_waypoints) % num_joints != 0:
+        return None
+
+    waypoints = []
+    for index in range(0, len(flat_waypoints), num_joints):
+        waypoint = flat_waypoints[index : index + num_joints]
+        if len(waypoint) < ARM_JOINT_COUNT:
+            return None
+        waypoints.append(waypoint[:ARM_JOINT_COUNT])
+
+    try:
+        durations = [float(value) for value in args.get("segment_durations", [])]
+    except (TypeError, ValueError):
+        durations = []
+
+    return waypoints, durations
+
+
+async def _send_service_response(ws, service_name: str, values: dict, call_id: str | None):
+    response = rosbridge_service_response(service_name, values, call_id)
+    await ws.send(json.dumps(response))
+
+
+def _arm_trajectory_segment_durations(waypoints: list[list[float]], durations: list[float]) -> list[float] | None:
+    if len(waypoints) < 2:
+        return None
+    if not durations:
+        return [1.0] * (len(waypoints) - 1)
+    if len(durations) != len(waypoints) - 1:
+        return None
+    return durations
+
+
+def _replace_active_arm_trajectory(shared_queues, task: asyncio.Task) -> None:
+    lock = getattr(shared_queues, "arm_trajectory_task_lock", None)
+    if lock is None:
+        previous = getattr(shared_queues, "arm_trajectory_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        shared_queues.arm_trajectory_task = task
+        return
+
+    with lock:
+        previous = getattr(shared_queues, "arm_trajectory_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        shared_queues.arm_trajectory_task = task
+
+
+def _clear_active_arm_trajectory(shared_queues, task: asyncio.Task) -> None:
+    lock = getattr(shared_queues, "arm_trajectory_task_lock", None)
+    if lock is None:
+        if getattr(shared_queues, "arm_trajectory_task", None) is task:
+            shared_queues.arm_trajectory_task = None
+        return
+
+    with lock:
+        if getattr(shared_queues, "arm_trajectory_task", None) is task:
+            shared_queues.arm_trajectory_task = None
+
+
+async def _run_arm_trajectory_service(
+    ws,
+    shared_queues,
+    service_name: str,
+    call_id: str | None,
+    waypoints: list[list[float]],
+    durations: list[float],
+):
+    segment_durations = _arm_trajectory_segment_durations(waypoints, durations)
+    if segment_durations is None:
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+        return
+
+    try:
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        shared_queues.agent_to_sim.put_nowait(ArmCmd(joint_positions=waypoints[0]))
+
+        for index, duration in enumerate(segment_durations):
+            if not is_arm_torque_enabled(shared_queues):
+                await _send_service_response(
+                    ws,
+                    service_name,
+                    {"success": False},
+                    call_id,
+                )
+                return
+
+            waypoint = waypoints[index + 1]
+            shared_queues.agent_to_sim.put_nowait(ArmGotoCmd(joint_positions=waypoint, duration=max(0.0, duration)))
+            await asyncio.sleep(max(0.0, duration))
+
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+    except asyncio.CancelledError:
+        await _send_service_response(
+            ws,
+            service_name,
+            {"success": False, "message": "Trajectory cancelled by a newer request."},
+            call_id,
+        )
+    except queue.Full:
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+    except Exception as exc:
+        print(f"[ROSBridge] Arm trajectory service failed: {exc}")
+        await _send_service_response(ws, service_name, {"success": False}, call_id)
+
+
+async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, args):
+    if service_name in ARM_GOTO_SERVICES:
+        print(f"[ROSBridge] Received {service_name} service call: {args}")
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        joint_positions, duration = _parse_arm_goto_args(args)
+        if joint_positions is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        try:
+            shared_queues.agent_to_sim.put_nowait(
+                ArmGotoCmd(
+                    joint_positions=joint_positions,
+                    duration=duration,
+                    service_id=call_id,
+                )
+            )
+        except queue.Full:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+        return
+
+    if service_name == "/mars/arm/goto_js_trajectory":
+        print(f"[ROSBridge] Received goto_js_trajectory service call: {args}")
+        if not is_arm_torque_enabled(shared_queues):
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        parsed = _parse_arm_trajectory_args(args)
+        if parsed is None:
+            await _send_service_response(ws, service_name, {"success": False}, call_id)
+            return
+
+        waypoints, durations = parsed
+        task = asyncio.create_task(
+            _run_arm_trajectory_service(
+                ws,
+                shared_queues,
+                service_name,
+                call_id,
+                waypoints,
+                durations,
+            )
+        )
+        _replace_active_arm_trajectory(shared_queues, task)
+        task.add_done_callback(lambda done_task: _clear_active_arm_trajectory(shared_queues, done_task))
+        return
+
+    if service_name in ARM_TRIGGER_SERVICES:
+        if service_name == "/mars/arm/torque_off":
+            set_arm_torque_enabled(shared_queues, False)
+            message = "Sim arm torque disabled; motion commands will be rejected."
+        elif service_name == "/mars/arm/reboot":
+            set_arm_torque_enabled(shared_queues, False)
+            message = "Sim arm rebooted; torque disabled. Run torque_on before moving."
+        else:
+            set_arm_torque_enabled(shared_queues, True)
+            message = "Sim arm torque enabled."
+
+        print(f"[ROSBridge] {message}")
+        await _send_service_response(
+            ws,
+            service_name,
+            {"success": True, "message": message},
+            call_id,
+        )
+
+
 async def inbound_data_loop(ws, shared_queues):
     """
     Continuously receive inbound messages on the data WebSocket
     (e.g. /cmd_vel, /chat_in, service calls for services we provide).
-    Service responses are handled on the separate service connection.
+    Service responses for simulator-advertised services are handled here.
     """
     print("[ROSBridge] inbound_data_loop started.")
     while not shared_queues.exit_event.is_set():
@@ -161,6 +471,13 @@ async def inbound_data_loop(ws, shared_queues):
             elif topic == "/mars/arm/commands":
                 arm_cmd = parse_arm_command(msg_data)
                 if arm_cmd:
+                    if not is_arm_torque_enabled(shared_queues):
+                        last_log = getattr(shared_queues, "_last_arm_torque_disabled_log_at", 0.0)
+                        now = time.time()
+                        if now - last_log > 5.0:
+                            print("[ROSBridge] Ignoring arm command: sim arm torque is disabled")
+                            shared_queues._last_arm_torque_disabled_log_at = now
+                        continue
                     print(f"[ROSBridge] Received arm command: {arm_cmd.joint_positions}")
                     try:
                         shared_queues.agent_to_sim.put_nowait(arm_cmd)
@@ -169,7 +486,9 @@ async def inbound_data_loop(ws, shared_queues):
 
             # 2) /chat_out
             elif topic == "/brain/chat_out":
-                payload = json.loads(msg_data.get("data", ""))
+                payload = _parse_json_object_topic(topic, msg_data)
+                if payload is None:
+                    continue
                 sender = payload.get("sender", "")
                 text = payload.get("text", "")
                 timestamp = payload.get("timestamp", time.time())
@@ -179,19 +498,43 @@ async def inbound_data_loop(ws, shared_queues):
                         text=text,
                         timestamp=timestamp,
                         timestamp_put_in_queue=time.time(),
+                        task_status=payload.get("taskStatus") or payload.get("task_status"),
+                        primitive_id=payload.get("primitiveId") or payload.get("primitive_id"),
+                        skill_id=payload.get("skillId") or payload.get("skill_id"),
+                        failure_reason=payload.get("failureReason") or payload.get("reason"),
                     )
-                    # Forward to sim
-                    shared_queues.chat_from_bridge.put_nowait(chat_msg)
+                    # Forward to sim/UI without allowing stale history to pile up.
+                    shared_queues.enqueue_chat_from_bridge(chat_msg)
+
+            elif topic == "/brain/skill_status_update":
+                payload = _parse_json_object_topic(topic, msg_data)
+                if payload is None:
+                    continue
+                text = payload.get("primitive_name") or payload.get("skill_name") or payload.get("skill_id") or ""
+                status = payload.get("status")
+                if text and status:
+                    chat_msg = ChatMessage(
+                        sender="task_activated",
+                        text=text,
+                        timestamp=payload.get("timestamp", time.time()),
+                        timestamp_put_in_queue=time.time(),
+                        task_status=status,
+                        primitive_id=payload.get("primitive_id"),
+                        skill_id=payload.get("skill_id"),
+                        failure_reason=payload.get("reason"),
+                    )
+                    shared_queues.enqueue_chat_from_bridge(chat_msg)
 
             elif topic == "/brain/websocket_status":
-                raw_status = msg_data.get("data", "{}")
-                try:
-                    status = json.loads(raw_status)
-                    if isinstance(status, dict):
-                        shared_queues.update_brain_backend_status(status)
-                        log_brain_backend_status(shared_queues, status)
-                except json.JSONDecodeError:
-                    print(f"[ROSBridge] Failed to parse /brain/websocket_status JSON: {raw_status}")
+                status = _parse_json_object_topic(topic, msg_data)
+                if status is not None:
+                    shared_queues.update_brain_backend_status(status)
+                    log_brain_backend_status(shared_queues, status)
+
+            elif topic == "/brain/available_skills":
+                skills = parse_available_skills_message(msg_data)
+                shared_queues.update_available_skills(skills)
+                print(f"[ROSBridge] Received {len(skills)} available skills")
 
             # 3) /sim_navigation/global_plan
             elif topic == "/sim_navigation/global_plan":
@@ -273,28 +616,13 @@ async def inbound_data_loop(ws, shared_queues):
             call_id = inbound_data.get("id", None)
             args = inbound_data.get("args", {})
 
-            # Handle /mars/arm/goto_js service
-            if service_name == "/mars/arm/goto_js":
-                print(f"[ROSBridge] Received goto_js service call: {args}")
-                data = args.get("data", {})
-                joint_data = data.get("data", [])
-                duration = args.get("time", 1)
-
-                if len(joint_data) >= 6:
-                    joint_positions = [float(d) for d in joint_data[:6]]
-                    arm_goto_cmd = ArmGotoCmd(
-                        joint_positions=joint_positions,
-                        duration=float(duration),
-                        service_id=call_id,
-                    )
-                    try:
-                        shared_queues.agent_to_sim.put_nowait(arm_goto_cmd)
-                    except queue.Full:
-                        pass
-
-                    # Send immediate success response (motion started)
-                    response = rosbridge_service_response(service_name, {"success": True}, call_id)
-                    await ws.send(json.dumps(response))
+            await _handle_arm_service_call(
+                ws,
+                shared_queues,
+                service_name,
+                call_id,
+                args,
+            )
 
         await asyncio.sleep(0.0001)
 
@@ -342,6 +670,9 @@ async def inbound_service_loop(ws, shared_queues):
                 else:
                     history_data = history_data_raw
 
+                if isinstance(history_data, list) and len(history_data) > 30:
+                    history_data = history_data[-30:]
+
                 for chat in history_data:
                     try:
                         chat_msg = ChatMessage(
@@ -349,11 +680,12 @@ async def inbound_service_loop(ws, shared_queues):
                             text=chat.get("text", ""),
                             timestamp=chat.get("timestamp", time.time()),
                             timestamp_put_in_queue=time.time(),
+                            task_status=chat.get("taskStatus") or chat.get("task_status"),
+                            primitive_id=chat.get("primitiveId") or chat.get("primitive_id"),
+                            skill_id=chat.get("skillId") or chat.get("skill_id"),
+                            failure_reason=chat.get("failureReason") or chat.get("reason"),
                         )
-                        try:
-                            shared_queues.chat_from_bridge.put_nowait(chat_msg)
-                        except queue.Full:
-                            print("[ROSBridge] chat_from_bridge queue is full; dropping chat message.")
+                        shared_queues.enqueue_chat_from_bridge(chat_msg)
                     except Exception as e:
                         print(f"[ROSBridge] Error processing chat history entry: {e}")
 
@@ -365,19 +697,47 @@ async def inbound_service_loop(ws, shared_queues):
                 values = inbound_data.get("values", {})
                 directives_raw = values.get("directives", "[]")
                 current_directive = values.get("current_directive", "")
-                startup_directive = values.get("startup_directive", "")
 
                 agents = []
+                skills = []
+                active_skill_ids = None
+                brain_active = None
 
                 try:
-                    if isinstance(directives_raw, list) and len(directives_raw) > 0:
-                        json_string = directives_raw[0]
+                    if isinstance(directives_raw, list):
+                        directive_entries = directives_raw
                     elif isinstance(directives_raw, str):
-                        json_string = directives_raw
+                        directive_entries = [directives_raw]
                     else:
-                        json_string = "[]"
+                        directive_entries = []
 
-                    agents_list = json.loads(json_string)
+                    json_string = directive_entries[0] if directive_entries else "[]"
+                    directives_payload = json.loads(json_string)
+                    if isinstance(directives_payload, dict):
+                        agents_list = directives_payload.get("agents", [])
+                        metadata_payload = directives_payload
+                    else:
+                        agents_list = directives_payload
+                        metadata_payload = {}
+
+                    if len(directive_entries) > 1:
+                        metadata_payload = json.loads(directive_entries[1])
+
+                    if not isinstance(agents_list, list):
+                        agents_list = []
+                    skills_list = metadata_payload.get("skills", []) if isinstance(metadata_payload, dict) else []
+                    if not isinstance(skills_list, list):
+                        skills_list = []
+                    raw_active_skill_ids = (
+                        metadata_payload.get("active_skills") if isinstance(metadata_payload, dict) else None
+                    )
+                    if isinstance(raw_active_skill_ids, list):
+                        active_skill_ids = [skill_id for skill_id in raw_active_skill_ids if isinstance(skill_id, str)]
+                    raw_brain_active = (
+                        metadata_payload.get("brain_active") if isinstance(metadata_payload, dict) else None
+                    )
+                    if isinstance(raw_brain_active, bool):
+                        brain_active = raw_brain_active
 
                     for directive in agents_list:
                         if isinstance(directive, dict):
@@ -390,6 +750,32 @@ async def inbound_service_loop(ws, shared_queues):
                             )
                             agents.append(agent)
                             print(f"[ROSBridge] Parsed agent: {agent.id} - {agent.display_name}")
+                    for skill in skills_list:
+                        if isinstance(skill, dict):
+                            raw_inputs = skill.get("inputs", {})
+                            inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
+                            if not inputs:
+                                inputs_json = skill.get("inputs_json", "")
+                                try:
+                                    parsed_inputs = (
+                                        json.loads(inputs_json) if isinstance(inputs_json, str) and inputs_json else {}
+                                    )
+                                except json.JSONDecodeError:
+                                    parsed_inputs = {}
+                                if isinstance(parsed_inputs, dict):
+                                    inputs = parsed_inputs
+                            skill_info = SkillInfo(
+                                id=str(skill.get("id", "")),
+                                name=str(skill.get("name", skill.get("id", ""))),
+                                type=str(skill.get("type", "")),
+                                guidelines=str(skill.get("guidelines", "")),
+                                guidelines_when_running=str(skill.get("guidelines_when_running", "")),
+                                inputs=inputs,
+                                in_training=bool(skill.get("in_training", False)),
+                                episode_count=int(skill.get("episode_count", 0) or 0),
+                                directory=str(skill.get("directory", "")),
+                            )
+                            skills.append(skill_info)
                 except json.JSONDecodeError as e:
                     print(f"[ROSBridge] Failed to parse directives JSON: {e}")
                 except Exception as e:
@@ -398,8 +784,11 @@ async def inbound_service_loop(ws, shared_queues):
                 shared_queues.update_available_agents(
                     agents=agents,
                     current_agent_id=current_directive,
-                    startup_agent_id=startup_directive,
+                    active_skill_ids=active_skill_ids,
+                    brain_active=brain_active,
                 )
+                if skills:
+                    shared_queues.update_available_skills(skills)
                 print(f"[ROSBridge] Loaded {len(agents)} available agents from brain")
 
         await asyncio.sleep(0.0001)
@@ -424,6 +813,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Queue monitoring - log periodically if queues are backing up
     last_queue_log_time = time.time()
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
+    last_sensor_publish_time = 0.0
+    last_clock_publish_time = 0.0
+    last_arm_state_publish_time = 0.0
+    last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
     adv_color = rosbridge_advertise("/mars/main_camera/left/image_raw/compressed", "sensor_msgs/msg/CompressedImage")
@@ -434,6 +827,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     adv_map = rosbridge_advertise("/map", "nav_msgs/msg/OccupancyGrid")
     adv_chat_in = rosbridge_advertise("/brain/chat_in", "std_msgs/msg/String")
     adv_set_directive = rosbridge_advertise("/brain/set_directive", "std_msgs/msg/String")
+    adv_set_active_skills = rosbridge_advertise("/brain/set_active_skills", "std_msgs/msg/String")
     adv_brain_backend_config = rosbridge_advertise("/brain/backend_config", "std_msgs/msg/String")
     # Add a new topic for logging configuration
     adv_logging_config = rosbridge_advertise("/logging_config", "std_msgs/msg/Bool")
@@ -446,7 +840,6 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
-    adv_arm_goto_service = rosbridge_advertise_service("/mars/arm/goto_js", "mars_msgs/srv/GotoJS")  # noqa: F841
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -455,6 +848,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_map))
     await ws.send(json.dumps(adv_chat_in))
     await ws.send(json.dumps(adv_set_directive))
+    await ws.send(json.dumps(adv_set_active_skills))
     await ws.send(json.dumps(adv_brain_backend_config))
     await ws.send(json.dumps(adv_logging_config))
     await ws.send(json.dumps(adv_clock))
@@ -463,9 +857,12 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_camera))
-    # await ws.send(json.dumps(adv_arm_goto_service))
+    for service_advert in arm_service_advertisements():
+        await ws.send(json.dumps(service_advert))
     print(
-        "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, /brain/backend_config, /logging_config, navigation topics, and arm interfaces"
+        "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, "
+        "/brain/backend_config, /logging_config, navigation topics, arm state, "
+        "and simulator-owned arm services"
     )
 
     # Publish initial navigation mode (simulator always uses mapfree)
@@ -477,18 +874,24 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Also subscribe to /cmd_vel, /chat_out, and navigation topics
     sub_cmd_vel = rosbridge_subscribe("/cmd_vel", "geometry_msgs/msg/Twist")
     sub_chat_out = rosbridge_subscribe("/brain/chat_out", "std_msgs/msg/String")
+    sub_skill_status = rosbridge_subscribe("/brain/skill_status_update", "std_msgs/msg/String")
     sub_brain_ws_status = rosbridge_subscribe("/brain/websocket_status", "std_msgs/msg/String")
+    sub_available_skills = rosbridge_subscribe("/brain/available_skills", "brain_messages/msg/AvailableSkills")
     sub_nav_path = rosbridge_subscribe("/sim_navigation/global_plan", "nav_msgs/msg/Path")
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
     sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
+    await ws.send(json.dumps(sub_skill_status))
     await ws.send(json.dumps(sub_brain_ws_status))
+    await ws.send(json.dumps(sub_available_skills))
     await ws.send(json.dumps(sub_nav_path))
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
     print(
-        "[ROSBridge] Subscribed to /cmd_vel, /brain/chat_out, /brain/websocket_status, /mars/arm/commands, and navigation topics"
+        "[ROSBridge] Subscribed to /cmd_vel, /brain/chat_out, "
+        "/brain/skill_status_update, /brain/websocket_status, /brain/available_skills, "
+        "/mars/arm/commands, and navigation topics"
     )
 
     # Initialize navigation controller
@@ -540,10 +943,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                     await ws.send(json.dumps(outbound))
 
                     # Echo back to UI
-                    try:
-                        shared_queues.chat_from_bridge.put_nowait(msg)
-                    except queue.Full:
-                        pass
+                    shared_queues.enqueue_chat_from_bridge(msg)
 
                 elif isinstance(msg, ChatSignal):
                     print(f"[ROSBridge] Publishing chat signal: {msg.signal}")
@@ -558,14 +958,17 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             except queue.Empty:
                 break
 
-        # PRIORITY 2: Process sensor data from dedicated size-1 queue (camera frames)
-        # This queue only ever has 0 or 1 item - old frames are dropped at the source
-        try:
-            sensor_msg = shared_queues.sensor_to_agent.get_nowait()
-            if isinstance(sensor_msg, RobotStateMsg):
-                await publish_robot_state(ws, sensor_msg, shared_queues)
-        except queue.Empty:
-            pass
+        # PRIORITY 2: Process sensor data from the latest-only queue.
+        # The web UI can render faster locally; ROSBridge cannot cheaply carry
+        # full camera payloads at the UI frame rate because images are JSON.
+        if now - last_sensor_publish_time >= SENSOR_PUBLISH_INTERVAL_SEC:
+            try:
+                sensor_msg = shared_queues.sensor_to_agent.get_nowait()
+                if isinstance(sensor_msg, RobotStateMsg):
+                    await publish_robot_state(ws, sensor_msg, shared_queues)
+                    last_sensor_publish_time = time.time()
+            except queue.Empty:
+                pass
 
         # PRIORITY 3: Process sim_to_agent messages (commands, map, arm state, etc.)
         try:
@@ -579,7 +982,16 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 directive_msg = {"data": msg.directive}
                 outbound = rosbridge_publish("/brain/set_directive", directive_msg)
                 await ws.send(json.dumps(outbound))
+                shared_queues.set_current_agent(msg.directive)
                 print(f"[ROSBridge] Published directive: {msg.directive}")
+            elif isinstance(msg, ActiveSkillsCmd):
+                active_skills_msg = {"data": json.dumps({"agent_id": msg.agent_id, "skills": msg.skills})}
+                outbound = rosbridge_publish("/brain/set_active_skills", active_skills_msg)
+                await ws.send(json.dumps(outbound))
+                shared_queues.update_active_skill_ids(msg.skills)
+                print(
+                    f"[ROSBridge] Published active skills for {msg.agent_id or 'current directive'}: {len(msg.skills)}"
+                )
             elif isinstance(msg, ResetRobotCmd):
                 reset_srv = rosbridge_call_service("/brain/reset_brain", "brain_messages/srv/ResetBrain")
 
@@ -602,6 +1014,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
                 print(f"[ROSBridge] Setting brain active: {msg.active}")
                 await service_call_queue.put(brain_active_srv)
+                shared_queues.set_brain_active(msg.active)
 
             elif isinstance(msg, RefreshAgentsCmd):
                 refresh_agents_srv = rosbridge_call_service(
@@ -648,6 +1061,28 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             # no messages to publish right now
             pass
 
+        clock_msg, arm_state_msg, nav_feedback_msg = shared_queues.pop_latest_agent_updates()
+        updates_now = time.time()
+        if clock_msg is not None and updates_now - last_clock_publish_time >= CLOCK_PUBLISH_INTERVAL_SEC:
+            outbound = rosbridge_publish("/clock", clock_msg)
+            await ws.send(json.dumps(outbound))
+            last_clock_publish_time = updates_now
+        if arm_state_msg is not None and updates_now - last_arm_state_publish_time >= ARM_STATE_PUBLISH_INTERVAL_SEC:
+            await publish_arm_state(ws, arm_state_msg)
+            last_arm_state_publish_time = updates_now
+        if (
+            nav_feedback_msg is not None
+            and updates_now - last_nav_feedback_publish_time >= NAV_FEEDBACK_PUBLISH_INTERVAL_SEC
+        ):
+            feedback_msg = {
+                "x": nav_feedback_msg.distance_to_goal,
+                "y": nav_feedback_msg.unused_y,
+                "z": nav_feedback_msg.unused_z,
+            }
+            outbound = rosbridge_publish("/sim_navigation/feedback", feedback_msg)
+            await ws.send(json.dumps(outbound))
+            last_nav_feedback_publish_time = updates_now
+
         await asyncio.sleep(0.0001)
 
     print("[ROSBridge] outbound_data_loop stopped.")
@@ -685,7 +1120,7 @@ async def outbound_service_loop(ws, shared_queues, service_call_queue):
             service_name = srv_msg.get("service", "unknown")
             print(f"[ROSBridge] [service] Forwarded call_service: {service_name}")
         except asyncio.TimeoutError:
-            agents, _, _ = shared_queues.get_available_agents()
+            agents, _, _, _, _ = shared_queues.get_available_agents()
             now = time.time()
             if not agents and now - last_agents_refresh_at >= agents_retry_interval:
                 retry_get_agents = rosbridge_call_service(
@@ -778,9 +1213,10 @@ async def rosbridge_loop(shared_queues, rosbridge_uri: str, retry_interval: floa
     service_task = asyncio.create_task(
         _service_connection_loop(shared_queues, rosbridge_uri, service_call_queue, retry_interval)
     )
+    tasks = [data_task, service_task]
 
     # If either loop exits (e.g. exit_event set), cancel the other
-    done, pending = await asyncio.wait([data_task, service_task], return_when=asyncio.FIRST_COMPLETED)
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
 
@@ -1017,7 +1453,10 @@ def parse_arm_command(msg: dict) -> ArmCmd | None:
         return None
 
 
-def run_agent_async(shared_queues, rosbridge_uri="ws://localhost:9090"):
+def run_agent_async(
+    shared_queues,
+    rosbridge_uri="ws://localhost:9090",
+):
     """
     Launch the asynchronous rosbridge_loop in a dedicated thread.
     """
@@ -1025,7 +1464,12 @@ def run_agent_async(shared_queues, rosbridge_uri="ws://localhost:9090"):
 
     def _run():
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(rosbridge_loop(shared_queues, rosbridge_uri))
+        loop.run_until_complete(
+            rosbridge_loop(
+                shared_queues,
+                rosbridge_uri,
+            )
+        )
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()

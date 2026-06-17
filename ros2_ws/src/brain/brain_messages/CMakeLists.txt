@@ -28,6 +28,8 @@ set(srv_files
   "srv/LoadEpisode.srv"
   "srv/ReloadSkillsAgents.srv"
   "srv/CreatePhysicalSkill.srv"
+  "srv/SaveAsReplaySkill.srv"
+  "srv/DeleteSkill.srv"
 )
 
 set(msg_files

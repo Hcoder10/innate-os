@@ -283,73 +283,28 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 0c. Use a headless (no-GUI) boot when no display is attached
-# Robots ship on the stock Ubuntu *desktop* image and boot into a full GNOME
-# session (gnome-shell, Xorg, gdm, ~25 gsd-* daemons, gvfs, tracker) that costs
-# ~0.8 GB RAM plus idle CPU — on a machine where RAM is the binding constraint
-# and nothing renders the desktop. Switching the default target to multi-user
-# frees that memory for the ROS stack with no functional impact (nothing in the
-# runtime depends on an X session).
-# Guarded: only switches when no DRM connector reports a connected display, so
-# an engineering kit attached to a monitor at update time keeps its GUI.
-# Reversible: `systemctl set-default graphical.target` restores it — gdm is
-# stopped, never masked. Idempotent and non-fatal: never blocks an update.
+# 0c. Headless (no-GUI) boot.
+# The stock Ubuntu desktop image boots into GNOME (~0.8 GB RAM) that nothing
+# renders on the robot. Switch the default target to multi-user; the GUI stays
+# one `systemctl set-default graphical.target` away, and takes effect on the
+# next boot.
 # -----------------------------------------------------------------------------
-display_connected() {
-    local status_file
-    for status_file in /sys/class/drm/*/status; do
-        [ -e "$status_file" ] || continue
-        [ "$(cat "$status_file" 2>/dev/null)" = "connected" ] && return 0
-    done
-    return 1
-}
-
-configure_headless_boot() {
-    if display_connected; then
-        log "  Display connected — keeping graphical boot target"
-        return 0
-    fi
-
-    if [ "$(systemctl get-default 2>/dev/null)" = "multi-user.target" ]; then
-        log "  Already set to multi-user.target (headless)"
-    else
-        log "  No display connected — setting default boot target to multi-user.target"
-        systemctl set-default multi-user.target >/dev/null 2>&1 || return 1
-    fi
-
-    # Reclaim the desktop's memory now instead of waiting for the next reboot.
-    # Stopping (not masking) gdm tears down the unused :0 session while leaving
-    # the GUI one command away. SSH/tmux are independent of gdm, so the running
-    # update is unaffected.
-    if systemctl is-active --quiet gdm.service 2>/dev/null; then
-        log "  Stopping gdm.service to reclaim memory now"
-        systemctl stop gdm.service 2>/dev/null || true
-    fi
-    return 0
-}
-
 log "Configuring boot target..."
-if configure_headless_boot; then
-    log "  Boot target configuration complete"
+if systemctl set-default multi-user.target >/dev/null 2>&1; then
+    log "  Set headless (multi-user) boot for next boot"
 else
     log "  WARNING: failed to set headless boot target (continuing)"
 fi
 
 # -----------------------------------------------------------------------------
-# 0d. Disable desktop/update daemons with no robot function
-# These ship with the Ubuntu desktop image and serve no purpose on a headless
-# robot — they only consume RAM and wake the CPU to poll (package/firmware
-# update checkers, printing, colour management, crash uploaders, etc.). Freeing
-# them compounds the headless-boot savings above.
-# Fleet-safe: each unit is disabled only if present on this image (idempotent,
-# tolerant of image variants) and non-fatal (a failure only warns, never blocks
-# an update). snapd is disabled only when no snaps are installed, so a robot
-# that ships something as a snap is never broken.
-# Reversible: `systemctl enable --now <unit>` restores any of these.
+# 0d. Disable desktop/update daemons with no robot function.
+# These ship with the desktop image and only cost RAM + periodic CPU wakeups on
+# a headless robot. Each is disabled only if present (non-fatal); snapd only
+# when no snaps are installed. Reversible via `systemctl enable --now <unit>`.
 # -----------------------------------------------------------------------------
 disable_unit() {
     local unit="$1"
-    # Skip units that don't exist on this image (keeps logs clean, avoids errors).
+    # Skip units not present on this image.
     [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
     if systemctl disable --now "$unit" >/dev/null 2>&1; then
         log "  Disabled $unit"
@@ -358,10 +313,11 @@ disable_unit() {
     fi
 }
 
+# fwupd is intentionally left enabled — it's the channel for LVFS firmware
+# updates, the one disabled daemon that removes a real capability.
 log "Disabling desktop/update daemons with no robot function..."
 for unit in \
     packagekit.service \
-    fwupd.service \
     ModemManager.service \
     cups.service cups.socket cups-browsed.service lpd.service \
     colord.service \
@@ -944,15 +900,26 @@ if systemctl list-unit-files bluetooth.service &>/dev/null; then
     SERVICES+=("bluetooth.service")
 fi
 
+# zenoh-router and ros-app must be *restarted* (not just started) after a
+# rebuild: `systemctl start` is a no-op when they're already running, which
+# leaves the long-lived Zenoh router holding stale liveliness tokens from the
+# previous node generation and the old node binaries in place — surfacing as
+# `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
+# the router before the nodes so the fresh graph comes up against a fresh router.
+RESTART_SERVICES=("zenoh-router.service" "ros-app.service")
+
 # Always enable services (so they start on boot after reboot)
-# But only start them if reboot is not required
+# But only start/restart them if reboot is not required
 for service in "${SERVICES[@]}"; do
     if [ -f "/etc/systemd/system/$service" ] || systemctl list-unit-files "$service" &>/dev/null; then
         log "  Enabling $service"
         systemctl enable "$service" 2>/dev/null || true
-        
+
         if [ "$HARDWARE_REBOOT_REQUIRED" = true ]; then
             log "  Skipping start of $service (reboot required - will start after reboot)"
+        elif [[ " ${RESTART_SERVICES[*]} " == *" $service "* ]]; then
+            log "  Restarting $service"
+            systemctl restart "$service" 2>/dev/null || true
         else
             log "  Starting $service"
             systemctl start "$service" 2>/dev/null || true

@@ -77,6 +77,7 @@ settle_after_launch
 tmux split-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch mars_control app.sim.launch.py" C-m
 echo "Started app control..."
+
 # === Window 2: WebRTC Streamer ===
 tmux new-window -t "$SESSION_NAME" -n webrtc
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
@@ -105,6 +106,16 @@ echo "Started brain client..."
 tmux new-window -t "$SESSION_NAME" -n behavior
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:behavior" "ros2 launch manipulation behavior.launch.py" C-m
 echo "Started behavior server..."
+
+# === Window 5: Arm IK ===
+tmux new-window -t "$SESSION_NAME" -n arm-ik
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:arm-ik" "ros2 run mars_arm ik.py" C-m
+echo "Started arm IK..."
+
+# === Window 6: Vision Navigation Inference Client ===
+tmux new-window -t "$SESSION_NAME" -n vision-nav
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:vision-nav" "ros2 launch innate_uninavid uninavid.launch.py cmd_vel_topic:=/cmd_vel" C-m
+echo "Started vision navigation inference client..."
 
 # Select the rosbridge-app window
 tmux select-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app"

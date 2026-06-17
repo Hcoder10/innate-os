@@ -172,6 +172,7 @@ class BrainLifecycle:
             self._logger.error(f"Unknown directive: {name}")
             return
         self._state.current_directive = self._state.directives[name]
+        self._state.active_skill_ids = list(self._state.current_directive.get_skills())
         self._logger.info(f"Activated directive: {name}")
         self._chat.clear()
         self._ws.send_message(MessageIn(type=MessageInType.RESET, payload={"memory_state": "clear"}))

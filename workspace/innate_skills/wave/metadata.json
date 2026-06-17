@@ -4,13 +4,13 @@
     "guidelines": "",
     "guidelines_when_running": "",
     "inputs": {},
+    "wheeled": false,
     "downloads": {
         "episode_0.h5": "https://storage.googleapis.com/karmanyaah-public/arm_wave/episode_0.h5"
     },
     "execution": {
         "model_type": "replay",
         "replay_file": "episode_0.h5",
-        "duration": 0.0,
         "replay_frequency": 50.0,
         "start_pose": [
             1.57693225,

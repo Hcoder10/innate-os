@@ -282,7 +282,15 @@ class Orchestrator:
             f"Successfully registered {msg.payload.get('count', 0)} primitives and directive: "
             f"{msg.payload.get('directive_registered', False)}"
         )
-        if self._config.simulator_mode and not self._state.is_brain_active and self.lifecycle is not None:
+        is_empty_directive = (
+            self._state.current_directive is not None and self._state.current_directive.id == "empty_directive"
+        )
+        if (
+            self._config.simulator_mode
+            and not self._state.is_brain_active
+            and not is_empty_directive
+            and self.lifecycle is not None
+        ):
             self._logger.info("[BrainClient] Auto-activating brain in simulator mode")
             self.lifecycle.activate_for_simulator()
         self.start_pose_image_timer_if_ready()

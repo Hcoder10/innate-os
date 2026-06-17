@@ -154,6 +154,15 @@ class DirectiveCmd(NamedTuple):
     directive: str
 
 
+class ActiveSkillsCmd(NamedTuple):
+    """
+    A command to update the active skills for the current directive.
+    """
+
+    agent_id: str | None
+    skills: list[str]
+
+
 class RefreshAgentsCmd(NamedTuple):
     """
     A command to refresh available robot directives from the brain.

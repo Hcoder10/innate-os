@@ -787,6 +787,7 @@ class AppControl : public rclcpp::Node {
             data_to_publish_dict["update_running"] = check_update_running();
 
             data_to_publish_dict["supports_webrtc_audio"] = true;
+            data_to_publish_dict["supports_digital_skills"] = true;
 
             if (!data_to_publish_dict.empty()) {
                 final_json_string_to_publish = data_to_publish_dict.dump();

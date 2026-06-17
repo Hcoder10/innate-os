@@ -13,7 +13,7 @@ class BasicAgent(Agent):
 
     @property
     def display_name(self) -> str:
-        return "No Prompt"
+        return "Basic Navigation"
 
     def get_skills(self) -> list[str]:
         """Return the list of skill IDs this directive can use"""
@@ -23,5 +23,5 @@ class BasicAgent(Agent):
         """Enable microphone input to hear user"""
         return ["micro"]
 
-    def get_prompt(self) -> None:
-        return None
+    def get_prompt(self) -> str:
+        return ""

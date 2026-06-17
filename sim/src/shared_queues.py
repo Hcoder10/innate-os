@@ -14,6 +14,10 @@ class ChatMessage(NamedTuple):
     text: str
     timestamp: float
     timestamp_put_in_queue: float | None  # Used to check if the message was lost
+    task_status: str | None = None
+    primitive_id: str | None = None
+    skill_id: str | None = None
+    failure_reason: str | None = None
 
 
 class ChatSignal(NamedTuple):
@@ -29,6 +33,20 @@ class AgentInfo(NamedTuple):
     display_icon: str | None  # Base64-encoded icon data or None
     prompt: str
     skills: list[str]
+
+
+class SkillInfo(NamedTuple):
+    """Information about an available skill/primitive."""
+
+    id: str
+    name: str
+    type: str
+    guidelines: str
+    guidelines_when_running: str
+    inputs: dict[str, Any]
+    in_training: bool
+    episode_count: int
+    directory: str
 
 
 class SharedQueues:
@@ -49,6 +67,14 @@ class SharedQueues:
         # Separate size-1 queue for camera/sensor data - always keeps only latest frame
         # This prevents image data from backing up and causing latency
         self.sensor_to_agent = queue.Queue(maxsize=1)
+        self.latest_clock_msg: dict[str, Any] | None = None
+        self.latest_arm_state_msg: Any | None = None
+        self.arm_torque_enabled: bool = True
+        self.arm_torque_lock = threading.Lock()
+        self.arm_trajectory_task: Any | None = None
+        self.arm_trajectory_task_lock = threading.Lock()
+        self.latest_nav_feedback_msg: Any | None = None
+        self.latest_agent_update_lock = threading.Lock()
 
         # Flag to indicate if all model outputs should be logged
         self.log_everything = log_everything
@@ -57,7 +83,10 @@ class SharedQueues:
 
         # Queues specifically for chat messages
         self.chat_to_bridge = queue.Queue(maxsize=5000)
-        self.chat_from_bridge = queue.Queue(maxsize=5000)
+        self.chat_from_bridge = queue.Queue(maxsize=200)
+        self.chat_from_bridge_lock = threading.Lock()
+        self._recent_chat_from_bridge_keys: deque[tuple[str, str, float]] = deque(maxlen=300)
+        self._recent_chat_from_bridge_key_set: set[tuple[str, str, float]] = set()
 
         # Store the latest robot position and orientation for direct access
         # Format: [x, y, z]
@@ -69,9 +98,12 @@ class SharedQueues:
 
         # Store available agents/directives from the robot
         self.available_agents: list[AgentInfo] = []
+        self.available_skills: list[SkillInfo] = []
         self.current_agent_id: str | None = None
-        self.startup_agent_id: str | None = None
+        self.active_skill_ids: list[str] = []
+        self.brain_active: bool = False
         self.available_agents_updated_at: float = 0.0
+        self.available_agent_state_updated_at: float = 0.0
         self.agents_lock = threading.Lock()  # For thread-safe updates
 
         # Store the brain client's cloud/local-agent websocket state for the UI.
@@ -154,30 +186,138 @@ class SharedQueues:
         self,
         agents: list[AgentInfo],
         current_agent_id: str | None = None,
-        startup_agent_id: str | None = None,
+        active_skill_ids: list[str] | None = None,
+        brain_active: bool | None = None,
     ):
         """Thread-safe method to update available agents from the robot"""
         with self.agents_lock:
+            previous_agent_id = self.current_agent_id
             self.available_agents = agents
             self.current_agent_id = current_agent_id
-            self.startup_agent_id = startup_agent_id
-            self.available_agents_updated_at = time.time()
+            if active_skill_ids is not None:
+                self.active_skill_ids = active_skill_ids
+            elif current_agent_id and (current_agent_id != previous_agent_id or not self.active_skill_ids):
+                current_agent = next(
+                    (agent for agent in agents if agent.id == current_agent_id),
+                    None,
+                )
+                self.active_skill_ids = current_agent.skills.copy() if current_agent else []
+            if brain_active is not None:
+                self.brain_active = brain_active
+            updated_at = time.time()
+            self.available_agents_updated_at = updated_at
+            self.available_agent_state_updated_at = updated_at
+
+    def update_available_skills(
+        self,
+        skills: list[SkillInfo],
+        active_skill_ids: list[str] | None = None,
+    ):
+        """Thread-safe method to update available skills from the robot."""
+        with self.agents_lock:
+            self.available_skills = skills
+            if active_skill_ids is not None:
+                self.active_skill_ids = active_skill_ids
+            self.available_agent_state_updated_at = time.time()
+
+    def set_current_agent(self, agent_id: str):
+        """Track the selected agent locally for API responses."""
+        with self.agents_lock:
+            self.current_agent_id = agent_id
+            current_agent = next(
+                (agent for agent in self.available_agents if agent.id == agent_id),
+                None,
+            )
+            self.active_skill_ids = current_agent.skills.copy() if current_agent else []
+            self.available_agent_state_updated_at = time.time()
+
+    def update_active_skill_ids(self, skill_ids: list[str]):
+        """Track the active skill subset locally for API responses."""
+        with self.agents_lock:
+            self.active_skill_ids = skill_ids.copy()
+            self.available_agent_state_updated_at = time.time()
+
+    def set_brain_active(self, active: bool):
+        """Track whether the brain is currently accepting user input."""
+        with self.agents_lock:
+            self.brain_active = active
+            self.available_agent_state_updated_at = time.time()
 
     def get_available_agents(
         self,
-    ) -> tuple[list[AgentInfo], str | None, str | None]:
-        """Thread-safe method to get available agents, current agent, and startup agent"""
+    ) -> tuple[list[AgentInfo], list[SkillInfo], str | None, list[str], bool]:
+        """Thread-safe method to get available agents, skills, and active IDs."""
         with self.agents_lock:
             return (
                 self.available_agents.copy(),
+                self.available_skills.copy(),
                 self.current_agent_id,
-                self.startup_agent_id,
+                self.active_skill_ids.copy(),
+                self.brain_active,
             )
 
     def get_available_agents_updated_at(self) -> float:
         """Thread-safe method to get the latest available-agents update time."""
         with self.agents_lock:
             return self.available_agents_updated_at
+
+    def set_latest_clock_msg(self, msg: dict[str, Any]) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_clock_msg = msg
+
+    def set_latest_arm_state_msg(self, msg: Any) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_arm_state_msg = msg
+
+    def set_latest_nav_feedback_msg(self, msg: Any) -> None:
+        with self.latest_agent_update_lock:
+            self.latest_nav_feedback_msg = msg
+
+    def pop_latest_agent_updates(self) -> tuple[dict[str, Any] | None, Any | None, Any | None]:
+        with self.latest_agent_update_lock:
+            clock_msg = self.latest_clock_msg
+            arm_state_msg = self.latest_arm_state_msg
+            nav_feedback_msg = self.latest_nav_feedback_msg
+            self.latest_clock_msg = None
+            self.latest_arm_state_msg = None
+            self.latest_nav_feedback_msg = None
+        return clock_msg, arm_state_msg, nav_feedback_msg
+
+    def enqueue_chat_from_bridge(self, msg: ChatMessage) -> bool:
+        timestamp = float(msg.timestamp or 0.0)
+        key = (msg.sender, msg.text, round(timestamp, 3))
+
+        with self.chat_from_bridge_lock:
+            if key in self._recent_chat_from_bridge_key_set:
+                return False
+
+            while self.chat_from_bridge.full():
+                try:
+                    dropped = self.chat_from_bridge.get_nowait()
+                except queue.Empty:
+                    break
+                dropped_timestamp = float(dropped.timestamp or 0.0)
+                dropped_key = (
+                    dropped.sender,
+                    dropped.text,
+                    round(dropped_timestamp, 3),
+                )
+                self._recent_chat_from_bridge_key_set.discard(dropped_key)
+
+            try:
+                self.chat_from_bridge.put_nowait(msg)
+            except queue.Full:
+                return False
+
+            if (
+                self._recent_chat_from_bridge_keys.maxlen is not None
+                and len(self._recent_chat_from_bridge_keys) >= self._recent_chat_from_bridge_keys.maxlen
+            ):
+                old_key = self._recent_chat_from_bridge_keys.popleft()
+                self._recent_chat_from_bridge_key_set.discard(old_key)
+            self._recent_chat_from_bridge_keys.append(key)
+            self._recent_chat_from_bridge_key_set.add(key)
+            return True
 
     def update_brain_backend_status(self, status: dict[str, Any]):
         """Thread-safe method to update brain/cloud backend connection status."""
@@ -245,6 +385,14 @@ class SharedQueues:
         with self.agents_lock:
             available_agent_count = len(self.available_agents)
             available_agents_updated_at = self.available_agents_updated_at
+            available_agent_state_updated_at = self.available_agent_state_updated_at
+
+        with self.latest_agent_update_lock:
+            latest_agent_updates = {
+                "clock": self.latest_clock_msg is not None,
+                "arm_state": self.latest_arm_state_msg is not None,
+                "nav_feedback": self.latest_nav_feedback_msg is not None,
+            }
 
         return {
             "queue_sizes": {
@@ -255,9 +403,11 @@ class SharedQueues:
                 "chat_to_bridge": self.chat_to_bridge.qsize(),
                 "chat_from_bridge": self.chat_from_bridge.qsize(),
             },
+            "latest_agent_updates": latest_agent_updates,
             "fps_by_camera": fps_by_camera,
             "latest_frame_age_by_camera": latest_frame_age_by_camera,
             "available_agent_count": available_agent_count,
             "available_agents_updated_at": available_agents_updated_at,
+            "available_agent_state_updated_at": available_agent_state_updated_at,
             "sim_log_mode": self.get_sim_log_mode(),
         }

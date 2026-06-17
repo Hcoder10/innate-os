@@ -18,7 +18,7 @@ import time
 
 import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
-from brain_messages.srv import CreatePhysicalSkill, ReloadSkillsAgents
+from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAgents, SaveAsReplaySkill
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
@@ -108,6 +108,10 @@ class SkillsActionServer(Node):
         self._create_physical_skill_srv = self.create_service(
             CreatePhysicalSkill, "/brain/create_physical_skill", self._handle_create_physical_skill
         )
+        self._save_replay_skill_srv = self.create_service(
+            SaveAsReplaySkill, "/brain/recorder/save_as_replay_skill", self._handle_save_as_replay_skill
+        )
+        self._delete_skill_srv = self.create_service(DeleteSkill, "/brain/delete_skill", self._handle_delete_skill)
         self._reload_skills_srv = self.create_service(
             ReloadSkillsAgents, "/brain/reload_skills", self._handle_reload_skills_agents
         )
@@ -134,6 +138,29 @@ class SkillsActionServer(Node):
         response.message = message
         response.skill_directory = skill_dir
         response.skill_id = skill_id
+        return response
+
+    def _handle_save_as_replay_skill(self, request, response):
+        try:
+            skill_dir, skill_id, wheeled = self.catalog.save_recording_as_replay_skill(
+                request.task_directory, request.name, request.guidelines, request.episode_id
+            )
+            response.success = True
+            response.message = f"Saved replay skill '{request.name.strip()}'."
+            response.skill_directory, response.skill_id, response.wheeled = skill_dir, skill_id, wheeled
+        except Exception as e:
+            response.success = False
+            response.message = str(e)
+        return response
+
+    def _handle_delete_skill(self, request, response):
+        try:
+            self.catalog.delete_skill(request.skill_directory)
+            response.success = True
+            response.message = f"Deleted {request.skill_directory}."
+        except Exception as e:
+            response.success = False
+            response.message = str(e)
         return response
 
     def _handle_reload_skills_agents(self, request, response):
@@ -549,6 +576,7 @@ class SkillsActionServer(Node):
         self._cli_skill_worker_stop.set()
         self._cli_skill_tasks.put(None)
         self._cli_skill_worker.join(timeout=1.0)
+        self.manipulation.shutdown()
         self._camera_node.shutdown()
         self._action_server.destroy()
         super().destroy_node()

@@ -48,7 +48,7 @@ Below is a brief description of each major piece. In the repository, these are l
 
 ### Mars Robot / Simulation
 
-- **Mars Robot**: A physical platform running ROS 2 (e.g. on a Jetson or SBC). Publishes topics like `/odom`, `/battery_state`, and receives `/cmd_vel`.  
+- **Mars Robot**: A physical platform running ROS 2 (e.g. on a Jetson or SBC). Publishes topics like `/odom`, `/battery_state`, and receives `/cmd_vel`.
 - **Simulation**: A software environment mimicking the robot's sensors (camera, LiDAR, etc.) and actuators. Publishes the same ROS 2 topics so that the rest of the system thinks it's dealing with a real robot.
 
 ### ROS 2 Nodes & Packages
