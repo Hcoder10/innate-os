@@ -402,6 +402,18 @@ def video_feed_chase(request: Request):
     )
 
 
+@router.get("/video_feed_arm", include_in_schema=False)
+def video_feed_arm(request: Request):
+    """
+    Streaming endpoint which returns the arm wrist camera feed.
+    """
+    shared_queues = request.app.state.SHARED_QUEUES
+    return StreamingResponse(
+        mjpeg_generator(shared_queues, "arm_wrist"),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
 @router.get("/get_robot_position")
 def get_robot_position(request: Request):
     """

@@ -6,6 +6,20 @@ import { Costmap2DView } from "./Costmap2DView";
 
 type ViewMode = "frontFocus" | "map";
 
+type CameraId = "first_person" | "arm" | "chase";
+
+const CAMERA_ENDPOINTS: Record<CameraId, string> = {
+  first_person: "/video_feed",
+  arm: "/video_feed_arm",
+  chase: "/video_feed_chase",
+};
+
+const CAMERA_LABELS: Record<CameraId, string> = {
+  first_person: "First Person",
+  arm: "Arm",
+  chase: "Chase",
+};
+
 type ImageDisplayProps = {
   viewMode: ViewMode;
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
@@ -92,6 +106,35 @@ const MiniLabel = styled.div`
   font-size: 10px;
   text-transform: uppercase;
   pointer-events: none;
+`;
+
+// Camera selector overlay (top-right of the feed)
+const CameraSelector = styled.div`
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  gap: 4px;
+`;
+
+const CameraButton = styled.button<{ $isActive: boolean }>`
+  padding: 6px 10px;
+  font-family: ${({ theme }) => theme.fonts.mono};
+  font-size: 10px;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid ${({ theme }) => theme.colors.foreground};
+  background: ${({ $isActive, theme }) =>
+    $isActive ? theme.colors.foreground : "rgba(0, 0, 0, 0.6)"};
+  color: ${({ $isActive, theme }) =>
+    $isActive ? theme.colors.background : theme.colors.foreground};
+  transition: all 0.15s;
+
+  &:hover {
+    background: ${({ $isActive, theme }) =>
+      $isActive ? theme.colors.foreground : "rgba(255, 255, 255, 0.15)"};
+  }
 `;
 
 // Camera Viewport - fills available space in the 4:3 container
@@ -359,6 +402,7 @@ export function ImageDisplay({
   const [isCheckingBackend, setIsCheckingBackend] = useState(false);
   const [showDirectiveModal, setShowDirectiveModal] = useState(false);
   const [directiveText, setDirectiveText] = useState("");
+  const [camera, setCamera] = useState<CameraId>("first_person");
 
   const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
   const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
@@ -390,7 +434,7 @@ export function ImageDisplay({
   const baseUrl = import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
 
   // Set up the sources for the main and secondary feeds based on view mode
-  const mainSrc = baseUrl + "/video_feed";
+  const mainSrc = baseUrl + CAMERA_ENDPOINTS[camera];
 
   // Function to check if the simulation is running
   const checkSimulationReady = useCallback(async () => {
@@ -530,6 +574,21 @@ export function ImageDisplay({
           {!isMapView && <MiniLabel>map</MiniLabel>}
           <Costmap2DView wsUrl={robotWsUrl} isMini={!isMapView} />
         </ViewLayer>
+
+        {/* Camera selector — sim (MJPEG) feeds only */}
+        {!isMapView && !useDirectRobot && (
+          <CameraSelector>
+            {(Object.keys(CAMERA_ENDPOINTS) as CameraId[]).map((id) => (
+              <CameraButton
+                key={id}
+                $isActive={camera === id}
+                onClick={() => setCamera(id)}
+              >
+                {CAMERA_LABELS[id]}
+              </CameraButton>
+            ))}
+          </CameraSelector>
+        )}
 
         {/* Loading indicator */}
         {!isMapView && showLoading && (
