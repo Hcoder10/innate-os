@@ -224,6 +224,49 @@ export function publishRosbridgeTopic(
   });
 }
 
+export interface RosbridgePublisher {
+  publish: (topic: string, msg: Record<string, unknown>) => void;
+  close: () => void;
+}
+
+/**
+ * Opens a single persistent ROSBridge connection for repeated publishing.
+ * Unlike publishRosbridgeTopic (which opens/closes a socket per message),
+ * this keeps the socket open so high-rate publishing (e.g. teleop /cmd_vel)
+ * is cheap. Messages sent while the socket is still connecting are buffered
+ * and flushed on open.
+ */
+export function createRosbridgePublisher(wsUrl: string): RosbridgePublisher {
+  const ws = new WebSocket(wsUrl);
+  const pending: string[] = [];
+
+  ws.onopen = () => {
+    while (pending.length > 0) {
+      ws.send(pending.shift() as string);
+    }
+  };
+
+  const publish = (topic: string, msg: Record<string, unknown>) => {
+    const payload = JSON.stringify({ op: "publish", topic, msg });
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    } else if (ws.readyState === WebSocket.CONNECTING) {
+      pending.push(payload);
+    }
+  };
+
+  const close = () => {
+    pending.length = 0;
+    try {
+      ws.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  return { publish, close };
+}
+
 function parseRobotAgents(rawAgents: unknown): RobotAgent[] {
   return Array.isArray(rawAgents)
     ? rawAgents

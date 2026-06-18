@@ -770,6 +770,7 @@ export default function App() {
       onSetHarnessRunning={(running) => void handleHarnessRunningChange(running)}
       onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
       onRunSkill={handleRunSkill}
+      robotWsUrl={robotWsUrl}
     />
   );
 }
