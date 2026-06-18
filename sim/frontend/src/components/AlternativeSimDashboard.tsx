@@ -10,6 +10,7 @@ import styled from "styled-components";
 import { RobotSkill } from "../services/rosbridgeService";
 import { Chat } from "./Chat";
 import { ImageDisplay } from "./ImageDisplay";
+import { TeleopDrive } from "./TeleopDrive";
 
 type ViewMode = "frontFocus" | "map";
 type BackendDisplayLevel = "healthy" | "warning" | "error";
@@ -44,6 +45,7 @@ type AlternativeSimDashboardProps = {
   onSetHarnessRunning: (running: boolean) => void;
   onToggleActiveSkill: (skillId: string) => void;
   onRunSkill: (skill: RobotSkill, inputsJson: string) => SkillRunHandle;
+  robotWsUrl: string;
 };
 
 type SkillInputSchema =
@@ -1071,6 +1073,7 @@ export function AlternativeSimDashboard({
   onSetHarnessRunning,
   onToggleActiveSkill,
   onRunSkill,
+  robotWsUrl,
 }: AlternativeSimDashboardProps) {
   const skillUpdatePending = Object.keys(pendingSkillChanges).length > 0;
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
@@ -1477,6 +1480,8 @@ export function AlternativeSimDashboard({
               Reset Position
             </DangerButton>
           </ResetActions>
+
+          <TeleopDrive wsUrl={robotWsUrl} />
         </LeftPanel>
 
         <CenterPanel>
