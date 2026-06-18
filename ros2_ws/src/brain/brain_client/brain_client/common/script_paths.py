@@ -12,13 +12,13 @@ Layout:
     $INNATE_OS_ROOT/inputs/                     # legacy input devices (<= 0.5.x, in place)
     ~/agents/                                   # user agents   (alternative, in place)
     ~/skills/                                   # user skills   (alternative, in place)
-    <any absolute path>                         # extra dirs from config/os.toml [paths]
+    <any absolute path>                         # extra dirs from .env INNATE_EXTRA_*_DIRS
 
-Extra scan dirs: the ``[paths]`` section of config/os.toml lets a user point at
-agent/skill directories anywhere on the machine. The env loader reads that config
-and exports them as ``INNATE_EXTRA_AGENT_DIRS`` / ``INNATE_EXTRA_SKILL_DIRS``
-(os.pathsep-joined); they are scanned in place (never created) and, because the
-hot-reload watchers consume these same getters, are hot-reloadable too.
+Extra scan dirs: ``INNATE_EXTRA_AGENT_DIRS`` / ``INNATE_EXTRA_SKILL_DIRS`` in the
+``.env`` file (os.pathsep-joined absolute paths) let a user point at agent/skill
+directories anywhere on the machine. They are scanned in place (never created)
+and, because the hot-reload watchers consume these same getters, are
+hot-reloadable too.
 
 Backwards compatibility: through release 0.5.x, agents/skills/inputs were loaded
 from $INNATE_OS_ROOT/{agents,skills,inputs} and ~/{agents,skills}. Those locations
@@ -94,8 +94,8 @@ def get_home_skills_dir() -> Path:
 def _dirs_from_env(env_var: str) -> list[Path]:
     """Parse an os.pathsep-separated list of extra scan dirs from ``env_var``.
 
-    Populated from config/os.toml ``[paths]`` by the env loader. Blank entries
-    are dropped; ``~`` and ``$VARS`` are expanded.
+    Populated from ``.env`` (``INNATE_EXTRA_*_DIRS``) by the env loader. Blank
+    entries are dropped; ``~`` and ``$VARS`` are expanded.
     """
     raw = os.environ.get(env_var, "")
     dirs: list[Path] = []
@@ -107,12 +107,12 @@ def _dirs_from_env(env_var: str) -> list[Path]:
 
 
 def get_extra_agent_dirs() -> list[Path]:
-    """Extra agent dirs from config/os.toml ``[paths].agent_dirs`` (anywhere on the machine)."""
+    """Extra agent dirs from ``.env`` ``INNATE_EXTRA_AGENT_DIRS`` (anywhere on the machine)."""
     return _dirs_from_env("INNATE_EXTRA_AGENT_DIRS")
 
 
 def get_extra_skill_dirs() -> list[Path]:
-    """Extra skill dirs from config/os.toml ``[paths].skill_dirs`` (anywhere on the machine)."""
+    """Extra skill dirs from ``.env`` ``INNATE_EXTRA_SKILL_DIRS`` (anywhere on the machine)."""
     return _dirs_from_env("INNATE_EXTRA_SKILL_DIRS")
 
 

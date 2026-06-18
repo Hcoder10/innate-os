@@ -57,6 +57,6 @@
 
 # ── System ────────────────────────────────────────────────────
 # system.brain_ws:       wss://agent-v1.innate.bot  # Hosted brain websocket URI
-# system.voice_id:       6ccbfb76-1fc6-48f7-b71d-91ac6298247b  # Cartesia TTS voice id (brain)
-# system.input_voice_id: 6ccbfb76-1fc6-48f7-b71d-91ac6298247b  # Cartesia TTS voice id (input manager)
+# system.voice_id:       9fdaae0b-f885-4813-b589-3c07cf9d5fea  # Cartesia TTS voice id (brain)
+# system.input_voice_id: 9fdaae0b-f885-4813-b589-3c07cf9d5fea  # Cartesia TTS voice id (input manager)
 # system.telemetry_url:  https://logs-v1.innate.bot  # Telemetry logging endpoint

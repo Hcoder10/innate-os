@@ -70,6 +70,6 @@
 
 # ── System / Services (non-secret; secrets stay in .env) ─────────────────────
 - {name: system.brain_ws,       group: System, node: /brain_client_node,  param: websocket_uri,      type: str, default: "wss://agent-v1.innate.bot", live: false, desc: "Hosted brain websocket URI"}
-- {name: system.voice_id,       group: System, node: /brain_client_node,  param: cartesia_voice_id,  type: str, default: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", live: false, desc: "Cartesia TTS voice id (brain)"}
-- {name: system.input_voice_id, group: System, node: /input_manager_node, param: cartesia_voice_id,  type: str, default: "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", live: false, desc: "Cartesia TTS voice id (input manager)"}
+- {name: system.voice_id,       group: System, node: /brain_client_node,  param: cartesia_voice_id,  type: str, default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", live: false, desc: "Cartesia TTS voice id (brain)"}
+- {name: system.input_voice_id, group: System, node: /input_manager_node, param: cartesia_voice_id,  type: str, default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", live: false, desc: "Cartesia TTS voice id (input manager)"}
 - {name: system.telemetry_url,  group: System, node: /logger_node,        param: telemetry_url,      type: str, default: "https://logs-v1.innate.bot", live: false, desc: "Telemetry logging endpoint"}
