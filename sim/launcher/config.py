@@ -25,8 +25,7 @@ REPO_ROOT = SIM_DIR.parent
 WORKSPACE_ROOT = REPO_ROOT.parent
 ENV_PATH = REPO_ROOT / ".env"
 ENV_TEMPLATE_PATH = REPO_ROOT / ".env.template"
-OS_CONFIG_PATH = REPO_ROOT / "config" / "os.toml"
-OS_CONFIG_TEMPLATE_PATH = REPO_ROOT / "config" / "os.toml.template"
+OVERRIDES_CONFIG_PATH = REPO_ROOT / "ros2_ws" / "src" / "innate_config" / "config" / "overrides.yaml"
 SIM_CONFIG_PATH = REPO_ROOT / "sim" / "config.toml"
 SIM_CONFIG_TEMPLATE_PATH = REPO_ROOT / "sim" / "config.toml.template"
 STATE_DIR = LAUNCHER_DIR / ".state"
@@ -69,7 +68,8 @@ SIM_IMAGE_INPUT_FILES = (
 ROS_INSTALL_VALIDATION_INPUT_FILES = ("scripts/validate_sim_ros_install.zsh",)
 OS_CONTAINER_SERVICE = "innate"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
-ENV_KEYS_MOVED_TO_OS_CONFIG = {
+# Configured in innate_config/overrides.yaml now, not .env.
+ENV_KEYS_MOVED_TO_OVERRIDES = {
     "BRAIN_WEBSOCKET_URI",
     "TELEMETRY_URL",
     "CARTESIA_VOICE_ID",
@@ -313,23 +313,51 @@ def get_nested_bool(data: dict[str, object], *keys: str) -> bool | None:
     return None
 
 
-def build_os_config_env(os_config: dict[str, object]) -> dict[str, str]:
+def _load_registry_module():
+    """Import the ROS-free innate_config registry from the source tree."""
+    src = str(REPO_ROOT / "ros2_ws" / "src" / "innate_config")
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    os.environ.setdefault("INNATE_OS_ROOT", str(REPO_ROOT))
+    from innate_config import registry
+
+    return registry
+
+
+# friendly knob name in overrides.yaml -> env var the sim processes read
+_OVERRIDE_ENV_KNOBS = {
+    "system.telemetry_url": "TELEMETRY_URL",
+    "system.voice_id": "CARTESIA_VOICE_ID",
+}
+
+
+def build_overrides_env() -> dict[str, str]:
+    """Non-secret robot settings for the sim, read from innate_config/overrides.yaml.
+
+    Only knobs the user actually overrode are exported, so anything left at its
+    default falls through to the downstream process default (matching the prior
+    os.toml behaviour).
+    """
+    try:
+        overridden = _load_registry_module().overridden_values()
+    except Exception as exc:  # never block the sim over a config read
+        warn(f"Could not read innate_config overrides.yaml: {exc}")
+        return {}
     env: dict[str, str] = {}
-    if telemetry_url := get_nested_str(os_config, "telemetry", "url"):
-        env["TELEMETRY_URL"] = telemetry_url
-    if cartesia_voice_id := get_nested_str(os_config, "voice", "cartesia_voice_id"):
-        env["CARTESIA_VOICE_ID"] = cartesia_voice_id
+    for knob, env_key in _OVERRIDE_ENV_KNOBS.items():
+        if knob in overridden:
+            env[env_key] = str(overridden[knob])
     return env
 
 
-def resolve_brain_websocket_uri(
-    mode: str,
-    cloud_port: str,
-    os_config: dict[str, object],
-) -> str:
+def resolve_brain_websocket_uri(mode: str, cloud_port: str) -> str:
     if mode in LOCAL_MODES:
         return f"ws://host.docker.internal:{cloud_port}"
-    return get_nested_str(os_config, "brain", "websocket_uri") or DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
+    try:
+        uri = _load_registry_module().current_value("system.brain_ws")
+    except Exception:
+        uri = None
+    return str(uri) if uri else DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
 
 
 def resolve_brain_client_version(repo_root: Path) -> str:
@@ -431,28 +459,26 @@ def resolve_os_image_setting(value: str | None, repo_root: Path) -> tuple[str, b
 
 def get_config() -> dict[str, object]:
     ensure_env_file()
-    ensure_config_file(OS_CONFIG_PATH, OS_CONFIG_TEMPLATE_PATH)
     ensure_config_file(SIM_CONFIG_PATH, SIM_CONFIG_TEMPLATE_PATH)
 
     user_env = parse_env_file(ENV_PATH)
-    ignored_os_env_keys = sorted(key for key in user_env if key in ENV_KEYS_MOVED_TO_OS_CONFIG)
-    raw_env = {key: value for key, value in user_env.items() if key not in ENV_KEYS_MOVED_TO_OS_CONFIG}
+    ignored_os_env_keys = sorted(key for key in user_env if key in ENV_KEYS_MOVED_TO_OVERRIDES)
+    raw_env = {key: value for key, value in user_env.items() if key not in ENV_KEYS_MOVED_TO_OVERRIDES}
     for key in SECRET_ENV_KEYS:
         value = os.environ.get(key, "").strip()
         if is_configured_secret_value(key, value):
             raw_env[key] = value
     if ignored_os_env_keys:
         warn(
-            f"Ignoring deprecated OS config keys in {ENV_PATH.name}: "
-            f"{', '.join(ignored_os_env_keys)}. Move them to config/os.toml if still needed."
+            f"Ignoring deprecated keys in {ENV_PATH.name}: "
+            f"{', '.join(ignored_os_env_keys)}. Set them in innate_config/overrides.yaml instead."
         )
-    os_config = parse_toml_file(OS_CONFIG_PATH)
     sim_config = parse_toml_file(SIM_CONFIG_PATH)
     cloud_port = "8765"
-    os_config_env = build_os_config_env(os_config)
+    overrides_env = build_overrides_env()
 
     merged_env = dict(raw_env)
-    merged_env.update(os_config_env)
+    merged_env.update(overrides_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
     merged_env.setdefault("SIMULATOR_PORT", "8000")
 
@@ -482,17 +508,13 @@ def get_config() -> dict[str, object]:
     return {
         "raw_env": merged_env,
         "user_env": user_env,
-        "os_config_env": os_config_env,
+        "overrides_env": overrides_env,
         "mode": mode,
         "os_repo": os_repo,
         "sim_repo": sim_repo,
         "cloud_repo": cloud_repo,
         "cloud_port": cloud_port,
-        "brain_websocket_uri": resolve_brain_websocket_uri(
-            mode,
-            cloud_port,
-            os_config,
-        ),
+        "brain_websocket_uri": resolve_brain_websocket_uri(mode, cloud_port),
         "brain_client_version": resolve_brain_client_version(os_repo),
         "cloud_image": get_nested_str(sim_config, "cloud_agent", "image") or "",
         "sim_visualization": get_nested_bool(sim_config, "display", "visualization")

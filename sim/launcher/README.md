@@ -6,7 +6,7 @@ The local workflow uses:
 
 - Python 3.10 or newer for the launcher
 - [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env) for secrets only
-- [`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) for optional non-secret OS overrides
+- [`ros2_ws/src/innate_config/config/overrides.yaml`](ros2_ws/src/innate_config/config/overrides.yaml) for non-secret robot settings (brain URI, telemetry, voice, ...)
 - [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) for optional non-secret simulator overrides
 
 The CLI brings up:
@@ -21,7 +21,7 @@ By default, the launcher expects this layout:
 innate-os/
 ├── innate
 ├── .env
-├── config/os.toml
+├── ros2_ws/src/innate_config/config/overrides.yaml
 ├── sim/launcher/
 ├── sim/config.toml
 └── ../innate-cloud-agent/   # optional
@@ -69,11 +69,14 @@ To inspect the current state:
 
 ## Config Files
 
-[`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) is for optional non-secret OS overrides such as:
+[`ros2_ws/src/innate_config/config/overrides.yaml`](ros2_ws/src/innate_config/config/overrides.yaml) is the single home for non-secret robot settings such as:
 
-- brain websocket URI
-- telemetry URL
-- Cartesia voice id
+- brain websocket URI (`system.brain_ws`)
+- telemetry URL (`system.telemetry_url`)
+- Cartesia voice id (`system.voice_id`)
+
+The sim launcher reads these from `overrides.yaml` and passes them to the
+simulator stack; uncomment and edit a line there to change one.
 
 [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) is for optional non-secret simulator overrides such as:
 

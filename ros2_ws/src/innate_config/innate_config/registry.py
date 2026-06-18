@@ -137,6 +137,41 @@ def build_node_params():
 
 
 # --------------------------------------------------------------------------- #
+# Friendly-name value lookups (for non-ROS consumers: sim launcher, web app)
+# --------------------------------------------------------------------------- #
+def overridden_values() -> dict:
+    """Return ``{friendly_name: typed_value}`` for every knob set in overrides.yaml.
+
+    Unknown or invalid entries are skipped. Knobs left at their default are not
+    included — this mirrors "override-only" semantics for callers that should
+    fall back to a downstream default when nothing is set.
+    """
+    by_name = registry_by_name()
+    out = {}
+    for name, raw in load_overrides().items():
+        e = by_name.get(name)
+        if e is None:
+            continue
+        try:
+            out[name] = coerce(e, raw)
+        except ConfigError:
+            continue
+    return out
+
+
+def current_value(name: str):
+    """Effective value of ``name``: its override if set and valid, else the default."""
+    e = entry(name)
+    raw = load_overrides().get(name)
+    if raw is None:
+        return e.get("default")
+    try:
+        return coerce(e, raw)
+    except ConfigError:
+        return e.get("default")
+
+
+# --------------------------------------------------------------------------- #
 # Self-documenting overrides file rendering
 # --------------------------------------------------------------------------- #
 _TEMPLATE_HEADER = """\
