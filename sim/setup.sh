@@ -22,9 +22,19 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo "Creating virtual environment with Python 3.11..."
-uv venv --python 3.11
+# --clear so a stale/incomplete .venv from a previous failed run doesn't block setup.
+uv venv --clear --python 3.11
 
 echo "Installing dependencies from $REQUIREMENTS_FILE..."
+# netifaces 0.11.0 ships no cp311 wheel, so uv builds it from source. Its old
+# distutils compiler-probe breaks under setuptools>=60 (the version uv pulls into
+# the isolated build env): the getifaddrs probe fails, HAVE_GETIFADDRS is never
+# defined, and the build dies with "netifaces.c: #error You need to add code for
+# your platform". Pre-build just netifaces with a pinned build-time setuptools via
+# a uv build-constraint; the main install below then finds it already satisfied.
+printf "setuptools<60\nwheel\n" > build-constraints.txt
+uv pip install --python .venv/bin/python --build-constraint build-constraints.txt netifaces==0.11.0
+
 uv pip install -r "$REQUIREMENTS_FILE" --python .venv/bin/python
 
 # Install PyTorch nightly with CUDA 12.8 for Blackwell (RTX 50xx, sm_120) support

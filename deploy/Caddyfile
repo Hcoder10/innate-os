@@ -1,0 +1,21 @@
+# Caddy reverse proxy for the public sim demo.
+#
+# Routes:
+#   /rosbridge* -> rosbridge websocket server (:9090), prefix stripped so the
+#                  upstream sees "/". The frontend must be built with
+#                  VITE_ROBOT_WS_URL=wss://<host>/rosbridge (see deploy/README.md),
+#                  otherwise the browser tries ws://localhost:9090 and fails
+#                  (wrong host + mixed-content on HTTPS).
+#   everything else -> simulator backend (:8000), which also serves the frontend.
+#
+# Caddy obtains/renews the TLS cert automatically; the hostname must resolve
+# (DNS-only, not proxied) to this instance and 80/443 must be reachable.
+
+sim-demo.innate.bot {
+	handle_path /rosbridge* {
+		reverse_proxy localhost:9090
+	}
+	handle {
+		reverse_proxy localhost:8000
+	}
+}
