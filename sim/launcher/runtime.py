@@ -1167,6 +1167,39 @@ def ensure_sim_data(config: dict[str, object], *, allow_fetch: bool) -> None:
         )
 
 
+def ensure_skill_assets(config: dict[str, object]) -> None:
+    """Download skill assets declared in each skill's metadata.json.
+
+    The sim shares the repo workspace/ via bind mount but never runs the
+    hardware post_update.sh, which is where these assets are normally fetched.
+    Mirrors that step here so sim skills have their downloads present.
+    Idempotent: assets already on disk are skipped.
+    """
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    workspace = sim_repo.parent / "workspace"
+    meta_files = sorted(workspace.glob("innate_skills/*/metadata.json")) + sorted(
+        workspace.glob("custom_skills/*/metadata.json")
+    )
+    for meta_file in meta_files:
+        try:
+            downloads = json.loads(meta_file.read_text()).get("downloads") or {}
+        except (json.JSONDecodeError, OSError):
+            continue
+        for fname, url in downloads.items():
+            dest = meta_file.parent / fname
+            if dest.exists():
+                continue
+            log(f"Downloading skill asset {dest.relative_to(workspace)}...")
+            tmp = meta_file.parent / f"{fname}.tmp"
+            try:
+                with urlopen(Request(url), timeout=300) as resp, open(tmp, "wb") as out:
+                    shutil.copyfileobj(resp, out)
+                tmp.replace(dest)
+            except (URLError, OSError) as exc:
+                tmp.unlink(missing_ok=True)
+                raise StackError(f"Failed to download skill asset {dest}: {exc}") from exc
+
+
 def sim_endpoint(port: str, path: str) -> str:
     return f"http://localhost:{port}/{path.lstrip('/')}"
 

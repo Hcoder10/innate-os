@@ -53,6 +53,7 @@ from runtime import (
     ensure_os_container,
     ensure_sim_data,
     ensure_sim_setup,
+    ensure_skill_assets,
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
@@ -117,6 +118,7 @@ def cmd_up(
         cloud_env_file = build_cloud_env(config)
         sim_python = ensure_sim_setup(config, allow_setup=False)
         ensure_sim_data(config, allow_fetch=False)
+        ensure_skill_assets(config)
 
         started = True
         start_cloud_agent(config, cloud_env_file)
