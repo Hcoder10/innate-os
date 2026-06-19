@@ -6,7 +6,7 @@
 
 import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
-import { createConnectPanel } from "../teleop/connectPanel.js";
+import { mountPage } from "../pageMount.js";
 import { JOB_STATUSES_TOPIC, AVAILABLE_SKILLS_TOPIC, START_TRAINING_SERVICE } from "../constants.js";
 import { createRunDashboard } from "./runDashboard.js";
 import { createRunDetail } from "./runDetail.js";
@@ -19,34 +19,7 @@ initShell("training", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
-const connectLayer = document.createElement("div");
-connectLayer.className = "connect-layer";
-const viewLayer = document.createElement("div");
-viewLayer.className = "training";
-viewLayer.hidden = true;
-stage.append(connectLayer, viewLayer);
-
-createConnectPanel(connectLayer, ros);
-
-const servedHost = location.hostname;
-if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
-  ros.connect(servedHost);
-}
-
-/** @type {{ destroy: () => void } | null} */
-let view = null;
-
-ros.onStateChange((state) => {
-  const show = state === "connected" || (state === "reconnecting" && view !== null);
-  connectLayer.hidden = show;
-  viewLayer.hidden = !show;
-  if (state === "connected" && !view) {
-    view = buildView(viewLayer);
-  } else if (state === "disconnected" && view) {
-    view.destroy();
-    view = null;
-  }
-});
+mountPage(stage, "training", buildView);
 
 /**
  * Small shared store: the latest job list + skill roster, with an update

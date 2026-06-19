@@ -11,7 +11,7 @@ import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
 import { initShell } from "../shell.js";
 import { WebRtcSession } from "../webrtcSession.js";
-import { createConnectPanel } from "../teleop/connectPanel.js";
+import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
 import { createJoystick } from "../teleop/joystick.js";
 import { createKeyboardDrive, createWasdChips } from "../teleop/keyboardDrive.js";
@@ -25,35 +25,7 @@ initShell("collect", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
-const connectLayer = document.createElement("div");
-connectLayer.className = "connect-layer";
-const cockpitLayer = document.createElement("div");
-cockpitLayer.className = "cockpit";
-cockpitLayer.hidden = true;
-stage.append(connectLayer, cockpitLayer);
-
-createConnectPanel(connectLayer, ros);
-
-// Robot-served page → connect straight away; localhost keeps the manual flow.
-const servedHost = location.hostname;
-if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
-  ros.connect(servedHost);
-}
-
-/** @type {{ destroy: () => void } | null} */
-let cockpit = null;
-
-ros.onStateChange((state) => {
-  const showCockpit = state === "connected" || (state === "reconnecting" && cockpit !== null);
-  connectLayer.hidden = showCockpit;
-  cockpitLayer.hidden = !showCockpit;
-  if (state === "connected" && !cockpit) {
-    cockpit = buildCockpit(cockpitLayer);
-  } else if (state === "disconnected" && cockpit) {
-    cockpit.destroy();
-    cockpit = null;
-  }
-});
+mountPage(stage, "cockpit", buildCockpit);
 
 /**
  * @param {HTMLElement} root

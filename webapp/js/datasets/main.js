@@ -7,7 +7,7 @@
 
 import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
-import { createConnectPanel } from "../teleop/connectPanel.js";
+import { mountPage } from "../pageMount.js";
 import { createSkillList } from "./skillList.js";
 import { createEpisodeList } from "./episodeList.js";
 import { createEpisodePlayer } from "./episodePlayer.js";
@@ -16,35 +16,7 @@ initShell("datasets", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
-const connectLayer = document.createElement("div");
-connectLayer.className = "connect-layer";
-const viewLayer = document.createElement("div");
-viewLayer.className = "datasets";
-viewLayer.hidden = true;
-stage.append(connectLayer, viewLayer);
-
-createConnectPanel(connectLayer, ros);
-
-// Robot-served page → connect straight away; localhost keeps the manual flow.
-const servedHost = location.hostname;
-if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
-  ros.connect(servedHost);
-}
-
-/** @type {{ destroy: () => void } | null} */
-let view = null;
-
-ros.onStateChange((state) => {
-  const show = state === "connected" || (state === "reconnecting" && view !== null);
-  connectLayer.hidden = show;
-  viewLayer.hidden = !show;
-  if (state === "connected" && !view) {
-    view = buildView(viewLayer);
-  } else if (state === "disconnected" && view) {
-    view.destroy();
-    view = null;
-  }
-});
+mountPage(stage, "datasets", buildView);
 
 /**
  * @param {HTMLElement} root
