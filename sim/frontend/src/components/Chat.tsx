@@ -9,6 +9,7 @@ import { groupMessages, Message, DisplayMessage } from "../utils/groupMessages";
 import { CartesiaClient } from "@cartesia/cartesia-js";
 import type CartesiaWebsocket from "@cartesia/cartesia-js/wrapper/Websocket";
 import { stopAgentDirect } from "../services/rosbridgeService";
+import { appConfig } from "../config";
 
 const ChatContainer = styled.div`
   width: 100%;
@@ -411,10 +412,9 @@ export function Chat() {
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const [audioQueue, setAudioQueue] = useState<Float32Array[]>([]);
   const isPlayingRef = useRef<boolean>(false);
-  const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
-  const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
-  const backendWsBaseUrl =
-    import.meta.env.VITE_WS_BASE_URL ?? "ws://localhost:8000";
+  const useDirectRobot = appConfig.directRobot;
+  const robotWsUrl = appConfig.robotWsUrl;
+  const backendWsBaseUrl = appConfig.wsBaseUrl;
   const handleScroll = () => {
     if (containerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
@@ -738,8 +738,7 @@ export function Chat() {
       if (useDirectRobot) {
         await stopAgentDirect(robotWsUrl);
       } else {
-        const baseUrl =
-          import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
+        const baseUrl = appConfig.simBaseUrl;
         const response = await fetch(`${baseUrl}/stop_agent`, {
           method: "POST",
         });
@@ -780,7 +779,7 @@ export function Chat() {
   useEffect(() => {
     if (!cartesiaRef.current) {
       cartesiaRef.current = new CartesiaClient({
-        apiKey: import.meta.env.VITE_CARTESIA_API_KEY || "",
+        apiKey: appConfig.cartesiaApiKey,
       });
     }
 

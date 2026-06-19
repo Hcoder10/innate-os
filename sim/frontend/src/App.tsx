@@ -16,6 +16,7 @@ import {
   setDirectiveDirect,
   startSkillExecutionDirect,
 } from "./services/rosbridgeService";
+import { appConfig } from "./config";
 
 const AGENT_BACKEND_WARNING_DELAY_MS = 15_000;
 const BACKEND_CONNECTED_STABLE_MS = 3_000;
@@ -205,9 +206,9 @@ export default function App() {
   const agentsLoadStartedAtRef = useRef(Date.now());
   const backendOverrideAppliedRef = useRef(false);
   const activeHarnessRef = useRef<string | null>(null);
-  const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
-  const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
-  const simBaseUrl = import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
+  const useDirectRobot = appConfig.directRobot;
+  const robotWsUrl = appConfig.robotWsUrl;
+  const simBaseUrl = appConfig.simBaseUrl;
 
   useEffect(() => {
     activeHarnessRef.current = activeHarnessId;

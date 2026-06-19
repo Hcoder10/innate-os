@@ -51,24 +51,15 @@ from config import (
 )
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
-FRONTEND_BUILD_INPUT_FILES = (
-    ".env",
-    ".env.development",
-    ".env.local",
-    ".env.production",
-    "index.html",
-    "package.json",
-    "tsconfig.app.json",
-    "tsconfig.json",
-    "tsconfig.node.json",
-    "vite.config.js",
-    "vite.config.mjs",
-    "vite.config.ts",
-    "yarn.lock",
-)
-FRONTEND_BUILD_INPUT_DIRS = ("public", "src")
-FRONTEND_DEPENDENCY_INPUT_FILES = ("package.json", "yarn.lock")
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
+FRONTEND_COMPOSE_ENV_KEYS = (
+    "FRONTEND_PORT",
+    "SIM_BASE_URL",
+    "WS_BASE_URL",
+    "ROBOT_WS_URL",
+    "DIRECT_ROBOT",
+    "CARTESIA_API_KEY",
+)
 
 
 def run_logged(
@@ -201,109 +192,46 @@ def python_import_succeeds(python_path: Path, module: str) -> bool:
     return result.returncode == 0
 
 
-def frontend_build_inputs(frontend_dir: Path) -> list[Path]:
-    inputs: list[Path] = []
-    for rel_path in FRONTEND_BUILD_INPUT_FILES:
-        path = frontend_dir / rel_path
-        if path.is_file():
-            inputs.append(path)
-
-    for rel_dir in FRONTEND_BUILD_INPUT_DIRS:
-        path = frontend_dir / rel_dir
-        if not path.is_dir():
-            continue
-        inputs.extend(child for child in path.rglob("*") if child.is_file())
-
-    return inputs
+def frontend_compose_env(config: dict[str, object]) -> dict[str, str]:
+    """Subprocess env for `docker compose` so it interpolates the frontend service's
+    host port and browser-facing URLs from the resolved config."""
+    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
+    env = os.environ.copy()
+    for key in FRONTEND_COMPOSE_ENV_KEYS:
+        value = raw_env.get(key)
+        if value is not None:
+            env[key] = value
+    return env
 
 
-def newest_mtime(paths: list[Path]) -> float:
-    newest = 0.0
-    for path in paths:
-        try:
-            newest = max(newest, path.stat().st_mtime)
-        except OSError:
-            continue
-    return newest
-
-
-def frontend_build_is_stale(frontend_dir: Path, dist_index: Path) -> bool:
-    if not dist_index.exists():
-        return True
-    try:
-        dist_mtime = dist_index.stat().st_mtime
-    except OSError:
-        return True
-    return newest_mtime(frontend_build_inputs(frontend_dir)) > dist_mtime
-
-
-def frontend_dependencies_are_stale(frontend_dir: Path) -> bool:
-    node_modules = frontend_dir / "node_modules"
-    if not node_modules.exists():
-        return True
-
-    install_marker = node_modules / ".yarn-integrity"
-    if not install_marker.exists():
-        return True
-
-    dependency_inputs = [
-        frontend_dir / rel_path for rel_path in FRONTEND_DEPENDENCY_INPUT_FILES if (frontend_dir / rel_path).is_file()
-    ]
-    return newest_mtime(dependency_inputs) > newest_mtime([install_marker])
-
-
-def ensure_frontend_build(frontend_dir: Path, *, allow_setup: bool) -> None:
-    dist_index = frontend_dir / "dist" / "index.html"
-    build_exists = dist_index.exists()
-    build_stale = frontend_build_is_stale(frontend_dir, dist_index)
-    if not build_stale:
-        return
-
-    if not build_exists and not allow_setup:
-        raise StackError(f"Simulator frontend build is missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`.")
-
-    ensure_dependency("yarn")
-    node_modules = frontend_dir / "node_modules"
-    if not node_modules.exists():
-        if not allow_setup:
-            raise StackError(
-                f"Simulator frontend dependencies are missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Installing simulator frontend dependencies...")
-        run_logged(
-            ["yarn", "install"],
-            cwd=frontend_dir,
-            log_path=FRONTEND_LOG_PATH,
-            failure_message="Simulator frontend dependency install failed.",
-        )
-    elif frontend_dependencies_are_stale(frontend_dir):
-        if not allow_setup:
-            raise StackError(
-                f"Simulator frontend dependencies are stale.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Updating simulator frontend dependencies...")
-        run_logged(
-            ["yarn", "install"],
-            cwd=frontend_dir,
-            log_path=FRONTEND_LOG_PATH,
-            failure_message="Simulator frontend dependency install failed.",
-        )
-
-    if build_exists:
-        log("Simulator frontend build is stale. Rebuilding...")
-    else:
-        log("Building simulator frontend...")
-    run_logged(
-        ["yarn", "build"],
-        cwd=frontend_dir,
+def prebuild_frontend_image(config: dict[str, object]) -> None:
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    log("Building simulator web frontend image...")
+    run_logged_with_heartbeat(
+        docker_compose_cmd("build", "frontend"),
+        cwd=os_repo,
+        env=frontend_compose_env(config),
         log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator frontend build failed.",
+        failure_message="Simulator web frontend image build failed.",
+        progress_message="Docker is still building the web frontend image.",
+    )
+
+
+def ensure_frontend_container(config: dict[str, object]) -> None:
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    log("Starting simulator web frontend container...")
+    run_logged_with_heartbeat(
+        docker_compose_cmd("up", "-d", "--build", "frontend"),
+        cwd=os_repo,
+        env=frontend_compose_env(config),
+        log_path=FRONTEND_LOG_PATH,
+        failure_message="Simulator web frontend container startup failed.",
+        progress_message="Docker is still building/starting the web frontend container.",
     )
 
 
 def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    frontend_dir = sim_repo / "frontend"
     sim_python = sim_repo / ".venv" / "bin" / "python"
 
     ensure_dependency("python3")
@@ -336,8 +264,6 @@ def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
         raise StackError(
             f"Simulator Python environment is missing required packages after setup.\nCheck: {BOOTSTRAP_LOG_PATH}"
         )
-
-    ensure_frontend_build(frontend_dir, allow_setup=allow_setup)
 
     return sim_python
 
@@ -970,6 +896,8 @@ def runtime_already_running(config: dict[str, object]) -> bool:
         return False
     if config["mode"] in LOCAL_MODES and not container_running("stack-cloud-agent"):
         return False
+    if not frontend_ready(config_frontend_port(config)):
+        return False
     return available_agent_count(simulator_port) > 0
 
 
@@ -988,6 +916,8 @@ def print_startup_checks(
     probe = collect_runtime_probe(config, simulator_http_ready=simulator_http_ready)
     simulator_port = str(probe["simulator_port"])
     os_status: dict[str, bool] = probe["os_status"]  # type: ignore[assignment]
+    frontend_port = config_frontend_port(config)
+    frontend_state = frontend_build_state(frontend_port)
     checks = [
         (
             bool(probe["agent_running"]),
@@ -1030,6 +960,13 @@ def print_startup_checks(
             probe["backend_level"] == "healthy",
             "Brain backend",
             str(probe["backend_label"]),
+        ),
+        (
+            frontend_state == "ready",
+            "Web UI",
+            f"http://localhost:{frontend_port} ready"
+            if frontend_state == "ready"
+            else f"http://localhost:{frontend_port} {frontend_state or 'not ready'}",
         ),
     ]
 
@@ -1379,6 +1316,58 @@ def wait_for_simulator_http(
 
 def simulator_ready(port: str) -> bool:
     return bool(sim_get_json(port, "video_feeds_ready").get("ready"))
+
+
+def config_frontend_port(config: dict[str, object]) -> str:
+    return str(config.get("frontend_port", "3000"))
+
+
+def fetch_text(url: str, *, timeout: float = 2.0) -> str:
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return ""
+            return response.read().decode("utf-8", errors="replace")
+    except (URLError, TimeoutError):
+        return ""
+
+
+def frontend_build_state(port: str) -> str:
+    """Returns 'building' | 'ready' | 'error' | '' (unreachable/unknown)."""
+    return str(request_json(f"http://localhost:{port}/build-status.json").get("state", ""))
+
+
+def frontend_ready(port: str) -> bool:
+    return frontend_build_state(port) == "ready"
+
+
+def wait_for_frontend_ready(
+    port: str,
+    *,
+    timeout_seconds: float = 300.0,
+) -> None:
+    deadline = time.time() + timeout_seconds
+    next_heartbeat = time.monotonic() + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
+    while time.time() < deadline:
+        state = frontend_build_state(port)
+        if state == "ready":
+            return
+        if state == "error":
+            build_log = fetch_text(f"http://localhost:{port}/build.log")
+            tail = "\n".join(build_log.splitlines()[-60:]) if build_log else "<no build log captured>"
+            raise StackError(f"Simulator web frontend build failed.\nRecent build log:\n{tail}")
+
+        now = time.monotonic()
+        if now >= next_heartbeat:
+            remaining = max(0, int(deadline - time.time()))
+            log(f"Waiting for the web frontend to build ({remaining}s remaining)...")
+            next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
+        time.sleep(SIM_HTTP_POLL_SECONDS)
+
+    raise StackError(
+        f"Timed out waiting for the simulator web frontend to build.\n"
+        f"Check: {CLI_SIM} logs frontend"
+    )
 
 
 def fetch_simulator_metrics(port: str) -> dict[str, object]:

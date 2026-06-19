@@ -1,0 +1,33 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	# Build state + log: always available, even while building or after a failed build.
+	handle /build-status.json {
+		root * /srv/status
+		header Cache-Control "no-store"
+		file_server
+	}
+	handle /build.log {
+		root * /srv/status
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	# Runtime config (URLs), written from env at container start.
+	handle /config.json {
+		root * /srv/config
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	# SPA: served from the web root with index.html fallback.
+	handle {
+		root * /srv/web
+		header Cache-Control "no-store"
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -47,15 +47,18 @@ from runtime import (
     capture_simulator_logs,
     clean_runtime,
     collect_status_snapshot,
+    config_frontend_port,
     config_simulator_port,
     down_cloud_agent,
     down_os,
     ensure_docker_available,
+    ensure_frontend_container,
     ensure_os_container,
     ensure_sim_data,
     ensure_sim_setup,
     ensure_skill_assets,
     open_os_container_shell,
+    prebuild_frontend_image,
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
@@ -64,6 +67,7 @@ from runtime import (
     stop_simulator,
     tail_file,
     wait_for_brain_directives,
+    wait_for_frontend_ready,
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
@@ -125,6 +129,9 @@ def cmd_up(
         started = True
         start_cloud_agent(config, cloud_env_file)
         ensure_os_container(config, os_env_file)
+        # Start the web frontend container; its build runs in the background while the
+        # simulator loads (we wait on it below).
+        ensure_frontend_container(config)
         start_simulator(config, sim_python)
 
         simulator_port = config_simulator_port(config)
@@ -146,6 +153,8 @@ def cmd_up(
             )
         log("Waiting for brain directives...")
         brain_directive_count = wait_for_brain_directives(simulator_port)
+        log("Waiting for the web frontend to build...")
+        wait_for_frontend_ready(config_frontend_port(config))
         print_startup_checks(
             config,
             simulator_http_ready=True,
@@ -224,6 +233,7 @@ def cmd_setup(config: dict[str, object]) -> None:
     configure_hosted_service_key(config)
     sim_python = ensure_sim_setup(config, allow_setup=True)
     ensure_sim_data(config, allow_fetch=True)
+    prebuild_frontend_image(config)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
     print(f"OS config: {OS_CONFIG_PATH}")

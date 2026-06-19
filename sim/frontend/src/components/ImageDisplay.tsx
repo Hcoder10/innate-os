@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { PreviewContainer, MainImage, MainVideo } from "../styles/StyledImages";
 import { useRobotWebRTC } from "../hooks/useRobotWebRTC";
 import { Costmap2DView } from "./Costmap2DView";
+import { appConfig } from "../config";
 
 type ViewMode = "frontFocus" | "map";
 
@@ -404,8 +405,8 @@ export function ImageDisplay({
   const [directiveText, setDirectiveText] = useState("");
   const [camera, setCamera] = useState<CameraId>("first_person");
 
-  const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
-  const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
+  const useDirectRobot = appConfig.directRobot;
+  const robotWsUrl = appConfig.robotWsUrl;
   const {
     mainStream,
     hasMedia,
@@ -431,7 +432,7 @@ export function ImageDisplay({
     ? (webRTCError ?? "Failed to connect to robot WebRTC stream.")
     : backendErrorMessage;
 
-  const baseUrl = import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
+  const baseUrl = appConfig.simBaseUrl;
 
   // Set up the sources for the main and secondary feeds based on view mode
   const mainSrc = baseUrl + CAMERA_ENDPOINTS[camera];

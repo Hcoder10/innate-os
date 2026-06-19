@@ -3,11 +3,14 @@ import { ThemeProvider } from "styled-components";
 import theme, { GlobalStyle } from "./styles/theme";
 import "./index.css";
 import App from "./App.tsx";
+import { loadConfig } from "./config.ts";
 
-// Render the application
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <ThemeProvider theme={theme}>
-    <GlobalStyle />
-    <App />
-  </ThemeProvider>
-);
+// Load runtime config before rendering so components can read appConfig synchronously.
+loadConfig().then(() => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <ThemeProvider theme={theme}>
+      <GlobalStyle />
+      <App />
+    </ThemeProvider>
+  );
+});

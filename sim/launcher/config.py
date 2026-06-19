@@ -455,6 +455,12 @@ def get_config() -> dict[str, object]:
     merged_env.update(os_config_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
     merged_env.setdefault("SIMULATOR_PORT", "8000")
+    # Web frontend container: host port + browser-facing URLs (overridable via .env).
+    merged_env.setdefault("FRONTEND_PORT", "3000")
+    merged_env.setdefault("SIM_BASE_URL", f"http://localhost:{merged_env['SIMULATOR_PORT']}")
+    merged_env.setdefault("WS_BASE_URL", f"ws://localhost:{merged_env['SIMULATOR_PORT']}")
+    merged_env.setdefault("ROBOT_WS_URL", merged_env["ROSBRIDGE_URI"])
+    merged_env.setdefault("DIRECT_ROBOT", "false")
 
     mode = get_nested_str(sim_config, "cloud_agent", "mode") or HOSTED_MODE
     if mode not in {HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}:
@@ -511,6 +517,7 @@ def get_config() -> dict[str, object]:
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,
         "os_always_build": os_always_build if os_always_build is not None else False,
+        "frontend_port": merged_env["FRONTEND_PORT"],
     }
 
 

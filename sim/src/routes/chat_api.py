@@ -1,9 +1,7 @@
 import asyncio
-import os
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
 from src.shared_queues import ChatMessage, ChatSignal, SharedQueues
 
 router = APIRouter()
@@ -12,16 +10,6 @@ router = APIRouter()
 connected_clients: dict[str, WebSocket] = {}
 # Broadcast task
 broadcast_task = None
-
-
-@router.get("/")
-def serve_react_app():
-    """Serves the React frontend index.html from the pre-built dist folder."""
-    frontend_build_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
-    index_path = os.path.join(frontend_build_path, "index.html")
-    with open(index_path, encoding="utf-8") as f:
-        html_content = f.read()
-    return HTMLResponse(content=html_content, status_code=200)
 
 
 # Function to broadcast messages to all connected clients
