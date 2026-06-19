@@ -737,6 +737,19 @@ def os_compose_zsh_cmd(command: str) -> list[str]:
     return os_compose_exec_cmd("zsh", "-lc", command)
 
 
+def open_os_container_shell() -> int:
+    """Drop the user into an interactive zsh inside the running ROS container.
+
+    Uses an interactive (TTY) shell so ~/.zshrc runs and sources ROS — a
+    non-interactive `zsh -lc` would leave `ros2` and the workspace unsourced.
+    """
+    if not container_running("innate-dev"):
+        raise StackError(
+            f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first."
+        )
+    return subprocess.run(["docker", "exec", "-it", "innate-dev", "zsh"]).returncode
+
+
 def capture_command_output(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         cmd,

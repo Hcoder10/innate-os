@@ -54,6 +54,7 @@ from runtime import (
     ensure_sim_data,
     ensure_sim_setup,
     ensure_skill_assets,
+    open_os_container_shell,
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
@@ -273,6 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog=f"{CLI_SIM} down",
         help="Stop the local simulator-backed runtime",
     )
+    sim_subparsers.add_parser(
+        "sh",
+        prog=f"{CLI_SIM} sh",
+        help="Open an interactive shell inside the running ROS container",
+    )
     status_parser = sim_subparsers.add_parser(
         "status",
         prog=f"{CLI_SIM} status",
@@ -379,6 +385,9 @@ def main() -> int:
         elif args.sim_command == "down":
             ensure_docker_available(command_hint=f"{CLI_SIM} down")
             cmd_down(config)
+        elif args.sim_command == "sh":
+            ensure_docker_available(command_hint=f"{CLI_SIM} sh")
+            return open_os_container_shell()
         elif args.sim_command == "status":
             ensure_docker_available(command_hint=f"{CLI_SIM} status")
             print_status(
