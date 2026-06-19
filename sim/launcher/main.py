@@ -228,7 +228,7 @@ def cmd_logs(target: str) -> None:
 
 
 def cmd_setup(config: dict[str, object]) -> None:
-    ensure_docker_available(command_hint=f"{CLI_ROOT} setup")
+    ensure_docker_available(command_hint=f"{CLI_SIM} setup")
     print_banner()
     configure_hosted_service_key(config)
     sim_python = ensure_sim_setup(config, allow_setup=True)
@@ -265,11 +265,6 @@ def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="innate", description="Innate local development CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "setup",
-        prog=f"{CLI_ROOT} setup",
-        help="Prepare the simulator environment and first-run credentials",
-    )
     sim_parser = subparsers.add_parser(
         "sim",
         prog=f"{CLI_ROOT} sim",
@@ -403,10 +398,6 @@ def main() -> int:
 
     try:
         config = get_config()
-
-        if args.command == "setup":
-            cmd_setup(config)
-            return 0
 
         if args.command != "sim":
             parser.error(f"Unknown command group: {args.command}")
