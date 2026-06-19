@@ -15,6 +15,8 @@ of files in raw_data/ and resumed.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
 import os
@@ -90,6 +92,12 @@ def convert_episodes_to_h264(
                 continue
 
             if not raw_path.exists():
+                if not h5_path.exists():
+                    # Source vanished mid-pass — the episode was deleted while we
+                    # were encoding this skill. Skip it instead of crashing the
+                    # whole pass; _update_metadata re-reads fresh and drops it.
+                    logger.info("Source for %s gone — skipping (deleted?)", item["filename"])
+                    continue
                 shutil.move(str(h5_path), str(raw_path))
                 logger.info("Moved %s -> raw_data/%s", h5_path.name, raw_path.name)
 
@@ -127,6 +135,11 @@ def convert_episodes_to_h264(
             h5_path = data_dir / item["filename"]
             raw_path = raw_dir / item["filename"]
 
+            if not raw_path.exists():
+                # Raw source deleted mid-pass — nothing left to strip.
+                logger.info("Raw source for %s gone — skipping strip (deleted?)", item["filename"])
+                continue
+
             yield ProgressUpdate(
                 stage=ProgressStage.COMPRESSING,
                 message=f"[{idx}/{total}] Stripping images from {item['filename']}…",
@@ -149,7 +162,7 @@ def convert_episodes_to_h264(
                 )
                 raise
 
-    _update_metadata(data_dir, meta, episodes)
+    _update_metadata(data_dir)
 
     yield ProgressUpdate(
         stage=ProgressStage.COMPRESSING,
@@ -227,7 +240,15 @@ def _encode_camera_to_mp4(
     threads: int = 4,
     idle_io: bool = False,
 ) -> None:
-    """Read images for *camera_name* from *h5_path* and encode to MP4."""
+    """Read images for *camera_name* from *h5_path* and encode to MP4.
+
+    Encodes to a ``.part`` sibling and atomically renames it into place on
+    success, so a crash or kill mid-encode never leaves a half-written ``.mp4``
+    that the incremental scan would trust as a finished file (and then strip the
+    raw H5 / upload to the cloud).
+    """
+    part_path = mp4_path.with_name(mp4_path.name + ".part")
+    part_path.unlink(missing_ok=True)  # clear any leftover from a prior crash
     with h5py.File(str(h5_path), "r") as f:
         dset = f[f"observations/images/{camera_name}"]
         num_frames, height, width, channels = dset.shape
@@ -279,7 +300,7 @@ def _encode_camera_to_mp4(
             "faststart=true",
             "!",
             "filesink",
-            f"location={mp4_path}",
+            f"location={part_path}",
         ]
 
         proc = subprocess.Popen(
@@ -310,8 +331,12 @@ def _encode_camera_to_mp4(
 
         if proc.returncode != 0:
             stderr = stderr_bytes.decode(errors="replace")
-            mp4_path.unlink(missing_ok=True)
+            part_path.unlink(missing_ok=True)
             raise RuntimeError(f"gst-launch-1.0 exited with code {proc.returncode}: {stderr}")
+
+    # Encode succeeded and the file is fully muxed — publish it atomically so the
+    # final .mp4 only ever appears complete.
+    os.replace(str(part_path), str(mp4_path))
 
     raw_size = num_frames * height * width * channels
     mp4_size = mp4_path.stat().st_size
@@ -355,20 +380,56 @@ def _strip_images_from_h5(raw_path: Path, dest_path: Path) -> None:
     )
 
 
-def _update_metadata(data_dir: Path, meta: dict, episodes: list[dict]) -> None:
-    """Update dataset_metadata.json with dataset_type and per-episode video_files."""
+@contextlib.contextmanager
+def _metadata_lock(data_dir: Path):
+    """Exclusive advisory lock around a dataset_metadata.json read-modify-write.
+
+    The recorder (C++ ``TaskManager``) takes the same ``flock`` on the same
+    ``.lock`` file for episode deletes / outcome edits, so those and this
+    converter's metadata write can't interleave and clobber one another. Held
+    only around the short RMW below — never across an encode.
+    """
+    lock_path = data_dir / (DATASET_METADATA + ".lock")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the fd releases the flock
+
+
+def _update_metadata(data_dir: Path) -> None:
+    """Flip ``dataset_type`` to h264 and attach per-episode ``video_files``.
+
+    Re-reads dataset_metadata.json **fresh** under the shared lock rather than
+    writing back the in-memory snapshot taken before the (minutes-long) encode.
+    So a concurrent delete or outcome edit isn't lost: an episode removed during
+    the encode stays removed (it won't be in the fresh read, so it can't be
+    resurrected), and we only attach ``video_files`` to episodes that still
+    exist and whose MP4s are on disk. Written atomically so a crash can't
+    truncate it.
+    """
     meta_path = data_dir / DATASET_METADATA
+    with _metadata_lock(data_dir):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            logger.warning("Cannot read %s for update — skipping", meta_path)
+            return
 
-    meta["dataset_type"] = "h264"
+        meta["dataset_type"] = "h264"
+        for ep in meta.get("episodes", []):
+            h5_file = ep.get("file_name", "")
+            if not h5_file:
+                continue
+            stem = Path(h5_file).stem
+            video_files = sorted(
+                p.name for p in data_dir.iterdir() if p.name.startswith(stem + "_") and p.suffix == ".mp4"
+            )
+            if video_files:
+                ep["video_files"] = video_files
 
-    for ep in meta.get("episodes", []):
-        h5_file = ep.get("file_name", "")
-        if not h5_file:
-            continue
-        stem = Path(h5_file).stem
-        video_files = sorted(p.name for p in data_dir.iterdir() if p.name.startswith(stem + "_") and p.suffix == ".mp4")
-        if video_files:
-            ep["video_files"] = video_files
-
-    meta_path.write_text(json.dumps(meta, indent=4) + "\n")
+        tmp_path = meta_path.with_suffix(meta_path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(meta, indent=4) + "\n")
+        os.replace(str(tmp_path), str(meta_path))
     logger.info("Updated %s: dataset_type -> h264", DATASET_METADATA)

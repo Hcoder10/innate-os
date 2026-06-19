@@ -6,7 +6,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <std_msgs/msg/string.hpp>
-#include <std_msgs/msg/bool.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 
@@ -63,9 +62,6 @@ class WebRTCStreamer : public rclcpp::Node {
     // with_audio is updated to reflect whether audio actually made it into the pipeline.
     bool start_pipeline_locked(bool& with_audio);
     void teardown_pipeline_locked();
-    // Latched signal of whether a live stream is up, so the background episode
-    // encoder can pause while teleop is consuming the (software) encoder.
-    void publish_streaming(bool active);
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,
                                      int target_height);
@@ -75,8 +71,6 @@ class WebRTCStreamer : public rclcpp::Node {
     // Publishers
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr offer_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ice_out_pub_;
-    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr streaming_status_pub_;
-    bool streaming_active_ = false;  // last value published on /webrtc/status
 
     // Subscribers
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr answer_sub_;

@@ -1,12 +1,119 @@
 #include "manipulation/task_manager.hpp"
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <hdf5.h>
 
 namespace fs = std::filesystem;
+
+namespace {
+// Atomically replace `path` with the pretty-printed JSON `j`: stage to a sibling
+// .tmp then rename (atomic on any POSIX filesystem), so a crash or power cut
+// mid-write can't truncate dataset_metadata.json to invalid JSON and break every
+// later reader (encoder, uploader, the apps' episode list).
+template <typename Json>
+void write_json_atomic(const std::string& path, const Json& j) {
+    const std::string tmp_path = path + ".tmp";
+    {
+        std::ofstream out(tmp_path);
+        if (!out.is_open()) {
+            throw std::runtime_error("Failed to open " + tmp_path + " for writing");
+        }
+        out << j.dump(4);
+    }  // flush + close before the rename
+    fs::rename(tmp_path, path);
+}
+
+// Cross-process advisory lock around a dataset_metadata.json read-modify-write.
+// The background encoder (Python episode_converter) takes the same flock(2) on
+// the same `<path>.lock` file, so episode deletes / outcome edits here can't
+// interleave with the encoder's metadata write and resurrect or clobber each
+// other. RAII: held for the guard's lifetime, released on close.
+class MetadataLock {
+   public:
+    explicit MetadataLock(const std::string& metadata_path) : lock_path_(metadata_path + ".lock") {
+        fd_ = ::open(lock_path_.c_str(), O_CREAT | O_RDWR, 0644);
+        if (fd_ >= 0) {
+            ::flock(fd_, LOCK_EX);  // blocks until the encoder (if mid-write) releases
+        } else {
+            // Degrade rather than crash, but say so — without the lock the
+            // encoder and this writer can race on dataset_metadata.json.
+            std::cerr << "MetadataLock: could not open " << lock_path_ << " (" << std::strerror(errno)
+                      << "); proceeding without the cross-process lock" << std::endl;
+        }
+    }
+    ~MetadataLock() {
+        if (fd_ >= 0) {
+            ::close(fd_);  // closing the fd releases the flock
+        }
+    }
+    MetadataLock(const MetadataLock&) = delete;
+    MetadataLock& operator=(const MetadataLock&) = delete;
+
+   private:
+    std::string lock_path_;
+    int fd_ = -1;
+};
+
+// Preserve the dataset_encoder's metadata writes (dataset_type=h264 and the
+// per-episode video_files it adds after converting) when the recorder rewrites
+// dataset_metadata.json from its in-memory snapshot. That snapshot is taken at
+// task activation and never sees the encoder's later disk changes, so without
+// this an add_episode / end_task save would downgrade dataset_type back to h5
+// and strip video_files — which re-queues the skill into a no-op encode that
+// leaves every episode stuck "preparing" with no error. Caller holds the lock.
+void merge_encoder_fields_from_disk(const std::string& path, nlohmann::json& meta) {
+    if (!fs::exists(path)) {
+        return;
+    }
+    nlohmann::json disk;
+    try {
+        std::ifstream in(path);
+        in >> disk;
+    } catch (const std::exception&) {
+        return;  // corrupt/unreadable on disk — write our copy as-is rather than fail the save
+    }
+    if (!disk.is_object()) {
+        return;
+    }
+
+    // Never downgrade the encoder's h264 marker back to h5.
+    if (disk.value("dataset_type", std::string{}) == "h264") {
+        meta["dataset_type"] = "h264";
+    }
+
+    // Carry over video_files for episodes that already have them on disk and
+    // don't in our snapshot (the recorder itself never sets video_files).
+    if (!disk.contains("episodes") || !disk["episodes"].is_array() || !meta.contains("episodes") ||
+        !meta["episodes"].is_array()) {
+        return;
+    }
+    for (auto& ep : meta["episodes"]) {
+        if (!ep.contains("episode_id")) {
+            continue;
+        }
+        if (ep.contains("video_files") && ep["video_files"].is_array() && !ep["video_files"].empty()) {
+            continue;
+        }
+        const int id = ep["episode_id"].get<int>();
+        for (const auto& dep : disk["episodes"]) {
+            if (dep.value("episode_id", -1) == id && dep.contains("video_files") && dep["video_files"].is_array() &&
+                !dep["video_files"].empty()) {
+                ep["video_files"] = dep["video_files"];
+                break;
+            }
+        }
+    }
+}
+}  // namespace
 
 namespace manipulation {
 
@@ -137,11 +244,14 @@ void TaskManager::save_metadata() {
     fs::create_directories(data_dir);
     std::string metadata_path = data_dir + "/dataset_metadata.json";
 
-    std::ofstream file(metadata_path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open metadata file for writing: " + metadata_path);
-    }
-    file << metadata_.dump(4);
+    MetadataLock lock(metadata_path);
+    // metadata_ is the snapshot from task activation; the background encoder may
+    // have written dataset_type=h264 + per-episode video_files to disk since. The
+    // lock stops a torn read but not this stale copy from clobbering those — so
+    // merge the encoder-owned fields back from a fresh disk read before writing
+    // (the converter does the same re-read on its side).
+    merge_encoder_fields_from_disk(metadata_path, metadata_);
+    write_json_atomic(metadata_path, metadata_);
 }
 
 void TaskManager::load_metadata() {
@@ -274,6 +384,10 @@ std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string
         return {false, "No dataset metadata at " + metadata_path};
     }
 
+    // Serialize the read-modify-write against the background encoder (see
+    // MetadataLock) so a concurrent encode write-back can't clobber this outcome.
+    MetadataLock lock(metadata_path);
+
     nlohmann::json meta;
     try {
         std::ifstream in(metadata_path);
@@ -302,8 +416,7 @@ std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string
     }
 
     try {
-        std::ofstream out(metadata_path);
-        out << meta.dump(4);
+        write_json_atomic(metadata_path, meta);
     } catch (const std::exception& e) {
         return {false, std::string("Failed to write metadata: ") + e.what()};
     }
@@ -322,6 +435,10 @@ std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& tas
     if (!fs::exists(metadata_path)) {
         return {false, "No dataset metadata at " + metadata_path};
     }
+
+    // Hold the lock across the metadata rewrite AND the file removal below, so
+    // the background encoder can't re-read a half-deleted state (see MetadataLock).
+    MetadataLock lock(metadata_path);
 
     nlohmann::json meta;
     try {
@@ -349,8 +466,7 @@ std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& tas
     // number_of_episodes doubles as the next-id counter (see add_episode); leave
     // it untouched so future ids never collide with a deleted slot.
     try {
-        std::ofstream out(metadata_path);
-        out << meta.dump(4);
+        write_json_atomic(metadata_path, meta);
     } catch (const std::exception& e) {
         return {false, std::string("Failed to write metadata: ") + e.what()};
     }

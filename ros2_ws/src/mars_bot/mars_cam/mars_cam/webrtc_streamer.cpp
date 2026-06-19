@@ -61,11 +61,6 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     // Create publishers
     offer_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer", 10);
     ice_out_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/ice_out", 10);
-    // Volatile QoS (NOT transient_local): this node runs composable with
-    // intra-process comm enabled, which only permits volatile durability. The
-    // episode encoder subscribes at startup and tracks transitions from there.
-    streaming_status_pub_ = this->create_publisher<std_msgs::msg::Bool>("/webrtc/status", 10);
-    publish_streaming(false);
 
     // Create subscribers
     answer_sub_ = this->create_subscription<std_msgs::msg::String>(
@@ -404,16 +399,6 @@ void WebRTCStreamer::teardown_pipeline_locked() {
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
     }
-
-    // The stream is definitively gone — let the background encoder resume.
-    publish_streaming(false);
-}
-
-void WebRTCStreamer::publish_streaming(bool active) {
-    streaming_active_ = active;
-    std_msgs::msg::Bool msg;
-    msg.data = active;
-    streaming_status_pub_->publish(msg);
 }
 
 void WebRTCStreamer::cleanup_pipeline() {
@@ -794,13 +779,6 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
     // from this callback thread would deadlock the pipeline. CLOSED tears down at once; FAILED/
     // DISCONNECTED only after a grace window, so webrtcbin can first recover via ICE restart.
     RCLCPP_INFO(self->get_logger(), "WebRTC connection state: %s", state_str);
-
-    // Signal a live stream to the background encoder on CONNECTED. We do NOT
-    // clear it on DISCONNECTED/FAILED here — those may recover via ICE restart;
-    // the definitive "false" is published from teardown_pipeline_locked().
-    if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
-        self->publish_streaming(true);
-    }
 }
 
 void WebRTCStreamer::on_ice_gathering_state_changed(GstElement* webrtc, GParamSpec* /*pspec*/, gpointer user_data) {

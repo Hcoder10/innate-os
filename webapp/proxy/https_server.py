@@ -388,17 +388,20 @@ async def process_request(connection, request):
         return None  # proceed with the WebSocket handshake
     split = urlsplit(request.path)
     qs = parse_qs(split.query)
+    # These builders do blocking disk I/O — reading multi-MB MP4s, h5py decodes,
+    # directory walks. Run them off the event loop (to_thread) so a scrubbing
+    # browser's back-to-back range reads can't stall the rosbridge /ws relay.
     if split.path == "/episode":
-        return episode_response(request, qs)
+        return await asyncio.to_thread(episode_response, request, qs)
     if split.path == "/episode/joints":
-        return joints_response(qs)
+        return await asyncio.to_thread(joints_response, qs)
     if split.path == "/episode/thumb":
         return await thumb_response(qs)
     if split.path == "/run/info":
-        return run_info_response(qs)
+        return await asyncio.to_thread(run_info_response, qs)
     if split.path == "/run/log":
-        return run_log_response(qs)
-    return static_response(request.path)
+        return await asyncio.to_thread(run_log_response, qs)
+    return await asyncio.to_thread(static_response, request.path)
 
 
 async def process_media_request(connection, request):
@@ -408,9 +411,9 @@ async def process_media_request(connection, request):
     split = urlsplit(request.path)
     qs = parse_qs(split.query)
     if split.path == "/episode":
-        return episode_response(request, qs)
+        return await asyncio.to_thread(episode_response, request, qs)
     if split.path == "/episode/joints":
-        return joints_response(qs)
+        return await asyncio.to_thread(joints_response, qs)
     if split.path == "/episode/thumb":
         return await thumb_response(qs)
     return _plain(404, "Not Found", "not found")

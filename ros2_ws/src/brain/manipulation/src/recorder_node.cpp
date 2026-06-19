@@ -159,8 +159,15 @@ RecorderNode::RecorderNode()
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/end_task");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/get_task_metadata");
 
-    // Create status publisher
-    status_pub_ = this->create_publisher<brain_messages::msg::RecorderStatus>("/brain/recorder/status", 10);
+    // Create status publisher. Latched (transient_local, depth 1) so a client
+    // that (re)connects mid-recording immediately learns the current state — e.g.
+    // the web Collect page can detect an episode still open on the robot after a
+    // dropped connection and offer to discard it, instead of silently orphaning
+    // it. Status is edge-published on transitions, so without latching a late
+    // subscriber would see nothing until the next transition.
+    rclcpp::QoS status_qos(rclcpp::KeepLast(1));
+    status_qos.transient_local();
+    status_pub_ = this->create_publisher<brain_messages::msg::RecorderStatus>("/brain/recorder/status", status_qos);
 
     // Create recording timer
     auto timer_period = std::chrono::duration<double>(1.0 / data_frequency_);

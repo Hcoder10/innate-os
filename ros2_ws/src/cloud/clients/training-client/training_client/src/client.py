@@ -270,7 +270,10 @@ class OrchestratorClient:
         Returns ``(size, md5_b64)`` — the Content-Length and the object's
         base64-encoded MD5 from the ``x-goog-hash`` header (``None`` for that
         slot if GCS reported no MD5, e.g. composite objects). Returns ``None``
-        for the whole tuple if the object doesn't exist (non-200).
+        for the whole tuple if the object doesn't exist (non-200) or the server
+        omitted Content-Length — both fall back to "not uploaded", the safe
+        side: a substituted 0 would falsely match an empty local file (skipping
+        a real upload) and needlessly mismatch a non-empty one.
         """
         try:
             resp = requests.head(
@@ -280,8 +283,9 @@ class OrchestratorClient:
             )
             if resp.status_code == 200:
                 cl = resp.headers.get("Content-Length")
-                size = int(cl) if cl else 0
-                return size, _parse_goog_md5(resp.headers.get("x-goog-hash", ""))
+                if not cl:
+                    return None
+                return int(cl), _parse_goog_md5(resp.headers.get("x-goog-hash", ""))
             return None
         except Exception as e:
             logger.warning("HEAD request failed for signed URL: %s", e)

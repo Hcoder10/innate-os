@@ -289,6 +289,17 @@ class ConsoleBridge(Node):
         out.data = json.dumps({"entries": items[-n:]}, separators=(",", ":"))
         self._backfill.publish(out)
 
+    def destroy_node(self):
+        # Release the per-pane capture file handles so fds don't leak if the node
+        # is re-instantiated in the same process (e.g. a composable-node restart).
+        for st in self._panes.values():
+            try:
+                st["fh"].close()
+            except Exception:
+                pass
+        self._panes.clear()
+        super().destroy_node()
+
 
 def main():
     rclpy.init()

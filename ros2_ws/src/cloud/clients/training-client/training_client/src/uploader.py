@@ -148,7 +148,7 @@ def upload_data_files(
         file_progress=FileProgress(filename="", index=verified_through, total=total),
     )
 
-    for idx, name in enumerate(filenames, start=file_offset + 1):  # noqa: B007
+    for name in filenames:
         download_url = download_urls.get(name)
 
         if not download_url:

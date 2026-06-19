@@ -8,14 +8,15 @@ cloud-sync becomes a pure upload. It reuses the *exact* converter that sync runs
 (``training_client.src.episode_converter.convert_episodes_to_h264``), which is
 idempotent and resumable — so a power-off mid-encode self-heals on the next pass.
 
-Hiccup safety: encoding is gated. It pauses (between work items) whenever the
-robot is recording/replaying, a skill/policy is executing, or a live WebRTC
-stream is up — and it runs at a high ``nice`` level with idle I/O and few
-threads. One episode-camera is encoded at a time, never in parallel.
+Hiccup safety: it runs at a high ``nice`` level with idle I/O and few threads,
+and encodes one episode-camera at a time (never in parallel), so it stays out of
+the way of recording/teleop without ever pausing. (Earlier it gated on
+recording/teleop/skill activity, but that left freshly-recorded episodes stuck
+un-encoded whenever a live view was open, so encoding now runs continuously.)
 
 Single-threaded by design: a timer advances the converter generator one work
-item per tick, so subscription callbacks (gating) and the encode service stay on
-one executor with no locking. Each item is a few seconds of gst encoding.
+item per tick, so the recorder callback and the encode service stay on one
+executor with no locking. Each item is a few seconds of gst encoding.
 """
 
 import json
@@ -28,7 +29,6 @@ from brain_messages.msg import EncodeStatus, RecorderStatus
 from brain_messages.srv import EncodeEpisode
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile
-from std_msgs.msg import Bool, String
 
 # Reused, idempotent converter — same code path the cloud-sync runs.
 from training_client.src.episode_converter import (
@@ -38,11 +38,6 @@ from training_client.src.episode_converter import (
 from training_client.src.types import ProgressStage
 
 DATA_SUBDIR = "data"
-# Recorder status values that mean a capture/replay session is in progress.
-RECORDER_BUSY = {"active", "stopped"}
-# Substrings that mark a skill_status_update as "a skill is running".
-SKILL_RUNNING_HINTS = ("run", "execut", "active", "start", "play", "progress")
-SKILL_IDLE_HINTS = ("idle", "done", "complete", "finish", "stopp", "cancel", "error", "fail")
 
 
 class DatasetEncoder(Node):
@@ -60,13 +55,11 @@ class DatasetEncoder(Node):
         self.declare_parameter("idle_io", True)
         self.declare_parameter("tick_period_sec", 0.5)
         self.declare_parameter("scan_period_sec", 60.0)
-        self.declare_parameter("skill_stale_sec", 15.0)
 
         self.skills_root = os.path.expanduser(self.get_parameter("skills_root").value)
         self.nice_level = int(self.get_parameter("nice_level").value)
         self.encode_threads = int(self.get_parameter("encode_threads").value)
         self.idle_io = bool(self.get_parameter("idle_io").value)
-        self.skill_stale_sec = float(self.get_parameter("skill_stale_sec").value)
 
         # Work queue of skill task_directories awaiting conversion (deduped).
         self._queue: deque[str] = deque()
@@ -79,12 +72,6 @@ class DatasetEncoder(Node):
         self._cur_total = 0
         self._cur_file = ""
 
-        # Gating inputs.
-        self._recording = False
-        self._skill_active_until = 0.0
-        self._webrtc_active = False
-        self._last_gated_pub = False
-
         # Latched status so a late subscriber (the apps) gets current state.
         latched = QoSProfile(
             depth=1,
@@ -93,11 +80,8 @@ class DatasetEncoder(Node):
         )
         self._status_pub = self.create_publisher(EncodeStatus, "/datasets/encode_status", latched)
 
+        # Auto-enqueue an episode's skill the moment the recorder saves it.
         self.create_subscription(RecorderStatus, "/brain/recorder/status", self._on_recorder, 10)
-        self.create_subscription(String, "/brain/skill_status_update", self._on_skill_status, 10)
-        # Volatile to match the streamer's publisher (it runs intra-process, which
-        # forbids transient_local). We subscribe at startup and follow transitions.
-        self.create_subscription(Bool, "/webrtc/status", self._on_webrtc, 10)
 
         self.create_service(EncodeEpisode, "/datasets/encode_episode", self._on_encode_request)
 
@@ -112,42 +96,10 @@ class DatasetEncoder(Node):
             f"threads={self.encode_threads}, idle_io={self.idle_io}"
         )
 
-    # ---- gating ----------------------------------------------------------
-    def _now(self) -> float:
-        return self.get_clock().now().nanoseconds / 1e9
-
-    def _skill_active(self) -> bool:
-        return self._now() < self._skill_active_until
-
-    def _gated(self) -> bool:
-        # Gating disabled: encoding runs continuously and stays out of the way
-        # purely via low priority (nice=15, reduced threads, idle I/O). Pausing
-        # on recording/teleop/skill left new episodes stuck un-encoded whenever
-        # a live view was open. The recorder subscription still drives
-        # enqueue-on-save; only the pause is gone. (Restore by returning the old
-        # `self._recording or self._webrtc_active or self._skill_active()`.)
-        return False
-
+    # ---- inputs ----------------------------------------------------------
     def _on_recorder(self, msg: RecorderStatus):
-        self._recording = msg.status in RECORDER_BUSY
         if msg.status == "saved" and msg.task_directory:
             self._enqueue(msg.task_directory)
-
-    def _on_skill_status(self, msg: String):
-        try:
-            data = json.loads(msg.data) if msg.data.strip() else {}
-        except (ValueError, TypeError):
-            data = {}
-        blob = " ".join(str(data.get(k, "")) for k in ("status", "state", "phase", "event", "type")).lower()
-        if not blob:
-            blob = str(msg.data).lower()
-        if any(h in blob for h in SKILL_IDLE_HINTS):
-            self._skill_active_until = 0.0
-        elif any(h in blob for h in SKILL_RUNNING_HINTS):
-            self._skill_active_until = self._now() + self.skill_stale_sec
-
-    def _on_webrtc(self, msg: Bool):
-        self._webrtc_active = bool(msg.data)
 
     # ---- queue management ------------------------------------------------
     def _enqueue(self, task_directory: str, front: bool = False):
@@ -194,6 +146,24 @@ class DatasetEncoder(Node):
             response.success = False
             response.message = f"No data/ directory under {task_dir}"
             return response
+        # Distinguish "no metadata to check yet" from "already encoded" — both
+        # make _needs_conversion return False, but only the latter is a success.
+        meta_path = os.path.join(task_dir, DATA_SUBDIR, DATASET_METADATA)
+        if not os.path.isfile(meta_path):
+            response.success = False
+            response.message = f"No {DATASET_METADATA} yet under {task_dir}/{DATA_SUBDIR}"
+            return response
+        # A present-but-corrupt metadata file would make _needs_conversion swallow
+        # the JSONDecodeError and return False — reporting "already encoded" for a
+        # file we can't even parse, leaving the episode stuck in "preparing" with
+        # no error and no retry. Surface the parse failure explicitly instead.
+        try:
+            with open(meta_path) as fh:
+                json.load(fh)
+        except (OSError, ValueError) as exc:
+            response.success = False
+            response.message = f"Cannot parse {DATASET_METADATA}: {exc}"
+            return response
         if not self._needs_conversion(task_dir):
             response.success = True
             response.message = "Already encoded; nothing to do"
@@ -206,7 +176,7 @@ class DatasetEncoder(Node):
     # ---- worker (timer advances one work item per tick) ------------------
     def _tick(self):
         if self._gen is None:
-            if self._gated() or not self._queue:
+            if not self._queue:
                 return
             self._current_dir = self._queue.popleft()
             self._queued.discard(self._current_dir)
@@ -219,10 +189,6 @@ class DatasetEncoder(Node):
             )
             self._cur_index = self._cur_total = 0
             self._cur_file = ""
-
-        if self._gated():
-            self._publish_gated()
-            return
 
         try:
             update = next(self._gen)
@@ -252,9 +218,6 @@ class DatasetEncoder(Node):
 
     # ---- status publishing ----------------------------------------------
     def _publish(self, *, stage, message="", error=""):
-        # Reset the gated-transition latch whenever we emit a non-gated update.
-        if stage != "gated":
-            self._last_gated_pub = False
         msg = EncodeStatus()
         msg.task_directory = self._current_dir
         msg.stage = stage
@@ -270,12 +233,6 @@ class DatasetEncoder(Node):
     def _publish_idle(self):
         self._reset_current()
         self._publish(stage="idle", message="idle")
-
-    def _publish_gated(self):
-        # Emit a gated update only on transition, to avoid spamming the topic.
-        if not self._last_gated_pub:
-            self._publish(stage="gated", message="paused — robot busy")
-            self._last_gated_pub = True
 
 
 def main():
