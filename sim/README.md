@@ -204,39 +204,20 @@ The backend exposes several API endpoints for controlling the simulation and int
 
 ### Configuration & Control (`/config_api`)
 
-*   **`POST /set_environment`**
-    *   Sets the active environment by placing configured entities.
-    *   Waits for simulator apply completion and returns an error if apply/rebuild fails.
-    *   **Request Body:** JSON object containing *either*:
-        *   `config_name`: (String) The name of a configuration file (without `.json`) in `data/environments/`.
-        *   `config`: (Object) A full environment configuration dictionary (matching the structure described above).
-    *   **Example (using `config_name`):**
+*   **`/sim/set_environment`** — rosbridge service, type `brain_messages/srv/ChangeMap` (replaces the old `POST /set_environment` HTTP route).
+    *   Sets the active environment by placing configured entities. Waits for simulator apply completion and returns `success` plus a `message` (error text on failure).
+    *   The single string request field `map_name` is *either*:
+        *   an environment **name** — a config file (without `.json`) in `data/environments/`, or
+        *   an inline environment **config** — the full configuration dictionary serialized as a JSON string.
+    *   **Example (by name):**
         ```bash
-        curl -X POST http://localhost:8000/set_environment \
-        -H "Content-Type: application/json" \
-        -d '{
-          "config_name": "walking_man_origin"
-        }'
+        ros2 service call /sim/set_environment brain_messages/srv/ChangeMap \
+          "{map_name: 'walking_man_origin'}"
         ```
-    *   **Example (using `config` object):**
+    *   **Example (inline JSON config):** pass the full config object as the `map_name` string, e.g.
         ```bash
-        curl -X POST http://localhost:8000/set_environment \
-        -H "Content-Type: application/json" \
-        -d '{
-          "config": {
-            "environment_name": "Baked_sc0_staging_00",
-            "entities": [
-              {
-                "name": "walker_1",
-                "asset_path": "data/assets/walking_man/man.obj",
-                "poses": [
-                  {"time": 0.0, "position": [0.0, 0.0, 0.10], "orientation": [0.0, 0.7071, 0.0, 0.7071]}
-                ],
-                "scale": [1.0, 1.0, 1.0]
-              }
-            ]
-          }
-        }'
+        ros2 service call /sim/set_environment brain_messages/srv/ChangeMap \
+          "{map_name: '{\"environment_name\": \"Baked_sc0_staging_00\", \"entities\": [ ... ]}'}"
         ```
 
 *   **`POST /reset_robot`**

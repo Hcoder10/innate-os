@@ -1,47 +1,21 @@
-import asyncio
-import json  # Need json for loading file
-import os  # Need os for path joining
-import time  # Add time import for timestamp
-import uuid
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, root_validator
 
-# ResetRobotCmd is used by the reset routes
-# SetEnvironmentCmd is used to send the config to the simulation node
-# BrainActiveCmd is used to activate/deactivate the brain via rosbridge
+# ResetRobotCmd is used by reset_brain; BrainActiveCmd / BrainBackendConfigCmd
+# activate/deactivate and configure the brain via rosbridge.
 from src.agent.types import (
     BrainActiveCmd,
     BrainBackendConfigCmd,
     ResetRobotCmd,
-    SetEnvironmentCmd,
 )
 from src.runtime_logging import SIM_LOG_MODES
 
 router = APIRouter()
-SET_ENV_APPLY_TIMEOUT_S = 30.0
-SET_ENV_APPLY_POLL_INTERVAL_S = 0.02
 
 
 class ResetBrainRequest(BaseModel):
     memory_state: str | None = None
-
-
-# Pydantic model for the set environment request body
-class SetEnvironmentRequest(BaseModel):
-    config: dict[str, Any] | None = None
-    config_name: str | None = None
-
-    @root_validator(pre=True)
-    def check_config_or_name_provided(cls, values):
-        config, config_name = values.get("config"), values.get("config_name")
-        if config is not None and config_name is not None:
-            raise ValueError("Provide either 'config' or 'config_name', not both.")
-        if config is None and config_name is None:
-            raise ValueError("Either 'config' or 'config_name' must be provided.")
-        return values
 
 
 class SetSimLogConfigRequest(BaseModel):
@@ -59,111 +33,6 @@ class BrainBackendConfigRequest(BaseModel):
         if not websocket_uri and not service_key:
             raise ValueError("Provide websocket_uri and/or service_key.")
         return values
-
-
-async def wait_for_environment_apply_result(shared_queues, request_id: str, timeout_s: float = SET_ENV_APPLY_TIMEOUT_S):
-    """Wait for SimulationNode to report set_environment success/failure."""
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        result = shared_queues.pop_environment_apply_result(request_id)
-        if result is not None:
-            return result
-        await asyncio.sleep(SET_ENV_APPLY_POLL_INTERVAL_S)
-    return None
-
-
-@router.post("/set_environment")
-# Update signature to use the new request model
-async def set_environment(request: Request, body: SetEnvironmentRequest):
-    """
-    Set the environment configuration either by providing a full configuration
-    dictionary directly or by specifying the name of a config file to load.
-
-    Args:
-        body: Request body containing either `config` (Dict) or `config_name` (str).
-
-    Returns:
-        JSON response confirming the environment configuration request was received.
-    """
-    shared_queues = request.app.state.SHARED_QUEUES
-    env_config = None
-
-    # Check if we have valid shared_queues
-    if shared_queues is None:
-        # Use HTTPException for standard FastAPI error handling
-        raise HTTPException(status_code=500, detail="Simulation not initialized")
-
-    # Determine the config dictionary (load from file or use directly)
-    if body.config_name:
-        config_name = body.config_name
-        print(f"[ConfigAPI] Loading environment config file: {config_name}.json")
-        try:
-            # Construct path relative to project root
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            config_path = os.path.join(project_root, "data", "environments", f"{config_name}.json")
-
-            with open(config_path) as f:
-                env_config = json.load(f)
-            print(f"[ConfigAPI] Successfully loaded config from {config_path}")
-        except FileNotFoundError:
-            raise HTTPException(  # noqa: B904
-                status_code=400,
-                detail=f"Configuration file '{config_name}.json' not found.",
-            )
-        except json.JSONDecodeError:
-            raise HTTPException(  # noqa: B904
-                status_code=400,
-                detail=f"Invalid JSON in configuration file '{config_name}.json'.",
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error loading configuration file: {e}")  # noqa: B904
-
-    elif body.config:
-        print("[ConfigAPI] Using direct environment configuration from request body.")
-        env_config = body.config
-
-    # This case should be caught by Pydantic validation, but double-check
-    if env_config is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Internal error: Could not determine environment configuration.",
-        )
-
-    # --- Send the command to the simulation ---
-    request_id = str(uuid.uuid4())
-
-    try:
-        set_env_cmd = SetEnvironmentCmd(config=env_config, timestamp=time.time(), request_id=request_id)
-        shared_queues.agent_to_sim.put_nowait(set_env_cmd)
-        # Don't log full config here for brevity/security
-        print("[ConfigAPI] Enqueued SetEnvironmentCmd")
-
-    except Exception as e:
-        # Re-raise as HTTPException for consistent API error handling
-        raise HTTPException(status_code=500, detail=f"Failed to queue environment update: {e}")  # noqa: B904
-
-    apply_result = await wait_for_environment_apply_result(shared_queues, request_id)
-    if apply_result is None:
-        raise HTTPException(
-            status_code=504,
-            detail="Timed out waiting for environment application result from simulator.",
-        )
-
-    if not apply_result.get("success", False):
-        raise HTTPException(
-            status_code=400,
-            detail=apply_result.get("error") or "Simulator failed to apply environment.",
-        )
-
-    return JSONResponse(
-        {
-            "status": "success",
-            "message": "Environment configuration applied.",
-            "request_id": request_id,
-            # Optionally include name if loaded from file
-            "source": (f"file: {body.config_name}.json" if body.config_name else "direct config"),
-        }
-    )
 
 
 @router.post("/brain_backend_config")

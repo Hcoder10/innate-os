@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import math
+import os
 import queue
 import threading
 import time
@@ -29,6 +30,7 @@ from src.agent.types import (
     RefreshAgentsCmd,
     ResetRobotCmd,
     RobotStateMsg,
+    SetEnvironmentCmd,
     VelocityCmd,
 )
 from src.shared_queues import AgentInfo, ChatMessage, ChatSignal, SkillInfo
@@ -56,6 +58,12 @@ ARM_TRIGGER_SERVICES = {
 # Simulator-control services the sim advertises over rosbridge (replacing the
 # old FastAPI control routes). All live under the /sim/ namespace.
 SIM_CONTROL_TRIGGER_SERVICES = {"/sim/reset_position"}
+SIM_SET_ENVIRONMENT_SERVICE = "/sim/set_environment"
+
+# Where named environment configs live (data/environments/<name>.json), three
+# directories up from this file (sim/src/agent/ -> sim/).
+ENVIRONMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "environments")
+SET_ENV_APPLY_TIMEOUT_S = 30.0
 
 
 def np_encoder(obj):
@@ -183,10 +191,16 @@ def arm_service_advertisements() -> list[dict]:
 
 
 def sim_control_service_advertisements() -> list[dict]:
-    return [
+    adverts = [
         rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
         for service in sorted(SIM_CONTROL_TRIGGER_SERVICES)
     ]
+    # set_environment carries a string payload (an environment name or an inline
+    # JSON config) and returns success+message. Reuse brain_messages/ChangeMap,
+    # which has exactly that shape (string map_name -> bool success, string
+    # message), to avoid defining a new srv type.
+    adverts.append(rosbridge_advertise_service(SIM_SET_ENVIRONMENT_SERVICE, "brain_messages/srv/ChangeMap"))
+    return adverts
 
 
 def is_arm_torque_enabled(shared_queues) -> bool:
@@ -364,6 +378,74 @@ async def _run_arm_trajectory_service(
         await _send_service_response(ws, service_name, {"success": False}, call_id)
 
 
+# Keep references to in-flight set_environment tasks so they are not garbage
+# collected before they finish (asyncio holds only weak references).
+_sim_control_tasks: set = set()
+
+
+def _resolve_environment_config(map_name: str) -> dict:
+    """Interpret the ChangeMap `map_name` field as either an inline JSON config
+    object or the name of a config in data/environments/<name>.json."""
+    text = (map_name or "").strip()
+    if not text:
+        raise ValueError("map_name is empty; provide an environment name or JSON config.")
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    config_path = os.path.join(ENVIRONMENTS_DIR, f"{text}.json")
+    with open(config_path) as config_file:
+        return json.load(config_file)
+
+
+async def _run_set_environment_service(ws, shared_queues, service_name, call_id, args):
+    """Apply an environment and reply once the simulator reports success/error.
+
+    Runs as its own task (not inline in inbound_data_loop) so the up-to-30s
+    apply wait never starves topic publishing on the data connection.
+    """
+    try:
+        env_config = _resolve_environment_config(args.get("map_name", ""))
+    except FileNotFoundError:
+        await _send_service_response(ws, service_name, {"success": False, "message": "environment not found"}, call_id)
+        return
+    except (ValueError, json.JSONDecodeError) as exc:
+        await _send_service_response(ws, service_name, {"success": False, "message": str(exc)}, call_id)
+        return
+
+    # Reuse the inbound call id as the apply request id so the simulator's result
+    # can be correlated back to this call.
+    request_id = call_id
+    try:
+        shared_queues.agent_to_sim.put_nowait(
+            SetEnvironmentCmd(config=env_config, timestamp=time.time(), request_id=request_id)
+        )
+    except queue.Full:
+        await _send_service_response(ws, service_name, {"success": False, "message": "queue full"}, call_id)
+        return
+
+    deadline = time.time() + SET_ENV_APPLY_TIMEOUT_S
+    while time.time() < deadline:
+        result = shared_queues.pop_environment_apply_result(request_id)
+        if result is not None:
+            await _send_service_response(
+                ws,
+                service_name,
+                {"success": bool(result.get("success")), "message": result.get("error") or ""},
+                call_id,
+            )
+            return
+        await asyncio.sleep(0.05)
+
+    await _send_service_response(
+        ws, service_name, {"success": False, "message": "timed out applying environment"}, call_id
+    )
+
+
 async def _handle_sim_control_service_call(ws, shared_queues, service_name, call_id, args):
     if service_name == "/sim/reset_position":
         # Reset the simulator pose only (no brain reset). Mirrors the old
@@ -374,6 +456,15 @@ async def _handle_sim_control_service_call(ws, shared_queues, service_name, call
             await _send_service_response(ws, service_name, {"success": False, "message": "queue full"}, call_id)
             return
         await _send_service_response(ws, service_name, {"success": True}, call_id)
+        return
+
+    if service_name == SIM_SET_ENVIRONMENT_SERVICE:
+        if not call_id:
+            await _send_service_response(ws, service_name, {"success": False, "message": "missing call id"}, call_id)
+            return
+        task = asyncio.create_task(_run_set_environment_service(ws, shared_queues, service_name, call_id, args))
+        _sim_control_tasks.add(task)
+        task.add_done_callback(_sim_control_tasks.discard)
         return
 
     await _send_service_response(ws, service_name, {"success": False, "message": "unknown service"}, call_id)
