@@ -89,16 +89,23 @@ function buildView(root) {
     closePlayer();
     listHost.hidden = true;
     playerHost.hidden = false;
-    const prev = episodes.neighbor(ep, -1);
-    const next = episodes.neighbor(ep, 1);
+    // Resolve neighbors LIVE at click, not frozen at open: the list keeps
+    // mutating underneath us as background encodes finish (the list re-fetches on
+    // each encode "done") and as episodes are deleted. Show a button only if a
+    // ready neighbor exists right now, and re-resolve on click so we never jump
+    // to an episode that has since been deleted or is still preparing.
+    const go = (/** @type {number} */ delta) => {
+      const target = episodes.neighbor(ep, delta);
+      if (target) openPlayer(skill, target);
+    };
     // On back, refresh the list so label/delete changes made in the player show.
     player = createEpisodePlayer(playerHost, ros, skill, ep, {
       onBack: () => {
         closePlayer();
         episodes.show(skill);
       },
-      onPrev: prev ? () => openPlayer(skill, prev) : null,
-      onNext: next ? () => openPlayer(skill, next) : null,
+      onPrev: episodes.neighbor(ep, -1) ? () => go(-1) : null,
+      onNext: episodes.neighbor(ep, 1) ? () => go(1) : null,
     });
   }
 

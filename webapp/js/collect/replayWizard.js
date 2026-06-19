@@ -14,6 +14,7 @@ import {
   RECORDER_NEW_EPISODE_SERVICE,
   RECORDER_STOP_EPISODE_SERVICE,
   RECORDER_SAVE_EPISODE_SERVICE,
+  RECORDER_CANCEL_EPISODE_SERVICE,
   SAVE_AS_REPLAY_SKILL_SERVICE,
   DELETE_SKILL_SERVICE,
 } from "../constants.js";
@@ -128,8 +129,19 @@ export function createReplayWizard(host, ros, opts) {
       const stopped = await ros.callService(RECORDER_STOP_EPISODE_SERVICE, {});
       if (stopped && stopped.success === false) throw new Error(stopped.message || "couldn't stop");
       recordingOpen = false;
-      const savedEp = await ros.callService(RECORDER_SAVE_EPISODE_SERVICE, {});
-      if (savedEp && savedEp.success === false) throw new Error(savedEp.message || "couldn't save take");
+      try {
+        const savedEp = await ros.callService(RECORDER_SAVE_EPISODE_SERVICE, {});
+        if (savedEp && savedEp.success === false) throw new Error(savedEp.message || "couldn't save take");
+      } catch (err) {
+        // Stop succeeded but the take didn't save → a stopped-but-unsaved episode
+        // is stranded on the recorder. Cancel it and drop back to idle so the user
+        // can re-record, instead of wedging in "recording" with a Stop button that
+        // re-fires on a closed episode.
+        await ros.callService(RECORDER_CANCEL_EPISODE_SERVICE, {}).catch(() => {});
+        phase = "idle";
+        resetTimer();
+        throw err;
+      }
       takes += 1;
       phase = "review";
       resetTimer();

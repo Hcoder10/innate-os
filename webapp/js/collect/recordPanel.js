@@ -23,6 +23,7 @@ import {
   RECORDER_STOP_EPISODE_SERVICE,
   RECORDER_SAVE_EPISODE_SERVICE,
   RECORDER_CANCEL_EPISODE_SERVICE,
+  RECORDER_STATUS_TOPIC,
 } from "../constants.js";
 import { createReplayWizard } from "./replayWizard.js";
 
@@ -83,6 +84,22 @@ export function createRecordPanel(parent, ros, opts = {}) {
   hint.className = "record-hint microlabel";
 
   learnedHost.append(top, controls, hint);
+
+  // Orphaned-recording recovery banner. Shown when the robot reports an episode
+  // still open while this panel is idle — typically a recording that outlived a
+  // dropped connection (on reconnect we get the latched recorder status). Sits
+  // above both faces of the HUD so it's visible in either mode.
+  const orphanBar = document.createElement("div");
+  orphanBar.className = "record-orphan";
+  orphanBar.hidden = true;
+  const orphanMsg = document.createElement("span");
+  orphanMsg.className = "record-orphan-msg";
+  const orphanDiscard = button("record-orphan-discard", "Discard recording");
+  const orphanDismiss = button("record-orphan-dismiss", "✕");
+  orphanDismiss.title = "Dismiss";
+  orphanBar.append(orphanMsg, orphanDiscard, orphanDismiss);
+  wrap.prepend(orphanBar);
+
   parent.appendChild(wrap);
 
   // ---- state --------------------------------------------------------------
@@ -102,6 +119,10 @@ export function createRecordPanel(parent, ros, opts = {}) {
   let digitalSkills = false; // robot supports recorded-movement (replay) skills
   /** @type {string} flashed after a replay skill is saved, until next render */
   let flash = "";
+  // Orphaned open episode on the robot (from the latched recorder status).
+  let orphanOpen = false;
+  let orphanDir = "";
+  let orphanBusy = false;
 
   /** @type {{ setArmReady: (r: boolean) => void, destroy: () => void } | null} */
   let wizard = null;
@@ -519,6 +540,85 @@ export function createRecordPanel(parent, ros, opts = {}) {
       });
   });
 
+  // ---- orphaned-recording recovery (latched recorder status) --------------
+
+  /** @param {{ task_directory?: string, episode_number?: string, status?: string }} msg */
+  function onRecorderStatus(msg) {
+    const status = msg?.status;
+    // While our own new/stop/save/cancel is in flight, our optimistic
+    // transitions own the state — don't fight them.
+    if (!busy) {
+      // The robot can change the episode state without us driving it: it
+      // auto-stops a recording at the max-length limit ("stopped"), and another
+      // client or a failure can save/cancel. Reconcile so the HUD never wedges
+      // (e.g. stuck on "Stop" with the timer running and Save unreachable).
+      if (recState === "recording" && status === "stopped") {
+        recState = "completed"; // surface Save / Discard
+        resetTimer();
+        render();
+      } else if (
+        (recState === "recording" || recState === "completed") &&
+        (status === "saved" || status === "cancelled" || status === "idle")
+      ) {
+        recState = "idle"; // the open episode is gone — don't strand the HUD on it
+        resetTimer();
+        render();
+      }
+    }
+
+    // An episode is genuinely OPEN only when it's recording or
+    // stopped-but-unsaved. The recorder publishes "active" for two different
+    // cases: a skill merely being selected/activated (no episode — empty
+    // episode_number), and an episode actually recording (episode_number set).
+    // Requiring an episode_number is what stops the banner firing just from
+    // picking a skill. "stopped" always carries one.
+    const episodeOpen = status === "stopped" || (status === "active" && !!msg?.episode_number);
+    if (episodeOpen && recState === "idle" && !busy) {
+      orphanOpen = true;
+      orphanDir = msg.task_directory || "";
+    } else if (!episodeOpen) {
+      orphanOpen = false;
+    }
+    renderOrphan();
+  }
+
+  function discardOrphan() {
+    if (orphanBusy) return;
+    orphanBusy = true;
+    renderOrphan();
+    // cancel_episode discards an active OR stopped episode on the recorder; the
+    // recorder then publishes "cancelled", which clears the banner via the sub.
+    ros.callService(RECORDER_CANCEL_EPISODE_SERVICE, {})
+      .then((res) => {
+        if (res && res.success === false) throw new Error(res.message || "couldn't discard");
+        orphanOpen = false;
+      })
+      .catch((err) => console.error("[collect] discard orphaned episode failed:", err))
+      .finally(() => {
+        orphanBusy = false;
+        renderOrphan();
+      });
+  }
+
+  function renderOrphan() {
+    orphanBar.hidden = !orphanOpen;
+    if (!orphanOpen) return;
+    const which = orphanDir ? skills.find((s) => s.directory === orphanDir)?.name : "";
+    orphanMsg.textContent = which
+      ? `The robot still has an unfinished recording open for “${which}” — discard it to start a new episode.`
+      : "The robot still has an unfinished recording open — discard it to start a new episode.";
+    orphanDiscard.disabled = orphanBusy;
+    orphanDiscard.textContent = orphanBusy ? "Discarding…" : "Discard recording";
+  }
+
+  orphanDiscard.addEventListener("click", discardOrphan);
+  orphanDismiss.addEventListener("click", () => {
+    orphanOpen = false;
+    renderOrphan();
+  });
+
+  const unsubStatus = ros.subscribe(RECORDER_STATUS_TOPIC, onRecorderStatus);
+
   // ---- render -------------------------------------------------------------
 
   function render() {
@@ -585,6 +685,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
       }
       unsubSkills();
       unsubInfo();
+      unsubStatus();
       wrap.remove();
     },
   };

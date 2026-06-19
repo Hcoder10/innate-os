@@ -194,12 +194,20 @@ export function createEpisodeList(parent, ros, opts) {
     return query ? sorted.filter((e) => String(numericId(e)).includes(query)) : sorted;
   }
 
-  /** Neighbor of *ep* in display order (delta -1 = row above, +1 = below), or null.
+  /** Nearest *ready* (playable) neighbor of *ep* in display order, walking in the
+   * delta direction (-1 = up, +1 = below) and skipping still-preparing episodes.
+   * Resolved against the live list, so it reflects deletes and encodes that
+   * happened since the player opened — never returns a now-missing or un-encoded
+   * episode (which would load a 404 video + "joint data unavailable").
    * @param {EpisodeSummary} ep @param {number} delta @returns {EpisodeSummary | null} */
   function neighbor(ep, delta) {
     const list = orderedEpisodes();
-    const i = list.findIndex((e) => numericId(e) === numericId(ep));
-    return i < 0 ? null : list[i + delta] || null;
+    let i = list.findIndex((e) => numericId(e) === numericId(ep));
+    if (i < 0) return null; // ep itself was deleted while the player was open
+    for (i += delta; i >= 0 && i < list.length; i += delta) {
+      if (isReady(list[i])) return list[i];
+    }
+    return null;
   }
 
   function render() {

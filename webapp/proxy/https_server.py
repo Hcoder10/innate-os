@@ -178,16 +178,21 @@ def _parse_range(header, size: int):
 
 
 def _serve_file_with_range(request, path: Path, content_type: str) -> Response:
-    """Serve a (small) file honoring HTTP Range, so <video> can scrub. Episodes
-    are a couple MB, so reading the whole file and slicing in memory is fine."""
-    body = path.read_bytes()
-    size = len(body)
+    """Serve a file honoring HTTP Range so <video> can scrub. For a range request
+    we read only the requested bytes from disk (seek + read) rather than slurping
+    the whole file and slicing — episode MP4s can be tens of MB and a scrubbing
+    browser fires many small range reads, so reading the whole file each time is
+    wasteful."""
+    size = path.stat().st_size
     common = {"Content-Type": content_type, "Accept-Ranges": "bytes", "Cache-Control": "no-cache"}
     rng = _parse_range(request.headers.get("Range"), size)
     if rng is None:
+        body = path.read_bytes()
         return Response(200, "OK", Headers({**common, "Content-Length": str(size)}), body)
     start, end = rng
-    chunk = body[start : end + 1]
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        chunk = fh.read(end - start + 1)
     headers = Headers({**common, "Content-Length": str(len(chunk)), "Content-Range": f"bytes {start}-{end}/{size}"})
     return Response(206, "Partial Content", headers, chunk)
 
@@ -235,6 +240,13 @@ def _make_thumb(mp4_path: Path, cache_path: Path, width: int = 240) -> None:
     os.replace(str(tmp), str(cache_path))
 
 
+# In-flight thumbnail generations, keyed by cache path, so a burst of lazy <img>
+# loads on a gallery page doesn't spawn N redundant cv2 decoders for the same
+# frame: the first request generates, the rest await the same lock and then read
+# the now-cached file.
+_thumb_locks: dict[str, asyncio.Lock] = {}
+
+
 async def thumb_response(qs: dict) -> Response:
     """GET /episode/thumb?dir=<skill_dir>&id=<n>&camera=<cam> → cached JPEG of a
     frame from the episode MP4 (generated on first request, then served static)."""
@@ -250,8 +262,12 @@ async def thumb_response(qs: dict) -> Response:
     cache = base / "thumbs" / f"episode_{eid}_{cam}.jpg"
     try:
         if not cache.is_file():
-            await asyncio.to_thread(_make_thumb, mp4, cache)
-        data = cache.read_bytes()
+            lock = _thumb_locks.setdefault(str(cache), asyncio.Lock())
+            async with lock:
+                if not cache.is_file():  # another request may have generated it while we waited
+                    await asyncio.to_thread(_make_thumb, mp4, cache)
+            _thumb_locks.pop(str(cache), None)
+        data = await asyncio.to_thread(cache.read_bytes)
     except Exception as err:  # noqa: BLE001
         return _plain(500, "Internal Server Error", f"thumb failed: {err}")
     return Response(
@@ -426,8 +442,11 @@ async def _reject_ws(connection):
 
 
 async def relay(source, sink):
-    async for message in source:
-        await sink.send(message)
+    try:
+        async for message in source:
+            await sink.send(message)
+    except ConnectionClosed:
+        pass  # either side going away ends the relay — a normal close, not an error
 
 
 async def ws_handler(connection):
@@ -443,6 +462,10 @@ async def ws_handler(connection):
             )
             for task in pending:
                 task.cancel()
+            # Consume every task's result so a relay that ended on a benign client
+            # disconnect (1001 going away) doesn't surface as an asyncio
+            # "Task exception was never retrieved" warning.
+            await asyncio.gather(*done, *pending, return_exceptions=True)
     except Exception as err:  # upstream down — close the client politely
         print(f"ws relay ended: {err}")
     finally:

@@ -90,13 +90,22 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   }
   label.addEventListener("change", () => {
     const outcome = /** @type {"success"|"failure"} */ (label.value);
+    const prev = episode.outcome;
     episode.outcome = outcome;
     applyLabelClass(outcome === "failure");
     ros.callService(SET_EPISODE_OUTCOME_SERVICE, {
       task_directory: dir,
       episode_id: id,
       outcome,
-    }).catch((err) => console.error("[datasets] set outcome failed:", err));
+    }).catch((err) => {
+      // Revert the optimistic update so the UI can't keep showing a label the
+      // robot never stored — outcome gates which episodes upload for training,
+      // so a silent divergence is misleading.
+      console.error("[datasets] set outcome failed:", err);
+      episode.outcome = prev;
+      label.value = prev === "failure" ? "failure" : "success";
+      applyLabelClass(prev === "failure");
+    });
   });
   const del = document.createElement("button");
   del.type = "button";
@@ -142,10 +151,12 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
     v.playsInline = true;
     v.preload = "auto";
     v.addEventListener("canplay", () => dot.classList.add("live"));
-    // A guessed camera (no video_files) may not exist — hide its cell rather
-    // than show a broken element. The first camera stays as the master.
+    // A secondary camera that 404s is optional — just hide its cell. If the
+    // master (first) camera fails, the whole player is inert, so surface an
+    // error rather than leave a frozen player.
     v.addEventListener("error", () => {
       if (cell !== pair.firstChild) cell.hidden = true;
+      else showVideoError();
     });
 
     cell.append(label, v);
@@ -181,7 +192,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
 
   // --- telemetry -----------------------------------------------------------
   const telemetry = document.createElement("div");
-  telemetry.className = "telemetry";
+  telemetry.className = "player-telemetry";
   const telHead = document.createElement("div");
   telHead.className = "telemetry-head";
   const telLabel = document.createElement("span");
@@ -227,6 +238,23 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
     const rate = SPEEDS[speedIdx];
     for (const v of videos) v.playbackRate = rate;
     speedBtn.textContent = `${rate}×`;
+  }
+
+  // If the master (first) camera's MP4 won't load, the player can't function —
+  // scrubber, play, time and playhead all key off it. Surface an error and
+  // disable transport instead of leaving a frozen, inert-looking player. The
+  // joint graph below stays usable.
+  let videoFailed = false;
+  function showVideoError() {
+    if (videoFailed) return;
+    videoFailed = true;
+    pauseAll();
+    const note = document.createElement("p");
+    note.className = "datasets-empty";
+    note.textContent = "This episode’s video couldn’t be loaded.";
+    pair.replaceChildren(note);
+    for (const b of [back10, stepB, playBtn, stepF, toEnd, speedBtn]) b.disabled = true;
+    scrub.disabled = true;
   }
 
   master.addEventListener("play", () => (playBtn.textContent = "❚❚"));
@@ -301,15 +329,30 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   }
 
   const jointsAbort = new AbortController();
-  fetch(`/episode/joints?${q}`, { signal: jointsAbort.signal })
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`joints ${r.status}`))))
-    .then((/** @type {EpisodeJoints} */ data) => {
-      if (data.data_frequency) fps = data.data_frequency;
-      renderGraph(data);
-    })
-    .catch(() => {
-      plot.innerHTML = '<p class="datasets-empty">Joint data unavailable.</p>';
-    });
+  /** @type {number | null} */
+  let jointsRetryTimer = null;
+  // Fetch joints with one retry: the episode's h5 can be momentarily unreadable
+  // if the encoder is mid-strip on it, which would otherwise leave the graph
+  // stuck on "unavailable" until the user reopens. Retry once after a short delay
+  // before giving up; never retry an abort (player closed).
+  /** @param {number} retries */
+  function loadJoints(retries) {
+    fetch(`/episode/joints?${q}`, { signal: jointsAbort.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`joints ${r.status}`))))
+      .then((/** @type {EpisodeJoints} */ data) => {
+        if (data.data_frequency) fps = data.data_frequency;
+        renderGraph(data);
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        if (retries > 0) {
+          jointsRetryTimer = window.setTimeout(() => loadJoints(retries - 1), 800);
+          return;
+        }
+        plot.innerHTML = '<p class="datasets-empty">Joint data unavailable.</p>';
+      });
+  }
+  loadJoints(1);
 
   /** @param {EpisodeJoints} data */
   function renderGraph(data) {
@@ -448,6 +491,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   return {
     destroy() {
       jointsAbort.abort();
+      if (jointsRetryTimer !== null) clearTimeout(jointsRetryTimer);
       for (const v of videos) {
         v.pause();
         v.removeAttribute("src");
