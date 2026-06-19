@@ -12,6 +12,7 @@ On startup fetches all existing jobs; auto-downloads + activates ``done`` runs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -216,6 +217,10 @@ class TrainingNode(Node):
         # is in-memory; without this, locally-recorded skills look "foreign").
         self._register_local_skill_dirs()
 
+        # Resume any start_training that a crash/reboot interrupted between
+        # upload and create_run (a robot can power-cycle anytime).
+        self._resume_pending_training()
+
         # ── Timer + poller ──────────────────────────────────────────
         self.create_timer(pub_sec, self._publish)
         self._poller = Poller(self._mgr, self._store, poll_sec)
@@ -416,21 +421,63 @@ class TrainingNode(Node):
     # ── Service: start_training ─────────────────────────────────────
 
     def _on_start_training(self, req: StartTraining.Request, res: StartTraining.Response) -> StartTraining.Response:
-        """Submit the skill and create a run once the upload finishes — all on
-        the robot, so the caller can disconnect immediately after this returns."""
+        """Kick off submit → upload → create_run on the robot and return at once.
+
+        The whole chain runs on a background thread (`_run_training_flow`), so
+        this service never blocks the single executor thread on network I/O —
+        the dashboard and other services stay live while a (slow) submit/upload
+        runs. The caller can disconnect immediately; the robot finishes the run.
+        """
         err = _require_absolute(req.skill_dir)
         if err:
             res.success, res.message = False, err
             return res
 
-        # Validate hyperparameters up front so bad input fails fast.
+        # Validate hyperparameters up front so bad input fails fast (sync, cheap).
         training_params, params_err = _build_training_params(req.run_params)
         if params_err:
             res.success, res.message = False, params_err
             return res
 
+        # Dedup: the chain is slow, so the webapp/mobile may re-fire (or two
+        # clients race). Without this each call would spawn its own upload +
+        # create_run → duplicate, separately-billed GPU runs. The claim is held
+        # until _run_training_flow finishes (released in its finally), so a
+        # retry while one is in flight is a clean no-op.
+        if not self._store.begin_start_training(req.skill_dir):
+            res.success, res.message = False, "Training is already starting for this skill."
+            return res
+
+        # Persist the intent before any work so a crash/reboot mid-upload resumes
+        # the run on next boot instead of silently dropping it.
+        self._write_pending_marker(req.skill_dir, training_params)
         try:
-            gen = self._mgr.submit(req.skill_dir)
+            threading.Thread(
+                target=self._run_training_flow,
+                args=(req.skill_dir, training_params),
+                daemon=True,
+                name="train-start",
+            ).start()
+        except Exception as e:  # spawning a thread should never fail, but don't leak the claim
+            self._clear_pending_marker(req.skill_dir)
+            self._store.end_start_training(req.skill_dir)
+            res.success, res.message = False, f"Couldn't start training: {e}"
+            return res
+
+        res.success = True
+        res.message = "Training starting — uploading, then creating a run."
+        self.get_logger().info(f"start_training: queued {req.skill_dir} (background)")
+        return res
+
+    def _run_training_flow(self, skill_dir: str, training_params: dict | None) -> None:
+        """Background worker: submit → (idempotent) upload → create_run, off the
+        executor thread. Surfaces a failure as a synthetic 'rejected' run so the
+        dashboard shows it. Clears the resume marker on any normal completion, so
+        only an abrupt kill (which skips the finally) leaves it for a boot-resume.
+        """
+        skill_id: str | None = None
+        try:
+            gen = self._mgr.submit(skill_dir)
             skill: SkillInfo | None = None
             try:
                 while True:
@@ -438,44 +485,98 @@ class TrainingNode(Node):
             except StopIteration as e:
                 skill = e.value
             if skill is None:
-                res.success, res.message = False, "submit returned no skill"
-                return res
-
+                self.get_logger().error(f"start_training: submit returned no skill for {skill_dir}")
+                return
+            skill_id = skill.skill_id
             self._store.put_skill(skill)
-            self._store.register_dir(skill.skill_id, req.skill_dir)
-            self._store.mark_upload_pending(skill.skill_id)
-
-            threading.Thread(
-                target=self._upload_then_run,
-                args=(skill.skill_id, req.skill_dir, training_params),
-                daemon=True,
-                name=f"train-{skill.skill_id[:8]}",
-            ).start()
-
-            res.success = True
-            res.message = f"Skill {skill.skill_id} submitted — run will start after upload"
-            self.get_logger().info(f"start_training: {skill.skill_id[:8]} submitted — syncing then creating a run")
-        except Exception as e:
-            self.get_logger().error(f"start_training failed: {e}")
-            res.success, res.message = False, str(e)
-        return res
-
-    def _upload_then_run(self, skill_id: str, skill_dir: str, training_params: dict | None) -> None:
-        """Background: (re-)upload the dataset, then create the run. The upload is
-        idempotent — it only transfers files that actually changed (new/edited
-        episodes, deletions, re-labels) and HEAD-skips the rest — so running it
-        every time is cheap and keeps the cloud dataset current."""
-        if not do_upload(self._mgr, self._store, skill_id, skill_dir):
-            self.get_logger().error(f"start_training: upload failed for {skill_id[:8]} — run not created")
-            return
-        try:
-            data = self._mgr.client.create_run(skill_id, training_params=training_params)
-            rid = int(data["run_id"])
-            self._store.put_job(self._mgr.run_status(skill_id, rid))
             self._store.register_dir(skill_id, skill_dir)
-            self.get_logger().info(f"start_training: run {skill_id[:8]}/{rid} created after upload")
+            self._store.clear_start_failure(skill_id)  # a fresh attempt clears the last failure marker
+            self._store.mark_upload_pending(skill_id)
+
+            if not do_upload(self._mgr, self._store, skill_id, skill_dir):
+                self.get_logger().error(f"start_training: upload failed for {skill_id[:8]} — run not created")
+                self._store.record_start_failure(skill_id, "Upload failed — run not created")
+                return
+            try:
+                data = self._mgr.client.create_run(skill_id, training_params=training_params)
+                rid = int(data["run_id"])
+                self._store.put_job(self._mgr.run_status(skill_id, rid))
+                self._store.register_dir(skill_id, skill_dir)
+                self.get_logger().info(f"start_training: run {skill_id[:8]}/{rid} created after upload")
+            except Exception as e:
+                self.get_logger().error(f"start_training: create_run failed for {skill_id[:8]}: {e}")
+                self._store.record_start_failure(skill_id, f"Couldn't start training: {e}")
         except Exception as e:
-            self.get_logger().error(f"start_training: create_run failed for {skill_id[:8]}: {e}")
+            self.get_logger().error(f"start_training flow failed for {skill_dir}: {e}")
+            if skill_id:
+                self._store.record_start_failure(skill_id, f"Couldn't start training: {e}")
+        finally:
+            self._clear_pending_marker(skill_dir)
+            self._store.end_start_training(skill_dir)
+
+    # ── start_training resume markers ───────────────────────────────
+    # A small on-disk record of an in-flight start_training, so a crash/reboot
+    # between upload and create_run resumes the run instead of dropping it. Kept
+    # outside the dataset dir (keyed by a hash of skill_dir) so it survives and
+    # works for any skill_dir; the upload is idempotent, so a resumed run just
+    # finishes the remainder.
+
+    def _pending_dir(self) -> str:
+        return os.path.join(
+            os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os")),
+            "workspace",
+            ".training_pending",
+        )
+
+    def _marker_path(self, skill_dir: str) -> str:
+        digest = hashlib.sha1(skill_dir.encode()).hexdigest()
+        return os.path.join(self._pending_dir(), f"{digest}.json")
+
+    def _write_pending_marker(self, skill_dir: str, training_params: dict | None) -> None:
+        try:
+            os.makedirs(self._pending_dir(), exist_ok=True)
+            with open(self._marker_path(skill_dir), "w") as fh:
+                json.dump({"skill_dir": skill_dir, "training_params": training_params}, fh)
+        except OSError as e:
+            # Best-effort: training still runs, we just lose crash-resume for it.
+            self.get_logger().warning(f"start_training: couldn't write resume marker: {e}")
+
+    def _clear_pending_marker(self, skill_dir: str) -> None:
+        try:
+            os.remove(self._marker_path(skill_dir))
+        except OSError:
+            pass
+
+    def _resume_pending_training(self) -> None:
+        try:
+            files = [f for f in os.listdir(self._pending_dir()) if f.endswith(".json")]
+        except OSError:
+            return
+        for name in files:
+            path = os.path.join(self._pending_dir(), name)
+            try:
+                with open(path) as fh:
+                    data = json.load(fh)
+                skill_dir = data["skill_dir"]
+                params = data.get("training_params")
+            except (OSError, ValueError, KeyError):
+                continue
+            if not (skill_dir and os.path.isdir(skill_dir)):
+                # Stale marker (skill deleted): drop it.
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            if not self._store.begin_start_training(skill_dir):
+                continue
+            self.get_logger().info(f"start_training: resuming interrupted run for {skill_dir}")
+            threading.Thread(
+                target=self._run_training_flow,
+                args=(skill_dir, params),
+                daemon=True,
+                name="train-resume",
+            ).start()
 
     # ── Service: cancel_run ─────────────────────────────────────────
 
