@@ -30,13 +30,107 @@ export function createVideoStage(parent, session) {
   retry.type = "button";
   retry.textContent = "Retry video";
   retry.hidden = true;
-  retry.addEventListener("click", () => session.start());
   status.append(statusText, retry);
 
   wrap.append(video, audio, status);
   parent.appendChild(wrap);
 
+  // A freshly attached MediaStream paints its first decoded frame and then
+  // holds it for a beat (jitter-buffer / playout warmup) before smooth playback
+  // — a multi-second frozen frame on a cold start. Cover that with a "loading
+  // video stream" state until frames are actually flowing. Only the FIRST
+  // bring-up: later rebuilds deliberately keep the previous frame as a
+  // freeze-frame (nicer than blanking back to a loading screen).
+  let latest = session.state;
+  let buffering = false;
+  let everPlayed = false;
+  let frameCbId = 0;
+  /** @type {number | null} */ let bufferTimer = null;
+
+  const stopFrameWatch = () => {
+    if (frameCbId && "cancelVideoFrameCallback" in video) {
+      // @ts-ignore — rVFC not in older TS dom lib
+      video.cancelVideoFrameCallback(frameCbId);
+    }
+    frameCbId = 0;
+    if (bufferTimer !== null) {
+      clearTimeout(bufferTimer);
+      bufferTimer = null;
+    }
+  };
+
+  // Give up waiting and reveal whatever's there — safety net so we never sit on
+  // "loading" forever (non-Chromium without rVFC, or a genuinely dead stream;
+  // the session's own watchdog handles real failures by erroring/rebuilding).
+  const revealReady = () => {
+    buffering = false;
+    stopFrameWatch();
+    render();
+  };
+
+  // Watch a newly attached stream until real frames flow, then reveal it.
+  const watchFirstFrames = () => {
+    buffering = true;
+    stopFrameWatch();
+    bufferTimer = setTimeout(revealReady, 5_000);
+    if ("requestVideoFrameCallback" in video) {
+      let seen = 0;
+      const tick = () => {
+        // A held/frozen frame is presented once; several distinct presentations
+        // mean playback is genuinely advancing.
+        if (++seen >= 3) {
+          buffering = false;
+          everPlayed = true;
+          stopFrameWatch();
+          render();
+          return;
+        }
+        // @ts-ignore — rVFC not in older TS dom lib
+        frameCbId = video.requestVideoFrameCallback(tick);
+      };
+      // @ts-ignore — rVFC not in older TS dom lib
+      frameCbId = video.requestVideoFrameCallback(tick);
+    }
+  };
+
+  const render = () => {
+    const state = latest;
+    // Cold-start "loading" only — never over a rebuild's freeze-frame.
+    const loading = buffering && !everPlayed;
+    const showStatus = (state.status !== "streaming" && !state.videoStream) || loading;
+    status.hidden = !showStatus;
+    wrap.classList.toggle("buffering", loading);
+    wrap.classList.toggle("degraded", state.status === "connecting" && !!state.videoStream);
+    if (state.status === "error") {
+      statusText.textContent = "video link failed";
+      retry.hidden = false;
+    } else if (state.status === "preempted") {
+      statusText.textContent = "camera in use by another device";
+      retry.hidden = false;
+    } else if (loading) {
+      statusText.textContent = "loading video stream";
+      retry.hidden = true;
+    } else {
+      statusText.textContent = state.status === "connecting" ? "establishing video link" : "video idle";
+      retry.hidden = true;
+    }
+    status.classList.toggle("waiting", state.status === "connecting" || loading);
+  };
+
+  // An explicit Retry is a fresh cold start (unlike an automatic reconnect,
+  // which keeps the freeze-frame): reset the guard and cover whatever's on
+  // screen with "loading video stream" until the rebuilt stream actually flows.
+  retry.addEventListener("click", () => {
+    everPlayed = false;
+    buffering = true;
+    stopFrameWatch();
+    bufferTimer = setTimeout(revealReady, 5_000);
+    render();
+    session.start();
+  });
+
   const unsub = session.onChange((state) => {
+    latest = state;
     // Keep the previous frame during rebuilds: only swap srcObject when a
     // new stream actually arrives, never clear it mid-handshake.
     if (state.videoStream && video.srcObject !== state.videoStream) {
@@ -44,9 +138,12 @@ export function createVideoStage(parent, session) {
       // autoplay alone can leave a swapped-in stream paused on its first
       // frame (Chromium); muted play() is always allowed, so be explicit.
       video.play().catch(() => {});
+      watchFirstFrames();
     }
-    if (state.status === "idle" && !state.videoStream) {
+    if (!state.videoStream && (state.status === "idle" || state.status === "preempted")) {
       video.srcObject = null;
+      buffering = false;
+      stopFrameWatch();
     }
 
     if (state.audioStream) {
@@ -63,23 +160,14 @@ export function createVideoStage(parent, session) {
       audio.srcObject = null;
     }
 
-    const showStatus = state.status !== "streaming" && !state.videoStream;
-    status.hidden = !showStatus;
-    wrap.classList.toggle("degraded", state.status === "connecting" && !!state.videoStream);
-    if (state.status === "error") {
-      statusText.textContent = "video link failed";
-      retry.hidden = false;
-    } else {
-      statusText.textContent = state.status === "connecting" ? "establishing video link" : "video idle";
-      retry.hidden = true;
-    }
-    status.classList.toggle("waiting", state.status === "connecting");
+    render();
   });
 
   return {
     audioEl: audio,
     destroy() {
       unsub();
+      stopFrameWatch();
       video.srcObject = null;
       audio.srcObject = null;
       wrap.remove();

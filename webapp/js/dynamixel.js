@@ -179,6 +179,7 @@ export class DynamixelLeader {
   /** @type {LeaderArmState} */ #state = { connected: false, positions: null, rate: 0, error: null };
   /** @type {number[]} */ #ids;
   #running = false;
+  #opening = false;
   /** @type {Map<number, number>} */ #round = new Map();
   /** @type {(() => void) | null} */ #roundComplete = null;
   /** @type {number[]} */ #emitTimes = [];
@@ -209,19 +210,30 @@ export class DynamixelLeader {
    * @param {SerialPort} port
    */
   async open(port) {
-    await this.close();
-    await port.open({ baudRate: LEADER_BAUD, bufferSize: 4096 });
-    if (!port.readable || !port.writable) {
-      await port.close().catch(() => {});
-      throw new Error("Serial port has no streams");
+    // Coalesce concurrent opens: `connected` only flips true after this resolves,
+    // so the !connected guards at the call sites (button, serial 'connect' event,
+    // getPorts() on mount) are TOCTOU — on a cold load with the arm already
+    // plugged in, two can fire and the second's close() would tear down the
+    // first's streams mid-open. First caller wins; the rest no-op.
+    if (this.#opening) return;
+    this.#opening = true;
+    try {
+      await this.close();
+      await port.open({ baudRate: LEADER_BAUD, bufferSize: 4096 });
+      if (!port.readable || !port.writable) {
+        await port.close().catch(() => {});
+        throw new Error("Serial port has no streams");
+      }
+      this.#port = port;
+      this.#writer = port.writable.getWriter();
+      this.#reader = port.readable.getReader();
+      this.#running = true;
+      this.#patch({ connected: true, error: null });
+      void this.#pumpReads();
+      void this.#pollLoop();
+    } finally {
+      this.#opening = false;
     }
-    this.#port = port;
-    this.#writer = port.writable.getWriter();
-    this.#reader = port.readable.getReader();
-    this.#running = true;
-    this.#patch({ connected: true, error: null });
-    void this.#pumpReads();
-    void this.#pollLoop();
   }
 
   /** Stop polling and release the port (it stays granted for next time). */

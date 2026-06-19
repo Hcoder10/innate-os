@@ -59,6 +59,12 @@ export class WebRtcSession {
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
   #videoTrackCount = 0;
   #handshakeAttempts = 0;
+  // Unique per page-load; tags our own /webrtc/start so the start listener can
+  // tell it apart from another device's (e.g. the phone app).
+  #clientId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+  // Another device actively took the camera; we've yielded and won't
+  // auto-reconnect until the operator explicitly retries (start()).
+  #preempted = false;
 
   /** @type {number | null} */ #watchdog = null;
   /** @type {number | null} */ #degradeTimer = null;
@@ -70,9 +76,14 @@ export class WebRtcSession {
     this.#unsubs = [
       rosClient.subscribe(WEBRTC_OFFER_TOPIC, (p) => void this.#onOffer(p)),
       rosClient.subscribe(WEBRTC_ICE_OUT_TOPIC, (p) => void this.#onIceOut(p)),
+      // Last-active-wins: a /webrtc/start we didn't send means another device
+      // (the phone app) is actively opening the camera. Yield to it and stop
+      // reconnecting rather than fighting back (which would ping-pong). The
+      // operator reclaims it with Retry (start()).
+      rosClient.subscribe(WEBRTC_START_TOPIC, (p) => this.#onStart(p)),
       rosClient.onStateChange((state) => {
         // The robot may have restarted while we were away; renegotiate.
-        if (state === "connected" && this.#started) {
+        if (state === "connected" && this.#started && !this.#preempted) {
           this.#handshakeAttempts = 0;
           this.#handshake();
         }
@@ -98,6 +109,7 @@ export class WebRtcSession {
   /** Begin (or manually retry) the video link. */
   start() {
     this.#started = true;
+    this.#preempted = false; // explicit (re)take, even if we'd yielded the camera
     this.#handshakeAttempts = 0;
     this.#handshake();
   }
@@ -132,7 +144,7 @@ export class WebRtcSession {
     this.#clearAudioDebounce();
     this.#audioDebounce = setTimeout(() => {
       this.#audioDebounce = null;
-      if (this.#started && this.#builtWithAudio !== this.#state.audioRequested) {
+      if (this.#started && !this.#preempted && this.#builtWithAudio !== this.#state.audioRequested) {
         this.#handshake();
       }
     }, AUDIO_REBUILD_DEBOUNCE_MS);
@@ -188,7 +200,7 @@ export class WebRtcSession {
     this.#armWatchdog(OFFER_TIMEOUT_MS);
 
     this.#ros.publish(WEBRTC_START_TOPIC, {
-      data: JSON.stringify({ source: "live", audio: this.#state.audioRequested }),
+      data: JSON.stringify({ source: "live", audio: this.#state.audioRequested, client_id: this.#clientId }),
     });
   }
 
@@ -311,13 +323,36 @@ export class WebRtcSession {
     }
   }
 
+  /**
+   * A /webrtc/start appeared on the topic. If it's ours (matching client_id),
+   * ignore it. Otherwise another device (the phone app) is actively opening the
+   * camera — yield: tear down and stop auto-reconnecting so we don't ping-pong
+   * the stream. The operator reclaims it via Retry (start()), which clears it.
+   * @param {any} payload /webrtc/start message (StringMsg, dual-path)
+   */
+  #onStart(payload) {
+    if (!this.#started || this.#preempted) return;
+    const raw = payload?.data ?? payload?.msg?.data;
+    if (typeof raw !== "string") return;
+    let id;
+    try {
+      id = JSON.parse(raw)?.client_id;
+    } catch {
+      id = undefined; // untagged / unparseable → treat as another device
+    }
+    if (id === this.#clientId) return; // our own start, echoed back to us
+    this.#preempted = true;
+    this.#closePc();
+    this.#patch({ status: "preempted", videoStream: null, audioStream: null });
+  }
+
   // ---- timers & teardown --------------------------------------------------
 
   #startDegradeTimer() {
     if (this.#degradeTimer !== null) return;
     this.#degradeTimer = setTimeout(() => {
       this.#degradeTimer = null;
-      if (this.#started) {
+      if (this.#started && !this.#preempted) {
         console.warn("[webrtc] ICE degraded for 10s, rebuilding");
         this.#handshake();
       }
