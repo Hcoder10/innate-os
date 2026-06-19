@@ -25,13 +25,6 @@ SET_ENV_APPLY_TIMEOUT_S = 30.0
 SET_ENV_APPLY_POLL_INTERVAL_S = 0.02
 
 
-# Pydantic model for the reset request body (copied from video_api)
-class ResetRobotRequest(BaseModel):
-    memory_state: str | None = None
-    position: list[float] | None = None
-    orientation: list[float] | None = None
-
-
 class ResetBrainRequest(BaseModel):
     memory_state: str | None = None
 
@@ -66,12 +59,6 @@ class BrainBackendConfigRequest(BaseModel):
         if not websocket_uri and not service_key:
             raise ValueError("Provide websocket_uri and/or service_key.")
         return values
-
-
-def build_reset_pose(position: list[float] | None, orientation: list[float] | None):
-    if position is None or orientation is None:
-        return None
-    return (tuple(position), tuple(orientation))
 
 
 async def wait_for_environment_apply_result(shared_queues, request_id: str, timeout_s: float = SET_ENV_APPLY_TIMEOUT_S):
@@ -276,47 +263,6 @@ def set_sim_log_config(request: Request, body: SetSimLogConfigRequest):
 
 
 # --- Moved Routes ---
-
-
-@router.post("/reset_robot")
-async def reset_robot(request: Request, reset_request: ResetRobotRequest | None = None):
-    """
-    Legacy combined reset.
-
-    Resets the simulator pose and also requests a brain reset.
-    """
-    shared_queues = request.app.state.SHARED_QUEUES
-
-    memory_state = None
-    pose = None
-
-    if reset_request is not None:
-        memory_state = reset_request.memory_state
-        pose = build_reset_pose(reset_request.position, reset_request.orientation)
-
-    if shared_queues is not None:
-        try:
-            reset_cmd = ResetRobotCmd(memory_state=memory_state, pose=pose)
-            shared_queues.agent_to_sim.put_nowait(reset_cmd)
-            shared_queues.sim_to_agent.put_nowait(reset_cmd)
-        except Exception:
-            # 503 Service Unavailable is appropriate if the queue is full
-            return JSONResponse({"status": "queue_full"}, status_code=503)
-
-        response = {"status": "reset_enqueued", "memory_state": memory_state}
-
-        if pose:
-            response["pose"] = {
-                "position": list(reset_request.position),  # Ensure list for JSON
-                "orientation": list(reset_request.orientation),  # Ensure list for JSON
-            }
-
-        return JSONResponse(response)
-    else:
-        return JSONResponse(
-            {"status": "error", "message": "Simulation not initialized"},
-            status_code=500,
-        )
 
 
 @router.post("/reset_brain")
