@@ -1,0 +1,41 @@
+# Direct dependencies for the Innate simulator (Linux host venv).
+#
+# Scope: ONLY what the simulator process (sim/ + genesis) imports. ROS nodes,
+# brain, and cloud clients run in the Docker container and bring their own deps
+# (sim/Dockerfile + each ros2_ws package's pyproject.toml) — do not add them here.
+#
+# This is the human-maintained source of truth. Transitive dependencies are
+# resolved automatically — DO NOT list them here. Regenerate the pinned lock with:
+#
+#     uv pip compile requirements.in -o requirements.ubuntu.txt
+#
+# Versions are pinned to the last known-good resolved set; bump intentionally.
+
+# --- Simulation engine (pulls its own backends: mujoco, gs-madrona, pyglet,
+#     PyOpenGL, opencv-python, scikit-image, trimesh, vtk, pymeshlab, numba, ...) ---
+genesis-world==1.0.0
+
+# --- Deep learning (genesis tensor backend; genesis declares no torch dep) ---
+# torch is reinstalled as nightly cu128 at runtime for Blackwell (RTX 50xx,
+# sm_120) by setup.sh; the pin here is the stable baseline.
+torch==2.11.0
+
+# --- Web backend (FastAPI app + rosbridge/MJPEG websockets) ---
+fastapi==0.116.1
+uvicorn==0.35.0
+websockets==15.0.1
+python-dotenv==1.1.1
+
+# --- Numerics / vision (imported directly by sim code) ---
+numpy==2.1.3
+scipy==1.16.0
+opencv-python==4.12.0.88
+pillow==11.3.0
+numpy-stl==3.2.0
+
+# --- Request models / config parsing ---
+pydantic==2.11.7
+tomli==2.2.1
+
+# --- Dev tooling (.flake8 lint config) ---
+flake8==7.3.0

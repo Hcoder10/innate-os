@@ -32,7 +32,7 @@ uv pip install -r "$REQUIREMENTS_FILE" --python .venv/bin/python
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "")
 if echo "${GPU_NAME}" | grep -qi "RTX 50\|B200\|B100\|blackwell"; then
     echo "⚡ Blackwell GPU detected (${GPU_NAME}) - installing PyTorch nightly cu128..."
-    uv pip install --python .venv/bin/python --pre --reinstall torch torchvision torchaudio \
+    uv pip install --python .venv/bin/python --pre --reinstall torch \
         --index-url https://download.pytorch.org/whl/nightly/cu128
     # Pin numpy to <2.3 (numba compatibility)
     uv pip install --python .venv/bin/python "numpy<2.3"
