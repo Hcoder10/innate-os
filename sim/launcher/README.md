@@ -57,6 +57,25 @@ To stop everything:
 ./innate sim down
 ```
 
+To stop everything **and** delete all related Docker containers, named volumes,
+and the local simulator virtualenv (a full reset — rerun `./innate sim setup`
+afterward):
+
+```bash
+./innate sim clean
+```
+
+Add `--data` to also delete the downloaded ReplicaCAD datasets and the simulator
+asset pack:
+
+```bash
+./innate sim clean --data
+```
+
+`clean` never deletes your secrets (`.env`), OS/sim config (`config/os.toml`,
+`sim/config.toml`), or environment presets (`sim/data/environments/`); it prints
+what it preserved when it finishes.
+
 To inspect the current state:
 
 ```bash

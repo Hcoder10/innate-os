@@ -517,13 +517,16 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     )
 
 
-def down_os(config: dict[str, object]) -> None:
+def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     compose_env = os_compose_env()
     ensure_state_dir()
+    down_args = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"]
+    if remove_volumes:
+        down_args += ["-v", "--remove-orphans"]
     with DOWN_LOG_PATH.open("a", encoding="utf-8") as log_file:
         subprocess.run(
-            ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"],
+            down_args,
             cwd=os_repo,
             env=compose_env,
             text=True,
@@ -532,6 +535,74 @@ def down_os(config: dict[str, object]) -> None:
             stderr=subprocess.STDOUT,
             check=False,
         )
+
+
+def delete_sim_venv(config: dict[str, object]) -> None:
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    venv_dir = sim_repo / ".venv"
+    if not venv_dir.exists():
+        log("No simulator virtualenv to delete.")
+        return
+    log(f"Deleting simulator virtualenv at {venv_dir}...")
+    shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+def delete_sim_data(config: dict[str, object]) -> None:
+    """Delete the downloaded ReplicaCAD datasets and the extracted asset pack.
+
+    Only removes content fetched by `./innate sim setup`. Git-tracked files
+    (data/environments/, data/assets/.gitignore, assets.lock.json) are preserved;
+    setup re-downloads the rest (asset state self-heals via missing-file checks).
+    """
+    data_dir: Path = config["sim_repo"] / "data"  # type: ignore[operator]
+    removed_any = False
+    for rel in ("ReplicaCAD_baked_lighting", "ReplicaCAD_dataset", "urdf", "replica_scene.stl"):
+        target = data_dir / rel
+        if not target.exists():
+            continue
+        log(f"Deleting {target}...")
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+        removed_any = True
+    # The asset pack extracts into data/assets/, which also holds a git-tracked
+    # .gitignore — clear the contents but keep that tracked file.
+    assets_dir = data_dir / "assets"
+    if assets_dir.is_dir():
+        for entry in assets_dir.iterdir():
+            if entry.name == ".gitignore":
+                continue
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+            removed_any = True
+    if removed_any:
+        log("Deleted ReplicaCAD datasets and simulator asset pack.")
+    else:
+        log("No downloaded simulator data to delete.")
+
+
+def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> None:
+    """Stop the runtime and delete all related Docker resources and the sim venv."""
+    stop_simulator()
+    down_cloud_agent()
+    log("Removing Innate OS containers, networks, and named volumes...")
+    down_os(config, remove_volumes=True)
+    # Belt-and-suspenders: force-remove named containers that may linger outside
+    # the compose project (e.g. after a partial or failed startup).
+    for container in ("innate-dev", "stack-cloud-agent"):
+        subprocess.run(
+            ["docker", "rm", "-f", container],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    delete_sim_venv(config)
+    if delete_data:
+        delete_sim_data(config)
 
 
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
