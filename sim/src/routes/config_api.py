@@ -36,11 +36,6 @@ class ResetBrainRequest(BaseModel):
     memory_state: str | None = None
 
 
-class ResetPositionRequest(BaseModel):
-    position: list[float] | None = None
-    orientation: list[float] | None = None
-
-
 # Pydantic model for the set environment request body
 class SetEnvironmentRequest(BaseModel):
     config: dict[str, Any] | None = None
@@ -343,47 +338,6 @@ async def reset_brain(request: Request, reset_request: ResetBrainRequest | None 
         return JSONResponse({"status": "queue_full"}, status_code=503)
 
     return JSONResponse({"status": "reset_brain_enqueued", "memory_state": memory_state})
-
-
-@router.post("/reset_position")
-async def reset_position(request: Request, reset_request: ResetPositionRequest | None = None):
-    """Reset simulator position without requesting a brain reset."""
-    shared_queues = request.app.state.SHARED_QUEUES
-    pose = None
-
-    if reset_request is not None:
-        pose = build_reset_pose(reset_request.position, reset_request.orientation)
-
-    if shared_queues is None:
-        print("[ConfigAPI] Rejecting reset_position request: simulation not initialized")
-        return JSONResponse(
-            {"status": "error", "message": "Simulation not initialized"},
-            status_code=500,
-        )
-
-    try:
-        if pose is None:
-            print("[ConfigAPI] Received reset_position request for default pose")
-        else:
-            print(
-                "[ConfigAPI] Received reset_position request for custom pose: "
-                f"position={pose[0]}, orientation={pose[1]}"
-            )
-        reset_cmd = ResetRobotCmd(pose=pose)
-        shared_queues.agent_to_sim.put_nowait(reset_cmd)
-        print("[ConfigAPI] Enqueued reset_position command")
-    except Exception as exc:
-        print(f"[ConfigAPI] Failed to enqueue reset_position command: {exc}")
-        return JSONResponse({"status": "queue_full"}, status_code=503)
-
-    response = {"status": "reset_position_enqueued"}
-    if pose and reset_request is not None:
-        response["pose"] = {
-            "position": list(reset_request.position),
-            "orientation": list(reset_request.orientation),
-        }
-
-    return JSONResponse(response)
 
 
 @router.post("/stop_agent")

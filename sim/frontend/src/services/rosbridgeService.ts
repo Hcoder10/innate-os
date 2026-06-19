@@ -747,6 +747,10 @@ export async function resetBrainDirect(
   });
 }
 
+export async function resetPositionDirect(wsUrl: string): Promise<void> {
+  await callRosbridgeService(wsUrl, "/sim/reset_position", {});
+}
+
 export async function stopAgentDirect(wsUrl: string): Promise<void> {
   await setBrainActiveDirect(wsUrl, false);
 }

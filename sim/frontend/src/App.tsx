@@ -9,6 +9,7 @@ import {
   StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
+  resetPositionDirect,
   publishManualSkillEventDirect,
   setActiveSkillsDirect,
   setBrainActiveDirect,
@@ -462,23 +463,8 @@ export default function App() {
 
   async function handleResetPosition() {
     try {
-      const response = await fetch(`${simBaseUrl}/reset_position`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!response.ok) {
-        alert(`Reset Position failed (HTTP ${response.status}).`);
-        return;
-      }
-
-      const data = await response.json();
-      if (data.status === "reset_position_enqueued") {
-        alert("Position reset requested!");
-      }
+      await resetPositionDirect(robotWsUrl);
+      alert("Position reset requested!");
     } catch (error) {
       console.error("Error resetting position:", error);
       const errorMessage =

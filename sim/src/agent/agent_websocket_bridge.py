@@ -53,6 +53,10 @@ ARM_TRIGGER_SERVICES = {
     "/mars/arm/reboot",
 }
 
+# Simulator-control services the sim advertises over rosbridge (replacing the
+# old FastAPI control routes). All live under the /sim/ namespace.
+SIM_CONTROL_TRIGGER_SERVICES = {"/sim/reset_position"}
+
 
 def np_encoder(obj):
     """JSON serializer that converts numpy.* types to native Python types."""
@@ -176,6 +180,13 @@ def arm_service_advertisements() -> list[dict]:
         rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(ARM_TRIGGER_SERVICES)
     )
     return adverts
+
+
+def sim_control_service_advertisements() -> list[dict]:
+    return [
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
+        for service in sorted(SIM_CONTROL_TRIGGER_SERVICES)
+    ]
 
 
 def is_arm_torque_enabled(shared_queues) -> bool:
@@ -351,6 +362,21 @@ async def _run_arm_trajectory_service(
     except Exception as exc:
         print(f"[ROSBridge] Arm trajectory service failed: {exc}")
         await _send_service_response(ws, service_name, {"success": False}, call_id)
+
+
+async def _handle_sim_control_service_call(ws, shared_queues, service_name, call_id, args):
+    if service_name == "/sim/reset_position":
+        # Reset the simulator pose only (no brain reset). Mirrors the old
+        # POST /reset_position route: enqueue a default-pose ResetRobotCmd.
+        try:
+            shared_queues.agent_to_sim.put_nowait(ResetRobotCmd(pose=None))
+        except queue.Full:
+            await _send_service_response(ws, service_name, {"success": False, "message": "queue full"}, call_id)
+            return
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+        return
+
+    await _send_service_response(ws, service_name, {"success": False, "message": "unknown service"}, call_id)
 
 
 async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, args):
@@ -616,13 +642,22 @@ async def inbound_data_loop(ws, shared_queues):
             call_id = inbound_data.get("id", None)
             args = inbound_data.get("args", {})
 
-            await _handle_arm_service_call(
-                ws,
-                shared_queues,
-                service_name,
-                call_id,
-                args,
-            )
+            if service_name.startswith("/sim/"):
+                await _handle_sim_control_service_call(
+                    ws,
+                    shared_queues,
+                    service_name,
+                    call_id,
+                    args,
+                )
+            else:
+                await _handle_arm_service_call(
+                    ws,
+                    shared_queues,
+                    service_name,
+                    call_id,
+                    args,
+                )
 
         await asyncio.sleep(0.0001)
 
@@ -858,6 +893,8 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_camera))
     for service_advert in arm_service_advertisements():
+        await ws.send(json.dumps(service_advert))
+    for service_advert in sim_control_service_advertisements():
         await ws.send(json.dumps(service_advert))
     print(
         "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, "
