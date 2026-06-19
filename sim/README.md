@@ -119,17 +119,24 @@ yarn dev
 
 The frontend will typically be available at `http://localhost:5173`.
 
+> The frontend reads its endpoint URLs at runtime from `/config.json` (no
+> build-time `VITE_*` vars). In dev that file is served from
+> `frontend/public/config.json`; in the container it is written from env by the
+> entrypoint. With `../innate sim up`, the frontend instead runs in its own
+> Docker container (Caddy) at `http://localhost:3000`.
+
 #### Optional: Direct Robot Mode
 
-The frontend can connect directly to a robot ROSBridge endpoint (instead of proxying chat/video through the simulator backend):
+The frontend can connect directly to a robot ROSBridge endpoint (instead of proxying chat/video through the simulator backend) by editing `frontend/public/config.json`:
 
-```bash
-# frontend/.env
-VITE_DIRECT_ROBOT=true
-VITE_ROBOT_WS_URL=ws://<robot-ip>:9090
+```jsonc
+{
+  "directRobot": true,
+  "robotWsUrl": "ws://<robot-ip>:9090"
+}
 ```
 
-When disabled (default), the frontend keeps using `VITE_WS_BASE_URL` and `VITE_SIM_BASE_URL` as before.
+When `directRobot` is `false` (default), the frontend uses `wsBaseUrl` and `simBaseUrl` to reach the simulator backend.
 
 ## Configuration
 
@@ -259,7 +266,6 @@ The backend exposes several API endpoints for controlling the simulation and int
 
 ### Chat (`/chat_api`)
 
-*   **`GET /`**: Serves the main React frontend (`index.html`).
 *   **`GET /is-connected/{user_id}`**: Checks if a user is connected via WebSocket.
 *   **`WS /ws/chat`**: WebSocket endpoint for real-time chat between frontend and agent.
 
@@ -272,8 +278,11 @@ The backend exposes several API endpoints for controlling the simulation and int
 │   └── ...                # Other simulation data (URDF, scene files)
 ├── frontend/
 │   ├── src/               # React frontend source code
-│   └── dist/              # Built frontend (served by backend)
-│   └── ...                # Config files (package.json, vite.config.js, .env)
+│   ├── public/            # Static assets incl. config.json (runtime URLs)
+│   ├── Dockerfile         # Single image: node build tooling + Caddy
+│   ├── Caddyfile          # Web server config (SPA + build-state endpoints)
+│   ├── docker-entrypoint.sh # Writes config.json, rebuilds on start, serves
+│   └── ...                # Config files (package.json, vite.config.ts)
 ├── src/
 │   ├── agent/             # Agent communication types, WebSocket bridge
 │   ├── routes/            # FastAPI API route definitions (config, video, chat)
@@ -289,7 +298,7 @@ The backend exposes several API endpoints for controlling the simulation and int
 
 ## Development Notes
 
-*   **Backend Serves Frontend:** In the standard setup, the FastAPI backend serves the built React frontend from `frontend/dist/`.
+*   **Containerized Frontend:** With `../innate sim up`, the frontend runs in its own Docker container (Caddy) at `http://localhost:3000`. The image carries the node/yarn build tooling and rebuilds on container start; endpoint URLs are injected at runtime via `/config.json`. The FastAPI backend no longer serves the frontend.
 *   **Frontend Dev Server:** For easier frontend development, run `yarn dev` in the `frontend` directory. This provides hot reloading but requires the backend to be running separately.
 *   **Communication:** Components (simulation, agent bridge, web API) communicate via thread-safe queues defined in `src/shared_queues.py`.
 *   **macOS Threading:** On macOS, the Genesis simulation runs in a separate thread managed by `gs.tools.run_in_another_thread` in `main.py`.

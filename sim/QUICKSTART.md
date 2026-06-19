@@ -27,14 +27,17 @@ git clone https://huggingface.co/datasets/ai-habitat/ReplicaCAD_dataset
 cd ..
 ```
 
-### 3. Build Frontend
+### 3. Install Frontend Dependencies
 
 ```bash
 cd frontend
 yarn install
-yarn build
 cd ..
 ```
+
+The backend no longer serves the frontend; use the dev server (below) to open
+the UI. Endpoint URLs are read at runtime from `frontend/public/config.json`
+(defaults point at `http://localhost:8000` / `ws://localhost:9090`).
 
 ## Running the Simulation
 
