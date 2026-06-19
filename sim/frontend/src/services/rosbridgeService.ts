@@ -583,6 +583,10 @@ function getAvailableSkillsFromTopicDirect(
           op: "subscribe",
           topic: "/brain/available_skills",
           type: "brain_messages/msg/AvailableSkills",
+          // /brain/available_skills is latched (transient_local). Request the
+          // same durability so we reliably receive the retained sample
+          // regardless of whether we subscribe before or after the publisher.
+          qos: { durability: "transient_local" },
         }),
       );
     };
