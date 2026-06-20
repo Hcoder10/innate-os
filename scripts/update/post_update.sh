@@ -895,6 +895,13 @@ if [ -f "/etc/systemd/system/shutdown-sound.service" ]; then
     SERVICES+=("shutdown-sound.service")
 fi
 
+# Add the 443->4443 port redirect if the service file exists (lets the webapp be
+# reached at https://<robot>.local with no :4443). In RESTART_SERVICES below so
+# an update re-applies the rule live instead of waiting for a reboot.
+if [ -f "/etc/systemd/system/innate-port-redirect.service" ]; then
+    SERVICES+=("innate-port-redirect.service")
+fi
+
 # Add bluetooth if available
 if systemctl list-unit-files bluetooth.service &>/dev/null; then
     SERVICES+=("bluetooth.service")
@@ -906,7 +913,7 @@ fi
 # previous node generation and the old node binaries in place — surfacing as
 # `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
 # the router before the nodes so the fresh graph comes up against a fresh router.
-RESTART_SERVICES=("zenoh-router.service" "ros-app.service")
+RESTART_SERVICES=("zenoh-router.service" "ros-app.service" "innate-port-redirect.service")
 
 # Always enable services (so they start on boot after reboot)
 # But only start/restart them if reboot is not required
