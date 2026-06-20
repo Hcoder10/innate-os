@@ -472,8 +472,10 @@ class TrainingNode(Node):
     def _run_training_flow(self, skill_dir: str, training_params: dict | None) -> None:
         """Background worker: submit → (idempotent) upload → create_run, off the
         executor thread. Surfaces a failure as a synthetic 'rejected' run so the
-        dashboard shows it. Clears the resume marker on any normal completion, so
-        only an abrupt kill (which skips the finally) leaves it for a boot-resume.
+        dashboard shows it. Clears the resume marker the moment create_run
+        succeeds (not only in the finally), so a kill after the run is created
+        can't re-create a duplicate on the next boot; the finally still clears it
+        for the upload-failed / create_run-failed / early-return paths.
         """
         skill_id: str | None = None
         try:
@@ -499,6 +501,13 @@ class TrainingNode(Node):
                 return
             try:
                 data = self._mgr.client.create_run(skill_id, training_params=training_params)
+                # The run now exists on the cloud — clear the resume marker
+                # immediately, *before* the run_status round-trip below. Otherwise a
+                # crash/power-cut anywhere in that window would leave the marker and
+                # re-create a duplicate, separately-billed run on the next boot.
+                # (A residual single-call window remains; fully closing it would
+                # need a cloud-side idempotency key on create_run.)
+                self._clear_pending_marker(skill_dir)
                 rid = int(data["run_id"])
                 self._store.put_job(self._mgr.run_status(skill_id, rid))
                 self._store.register_dir(skill_id, skill_dir)
