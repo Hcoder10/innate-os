@@ -9,6 +9,10 @@ export interface AppConfig {
   robotWsUrl: string;
   directRobot: boolean;
   cartesiaApiKey: string;
+  // Skills pinned to the top of the skills list, in this order. Matched against
+  // the skill's display name (case-insensitive); skills that aren't currently
+  // available are simply skipped.
+  pinnedSkills: string[];
 }
 
 export const appConfig: AppConfig = {
@@ -17,6 +21,7 @@ export const appConfig: AppConfig = {
   robotWsUrl: "ws://localhost:9090",
   directRobot: false,
   cartesiaApiKey: "",
+  pinnedSkills: ["navigate with vision", "navigate with position", "wave"],
 };
 
 export async function loadConfig(): Promise<void> {

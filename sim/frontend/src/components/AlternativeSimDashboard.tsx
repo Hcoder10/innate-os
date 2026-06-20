@@ -8,6 +8,7 @@ import {
 import type { Dispatch, SetStateAction } from "react";
 import styled from "styled-components";
 import { RobotSkill } from "../services/rosbridgeService";
+import { appConfig } from "../config";
 import { Chat } from "./Chat";
 import { ImageDisplay } from "./ImageDisplay";
 import { TeleopDrive } from "./TeleopDrive";
@@ -926,6 +927,22 @@ function formatSkillName(skill: RobotSkill) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase()) ?? skill.id;
 }
 
+// Pinned skills sort to the top in PINNED_SKILLS order; everything else keeps
+// its original order.
+function pinnedRank(skill: RobotSkill): number {
+  const pinned = appConfig.pinnedSkills;
+  const name = formatSkillName(skill).toLowerCase();
+  const index = pinned.findIndex((entry) => entry.toLowerCase() === name);
+  return index === -1 ? pinned.length : index;
+}
+
+function sortSkills(skills: RobotSkill[]): RobotSkill[] {
+  return skills
+    .map((skill, index) => ({ skill, index }))
+    .sort((a, b) => pinnedRank(a.skill) - pinnedRank(b.skill) || a.index - b.index)
+    .map((entry) => entry.skill);
+}
+
 function getSkillInputs(skill: RobotSkill): Record<string, SkillInputSchema> {
   if (skill.inputs && typeof skill.inputs === "object") {
     return skill.inputs as Record<string, SkillInputSchema>;
@@ -1241,7 +1258,7 @@ export function AlternativeSimDashboard({
 
           <AgentList>
             {availableSkills.length > 0 ? (
-              availableSkills.map((skill) => {
+              sortSkills(availableSkills).map((skill) => {
                 const isActive = activeSkillIds.includes(skill.id);
                 const pendingAction = pendingSkillChanges[skill.id];
                 const isPending = pendingAction !== undefined;

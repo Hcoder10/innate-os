@@ -18,7 +18,8 @@ cat > "$CONFIG_DIR/config.json" <<EOF
   "wsBaseUrl": "${WS_BASE_URL:-ws://localhost:8000}",
   "robotWsUrl": "${ROBOT_WS_URL:-ws://localhost:9090}",
   "directRobot": ${DIRECT_ROBOT:-false},
-  "cartesiaApiKey": "${CARTESIA_API_KEY:-}"
+  "cartesiaApiKey": "${CARTESIA_API_KEY:-}",
+  "pinnedSkills": ${PINNED_SKILLS:-[\"navigate with vision\", \"navigate with position\", \"wave\"]}
 }
 EOF
 
