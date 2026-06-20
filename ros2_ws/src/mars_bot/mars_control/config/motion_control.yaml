@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     motion_control:
-      max_speed: 0.6
+      max_speed: 0.4
       max_angular_speed: 1.0
       max_acceleration: 0.6
       max_angular_acceleration: 0.5

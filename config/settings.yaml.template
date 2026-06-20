@@ -20,13 +20,12 @@
 # `ros__parameters:` once, then uncomment whichever groups below you want.
 #
 # Driving speed — teleop and autonomy are capped independently:
-#   motion_control = manual driving — bringup clamps every /cmd_vel to it; joystick,
-#                    keyboard & app scale to it.
+#   motion_control = manual driving — the joystick, keyboard & app scale to it.
 #   nav            = autonomous nav2 — the nav remap maps it onto nav2's planners +
 #                    velocity smoother.
 # Tune them separately, e.g. turn nav down for safety without slowing manual driving.
-# Both cap the same /cmd_vel, so the bringup (motion_control) clamp is the overall
-# ceiling — keep motion_control >= nav.
+# Neither is the hard ceiling: bringup's `safety` clamp (under `bringup:` below) caps
+# every /cmd_vel at the motors. Keep that safety clamp >= motion_control and nav.
 # /**:
 #   ros__parameters:
 #     motion_control:               # teleop / manual driving
@@ -45,12 +44,19 @@
 #     joystick:
 #       slow_mode_factor: 0.25      # speed multiplier while the slow-mode button is held
 
-# ── Battery thresholds ────────────────────────────────────────────────
+# ── Battery thresholds + safety speed clamp (bringup) ─────────────────
+# bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling
+# every velocity source (teleop, nav2, brain) passes through. It is a backstop, not the
+# driving feel, so keep it >= the motion_control / nav driving caps above. (battery and
+# safety share ONE bringup: block — uncomment the block once, then the groups you want.)
 # bringup:
 #   ros__parameters:
 #     battery:
 #       warning_percentage: 20      # low-battery warning level (%)
 #       critical_percentage: 10     # critical-battery level (%)
+#     safety:
+#       max_speed: 0.4              # m/s, hard /cmd_vel linear ceiling at the motors
+#       max_angular_speed: 2.5      # rad/s, hard /cmd_vel angular ceiling at the motors
 
 # ── Arm ───────────────────────────────────────────────────────────────
 # mars_arm:
@@ -119,7 +125,7 @@
 # (The cloud endpoint URL is connectivity and lives in .env as UNINAVID_WS_URL.)
 # UniNavid drives in discrete action bursts; forward_speed / turn_speed set how fast.
 # This is UniNavid's own autonomous-speed knob — separate from nav (nav2) and
-# motion_control (teleop). The bringup /cmd_vel clamp (motion_control) is still the ceiling.
+# motion_control (teleop). The bringup `safety` /cmd_vel clamp is still the ceiling.
 # uninavid_node:
 #   ros__parameters:
 #     forward_speed: 0.3                    # m/s, FORWARD action speed

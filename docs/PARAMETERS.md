@@ -45,6 +45,7 @@ To tune something, **uncomment a whole stanza** (the `node:`, `ros__parameters:`
 | `/**` `inflation_layer` | `inflation_radius` / `cost_scaling_factor` | `0.3` / `10.0` |
 | `joystick_controller` `joystick` | `slow_mode_factor` | `0.25` |
 | `bringup` `battery` | `warning_percentage` / `critical_percentage` | `20` / `10` |
+| `bringup` `safety` (hard `/cmd_vel` clamp) | `max_speed` / `max_angular_speed` | `0.4` / `2.5` |
 | `mars_arm` | `max_jerk` / `stress_enabled` | `150.0` / `false` |
 | `main_camera_driver` (hardware) | `publish_left_width/height`, `fps`, `jpeg_quality`, `auto_exposure_mode`, `exposure`, `gain`, `default_gain`, `target_brightness`, `ae_kp` | see template |
 | `manipulation_server` | `inference_hz`, `speed`, `n_action_steps` (0=auto), `temporal_ensemble_coeff` | `25.0`, `1.5`, `0`, `0.0` |
@@ -53,15 +54,17 @@ To tune something, **uncomment a whole stanza** (the `node:`, `ros__parameters:`
 | `uninavid_node` (VLN) | `forward_speed`, `turn_speed`, `cmd_duration_sec`, `image_send_hz`, `consecutive_stops_to_complete`, `cmd_publish_hz`, `poll_period_sec` | `0.3` / `0.8`, rest see template |
 | `script_paths` | `extra_agent_dirs`, `extra_skill_dirs` (extra dirs scanned on top of `workspace/`) | `[]` |
 
-> **Manual-speed fallbacks (`motion_control` unset).** With no `/** motion_control` override
-> each teleop node keeps its own built-in cap: bringup's `/cmd_vel` clamp is `0.4` m/s /
-> `2.5` rad/s, joystick & keyboard scale to `0.6` / `1.0`, and the app drive joystick to
-> `0.5` / `1.0`. Bringup clamps every `/cmd_vel`, so `0.4` m/s is the effective top speed
-> regardless (the value shown above); set `motion_control` and every node uses that one value.
+> **Driving caps vs the safety clamp.** `motion_control` is the *driving feel* cap: the
+> joystick, keyboard, and app drive joystick all ship the same `0.4` m/s / `1.0` rad/s
+> default, so an uncommented-but-unedited `/** motion_control` stanza is a no-op. The
+> *hard ceiling* is separate: bringup's `safety` clamp (`0.4` m/s / `2.5` rad/s) caps
+> every `/cmd_vel` at the motors, so it is the one limit every source — teleop, nav2,
+> brain — passes through. It is a backstop, deliberately kept above the driving caps, so
+> tuning driving feel never lowers it. Keep `safety` ≥ `motion_control` and ≥ `nav`.
 
 ## The one bit of magic: the nav remap
 
-Teleop and autonomy have **separate speed caps** so they tune independently — turn nav2 down for safety without throttling manual driving, or give manual control a more aggressive cap without speeding up autonomy. Native layering matches parameters **by name**: our drive nodes all use `motion_control.max_speed`, so that one `/**` stanza reaches bringup's `/cmd_vel` clamp, the joystick, the keyboard, and the app at once. **nav2** is the autonomous cap and names the same concept differently per component (`InnateFollowPath.vx_max`, `FollowPath.max_vel_x`, the smoother's `[x,y,theta]` list, costmap `inflation_layer`), so a thin remap translates the separate `nav` / `inflation_layer` knob onto those schemas at launch (`load_motion_limit_overrides` / `load_costmap_rewrites` in `mars_bringup/mars_bringup/config_loader.py`). Costmap inflation is applied via nav2 `RewrittenYaml`. The bringup clamp (driven by `motion_control`) is the overall ceiling on `/cmd_vel`, so keep `motion_control` ≥ `nav`; even if a nav planner limit were missed, that clamp still enforces the real ceiling.
+Teleop and autonomy have **separate speed caps** so they tune independently — turn nav2 down for safety without throttling manual driving, or give manual control a more aggressive cap without speeding up autonomy. Native layering matches parameters **by name**: the joystick, keyboard, and app drive joystick all use `motion_control.max_speed`, so that one `/**` stanza reaches all three at once. **nav2** is the autonomous cap and names the same concept differently per component (`InnateFollowPath.vx_max`, `FollowPath.max_vel_x`, the smoother's `[x,y,theta]` list, costmap `inflation_layer`), so a thin remap translates the separate `nav` / `inflation_layer` knob onto those schemas at launch (`load_motion_limit_overrides` / `load_costmap_rewrites` in `mars_bringup/mars_bringup/config_loader.py`). Costmap inflation is applied via nav2 `RewrittenYaml`. Underneath all of them, bringup's own `safety` clamp is the overall ceiling on `/cmd_vel` — a separate backstop, not driven by `motion_control` — so keep `safety` ≥ `motion_control` and ≥ `nav`; even if a teleop or nav limit were missed, that clamp still enforces the real ceiling at the motors.
 
 ## Going deeper (advanced parameters)
 

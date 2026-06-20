@@ -37,10 +37,10 @@ namespace mars_control {
 // Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
 namespace joy_tuning {
 // Defaults match the original pre-tuning feel: 15% deadband, quadratic
-// response, 0.5 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
+// response, 0.4 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
 constexpr double DEADZONE = 0.15;
 constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
-constexpr double MAX_LINEAR = 0.5;   // m/s
+constexpr double MAX_LINEAR = 0.4;   // m/s
 constexpr double MAX_ANGULAR = 1.0;  // rad/s
 // Car-like steering inversion while reversing is the `reverse_steering` ROS
 // parameter (default off); the app's Dev tab toggles it live via set_parameters.

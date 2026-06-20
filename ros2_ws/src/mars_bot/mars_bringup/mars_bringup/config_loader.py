@@ -139,6 +139,9 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "nav.max_angular_speed",
         "inflation_layer.inflation_radius",
         "inflation_layer.cost_scaling_factor",
+        # bringup (safety clamp)
+        "safety.max_speed",
+        "safety.max_angular_speed",
         # mars_arm
         "max_jerk",
         # joystick_controller
