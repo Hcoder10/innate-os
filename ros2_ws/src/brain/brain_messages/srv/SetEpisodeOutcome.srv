@@ -1,0 +1,10 @@
+# Request — set the curation label for one recorded episode. Stored as the
+# per-episode `outcome` field in dataset_metadata.json. A later training step
+# can filter on it (e.g. upload only successful episodes).
+string task_directory   # Absolute path to the skill directory
+int32 episode_id        # Episode to label (e.g. 0, 1, 2…)
+string outcome          # "success" | "failure" | "" to clear the label
+---
+# Response
+bool success
+string message

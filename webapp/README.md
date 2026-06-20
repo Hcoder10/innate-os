@@ -1,0 +1,117 @@
+# Innate Webapp
+
+Web cockpit for the Innate robot — one zero-build app whose pages share the
+same modules:
+
+- **Teleop** (`index.html`) — live video, joystick/keyboard drive, head tilt,
+  robot speech, telemetry, and leader-arm USB follow.
+- **Collect** (`collect/`) — record episodes (learned skills) and one-shot
+  recorded movements; reuses the teleop cockpit with a recording HUD.
+- **Datasets** (`datasets/`) — browse a skill's episodes and replay them
+  (per-camera MP4 + synced joint graph).
+- **Training** (`training/`) — start and monitor cloud training runs: live
+  step progress, ETA, logs, and the W&B link.
+- **Debugging** (`debugging/`) — a live, structured view of the robot's full
+  console (the `innate_console` stream).
+
+## Run
+
+Served by the robot over HTTPS — one process serves the app *and* proxies
+`/ws` to rosbridge on the same TLS port (the client switches to `wss://`
+automatically):
+
+```sh
+python3 proxy/https_server.py        # https://mars.local:4443 (or robot IP)
+```
+
+Pages served by the robot auto-connect to it (no IP typing). The certificate
+is self-signed (generated on first run) — accept the browser warning once per
+machine. A secure origin is what unlocks **leader-arm USB teleop** from the
+robot-served page. There is no build step, no install, no `node_modules`.
+
+On the robot it starts automatically in the `console-webapp` tmux window — see
+[scripts/launch_ros_in_tmux.sh](../scripts/launch_ros_in_tmux.sh).
+
+## Stack
+
+Zero-build static site: `index.html` + native ES modules + one hand-written
+stylesheet. Typing comes from JSDoc + `// @ts-check` against shared interfaces
+in [js/types.d.ts](js/types.d.ts) — TypeScript is used as a *checker*, never a
+compiler:
+
+```sh
+npx tsc --noEmit      # optional type check (editor gets it for free)
+```
+
+Each page is a sibling sharing those modules. If a page one day genuinely
+needs a chart library or framework, that page adopts it locally — never
+app-wide tooling.
+
+## Layout
+
+```
+index.html              teleop (the front door)
+collect/  datasets/  training/  debugging/     the other page entry points
+css/app.css             entire design system
+proxy/https_server.py   HTTPS front door: app + wss rosbridge proxy + episode media
+js/
+  constants.js          robot topic names
+  rosClient.js          shared rosbridge socket (reconnect, sub replay, services)
+  driveController.js    /joystick heartbeat + joystick/keyboard arbitration
+  webrtcSession.js      camera + mic over WebRTC, signaled through rosbridge
+  dynamixel.js          leader-arm WebSerial reader (Protocol 2.0)
+  shell.js              icon rail + connection badge on every page
+  teleop/               teleop modules (joystick, keyboard, head tilt, TTS, arm)
+  collect/ datasets/ training/ debugging/      per-page modules
+```
+
+## Robot interface (rosbridge `ws://<robot>:9090`, rws)
+
+| Function   | Topic                         | Payload                                   |
+| ---------- | ----------------------------- | ----------------------------------------- |
+| Drive      | `/joystick`                   | `{x, y}` in −1..1, `y>0` forward. Latched value re-published every 150 ms while engaged, exactly one `{x:0,y:0}` on release, silence while idle. |
+| Head tilt  | `/mars/head/set_position`     | `{data: <int deg>}`, clamped −40..70      |
+| Head pos   | `/mars/head/current_position` | JSON-in-String `{current_position, …}`    |
+| Speech     | `/brain/tts`                  | `{data: text}`                            |
+| Battery    | `/battery_state`              | `sensor_msgs/BatteryState` (0.2 Hz)       |
+| Robot info | `/robot/info`                 | JSON-in-String `{robot_name, version, …}` |
+| Arm follow | `/leader_positions`           | `Int32MultiArray` of 6 raw Dynamixel ticks (2048 = center); robot converts to `/mars/arm/commands` |
+| Video/mic  | `/webrtc/start` → offer on `/webrtc/offer`, answer on `/webrtc/answer`, ICE via `/webrtc/ice_in` / `/webrtc/ice_out` | start payload `{data: '{"source":"live","audio":bool}'}`; the robot rebuilds its pipeline on every start, so toggling audio re-handshakes (debounced, freeze-frame kept) |
+
+Notes:
+
+- **One video consumer at a time.** The robot has a single WebRTC pipeline
+  and `/webrtc/offer` is a broadcast topic — every connected client answers
+  every offer, so two clients (e.g. the mobile app's camera view and this
+  webapp) endlessly steal the stream from each other. Close one before using
+  the other. Drive/TTS/telemetry are unaffected.
+- **Robot mic** starts muted and only becomes audible from the toggle's click
+  (autoplay policy). Chromium/Firefox then allow re-play after rebuilds;
+  Safari may need a second click.
+- **Keyboard drive**: WASD / arrows, `Shift` = slow. Suppressed while typing
+  in the TTS bar. Focus loss (Cmd+Tab) halts the robot immediately.
+- If video stalls on a real robot, suspect mDNS ICE obfuscation first
+  (browsers mask host candidates as `*.local`); LAN usually still connects
+  via the robot's host candidates.
+
+## Leader-arm teleop (USB)
+
+Plug the leader arm into the computer running the browser. The teleop page's
+**leader arm** panel reads its six Dynamixel servos directly over WebSerial
+(Protocol 2.0 SyncRead at 1 Mbaud, ~50–60 Hz) and, while engaged, streams raw
+ticks to `/leader_positions` over the same rosbridge socket — the path the
+robot already consumes. No UDP, no robot changes, no drivers beyond the OS
+serial driver.
+
+- **Use a secure origin.** Browsers only expose WebSerial there — the robot's
+  HTTPS front door (`https://<robot>:4443`, see above), so arm teleop works
+  straight from the robot-served page.
+- **First time:** click *Connect arm* and pick the USB serial device. The
+  grant persists — afterwards the arm attaches automatically, even when
+  plugged in mid-session.
+- **Engage follow** starts publishing; the follower arm snaps to the leader's
+  pose immediately, so hold the leader in a sane position first. Disengaging
+  (or hiding the tab, or losing rosbridge) stops new commands and the arm
+  holds its last pose.
+- Chrome/Edge only (WebSerial). Protocol layer is tested headlessly:
+  `node tests/dynamixel.test.js`.

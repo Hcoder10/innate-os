@@ -1,0 +1,10 @@
+# Request — queue a recorded episode (or a whole skill) for background H.264
+# encoding. Used by the webapp "Prepare video" button when an episode has no MP4
+# yet. The request is honored on a best-effort basis: it still waits for the
+# encoder's gating (no recording / policy / live stream in progress).
+string task_directory   # Absolute path to the skill directory (contains data/)
+int32 episode_id        # Episode to prioritize, or -1 to scan the whole skill
+---
+# Response
+bool success            # True if the request was accepted/queued
+string message

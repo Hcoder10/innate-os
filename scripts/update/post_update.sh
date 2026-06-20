@@ -654,14 +654,6 @@ fi
         add-apt-repository -y ppa:git-core/ppa
     fi
 
-    # Add NodeSource repo for Node.js 20 LTS (used to build Training Manager frontend)
-    if ! dpkg -l | grep -q "^ii.*nodejs"; then
-        if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
-            log "  Adding NodeSource repository for Node.js 20..."
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-        fi
-    fi
-
     apt-get update
 
     # Install all apt dependencies (common + hardware-specific) in one go
@@ -719,25 +711,6 @@ fi
         sudo -u "$ACTUAL_USER" pip3 install -r "$PIP_DEPS_FILE" --upgrade-strategy only-if-needed
         log "  Pip dependencies installed"
     fi
-
-# -----------------------------------------------------------------------------
-# 6a. Build Training Manager frontend (Node.js / npm)
-# -----------------------------------------------------------------------------
-TRAINING_MANAGER_FRONTEND="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/frontend"
-TRAINING_MANAGER_STATIC="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/training_manager/static"
-
-if [ -d "$TRAINING_MANAGER_FRONTEND" ]; then
-    log "Building Training Manager frontend..."
-    log "  Node.js $(node --version)"
-
-    sudo -u "$ACTUAL_USER" bash -c "cd \"$TRAINING_MANAGER_FRONTEND\" && npm install && npm run build"
-
-    if [ -f "$TRAINING_MANAGER_STATIC/index.html" ]; then
-        log "  Training Manager frontend built successfully"
-    else
-        log "  WARNING: Training Manager frontend build may have failed"
-    fi
-fi
 
 # -----------------------------------------------------------------------------
 # 6b. Rebuild ROS2 workspace if needed
@@ -933,6 +906,13 @@ if [ -f "/etc/systemd/system/shutdown-sound.service" ]; then
     SERVICES+=("shutdown-sound.service")
 fi
 
+# Add the 443->4443 port redirect if the service file exists (lets the webapp be
+# reached at https://<robot>.local with no :4443). In RESTART_SERVICES below so
+# an update re-applies the rule live instead of waiting for a reboot.
+if [ -f "/etc/systemd/system/innate-port-redirect.service" ]; then
+    SERVICES+=("innate-port-redirect.service")
+fi
+
 # Add bluetooth if available
 if systemctl list-unit-files bluetooth.service &>/dev/null; then
     SERVICES+=("bluetooth.service")
@@ -944,7 +924,7 @@ fi
 # previous node generation and the old node binaries in place — surfacing as
 # `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
 # the router before the nodes so the fresh graph comes up against a fresh router.
-RESTART_SERVICES=("zenoh-router.service" "ros-app.service")
+RESTART_SERVICES=("zenoh-router.service" "ros-app.service" "innate-port-redirect.service")
 
 # Always enable services (so they start on boot after reboot)
 # But only start/restart them if reboot is not required

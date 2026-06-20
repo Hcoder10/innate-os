@@ -1,5 +1,7 @@
 #!/bin/zsh
-# This script initializes the environment variables for every ROS node's communication
+# Shared ROS runtime environment, sourced by every node (via the launch script) and
+# by interactive shells (.zshrc): DDS/Zenoh transport config, plus the console-logging
+# format the observability tooling depends on (see the RCUTILS export at the bottom).
 
 export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 export ROS_DOMAIN_ID=0
@@ -17,3 +19,10 @@ export ZENOH_SESSION_CONFIG_OVERRIDE='transport/shared_memory/enabled=true;trans
 export ZENOH_ROUTER_CONFIG_OVERRIDE='transport/shared_memory/enabled=false;transport/shared_memory/transport_optimization/pool_size=4194304;transport/link/tx/queue/congestion_control/drop/wait_before_drop=900000;transport/link/tx/queue/congestion_control/drop/max_wait_before_drop_fragments=900000'
 export ZENOH_CONFIG_OVERRIDE="$ZENOH_SESSION_CONFIG_OVERRIDE"
 # export RUST_LOG=debug
+
+# Standardize every node's console output so each line is self-describing:
+# severity, timestamp, and logger/node name. This is the contract the
+# observability tooling relies on to attribute logs by node (see
+# innate_console bridge + the webapp Debugging page). It matches rcl's default
+# layout; pinning it explicitly guards against drift and per-node overrides.
+export RCUTILS_CONSOLE_OUTPUT_FORMAT='[{severity}] [{time}] [{name}]: {message}'

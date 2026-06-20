@@ -56,3 +56,6 @@ camera, arm, navigation, brain runtime knobs, TTS voice, extra agent/skill dirs.
 **reaches the cloud** + the environment lives in **`.env`**: secrets (`INNATE_SERVICE_KEY`)
 and all cloud endpoint URLs (`BRAIN_WEBSOCKET_URI`, …). Both are auto-created from their
 `.template`. See [docs/PARAMETERS.md](docs/PARAMETERS.md).
+## Web app
+
+- **[webapp](webapp)** — the operator web app (teleop, data collection, datasets, training, debugging). A static front end plus an HTTPS front door (`webapp/proxy/https_server.py`) that serves the app, proxies `wss` → the local rosbridge, and serves episode media (HTTPS `:4443`, plus a cleartext `:4080` media listener for the mobile app). It's launched on boot in the `console-webapp` tmux window (next to the `innate_console` log bridge it feeds) in [scripts/launch_ros_in_tmux.sh](scripts/launch_ros_in_tmux.sh).

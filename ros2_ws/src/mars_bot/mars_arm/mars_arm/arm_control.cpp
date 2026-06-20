@@ -117,15 +117,26 @@ void MarsArmNode::controlTimerCallback() {
             std::vector<std::tuple<int, int, int, int, int, int>> gs_pid_data;
 
             if (gain_mode_ == GainMode::TELEOP) {
-                // On transition to TELEOP: zero out profile limits for instant response
+                // On transition to TELEOP: apply the configured profile limits (not
+                // 0/unlimited). Profile Velocity 0 makes each servo jump instantly to
+                // the commanded goal, which only looks smooth for a dense, steady
+                // command stream — the phone's dedicated UDP path. The web leader-arm
+                // stream arrives over rosbridge at a lower, jittery rate, so instant
+                // jumps stairstep (jerky). A non-zero profile velocity interpolates
+                // between sparse setpoints and smooths it — matching the
+                // post-arm-reboot state that's already smooth on both apps.
                 if (last_applied_gain_mode_ != GainMode::TELEOP) {
                     last_applied_gain_mode_ = GainMode::TELEOP;
                     for (int i = 0; i < 6; i++) {
-                        dynamixel_->setProfileVelocity(joint_configs_[i].servo_id, 0);
-                        dynamixel_->setProfileAcceleration(joint_configs_[i].servo_id, 0);
+                        if (joint_configs_[i].profile_velocity > 0)
+                            dynamixel_->setProfileVelocity(joint_configs_[i].servo_id,
+                                                           joint_configs_[i].profile_velocity);
+                        if (joint_configs_[i].profile_acceleration > 0)
+                            dynamixel_->setProfileAcceleration(joint_configs_[i].servo_id,
+                                                               joint_configs_[i].profile_acceleration);
                     }
                     RCLCPP_INFO(this->get_logger(),
-                                "TELEOP: profile velocity/acceleration set to 0 (unlimited) for joints 1-6");
+                                "TELEOP: profile velocity/acceleration set from config for joints 1-6");
                 }
 
                 // TELEOP: apply flat teleop gains for joints 1-6
