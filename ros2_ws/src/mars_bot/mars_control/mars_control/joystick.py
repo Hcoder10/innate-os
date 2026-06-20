@@ -7,6 +7,7 @@ import pygame
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 
 
 class JoystickAxis:
@@ -172,15 +173,15 @@ class JoystickController(Node):
 
     def _load_parameters(self):
         """Declare and load all parameters from the config file."""
-        # Declare motion control parameters
+        # No literal defaults: values come from mars_control/config/motion_control.yaml.
         self.motion_params = {
-            "max_speed": 2.0,
-            "max_angular_speed": 2.5,
-            "max_acceleration": 0.8,
-            "max_angular_acceleration": 2.0,
-            "speed_time_constant": 0.2,
-            "angular_speed_time_constant": 0.2,
-            "dt": 0.02,
+            "max_speed": Parameter.Type.DOUBLE,
+            "max_angular_speed": Parameter.Type.DOUBLE,
+            "max_acceleration": Parameter.Type.DOUBLE,
+            "max_angular_acceleration": Parameter.Type.DOUBLE,
+            "speed_time_constant": Parameter.Type.DOUBLE,
+            "angular_speed_time_constant": Parameter.Type.DOUBLE,
+            "dt": Parameter.Type.DOUBLE,
         }
 
         # Declare joystick parameters

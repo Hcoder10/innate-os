@@ -6,6 +6,7 @@ from geometry_msgs.msg import Twist
 from mars_msgs.srv import LightCommand
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import BatteryState
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
@@ -57,10 +58,12 @@ class Bringup(Node):
                 ("battery.critical_percentage", 10),
                 ("ros_topics.odom_frequency", 30.0),
                 ("ros_topics.battery_state_frequency", 0.2),
-                ("motion_control.max_speed", 2.5),
-                ("motion_control.max_angular_speed", 2.5),
             ],
         )
+
+        # No literal defaults: motion limits come from config/robot_config.yaml.
+        self.declare_parameter("motion_control.max_speed", Parameter.Type.DOUBLE)
+        self.declare_parameter("motion_control.max_angular_speed", Parameter.Type.DOUBLE)
 
         # Build a structured dictionary with only the parameters needed by I2CManager
         params = {

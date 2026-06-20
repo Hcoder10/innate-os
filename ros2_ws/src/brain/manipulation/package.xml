@@ -25,6 +25,7 @@
   <!-- Internal packages -->
   <depend>brain_messages</depend>
   <depend>mars_msgs</depend>
+  <exec_depend>mars_bringup</exec_depend>
 
   <!-- Image processing -->
   <depend>cv_bridge</depend>

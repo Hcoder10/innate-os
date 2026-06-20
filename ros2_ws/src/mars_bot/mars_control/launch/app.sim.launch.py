@@ -1,13 +1,10 @@
-import os
-
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from mars_bringup.config_loader import innate_os_root, settings_params
 
 
 def generate_launch_description():
-    # Use environment variable if set, otherwise construct from HOME
-    mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-    data_directory = os.path.join(mars_root, "data")
+    data_directory = str(innate_os_root() / "data")
 
     # Default hardware revision for new robots
     default_hardware_revision = "R6"
@@ -21,7 +18,8 @@ def generate_launch_description():
             {
                 "data_directory": data_directory,
                 "default_hardware_revision": default_hardware_revision,
-            }
+            },
+            *settings_params(),
         ],
     )
 

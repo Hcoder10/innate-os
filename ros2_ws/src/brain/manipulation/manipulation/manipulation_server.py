@@ -37,12 +37,14 @@ from manipulation.config_validation import (  # noqa: E402
 )
 
 
-def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None):
+def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None, speed=1.5, temporal_ensemble_coeff=None):
     """Create ACT configuration matching the training setup.
 
     n_action_steps: optional override for the ACT replanning horizon.
     When None, falls back to min(40, chunk_size). Values exceeding chunk_size
     are clamped with a warning (ACTConfig would otherwise raise ValueError).
+    When temporal_ensemble_coeff is set, the horizon is pinned to 1 (the only
+    value ACT temporal ensembling allows), regardless of this argument.
     """
     input_shapes = {
         "observation.image_camera_1": [3, 224, 224],  # [C, H, W]
@@ -84,11 +86,20 @@ def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None):
                 print(f"[create_act_config] n_action_steps={effective_n_action_steps} is < 1; clamping to 1.")
                 effective_n_action_steps = 1
 
+    # Temporal ensembling only works with a replanning horizon of 1 (ACTConfig rejects
+    # anything else), so pin it here instead of crashing policy loading.
+    if temporal_ensemble_coeff is not None and effective_n_action_steps != 1:
+        print(
+            f"[create_act_config] temporal_ensemble_coeff enabled; pinning n_action_steps "
+            f"to 1 (was {effective_n_action_steps})."
+        )
+        effective_n_action_steps = 1
+
     return ACTConfig(
         n_obs_steps=1,
         chunk_size=chunk_size,
         n_action_steps=effective_n_action_steps,
-        speed=1.5,
+        speed=speed,
         input_shapes=input_shapes,
         output_shapes=output_shapes,
         # Architecture parameters
@@ -107,7 +118,7 @@ def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None):
         dropout=0.1,
         kl_weight=10.0,
         # Temporal ensembling
-        temporal_ensemble_coeff=None,
+        temporal_ensemble_coeff=temporal_ensemble_coeff,
         # Optimizer settings
         optimizer_lr=1e-5,
         optimizer_weight_decay=1e-4,
@@ -133,6 +144,23 @@ class ManipulationServer(Node):
         except Exception as e:
             self.get_logger().warn(f"Could not load data_directory parameter: {e}")
             self.data_directory = default_data_dir
+
+        # Learned-policy runtime knobs (from manipulation_server.yaml; overridable via config/settings.yaml).
+        self.declare_parameter("inference_hz", 25.0)
+        self.declare_parameter("speed", 1.5)
+        # inference_hz drives the loop period (1.0 / inference_hz); guard against <= 0.
+        inference_hz = self.get_parameter("inference_hz").value
+        if inference_hz <= 0:
+            self.get_logger().warn(f"inference_hz must be > 0 (got {inference_hz}); falling back to 25.0 Hz.")
+            inference_hz = 25.0
+        self.inference_hz = inference_hz
+        self.policy_speed = self.get_parameter("speed").value
+        # n_action_steps=0 means "auto" (min(40, chunk_size)); a per-skill value still wins.
+        # temporal_ensemble_coeff=0.0 disables ACT temporal ensembling.
+        self.declare_parameter("n_action_steps", 0)
+        self.declare_parameter("temporal_ensemble_coeff", 0.0)
+        self.default_n_action_steps = self.get_parameter("n_action_steps").value
+        self.temporal_ensemble_coeff = self.get_parameter("temporal_ensemble_coeff").value
 
         # Image size for policy inference (matches checkpoint training)
         self.bridge = CvBridge()
@@ -362,6 +390,8 @@ class ManipulationServer(Node):
             start_pose_time = params.start_pose_time
             end_pose_time = params.end_pose_time
             n_action_steps_override = params.n_action_steps
+            if n_action_steps_override is None and self.default_n_action_steps > 0:
+                n_action_steps_override = self.default_n_action_steps
 
             # Load policy
             if not self._load_policy_for_behavior(
@@ -393,7 +423,7 @@ class ManipulationServer(Node):
 
             # Execute policy inference
             start_time = time.time()
-            inference_hz = 25.0
+            inference_hz = self.inference_hz
             period = 1.0 / inference_hz
             early_termination = False
 
@@ -830,6 +860,8 @@ class ManipulationServer(Node):
                 action_dim=action_dim,
                 chunk_size=chunk_size,
                 n_action_steps=n_action_steps_override,
+                speed=self.policy_speed,
+                temporal_ensemble_coeff=self.temporal_ensemble_coeff or None,
             )
             self.get_logger().info(f"Resolved n_action_steps={policy_config.n_action_steps} (chunk_size={chunk_size})")
             self.current_policy = ACTPolicy(config=policy_config, dataset_stats=dataset_stats).to(self.device)

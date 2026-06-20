@@ -133,7 +133,7 @@ class BrainClientNode(Node):
             use_odom_as_amcl_pose=cfg.use_odom_as_amcl_pose,
         )
         self.map_state = MapState(self, cfg.map_topic)
-        self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic)
+        self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
         self.gaze = GazeController(self, state)
         self.catalog = SkillCatalog(self, self.ws_bridge, state)
         self.runner = PrimitiveRunner(

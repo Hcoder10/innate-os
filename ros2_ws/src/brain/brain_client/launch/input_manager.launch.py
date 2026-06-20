@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from mars_bringup.env_loader import load_env_file
+from mars_bringup.config_loader import get_env, load_env_file, settings_params
 
 from brain_client.common.logging import get_logging_env_vars
 
@@ -34,7 +34,8 @@ def generate_launch_description():
     )
     cartesia_voice_id_arg = DeclareLaunchArgument(
         "cartesia_voice_id",
-        default_value="9fdaae0b-f885-4813-b589-3c07cf9d5fea",
+        # Same env default as brain_client.launch.py, so .env CARTESIA_VOICE_ID sets both speech paths.
+        default_value=get_env("CARTESIA_VOICE_ID", "9fdaae0b-f885-4813-b589-3c07cf9d5fea"),
         description="Cartesia Alfred voice id",
     )
 
@@ -56,7 +57,8 @@ def generate_launch_description():
                         "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
                         "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
                         "cartesia_voice_id": LaunchConfiguration("cartesia_voice_id"),
-                    }
+                    },
+                    *settings_params(),
                 ],
             ),
         ]

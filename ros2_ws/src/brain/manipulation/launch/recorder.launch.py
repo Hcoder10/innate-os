@@ -4,6 +4,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from mars_bringup.config_loader import workspace_skills_dir
 
 
 def generate_launch_description():
@@ -14,8 +15,7 @@ def generate_launch_description():
     # Resolve data_directory from $INNATE_OS_ROOT so a non-default repo
     # location is honored. ROS YAML can't expand env vars, so we override
     # the parameter here.
-    innate_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-    data_directory = os.path.join(innate_root, "workspace", "custom_skills")
+    data_directory = str(workspace_skills_dir())
 
     # Define the C++ recorder node with its parameters.
     recorder_node = Node(

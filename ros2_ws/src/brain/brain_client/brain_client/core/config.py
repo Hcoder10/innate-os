@@ -51,6 +51,7 @@ class BrainConfig:
     video_buffer_duration_seconds: float
     video_fps: float
     image_buffer_max_size: int
+    scan_stale_after_sec: float
 
     # --- Proxy service config (credentials come from env, not params) ---
     cartesia_voice_id: str
@@ -132,6 +133,7 @@ class BrainConfig:
             "pose_image_interval": 0.5,
             "video_buffer_duration_seconds": 2.0,
             "video_fps": 10.0,
+            "scan_stale_after_sec": 10.0,
         }
 
         for name, default in {**string_params, **bool_params, **int_params, **double_params}.items():
@@ -179,6 +181,7 @@ class BrainConfig:
             video_buffer_duration_seconds=d("video_buffer_duration_seconds"),
             video_fps=d("video_fps"),
             image_buffer_max_size=i("image_buffer_max_size"),
+            scan_stale_after_sec=d("scan_stale_after_sec"),
             cartesia_voice_id=s("cartesia_voice_id"),
             openai_realtime_model=s("openai_realtime_model"),
             openai_realtime_url=s("openai_realtime_url"),
