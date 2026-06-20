@@ -7,6 +7,7 @@
 #
 # This script handles:
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
+#   0a2. Create config/settings.yaml from template if missing
 #   0b. Enable a disk-backed swap file (INN-530)
 #   0c. Use a headless (no-GUI) boot when no display is attached
 #   0d. Disable desktop/update daemons with no robot function
@@ -205,6 +206,28 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 0·1 Seed /etc/innate.env with the service key, so INNATE_SERVICE_KEY survives a repo
+# reset that loses the .env. Readers use it only as a fallback (repo .env wins). Write-once:
+# an existing key is left untouched. Mode 640 root:$ACTUAL_USER — root-owned but group-readable
+# so the non-root launch readers can reach it.
+# -----------------------------------------------------------------------------
+SYSTEM_ENV_FILE="/etc/innate.env"
+if [ -f "$ENV_FILE" ]; then
+    # Require a non-empty value (.+) so the empty template default never gets copied.
+    SERVICE_KEY_LINE=$(grep -E '^INNATE_SERVICE_KEY=.+' "$ENV_FILE" | tail -n1 || true)
+    if [ -n "$SERVICE_KEY_LINE" ]; then
+        if [ -f "$SYSTEM_ENV_FILE" ] && grep -qE '^INNATE_SERVICE_KEY=.+' "$SYSTEM_ENV_FILE"; then
+            log "Service key already present in $SYSTEM_ENV_FILE (leaving its contents untouched)"
+        else
+            (umask 077; printf '%s\n' "$SERVICE_KEY_LINE" > "$SYSTEM_ENV_FILE")
+            chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
+            chmod 640 "$SYSTEM_ENV_FILE"
+            log "Copied INNATE_SERVICE_KEY from .env to $SYSTEM_ENV_FILE"
+        fi
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # 0a. Migrate user-created data into the post-refactor layout.
 # The refactor moved agents/skills/inputs under workspace/ and maps + nav-state
 # (.last_mode/.last_map) under data/. git checkout relocated the *tracked*
@@ -217,6 +240,21 @@ fi
 # shellcheck source=scripts/update/migrate_user_data.sh
 source "$SCRIPT_DIR/migrate_user_data.sh"
 MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
+
+# -----------------------------------------------------------------------------
+# 0a2. Create config/settings.yaml from template if missing.
+# settings.yaml = tunable ROS parameters (the file users edit). Only created when missing,
+# so an existing robot's config is never overwritten on upgrade.
+# -----------------------------------------------------------------------------
+SETTINGS_CONFIG="$REPO_DIR/config/settings.yaml"
+SETTINGS_TEMPLATE="$REPO_DIR/config/settings.yaml.template"
+
+if [ ! -f "$SETTINGS_CONFIG" ] && [ -f "$SETTINGS_TEMPLATE" ]; then
+    log "Creating config/settings.yaml from template..."
+    cp "$SETTINGS_TEMPLATE" "$SETTINGS_CONFIG"
+    chown "$ACTUAL_USER:$ACTUAL_USER" "$SETTINGS_CONFIG"
+    log "  Created $SETTINGS_CONFIG (uncomment a stanza to tune a parameter)"
+fi
 
 # -----------------------------------------------------------------------------
 # 0b. Enable a disk-backed swap file (INN-530)
