@@ -3,7 +3,6 @@ import json
 import os
 import threading
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
 
 import uvicorn
 from dotenv import load_dotenv
@@ -29,7 +28,6 @@ load_dotenv()
 # Define constants
 ROSBRIDGE_URI = os.getenv("ROSBRIDGE_URI", "ws://localhost:9090")
 SIMULATOR_PORT = int(os.getenv("SIMULATOR_PORT", "8000"))
-SENSITIVE_QUERY_PARAMS = {"innate_service_key", "service_key"}
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -40,31 +38,6 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 app = FastAPI()
-
-
-def redact_sensitive_query_string(query_string: bytes) -> bytes:
-    if not query_string:
-        return query_string
-
-    query = query_string.decode("latin-1")
-    changed = False
-    redacted_pairs: list[tuple[str, str]] = []
-    for key, value in parse_qsl(query, keep_blank_values=True):
-        if key.lower() in SENSITIVE_QUERY_PARAMS and value:
-            redacted_pairs.append((key, "redacted"))
-            changed = True
-        else:
-            redacted_pairs.append((key, value))
-
-    if not changed:
-        return query_string
-    return urlencode(redacted_pairs).encode("latin-1")
-
-
-@app.middleware("http")
-async def redact_sensitive_query_params(request, call_next):
-    request.scope["query_string"] = redact_sensitive_query_string(request.scope.get("query_string", b""))
-    return await call_next(request)
 
 
 # Enable CORS
