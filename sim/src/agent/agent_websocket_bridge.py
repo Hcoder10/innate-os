@@ -192,8 +192,7 @@ def arm_service_advertisements() -> list[dict]:
 
 def sim_control_service_advertisements() -> list[dict]:
     adverts = [
-        rosbridge_advertise_service(service, "std_srvs/srv/Trigger")
-        for service in sorted(SIM_CONTROL_TRIGGER_SERVICES)
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(SIM_CONTROL_TRIGGER_SERVICES)
     ]
     # set_environment carries a string payload (an environment name or an inline
     # JSON config) and returns success+message. Reuse brain_messages/ChangeMap,

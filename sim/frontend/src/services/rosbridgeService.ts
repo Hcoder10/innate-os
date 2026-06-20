@@ -774,8 +774,17 @@ export async function setBrainBackendConfigDirect(
   wsUrl: string,
   config: { websocket_uri?: string; service_key?: string },
 ): Promise<void> {
+  // Mirror the bridge: only include non-empty fields, so an empty value reads
+  // as "unchanged" to the brain rather than "clear this setting".
+  const payload: Record<string, string> = {};
+  if (config.websocket_uri) {
+    payload.websocket_uri = config.websocket_uri;
+  }
+  if (config.service_key) {
+    payload.service_key = config.service_key;
+  }
   await publishRosbridgeTopic(wsUrl, "/brain/backend_config", {
-    data: JSON.stringify(config),
+    data: JSON.stringify(payload),
   });
 }
 

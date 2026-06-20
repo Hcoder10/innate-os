@@ -735,16 +735,7 @@ export function Chat() {
 
   const stopAgent = async () => {
     try {
-      if (useDirectRobot) {
-        await stopAgentDirect(robotWsUrl);
-      } else {
-        const baseUrl = appConfig.simBaseUrl;
-        const response = await fetch(`${baseUrl}/stop_agent`, {
-          method: "POST",
-        });
-        const data = await response.json();
-        console.log("Agent stopped:", data);
-      }
+      await stopAgentDirect(robotWsUrl);
 
       setMessages((prev) => [
         ...prev,
