@@ -133,7 +133,7 @@ class Orchestrator:
                 if not frames:
                     self._logger.warn("[BrainClient] Video enabled but no recent frames; sending single image.")
                 else:
-                    video_b64 = image_codec.encode_video_b64(frames, self._config.video_fps)
+                    video_b64 = image_codec.mux_mjpeg_avi_b64(frames, self._config.video_fps)
                     if video_b64:
                         payload["video_b64"] = video_b64
                         payload["video_format"] = "avi_mjpeg"

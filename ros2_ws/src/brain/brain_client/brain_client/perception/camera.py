@@ -1,7 +1,8 @@
 """Camera capture: RGB / arm / depth frames, the frame buffer, and head pitch.
 
-Owns the on-demand sensor subscriptions created while the brain is active. Decodes
-incoming frames and exposes them as ready-to-send blocks via the pure
+Owns the on-demand sensor subscriptions created while the brain is active. RGB and
+arm frames already arrive JPEG-compressed and are forwarded untouched; only depth is
+unpacked to a numpy array. Frames are exposed as ready-to-send blocks via the pure
 :mod:`perception.image_codec` and :mod:`navigation.payload` helpers.
 """
 
@@ -10,7 +11,6 @@ from __future__ import annotations
 import json
 from collections import deque
 
-import cv2
 import numpy as np
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
@@ -29,9 +29,9 @@ class CameraCapture:
         self._logger = node.get_logger()
         self._config = config
 
-        self.last_image = None
+        self.last_image_jpeg = None
         self.last_depth_image = None
-        self.last_arm_camera = None
+        self.last_arm_jpeg = None
         self.current_head_pitch = 0.0
         self.image_buffer = deque(maxlen=config.image_buffer_max_size)
 
@@ -63,29 +63,25 @@ class CameraCapture:
             if sub is not None:
                 self._node.destroy_subscription(sub)
         self._image_sub = self._depth_sub = self._arm_sub = self._head_sub = None
-        self.last_image = None
+        self.last_image_jpeg = None
         self.last_depth_image = None
-        self.last_arm_camera = None
+        self.last_arm_jpeg = None
         self.image_buffer.clear()
 
     # --- callbacks ---
     def _on_image(self, msg: CompressedImage) -> None:
-        try:
-            decoded = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
-            if decoded is not None:
-                self.last_image = decoded
-                t = self._node.get_clock().now().nanoseconds / 1e9
-                self.image_buffer.append((t, decoded))
-            else:
-                self._logger.warn("Failed to decode image (decoded is None).")
-        except Exception as e:
-            self._logger.error(f"Failed to decode compressed image: {e}")
+        if not msg.data:
+            return
+        # Frames arrive JPEG-compressed; forward the bytes as-is, no decode/re-encode.
+        jpeg = bytes(msg.data)
+        self.last_image_jpeg = jpeg
+        if self._config.send_video_feed:
+            t = self._node.get_clock().now().nanoseconds / 1e9
+            self.image_buffer.append((t, jpeg))
 
     def _on_arm(self, msg: CompressedImage) -> None:
-        try:
-            self.last_arm_camera = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
-        except Exception as e:
-            self._logger.error(f"Failed to decode arm camera image: {e}")
+        if msg.data:
+            self.last_arm_jpeg = bytes(msg.data)
 
     def _on_depth(self, msg: Image) -> None:
         try:
@@ -107,14 +103,14 @@ class CameraCapture:
     # --- queries / encoded blocks ---
     @property
     def has_image(self) -> bool:
-        return self.last_image is not None
+        return self.last_image_jpeg is not None
 
     def latest_image_b64(self) -> str | None:
-        return image_codec.encode_jpeg_b64(self.last_image)
+        return image_codec.b64encode_jpeg(self.last_image_jpeg)
 
     def recent_frames(self, window_seconds: float) -> list:
         now = self._node.get_clock().now().nanoseconds / 1e9
-        return [img for ts, img in list(self.image_buffer) if now - ts <= window_seconds]
+        return [jpeg for ts, jpeg in list(self.image_buffer) if now - ts <= window_seconds]
 
     def depth_block(self) -> dict | None:
         if self._config.send_depth and self.last_depth_image is not None:
@@ -122,8 +118,8 @@ class CameraCapture:
         return None
 
     def arm_block(self) -> dict | None:
-        if self._config.send_arm_camera_image and self.last_arm_camera is not None:
-            arm_b64 = image_codec.encode_jpeg_b64(self.last_arm_camera)
+        if self._config.send_arm_camera_image and self.last_arm_jpeg is not None:
+            arm_b64 = image_codec.b64encode_jpeg(self.last_arm_jpeg)
             if arm_b64:
                 return {"image_b64": arm_b64, "camera_type": "arm_wrist"}
         return None
@@ -131,4 +127,4 @@ class CameraCapture:
     def clear_after_send(self) -> None:
         """Reset depth/arm so the same frames are not resent."""
         self.last_depth_image = None
-        self.last_arm_camera = None
+        self.last_arm_jpeg = None
