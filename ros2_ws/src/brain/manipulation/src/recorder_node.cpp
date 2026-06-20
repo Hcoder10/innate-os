@@ -828,11 +828,34 @@ void RecorderNode::handle_load_episode(const std::shared_ptr<brain_messages::srv
         }
 
         std::string data_dir = request->task_directory + "/data";
-        std::string h5_path = data_dir + "/episode_" + std::to_string(request->episode_id) + ".h5";
+        std::string raw_dir = request->task_directory + "/raw_data";
+        const std::string fname = "/episode_" + std::to_string(request->episode_id) + ".h5";
 
-        if (!fs::exists(h5_path)) {
+        // The replay needs raw images. The MP4 encoder moves the original episode
+        // to raw_data/ and leaves a stripped (image-less) copy in data/, so while
+        // an episode is encoding (and after) the frames live in raw_data/. Prefer
+        // data/, fall back to raw_data/ — otherwise an episode is un-replayable for
+        // the minute-plus it takes to encode, and the app shows a misleading
+        // "Update the OS to play this episode."
+        std::string h5_path;
+        for (const std::string& cand : {data_dir + fname, raw_dir + fname}) {
+            if (!fs::exists(cand)) {
+                continue;
+            }
+            hid_t probe = H5Fopen(cand.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+            if (probe < 0) {
+                continue;
+            }
+            bool has_images = H5Lexists(probe, "/observations/images", H5P_DEFAULT) > 0;
+            H5Fclose(probe);
+            if (has_images) {
+                h5_path = cand;
+                break;
+            }
+        }
+        if (h5_path.empty()) {
             response->success = false;
-            response->message = "Episode file not found: " + h5_path;
+            response->message = "No images found for episode " + std::to_string(request->episode_id);
             response->num_frames = 0;
             response->fps = 0.0;
             response->duration_sec = 0.0;
