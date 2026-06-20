@@ -6,7 +6,6 @@ import {
   ExecuteSkillResult,
   RobotAgent,
   RobotSkill,
-  StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
   resetPositionDirect,
@@ -16,12 +15,12 @@ import {
   setBrainBackendConfigDirect,
   setDirectiveDirect,
   startSkillExecutionDirect,
+  subscribeBrainBackendStatus,
 } from "./services/rosbridgeService";
 import { appConfig } from "./config";
 
 const AGENT_BACKEND_WARNING_DELAY_MS = 15_000;
 const BACKEND_CONNECTED_STABLE_MS = 3_000;
-const BACKEND_STATUS_POLL_MS = 1_000;
 const BRAIN_URI_URL_PARAMS = ["brain_uri", "brain_websocket_uri", "websocket_uri"];
 const SERVICE_KEY_URL_PARAMS = ["innate_service_key", "service_key"];
 const BACKEND_OVERRIDE_URL_PARAMS = [
@@ -368,48 +367,19 @@ export default function App() {
   }, [fetchAgents]);
 
   useEffect(() => {
-    if (useDirectRobot) {
-      return;
-    }
-
-    let stopped = false;
-    const pollBackendStatus = async () => {
-      try {
-        const response = await fetch(`${simBaseUrl}/stack_metrics`);
-        if (!response.ok) {
-          return;
-        }
-        const data = (await response.json()) as StackMetricsResponse;
-        if (stopped || !data.brain_backend_status) {
-          return;
-        }
-
-        setBrainBackendStatus(data.brain_backend_status);
-        if (data.brain_backend_status.connected) {
-          setBackendWarmupTimedOut(false);
-          setAgentLoadTimedOut(false);
-        } else if (
-          Date.now() - agentsLoadStartedAtRef.current >=
-          AGENT_BACKEND_WARNING_DELAY_MS
-        ) {
-          setBackendWarmupTimedOut(true);
-        }
-      } catch {
-        // The video panel already handles simulator connectivity; keep this poll quiet.
+    return subscribeBrainBackendStatus(robotWsUrl, (status) => {
+      setBrainBackendStatus(status);
+      if (status.connected) {
+        setBackendWarmupTimedOut(false);
+        setAgentLoadTimedOut(false);
+      } else if (
+        Date.now() - agentsLoadStartedAtRef.current >=
+        AGENT_BACKEND_WARNING_DELAY_MS
+      ) {
+        setBackendWarmupTimedOut(true);
       }
-    };
-
-    void pollBackendStatus();
-    const intervalId = window.setInterval(
-      () => void pollBackendStatus(),
-      BACKEND_STATUS_POLL_MS,
-    );
-
-    return () => {
-      stopped = true;
-      window.clearInterval(intervalId);
-    };
-  }, [simBaseUrl, useDirectRobot]);
+    });
+  }, [robotWsUrl]);
 
   const handleReloadAgents = useCallback(() => {
     void fetchAgents({ requestRefresh: true });

@@ -620,6 +620,59 @@ function getAvailableSkillsFromTopicDirect(
   });
 }
 
+// Persistent subscription to the brain's backend status. Replaces the old
+// /stack_metrics HTTP poll. Returns an unsubscribe function.
+export function subscribeBrainBackendStatus(
+  wsUrl: string,
+  onStatus: (status: BrainBackendStatus) => void,
+): () => void {
+  const ws = new WebSocket(wsUrl);
+  let disposed = false;
+
+  ws.onopen = () => {
+    ws.send(
+      JSON.stringify({
+        op: "subscribe",
+        topic: "/brain/websocket_status",
+        type: "std_msgs/msg/String",
+        throttle_rate: 500,
+        queue_length: 1,
+      }),
+    );
+  };
+
+  ws.onmessage = (event) => {
+    let payload: { op?: string; topic?: string; msg?: { data?: string } };
+    try {
+      payload = JSON.parse(event.data as string);
+    } catch {
+      return;
+    }
+    if (payload.op !== "publish" || payload.topic !== "/brain/websocket_status") {
+      return;
+    }
+    try {
+      const status = JSON.parse(payload.msg?.data ?? "") as BrainBackendStatus;
+      if (!disposed) {
+        // The raw topic has no `updated_at`; the sim used to stamp it with its
+        // receive time when caching for /stack_metrics. Mirror that here so the
+        // connection-stability debounce (timestamp ?? updated_at) still works.
+        onStatus({ ...status, updated_at: Date.now() / 1000 });
+      }
+    } catch {
+      // Ignore malformed status payloads.
+    }
+  };
+
+  return () => {
+    disposed = true;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ op: "unsubscribe", topic: "/brain/websocket_status" }));
+    }
+    ws.close();
+  };
+}
+
 export async function getAvailableAgentsDirect(
   wsUrl: string,
 ): Promise<AvailableAgentsResponse> {
