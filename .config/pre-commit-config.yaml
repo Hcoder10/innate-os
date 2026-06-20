@@ -33,3 +33,30 @@ repos:
         # C/C++ only. The hook otherwise also targets json/js/java, which the
         # C++-only .clang-format can't format.
         types_or: [c, c++]
+
+  # Locks the nav2 motion-limit remap to the real config: a plugin/param rename
+  # in controller.yaml / velocity_smoother.yaml / the sim params fails here instead
+  # of silently turning the nav override into a no-op. (needs pyyaml — it imports
+  # config_loader.) Runs in an isolated venv so it needs no ROS/colcon build.
+  - repo: local
+    hooks:
+      - id: nav-remap-param-names
+        name: nav2 motion-limit remap targets exist in config
+        entry: python -m pytest tests/test_motion_limit_overrides.py -q
+        language: python
+        additional_dependencies: [pytest, pyyaml]
+        pass_filenames: false
+        always_run: true
+
+  # Locks _SETTINGS_DOUBLE_KEYS to settings.yaml.template: a float tunable added to the
+  # template without being guarded fails here instead of crashing a node at startup with
+  # an opaque InvalidParameterTypeException. (needs pyyaml — it imports config_loader.)
+  - repo: local
+    hooks:
+      - id: settings-double-keys
+        name: settings.yaml double tunables are all guarded
+        entry: python -m pytest tests/test_settings_double_keys.py -q
+        language: python
+        additional_dependencies: [pytest, pyyaml]
+        pass_filenames: false
+        always_run: true

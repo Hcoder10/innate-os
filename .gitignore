@@ -57,6 +57,7 @@ Thumbs.db
 # Environment files
 .env
 config/os.toml
+config/settings.yaml
 sim/config.toml
 .venv/
 ENV/

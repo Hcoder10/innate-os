@@ -12,13 +12,12 @@ Layout:
     $INNATE_OS_ROOT/inputs/                     # legacy input devices (<= 0.5.x, in place)
     ~/agents/                                   # user agents   (alternative, in place)
     ~/skills/                                   # user skills   (alternative, in place)
-    <any absolute path>                         # extra dirs from config/os.toml [paths]
+    <any absolute path>                         # extra dirs from config/settings.yaml
 
-Extra scan dirs: the ``[paths]`` section of config/os.toml lets a user point at
-agent/skill directories anywhere on the machine. The env loader reads that config
-and exports them as ``INNATE_EXTRA_AGENT_DIRS`` / ``INNATE_EXTRA_SKILL_DIRS``
-(os.pathsep-joined); they are scanned in place (never created) and, because the
-hot-reload watchers consume these same getters, are hot-reloadable too.
+Extra scan dirs: the ``script_paths`` section of config/settings.yaml
+(``extra_agent_dirs`` / ``extra_skill_dirs``) lets a user point at agent/skill
+directories anywhere on the machine; they are scanned in place (never created) and,
+because the hot-reload watchers consume these same getters, are hot-reloadable too.
 
 Backwards compatibility: through release 0.5.x, agents/skills/inputs were loaded
 from $INNATE_OS_ROOT/{agents,skills,inputs} and ~/{agents,skills}. Those locations
@@ -34,6 +33,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Literal
+
+from mars_bringup.config_loader import load_extra_script_dirs
 
 Source = Literal["shipped", "user"]
 
@@ -91,15 +92,13 @@ def get_home_skills_dir() -> Path:
     return Path.home() / "skills"
 
 
-def _dirs_from_env(env_var: str) -> list[Path]:
-    """Parse an os.pathsep-separated list of extra scan dirs from ``env_var``.
+def _extra_dirs(settings_key: str) -> list[Path]:
+    """Resolve extra scan dirs from config/settings.yaml ``script_paths.<settings_key>``.
 
-    Populated from config/os.toml ``[paths]`` by the env loader. Blank entries
-    are dropped; ``~`` and ``$VARS`` are expanded.
+    Blank entries are dropped; ``~`` and ``$VARS`` are expanded.
     """
-    raw = os.environ.get(env_var, "")
     dirs: list[Path] = []
-    for part in raw.split(os.pathsep):
+    for part in load_extra_script_dirs(settings_key):
         part = part.strip()
         if part:
             dirs.append(Path(os.path.expandvars(os.path.expanduser(part))))
@@ -107,13 +106,13 @@ def _dirs_from_env(env_var: str) -> list[Path]:
 
 
 def get_extra_agent_dirs() -> list[Path]:
-    """Extra agent dirs from config/os.toml ``[paths].agent_dirs`` (anywhere on the machine)."""
-    return _dirs_from_env("INNATE_EXTRA_AGENT_DIRS")
+    """Extra agent dirs from settings.yaml ``script_paths.extra_agent_dirs`` (anywhere on the machine)."""
+    return _extra_dirs("extra_agent_dirs")
 
 
 def get_extra_skill_dirs() -> list[Path]:
-    """Extra skill dirs from config/os.toml ``[paths].skill_dirs`` (anywhere on the machine)."""
-    return _dirs_from_env("INNATE_EXTRA_SKILL_DIRS")
+    """Extra skill dirs from settings.yaml ``script_paths.extra_skill_dirs`` (anywhere on the machine)."""
+    return _extra_dirs("extra_skill_dirs")
 
 
 def _scan_dirs(required: list[Path], optional: list[Path]) -> list[Path]:
