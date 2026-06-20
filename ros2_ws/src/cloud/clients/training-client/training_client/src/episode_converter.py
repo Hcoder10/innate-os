@@ -11,6 +11,12 @@ The conversion is incremental: episodes whose MP4s already exist on disk
 are skipped.  New episodes added after a prior conversion are detected and
 converted.  Partially-completed conversions are detected by the presence
 of files in raw_data/ and resumed.
+
+Datasets encoded by older Innate OS (before chroma was forced to 4:2:0) hold
+H.264 4:4:4 MP4s that phone/Jetson hardware decoders render black.  Their raw
+frames are long gone (the source H5 was stripped), so those MP4s are detected by
+an encoder-version stamp and transcoded *in place from the MP4 itself* to a
+universally decodable 4:2:0 stream.
 """
 
 from __future__ import annotations
@@ -34,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 DATASET_METADATA = "dataset_metadata.json"
 RAW_DATA_DIR = "raw_data"
+
+# Bumped whenever the MP4 encode format changes. Each episode records the version
+# it was encoded with (in dataset_metadata.json); any episode below this is
+# re-encoded. v1 = H.264 4:2:0 chroma (forced via I420). Episodes from before this
+# stamp existed — old Innate OS — are 4:4:4 and treated as v0, so they get
+# transcoded to 4:2:0. Because the 4:2:0 fix and this stamp ship together, a
+# below-version episode is *always* pre-fix 4:4:4, so no per-file probe is needed.
+ENCODER_VERSION = 1
 
 
 def convert_episodes_to_h264(
@@ -162,6 +176,41 @@ def convert_episodes_to_h264(
                 )
                 raise
 
+        elif item["kind"] == "transcode":
+            mp4_path = data_dir / item["filename"]
+            if not mp4_path.exists():
+                # MP4 deleted mid-pass (episode removed while we worked) — skip.
+                logger.info("MP4 %s gone — skipping transcode (deleted?)", item["filename"])
+                continue
+
+            yield ProgressUpdate(
+                stage=ProgressStage.COMPRESSING,
+                message=f"[{idx}/{total}] Re-encoding {item['filename']} to 4:2:0…",
+                file_progress=FileProgress(filename=item["filename"], index=idx, total=total),
+            )
+
+            try:
+                _transcode_mp4_to_420(
+                    mp4_path,
+                    fps,
+                    nice_level=nice_level,
+                    threads=threads,
+                    idle_io=idle_io,
+                )
+            except Exception as e:
+                yield ProgressUpdate(
+                    stage=ProgressStage.ERROR,
+                    message=f"[{idx}/{total}] Re-encode failed for {item['filename']}: {e}",
+                    file_progress=FileProgress(
+                        filename=item["filename"],
+                        index=idx,
+                        total=total,
+                        error=str(e),
+                    ),
+                    error=str(e),
+                )
+                raise
+
     _update_metadata(data_dir)
 
     yield ProgressUpdate(
@@ -177,6 +226,17 @@ def _build_work_list(data_dir: Path, raw_dir: Path, episodes: list[dict]) -> lis
         h5_file = ep.get("file_name", "")
         if not h5_file:
             continue
+
+        # Re-encode stale MP4s: an episode encoded before the 4:2:0 chroma fix
+        # (old Innate OS) has 4:4:4 MP4s that hardware decoders render black, and
+        # its raw frames are gone (the source H5 was stripped), so we transcode
+        # each existing MP4 in place from the MP4 itself. No pixel-format probe:
+        # the chroma fix and the version stamp shipped together, so a below-version
+        # episode is always pre-fix 4:4:4. _update_metadata stamps the episode
+        # current once its MP4s are confirmed, so this runs exactly once.
+        if ep.get("encoder_version", 0) < ENCODER_VERSION:
+            for mp4 in sorted(data_dir.glob(f"{Path(h5_file).stem}_*.mp4")):
+                items.append({"kind": "transcode", "filename": mp4.name})
 
         raw_path = raw_dir / h5_file
         h5_path = data_dir / h5_file
@@ -351,6 +411,82 @@ def _encode_camera_to_mp4(
     )
 
 
+def _transcode_mp4_to_420(
+    mp4_path: Path,
+    fps: int,
+    *,
+    nice_level: int = 0,
+    threads: int = 4,
+    idle_io: bool = False,
+) -> None:
+    """Re-encode an existing MP4 in place to H.264 4:2:0 + faststart.
+
+    For datasets from old Innate OS, the MP4s are 4:4:4 (encoded before chroma was
+    forced to 4:2:0) and there are no raw frames left to re-encode from. So we
+    decode the existing MP4 in *software* — ``avdec_h264`` handles 4:4:4, unlike
+    the Jetson's hardware decoder — and re-encode to a universally decodable 4:2:0
+    stream. It's a lossy→lossy re-encode, but the alternative is a file that
+    phones and the Jetson render black. Writes a ``.part`` sibling and renames it
+    atomically (like the raw-image encoder), so a crash/kill never leaves a
+    half-written MP4 in place of the original.
+    """
+    part_path = mp4_path.with_name(mp4_path.name + ".part")
+    part_path.unlink(missing_ok=True)  # clear any leftover from a prior crash
+
+    io_prefix = ["ionice", "-c", "3"] if (idle_io and shutil.which("ionice")) else []
+    gst_args = [
+        *io_prefix,
+        "nice",
+        "-n",
+        str(nice_level),
+        "gst-launch-1.0",
+        "-e",
+        "filesrc",
+        f"location={mp4_path}",
+        "!",
+        "qtdemux",
+        "!",
+        "h264parse",
+        "!",
+        # Software decode — handles the 4:4:4 stream the hardware decoder can't.
+        "avdec_h264",
+        "!",
+        "videoconvert",
+        "!",
+        # Same 4:2:0 target + GOP/faststart settings as the raw-image encoder.
+        "video/x-raw,format=I420",
+        "!",
+        "x264enc",
+        "pass=qual",
+        "quantizer=23",
+        "speed-preset=ultrafast",
+        f"threads={threads}",
+        f"key-int-max={fps}",
+        "!",
+        "h264parse",
+        "!",
+        "mp4mux",
+        "faststart=true",
+        "!",
+        "filesink",
+        f"location={part_path}",
+    ]
+
+    proc = subprocess.run(gst_args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        part_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"gst-launch-1.0 transcode exited with code {proc.returncode}: {proc.stderr.decode(errors='replace')}"
+        )
+    if not part_path.exists() or part_path.stat().st_size == 0:
+        # Never replace a good original with an empty/missing transcode.
+        part_path.unlink(missing_ok=True)
+        raise RuntimeError(f"transcode produced no output for {mp4_path.name}")
+
+    os.replace(str(part_path), str(mp4_path))
+    logger.info("Re-encoded %s to H.264 4:2:0", mp4_path.name)
+
+
 def _strip_images_from_h5(raw_path: Path, dest_path: Path) -> None:
     """Create a copy of *raw_path* at *dest_path* without /observations/images/."""
     tmp_path = dest_path.with_suffix(".h5.tmp")
@@ -428,6 +564,10 @@ def _update_metadata(data_dir: Path) -> None:
             )
             if video_files:
                 ep["video_files"] = video_files
+                # Stamp the format these MP4s are now in, so the next scan doesn't
+                # re-probe or re-transcode them (this runs after any transcode, so
+                # the files are guaranteed current here).
+                ep["encoder_version"] = ENCODER_VERSION
 
         tmp_path = meta_path.with_suffix(meta_path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(meta, indent=4) + "\n")
