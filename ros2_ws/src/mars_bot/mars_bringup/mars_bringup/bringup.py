@@ -151,9 +151,7 @@ class Bringup(Node):
     def _cmd_vel_callback(self, msg: Twist):
         """Handle incoming velocity commands."""
         # Apply speed limits
-        limited_linear = max(
-            min(msg.linear.x, self.params["safety"]["max_speed"]), -self.params["safety"]["max_speed"]
-        )
+        limited_linear = max(min(msg.linear.x, self.params["safety"]["max_speed"]), -self.params["safety"]["max_speed"])
         limited_angular = max(
             min(-msg.angular.z, self.params["safety"]["max_angular_speed"]),
             -self.params["safety"]["max_angular_speed"],
