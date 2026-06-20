@@ -774,12 +774,6 @@ def command_succeeds(cmd: list[str], *, cwd: Path | None = None, env: dict[str, 
     return result.returncode == 0
 
 
-def tcp_port_open(port: int) -> bool:
-    with socket.socket() as sock:
-        sock.settimeout(1.0)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
-
-
 def websocket_port_open(port: int) -> bool:
     request = (
         f"GET / HTTP/1.1\r\n"
@@ -847,7 +841,7 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and tcp_port_open(9090)
+    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
     agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
