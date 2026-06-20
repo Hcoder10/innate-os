@@ -93,7 +93,13 @@ def get_logging_env_vars():
     Returns:
         list: A list of SetEnvironmentVariable actions.
     """
-    profile = os.getenv("INNATE_BRAIN_LOG_PROFILE", "compact").strip().lower()
+    # Default to the standard format (inherit RCUTILS_CONSOLE_OUTPUT_FORMAT from
+    # the environment — see config/dds/setup_dds.zsh) so brain_client's lines
+    # carry their node name and timestamp like every other node, and the
+    # observability tooling can attribute them. The terse "compact" layout is
+    # still available via INNATE_BRAIN_LOG_PROFILE=compact for tmux-only reading,
+    # but it hides the node name, so it's no longer the default.
+    profile = os.getenv("INNATE_BRAIN_LOG_PROFILE", "default").strip().lower()
     output_format_by_profile = {
         "compact": "[{severity}] {message}",
         "message-only": "{message}",

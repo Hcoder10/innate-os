@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime
 
@@ -28,6 +29,7 @@ _STATUS_MAP: dict[str, int] = {
     "running": TrainingRunStatus.STATUS_RUNNING,
     "done": TrainingRunStatus.STATUS_DONE,
     "downloaded": TrainingRunStatus.STATUS_DOWNLOADED,
+    "cancelled": TrainingRunStatus.STATUS_CANCELLED,
 }
 
 _STAGE_MAP: dict[str, int] = {
@@ -72,6 +74,7 @@ class JobStore:
         # Tracks transfers that finished successfully (for persistent ✓ in UI).
         self._completed_transfers: set[tuple[int, str, int]] = set()
         self._download_initiated: set[tuple[str, int]] = set()
+        self._starting: set[str] = set()  # skill_dirs with an in-flight start_training
         self._dir_map: dict[str, str] = {}  # skill_id → skill_dir
         self._uploaded_ep_counts: dict[str, int] = {}  # skill_id → uploaded episode count
 
@@ -112,6 +115,35 @@ class JobStore:
     def unmark_download(self, skill_id: str, run_id: int) -> None:
         with self._lock:
             self._download_initiated.discard((skill_id, run_id))
+
+    # ── start_training dedup ────────────────────────────────────────
+
+    def begin_start_training(self, skill_dir: str) -> bool:
+        """Claim an in-flight start_training for *skill_dir*. Returns False if one
+        is already running, so the caller can reject a duplicate before it spawns
+        a second upload + create_run — i.e. a second, separately-billed GPU run."""
+        with self._lock:
+            if skill_dir in self._starting:
+                return False
+            self._starting.add(skill_dir)
+            return True
+
+    def end_start_training(self, skill_dir: str) -> None:
+        with self._lock:
+            self._starting.discard(skill_dir)
+
+    def record_start_failure(self, skill_id: str, error: str) -> None:
+        """Surface a failed start_training (upload or create_run) as a synthetic
+        'rejected' run, so the dashboard shows the failure instead of just a log
+        line. run_id -1 marks the placeholder (no run was actually created); it's
+        cleared by the next attempt (clear_start_failure) and never collides with
+        a real run_id."""
+        with self._lock:
+            self._jobs[(skill_id, -1)] = RunInfo(skill_id=skill_id, run_id=-1, status="rejected", error_message=error)
+
+    def clear_start_failure(self, skill_id: str) -> None:
+        with self._lock:
+            self._jobs.pop((skill_id, -1), None)
 
     # ── Directory map ─────────────────────────────────────────────
 
@@ -206,6 +238,10 @@ def build_run_status(
     s.started_at = parse_iso_to_ros(run.started_at)
     s.finished_at = parse_iso_to_ros(run.finished_at)
     s.instance_type = run.instance_type or ""
+    s.wandb_url = run.wandb_run_url or ""
+    s.current_step = run.current_step or 0
+    s.total_step = run.total_steps or 0
+    s.training_params_json = json.dumps(run.training_params or {})
     s.transfer_done = transfer_done
     if transfer is not None:
         s.has_active_transfer = True

@@ -851,7 +851,7 @@ int main(int argc, char** argv) {
         auto node = std::make_shared<mars_cam::MainCameraDriver>();
         rclcpp::spin(node);
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(rclcpp::get_logger("main"), "Exception: %s", e.what());
+        RCLCPP_ERROR(rclcpp::get_logger("main_camera_driver"), "Exception: %s", e.what());
         return 1;
     }
 

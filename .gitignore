@@ -88,6 +88,9 @@ data/
 workspace/custom_agents/
 workspace/custom_skills/
 
+# Runtime start_training resume markers (innate_training_node).
+workspace/.training_pending/
+
 # recordings folder
 recordings/
 

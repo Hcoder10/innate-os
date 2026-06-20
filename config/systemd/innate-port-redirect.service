@@ -1,0 +1,16 @@
+[Unit]
+Description=Redirect 443 -> 4443 so the webapp is reachable without a port
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs as root (no User=) — binding/redirecting privileged ports needs it. The
+# oneshot installs the nft redirect and stays "active" so status is meaningful;
+# ExecStop tears the rule back down on stop/restart.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/jetson1/innate-os/config/network/setup-port-redirect.sh
+ExecStop=/bin/sh -c '/usr/sbin/iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

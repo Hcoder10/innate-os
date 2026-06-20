@@ -143,17 +143,21 @@ def write_skill_id(skill_dir: str | Path, skill_id: str) -> None:
 
 
 def read_local_episode_count(skill_dir: str | Path) -> int:
-    """Read ``number_of_episodes`` from ``data/dataset_metadata.json``.
+    """Return how many episodes a skill has — the length of the ``episodes`` list
+    in ``data/dataset_metadata.json`` (written by the C++ TaskManager).
 
-    This file is written by the C++ TaskManager when episodes are recorded.
-    Returns 0 if the file is missing or the key is absent.
+    Use the list length, **not** ``number_of_episodes``: since per-episode delete
+    landed, that field is a monotonic next-id allocator (so ids never collide
+    with a deleted slot), not the live count — it overcounts after a deletion.
+    Returns 0 if the file is missing or malformed.
     """
     meta_path = Path(skill_dir) / "data" / "dataset_metadata.json"
     if not meta_path.is_file():
         return 0
     try:
         data = json.loads(meta_path.read_text())
-        return int(data.get("number_of_episodes", 0))
+        episodes = data.get("episodes", [])
+        return len(episodes) if isinstance(episodes, list) else 0
     except (json.JSONDecodeError, OSError, ValueError, TypeError):
         return 0
 

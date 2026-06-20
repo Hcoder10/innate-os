@@ -473,7 +473,7 @@ class AppControl : public rclcpp::Node {
                 }
             }
         } catch (const YAML::Exception& e) {
-            RCLCPP_WARN(rclcpp::get_logger("app_control"), "Failed to load os_config.yaml: %s", e.what());
+            RCLCPP_WARN(get_logger(), "Failed to load os_config.yaml: %s", e.what());
             app_config_ = json::object();
         }
     }
