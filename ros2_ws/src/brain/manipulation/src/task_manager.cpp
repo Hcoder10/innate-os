@@ -15,21 +15,45 @@
 namespace fs = std::filesystem;
 
 namespace {
-// Atomically replace `path` with the pretty-printed JSON `j`: stage to a sibling
-// .tmp then rename (atomic on any POSIX filesystem), so a crash or power cut
-// mid-write can't truncate dataset_metadata.json to invalid JSON and break every
-// later reader (encoder, uploader, the apps' episode list).
+// Atomically + durably replace `path` with the pretty-printed JSON `j`: write a
+// sibling .tmp, fsync it, rename (atomic on any POSIX filesystem), then fsync the
+// directory. A crash or power cut mid-write can't truncate dataset_metadata.json
+// to invalid JSON, and the rename can't reach disk ahead of the file's data —
+// either would break every later reader (encoder, uploader, the apps' episode
+// list). A failed write (disk full / I/O error) throws instead of promoting a
+// partial .tmp over the good file.
 template <typename Json>
 void write_json_atomic(const std::string& path, const Json& j) {
     const std::string tmp_path = path + ".tmp";
-    {
-        std::ofstream out(tmp_path);
-        if (!out.is_open()) {
-            throw std::runtime_error("Failed to open " + tmp_path + " for writing");
+    const std::string data = j.dump(4);
+
+    int fd = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        throw std::runtime_error("Failed to open " + tmp_path + " for writing");
+    }
+    size_t written = 0;
+    while (written < data.size()) {
+        ssize_t n = ::write(fd, data.data() + written, data.size() - written);
+        if (n < 0) {
+            ::close(fd);
+            throw std::runtime_error("Failed to write " + tmp_path + " (disk full or I/O error)");
         }
-        out << j.dump(4);
-    }  // flush + close before the rename
+        written += static_cast<size_t>(n);
+    }
+    if (::fsync(fd) != 0) {
+        ::close(fd);
+        throw std::runtime_error("fsync failed for " + tmp_path);
+    }
+    ::close(fd);
+
     fs::rename(tmp_path, path);
+
+    // fsync the directory so the rename itself survives a power cut.
+    int dir_fd = ::open(fs::path(path).parent_path().c_str(), O_RDONLY | O_DIRECTORY);
+    if (dir_fd >= 0) {
+        ::fsync(dir_fd);
+        ::close(dir_fd);
+    }
 }
 
 // Cross-process advisory lock around a dataset_metadata.json read-modify-write.

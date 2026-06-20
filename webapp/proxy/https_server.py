@@ -92,30 +92,41 @@ def ensure_cert() -> tuple[Path, Path]:
     hostname = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() or "robot"
     ips = subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
     sans = [f"DNS:{hostname}.local", f"DNS:{hostname}", "DNS:localhost"] + [f"IP:{ip}" for ip in ips if ":" not in ip]
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "ec",
-            "-pkeyopt",
-            "ec_paramgen_curve:prime256v1",
-            "-keyout",
-            str(key),
-            "-out",
-            str(cert),
-            "-days",
-            "3650",
-            "-nodes",
-            "-subj",
-            f"/CN={hostname}.local",
-            "-addext",
-            f"subjectAltName={','.join(sans)}",
-        ],
-        check=True,
-        capture_output=True,
-    )
+    openssl_cmd = [
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-keyout",
+        str(key),
+        "-out",
+        str(cert),
+        "-days",
+        "3650",
+        "-nodes",
+        "-subj",
+        f"/CN={hostname}.local",
+        "-addext",
+        f"subjectAltName={','.join(sans)}",
+    ]
+    try:
+        subprocess.run(openssl_cmd, check=True, capture_output=True)
+    except FileNotFoundError:
+        # Fail loudly — otherwise the unit just respawns and a "site won't load"
+        # symptom hides the real cause (no openssl on PATH).
+        print("FATAL: openssl not found — cannot generate the HTTPS certificate.", file=sys.stderr, flush=True)
+        raise
+    except subprocess.CalledProcessError as exc:
+        # capture_output swallows openssl's stderr; print it so each restart says why.
+        print(
+            f"FATAL: openssl failed to generate the HTTPS certificate:\n{exc.stderr.decode(errors='replace')}",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
     key.chmod(0o600)
     print(f"generated self-signed cert for {', '.join(sans)}")
     return cert, key
@@ -150,6 +161,15 @@ def _resolve_under_root(rel: str):
     except (OSError, ValueError):
         return None
     return p if p.is_relative_to(SKILLS_ROOT) else None
+
+
+def _safe_resolve(p: Path):
+    """Path.resolve() that returns None instead of raising on illegal bytes (e.g.
+    a NUL byte in a query param), so malformed input becomes a 404, not a 500."""
+    try:
+        return p.resolve()
+    except (OSError, ValueError):
+        return None
 
 
 def _parse_range(header, size: int):
@@ -204,8 +224,8 @@ def episode_response(request, qs: dict) -> Response:
     cam = (qs.get("camera") or [""])[0]
     if base is None or not eid or not cam:
         return _plain(404, "Not Found", "not found")
-    mp4 = (base / "data" / f"episode_{eid}_{cam}.mp4").resolve()
-    if not mp4.is_relative_to(SKILLS_ROOT) or mp4.suffix != ".mp4" or not mp4.is_file():
+    mp4 = _safe_resolve(base / "data" / f"episode_{eid}_{cam}.mp4")
+    if mp4 is None or not mp4.is_relative_to(SKILLS_ROOT) or mp4.suffix != ".mp4" or not mp4.is_file():
         return _plain(404, "Not Found", "no such episode video")
     return _serve_file_with_range(request, mp4, "video/mp4")
 
@@ -255,18 +275,21 @@ async def thumb_response(qs: dict) -> Response:
     cam = (qs.get("camera") or ["camera_1"])[0]
     if base is None or not eid:
         return _plain(404, "Not Found", "not found")
-    mp4 = (base / "data" / f"episode_{eid}_{cam}.mp4").resolve()
-    if not mp4.is_relative_to(SKILLS_ROOT) or not mp4.is_file():
+    mp4 = _safe_resolve(base / "data" / f"episode_{eid}_{cam}.mp4")
+    if mp4 is None or not mp4.is_relative_to(SKILLS_ROOT) or not mp4.is_file():
         return _plain(404, "Not Found", "no such episode video")
     # Cache beside data/ (not inside it) so thumbnails are never uploaded to the cloud.
     cache = base / "thumbs" / f"episode_{eid}_{cam}.jpg"
     try:
         if not cache.is_file():
             lock = _thumb_locks.setdefault(str(cache), asyncio.Lock())
-            async with lock:
-                if not cache.is_file():  # another request may have generated it while we waited
-                    await asyncio.to_thread(_make_thumb, mp4, cache)
-            _thumb_locks.pop(str(cache), None)
+            try:
+                async with lock:
+                    if not cache.is_file():  # another request may have generated it while we waited
+                        await asyncio.to_thread(_make_thumb, mp4, cache)
+            finally:
+                # finally, so a failed _make_thumb doesn't leak the lock entry.
+                _thumb_locks.pop(str(cache), None)
         data = await asyncio.to_thread(cache.read_bytes)
     except Exception as err:  # noqa: BLE001
         return _plain(500, "Internal Server Error", f"thumb failed: {err}")
@@ -285,8 +308,8 @@ def joints_response(qs: dict) -> Response:
     eid = (qs.get("id") or [""])[0]
     if base is None or not eid:
         return _plain(404, "Not Found", "not found")
-    h5 = (base / "data" / f"episode_{eid}.h5").resolve()
-    if not h5.is_relative_to(SKILLS_ROOT) or h5.suffix != ".h5" or not h5.is_file():
+    h5 = _safe_resolve(base / "data" / f"episode_{eid}.h5")
+    if h5 is None or not h5.is_relative_to(SKILLS_ROOT) or h5.suffix != ".h5" or not h5.is_file():
         return _plain(404, "Not Found", "no such episode")
     try:
         import h5py  # available in the robot's system python
@@ -321,8 +344,8 @@ def run_info_response(qs: dict) -> Response:
     rid = (qs.get("id") or [""])[0]
     if base is None or not rid:
         return _plain(404, "Not Found", "not found")
-    run_dir = (base / rid).resolve()
-    if not run_dir.is_relative_to(SKILLS_ROOT) or not run_dir.is_dir():
+    run_dir = _safe_resolve(base / rid)
+    if run_dir is None or not run_dir.is_relative_to(SKILLS_ROOT) or not run_dir.is_dir():
         # Not downloaded yet (or never will be).
         body = json.dumps({"downloaded": False, "has_checkpoint": False, "files": []}).encode()
         return Response(
@@ -330,15 +353,21 @@ def run_info_response(qs: dict) -> Response:
         )
     files = []
     has_ckpt = False
+    truncated = False
+    max_files = 2000  # bound the response — run dirs can hold many checkpoint shards
     try:
         for p in sorted(run_dir.rglob("*")):
-            if p.is_file():
+            if not p.is_file():
+                continue
+            if fnmatch.fnmatch(p.name, "*_step_*.pth"):
+                has_ckpt = True
+            if len(files) < max_files:
                 files.append(p.relative_to(run_dir).as_posix())
-                if fnmatch.fnmatch(p.name, "*_step_*.pth"):
-                    has_ckpt = True
+            else:
+                truncated = True
     except OSError as err:
         return _plain(500, "Internal Server Error", f"failed to read run dir: {err}")
-    body = json.dumps({"downloaded": True, "has_checkpoint": has_ckpt, "files": files}).encode()
+    body = json.dumps({"downloaded": True, "has_checkpoint": has_ckpt, "files": files, "truncated": truncated}).encode()
     return Response(
         200,
         "OK",
@@ -355,12 +384,24 @@ def run_log_response(qs: dict) -> Response:
     rel = (qs.get("file") or [""])[0]
     if base is None or not rid or not rel:
         return _plain(404, "Not Found", "not found")
-    run_dir = (base / rid).resolve()
-    target = (run_dir / rel).resolve()
-    if not run_dir.is_relative_to(SKILLS_ROOT) or not target.is_relative_to(run_dir) or not target.is_file():
+    run_dir = _safe_resolve(base / rid)
+    target = _safe_resolve(run_dir / rel) if run_dir else None
+    if (
+        run_dir is None
+        or target is None
+        or not run_dir.is_relative_to(SKILLS_ROOT)
+        or not target.is_relative_to(run_dir)
+        or not target.is_file()
+    ):
         return _plain(404, "Not Found", "no such log file")
     try:
-        data = target.read_bytes()
+        # Bound the read: this route serves *any* file under the run dir (the
+        # guard only checks containment + is_file()), including multi-GB .pth
+        # checkpoints — never pull more than the cap into RAM. read() of a
+        # too-large file returns the cap+1 so the truncation check below still
+        # fires, but peak memory is bounded regardless of file size.
+        with open(target, "rb") as fh:
+            data = fh.read(MAX_LOG_BYTES + 1)
     except OSError as err:
         return _plain(500, "Internal Server Error", f"read failed: {err}")
     truncated = b""

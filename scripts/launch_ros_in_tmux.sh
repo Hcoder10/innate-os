@@ -88,16 +88,19 @@ process_command_group() {
     
     sleep 0.1
 
-    # First command runs in the window's initial pane; each additional
-    # |-delimited command gets its own pane (the split makes it active, so we
-    # send to the window's active pane rather than a fixed pane index).
-    tmux send-keys -t $SESSION_NAME:"$window_name" "$PANE_SETUP_CMD && ${commands[1]}" C-m || return 1
+    # Address each pane by its unique pane-id (captured from split-window) rather
+    # than the window's *active* pane. The active-pane approach relied on
+    # split-window having just made the intended pane active plus a fixed sleep,
+    # so a slow/loaded box, a tmux hook, or a layout side-effect could misroute
+    # keys to the wrong pane. Pane-ids are exact, with no timing dependency.
+    local first_pane
+    first_pane=$(tmux display-message -p -t $SESSION_NAME:"$window_name" '#{pane_id}')
+    tmux send-keys -t "$first_pane" "$PANE_SETUP_CMD && ${commands[1]}" C-m || return 1
 
-    local idx
+    local idx pane_id
     for (( idx = 2; idx <= ${#commands[@]}; idx++ )); do
-        tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" || return 1
-        sleep 0.1
-        tmux send-keys -t $SESSION_NAME:"$window_name" "$PANE_SETUP_CMD && ${commands[$idx]}" C-m || return 1
+        pane_id=$(tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" -P -F '#{pane_id}') || return 1
+        tmux send-keys -t "$pane_id" "$PANE_SETUP_CMD && ${commands[$idx]}" C-m || return 1
     done
 
     if [ ${#commands[@]} -gt 1 ]; then

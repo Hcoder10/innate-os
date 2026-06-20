@@ -1,5 +1,7 @@
 #!/bin/zsh
-# This script initializes the environment variables for every ROS node's communication
+# Shared ROS runtime environment, sourced by every node (via the launch script) and
+# by interactive shells (.zshrc): DDS/Zenoh transport config, plus the console-logging
+# format the observability tooling depends on (see the RCUTILS export at the bottom).
 
 export RMW_IMPLEMENTATION=rmw_zenoh_cpp
 export ROS_DOMAIN_ID=0
