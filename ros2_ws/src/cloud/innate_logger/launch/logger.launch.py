@@ -12,6 +12,7 @@ def generate_launch_description() -> LaunchDescription:
                 executable="logger_node",
                 name="logger_node",
                 output="screen",
+                # telemetry_url comes from the environment (TELEMETRY_URL in .env).
                 parameters=[],
             ),
         ]

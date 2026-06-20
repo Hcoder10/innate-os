@@ -18,7 +18,6 @@ from config import (
     HOSTED_MODE,
     LOCAL_MODES,
     LOG_TARGETS,
-    OS_CONFIG_PATH,
     OS_SESSION_LOG_PATH,
     SHOW_LIVE_DASHBOARD_DEFAULT,
     SIM_CONFIG_PATH,
@@ -206,7 +205,6 @@ def cmd_setup(config: dict[str, object]) -> None:
     ensure_sim_data(config, allow_fetch=True)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
-    print(f"OS config: {OS_CONFIG_PATH}")
     print(f"Sim config: {SIM_CONFIG_PATH}")
     print(f"Simulator Python: {sim_python}")
 

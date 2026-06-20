@@ -23,6 +23,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
+from mars_bringup.config_loader import settings_params
 
 from mars_cam.remote_throttle_nodes import make_remote_throttle_nodes
 
@@ -48,7 +49,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::MainCameraDriver",
         name="main_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -56,7 +61,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::ArmCameraDriver",
         name="arm_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -85,7 +94,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::StereoDepthEstimator",
         name="stereo_depth_estimator",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 

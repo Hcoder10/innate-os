@@ -26,6 +26,12 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from mars_bringup.config_loader import (
+    load_costmap_rewrites,
+    load_motion_limit_overrides,
+    load_yaml_param_defaults,
+    settings_params,
+)
 
 
 def generate_launch_description():
@@ -40,6 +46,22 @@ def generate_launch_description():
     amcl_params_file = os.path.join(share_dir, "config", "amcl.yaml")
     behavior_params_file = os.path.join(share_dir, "config", "behavior.yaml")  # noqa: F841
     smoother_params_file = os.path.join(share_dir, "config", "velocity_smoother.yaml")  # noqa: F841
+
+    # settings.yaml's /** inflation_layer.* rewrites the costmap inflation knobs. Opt-in:
+    # when unset, costmap.yaml is used unchanged. RewrittenYaml is imported lazily so a
+    # missing nav2_common never breaks navigation in the no-override case.
+    costmap_rewrites = load_costmap_rewrites()
+    if costmap_rewrites:
+        try:
+            from nav2_common.launch import RewrittenYaml
+
+            costmap_params_file = RewrittenYaml(
+                source_file=costmap_params_file,
+                param_rewrites={key: str(value) for key, value in costmap_rewrites.items()},
+                convert_types=True,
+            )
+        except ImportError:
+            print("[navigation.launch] nav2_common not available; ignoring [navigation] costmap overrides.")
 
     # Use the map file - construct path from environment variable or HOME
     mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
@@ -85,7 +107,8 @@ def generate_launch_description():
                 "auto_localize": True,
                 "auto_localize_timeout": 30.0,
                 "max_score_threshold": 0.3,
-            }
+            },
+            *settings_params(),
         ],
     )
 
@@ -113,7 +136,11 @@ def generate_launch_description():
         executable="controller_server",
         name="controller_server",
         output="screen",
-        parameters=[controller_params_file, costmap_params_file],
+        parameters=[
+            controller_params_file,
+            costmap_params_file,
+            load_motion_limit_overrides("mppi", defaults=load_yaml_param_defaults(controller_params_file)),
+        ],
         remappings=[
             ("cmd_vel", "cmd_vel_raw"),
             # Remap costmap footprint to global /footprint

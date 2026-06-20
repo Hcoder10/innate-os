@@ -6,6 +6,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+from mars_bringup.config_loader import settings_params, workspace_skills_dir
 
 
 def generate_launch_description():
@@ -13,15 +14,18 @@ def generate_launch_description():
     manipulation_share = FindPackageShare("manipulation")
 
     # Declare launch arguments
-    recorder_config_arg = DeclareLaunchArgument(
-        "recorder_config",
-        default_value=PathJoinSubstitution([manipulation_share, "config", "recorder.yaml"]),
-        description="Path to the recorder configuration file",
+    manipulation_config_arg = DeclareLaunchArgument(
+        "manipulation_config",
+        default_value=PathJoinSubstitution([manipulation_share, "config", "manipulation_server.yaml"]),
+        description="Path to the manipulation server configuration file",
     )
 
     log_level_arg = DeclareLaunchArgument(
         "log_level", default_value="info", description="Log level for the behavior server"
     )
+
+    # Resolved here because ROS YAML can't expand $INNATE_OS_ROOT. Mirrors recorder.launch.py.
+    data_directory = str(workspace_skills_dir())
 
     # Behavior server node
     behavior_server_node = Node(
@@ -30,8 +34,9 @@ def generate_launch_description():
         name="manipulation_server",
         output="screen",
         parameters=[
-            {"recorder_config": LaunchConfiguration("recorder_config")},
-            LaunchConfiguration("recorder_config"),  # This loads the entire YAML file as parameters
+            LaunchConfiguration("manipulation_config"),
+            {"data_directory": data_directory},  # env-resolved; beats the YAML fallback
+            *settings_params(),  # settings.yaml overrides, layered last
         ],
         arguments=["--ros-args", "--log-level", LaunchConfiguration("log_level")],
         emulate_tty=True,
@@ -39,4 +44,4 @@ def generate_launch_description():
         respawn_delay=2.0,
     )
 
-    return LaunchDescription([recorder_config_arg, log_level_arg, behavior_server_node])
+    return LaunchDescription([manipulation_config_arg, log_level_arg, behavior_server_node])

@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from mars_bringup.config_loader import settings_params
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -29,7 +30,7 @@ def generate_launch_description() -> LaunchDescription:
         executable="uninavid_node",
         name="uninavid_node",
         output="screen",
-        parameters=[LaunchConfiguration("params_file")],
+        parameters=[LaunchConfiguration("params_file"), *settings_params()],
         remappings=[
             ("/cmd_vel", LaunchConfiguration("cmd_vel_topic")),
         ],

@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from mars_bringup.config_loader import load_motion_limit_overrides, load_yaml_param_defaults
 
 
 def expand_action_remappings(action_remappings):
@@ -89,13 +90,16 @@ def generate_launch_description():
         ],
     )
 
-    # Shared velocity smoother node
+    # Shared velocity smoother node; settings.yaml's /** nav overrides its limit lists.
+    smoother_limit_overrides = load_motion_limit_overrides(
+        "smoother", defaults=load_yaml_param_defaults(smoother_params_file)
+    )
     velocity_smoother_node = Node(
         package="nav2_velocity_smoother",
         executable="velocity_smoother",
         name="velocity_smoother",
         output="screen",
-        parameters=[smoother_params_file],
+        parameters=[smoother_params_file, smoother_limit_overrides],
         remappings=[("cmd_vel", "/cmd_vel_scaled"), ("cmd_vel_smoothed", "/cmd_vel")],
         arguments=["--ros-args", "--log-level", "warn"],
     )

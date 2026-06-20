@@ -5,15 +5,16 @@ import rclpy
 from geometry_msgs.msg import Twist
 from pynput import keyboard
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 
 
 class KeyboardController(Node):
     def __init__(self):
         super().__init__("keyboard_controller")
 
-        # Declare and get parameters
-        self.declare_parameter("motion_control.max_speed", 2.0)
-        self.declare_parameter("motion_control.max_angular_speed", 2.5)
+        # No literal defaults: values come from mars_control/config/motion_control.yaml.
+        self.declare_parameter("motion_control.max_speed", Parameter.Type.DOUBLE)
+        self.declare_parameter("motion_control.max_angular_speed", Parameter.Type.DOUBLE)
 
         # Initialize speed and turn rate
         self.current_speed = 0.0

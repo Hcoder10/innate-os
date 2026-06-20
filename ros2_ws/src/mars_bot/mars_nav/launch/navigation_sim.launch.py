@@ -5,6 +5,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from mars_bringup.config_loader import load_motion_limit_overrides, load_yaml_param_defaults
 
 
 def generate_launch_description():
@@ -59,7 +60,7 @@ def generate_launch_description():
         executable="controller_server",
         name="controller_server",
         output="screen",
-        parameters=[config_file],
+        parameters=[config_file, load_motion_limit_overrides("dwb", defaults=load_yaml_param_defaults(config_file))],
     )
 
     # Create the lifecycle manager node to manage all nodes
