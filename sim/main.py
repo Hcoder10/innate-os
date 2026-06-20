@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.agent.agent_websocket_bridge import run_agent_async
-from src.routes.chat_api import router as chat_api_router
 from src.routes.config_api import router as config_api_router
 
 # Import the new video & reset endpoints router
@@ -80,7 +79,6 @@ app.add_middleware(
 
 # Include the routers
 app.include_router(video_api_router)
-app.include_router(chat_api_router)
 app.include_router(config_api_router)
 
 # Initialize a placeholder on the application's state so that downstream
