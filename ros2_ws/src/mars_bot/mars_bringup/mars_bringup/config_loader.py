@@ -154,6 +154,8 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "inference_hz",
         "speed",
         "temporal_ensemble_coeff",
+        "replay_base_speed_scale",
+        "learned_base_speed_scale",
         # navigation_grid_localizer
         "max_score_threshold",
         "max_range",

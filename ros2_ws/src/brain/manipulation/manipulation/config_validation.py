@@ -51,6 +51,14 @@ class BehaviorConfigError(ValueError):
 
 ARM_DOF = 6  # Length expected for every pose (joint-space target).
 
+# Default action-head width for a learned skill whose metadata omits
+# ``execution.action_dim``. Single source of truth for this default: it backs
+# LearnedExecCfg.action_dim (runtime/consumer) and is imported by the engine pre-build
+# (act_config.create_act_config / act_trt), so producer and consumer agree on the
+# engine-cache key. ``innate_training_node.workers`` mirrors this value locally because
+# the long-running node can't import the manipulation package (see its comment there).
+DEFAULT_ACTION_DIM = 10
+
 KNOWN_BEHAVIOR_TYPES = ("learned", "poses", "replay")
 
 
@@ -130,7 +138,7 @@ class LearnedExecCfg(_BaseExecCfg):
     """``execution`` block for ``type: learned`` skills."""
 
     checkpoint: str = Field(..., min_length=1)
-    action_dim: int = Field(10, ge=1, le=64)
+    action_dim: int = Field(DEFAULT_ACTION_DIM, ge=1, le=64)
     duration: float = Field(120.0, gt=0)
     progress_threshold: float = Field(2.0, ge=0)
     start_pose: Pose6 | None = None
