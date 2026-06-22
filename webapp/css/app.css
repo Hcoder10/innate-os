@@ -84,12 +84,23 @@ button {
 .rail {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   padding: 14px 0 12px;
   border-right: 1px solid var(--hairline);
   background: var(--bg);
   user-select: none;
   -webkit-user-select: none;
+  /* Overlay-expand on hover: the body grid reserves 64px; the rail widens on top
+     of the content (no reflow) and fades in text labels. */
+  position: relative;
+  z-index: 40;
+  width: 64px;
+  overflow: hidden;
+  transition: width 160ms ease;
+}
+.rail:hover {
+  width: 200px;
+  box-shadow: 2px 0 18px rgb(0 0 0 / 45%);
 }
 
 .rail-mark {
@@ -110,12 +121,14 @@ button {
 
 .rail-link {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   height: 38px;
+  margin: 0 8px;           /* 48px content + 2×8 = the 64px collapsed rail, icon stays centered */
   border-radius: 9px;
   color: var(--muted);
+  text-decoration: none;   /* it's an <a> — no link underline under the label */
   transition: color 120ms ease;
 }
 
@@ -125,6 +138,25 @@ button {
 
 .rail-link.active {
   color: var(--text);
+}
+
+.rail-ico {
+  flex: none;
+  width: 48px;             /* centers the icon within the 64px collapsed rail */
+  display: grid;
+  place-items: center;
+}
+
+.rail-label {
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.rail:hover .rail-label {
+  opacity: 1;
 }
 
 .rail-link.active::before {
