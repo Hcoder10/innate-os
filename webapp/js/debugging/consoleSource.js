@@ -22,6 +22,7 @@ export function createConsoleSource(ros) {
   /** @type {Set<() => void>} */
   const readyCbs = new Set();
   let backfilled = false;
+  let readyFired = false;
   let retryTimer = 0;
 
   /** @param {any} rec @param {boolean} isBackfill */
@@ -31,6 +32,17 @@ export function createConsoleSource(ros) {
     if (rec && typeof rec.node === "string") rec.node = normNode(rec.node);
     for (const cb of [...recordCbs]) {
       try { cb(rec, isBackfill); } catch (err) { console.error("[console] consumer threw:", err); }
+    }
+  }
+
+  // Fire the ready callbacks exactly once — on the first backfill batch, or when
+  // we give up retrying — so consumers always finalize their initial render
+  // instead of waiting forever when no history ever arrives.
+  function signalReady() {
+    if (readyFired) return;
+    readyFired = true;
+    for (const cb of [...readyCbs]) {
+      try { cb(); } catch (err) { console.error("[console] ready cb threw:", err); }
     }
   }
 
@@ -45,9 +57,7 @@ export function createConsoleSource(ros) {
     try {
       for (const rec of JSON.parse(m.data).entries || []) emit(rec, true);
     } catch { /* ignore */ }
-    for (const cb of [...readyCbs]) {
-      try { cb(); } catch (err) { console.error("[console] ready cb threw:", err); }
-    }
+    signalReady();
   });
 
   // Ask for history. The reply comes over a volatile topic, and on a fresh page
@@ -63,6 +73,7 @@ export function createConsoleSource(ros) {
     if (backfilled || ++tries >= 8) {
       clearInterval(retryTimer);
       retryTimer = 0;
+      signalReady(); // done or gave up — let consumers finalize (a late reply still populates)
       return;
     }
     ros.publish(CONSOLE_REQUEST_TOPIC, reqMsg);
@@ -72,7 +83,7 @@ export function createConsoleSource(ros) {
     onRecord(cb) { recordCbs.add(cb); return () => recordCbs.delete(cb); },
     onReady(cb) { readyCbs.add(cb); return () => readyCbs.delete(cb); },
     destroy() {
-      if (retryTimer) clearInterval(retryTimer);
+      if (retryTimer) { clearInterval(retryTimer); retryTimer = 0; }
       unsubLive();
       unsubBackfill();
       recordCbs.clear();
