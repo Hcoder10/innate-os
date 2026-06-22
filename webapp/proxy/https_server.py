@@ -440,6 +440,21 @@ def static_response(path: str) -> Response:
     return Response(200, "OK", headers, body)
 
 
+def settings_get_response() -> Response:
+    """GET /settings -> the live override values from config/settings.yaml. The
+    webapp owns the catalog (knobs/defaults/docs); this only reports what's set."""
+    import settings_store
+
+    payload = {"overrides": settings_store.read_overrides(), "exists": settings_store.settings_path().is_file()}
+    body = json.dumps(payload).encode()
+    return Response(
+        200,
+        "OK",
+        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
+        body,
+    )
+
+
 async def process_request(connection, request):
     if request.path == "/ws":
         return None  # proceed with the WebSocket handshake
@@ -458,6 +473,12 @@ async def process_request(connection, request):
         return await asyncio.to_thread(run_info_response, qs)
     if split.path == "/run/log":
         return await asyncio.to_thread(run_log_response, qs)
+    if split.path == "/settings":
+        # A WebSocket upgrade -> the write channel handled in ws_handler; a plain
+        # GET -> the current override values.
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return None
+        return await asyncio.to_thread(settings_get_response)
     return await asyncio.to_thread(static_response, request.path)
 
 
@@ -490,8 +511,31 @@ async def relay(source, sink):
         pass  # either side going away ends the relay — a normal close, not an error
 
 
+async def _settings_ws(connection):
+    """Settings write channel: receive {sets, clears} messages, apply each to
+    config/settings.yaml, and ack. One persistent WS per open Settings page."""
+    import settings_store
+
+    try:
+        async for raw in connection:
+            try:
+                req = json.loads(raw)
+                sets = req.get("sets", []) or []
+                clears = req.get("clears", []) or []
+            except (ValueError, AttributeError, TypeError):
+                await connection.send(json.dumps({"ok": False, "message": "malformed request"}))
+                continue
+            ok, msg = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
+            await connection.send(json.dumps({"ok": ok, "message": msg}))
+    except ConnectionClosed:
+        pass  # page closed — normal
+
+
 async def ws_handler(connection):
-    """Bidirectional /ws <-> rosbridge relay."""
+    """Bidirectional /ws <-> rosbridge relay (or the /settings write channel)."""
+    if connection.request.path == "/settings":
+        await _settings_ws(connection)
+        return
     try:
         async with ws_connect(ROSBRIDGE_URL, max_size=None) as upstream:
             done, pending = await asyncio.wait(
