@@ -11,6 +11,13 @@
   <depend>builtin_interfaces</depend>
   <depend>innate_cloud_msgs</depend>
   <depend>cloud_clients</depend>
+  <!-- Runtime-only: post-download TensorRT engine pre-build runs `python -m manipulation.act_trt`. -->
+  <exec_depend>manipulation</exec_depend>
+  <!-- Runtime-only: workers.py locates the manipulation lib dir via get_package_prefix. -->
+  <exec_depend>ament_index_python</exec_depend>
+  <!-- Runtime-only: the engine pre-build sweep resolves skill roots via
+       brain_client.common.script_paths.get_skill_directories (single source of truth). -->
+  <exec_depend>brain_client</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

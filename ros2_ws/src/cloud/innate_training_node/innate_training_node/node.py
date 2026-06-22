@@ -48,7 +48,7 @@ from training_client.src.types import (
 )
 
 from .job_store import JobStore, build_skill_status
-from .workers import Poller, do_upload, maybe_auto_download
+from .workers import Poller, do_upload, maybe_auto_download, start_prebuild_sweep
 
 # TODO: fetch from discovery URL once available.
 KNOWN_PRESETS: set[str] = {"act-default"}
@@ -225,6 +225,11 @@ class TrainingNode(Node):
         self.create_timer(pub_sec, self._publish)
         self._poller = Poller(self._mgr, self._store, poll_sec)
         self._poller.start()
+
+        # Warm TensorRT engines for any local checkpoints missing a current-version
+        # engine — models downloaded before pre-build existed, shipped skills, or
+        # engines invalidated by a TensorRT upgrade. Off the hot path, best-effort.
+        start_prebuild_sweep()
 
         self.get_logger().info(f"Training node ready — server={server_url} poll={poll_sec}s pub={pub_sec}s")
 

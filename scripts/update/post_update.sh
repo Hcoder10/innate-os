@@ -661,6 +661,14 @@ fi
         log "  Installing apt dependencies (common + hardware)..."
         cat "$APT_DEPS_COMMON" "$APT_DEPS_HARDWARE" | grep -v '^#' | grep -v '^$' | xargs apt-get -o DPkg::Lock::Timeout=45 install -y
         log "  Apt dependencies installed"
+
+        # Refresh the linker cache so freshly installed libs are discoverable. In
+        # particular libnvdla_compiler.so (from nvidia-l4t-dla-compiler) lands in
+        # /usr/lib/aarch64-linux-gnu/nvidia -- that path is in ld.so.conf.d but the
+        # cache can be stale, and libnvinfer dlopens it at `import tensorrt`. Without
+        # this, TensorRT can't import and the ACT policy fails to load.
+        ldconfig
+        log "  Refreshed linker cache (ldconfig)"
     fi
 
     # Remove PulseAudio (conflicts with ALSA-only audio setup)
