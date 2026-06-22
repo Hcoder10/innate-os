@@ -22,6 +22,7 @@ export function createConsoleSource(ros) {
   /** @type {Set<() => void>} */
   const readyCbs = new Set();
   let backfilled = false;
+  let retryTimer = 0;
 
   /** @param {any} rec @param {boolean} isBackfill */
   function emit(rec, isBackfill) {
@@ -40,6 +41,7 @@ export function createConsoleSource(ros) {
   const unsubBackfill = ros.subscribe(CONSOLE_BACKFILL_TOPIC, (m) => {
     if (backfilled) return; // one batch only
     backfilled = true;
+    if (retryTimer) { clearInterval(retryTimer); retryTimer = 0; }
     try {
       for (const rec of JSON.parse(m.data).entries || []) emit(rec, true);
     } catch { /* ignore */ }
@@ -48,13 +50,29 @@ export function createConsoleSource(ros) {
     }
   });
 
-  // Ask for history once subscriptions are registered.
-  ros.publish(CONSOLE_REQUEST_TOPIC, { data: JSON.stringify({ max_lines: BACKFILL_LINES }) });
+  // Ask for history. The reply comes over a volatile topic, and on a fresh page
+  // load it can be published before this subscription has finished matching
+  // (rosbridge discovery lag) — then it's missed and the page shows nothing. So
+  // re-issue the request until the first batch lands (or we give up): that lets
+  // the subscription settle so the reply gets through. `backfilled` keeps us to
+  // a single batch even if several replies arrive.
+  const reqMsg = { data: JSON.stringify({ max_lines: BACKFILL_LINES }) };
+  let tries = 0;
+  ros.publish(CONSOLE_REQUEST_TOPIC, reqMsg);
+  retryTimer = setInterval(() => {
+    if (backfilled || ++tries >= 8) {
+      clearInterval(retryTimer);
+      retryTimer = 0;
+      return;
+    }
+    ros.publish(CONSOLE_REQUEST_TOPIC, reqMsg);
+  }, 500);
 
   return {
     onRecord(cb) { recordCbs.add(cb); return () => recordCbs.delete(cb); },
     onReady(cb) { readyCbs.add(cb); return () => readyCbs.delete(cb); },
     destroy() {
+      if (retryTimer) clearInterval(retryTimer);
       unsubLive();
       unsubBackfill();
       recordCbs.clear();
