@@ -459,9 +459,17 @@ class SkillRepository:
             for e in meta.get("episodes", [])
             if e.get("episode_id") is not None and e.get("file_name")
         }
-        episode_path = data_dir / file_by_id.get(episode_id, f"episode_{episode_id}.h5")
+        episode_file = file_by_id.get(episode_id, f"episode_{episode_id}.h5")
+        episode_path = data_dir / episode_file
         if not episode_path.exists():
-            raise FileNotFoundError(f"Recorded episode not found: {episode_path}")
+            # The background dataset encoder moves a freshly-saved recording into
+            # ../raw_data/ while it encodes MP4s / strips images, leaving a window
+            # where the episode isn't under data/. Fall back to the raw copy (same
+            # action data) — mirrors the recorder's own prefer-data/-fall-back-to-raw.
+            raw_path = data_dir.parent / "raw_data" / episode_file
+            if not raw_path.exists():
+                raise FileNotFoundError(f"Recorded episode not found: {episode_path}")
+            episode_path = raw_path
         return meta, episode_path
 
     def _resolve_replay_skill_dir(self, display_name: str, task_directory: str) -> tuple[Path, bool]:
