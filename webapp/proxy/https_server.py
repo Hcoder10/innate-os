@@ -525,7 +525,10 @@ async def _settings_ws(connection):
             except (ValueError, AttributeError, TypeError):
                 await connection.send(json.dumps({"ok": False, "message": "malformed request"}))
                 continue
-            ok, msg = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
+            try:
+                ok, msg = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
+            except Exception as exc:  # noqa: BLE001 — malformed payload, disk error, etc.
+                ok, msg = False, f"settings update failed: {exc}"
             await connection.send(json.dumps({"ok": ok, "message": msg}))
     except ConnectionClosed:
         pass  # page closed — normal

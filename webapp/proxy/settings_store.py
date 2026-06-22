@@ -24,9 +24,14 @@ hand-written prose comments don't (the file is regenerated from the template).
 
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 import yaml
+
+# Serialises the read-modify-write in apply_changes so two concurrent saves
+# (e.g. two browser tabs) can't clobber each other.
+_WRITE_LOCK = threading.Lock()
 
 
 def settings_path() -> Path:
@@ -220,7 +225,15 @@ def _regenerate(overrides: dict) -> str:
 
 def apply_changes(sets, clears):
     """Apply override *sets* (``[{path, value, type}]``) and *clears* (``[path]``),
-    then regenerate a standardised settings.yaml. Returns ``(ok, message)``."""
+    then regenerate a standardised settings.yaml. Returns ``(ok, message)``.
+
+    Serialised under a lock so concurrent saves (e.g. two browser tabs) can't
+    clobber each other's read-modify-write."""
+    with _WRITE_LOCK:
+        return _apply_changes_locked(sets, clears)
+
+
+def _apply_changes_locked(sets, clears):
     overrides = read_overrides()
     for kp in clears:
         _remove_path(overrides, list(kp))

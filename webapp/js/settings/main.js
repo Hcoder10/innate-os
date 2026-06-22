@@ -287,28 +287,41 @@ function saveOverWs(/** @type {any} */ payload) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/settings`);
     let settled = false;
+    const settle = (/** @type {boolean} */ ok, /** @type {any} */ arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        ws.close();
+      } catch {
+        /* already closing */
+      }
+      (ok ? resolve : reject)(arg);
+    };
+    // Without this, a half-open socket (upgrade accepted, no reply, never closed)
+    // would leave the promise pending and Save disabled for the page's life.
+    const timer = setTimeout(() => settle(false, new Error("timed out — is the robot reachable?")), 12000);
     ws.addEventListener("open", () => ws.send(JSON.stringify(payload)));
     ws.addEventListener("message", (ev) => {
-      settled = true;
       try {
-        resolve(JSON.parse(ev.data));
+        settle(true, JSON.parse(ev.data));
       } catch {
-        resolve({ ok: false, message: "bad response" });
+        settle(true, { ok: false, message: "bad response" });
       }
-      ws.close();
     });
-    ws.addEventListener("error", () => {
-      if (!settled) reject(new Error("connection failed"));
-    });
-    ws.addEventListener("close", () => {
-      if (!settled) reject(new Error("closed before reply"));
-    });
+    ws.addEventListener("error", () => settle(false, new Error("connection failed")));
+    ws.addEventListener("close", () => settle(false, new Error("closed before reply")));
   });
 }
 
 async function onSave() {
   const sets = [];
   const clears = [];
+  // Snapshot exactly what we send, keyed by entry index. The success handler
+  // stamps saved-state from THIS snapshot, not the live entries — otherwise a
+  // field edited during the WS round-trip would be mis-marked as saved while
+  // the file holds the older value.
+  const snapshot = entries.map((e) => ({ overridden: e.overridden, value: e.value }));
   for (const e of entries) {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
@@ -318,10 +331,10 @@ async function onSave() {
   try {
     const res = await saveOverWs({ sets, clears });
     if (res && res.ok) {
-      for (const e of entries) {
-        e.savedOverridden = e.overridden;
-        e.savedValue = e.value;
-      }
+      entries.forEach((e, i) => {
+        e.savedOverridden = snapshot[i].overridden;
+        e.savedValue = snapshot[i].value;
+      });
       recompute();
       setStatus("Saved — restart the robot to apply.", "ok");
     } else {
