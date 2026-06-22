@@ -71,7 +71,9 @@ export function initShell(activeKey, root) {
     a.title = section.label;
     a.setAttribute("aria-label", section.label);
     if (section.key === activeKey) a.setAttribute("aria-current", "page");
-    a.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${section.icon}</svg>`;
+    a.innerHTML =
+      `<span class="rail-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${section.icon}</svg></span>` +
+      `<span class="rail-label">${section.label}</span>`;
     nav.appendChild(a);
   }
   rail.appendChild(nav);
