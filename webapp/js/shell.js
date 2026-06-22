@@ -34,6 +34,12 @@ const SECTIONS = [
     label: "Training",
     icon: '<polyline points="4,17.5 9.5,11.5 13.5,15 20,7"/><polyline points="15.5,7 20,7 20,11.5"/>',
   },
+  {
+    key: "settings",
+    label: "Settings",
+    // Sliders motif: two tracks, each with a knob.
+    icon: '<line x1="4" y1="8.5" x2="20" y2="8.5"/><circle cx="10" cy="8.5" r="2.3" fill="currentColor" stroke="none"/><line x1="4" y1="15.5" x2="20" y2="15.5"/><circle cx="15" cy="15.5" r="2.3" fill="currentColor" stroke="none"/>',
+  },
 ];
 
 /**
