@@ -1,8 +1,7 @@
 <div align="center">
 
 <p>
-  <img src="docs/assets/readme/innate-mark-black.svg" alt="Innate mark" width="60">
-  <img src="docs/assets/readme/innate-wordmark-black.svg" alt="Innate wordmark" width="86">
+  <img src="docs/assets/readme/innate-lockup-black.svg" alt="Innate" width="180">
 </p>
 
 # Innate OS
