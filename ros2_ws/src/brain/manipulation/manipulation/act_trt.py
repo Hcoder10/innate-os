@@ -236,12 +236,12 @@ class TRTACTPolicy:
             )
         self._context = self._engine.create_execution_context()
         self._stream = torch.cuda.Stream()
-        # Pure-GPU forward timing (CUDA events around execute only, excluding the H2D
-        # copies and the host-side sync wait). Read by the profiler to separate the raw
-        # engine cost from the Python/transfer overhead in select_action.
+        # CUDA events bracketing execute only (no H2D copies / host sync), for the profiler.
         self._ev_start = torch.cuda.Event(enable_timing=True)
         self._ev_end = torch.cuda.Event(enable_timing=True)
+        # Per-step timing the profiler reads; cleared on cached dequeue steps (see select_action).
         self.last_engine_ms = 0.0
+        self.engine_ran = False
 
         # Persistent I/O buffers (fixed batch size 1); engine addresses bound once.
         self._buffers = {
@@ -299,11 +299,8 @@ class TRTACTPolicy:
     def _run_engine(self, batch):
         """Run the engine for the current observation; returns the full unnormalized
         action chunk (1, chunk_size, action_dim), cloned out of the persistent buffer."""
-        # Run the input copies AND the engine launch on self._stream, after waiting for the
-        # caller's stream (where the input tensors were produced). Without this, the copies
-        # would run on the default stream while the engine ran on self._stream with no
-        # ordering between them -- the engine could read the input buffers before the copies
-        # land, yielding actions computed from stale/partial data.
+        # Wait for the caller's stream (where the inputs were produced) before copying and
+        # launching, so the engine can't read the buffers before the copies land.
         self._stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self._stream):
             self._buffers["image_camera_1"].copy_(batch["observation.image_camera_1"])
@@ -314,6 +311,7 @@ class TRTACTPolicy:
             self._ev_end.record(self._stream)
         self._stream.synchronize()
         self.last_engine_ms = self._ev_start.elapsed_time(self._ev_end)
+        self.engine_ran = True
         if not ok:
             # A failed launch (CUDA OOM, driver fault, unbound tensor) leaves stale data in
             # action_chunk; raise so the caller skips this step instead of acting on it.
@@ -322,8 +320,7 @@ class TRTACTPolicy:
 
     @property
     def last_disagreement(self):
-        """Ensemble disagreement (uncertainty) of the last emitted action, or None when not
-        ensembling. On-device scalar tensor; the caller converts it only when profiling."""
+        """Ensemble disagreement of the last action (on-device scalar), or None when not ensembling."""
         return self._ensembler.last_disagreement if self._ensembler is not None else None
 
     @torch.no_grad()
@@ -342,6 +339,10 @@ class TRTACTPolicy:
             if self.config.speed != 1:
                 actions_to_queue = self._resample_actions(actions_to_queue, self.config.speed)
             self._action_queue.extend(actions_to_queue.transpose(0, 1))
+        else:
+            # Cached dequeue step -- no GPU forward, so clear the timing the profiler reads.
+            self.engine_ran = False
+            self.last_engine_ms = 0.0
         return self._action_queue.popleft()
 
     def __del__(self):

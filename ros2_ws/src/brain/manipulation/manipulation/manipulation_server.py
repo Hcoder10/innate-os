@@ -843,17 +843,14 @@ class ManipulationServer(Node):
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
     def _resize_matrices(self, h, w):
-        """Return cached (row, col) GPU matrices that replicate cv2.INTER_AREA for an
-        (h, w) -> image_size resize. INTER_AREA is a separable, content-independent
-        linear filter, so its weights can be recovered exactly from identity inputs and
-        applied as two matmuls. Built once per source resolution."""
+        """Cached (row, col) GPU matrices replicating cv2.INTER_AREA for an (h, w) ->
+        image_size resize. INTER_AREA is separable, so its weights recover exactly from
+        identity inputs and apply as two matmuls."""
         key = (h, w)
         mats = self._resize_mats.get(key)
         if mats is None:
             out_h, out_w = self.image_size[1], self.image_size[0]
-            # row[i, j]: weight of src row j in dst row i (out_h x h)
             row = cv2.resize(np.eye(h, dtype=np.float32), (h, out_h), interpolation=cv2.INTER_AREA)
-            # col[k, l]: weight of src col k in dst col l (w x out_w)
             col = cv2.resize(np.eye(w, dtype=np.float32), (out_w, w), interpolation=cv2.INTER_AREA)
             mats = (
                 torch.from_numpy(row).to(self.device),
@@ -868,7 +865,10 @@ class ManipulationServer(Node):
         h, w = img_bgr.shape[:2]
         row, col = self._resize_matrices(h, w)
         src = torch.from_numpy(np.ascontiguousarray(img_bgr)).to(self.device, non_blocking=True).float()
-        resized = torch.einsum("ij,jkc,kl->ilc", row, src, col)  # (out_h, out_w, 3)
+        # Contract columns first: the (h, out_w, 3) intermediate is the cheaper order for a
+        # landscape frame (torch.einsum has no per-call optimize flag).
+        cols = torch.einsum("jkc,kl->jlc", src, col)
+        resized = torch.einsum("ij,jlc->ilc", row, cols)
         return resized.permute(2, 0, 1) / 255.0
 
     def _run_inference_once(self):
@@ -886,14 +886,11 @@ class ManipulationServer(Node):
             return None
 
         try:
-            # Only do the profiling work (stream sync for attribution + JSON publish) when
-            # someone is actually subscribed, so it costs literally nothing when idle.
+            # Profiling work (stream sync + JSON publish) only runs when someone's subscribed.
             profiling = self.inference_profile_pub.get_subscription_count() > 0
 
             t0 = time.perf_counter()
-            # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
-            # Resize on-GPU via precomputed INTER_AREA matrices to keep the CPU off the
-            # hot path; output is (1, 3, 224, 224) float32 in [0, 1], CHW, BGR.
+            # On-GPU resize keeps the CPU off the hot path; BGR + INTER_AREA matches training.
             img1 = self._resize_normalize_gpu(self.latest_image1).unsqueeze(0)
             img2 = self._resize_normalize_gpu(self.latest_image2).unsqueeze(0)
             qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
@@ -902,26 +899,19 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": img2,
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
-            # The GPU resize is async; the engine waits on it anyway, so syncing here has no
-            # net latency cost but attributes its compute to preprocess instead of inference.
-            # Only worth it when profiling — otherwise let it overlap freely.
+            # Sync so the GPU resize is attributed to preprocess, not inference; no net cost
+            # since the engine waits on it anyway. Only when profiling.
             if profiling and self.device.type == "cuda":
                 torch.cuda.current_stream().synchronize()
             t1 = time.perf_counter()
 
-            # Chunked policies only run the model when their action queue drains; the other
-            # steps just dequeue a cached action. Flag which kind of step this is so the
-            # profiler can separate true model latency from cheap dequeues.
-            queue = getattr(self.current_policy, "_action_queue", None)
-            engine_ran = queue is None or len(queue) == 0
-
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
-            t_sel = time.perf_counter()  # select_action returns once the engine has synced
+            t_sel = time.perf_counter()  # returns once the engine has synced
             action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks on the remaining GPU work
             t2 = time.perf_counter()
-            # Pure GPU forward (CUDA-event measured inside the engine), to compare against
-            # the ~6 ms fp32 spec and separate it from copy/ensemble/transfer overhead.
+            # Whether the model ran this step (vs. a cached dequeue) and its GPU-forward time.
+            engine_ran = bool(getattr(self.current_policy, "engine_ran", True))
             engine_ms = float(getattr(self.current_policy, "last_engine_ms", 0.0))
 
             if action_np.shape[0] < self.current_action_dim:
@@ -936,9 +926,7 @@ class ManipulationServer(Node):
             t3 = time.perf_counter()
 
             if profiling:
-                # Behavior-quality signals (cheap; only when someone's recording): the policy's
-                # progress head, command smoothness (jerk = ||Δaction||), and ensemble
-                # disagreement (uncertainty). float() on the disagreement is post-sync, so free.
+                # Behavior signals: progress head, command jerk (||Δaction||), ensemble disagreement.
                 quality = {}
                 if self.current_action_dim >= 10:
                     quality["progress"] = float(action_np[8])
@@ -953,7 +941,6 @@ class ManipulationServer(Node):
                 disagreement = getattr(self.current_policy, "last_disagreement", None)
                 if disagreement is not None:
                     quality["disagreement"] = float(disagreement)
-                self._prev_action_np = action_np
                 self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
@@ -963,15 +950,7 @@ class ManipulationServer(Node):
             return None
 
     def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality=None):
-        """Publish one inference step's timing breakdown as JSON for the Profiling page.
-
-        Sections (ms): preprocess (resize/normalize/to-GPU), inference (select_action +
-        GPU->CPU sync), postprocess (command publishing). inference is further split into
-        engine (pure GPU forward, CUDA-event measured) and transfer (the final .cpu()
-        copy); the remainder is input copies + temporal-ensemble + Python overhead.
-        period_ms is the 25 Hz budget so the page can show headroom. quality carries the
-        optional behavior signals (progress, arm/base jerk, ensemble disagreement).
-        """
+        """Publish one inference step's timing breakdown (ms) as JSON for the Profiling page."""
         self._inference_seq += 1
         payload = {
             "seq": self._inference_seq,

@@ -282,12 +282,35 @@ function downloadText(text, filename) {
  * @param {ReturnType<typeof chartCard>} disagreementCard
  */
 function render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard) {
-  renderStats(samples, statsRow);
+  // computeStats sorts the (growing) record for percentiles, so do it once per tick and
+  // share it with the views that need aggregates.
+  const st = computeStats(samples);
+  renderStats(st, statsRow);
   renderTimeseries(samples, tsCard.body);
   renderHistogram(samples, histCard.body);
-  renderBreakdown(samples, breakdownCard.body);
+  renderBreakdown(st, breakdownCard.body);
   renderLine(samples, progressCard.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: 1 });
   renderLine(samples, disagreementCard.body, (s) => s.disagreement, "var(--blue)", {});
+}
+
+/**
+ * Lazily attach a persistent scaffold to a host and reuse it across ticks, rebuilding only
+ * when `key` changes (e.g. empty <-> populated). Returns whatever `build` produced so the
+ * caller can update its nodes in place instead of recreating the subtree every render.
+ * @template T
+ * @param {HTMLElement} host
+ * @param {string} key
+ * @param {(host: HTMLElement) => T} build
+ * @returns {T}
+ */
+function scaffold(host, key, build) {
+  const h = /** @type {any} */ (host);
+  if (h.__key !== key) {
+    host.replaceChildren();
+    h.__ui = build(host);
+    h.__key = key;
+  }
+  return h.__ui;
 }
 
 /**
@@ -299,17 +322,32 @@ function render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard
  * @param {{lo?: number, hi?: number}} fixed  optional fixed y-range (else auto)
  */
 function renderLine(samples, host, accessor, color, fixed) {
-  host.replaceChildren();
   const pts = samples.slice(-MAX_PLOT_POINTS).map(accessor).filter((v) => typeof v === "number");
-  if (!pts.length) return placeholder(host, "no signal in this recording");
+  if (!pts.length) {
+    scaffold(host, "empty", (h) => placeholder(h, "no signal in this recording"));
+    return;
+  }
 
   const lo = fixed.lo ?? Math.min(...pts);
   const hi = fixed.hi ?? Math.max(...pts);
   const span = hi - lo || 1;
   const W = 1000;
   const H = 240;
-  const svg = makeSvg(W, H);
-  svg.setAttribute("preserveAspectRatio", "none");
+  // Persist the svg + path + axis; only the path's `d` and the axis labels change each tick.
+  const { path, axis } = scaffold(host, "data", (h) => {
+    const svg = makeSvg(W, H);
+    svg.setAttribute("preserveAspectRatio", "none");
+    const p = document.createElementNS(SVG_NS, "path");
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", color);
+    p.setAttribute("stroke-width", "1.5");
+    p.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(p);
+    h.appendChild(svg);
+    const ax = axisLabels(["", "", ""]);
+    h.appendChild(ax);
+    return { path: p, axis: ax };
+  });
 
   let d = "";
   pts.forEach((v, i) => {
@@ -317,17 +355,9 @@ function renderLine(samples, host, accessor, color, fixed) {
     const y = H - ((v - lo) / span) * H;
     d += `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)} `;
   });
-  const path = document.createElementNS(SVG_NS, "path");
   path.setAttribute("d", d.trim());
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", color);
-  path.setAttribute("stroke-width", "1.5");
-  path.setAttribute("vector-effect", "non-scaling-stroke");
-  svg.appendChild(path);
-
-  host.appendChild(svg);
   const last = pts[pts.length - 1];
-  host.appendChild(axisLabels([hi.toFixed(2), `now ${last.toFixed(2)}`, lo.toFixed(2)]));
+  setAxis(axis, [hi.toFixed(2), `now ${last.toFixed(2)}`, lo.toFixed(2)]);
 }
 
 /**
@@ -387,75 +417,89 @@ function computeStats(samples) {
   };
 }
 
-/** @param {Sample[]} samples @param {HTMLElement} host */
-function renderStats(samples, host) {
-  host.replaceChildren();
-  const n = samples.length;
-  const st = computeStats(samples);
-  const cards = [
-    stat("samples", n ? String(n) : "—", "recorded steps"),
-    stat("effective rate", n ? `${st.effectiveHz.toFixed(1)} Hz` : "—", `budget ${st.budgetMs.toFixed(0)} ms`),
-    stat("total p50", fmtMs(st.total.p50), "median step"),
-    stat("total p95", fmtMs(st.total.p95), "95th pct"),
-    stat("total p99", fmtMs(st.total.p99), "99th pct"),
-    stat("engine p50", fmtMs(st.engine.p50), "pure GPU forward"),
-    stat("model p95", fmtMs(st.model.p95), `${st.model.count} engine runs`),
-    stat("over budget", n ? `${st.overBudgetPct.toFixed(0)}%` : "—", `> ${st.budgetMs.toFixed(0)} ms`),
-    stat("headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0),
-  ];
+/** @param {ReturnType<typeof computeStats>} st @param {HTMLElement} host */
+function renderStats(st, host) {
+  const n = st.sampleCount;
   const q = st.quality;
   const fmt = (v, d = 3) => (v == null ? "—" : v.toFixed(d));
-  if (q.armJerkMean != null) cards.push(stat("arm jerk", `${fmt(q.armJerkMean)} rad`, "mean ‖Δcmd‖ — smoothness"));
-  if (q.disagreementMean != null) cards.push(stat("uncertainty", fmt(q.disagreementMean), "mean ensemble disagreement"));
-  host.append(...cards);
+  // Fixed-order rows; labels are stable, so build the cards once and update value/foot/warn
+  // in place each tick. The two quality cards are always present but hidden until recorded.
+  const rows = [
+    ["samples", n ? String(n) : "—", "recorded steps", false, true],
+    ["effective rate", n ? `${st.effectiveHz.toFixed(1)} Hz` : "—", `budget ${st.budgetMs.toFixed(0)} ms`, false, true],
+    ["total p50", fmtMs(st.total.p50), "median step", false, true],
+    ["total p95", fmtMs(st.total.p95), "95th pct", false, true],
+    ["total p99", fmtMs(st.total.p99), "99th pct", false, true],
+    ["engine p50", fmtMs(st.engine.p50), "pure GPU forward", false, true],
+    ["model p95", fmtMs(st.model.p95), `${st.model.count} engine runs`, false, true],
+    ["over budget", n ? `${st.overBudgetPct.toFixed(0)}%` : "—", `> ${st.budgetMs.toFixed(0)} ms`, false, true],
+    ["headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0, true],
+    ["arm jerk", `${fmt(q.armJerkMean)} rad`, "mean ‖Δcmd‖ — smoothness", false, q.armJerkMean != null],
+    ["uncertainty", fmt(q.disagreementMean), "mean ensemble disagreement", false, q.disagreementMean != null],
+  ];
+  const cards = scaffold(host, "stats", (h) => rows.map((r) => stat(/** @type {string} */ (r[0]), h)));
+  rows.forEach((r, i) => {
+    const c = cards[i];
+    c.value.textContent = /** @type {string} */ (r[1]);
+    c.foot.textContent = /** @type {string} */ (r[2]);
+    c.card.classList.toggle("warn", !!r[3]);
+    c.card.hidden = !r[4];
+  });
 }
 
 /**
- * @param {string} label @param {string} value @param {string} foot @param {boolean} [warn]
+ * Build one stat card with a fixed label; value/foot are filled in by the caller each tick.
+ * @param {string} label @param {HTMLElement} host
  */
-function stat(label, value, foot, warn = false) {
+function stat(label, host) {
   const card = document.createElement("div");
-  card.className = "prof-stat" + (warn ? " warn" : "");
+  card.className = "prof-stat";
   const l = document.createElement("div");
   l.className = "prof-stat-label microlabel";
   l.textContent = label;
-  const v = document.createElement("div");
-  v.className = "prof-stat-value mono";
-  v.textContent = value;
-  const f = document.createElement("div");
-  f.className = "prof-stat-foot";
-  f.textContent = foot;
-  card.append(l, v, f);
-  return card;
+  const value = document.createElement("div");
+  value.className = "prof-stat-value mono";
+  const foot = document.createElement("div");
+  foot.className = "prof-stat-foot";
+  card.append(l, value, foot);
+  host.appendChild(card);
+  return { card, value, foot };
 }
 
 /** @param {Sample[]} samples @param {HTMLElement} host */
 function renderTimeseries(samples, host) {
-  host.replaceChildren();
-  if (!samples.length) return placeholder(host);
+  if (!samples.length) {
+    scaffold(host, "empty", (h) => placeholder(h));
+    return;
+  }
 
   const pts = samples.slice(-MAX_PLOT_POINTS);
   const period = pts[pts.length - 1].period_ms;
   const totals = pts.map((s) => s.total_ms);
   const max = Math.max(period, ...totals) * 1.1;
-
   const W = 1000;
   const H = 240;
-  const svg = makeSvg(W, H);
-  svg.setAttribute("preserveAspectRatio", "none");
 
-  // budget line
+  const { svg, axis } = scaffold(host, "data", (h) => {
+    const el = makeSvg(W, H);
+    el.setAttribute("preserveAspectRatio", "none");
+    h.appendChild(el);
+    const ax = axisLabels(["", "", ""]);
+    h.appendChild(ax);
+    h.appendChild(legend([["var(--accent)", "total step"], ["var(--danger)", "budget"], ["var(--accent-dim)", "model ran"]]));
+    return { svg: el, axis: ax };
+  });
+
+  // The plotted geometry changes every tick (window scrolls, model-ran marker count varies),
+  // so redraw the svg's interior; the card, axis, and legend persist across ticks.
+  svg.replaceChildren();
   const by = H - (period / max) * H;
-  svg.appendChild(hline(by, W, "var(--danger)", "4 4"));
-
-  // model-ran markers (faint) so the chunk cadence is visible
+  svg.appendChild(hline(by, W, "var(--danger)", "4 4")); // budget line
   pts.forEach((s, i) => {
-    if (!s.engine_ran) return;
+    if (!s.engine_ran) return; // model-ran markers (faint) so the chunk cadence is visible
     const x = (i / Math.max(1, pts.length - 1)) * W;
     svg.appendChild(vline(x, H, "var(--accent-faint)"));
   });
-
-  // total line
   let d = "";
   pts.forEach((s, i) => {
     const x = (i / Math.max(1, pts.length - 1)) * W;
@@ -470,16 +514,16 @@ function renderTimeseries(samples, host) {
   path.setAttribute("vector-effect", "non-scaling-stroke");
   svg.appendChild(path);
 
-  host.appendChild(svg);
-  host.appendChild(axisLabels([fmtMs(max, 0), `budget ${period.toFixed(0)} ms`, "0"]));
-  host.appendChild(legend([["var(--accent)", "total step"], ["var(--danger)", "budget"], ["var(--accent-dim)", "model ran"]]));
+  setAxis(axis, [fmtMs(max, 0), `budget ${period.toFixed(0)} ms`, "0"]);
 }
 
 /** @param {Sample[]} samples @param {HTMLElement} host */
 function renderHistogram(samples, host) {
-  host.replaceChildren();
   const vals = samples.filter((s) => s.engine_ran).map((s) => s.inference_ms);
-  if (!vals.length) return placeholder(host, "no engine-run steps yet");
+  if (!vals.length) {
+    scaffold(host, "empty", (h) => placeholder(h, "no engine-run steps yet"));
+    return;
+  }
 
   const min = Math.min(...vals);
   const max = Math.max(...vals);
@@ -494,64 +538,83 @@ function renderHistogram(samples, host) {
 
   const W = 1000;
   const H = 240;
-  const svg = makeSvg(W, H);
-  const bw = W / bins;
-  counts.forEach((c, i) => {
-    const h = (c / peak) * (H - 4);
-    const rect = document.createElementNS(SVG_NS, "rect");
-    rect.setAttribute("x", (i * bw + 1).toFixed(1));
-    rect.setAttribute("y", (H - h).toFixed(1));
-    rect.setAttribute("width", (bw - 2).toFixed(1));
-    rect.setAttribute("height", h.toFixed(1));
-    rect.setAttribute("fill", "var(--accent)");
-    rect.setAttribute("opacity", "0.85");
-    svg.appendChild(rect);
+  // bin count and x/width are fixed, so build the bars + median marker once and only update
+  // each bar's height and the median's x-position per tick.
+  const { rects, median, axis } = scaffold(host, "data", (h) => {
+    const svg = makeSvg(W, H);
+    const bw = W / bins;
+    const bars = counts.map((_, i) => {
+      const rect = document.createElementNS(SVG_NS, "rect");
+      rect.setAttribute("x", (i * bw + 1).toFixed(1));
+      rect.setAttribute("width", (bw - 2).toFixed(1));
+      rect.setAttribute("fill", "var(--accent)");
+      rect.setAttribute("opacity", "0.85");
+      svg.appendChild(rect);
+      return rect;
+    });
+    const med = vline(0, H, "var(--text)", "1.5");
+    svg.appendChild(med);
+    h.appendChild(svg);
+    const ax = axisLabels(["", "", ""]);
+    h.appendChild(ax);
+    return { rects: bars, median: med, axis: ax };
   });
 
-  // median marker
+  rects.forEach((rect, i) => {
+    const h = (counts[i] / peak) * (H - 4);
+    rect.setAttribute("y", (H - h).toFixed(1));
+    rect.setAttribute("height", h.toFixed(1));
+  });
   const med = percentile(vals, 50);
-  const mx = ((med - min) / span) * W;
-  svg.appendChild(vline(mx, H, "var(--text)", "1.5"));
-
-  host.appendChild(svg);
-  host.appendChild(axisLabels([`${min.toFixed(1)} ms`, `median ${med.toFixed(1)} ms`, `${max.toFixed(1)} ms`]));
+  const mx = (((med - min) / span) * W).toFixed(1);
+  median.setAttribute("x1", mx);
+  median.setAttribute("x2", mx);
+  setAxis(axis, [`${min.toFixed(1)} ms`, `median ${med.toFixed(1)} ms`, `${max.toFixed(1)} ms`]);
 }
 
-/** @param {Sample[]} samples @param {HTMLElement} host */
-function renderBreakdown(samples, host) {
-  host.replaceChildren();
-  if (!samples.length) return placeholder(host);
+const BREAKDOWN_ROWS = [
+  ["Preprocess", "var(--blue)"],
+  ["Model fwd (GPU)", "var(--accent)"],
+  ["Copy + ensemble", "var(--accent-dim)"],
+  ["GPU → CPU copy", "var(--muted)"],
+  ["Postprocess", "var(--ok)"],
+];
 
-  const b = computeStats(samples).breakdown;
-  const sum = b.preprocess + b.engine + b.overhead + b.transfer + b.postprocess || 1;
-
-  const rows = [
-    ["Preprocess", b.preprocess, "var(--blue)"],
-    ["Model fwd (GPU)", b.engine, "var(--accent)"],
-    ["Copy + ensemble", b.overhead, "var(--accent-dim)"],
-    ["GPU → CPU copy", b.transfer, "var(--muted)"],
-    ["Postprocess", b.postprocess, "var(--ok)"],
-  ];
-
-  for (const [label, val, color] of rows) {
-    const row = document.createElement("div");
-    row.className = "prof-bar-row";
-    const name = document.createElement("span");
-    name.className = "prof-bar-name";
-    name.textContent = /** @type {string} */ (label);
-    const track = document.createElement("div");
-    track.className = "prof-bar-track";
-    const fill = document.createElement("div");
-    fill.className = "prof-bar-fill";
-    fill.style.width = `${(/** @type {number} */ (val) / sum) * 100}%`;
-    fill.style.background = /** @type {string} */ (color);
-    track.appendChild(fill);
-    const v = document.createElement("span");
-    v.className = "prof-bar-val mono";
-    v.textContent = fmtMs(/** @type {number} */ (val));
-    row.append(name, track, v);
-    host.appendChild(row);
+/** @param {ReturnType<typeof computeStats>} st @param {HTMLElement} host */
+function renderBreakdown(st, host) {
+  if (!st.sampleCount) {
+    scaffold(host, "empty", (h) => placeholder(h));
+    return;
   }
+  const b = st.breakdown;
+  const vals = [b.preprocess, b.engine, b.overhead, b.transfer, b.postprocess];
+  const sum = vals.reduce((a, v) => a + v, 0) || 1;
+  // Fixed label/colour rows, so build them once and only nudge the fill width + value text.
+  const bars = scaffold(host, "data", (h) => BREAKDOWN_ROWS.map(([label, color]) => breakdownBar(label, color, h)));
+  bars.forEach((bar, i) => {
+    bar.fill.style.width = `${(vals[i] / sum) * 100}%`;
+    bar.val.textContent = fmtMs(vals[i]);
+  });
+}
+
+/** @param {string} label @param {string} color @param {HTMLElement} host */
+function breakdownBar(label, color, host) {
+  const row = document.createElement("div");
+  row.className = "prof-bar-row";
+  const name = document.createElement("span");
+  name.className = "prof-bar-name";
+  name.textContent = label;
+  const track = document.createElement("div");
+  track.className = "prof-bar-track";
+  const fill = document.createElement("div");
+  fill.className = "prof-bar-fill";
+  fill.style.background = color;
+  track.appendChild(fill);
+  const val = document.createElement("span");
+  val.className = "prof-bar-val mono";
+  row.append(name, track, val);
+  host.appendChild(row);
+  return { fill, val };
 }
 
 // ---- small DOM/SVG helpers ------------------------------------------------
@@ -620,6 +683,13 @@ function axisLabels(labels) {
     wrap.appendChild(span);
   }
   return wrap;
+}
+
+/** Update an existing axisLabels row in place. @param {HTMLElement} wrap @param {string[]} labels */
+function setAxis(wrap, labels) {
+  wrap.querySelectorAll("span").forEach((span, i) => {
+    span.textContent = labels[i] ?? "";
+  });
 }
 
 /** @param {Array<[string,string]>} items color,label */
