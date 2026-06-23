@@ -45,6 +45,10 @@ services:
       - ros2_ws_log:/root/innate-os/ros2_ws/log
       - ccache:/root/.cache/ccache
 
+      # Persist ROS runtime node logs (~/.ros/log) to the host so per-node
+      # stdout/stderr survives `docker compose down` on a failed startup.
+      - ./launcher/.state/ros-log:/root/.ros/log
+
       # 3) Mount git credentials from host (read-only for security)
       - ~/.ssh:/root/.ssh:ro
       - ~/.gitconfig:/root/.gitconfig:ro
