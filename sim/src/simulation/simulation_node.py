@@ -42,6 +42,9 @@ ROBOT_ARM_HOME_POSITIONS = [
     0.0015339807878856412,
 ]
 SIM_ROBOT_ORANGE_LINKS = {"link1", "link3", "link5", "ee_link"}
+# Max valid depth (meters) before a pixel is treated as no-reading; matches the
+# real robot's mars_cam MAX_DEPTH_M so 16UC1 mm values stay in uint16 range.
+DEPTH_MAX_M = 10.0
 DEFAULT_SCENE_CONFIG = {
     "name": "Baked_sc0_staging_00",
     "mesh_path": "data/ReplicaCAD_baked_lighting/stages_uncompressed/Baked_sc0_staging_00.glb",
@@ -2107,7 +2110,17 @@ class SimulationNode:
                 if chase_rgb is not None:
                     chase_rgb = cv2.cvtColor(chase_rgb, cv2.COLOR_RGB2BGR)
 
-                depth_to_send = depth
+                # Match the real robot (mars_cam): publish depth as 16UC1 in
+                # millimeters, 0 = invalid/out-of-range. Halves the wire payload
+                # vs 32FC1 and is what brain_client decodes (16UC1 -> uint16 mm).
+                if depth is not None:
+                    depth_to_send = np.where(
+                        (depth > 0.0) & (depth <= DEPTH_MAX_M),
+                        depth * 1000.0,
+                        0.0,
+                    ).astype(np.uint16)
+                else:
+                    depth_to_send = None
 
                 try:
                     camera_views = {
