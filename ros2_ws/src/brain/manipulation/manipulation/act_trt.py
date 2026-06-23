@@ -320,6 +320,12 @@ class TRTACTPolicy:
             raise RuntimeError("TensorRT execute_async_v3 failed (engine execution did not launch)")
         return self._buffers["action_chunk"].clone()
 
+    @property
+    def last_disagreement(self):
+        """Ensemble disagreement (uncertainty) of the last emitted action, or None when not
+        ensembling. On-device scalar tensor; the caller converts it only when profiling."""
+        return self._ensembler.last_disagreement if self._ensembler is not None else None
+
     @torch.no_grad()
     def select_action(self, batch):
         if self._ensembler is not None:

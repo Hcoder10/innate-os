@@ -23,7 +23,8 @@ const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full record
 /**
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,
  *   engine_ms:number, transfer_ms:number, postprocess_ms:number, total_ms:number,
- *   engine_ran:boolean, period_ms:number }} Sample
+ *   engine_ran:boolean, period_ms:number, progress?:number, disagreement?:number,
+ *   arm_jerk?:number, base_jerk?:number }} Sample
  */
 
 /**
@@ -78,7 +79,16 @@ function buildView(root) {
   const tsCard = chartCard("Total step latency vs 25 Hz budget", "ms over recorded steps");
   const histCard = chartCard("Model inference time", "engine-run steps only");
   const breakdownCard = chartCard("Average per-step breakdown", "where each step spends time");
-  charts.append(tsCard.card, histCard.card, breakdownCard.card);
+  // Behavior quality: how well / how confident the policy is, vs just how fast.
+  const progressCard = chartCard("Progress", "policy's learned progress head (action[8])");
+  const disagreementCard = chartCard("Ensemble disagreement", "uncertainty — spikes precede failures");
+  charts.append(
+    tsCard.card,
+    histCard.card,
+    breakdownCard.card,
+    progressCard.card,
+    disagreementCard.card,
+  );
 
   const hint = document.createElement("p");
   hint.className = "prof-hint microlabel";
@@ -124,12 +134,12 @@ function buildView(root) {
     const flowing = lastMsgAt > 0 && sinceMsg < 500;
     setLive(live, flowing, recording);
     if (dirty) {
-      render(samples, statsRow, tsCard, histCard, breakdownCard);
+      render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard);
       dirty = false;
     }
   }, 140);
 
-  render(samples, statsRow, tsCard, histCard, breakdownCard);
+  render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard);
 
   return {
     destroy() {
@@ -173,6 +183,7 @@ async function exportJson(samples, btn) {
   if (!samples.length) return flashBtn(btn, "No data", "Export JSON");
   const st = computeStats(samples);
   const r = (x, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
+  const rn = (x, d = 2) => (x == null ? null : r(x, d)); // null-safe (quality may be absent)
   const profile = {
     generated_at: new Date().toISOString(),
     source: "Innate webapp · ACT inference profiler",
@@ -184,7 +195,10 @@ async function exportJson(samples, btn) {
       "engine (pure GPU model forward, CUDA-event measured), overhead (input copies + " +
       "temporal-ensemble + Python, = inference − engine − transfer), transfer (final GPU→CPU " +
       "copy), postprocess (command publish). model_inference_ms is the full select_action+copy " +
-      "for engine-run steps; engine_forward_ms is just the GPU forward. samples is the raw record.",
+      "for engine-run steps; engine_forward_ms is just the GPU forward. behavior_quality holds " +
+      "policy signals (not timing): progress (learned progress head action[8]), disagreement " +
+      "(ensemble uncertainty — weighted std across overlapping chunk predictions; spikes precede " +
+      "failures/OOD), arm_jerk/base_jerk (per-step ‖Δcommand‖, lower=smoother). samples is the raw record.",
     sample_count: st.sampleCount,
     budget_ms: r(st.budgetMs),
     summary: {
@@ -201,6 +215,13 @@ async function exportJson(samples, btn) {
         transfer: r(st.breakdown.transfer),
         postprocess: r(st.breakdown.postprocess),
       },
+      behavior_quality: {
+        progress_last: rn(st.quality.progressLast, 4),
+        disagreement_mean: rn(st.quality.disagreementMean, 4),
+        disagreement_p95: rn(st.quality.disagreementP95, 4),
+        arm_jerk_mean: rn(st.quality.armJerkMean, 4),
+        base_jerk_mean: rn(st.quality.baseJerkMean, 4),
+      },
     },
     samples: samples.map((s) => ({
       seq: s.seq,
@@ -212,6 +233,10 @@ async function exportJson(samples, btn) {
       postprocess_ms: r(s.postprocess_ms, 3),
       total_ms: r(s.total_ms, 3),
       engine_ran: s.engine_ran,
+      ...(s.progress != null ? { progress: r(s.progress, 4) } : {}),
+      ...(s.disagreement != null ? { disagreement: r(s.disagreement, 4) } : {}),
+      ...(s.arm_jerk != null ? { arm_jerk: r(s.arm_jerk, 4) } : {}),
+      ...(s.base_jerk != null ? { base_jerk: r(s.base_jerk, 4) } : {}),
     })),
   };
 
@@ -253,12 +278,56 @@ function downloadText(text, filename) {
  * @param {ReturnType<typeof chartCard>} tsCard
  * @param {ReturnType<typeof chartCard>} histCard
  * @param {ReturnType<typeof chartCard>} breakdownCard
+ * @param {ReturnType<typeof chartCard>} progressCard
+ * @param {ReturnType<typeof chartCard>} disagreementCard
  */
-function render(samples, statsRow, tsCard, histCard, breakdownCard) {
+function render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard) {
   renderStats(samples, statsRow);
   renderTimeseries(samples, tsCard.body);
   renderHistogram(samples, histCard.body);
   renderBreakdown(samples, breakdownCard.body);
+  renderLine(samples, progressCard.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: 1 });
+  renderLine(samples, disagreementCard.body, (s) => s.disagreement, "var(--blue)", {});
+}
+
+/**
+ * Generic line chart over the recorded window for an optional per-sample scalar.
+ * @param {Sample[]} samples
+ * @param {HTMLElement} host
+ * @param {(s: Sample) => number|undefined} accessor
+ * @param {string} color
+ * @param {{lo?: number, hi?: number}} fixed  optional fixed y-range (else auto)
+ */
+function renderLine(samples, host, accessor, color, fixed) {
+  host.replaceChildren();
+  const pts = samples.slice(-MAX_PLOT_POINTS).map(accessor).filter((v) => typeof v === "number");
+  if (!pts.length) return placeholder(host, "no signal in this recording");
+
+  const lo = fixed.lo ?? Math.min(...pts);
+  const hi = fixed.hi ?? Math.max(...pts);
+  const span = hi - lo || 1;
+  const W = 1000;
+  const H = 240;
+  const svg = makeSvg(W, H);
+  svg.setAttribute("preserveAspectRatio", "none");
+
+  let d = "";
+  pts.forEach((v, i) => {
+    const x = (i / Math.max(1, pts.length - 1)) * W;
+    const y = H - ((v - lo) / span) * H;
+    d += `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)} `;
+  });
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d.trim());
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", color);
+  path.setAttribute("stroke-width", "1.5");
+  path.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(path);
+
+  host.appendChild(svg);
+  const last = pts[pts.length - 1];
+  host.appendChild(axisLabels([hi.toFixed(2), `now ${last.toFixed(2)}`, lo.toFixed(2)]));
 }
 
 /**
@@ -279,6 +348,13 @@ function computeStats(samples) {
   const meanInfer = mean(samples.map((s) => s.inference_ms));
   const meanEngine = mean(samples.map((s) => s.engine_ms || 0));
   const meanTransfer = mean(samples.map((s) => s.transfer_ms || 0));
+  // Behavior-quality signals (present only when recorded against an ensembling policy
+  // with a progress head). num() drops missing values so stats stay meaningful.
+  const num = (key) => samples.map((s) => s[key]).filter((v) => typeof v === "number");
+  const progress = num("progress");
+  const disagree = num("disagreement");
+  const armJerk = num("arm_jerk");
+  const baseJerk = num("base_jerk");
   return {
     sampleCount: n,
     budgetMs: period,
@@ -301,6 +377,13 @@ function computeStats(samples) {
       transfer: meanTransfer,
       postprocess: mean(samples.map((s) => s.postprocess_ms)),
     },
+    quality: {
+      progressLast: progress.length ? progress[progress.length - 1] : null,
+      disagreementMean: disagree.length ? mean(disagree) : null,
+      disagreementP95: disagree.length ? percentile(disagree, 95) : null,
+      armJerkMean: armJerk.length ? mean(armJerk) : null,
+      baseJerkMean: baseJerk.length ? mean(baseJerk) : null,
+    },
   };
 }
 
@@ -320,6 +403,10 @@ function renderStats(samples, host) {
     stat("over budget", n ? `${st.overBudgetPct.toFixed(0)}%` : "—", `> ${st.budgetMs.toFixed(0)} ms`),
     stat("headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0),
   ];
+  const q = st.quality;
+  const fmt = (v, d = 3) => (v == null ? "—" : v.toFixed(d));
+  if (q.armJerkMean != null) cards.push(stat("arm jerk", `${fmt(q.armJerkMean)} rad`, "mean ‖Δcmd‖ — smoothness"));
+  if (q.disagreementMean != null) cards.push(stat("uncertainty", fmt(q.disagreementMean), "mean ensemble disagreement"));
   host.append(...cards);
 }
 

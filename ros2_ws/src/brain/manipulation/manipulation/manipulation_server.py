@@ -149,6 +149,8 @@ class ManipulationServer(Node):
         # Only published while a learned behavior is executing, so it's free when idle.
         self.inference_profile_pub = self.create_publisher(String, "/brain/manipulation/inference_profile", 10)
         self._inference_seq = 0
+        # Previous emitted action, for the per-step command-jerk (smoothness) metric.
+        self._prev_action_np = None
         # Service clients
         self.head_ai_position_client = self.create_client(Trigger, "/mars/head/set_ai_position")
         self.arm_goto_client = self.create_client(GotoJS, "/mars/arm/goto_js")
@@ -934,7 +936,20 @@ class ManipulationServer(Node):
             t3 = time.perf_counter()
 
             if profiling:
-                self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms)
+                # Behavior-quality signals (cheap; only when someone's recording): the policy's
+                # progress head, command smoothness (jerk = ||Δaction||), and ensemble
+                # disagreement (uncertainty). float() on the disagreement is post-sync, so free.
+                quality = {}
+                if self.current_action_dim >= 10:
+                    quality["progress"] = float(action_np[8])
+                if self._prev_action_np is not None:
+                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - self._prev_action_np[:6]))
+                    quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - self._prev_action_np[6:8]))
+                disagreement = getattr(self.current_policy, "last_disagreement", None)
+                if disagreement is not None:
+                    quality["disagreement"] = float(disagreement)
+                self._prev_action_np = action_np
+                self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
 
@@ -942,14 +957,15 @@ class ManipulationServer(Node):
             self.get_logger().error(f"Error during inference: {e}")
             return None
 
-    def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms):
+    def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality=None):
         """Publish one inference step's timing breakdown as JSON for the Profiling page.
 
         Sections (ms): preprocess (resize/normalize/to-GPU), inference (select_action +
         GPU->CPU sync), postprocess (command publishing). inference is further split into
         engine (pure GPU forward, CUDA-event measured) and transfer (the final .cpu()
         copy); the remainder is input copies + temporal-ensemble + Python overhead.
-        period_ms is the 25 Hz budget so the page can show headroom.
+        period_ms is the 25 Hz budget so the page can show headroom. quality carries the
+        optional behavior signals (progress, arm/base jerk, ensemble disagreement).
         """
         self._inference_seq += 1
         payload = {
@@ -964,6 +980,8 @@ class ManipulationServer(Node):
             "engine_ran": bool(engine_ran),
             "period_ms": 1000.0 / self.inference_hz,
         }
+        if quality:
+            payload.update(quality)
         msg = String()
         msg.data = json.dumps(payload)
         self.inference_profile_pub.publish(msg)
