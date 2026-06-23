@@ -381,56 +381,66 @@ class ManipulationServer(Node):
                 f"Starting policy inference for {duration} seconds at {inference_hz} Hz (progress threshold: {progress_threshold})"
             )
 
-            while rclpy.ok():
-                loop_start = time.time()
-                elapsed_time = loop_start - start_time
-                iteration_count += 1
+            # Disable automatic GC for the run. Per-step allocations (tensors, numpy,
+            # feedback msgs) are freed by refcounting, but periodic gen-2 collections
+            # cause pauses that show up as latency spikes in the 25 Hz loop. freeze()
+            # moves already-live objects out of the scan set; gc is re-enabled in the
+            # finally so every exit path (return/break/raise) restores it.
+            gc.freeze()
+            gc.disable()
+            try:
+                while rclpy.ok():
+                    loop_start = time.time()
+                    elapsed_time = loop_start - start_time
+                    iteration_count += 1
 
-                # Check for cancellation
-                if self._cancel_requested.is_set():
-                    self.get_logger().info("Behavior execution canceled")
-                    self._stop_robot()
-                    if end_pose:
-                        self.call_arm_goto_service(end_pose, end_pose_time)
-                    return "CANCELLED", "User requested cancellation"
-
-                # Check if duration completed (moved earlier to prevent infinite loop)
-                if elapsed_time >= duration:
-                    self.get_logger().info(f"Behavior timeout reached after {elapsed_time:.2f} seconds")
-                    break
-
-                progress = self._run_inference_once()
-
-                # Check if inference failed due to missing sensor data
-                if progress is None:
-                    # Check if it's due to missing sensors
-                    if not self._check_sensor_availability():
-                        self.get_logger().error("Required sensors became unavailable during execution")
+                    # Check for cancellation
+                    if self._cancel_requested.is_set():
+                        self.get_logger().info("Behavior execution canceled")
                         self._stop_robot()
-                        return "FAILURE", "Required sensors became unavailable during execution"
-                    # If sensors are available but inference still failed, continue
-                    # but still check timeout and send feedback
-                else:
-                    # Check for early termination based on progress metric
-                    if progress > progress_threshold:
-                        early_termination = True
-                        self.get_logger().info(
-                            f"Early termination triggered! Progress: {progress:.4f} > {progress_threshold}"
-                        )
+                        if end_pose:
+                            self.call_arm_goto_service(end_pose, end_pose_time)
+                        return "CANCELLED", "User requested cancellation"
+
+                    # Check if duration completed (moved earlier to prevent infinite loop)
+                    if elapsed_time >= duration:
+                        self.get_logger().info(f"Behavior timeout reached after {elapsed_time:.2f} seconds")
                         break
 
-                # Send feedback
-                remaining_time = max(0.0, duration - elapsed_time)
-                feedback_msg = ExecuteBehavior.Feedback()
-                feedback_msg.elapsed_time = float(elapsed_time)
-                feedback_msg.remaining_time = float(remaining_time)
-                feedback_msg.status = f"Executing {behavior_name} ({skill_dir})"
-                goal_handle.publish_feedback(feedback_msg)
+                    progress = self._run_inference_once()
 
-                # Maintain loop rate
-                sleep_time = period - (time.time() - loop_start)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                    # Check if inference failed due to missing sensor data
+                    if progress is None:
+                        # Check if it's due to missing sensors
+                        if not self._check_sensor_availability():
+                            self.get_logger().error("Required sensors became unavailable during execution")
+                            self._stop_robot()
+                            return "FAILURE", "Required sensors became unavailable during execution"
+                        # If sensors are available but inference still failed, continue
+                        # but still check timeout and send feedback
+                    else:
+                        # Check for early termination based on progress metric
+                        if progress > progress_threshold:
+                            early_termination = True
+                            self.get_logger().info(
+                                f"Early termination triggered! Progress: {progress:.4f} > {progress_threshold}"
+                            )
+                            break
+
+                    # Send feedback
+                    remaining_time = max(0.0, duration - elapsed_time)
+                    feedback_msg = ExecuteBehavior.Feedback()
+                    feedback_msg.elapsed_time = float(elapsed_time)
+                    feedback_msg.remaining_time = float(remaining_time)
+                    feedback_msg.status = f"Executing {behavior_name} ({skill_dir})"
+                    goal_handle.publish_feedback(feedback_msg)
+
+                    # Maintain loop rate
+                    sleep_time = period - (time.time() - loop_start)
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+            finally:
+                gc.enable()
 
             # Stop robot and move to end pose
             self._stop_robot()
