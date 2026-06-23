@@ -37,7 +37,86 @@ from manipulation.config_validation import (  # noqa: E402
 )
 
 
-def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None, speed=1.5, temporal_ensemble_coeff=None):
+class SockStateEstimator:
+    """YOLO-backed sock-state encoder matching the ACT training pipeline."""
+
+    def __init__(self, checkpoint_path, conf_threshold, imgsz, device, logger):
+        self.checkpoint_path = os.path.expanduser(checkpoint_path)
+        self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
+        self.device = device
+        self.logger = logger
+
+        if not os.path.isfile(self.checkpoint_path):
+            raise FileNotFoundError(f"sock detector checkpoint not found at {self.checkpoint_path!r}")
+
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise RuntimeError(
+                "ultralytics is required for sock-state ACT inference. "
+                "Install it on the robot or select a baseline checkpoint."
+            ) from exc
+
+        self.model = YOLO(self.checkpoint_path)
+        self.logger.info(
+            f"Sock detector loaded from {self.checkpoint_path} "
+            f"(conf={self.conf_threshold}, imgsz={self.imgsz}, device={self.device or 'auto'})"
+        )
+
+    @staticmethod
+    def _box_to_sock_state(result, conf_threshold, width, height):
+        empty = np.zeros((5,), dtype=np.float32)
+        boxes = getattr(result, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return empty
+
+        confs = boxes.conf.detach().cpu().numpy()
+        keep = np.where(confs >= conf_threshold)[0]
+        if keep.size == 0:
+            return empty
+
+        best_idx = int(keep[np.argmax(confs[keep])])
+        x1, y1, x2, y2 = boxes.xyxy[best_idx].detach().cpu().numpy().astype(np.float32)
+        state = np.array(
+            [
+                1.0,
+                ((x1 + x2) * 0.5) / max(width, 1),
+                ((y1 + y2) * 0.5) / max(height, 1),
+                (x2 - x1) / max(width, 1),
+                (y2 - y1) / max(height, 1),
+            ],
+            dtype=np.float32,
+        )
+        return np.clip(state, 0.0, 1.0)
+
+    def estimate(self, images):
+        """Return [valid, cx, cy, w, h] for each camera, concatenated."""
+        predict_kwargs = {
+            "imgsz": self.imgsz,
+            "conf": self.conf_threshold,
+            "verbose": False,
+            "max_det": 3,
+        }
+        if self.device:
+            predict_kwargs["device"] = self.device
+        results = self.model.predict(images, **predict_kwargs)
+
+        states = []
+        for image, result in zip(images, results, strict=False):
+            height, width = image.shape[:2]
+            states.append(self._box_to_sock_state(result, self.conf_threshold, width, height))
+        return np.concatenate(states).astype(np.float32)
+
+
+def create_act_config(
+    action_dim=10,
+    chunk_size=30,
+    n_action_steps=None,
+    speed=1.5,
+    temporal_ensemble_coeff=None,
+    environment_state_dim=0,
+):
     """Create ACT configuration matching the training setup.
 
     n_action_steps: optional override for the ACT replanning horizon.
@@ -51,6 +130,8 @@ def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None, speed=1
         "observation.image_camera_2": [3, 224, 224],  # [C, H, W]
         "observation.state": [6],  # state_dim
     }
+    if environment_state_dim:
+        input_shapes["observation.environment_state"] = [int(environment_state_dim)]
 
     output_shapes = {
         "action": [action_dim]  # action_dim - now configurable
@@ -159,8 +240,20 @@ class ManipulationServer(Node):
         # temporal_ensemble_coeff=0.0 disables ACT temporal ensembling.
         self.declare_parameter("n_action_steps", 0)
         self.declare_parameter("temporal_ensemble_coeff", 0.0)
+        self.declare_parameter("sock_detector_checkpoint", "")
+        self.declare_parameter("sock_detector_conf", 0.25)
+        self.declare_parameter("sock_detector_imgsz", 640)
+        self.declare_parameter("sock_detector_device", "")
+        self.declare_parameter("sock_state_required", True)
         self.default_n_action_steps = self.get_parameter("n_action_steps").value
         self.temporal_ensemble_coeff = self.get_parameter("temporal_ensemble_coeff").value
+        self.default_sock_detector_checkpoint = os.path.expanduser(
+            self.get_parameter("sock_detector_checkpoint").value or ""
+        )
+        self.sock_detector_conf = float(self.get_parameter("sock_detector_conf").value)
+        self.sock_detector_imgsz = int(self.get_parameter("sock_detector_imgsz").value)
+        self.sock_detector_device = self.get_parameter("sock_detector_device").value or ""
+        self.sock_state_required = bool(self.get_parameter("sock_state_required").value)
 
         # Image size for policy inference (matches checkpoint training)
         self.bridge = CvBridge()
@@ -179,6 +272,8 @@ class ManipulationServer(Node):
         self.current_goal_handle = None
         self.current_policy = None
         self.current_action_dim = 10  # Add this to track current policy's action dimension
+        self.current_environment_state_dim = 0
+        self.sock_state_estimator = None
         self._cancel_requested = threading.Event()
 
         # Sensor data
@@ -360,11 +455,16 @@ class ManipulationServer(Node):
 
     def _release_policy(self):
         """Free the loaded policy and reclaim GPU memory."""
-        if self.current_policy is None:
+        if self.current_policy is None and self.sock_state_estimator is None:
             return
         try:
-            del self.current_policy
+            if self.current_policy is not None:
+                del self.current_policy
+            if self.sock_state_estimator is not None:
+                del self.sock_state_estimator
             self.current_policy = None
+            self.sock_state_estimator = None
+            self.current_environment_state_dim = 0
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -392,12 +492,26 @@ class ManipulationServer(Node):
             n_action_steps_override = params.n_action_steps
             if n_action_steps_override is None and self.default_n_action_steps > 0:
                 n_action_steps_override = self.default_n_action_steps
+            sock_detector_path = (
+                os.path.join(skill_dir, params.sock_detector)
+                if params.sock_detector
+                else self.default_sock_detector_checkpoint
+            )
+            sock_detector_conf = params.sock_detector_conf
+            if sock_detector_conf is None:
+                sock_detector_conf = self.sock_detector_conf
+            sock_detector_imgsz = params.sock_detector_imgsz
+            if sock_detector_imgsz is None:
+                sock_detector_imgsz = self.sock_detector_imgsz
 
             # Load policy
             if not self._load_policy_for_behavior(
                 checkpoint_path,
                 action_dim,
                 n_action_steps_override=n_action_steps_override,
+                sock_detector_path=sock_detector_path,
+                sock_detector_conf=sock_detector_conf,
+                sock_detector_imgsz=sock_detector_imgsz,
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
 
@@ -431,6 +545,7 @@ class ManipulationServer(Node):
             loop_times = []
             inference_times = []
             # Detailed timing breakdowns
+            sock_state_times = []
             preprocess_times = []
             tensor_creation_times = []
             model_inference_times = []
@@ -479,6 +594,7 @@ class ManipulationServer(Node):
 
                 # Store detailed timing breakdowns
                 if detailed_timing:
+                    sock_state_times.append(detailed_timing.get("sock_state", 0))
                     preprocess_times.append(detailed_timing.get("preprocess", 0))
                     tensor_creation_times.append(detailed_timing.get("tensor_creation", 0))
                     model_inference_times.append(detailed_timing.get("model_inference", 0))
@@ -526,6 +642,7 @@ class ManipulationServer(Node):
                         and len(tensor_creation_times) >= timing_log_interval
                         and len(model_inference_times) >= timing_log_interval
                     ):
+                        avg_sock_state = np.mean(sock_state_times[-timing_log_interval:]) * 1000
                         avg_preprocess = np.mean(preprocess_times[-timing_log_interval:]) * 1000
                         avg_tensor = np.mean(tensor_creation_times[-timing_log_interval:]) * 1000
                         avg_model = np.mean(model_inference_times[-timing_log_interval:]) * 1000
@@ -534,6 +651,7 @@ class ManipulationServer(Node):
 
                         self.get_logger().debug(
                             f"[DETAILED TIMING] iter={iteration_count} | "
+                            f"sock_state: {avg_sock_state:.1f}ms | "
                             f"preprocess: {avg_preprocess:.1f}ms | "
                             f"tensor_creation: {avg_tensor:.1f}ms | "
                             f"model_inference: {avg_model:.1f}ms | "
@@ -578,6 +696,7 @@ class ManipulationServer(Node):
 
                 # Log final detailed timing breakdown
                 if len(preprocess_times) > 0:
+                    overall_avg_sock_state = np.mean(sock_state_times) * 1000
                     overall_avg_preprocess = np.mean(preprocess_times) * 1000
                     overall_avg_tensor = np.mean(tensor_creation_times) * 1000
                     overall_avg_model = np.mean(model_inference_times) * 1000
@@ -586,6 +705,7 @@ class ManipulationServer(Node):
 
                     self.get_logger().debug(
                         f"[DETAILED TIMING SUMMARY] total_iterations={iteration_count} | "
+                        f"sock_state: avg={overall_avg_sock_state:.1f}ms | "
                         f"preprocess: avg={overall_avg_preprocess:.1f}ms | "
                         f"tensor_creation: avg={overall_avg_tensor:.1f}ms | "
                         f"model_inference: avg={overall_avg_model:.1f}ms | "
@@ -787,7 +907,15 @@ class ManipulationServer(Node):
             self._stop_robot()
             return "FAILURE", f"Exception during replay execution: {str(e)}"
 
-    def _load_policy_for_behavior(self, checkpoint_path, action_dim=8, n_action_steps_override=None):
+    def _load_policy_for_behavior(
+        self,
+        checkpoint_path,
+        action_dim=8,
+        n_action_steps_override=None,
+        sock_detector_path=None,
+        sock_detector_conf=None,
+        sock_detector_imgsz=None,
+    ):
         """Load ACT policy for a specific behavior.
 
         n_action_steps_override: optional override for the ACT replanning horizon.
@@ -852,9 +980,18 @@ class ManipulationServer(Node):
                 chunk_size = state_dict[pos_embed_key].shape[0]
                 self.get_logger().info(f"Inferred chunk_size={chunk_size} from checkpoint")
 
+            environment_state_dim = 0
+            env_proj_key = "model.encoder_env_state_input_proj.weight"
+            if env_proj_key in state_dict:
+                environment_state_dim = int(state_dict[env_proj_key].shape[1])
+                self.get_logger().info(
+                    f"Inferred environment_state_dim={environment_state_dim} from checkpoint"
+                )
+
             self.get_logger().info(
                 f"Creating ACTPolicy with action_dim={action_dim}, chunk_size={chunk_size}, "
-                f"n_action_steps_override={n_action_steps_override} on device={self.device}"
+                f"n_action_steps_override={n_action_steps_override}, "
+                f"environment_state_dim={environment_state_dim} on device={self.device}"
             )
             policy_config = create_act_config(
                 action_dim=action_dim,
@@ -862,9 +999,33 @@ class ManipulationServer(Node):
                 n_action_steps=n_action_steps_override,
                 speed=self.policy_speed,
                 temporal_ensemble_coeff=self.temporal_ensemble_coeff or None,
+                environment_state_dim=environment_state_dim,
             )
             self.get_logger().info(f"Resolved n_action_steps={policy_config.n_action_steps} (chunk_size={chunk_size})")
             self.current_policy = ACTPolicy(config=policy_config, dataset_stats=dataset_stats).to(self.device)
+            self.current_environment_state_dim = environment_state_dim
+
+            if environment_state_dim:
+                if environment_state_dim != 10:
+                    self.get_logger().warn(
+                        f"Sock-state checkpoint expects environment_state_dim={environment_state_dim}; "
+                        "the runtime detector emits 10 values ([valid,cx,cy,w,h] for two cameras)."
+                    )
+                if not sock_detector_path:
+                    if self.sock_state_required:
+                        self.get_logger().error(
+                            "Checkpoint expects observation.environment_state but no sock detector was configured."
+                        )
+                        return False
+                    self.get_logger().warn("No sock detector configured; using zero environment_state.")
+                else:
+                    self.sock_state_estimator = SockStateEstimator(
+                        sock_detector_path,
+                        sock_detector_conf,
+                        sock_detector_imgsz,
+                        self.sock_detector_device,
+                        self.get_logger(),
+                    )
 
             # Load state dict with strict=False to handle potential mismatches gracefully
             load_result = self.current_policy.load_state_dict(state_dict, strict=False)
@@ -924,6 +1085,10 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": torch.zeros(1, 3, 224, 224, device=self.device),
                 "observation.state": torch.zeros(1, 6, device=self.device),
             }
+            if self.current_environment_state_dim:
+                dummy_batch["observation.environment_state"] = torch.zeros(
+                    1, self.current_environment_state_dim, device=self.device
+                )
             # Run multiple warmup iterations to ensure compilation completes
             num_warmup = 5
             for i in range(num_warmup):  # noqa: B007
@@ -988,27 +1153,55 @@ class ManipulationServer(Node):
         self.latest_joint_state = msg
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
+    def _estimate_sock_state(self, image1, image2):
+        """Build the environment-state vector expected by sock-state ACT."""
+        if not self.current_environment_state_dim:
+            return None
+        if self.sock_state_estimator is None:
+            return np.zeros((self.current_environment_state_dim,), dtype=np.float32)
+
+        sock_state = self.sock_state_estimator.estimate([image1, image2])
+        if sock_state.shape[0] != self.current_environment_state_dim:
+            self.get_logger().error(
+                f"Sock state has wrong dimensions. Expected {self.current_environment_state_dim}, "
+                f"got {sock_state.shape[0]}"
+            )
+            return None
+        return sock_state
+
     def _run_inference_once(self, detailed_timing=None):
         """Run one inference step with current policy.
 
         Args:
             detailed_timing: Optional dict to store detailed timing breakdowns
         """
+        latest_image1 = self.latest_image1
+        latest_image2 = self.latest_image2
+        latest_joint_state = self.latest_joint_state
         if (
             not self.current_policy
-            or self.latest_image1 is None
-            or self.latest_image2 is None
-            or self.latest_joint_state is None
+            or latest_image1 is None
+            or latest_image2 is None
+            or latest_joint_state is None
         ):
             return None
 
         try:
+            sock_state_np = None
+            sock_state_time = 0.0
+            if self.current_environment_state_dim:
+                sock_state_start = time.time()
+                sock_state_np = self._estimate_sock_state(latest_image1, latest_image2)
+                sock_state_time = time.time() - sock_state_start
+                if sock_state_np is None:
+                    return None
+
             # Image preprocessing timing
             preprocess_start = time.time()
             # Keep images in BGR format to match training pipeline (recorder → H5 → WebDataset → model all use BGR)
             # Use INTER_AREA to match training preprocessing (webdataset.py uses INTER_AREA)
-            img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
-            img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
+            img1 = cv2.resize(latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
+            img2 = cv2.resize(latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
             img1 = img1.astype(np.float32) / 255.0
             img2 = img2.astype(np.float32) / 255.0
             img1 = np.transpose(img1, (2, 0, 1))
@@ -1021,8 +1214,11 @@ class ManipulationServer(Node):
             img2_tensor = torch.tensor(img2, device=self.device).unsqueeze(0)
 
             # Joint state preprocessing
-            qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
+            qpos = np.asarray(latest_joint_state.position, dtype=np.float32)
             qpos_tensor = torch.tensor(qpos, device=self.device).unsqueeze(0)
+            sock_state_tensor = None
+            if sock_state_np is not None:
+                sock_state_tensor = torch.tensor(sock_state_np, device=self.device).unsqueeze(0)
 
             if self.device.type == "cuda":
                 torch.cuda.synchronize()  # Wait for GPU transfers to complete
@@ -1033,6 +1229,8 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": img2_tensor,
                 "observation.state": qpos_tensor,
             }
+            if sock_state_tensor is not None:
+                batch["observation.environment_state"] = sock_state_tensor
 
             # Policy forward pass timing
             inference_start = time.time()
@@ -1077,13 +1275,19 @@ class ManipulationServer(Node):
 
             # Store detailed timing if requested
             if detailed_timing is not None:
+                detailed_timing["sock_state"] = sock_state_time
                 detailed_timing["preprocess"] = preprocess_time
                 detailed_timing["tensor_creation"] = tensor_creation_time
                 detailed_timing["model_inference"] = inference_time
                 detailed_timing["cpu_transfer"] = cpu_transfer_time
                 detailed_timing["publish"] = publish_time
                 detailed_timing["total"] = (
-                    preprocess_time + tensor_creation_time + inference_time + cpu_transfer_time + publish_time
+                    sock_state_time
+                    + preprocess_time
+                    + tensor_creation_time
+                    + inference_time
+                    + cpu_transfer_time
+                    + publish_time
                 )
 
             # Return progress value for early termination check

@@ -112,6 +112,9 @@ class TestLearnedExecCfg:
                 "type": "learned",
                 "execution": {
                     "checkpoint": "ckpt.pth",
+                    "sock_detector": "sock_yolo11n_best.pt",
+                    "sock_detector_conf": 0.25,
+                    "sock_detector_imgsz": 640,
                     "action_dim": 8,
                     "duration": 30.0,
                     "progress_threshold": 1.5,
@@ -126,6 +129,9 @@ class TestLearnedExecCfg:
         )
         params = result.params
         assert isinstance(params, LearnedExecCfg)
+        assert params.sock_detector == "sock_yolo11n_best.pt"
+        assert params.sock_detector_conf == 0.25
+        assert params.sock_detector_imgsz == 640
         assert params.action_dim == 8
         assert params.duration == 30.0
         assert params.start_pose == [0.0] * 6
@@ -159,6 +165,65 @@ class TestLearnedExecCfg:
             check_files_exist=True,
         )
         assert result.resolved_path == str(tmp_path / "ckpt.pth")
+
+    def test_sock_detector_file_missing_on_disk(self, tmp_path):
+        _touch(tmp_path, "ckpt.pth")
+        with pytest.raises(BehaviorConfigError, match="sock_detector"):
+            validate_behavior_config(
+                {
+                    "type": "learned",
+                    "execution": {
+                        "checkpoint": "ckpt.pth",
+                        "sock_detector": "missing.pt",
+                    },
+                },
+                str(tmp_path),
+                check_files_exist=True,
+            )
+
+    def test_sock_detector_file_exists_on_disk(self, tmp_path):
+        _touch(tmp_path, "ckpt.pth")
+        _touch(tmp_path, "sock_yolo11n_best.pt")
+        result = validate_behavior_config(
+            {
+                "type": "learned",
+                "execution": {
+                    "checkpoint": "ckpt.pth",
+                    "sock_detector": "sock_yolo11n_best.pt",
+                },
+            },
+            str(tmp_path),
+            check_files_exist=True,
+        )
+        assert result.params.sock_detector == "sock_yolo11n_best.pt"
+
+    @pytest.mark.parametrize("bad", [-0.1, 1.1, float("nan"), True, "0.25"])
+    def test_sock_detector_conf_rejected(self, tmp_path, bad):
+        with pytest.raises(BehaviorConfigError, match="sock_detector_conf"):
+            _validate(
+                {
+                    "type": "learned",
+                    "execution": {
+                        "checkpoint": "ckpt.pth",
+                        "sock_detector_conf": bad,
+                    },
+                },
+                tmp_path,
+            )
+
+    @pytest.mark.parametrize("bad", [0, 31, 4097, True, "640"])
+    def test_sock_detector_imgsz_rejected(self, tmp_path, bad):
+        with pytest.raises(BehaviorConfigError, match="sock_detector_imgsz"):
+            _validate(
+                {
+                    "type": "learned",
+                    "execution": {
+                        "checkpoint": "ckpt.pth",
+                        "sock_detector_imgsz": bad,
+                    },
+                },
+                tmp_path,
+            )
 
     @pytest.mark.parametrize(
         "bad",

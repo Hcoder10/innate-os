@@ -86,6 +86,11 @@
 #     speed: 1.5                    # action execution speed multiplier
 #     n_action_steps: 0            # replan horizon; 0 = auto (min(40, chunk_size)), clamped to chunk_size
 #     temporal_ensemble_coeff: 0.0  # ACT action smoothing; 0 = disabled (try ~0.01 to enable; pins n_action_steps to 1)
+#     sock_detector_checkpoint: ""  # optional fallback YOLO checkpoint for sock-state ACT policies
+#     sock_detector_conf: 0.25      # YOLO threshold for [valid,cx,cy,w,h] per camera
+#     sock_detector_imgsz: 640      # YOLO inference image size
+#     sock_detector_device: ""      # empty = ultralytics auto; use "0" / "cpu" to force
+#     sock_state_required: true     # fail if a sock-state checkpoint has no detector configured
 
 # ── Localization (grid localizer) ─────────────────────────────────────
 # navigation_grid_localizer:
