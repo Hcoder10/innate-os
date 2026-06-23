@@ -884,6 +884,10 @@ class ManipulationServer(Node):
             return None
 
         try:
+            # Only do the profiling work (stream sync for attribution + JSON publish) when
+            # someone is actually subscribed, so it costs literally nothing when idle.
+            profiling = self.inference_profile_pub.get_subscription_count() > 0
+
             t0 = time.perf_counter()
             # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
             # Resize on-GPU via precomputed INTER_AREA matrices to keep the CPU off the
@@ -896,9 +900,10 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": img2,
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
-            # The GPU resize is async; the engine waits on it anyway, so sync here (no net
-            # latency cost) to attribute its compute to preprocess instead of inference.
-            if self.device.type == "cuda":
+            # The GPU resize is async; the engine waits on it anyway, so syncing here has no
+            # net latency cost but attributes its compute to preprocess instead of inference.
+            # Only worth it when profiling — otherwise let it overlap freely.
+            if profiling and self.device.type == "cuda":
                 torch.cuda.current_stream().synchronize()
             t1 = time.perf_counter()
 
@@ -928,7 +933,8 @@ class ManipulationServer(Node):
             self._publish_arm(action_np[:6])
             t3 = time.perf_counter()
 
-            self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms)
+            if profiling:
+                self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
 
