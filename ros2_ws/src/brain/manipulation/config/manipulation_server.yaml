@@ -9,7 +9,7 @@ manipulation_server:
     inference_hz: 25.0                      # policy inference loop rate (Hz)
     speed: 1.5                             # action execution speed multiplier
     replay_base_speed_scale: 1.0            # scale on replayed base cmd_vel; 1.0 = full recorded speed
-    learned_base_speed_scale: 1.0           # de-rate on learned-policy predicted base cmd_vel; 1.0 = full predicted speed
+    learned_base_speed_scale: 1.0           # scale on learned-policy predicted base cmd_vel; 1.0 = full predicted speed
     n_action_steps: 0                      # replan horizon; 0 = auto (min(40, chunk_size)), per-skill config wins
     # ACT temporal-ensemble smoothing. Runs the TRT engine every step and exponentially blends
     # overlapping chunk predictions to remove the per-replan motion discontinuity.
