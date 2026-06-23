@@ -886,11 +886,10 @@ class ManipulationServer(Node):
             return None
 
         try:
-            # Profiling work (stream sync + JSON publish) only runs when someone's subscribed.
             profiling = self.inference_profile_pub.get_subscription_count() > 0
 
             t0 = time.perf_counter()
-            # On-GPU resize keeps the CPU off the hot path; BGR + INTER_AREA matches training.
+            # BGR + INTER_AREA matches the training pipeline.
             img1 = self._resize_normalize_gpu(self.latest_image1).unsqueeze(0)
             img2 = self._resize_normalize_gpu(self.latest_image2).unsqueeze(0)
             qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
@@ -907,10 +906,9 @@ class ManipulationServer(Node):
 
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
-            t_sel = time.perf_counter()  # returns once the engine has synced
+            t_sel = time.perf_counter()
             action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks on the remaining GPU work
             t2 = time.perf_counter()
-            # Whether the model ran this step (vs. a cached dequeue) and its GPU-forward time.
             engine_ran = bool(getattr(self.current_policy, "engine_ran", True))
             engine_ms = float(getattr(self.current_policy, "last_engine_ms", 0.0))
 
@@ -926,7 +924,6 @@ class ManipulationServer(Node):
             t3 = time.perf_counter()
 
             if profiling:
-                # Behavior signals: progress head, command jerk (||Δaction||), ensemble disagreement.
                 quality = {}
                 if self.current_action_dim >= 10:
                     quality["progress"] = float(action_np[8])

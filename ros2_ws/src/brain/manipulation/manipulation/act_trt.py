@@ -236,10 +236,9 @@ class TRTACTPolicy:
             )
         self._context = self._engine.create_execution_context()
         self._stream = torch.cuda.Stream()
-        # CUDA events bracketing execute only (no H2D copies / host sync), for the profiler.
+        # CUDA events bracket execute only (no H2D copies / host sync).
         self._ev_start = torch.cuda.Event(enable_timing=True)
         self._ev_end = torch.cuda.Event(enable_timing=True)
-        # Per-step timing the profiler reads; cleared on cached dequeue steps (see select_action).
         self.last_engine_ms = 0.0
         self.engine_ran = False
 
@@ -340,7 +339,7 @@ class TRTACTPolicy:
                 actions_to_queue = self._resample_actions(actions_to_queue, self.config.speed)
             self._action_queue.extend(actions_to_queue.transpose(0, 1))
         else:
-            # Cached dequeue step -- no GPU forward, so clear the timing the profiler reads.
+            # Cached dequeue: no engine ran this step.
             self.engine_ran = False
             self.last_engine_ms = 0.0
         return self._action_queue.popleft()
