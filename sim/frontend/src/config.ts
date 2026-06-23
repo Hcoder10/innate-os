@@ -2,6 +2,11 @@
 // startup, or served from public/config.json during `yarn dev`). Fetched once
 // before the app renders (see main.tsx) so components can read appConfig
 // synchronously.
+//
+// Defaults live in public/config.json — the single source of truth. They are
+// baked in here at build time, served as-is during `yarn dev`, and used by the
+// container entrypoint as the base it overlays env vars onto.
+import defaults from "../public/config.json";
 
 export interface AppConfig {
   simBaseUrl: string;
@@ -15,14 +20,7 @@ export interface AppConfig {
   pinnedSkills: string[];
 }
 
-export const appConfig: AppConfig = {
-  simBaseUrl: "http://localhost:8000",
-  wsBaseUrl: "ws://localhost:8000",
-  robotWsUrl: "ws://localhost:9090",
-  directRobot: false,
-  cartesiaApiKey: "",
-  pinnedSkills: ["navigate with vision", "navigate with position", "wave"],
-};
+export const appConfig: AppConfig = { ...defaults };
 
 export async function loadConfig(): Promise<void> {
   try {

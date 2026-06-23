@@ -11,17 +11,22 @@ BUILD_LOG="$STATUS_DIR/build.log"
 
 mkdir -p "$WEB_DIR" "$STATUS_DIR" "$CONFIG_DIR"
 
-# 1. Runtime config.json from env (browser-facing URLs).
-cat > "$CONFIG_DIR/config.json" <<EOF
-{
-  "simBaseUrl": "${SIM_BASE_URL:-http://localhost:8000}",
-  "wsBaseUrl": "${WS_BASE_URL:-ws://localhost:8000}",
-  "robotWsUrl": "${ROBOT_WS_URL:-ws://localhost:9090}",
-  "directRobot": ${DIRECT_ROBOT:-false},
-  "cartesiaApiKey": "${CARTESIA_API_KEY:-}",
-  "pinnedSkills": ${PINNED_SKILLS:-[\"navigate with vision\", \"navigate with position\", \"wave\"]}
-}
-EOF
+# 1. Runtime config.json: start from the shipped defaults (public/config.json,
+#    the single source of truth) and overlay only the env vars that are set.
+node -e '
+  const fs = require("fs");
+  const out = JSON.parse(fs.readFileSync("/app/public/config.json", "utf8"));
+  const set = (key, env, parse = String) => {
+    if (process.env[env] != null) out[key] = parse(process.env[env]);
+  };
+  set("simBaseUrl",     "SIM_BASE_URL");
+  set("wsBaseUrl",      "WS_BASE_URL");
+  set("robotWsUrl",     "ROBOT_WS_URL");
+  set("directRobot",    "DIRECT_ROBOT",     v => v === "true");
+  set("cartesiaApiKey", "CARTESIA_API_KEY");
+  set("pinnedSkills",   "PINNED_SKILLS",    JSON.parse);
+  fs.writeFileSync(process.argv[1], JSON.stringify(out));
+' "$CONFIG_DIR/config.json"
 
 # 2. Seed build state + a self-refreshing placeholder page.
 echo '{"state":"building"}' > "$STATUS_FILE"
