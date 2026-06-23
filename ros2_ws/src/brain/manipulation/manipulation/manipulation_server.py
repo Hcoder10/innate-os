@@ -942,9 +942,14 @@ class ManipulationServer(Node):
                 quality = {}
                 if self.current_action_dim >= 10:
                     quality["progress"] = float(action_np[8])
-                if self._prev_action_np is not None:
-                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - self._prev_action_np[:6]))
-                    quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - self._prev_action_np[6:8]))
+                # Update prev first so a failure below can't stall it, and guard on matching
+                # shape: switching to a behavior with a different action_dim leaves a stale
+                # prev whose slices won't broadcast.
+                prev = self._prev_action_np
+                self._prev_action_np = action_np
+                if prev is not None and prev.shape == action_np.shape:
+                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - prev[:6]))
+                    quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - prev[6:8]))
                 disagreement = getattr(self.current_policy, "last_disagreement", None)
                 if disagreement is not None:
                     quality["disagreement"] = float(disagreement)
