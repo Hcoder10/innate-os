@@ -307,6 +307,9 @@ class ManipulationServer(Node):
             self._stop_sensor_subscriptions()
             self.execution_running = False
             self.current_goal_handle = None
+            # Drop the jerk reference so the next behavior's first step isn't compared
+            # against this one's final action.
+            self._prev_action_np = None
             self._release_policy()
 
     def _release_policy(self):
