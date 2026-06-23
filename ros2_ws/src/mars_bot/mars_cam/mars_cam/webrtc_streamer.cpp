@@ -522,9 +522,6 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
         "caps=video/x-raw,format=BGR,width=640,height=480,framerate=30/1 ! "
         "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
         "videoconvert ! "
-        // CBR with a small rate-control buffer stops the encoder from holding frames to
-        // smooth out the bitrate (the VBR default buffers ~6 s). ~0.5 s of buffering trades
-        // a little bitrate stability for lower glass-to-glass latency on the live link.
         "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
         "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
         "rtpvp8pay pt=96 ! "
@@ -535,9 +532,6 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
         "caps=video/x-raw,format=BGR,width=640,height=480,framerate=15/1 ! "
         "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
         "videoconvert ! "
-        // CBR with a small rate-control buffer stops the encoder from holding frames to
-        // smooth out the bitrate (the VBR default buffers ~6 s). ~0.5 s of buffering trades
-        // a little bitrate stability for lower glass-to-glass latency on the live link.
         "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
         "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
         "rtpvp8pay pt=97 ! "

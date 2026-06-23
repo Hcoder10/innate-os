@@ -211,17 +211,13 @@ export class WebRtcSession {
    */
   #onTrack(event, pc) {
     const track = event.track;
-    // Minimize the receive jitter buffer: this is a live teleop feed, so freshness
-    // beats smoothness. The browser otherwise buffers 100s of ms to absorb jitter.
-    // jitterBufferTarget is the standardized knob; playoutDelayHint is the older
-    // Chrome equivalent — set both for coverage, guarded since support varies.
     const receiver = event.receiver;
     if (receiver) {
       try {
         if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
         if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
       } catch {
-        // Older browsers reject the assignment; the default buffer still works.
+        // unsupported; default buffer applies
       }
     }
     if (track.kind === "audio") {
