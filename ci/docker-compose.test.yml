@@ -10,5 +10,13 @@ services:
     # overflows the 64 MB container default. (Honored locally; on Cloud Build the
     # build step passes --shm-size=2g explicitly — see ci/cloudbuild.integration-test.yaml.)
     shm_size: "2g"
+    # rmw_zenoh mlock()s its POSIX SHM pool; the container's default 64 KiB
+    # memlock ceiling makes the receive-side mmap fail with ENOMEM ("OS error
+    # 12"). Lift the lock limit so the SHM transport works. (shm_size only
+    # sizes /dev/shm, not the lock.)
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     # Single source of truth for the test flow, baked into the image.
     command: run_integration_tests.sh
