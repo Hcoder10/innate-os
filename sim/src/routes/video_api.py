@@ -1,34 +1,12 @@
 import time
 
-import cv2
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
-
-def mjpeg_generator(shared_queues, camera_name="first_person"):
-    """
-    Continuously yields JPEG frames from the simulation.
-    Uses the shared_queues (attached on app.state) for the latest frames.
-    """
-    while True:
-        if shared_queues is None:
-            time.sleep(0.1)
-            continue
-
-        frame = shared_queues.latest_frames.get(camera_name)
-        if frame is None:
-            time.sleep(0.01)
-            continue
-
-        shared_queues.latest_frames[camera_name] = None
-
-        success, encoded_image = cv2.imencode(".jpg", frame)
-        if not success:
-            continue
-
-        yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + encoded_image.tobytes() + b"\r\n")
+# Camera frames are streamed to the browser over WebRTC (see src/webrtc/), not
+# MJPEG. The endpoints below remain for readiness/metrics polling.
 
 
 @router.get("/video_feeds_ready")
@@ -79,41 +57,4 @@ def stack_metrics(request: Request):
             **metrics,
             "brain_backend_status": shared_queues.get_brain_backend_status(),
         }
-    )
-
-
-@router.get("/video_feed", include_in_schema=False)
-def video_feed(request: Request):
-    """
-    Streaming endpoint which returns the primary camera feed.
-    Retrieves the shared queues from the application's state.
-    """
-    shared_queues = request.app.state.SHARED_QUEUES
-    return StreamingResponse(
-        mjpeg_generator(shared_queues, "first_person"),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-@router.get("/video_feed_chase", include_in_schema=False)
-def video_feed_chase(request: Request):
-    """
-    Streaming endpoint which returns the chase camera feed.
-    """
-    shared_queues = request.app.state.SHARED_QUEUES
-    return StreamingResponse(
-        mjpeg_generator(shared_queues, "chase"),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-@router.get("/video_feed_arm", include_in_schema=False)
-def video_feed_arm(request: Request):
-    """
-    Streaming endpoint which returns the arm wrist camera feed.
-    """
-    shared_queues = request.app.state.SHARED_QUEUES
-    return StreamingResponse(
-        mjpeg_generator(shared_queues, "arm_wrist"),
-        media_type="multipart/x-mixed-replace; boundary=frame",
     )

@@ -2,12 +2,22 @@
 #    uv pip compile requirements.in --python-version 3.11 -o requirements.ubuntu.txt
 absl-py==2.4.0
     # via mujoco
+aioice==0.10.2
+    # via aiortc
+aiortc==1.9.0
+    # via -r requirements.in
 annotated-types==0.7.0
     # via pydantic
 anyio==4.14.0
     # via starlette
+av==12.3.0
+    # via aiortc
 cffi==2.0.0
-    # via quadrants
+    # via
+    #   aiortc
+    #   cryptography
+    #   pylibsrtp
+    #   quadrants
 click==8.2.1
     # via uvicorn
 coacd==1.0.11
@@ -16,6 +26,10 @@ colorama==0.4.6
     # via quadrants
 contourpy==1.3.3
     # via matplotlib
+cryptography==49.0.0
+    # via
+    #   aiortc
+    #   pyopenssl
 cuda-bindings==13.3.1
     # via torch
 cuda-pathfinder==1.5.5
@@ -32,6 +46,8 @@ deprecated==1.3.1
     # via pygltflib
 dill==0.4.1
     # via quadrants
+dnspython==2.8.0
+    # via aioice
 dracopy==2.0.0
     # via genesis-world
 etils==1.14.0
@@ -58,12 +74,16 @@ genesis-world==1.0.0
     # via -r requirements.in
 glfw==2.10.0
     # via mujoco
+google-crc32c==1.8.0
+    # via aiortc
 gs-madrona==0.0.7.post2
     # via genesis-world
 h11==0.16.0
     # via uvicorn
 idna==3.18
     # via anyio
+ifaddr==0.2.0
+    # via aioice
 imageio==2.37.3
     # via
     #   moviepy
@@ -216,6 +236,8 @@ pydantic==2.11.7
     #   quadrants
 pydantic-core==2.33.2
     # via pydantic
+pyee==13.0.1
+    # via aiortc
 pyflakes==3.4.0
     # via flake8
 pygel3d==0.6.1
@@ -226,12 +248,16 @@ pygltflib==1.16.0
     # via genesis-world
 pygments==2.20.0
     # via rich
+pylibsrtp==1.0.0
+    # via aiortc
 pymeshlab==2025.7.post1
     # via genesis-world
 pyopengl==3.1.10
     # via
     #   genesis-world
     #   mujoco
+pyopenssl==26.3.0
+    # via aiortc
 pyparsing==3.3.2
     # via matplotlib
 pysplashsurf==0.14.1.0
@@ -295,6 +321,8 @@ typing-extensions==4.15.0
     #   fastapi
     #   pydantic
     #   pydantic-core
+    #   pyee
+    #   pyopenssl
     #   python-utils
     #   starlette
     #   torch

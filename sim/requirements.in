@@ -26,6 +26,11 @@ uvicorn==0.35.0
 websockets==15.0.1
 python-dotenv==1.1.1
 
+# --- WebRTC streaming (sim camera feeds to the browser; VP8 encode via aiortc).
+#     Pulls av (PyAV; bundles ffmpeg+libvpx), aioice, pylibsrtp, cryptography,
+#     pyee, google-crc32c — all wheels, no apt/system packages. ---
+aiortc==1.9.0
+
 # --- Numerics / vision (imported directly by sim code) ---
 numpy==2.1.3
 scipy==1.16.0

@@ -142,6 +142,52 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
 
 
 #
+# WebRTC signaling topics (emulates the robot's mars_cam streamer protocol).
+# Signaling only — media flows peer-to-peer between the browser and the sim's
+# aiortc server, not over rosbridge.
+#
+WEBRTC_OFFER_TOPIC = "/webrtc/offer"
+WEBRTC_ANSWER_TOPIC = "/webrtc/answer"
+WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in"
+WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out"
+WEBRTC_START_TOPIC = "/webrtc/start"
+WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # additive: which cameras to encode
+WEBRTC_INBOUND_TOPICS = {
+    WEBRTC_START_TOPIC,
+    WEBRTC_ANSWER_TOPIC,
+    WEBRTC_ICE_IN_TOPIC,
+    WEBRTC_ACTIVE_STREAMS_TOPIC,
+}
+
+
+def relay_webrtc_inbound(shared_queues, topic: str, msg_data: dict) -> None:
+    """Parse a /webrtc/* std_msgs/String message and hand it to the aiortc thread."""
+    data = (msg_data or {}).get("data", "")
+    if topic == WEBRTC_START_TOPIC:
+        item = {"kind": "start", "payload": _loads_or_empty(data)}
+    elif topic == WEBRTC_ANSWER_TOPIC:
+        item = {"kind": "answer", "sdp": data}  # raw SDP, not JSON
+    elif topic == WEBRTC_ICE_IN_TOPIC:
+        item = {"kind": "ice", "payload": _loads_or_empty(data)}
+    elif topic == WEBRTC_ACTIVE_STREAMS_TOPIC:
+        item = {"kind": "active_streams", "cameras": _loads_or_empty(data).get("cameras", [])}
+    else:
+        return
+    try:
+        shared_queues.webrtc_signal_in.put_nowait(item)
+    except queue.Full:
+        pass
+
+
+def _loads_or_empty(data: str) -> dict:
+    try:
+        parsed = json.loads(data)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+#
 # Rosbridge Utility Methods
 #
 def rosbridge_subscribe(topic: str, msg_type: str) -> dict:
@@ -600,6 +646,11 @@ async def inbound_data_loop(ws, shared_queues):
                     except queue.Full:
                         pass
 
+            # 1c) WebRTC signaling (browser -> sim aiortc server), relayed via
+            # shared_queues so the aiortc thread stays decoupled from this loop.
+            elif topic in WEBRTC_INBOUND_TOPICS:
+                relay_webrtc_inbound(shared_queues, topic, msg_data)
+
             # 2) /chat_out
             elif topic == "/brain/chat_out":
                 payload = _parse_json_object_topic(topic, msg_data)
@@ -966,6 +1017,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
 
+    # WebRTC signaling (server->browser): offer + ICE candidates.
+    adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
+    adv_webrtc_ice_out = rosbridge_advertise(WEBRTC_ICE_OUT_TOPIC, "std_msgs/msg/String")
+
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
     await ws.send(json.dumps(adv_cinfo))
@@ -982,6 +1037,8 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_camera))
+    await ws.send(json.dumps(adv_webrtc_offer))
+    await ws.send(json.dumps(adv_webrtc_ice_out))
     for service_advert in arm_service_advertisements():
         await ws.send(json.dumps(service_advert))
     for service_advert in sim_control_service_advertisements():
@@ -1015,6 +1072,9 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_nav_path))
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
+    # WebRTC signaling (browser->server): start / answer / ice_in / active_streams.
+    for webrtc_topic in WEBRTC_INBOUND_TOPICS:
+        await ws.send(json.dumps(rosbridge_subscribe(webrtc_topic, "std_msgs/msg/String")))
     print(
         "[ROSBridge] Subscribed to /cmd_vel, /brain/chat_out, "
         "/brain/skill_status_update, /brain/websocket_status, /brain/available_skills, "
@@ -1084,6 +1144,25 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 chat_processed += 1
             except queue.Empty:
                 break
+
+        # PRIORITY 1b: WebRTC signaling out (offer / ice_out) — tiny text, keep it
+        # ahead of heavy sensor payloads so the handshake is snappy.
+        webrtc_processed = 0
+        while webrtc_processed < 20:
+            try:
+                signal = shared_queues.webrtc_signal_out.get_nowait()
+            except queue.Empty:
+                break
+            kind = signal.get("kind")
+            if kind == "offer":
+                topic, payload = WEBRTC_OFFER_TOPIC, signal.get("sdp", "")
+            elif kind == "ice":
+                topic, payload = WEBRTC_ICE_OUT_TOPIC, json.dumps(signal.get("payload", {}))
+            else:
+                webrtc_processed += 1
+                continue
+            await ws.send(json.dumps(rosbridge_publish(topic, {"data": payload})))
+            webrtc_processed += 1
 
         # PRIORITY 2: Process sensor data from the latest-only queue.
         # The web UI can render faster locally; ROSBridge cannot cheaply carry
