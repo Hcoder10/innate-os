@@ -3092,3 +3092,207 @@ button {
     transition: none !important;
   }
 }
+
+/* ---- profiling page ----------------------------------------------------- */
+/* Record-and-graph view for ACT inference timing. Inherits .page-head /
+   .page-title from the shared header. */
+
+.profiling {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.prof-sub {
+  align-self: center;
+}
+
+.prof-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prof-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.prof-live[data-state="live"] .prof-live-dot {
+  background: var(--ok);
+}
+.prof-live[data-state="rec"] .prof-live-dot {
+  background: var(--danger);
+  animation: prof-pulse 1.2s ease-in-out infinite;
+}
+@keyframes prof-pulse {
+  50% { opacity: 0.25; }
+}
+
+.prof-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 12px;
+}
+.prof-btn:hover {
+  border-color: var(--accent-dim);
+}
+.prof-btn-rec.active {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.prof-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.prof-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.prof-stat {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+}
+.prof-stat.warn {
+  border-color: var(--danger);
+}
+.prof-stat-label {
+  margin-bottom: 6px;
+}
+.prof-stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.prof-stat.warn .prof-stat-value {
+  color: var(--danger);
+}
+.prof-stat-foot {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.prof-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.prof-chart-card {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  background: var(--panel);
+  min-width: 0;
+}
+.prof-chart-card:first-child {
+  grid-column: 1 / -1;
+}
+.prof-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.prof-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.prof-chart-body {
+  min-height: 120px;
+}
+
+.prof-svg {
+  width: 100%;
+  height: 200px;
+  display: block;
+  border-bottom: 1px solid var(--hairline);
+}
+.prof-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.prof-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prof-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prof-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.prof-bar-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 70px;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+}
+.prof-bar-name {
+  font-size: 12px;
+  color: var(--text);
+}
+.prof-bar-track {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.prof-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+.prof-bar-val {
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.prof-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--muted);
+}
+.prof-hint {
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .prof-charts {
+    grid-template-columns: 1fr;
+  }
+}

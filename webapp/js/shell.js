@@ -35,6 +35,12 @@ const SECTIONS = [
     icon: '<polyline points="4,17.5 9.5,11.5 13.5,15 20,7"/><polyline points="15.5,7 20,7 20,11.5"/>',
   },
   {
+    key: "profiling",
+    label: "Profiling",
+    // Stopwatch motif: dial, crown, and a sweeping hand.
+    icon: '<circle cx="12" cy="13" r="7.5"/><line x1="12" y1="13" x2="15" y2="10"/><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="9.5" y1="2.5" x2="14.5" y2="2.5"/>',
+  },
+  {
     key: "settings",
     label: "Settings",
     // Sliders motif: two tracks, each with a knob.

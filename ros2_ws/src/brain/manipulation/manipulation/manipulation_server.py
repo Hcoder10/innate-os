@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import gc
+import json
 import math
 import os
 import threading
@@ -19,7 +20,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import Float64MultiArray, Int32
+from std_msgs.msg import Float64MultiArray, Int32, String
 from std_srvs.srv import Trigger
 
 # Import your policy class and trajectory generator
@@ -139,6 +140,10 @@ class ManipulationServer(Node):
         self.arm_state_pub = self.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
         # Head position command (degrees) — only published for head-enabled replay skills.
         self.head_set_position_pub = self.create_publisher(Int32, "/mars/head/set_position", 10)
+        # Per-step inference timing breakdown (JSON String), for the webapp Profiling page.
+        # Only published while a learned behavior is executing, so it's free when idle.
+        self.inference_profile_pub = self.create_publisher(String, "/brain/manipulation/inference_profile", 10)
+        self._inference_seq = 0
         # Service clients
         self.head_ai_position_client = self.create_client(Trigger, "/mars/head/set_ai_position")
         self.arm_goto_client = self.create_client(GotoJS, "/mars/arm/goto_js")
@@ -845,6 +850,7 @@ class ManipulationServer(Node):
             return None
 
         try:
+            t0 = time.perf_counter()
             # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
             img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
             img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
@@ -856,10 +862,18 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": torch.tensor(img2, device=self.device).unsqueeze(0),
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
+            t1 = time.perf_counter()
+
+            # Chunked policies only run the model when their action queue drains; the other
+            # steps just dequeue a cached action. Flag which kind of step this is so the
+            # profiler can separate true model latency from cheap dequeues.
+            queue = getattr(self.current_policy, "_action_queue", None)
+            engine_ran = queue is None or len(queue) == 0
 
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
             action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks until inference is done
+            t2 = time.perf_counter()
 
             if action_np.shape[0] < self.current_action_dim:
                 self.get_logger().error(
@@ -870,12 +884,37 @@ class ManipulationServer(Node):
             # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z, [8] progress.
             self._publish_base(float(action_np[6]), float(action_np[7]), self.learned_base_speed_scale)
             self._publish_arm(action_np[:6])
+            t3 = time.perf_counter()
+
+            self._publish_inference_profile(t0, t1, t2, t3, engine_ran)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
 
         except Exception as e:
             self.get_logger().error(f"Error during inference: {e}")
             return None
+
+    def _publish_inference_profile(self, t0, t1, t2, t3, engine_ran):
+        """Publish one inference step's timing breakdown as JSON for the Profiling page.
+
+        Sections (ms): preprocess (resize/normalize/to-GPU), inference (select_action +
+        GPU->CPU sync), postprocess (command publishing). period_ms is the 25 Hz budget
+        so the page can show headroom.
+        """
+        self._inference_seq += 1
+        payload = {
+            "seq": self._inference_seq,
+            "t": time.time(),
+            "preprocess_ms": (t1 - t0) * 1000.0,
+            "inference_ms": (t2 - t1) * 1000.0,
+            "postprocess_ms": (t3 - t2) * 1000.0,
+            "total_ms": (t3 - t0) * 1000.0,
+            "engine_ran": bool(engine_ran),
+            "period_ms": 1000.0 / self.inference_hz,
+        }
+        msg = String()
+        msg.data = json.dumps(payload)
+        self.inference_profile_pub.publish(msg)
 
     def _publish_arm(self, positions):
         """Publish a single absolute joint-position command (first 6 joints)."""
