@@ -96,7 +96,7 @@ export const CATALOG = [
   },
   {
     section: "Manipulation",
-    note: "Learned-skill execution. A per-skill behavior_config still overrides these.",
+    note: "Learned-skill execution. Node-level, applied at startup (restart to apply); only n_action_steps accepts a per-skill behavior_config override.",
     knobs: [
       { path: ["manipulation_server", P, "inference_hz"], label: "Inference rate", default: 25.0, type: "float", unit: "Hz", doc: "Policy inference loop rate" },
       { path: ["manipulation_server", P, "speed"], label: "Execution speed", default: 1.5, type: "float", unit: "×", doc: "Action execution speed multiplier" },

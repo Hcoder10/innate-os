@@ -79,7 +79,8 @@
 #     ae_kp: 0.8                    # auto-exposure proportional gain
 
 # ── Manipulation (learned-skill execution) ────────────────────────────
-# chunk_size is fixed by the trained model; a per-skill behavior_config still wins over these.
+# chunk_size is fixed by the trained model. These are node-level (restart to apply);
+# only n_action_steps accepts a per-skill behavior_config override.
 # manipulation_server:
 #   ros__parameters:
 #     inference_hz: 25.0            # policy inference loop rate (Hz)
