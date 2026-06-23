@@ -62,6 +62,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // with_audio is updated to reflect whether audio actually made it into the pipeline.
     bool start_pipeline_locked(bool& with_audio);
     void teardown_pipeline_locked();
+
+    // Adds the playout-delay RTP header extension to both video tracks (caller holds the mutex).
+    void attach_playout_delay_extension();
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,
                                      int target_height);
@@ -117,6 +120,10 @@ class WebRTCStreamer : public rclcpp::Node {
     bool enable_audio_;
     std::string audio_source_element_;
     std::string audio_capture_device_;
+
+    // Receiver de-jitter buffer bounds (ms) signalled via the playout-delay header extension.
+    guint playout_min_delay_ms_ = 0;
+    guint playout_max_delay_ms_ = 40;
 };
 
 }  // namespace mars_cam
