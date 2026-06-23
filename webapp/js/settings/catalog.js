@@ -101,7 +101,7 @@ export const CATALOG = [
       { path: ["manipulation_server", P, "inference_hz"], label: "Inference rate", default: 25.0, type: "float", unit: "Hz", doc: "Policy inference loop rate" },
       { path: ["manipulation_server", P, "speed"], label: "Execution speed", default: 1.5, type: "float", unit: "×", doc: "Action execution speed multiplier" },
       { path: ["manipulation_server", P, "replay_base_speed_scale"], label: "Replay base speed", default: 1.0, type: "float", unit: "×", doc: "Base-speed scale for replay (1.0 = recorded speed)" },
-      { path: ["manipulation_server", P, "learned_base_speed_scale"], label: "Learned base speed", default: 1.0, type: "float", unit: "×", doc: "Base-speed de-rate for the learned policy (1.0 = full predicted speed)" },
+      { path: ["manipulation_server", P, "learned_base_speed_scale"], label: "Learned base speed", default: 1.0, type: "float", unit: "×", doc: "Base-speed scale for the learned policy (1.0 = full predicted speed)" },
       { path: ["manipulation_server", P, "n_action_steps"], label: "Replan horizon", default: 0, type: "int", doc: "Replan horizon; 0 = auto (min(40, chunk_size))" },
       { path: ["manipulation_server", P, "temporal_ensemble_coeff"], label: "Action smoothing", default: 0.01, type: "float", doc: "ACT temporal-ensemble coefficient; 0 = disabled" },
     ],
