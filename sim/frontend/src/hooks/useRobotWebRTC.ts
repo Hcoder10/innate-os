@@ -139,6 +139,21 @@ export function useRobotWebRTC({
           return;
         }
 
+        // Minimize the receive jitter buffer: this is a live teleop feed, so
+        // freshness beats smoothness. The browser otherwise buffers 100s of ms
+        // to absorb jitter. jitterBufferTarget is the standardized knob;
+        // playoutDelayHint is the older Chrome equivalent — set both, guarded.
+        const receiver = event.receiver as RTCRtpReceiver & {
+          jitterBufferTarget?: number | null;
+          playoutDelayHint?: number | null;
+        };
+        try {
+          if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
+          if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
+        } catch {
+          // Older browsers reject the assignment; the default buffer still works.
+        }
+
         const stream = new MediaStream([event.track]);
         const mid = event.transceiver?.mid;
         const isMainMid = mid === "0" || mid === "video0";
