@@ -20,6 +20,7 @@ import { createHeadTilt } from "./headTilt.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
+import { createProfilingPanel } from "./profilingPanel.js";
 
 initShell("teleop", "");
 
@@ -67,6 +68,7 @@ function buildCockpit(root) {
     createJoystick(stickOverlay, drive),
     createTtsBar(ttsOverlay, ros),
     createArmPanel(armOverlay, ros),
+    createProfilingPanel(root, session),
     keyboard,
   ];
 

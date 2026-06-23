@@ -97,6 +97,14 @@ export class WebRtcSession {
   }
 
   /**
+   * Live RTCStatsReport for the profiling panel, or null when no pc is up.
+   * @returns {Promise<RTCStatsReport | null>}
+   */
+  getStats() {
+    return this.#pc ? this.#pc.getStats() : Promise.resolve(null);
+  }
+
+  /**
    * @param {(state: WebRtcState) => void} cb Fires immediately, then on change.
    * @returns {() => void} unsubscribe
    */
