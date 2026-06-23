@@ -19,6 +19,12 @@ services:
       context: ..
       dockerfile: sim/Dockerfile
       target: dev-runtime
+      # Build with the host network namespace so `RUN apt-get` can reach DNS.
+      # On hosts using systemd-resolved (nameserver 127.0.0.53) the default
+      # bridge build network can't reach that host-loopback resolver, so apt
+      # fails with "Temporary failure resolving ...". Harmless where bridge
+      # DNS already works.
+      network: host
     container_name: innate-dev
     # Use host networking if you need direct access to hardware, or use your own approach
     depends_on:
