@@ -872,7 +872,9 @@ class ManipulationServer(Node):
         # landscape frame (torch.einsum has no per-call optimize flag).
         cols = torch.einsum("jkc,kl->jlc", src, col)
         resized = torch.einsum("ij,jlc->ilc", row, cols)
-        return resized.permute(2, 0, 1) / 255.0
+        # Round to uint8 before normalizing: cv2.resize returns a uint8 image, so training
+        # saw integer-quantized pixels. Matmuls stay in float, so round here to match.
+        return resized.round().permute(2, 0, 1) / 255.0
 
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
