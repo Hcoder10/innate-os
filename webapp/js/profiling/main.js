@@ -12,13 +12,13 @@ import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { INFERENCE_PROFILE_TOPIC } from "../constants.js";
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full record
+
 initShell("profiling", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 mountPage(stage, "profiling", buildView);
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full record
 
 /**
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,
