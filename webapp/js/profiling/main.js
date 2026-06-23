@@ -22,7 +22,8 @@ const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full record
 
 /**
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,
- *   postprocess_ms:number, total_ms:number, engine_ran:boolean, period_ms:number }} Sample
+ *   engine_ms:number, transfer_ms:number, postprocess_ms:number, total_ms:number,
+ *   engine_ran:boolean, period_ms:number }} Sample
  */
 
 /**
@@ -179,10 +180,11 @@ async function exportJson(samples, btn) {
     schema:
       "ACT policy inference timing. All values in milliseconds unless noted. " +
       "budget_ms is the inference period target (1000/target_hz). breakdown_ms holds " +
-      "per-step means: preprocess (image resize/normalize/to-GPU), inference " +
-      "(model forward + GPU→CPU sync), postprocess (command publish). model_inference_ms " +
-      "covers only steps where the policy actually ran the engine (others reuse a queued " +
-      "action chunk). samples is the raw per-step record.",
+      "per-step means for the pipeline stages: preprocess (image resize/normalize/to-GPU), " +
+      "engine (pure GPU model forward, CUDA-event measured), overhead (input copies + " +
+      "temporal-ensemble + Python, = inference − engine − transfer), transfer (final GPU→CPU " +
+      "copy), postprocess (command publish). model_inference_ms is the full select_action+copy " +
+      "for engine-run steps; engine_forward_ms is just the GPU forward. samples is the raw record.",
     sample_count: st.sampleCount,
     budget_ms: r(st.budgetMs),
     summary: {
@@ -191,13 +193,22 @@ async function exportJson(samples, btn) {
       headroom_ms: r(st.headroomMs),
       total_ms: { mean: r(st.total.mean), p50: r(st.total.p50), p95: r(st.total.p95), p99: r(st.total.p99), max: r(st.total.max) },
       model_inference_ms: { count: st.model.count, mean: r(st.model.mean), p95: r(st.model.p95) },
-      breakdown_ms: { preprocess: r(st.breakdown.preprocess), inference: r(st.breakdown.inference), postprocess: r(st.breakdown.postprocess) },
+      engine_forward_ms: { mean: r(st.engine.mean), p50: r(st.engine.p50), p95: r(st.engine.p95) },
+      breakdown_ms: {
+        preprocess: r(st.breakdown.preprocess),
+        engine: r(st.breakdown.engine),
+        overhead: r(st.breakdown.overhead),
+        transfer: r(st.breakdown.transfer),
+        postprocess: r(st.breakdown.postprocess),
+      },
     },
     samples: samples.map((s) => ({
       seq: s.seq,
       t: s.t,
       preprocess_ms: r(s.preprocess_ms, 3),
       inference_ms: r(s.inference_ms, 3),
+      engine_ms: r(s.engine_ms, 3),
+      transfer_ms: r(s.transfer_ms, 3),
       postprocess_ms: r(s.postprocess_ms, 3),
       total_ms: r(s.total_ms, 3),
       engine_ran: s.engine_ran,
@@ -257,10 +268,17 @@ function render(samples, statsRow, tsCard, histCard, breakdownCard) {
 function computeStats(samples) {
   const n = samples.length;
   const total = samples.map((s) => s.total_ms);
-  const engine = samples.filter((s) => s.engine_ran).map((s) => s.inference_ms);
+  const run = samples.filter((s) => s.engine_ran);
+  const inference = run.map((s) => s.inference_ms);
+  const engineFwd = run.map((s) => s.engine_ms || 0);
   const period = n ? samples[n - 1].period_ms : 40;
   const overBudget = total.filter((v) => v > period).length;
   const p95 = percentile(total, 95);
+  // Mean per-step inference splits into the pure GPU forward, the final D2H copy,
+  // and the remainder (input copies + temporal-ensemble + Python).
+  const meanInfer = mean(samples.map((s) => s.inference_ms));
+  const meanEngine = mean(samples.map((s) => s.engine_ms || 0));
+  const meanTransfer = mean(samples.map((s) => s.transfer_ms || 0));
   return {
     sampleCount: n,
     budgetMs: period,
@@ -274,10 +292,13 @@ function computeStats(samples) {
       p99: percentile(total, 99),
       max: total.length ? Math.max(...total) : 0,
     },
-    model: { count: engine.length, mean: mean(engine), p95: percentile(engine, 95) },
+    model: { count: run.length, mean: mean(inference), p95: percentile(inference, 95) },
+    engine: { mean: mean(engineFwd), p50: percentile(engineFwd, 50), p95: percentile(engineFwd, 95) },
     breakdown: {
       preprocess: mean(samples.map((s) => s.preprocess_ms)),
-      inference: mean(samples.map((s) => s.inference_ms)),
+      engine: meanEngine,
+      overhead: Math.max(0, meanInfer - meanEngine - meanTransfer),
+      transfer: meanTransfer,
       postprocess: mean(samples.map((s) => s.postprocess_ms)),
     },
   };
@@ -294,6 +315,7 @@ function renderStats(samples, host) {
     stat("total p50", fmtMs(st.total.p50), "median step"),
     stat("total p95", fmtMs(st.total.p95), "95th pct"),
     stat("total p99", fmtMs(st.total.p99), "99th pct"),
+    stat("engine p50", fmtMs(st.engine.p50), "pure GPU forward"),
     stat("model p95", fmtMs(st.model.p95), `${st.model.count} engine runs`),
     stat("over budget", n ? `${st.overBudgetPct.toFixed(0)}%` : "—", `> ${st.budgetMs.toFixed(0)} ms`),
     stat("headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0),
@@ -413,15 +435,15 @@ function renderBreakdown(samples, host) {
   host.replaceChildren();
   if (!samples.length) return placeholder(host);
 
-  const pre = mean(samples.map((s) => s.preprocess_ms));
-  const inf = mean(samples.map((s) => s.inference_ms));
-  const post = mean(samples.map((s) => s.postprocess_ms));
-  const sum = pre + inf + post || 1;
+  const b = computeStats(samples).breakdown;
+  const sum = b.preprocess + b.engine + b.overhead + b.transfer + b.postprocess || 1;
 
   const rows = [
-    ["Preprocess", pre, "var(--blue)"],
-    ["Model inference", inf, "var(--accent)"],
-    ["Postprocess", post, "var(--ok)"],
+    ["Preprocess", b.preprocess, "var(--blue)"],
+    ["Model fwd (GPU)", b.engine, "var(--accent)"],
+    ["Copy + ensemble", b.overhead, "var(--accent-dim)"],
+    ["GPU → CPU copy", b.transfer, "var(--muted)"],
+    ["Postprocess", b.postprocess, "var(--ok)"],
   ];
 
   for (const [label, val, color] of rows) {

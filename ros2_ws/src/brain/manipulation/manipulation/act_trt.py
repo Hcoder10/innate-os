@@ -236,6 +236,12 @@ class TRTACTPolicy:
             )
         self._context = self._engine.create_execution_context()
         self._stream = torch.cuda.Stream()
+        # Pure-GPU forward timing (CUDA events around execute only, excluding the H2D
+        # copies and the host-side sync wait). Read by the profiler to separate the raw
+        # engine cost from the Python/transfer overhead in select_action.
+        self._ev_start = torch.cuda.Event(enable_timing=True)
+        self._ev_end = torch.cuda.Event(enable_timing=True)
+        self.last_engine_ms = 0.0
 
         # Persistent I/O buffers (fixed batch size 1); engine addresses bound once.
         self._buffers = {
@@ -303,8 +309,11 @@ class TRTACTPolicy:
             self._buffers["image_camera_1"].copy_(batch["observation.image_camera_1"])
             self._buffers["image_camera_2"].copy_(batch["observation.image_camera_2"])
             self._buffers["state"].copy_(batch["observation.state"])
+            self._ev_start.record(self._stream)
             ok = self._context.execute_async_v3(self._stream.cuda_stream)
+            self._ev_end.record(self._stream)
         self._stream.synchronize()
+        self.last_engine_ms = self._ev_start.elapsed_time(self._ev_end)
         if not ok:
             # A failed launch (CUDA OOM, driver fault, unbound tensor) leaves stale data in
             # action_chunk; raise so the caller skips this step instead of acting on it.

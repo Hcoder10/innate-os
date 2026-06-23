@@ -896,6 +896,10 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": img2,
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
+            # The GPU resize is async; the engine waits on it anyway, so sync here (no net
+            # latency cost) to attribute its compute to preprocess instead of inference.
+            if self.device.type == "cuda":
+                torch.cuda.current_stream().synchronize()
             t1 = time.perf_counter()
 
             # Chunked policies only run the model when their action queue drains; the other
@@ -906,8 +910,12 @@ class ManipulationServer(Node):
 
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
-            action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks until inference is done
+            t_sel = time.perf_counter()  # select_action returns once the engine has synced
+            action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks on the remaining GPU work
             t2 = time.perf_counter()
+            # Pure GPU forward (CUDA-event measured inside the engine), to compare against
+            # the ~6 ms fp32 spec and separate it from copy/ensemble/transfer overhead.
+            engine_ms = float(getattr(self.current_policy, "last_engine_ms", 0.0))
 
             if action_np.shape[0] < self.current_action_dim:
                 self.get_logger().error(
@@ -920,7 +928,7 @@ class ManipulationServer(Node):
             self._publish_arm(action_np[:6])
             t3 = time.perf_counter()
 
-            self._publish_inference_profile(t0, t1, t2, t3, engine_ran)
+            self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
 
@@ -928,12 +936,14 @@ class ManipulationServer(Node):
             self.get_logger().error(f"Error during inference: {e}")
             return None
 
-    def _publish_inference_profile(self, t0, t1, t2, t3, engine_ran):
+    def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms):
         """Publish one inference step's timing breakdown as JSON for the Profiling page.
 
         Sections (ms): preprocess (resize/normalize/to-GPU), inference (select_action +
-        GPU->CPU sync), postprocess (command publishing). period_ms is the 25 Hz budget
-        so the page can show headroom.
+        GPU->CPU sync), postprocess (command publishing). inference is further split into
+        engine (pure GPU forward, CUDA-event measured) and transfer (the final .cpu()
+        copy); the remainder is input copies + temporal-ensemble + Python overhead.
+        period_ms is the 25 Hz budget so the page can show headroom.
         """
         self._inference_seq += 1
         payload = {
@@ -941,6 +951,8 @@ class ManipulationServer(Node):
             "t": time.time(),
             "preprocess_ms": (t1 - t0) * 1000.0,
             "inference_ms": (t2 - t1) * 1000.0,
+            "engine_ms": engine_ms,
+            "transfer_ms": (t2 - t_sel) * 1000.0,
             "postprocess_ms": (t3 - t2) * 1000.0,
             "total_ms": (t3 - t0) * 1000.0,
             "engine_ran": bool(engine_ran),
