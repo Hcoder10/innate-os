@@ -155,16 +155,30 @@ function buildView(root) {
   };
 }
 
+// Timing fields the page reads unguarded in computeStats; a dropped or renamed one
+// would propagate undefined/NaN into mean/percentile. Quality fields are optional and
+// filtered downstream, so they're not required here.
+const REQUIRED_NUMERIC = [
+  "seq", "t", "preprocess_ms", "inference_ms", "engine_ms",
+  "transfer_ms", "postprocess_ms", "total_ms", "period_ms",
+];
+
 /** @param {any} data @returns {Sample | null} */
 function parseSample(data) {
   if (typeof data !== "string") return null;
+  let s;
   try {
-    const s = JSON.parse(data);
-    if (typeof s.total_ms !== "number") return null;
-    return s;
+    s = JSON.parse(data);
   } catch {
     return null;
   }
+  // Reject the whole sample unless every required field is present and the right type,
+  // rather than letting a missing value silently become NaN in the stats.
+  if (typeof s.engine_ran !== "boolean") return null;
+  for (const f of REQUIRED_NUMERIC) {
+    if (typeof s[f] !== "number" || !isFinite(s[f])) return null;
+  }
+  return s;
 }
 
 /** @param {HTMLElement} live @param {boolean} flowing @param {boolean} recording */

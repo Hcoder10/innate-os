@@ -950,25 +950,40 @@ class ManipulationServer(Node):
             return None
 
     def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality=None):
-        """Publish one inference step's timing breakdown (ms) as JSON for the Profiling page."""
+        """Publish one inference step's timing breakdown (ms) as JSON for the Profiling page.
+
+        Non-finite values are coerced to null: a diverging policy emits NaN/Inf actions,
+        which turn the derived jerk/progress fields non-finite. json.dumps would then write
+        a bare `NaN` token (invalid JSON), and the page's JSON.parse would reject the whole
+        sample — blanking the profiler exactly when divergence is most worth seeing.
+        allow_nan=False is a tripwire for any field we missed; the publish is isolated so a
+        serialization error can never break the live inference path.
+        """
         self._inference_seq += 1
+
+        def fin(v):
+            return v if math.isfinite(v) else None
+
         payload = {
             "seq": self._inference_seq,
             "t": time.time(),
-            "preprocess_ms": (t1 - t0) * 1000.0,
-            "inference_ms": (t2 - t1) * 1000.0,
-            "engine_ms": engine_ms,
-            "transfer_ms": (t2 - t_sel) * 1000.0,
-            "postprocess_ms": (t3 - t2) * 1000.0,
-            "total_ms": (t3 - t0) * 1000.0,
+            "preprocess_ms": fin((t1 - t0) * 1000.0),
+            "inference_ms": fin((t2 - t1) * 1000.0),
+            "engine_ms": fin(engine_ms),
+            "transfer_ms": fin((t2 - t_sel) * 1000.0),
+            "postprocess_ms": fin((t3 - t2) * 1000.0),
+            "total_ms": fin((t3 - t0) * 1000.0),
             "engine_ran": bool(engine_ran),
-            "period_ms": 1000.0 / self.inference_hz,
+            "period_ms": fin(1000.0 / self.inference_hz),
         }
         if quality:
-            payload.update(quality)
-        msg = String()
-        msg.data = json.dumps(payload)
-        self.inference_profile_pub.publish(msg)
+            payload.update({k: fin(v) for k, v in quality.items()})
+        try:
+            msg = String()
+            msg.data = json.dumps(payload, allow_nan=False)
+            self.inference_profile_pub.publish(msg)
+        except (ValueError, TypeError) as e:
+            self.get_logger().warning(f"Skipping inference profile sample: {e}")
 
     def _publish_arm(self, positions):
         """Publish a single absolute joint-position command (first 6 joints)."""
