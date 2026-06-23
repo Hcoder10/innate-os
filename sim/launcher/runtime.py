@@ -687,6 +687,8 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
         env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
     if config.get("sim_scene_dt") is not None:
         env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
+    if config.get("sim_ros_image_fps") is not None:
+        env["SIM_ROS_IMAGE_FPS"] = str(config["sim_ros_image_fps"])
     if config.get("sim_camera_near") is not None:
         env["SIM_CAMERA_NEAR"] = str(config["sim_camera_near"])
 
