@@ -103,6 +103,11 @@ class ManipulationServer(Node):
         self.bridge = CvBridge()
         self.image_size = (224, 224)  # Resize to match checkpoint expectations
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Cache of GPU resampling matrices keyed by source (h, w). INTER_AREA is a
+        # separable linear filter, so resize == two matmuls with content-independent
+        # weights; precomputing them lets the whole resize run on-GPU, bit-exact to
+        # cv2.INTER_AREA (up to uint8 rounding), instead of on the contended CPU.
+        self._resize_mats = {}
 
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
@@ -835,6 +840,35 @@ class ManipulationServer(Node):
         self.latest_joint_state = msg
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
+    def _resize_matrices(self, h, w):
+        """Return cached (row, col) GPU matrices that replicate cv2.INTER_AREA for an
+        (h, w) -> image_size resize. INTER_AREA is a separable, content-independent
+        linear filter, so its weights can be recovered exactly from identity inputs and
+        applied as two matmuls. Built once per source resolution."""
+        key = (h, w)
+        mats = self._resize_mats.get(key)
+        if mats is None:
+            out_h, out_w = self.image_size[1], self.image_size[0]
+            # row[i, j]: weight of src row j in dst row i (out_h x h)
+            row = cv2.resize(np.eye(h, dtype=np.float32), (h, out_h), interpolation=cv2.INTER_AREA)
+            # col[k, l]: weight of src col k in dst col l (w x out_w)
+            col = cv2.resize(np.eye(w, dtype=np.float32), (out_w, w), interpolation=cv2.INTER_AREA)
+            mats = (
+                torch.from_numpy(row).to(self.device),
+                torch.from_numpy(col).to(self.device),
+            )
+            self._resize_mats[key] = mats
+        return mats
+
+    def _resize_normalize_gpu(self, img_bgr):
+        """Resize a HWC uint8 BGR frame to (3, image_size) float32 in [0, 1] on the GPU,
+        matching the cv2.INTER_AREA + /255 + CHW transpose the model was trained on."""
+        h, w = img_bgr.shape[:2]
+        row, col = self._resize_matrices(h, w)
+        src = torch.from_numpy(np.ascontiguousarray(img_bgr)).to(self.device, non_blocking=True).float()
+        resized = torch.einsum("ij,jkc,kl->ilc", row, src, col)  # (out_h, out_w, 3)
+        return resized.permute(2, 0, 1) / 255.0
+
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
 
@@ -852,14 +886,14 @@ class ManipulationServer(Node):
         try:
             t0 = time.perf_counter()
             # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
-            img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
-            img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
-            img1 = np.transpose(img1.astype(np.float32) / 255.0, (2, 0, 1))
-            img2 = np.transpose(img2.astype(np.float32) / 255.0, (2, 0, 1))
+            # Resize on-GPU via precomputed INTER_AREA matrices to keep the CPU off the
+            # hot path; output is (1, 3, 224, 224) float32 in [0, 1], CHW, BGR.
+            img1 = self._resize_normalize_gpu(self.latest_image1).unsqueeze(0)
+            img2 = self._resize_normalize_gpu(self.latest_image2).unsqueeze(0)
             qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
             batch = {
-                "observation.image_camera_1": torch.tensor(img1, device=self.device).unsqueeze(0),
-                "observation.image_camera_2": torch.tensor(img2, device=self.device).unsqueeze(0),
+                "observation.image_camera_1": img1,
+                "observation.image_camera_2": img2,
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
             t1 = time.perf_counter()
