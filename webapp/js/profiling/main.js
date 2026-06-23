@@ -56,11 +56,14 @@ function buildView(root) {
 
   const recordBtn = document.createElement("button");
   recordBtn.className = "prof-btn prof-btn-rec";
+  const exportBtn = document.createElement("button");
+  exportBtn.className = "prof-btn";
+  exportBtn.textContent = "Export JSON";
   const clearBtn = document.createElement("button");
   clearBtn.className = "prof-btn";
   clearBtn.textContent = "Clear";
 
-  head.append(title, sub, live, spacer, recordBtn, clearBtn);
+  head.append(title, sub, live, spacer, recordBtn, exportBtn, clearBtn);
 
   // ---- body ---------------------------------------------------------------
   const body = document.createElement("div");
@@ -98,6 +101,7 @@ function buildView(root) {
     samples = [];
     dirty = true;
   });
+  exportBtn.addEventListener("click", () => exportJson(samples, exportBtn));
   syncRecordBtn();
 
   // ---- subscription -------------------------------------------------------
@@ -156,6 +160,80 @@ function setLive(live, flowing, recording) {
   text.textContent = state === "idle" ? "no signal" : state === "rec" ? "recording" : "receiving";
 }
 
+// ---- export ---------------------------------------------------------------
+
+/**
+ * Build a self-describing JSON profile and hand it off — copied to the clipboard
+ * for pasting into an LLM, with a file download as fallback. All times in ms.
+ * @param {Sample[]} samples
+ * @param {HTMLButtonElement} btn
+ */
+async function exportJson(samples, btn) {
+  if (!samples.length) return flashBtn(btn, "No data", "Export JSON");
+  const st = computeStats(samples);
+  const r = (x, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
+  const profile = {
+    generated_at: new Date().toISOString(),
+    source: "Innate webapp · ACT inference profiler",
+    topic: INFERENCE_PROFILE_TOPIC,
+    schema:
+      "ACT policy inference timing. All values in milliseconds unless noted. " +
+      "budget_ms is the inference period target (1000/target_hz). breakdown_ms holds " +
+      "per-step means: preprocess (image resize/normalize/to-GPU), inference " +
+      "(model forward + GPU→CPU sync), postprocess (command publish). model_inference_ms " +
+      "covers only steps where the policy actually ran the engine (others reuse a queued " +
+      "action chunk). samples is the raw per-step record.",
+    sample_count: st.sampleCount,
+    budget_ms: r(st.budgetMs),
+    summary: {
+      effective_hz: r(st.effectiveHz),
+      over_budget_pct: r(st.overBudgetPct, 1),
+      headroom_ms: r(st.headroomMs),
+      total_ms: { mean: r(st.total.mean), p50: r(st.total.p50), p95: r(st.total.p95), p99: r(st.total.p99), max: r(st.total.max) },
+      model_inference_ms: { count: st.model.count, mean: r(st.model.mean), p95: r(st.model.p95) },
+      breakdown_ms: { preprocess: r(st.breakdown.preprocess), inference: r(st.breakdown.inference), postprocess: r(st.breakdown.postprocess) },
+    },
+    samples: samples.map((s) => ({
+      seq: s.seq,
+      t: s.t,
+      preprocess_ms: r(s.preprocess_ms, 3),
+      inference_ms: r(s.inference_ms, 3),
+      postprocess_ms: r(s.postprocess_ms, 3),
+      total_ms: r(s.total_ms, 3),
+      engine_ran: s.engine_ran,
+    })),
+  };
+
+  const text = JSON.stringify(profile, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    flashBtn(btn, "Copied ✓", "Export JSON");
+  } catch {
+    downloadText(text, `act-profile-${st.sampleCount}steps.json`);
+    flashBtn(btn, "Downloaded", "Export JSON");
+  }
+}
+
+/** @param {HTMLButtonElement} btn @param {string} msg @param {string} restore */
+function flashBtn(btn, msg, restore) {
+  btn.textContent = msg;
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = restore;
+    btn.disabled = false;
+  }, 1400);
+}
+
+/** @param {string} text @param {string} filename */
+function downloadText(text, filename) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ---- rendering ------------------------------------------------------------
 
 /**
@@ -172,27 +250,53 @@ function render(samples, statsRow, tsCard, histCard, breakdownCard) {
   renderBreakdown(samples, breakdownCard.body);
 }
 
-/** @param {Sample[]} samples @param {HTMLElement} host */
-function renderStats(samples, host) {
-  host.replaceChildren();
+/**
+ * Aggregate the recorded samples into the numbers the page shows and exports.
+ * @param {Sample[]} samples
+ */
+function computeStats(samples) {
   const n = samples.length;
   const total = samples.map((s) => s.total_ms);
   const engine = samples.filter((s) => s.engine_ran).map((s) => s.inference_ms);
   const period = n ? samples[n - 1].period_ms : 40;
-
   const overBudget = total.filter((v) => v > period).length;
-  const hz = effectiveHz(samples);
   const p95 = percentile(total, 95);
+  return {
+    sampleCount: n,
+    budgetMs: period,
+    effectiveHz: effectiveHz(samples),
+    overBudgetPct: n ? (100 * overBudget) / n : 0,
+    headroomMs: period - p95,
+    total: {
+      mean: mean(total),
+      p50: percentile(total, 50),
+      p95,
+      p99: percentile(total, 99),
+      max: total.length ? Math.max(...total) : 0,
+    },
+    model: { count: engine.length, mean: mean(engine), p95: percentile(engine, 95) },
+    breakdown: {
+      preprocess: mean(samples.map((s) => s.preprocess_ms)),
+      inference: mean(samples.map((s) => s.inference_ms)),
+      postprocess: mean(samples.map((s) => s.postprocess_ms)),
+    },
+  };
+}
 
+/** @param {Sample[]} samples @param {HTMLElement} host */
+function renderStats(samples, host) {
+  host.replaceChildren();
+  const n = samples.length;
+  const st = computeStats(samples);
   const cards = [
     stat("samples", n ? String(n) : "—", "recorded steps"),
-    stat("effective rate", n ? `${hz.toFixed(1)} Hz` : "—", `budget ${period.toFixed(0)} ms`),
-    stat("total p50", fmtMs(percentile(total, 50)), "median step"),
-    stat("total p95", fmtMs(p95), "95th pct"),
-    stat("total p99", fmtMs(percentile(total, 99)), "99th pct"),
-    stat("model p95", fmtMs(percentile(engine, 95)), `${engine.length} engine runs`),
-    stat("over budget", n ? `${((100 * overBudget) / n).toFixed(0)}%` : "—", `> ${period.toFixed(0)} ms`),
-    stat("headroom", n ? fmtMs(period - p95) : "—", "budget − p95", period - p95 < 0),
+    stat("effective rate", n ? `${st.effectiveHz.toFixed(1)} Hz` : "—", `budget ${st.budgetMs.toFixed(0)} ms`),
+    stat("total p50", fmtMs(st.total.p50), "median step"),
+    stat("total p95", fmtMs(st.total.p95), "95th pct"),
+    stat("total p99", fmtMs(st.total.p99), "99th pct"),
+    stat("model p95", fmtMs(st.model.p95), `${st.model.count} engine runs`),
+    stat("over budget", n ? `${st.overBudgetPct.toFixed(0)}%` : "—", `> ${st.budgetMs.toFixed(0)} ms`),
+    stat("headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0),
   ];
   host.append(...cards);
 }
