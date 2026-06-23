@@ -77,10 +77,9 @@ class ManipulationServer(Node):
         self.inference_hz = inference_hz
         self.policy_speed = self.get_parameter("speed").value
         # De-rate applied to the recorded/predicted base velocity at execution time. Replay and
-        # learned inference are tuned independently: replay plays back recorded cmd_vel 1:1 by
-        # default, the learned path de-rates the policy's predicted cmd_vel to half speed.
+        # learned inference are tuned independently; both play back base cmd_vel 1:1 by default.
         self.declare_parameter("replay_base_speed_scale", 1.0)
-        self.declare_parameter("learned_base_speed_scale", 0.5)
+        self.declare_parameter("learned_base_speed_scale", 1.0)
         self.replay_base_speed_scale = self.get_parameter("replay_base_speed_scale").value
         self.learned_base_speed_scale = self.get_parameter("learned_base_speed_scale").value
         # n_action_steps=0 means "auto" (min(40, chunk_size)); a per-skill value still wins.
