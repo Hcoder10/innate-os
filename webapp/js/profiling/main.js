@@ -13,7 +13,12 @@ import { mountPage } from "../pageMount.js";
 import { INFERENCE_PROFILE_TOPIC } from "../constants.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full record
+const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full retained record
+// Cap the retained record so an unattended recording can't grow without bound. At the
+// 25 Hz inference rate this is ~20 min of history — well past any real profiling session —
+// and it bounds the per-tick computeStats/histogram sort cost, not just memory. Older
+// samples roll off; stats and the export reflect the most recent MAX_SAMPLES.
+const MAX_SAMPLES = 30000;
 
 initShell("profiling", "../");
 
@@ -122,6 +127,7 @@ function buildView(root) {
     const s = parseSample(msg?.data);
     if (s) {
       samples.push(s);
+      if (samples.length > MAX_SAMPLES) samples.shift();
       dirty = true;
     }
   });
@@ -282,7 +288,7 @@ function downloadText(text, filename) {
  * @param {ReturnType<typeof chartCard>} disagreementCard
  */
 function render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard) {
-  // computeStats sorts the (growing) record for percentiles, so do it once per tick and
+  // computeStats sorts the retained record for percentiles, so do it once per tick and
   // share it with the views that need aggregates.
   const st = computeStats(samples);
   renderStats(st, statsRow);
