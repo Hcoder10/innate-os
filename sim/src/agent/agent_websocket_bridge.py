@@ -1373,15 +1373,17 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
         if ret:
             jpg_bytes = encoded_img.tobytes()
 
-            # Build a sensor_msgs/CompressedImage message
-            # RWS expects uint8[] as a JSON int array, not base64
+            # Build a sensor_msgs/CompressedImage message.
+            # uint8[] is sent as a base64 string per the rosbridge protocol; this
+            # is ~60-70% smaller on the wire than a JSON int array (and cheaper to
+            # serialize). The server re-encodes to base64 for subscribers anyway.
             compressed_msg = {
                 "header": {
                     "stamp": {"sec": sec, "nanosec": nsec},
                     "frame_id": rsm.frame_id,
                 },
                 "format": "jpeg",
-                "data": list(jpg_bytes),
+                "data": base64.b64encode(jpg_bytes).decode("utf-8"),
             }
             outbound = rosbridge_publish("/mars/main_camera/left/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
@@ -1394,15 +1396,14 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
         if ret:
             jpg_bytes = encoded_img.tobytes()
 
-            # Build a sensor_msgs/CompressedImage message
-            # RWS expects uint8[] as a JSON int array, not base64
+            # Build a sensor_msgs/CompressedImage message (base64 uint8[], see above).
             compressed_msg = {
                 "header": {
                     "stamp": {"sec": sec, "nanosec": nsec},
                     "frame_id": "arm_wrist_camera_frame",
                 },
                 "format": "jpeg",
-                "data": list(jpg_bytes),
+                "data": base64.b64encode(jpg_bytes).decode("utf-8"),
             }
             outbound = rosbridge_publish("/mars/arm/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
