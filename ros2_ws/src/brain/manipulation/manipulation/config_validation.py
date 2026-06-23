@@ -138,6 +138,9 @@ class LearnedExecCfg(_BaseExecCfg):
     """``execution`` block for ``type: learned`` skills."""
 
     checkpoint: str = Field(..., min_length=1)
+    sock_detector: str | None = Field(None, min_length=1)
+    sock_detector_conf: float | None = Field(None, ge=0.0, le=1.0)
+    sock_detector_imgsz: int | None = Field(None, ge=32, le=4096)
     action_dim: int = Field(DEFAULT_ACTION_DIM, ge=1, le=64)
     duration: float = Field(120.0, gt=0)
     progress_threshold: float = Field(2.0, ge=0)
@@ -161,6 +164,8 @@ class LearnedExecCfg(_BaseExecCfg):
         "start_pose_time",
         "end_pose_time",
         "n_action_steps",
+        "sock_detector_conf",
+        "sock_detector_imgsz",
         mode="before",
     )
     @classmethod
@@ -329,6 +334,12 @@ def validate_behavior_config(
         resolved_path = os.path.join(skill_dir, params.checkpoint)
         if check_files_exist and not os.path.isfile(resolved_path):
             raise BehaviorConfigError(f"execution.checkpoint: file does not exist at {resolved_path!r}")
+        if params.sock_detector:
+            sock_detector_path = os.path.join(skill_dir, params.sock_detector)
+            if check_files_exist and not os.path.isfile(sock_detector_path):
+                raise BehaviorConfigError(
+                    f"execution.sock_detector: file does not exist at {sock_detector_path!r}"
+                )
     elif behavior_type == "replay":
         assert isinstance(params, ReplayExecCfg)
         resolved_path = os.path.join(skill_dir, params.replay_file)

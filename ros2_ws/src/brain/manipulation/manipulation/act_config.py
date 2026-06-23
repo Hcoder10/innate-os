@@ -17,6 +17,9 @@ _CHUNK_SIZE_KEY = "model.decoder_pos_embed.weight"
 # action_dim is the output width of the action head (nn.Linear(dim_model, action_dim)).
 _ACTION_HEAD_KEY = "model.action_head.weight"
 
+# environment_state_dim is the width of the optional sock-state projection.
+_ENV_STATE_KEY = "model.encoder_env_state_input_proj.weight"
+
 
 def load_torch_file(path, mmap=False, log=None):
     """``torch.load`` onto CPU with a ``weights_only=True`` fast path and a fallback.
@@ -88,6 +91,12 @@ def infer_action_dim(state_dict):
     return weight.shape[0] if weight is not None else None
 
 
+def infer_environment_state_dim(state_dict):
+    """Infer optional observation.environment_state width from checkpoint weights."""
+    weight = state_dict.get(_ENV_STATE_KEY)
+    return int(weight.shape[1]) if weight is not None else 0
+
+
 def validate_action_dim(state_dict, action_dim, checkpoint_path=""):
     """Raise if the caller-supplied action_dim disagrees with the checkpoint.
 
@@ -107,7 +116,12 @@ def validate_action_dim(state_dict, action_dim, checkpoint_path=""):
 
 
 def create_act_config(
-    action_dim=DEFAULT_ACTION_DIM, chunk_size=30, n_action_steps=None, speed=1.5, temporal_ensemble_coeff=None
+    action_dim=DEFAULT_ACTION_DIM,
+    chunk_size=30,
+    n_action_steps=None,
+    speed=1.5,
+    temporal_ensemble_coeff=None,
+    environment_state_dim=0,
 ):
     """ACT config matching the training setup.
 
@@ -124,16 +138,20 @@ def create_act_config(
     if temporal_ensemble_coeff is not None:
         n_action_steps = 1
 
+    input_shapes = {
+        "observation.image_camera_1": [3, 224, 224],
+        "observation.image_camera_2": [3, 224, 224],
+        "observation.state": [6],
+    }
+    if environment_state_dim:
+        input_shapes["observation.environment_state"] = [int(environment_state_dim)]
+
     return ACTConfig(
         n_obs_steps=1,
         chunk_size=chunk_size,
         n_action_steps=n_action_steps,
         speed=speed,
-        input_shapes={
-            "observation.image_camera_1": [3, 224, 224],
-            "observation.image_camera_2": [3, 224, 224],
-            "observation.state": [6],
-        },
+        input_shapes=input_shapes,
         output_shapes={"action": [action_dim]},
         vision_backbone="resnet18",
         replace_final_stride_with_dilation=False,

@@ -27,6 +27,7 @@ from manipulation.ACT import ACTPolicy  # noqa: E402
 from manipulation.act_config import (  # noqa: E402
     create_act_config,
     infer_chunk_size,
+    infer_environment_state_dim,
     load_torch_file,
     normalize_state_dict,
     validate_action_dim,
@@ -45,6 +46,78 @@ from manipulation.config_validation import (  # noqa: E402
     ValidatedBehavior,
     validate_behavior_config,
 )
+
+
+class SockStateEstimator:
+    """YOLO-backed sock-state encoder matching the ACT training pipeline."""
+
+    def __init__(self, checkpoint_path, conf_threshold, imgsz, device, logger):
+        self.checkpoint_path = os.path.expanduser(checkpoint_path)
+        self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
+        self.device = device
+        self.logger = logger
+
+        if not os.path.isfile(self.checkpoint_path):
+            raise FileNotFoundError(f"sock detector checkpoint not found at {self.checkpoint_path!r}")
+
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise RuntimeError(
+                "ultralytics is required for sock-state ACT inference. "
+                "Install it on the robot or select a baseline checkpoint."
+            ) from exc
+
+        self.model = YOLO(self.checkpoint_path)
+        self.logger.info(
+            f"Sock detector loaded from {self.checkpoint_path} "
+            f"(conf={self.conf_threshold}, imgsz={self.imgsz}, device={self.device or 'auto'})"
+        )
+
+    @staticmethod
+    def _box_to_sock_state(result, conf_threshold, width, height):
+        empty = np.zeros((5,), dtype=np.float32)
+        boxes = getattr(result, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return empty
+
+        confs = boxes.conf.detach().cpu().numpy()
+        keep = np.where(confs >= conf_threshold)[0]
+        if keep.size == 0:
+            return empty
+
+        best_idx = int(keep[np.argmax(confs[keep])])
+        x1, y1, x2, y2 = boxes.xyxy[best_idx].detach().cpu().numpy().astype(np.float32)
+        state = np.array(
+            [
+                1.0,
+                ((x1 + x2) * 0.5) / max(width, 1),
+                ((y1 + y2) * 0.5) / max(height, 1),
+                (x2 - x1) / max(width, 1),
+                (y2 - y1) / max(height, 1),
+            ],
+            dtype=np.float32,
+        )
+        return np.clip(state, 0.0, 1.0)
+
+    def estimate(self, images):
+        """Return [valid, cx, cy, w, h] for each camera, concatenated."""
+        predict_kwargs = {
+            "imgsz": self.imgsz,
+            "conf": self.conf_threshold,
+            "verbose": False,
+            "max_det": 3,
+        }
+        if self.device:
+            predict_kwargs["device"] = self.device
+        results = self.model.predict(images, **predict_kwargs)
+
+        states = []
+        for image, result in zip(images, results, strict=False):
+            height, width = image.shape[:2]
+            states.append(self._box_to_sock_state(result, self.conf_threshold, width, height))
+        return np.concatenate(states).astype(np.float32)
 
 
 class ManipulationServer(Node):
@@ -98,6 +171,18 @@ class ManipulationServer(Node):
             self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); using default 0.01")
             coeff = 0.01
         self.temporal_ensemble_coeff = coeff if coeff != 0 else None
+        self.declare_parameter("sock_detector_checkpoint", "")
+        self.declare_parameter("sock_detector_conf", 0.25)
+        self.declare_parameter("sock_detector_imgsz", 640)
+        self.declare_parameter("sock_detector_device", "")
+        self.declare_parameter("sock_state_required", True)
+        self.default_sock_detector_checkpoint = os.path.expanduser(
+            self.get_parameter("sock_detector_checkpoint").value or ""
+        )
+        self.sock_detector_conf = float(self.get_parameter("sock_detector_conf").value)
+        self.sock_detector_imgsz = int(self.get_parameter("sock_detector_imgsz").value)
+        self.sock_detector_device = self.get_parameter("sock_detector_device").value or ""
+        self.sock_state_required = bool(self.get_parameter("sock_state_required").value)
 
         # Image size for policy inference (matches checkpoint training)
         self.bridge = CvBridge()
@@ -115,6 +200,8 @@ class ManipulationServer(Node):
         self.current_goal_handle = None
         self.current_policy = None
         self.current_action_dim = 10  # Add this to track current policy's action dimension
+        self.current_environment_state_dim = 0
+        self.sock_state_estimator = None
         self._cancel_requested = threading.Event()
 
         # Sensor data
@@ -300,11 +387,16 @@ class ManipulationServer(Node):
 
     def _release_policy(self):
         """Free the loaded policy and reclaim GPU memory."""
-        if self.current_policy is None:
+        if self.current_policy is None and self.sock_state_estimator is None:
             return
         try:
-            del self.current_policy
+            if self.current_policy is not None:
+                del self.current_policy
+            if self.sock_state_estimator is not None:
+                del self.sock_state_estimator
             self.current_policy = None
+            self.sock_state_estimator = None
+            self.current_environment_state_dim = 0
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -331,12 +423,26 @@ class ManipulationServer(Node):
             n_action_steps_override = params.n_action_steps
             if n_action_steps_override is None and self.default_n_action_steps > 0:
                 n_action_steps_override = self.default_n_action_steps
+            sock_detector_path = (
+                os.path.join(skill_dir, params.sock_detector)
+                if params.sock_detector
+                else self.default_sock_detector_checkpoint
+            )
+            sock_detector_conf = params.sock_detector_conf
+            if sock_detector_conf is None:
+                sock_detector_conf = self.sock_detector_conf
+            sock_detector_imgsz = params.sock_detector_imgsz
+            if sock_detector_imgsz is None:
+                sock_detector_imgsz = self.sock_detector_imgsz
 
             # Load policy
             if not self._load_policy_for_behavior(
                 checkpoint_path,
                 action_dim,
                 n_action_steps_override=n_action_steps_override,
+                sock_detector_path=sock_detector_path,
+                sock_detector_conf=sock_detector_conf,
+                sock_detector_imgsz=sock_detector_imgsz,
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
 
@@ -611,7 +717,15 @@ class ManipulationServer(Node):
             self._stop_robot()
             return "FAILURE", f"Exception during replay execution: {str(e)}"
 
-    def _load_policy_for_behavior(self, checkpoint_path, action_dim, n_action_steps_override=None):
+    def _load_policy_for_behavior(
+        self,
+        checkpoint_path,
+        action_dim,
+        n_action_steps_override=None,
+        sock_detector_path=None,
+        sock_detector_conf=None,
+        sock_detector_imgsz=None,
+    ):
         """Load ACT policy for a specific behavior.
 
         n_action_steps_override: optional override for the ACT replanning horizon.
@@ -643,6 +757,11 @@ class ManipulationServer(Node):
             # Infer chunk_size from checkpoint weights so the model matches the checkpoint
             chunk_size = infer_chunk_size(state_dict)
             self.get_logger().info(f"Using chunk_size={chunk_size} (inferred from checkpoint)")
+            environment_state_dim = infer_environment_state_dim(state_dict)
+            if environment_state_dim:
+                self.get_logger().info(
+                    f"Using environment_state_dim={environment_state_dim} (inferred from checkpoint)"
+                )
 
             # Fail loudly if the metadata action_dim disagrees with the checkpoint's action
             # head. Otherwise load_state_dict(assign=True) silently exports a wrong-width head
@@ -655,7 +774,30 @@ class ManipulationServer(Node):
                 n_action_steps=n_action_steps_override,
                 speed=self.policy_speed,
                 temporal_ensemble_coeff=self.temporal_ensemble_coeff,
+                environment_state_dim=environment_state_dim,
             )
+            self.current_environment_state_dim = environment_state_dim
+            if environment_state_dim:
+                if environment_state_dim != 10:
+                    self.get_logger().warn(
+                        f"Sock-state checkpoint expects environment_state_dim={environment_state_dim}; "
+                        "the runtime detector emits 10 values ([valid,cx,cy,w,h] for two cameras)."
+                    )
+                if not sock_detector_path:
+                    if self.sock_state_required:
+                        self.get_logger().error(
+                            "Checkpoint expects observation.environment_state but no sock detector was configured."
+                        )
+                        return False
+                    self.get_logger().warn("No sock detector configured; using zero environment_state.")
+                else:
+                    self.sock_state_estimator = SockStateEstimator(
+                        sock_detector_path,
+                        sock_detector_conf,
+                        sock_detector_imgsz,
+                        self.sock_detector_device,
+                        self.get_logger(),
+                    )
 
             # TensorRT is the only inference path: a fused engine runs the ACT forward ~10x
             # faster (~6ms vs ~64ms eager) with near-exact accuracy (~0.02% RMSE). The engine
@@ -693,7 +835,7 @@ class ManipulationServer(Node):
             # load_state_dict, the host->device transfer and the dataset_stats load -- all of
             # which exist purely to export the engine. engine_path_for matches build_engine's
             # own cache key, so a miss here is exactly a miss inside build_engine.
-            engine_path = engine_path_for(checkpoint_path, action_dim, chunk_size, "fp32")
+            engine_path = engine_path_for(checkpoint_path, action_dim, chunk_size, "fp32", environment_state_dim)
             if not os.path.exists(engine_path):
                 stats_path = os.path.join(os.path.dirname(checkpoint_path), "dataset_stats.pt")
                 dataset_stats = None
@@ -705,7 +847,8 @@ class ManipulationServer(Node):
 
                 self.get_logger().info(
                     f"Engine not cached; building eager ACTPolicy to export it "
-                    f"(action_dim={action_dim}, chunk_size={chunk_size}) on device={self.device}"
+                    f"(action_dim={action_dim}, chunk_size={chunk_size}, "
+                    f"environment_state_dim={environment_state_dim}) on device={self.device}"
                 )
                 # Build on CPU and adopt the checkpoint tensors directly (assign=True) to avoid
                 # allocating random weights on the GPU and a redundant device transfer. The model
@@ -762,6 +905,10 @@ class ManipulationServer(Node):
                 "observation.image_camera_2": torch.zeros(1, 3, 224, 224, device=self.device),
                 "observation.state": torch.zeros(1, 6, device=self.device),
             }
+            if self.current_environment_state_dim:
+                dummy_batch["observation.environment_state"] = torch.zeros(
+                    1, self.current_environment_state_dim, device=self.device
+                )
             with torch.no_grad():
                 _ = self.current_policy.select_action(dummy_batch)
             if self.device.type == "cuda":
@@ -831,32 +978,54 @@ class ManipulationServer(Node):
         self.latest_joint_state = msg
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
+    def _estimate_sock_state(self, image1, image2):
+        """Build the environment-state vector expected by sock-state ACT."""
+        if not self.current_environment_state_dim:
+            return None
+        if self.sock_state_estimator is None:
+            return np.zeros((self.current_environment_state_dim,), dtype=np.float32)
+
+        sock_state = self.sock_state_estimator.estimate([image1, image2])
+        if sock_state.shape[0] != self.current_environment_state_dim:
+            self.get_logger().error(
+                f"Sock state has wrong dimensions. Expected {self.current_environment_state_dim}, "
+                f"got {sock_state.shape[0]}"
+            )
+            return None
+        return sock_state
+
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
 
         Returns the progress scalar (action[8]) for the early-termination check, or
         None if inputs aren't ready yet or inference failed.
         """
-        if (
-            not self.current_policy
-            or self.latest_image1 is None
-            or self.latest_image2 is None
-            or self.latest_joint_state is None
-        ):
+        latest_image1 = self.latest_image1
+        latest_image2 = self.latest_image2
+        latest_joint_state = self.latest_joint_state
+        if not self.current_policy or latest_image1 is None or latest_image2 is None or latest_joint_state is None:
             return None
 
         try:
+            sock_state_np = None
+            if self.current_environment_state_dim:
+                sock_state_np = self._estimate_sock_state(latest_image1, latest_image2)
+                if sock_state_np is None:
+                    return None
+
             # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
-            img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
-            img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
+            img1 = cv2.resize(latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
+            img2 = cv2.resize(latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
             img1 = np.transpose(img1.astype(np.float32) / 255.0, (2, 0, 1))
             img2 = np.transpose(img2.astype(np.float32) / 255.0, (2, 0, 1))
-            qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
+            qpos = np.asarray(latest_joint_state.position, dtype=np.float32)
             batch = {
                 "observation.image_camera_1": torch.tensor(img1, device=self.device).unsqueeze(0),
                 "observation.image_camera_2": torch.tensor(img2, device=self.device).unsqueeze(0),
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
+            if sock_state_np is not None:
+                batch["observation.environment_state"] = torch.tensor(sock_state_np, device=self.device).unsqueeze(0)
 
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)

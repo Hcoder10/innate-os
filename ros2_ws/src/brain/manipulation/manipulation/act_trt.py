@@ -32,7 +32,7 @@ import torch.nn.functional as F
 class _ExportWrapper(nn.Module):
     """Flatten ACTPolicy inference to plain tensors for ONNX export.
 
-    Input: raw images + state. Output: full unnormalized action chunk
+    Input: raw images + state (+ optional environment state). Output: full unnormalized action chunk
     (B, chunk_size, action_dim) -- i.e. normalize -> model -> unnormalize.
     """
 
@@ -41,12 +41,14 @@ class _ExportWrapper(nn.Module):
         self.policy = policy
 
     @torch.no_grad()
-    def forward(self, image_camera_1, image_camera_2, state):
+    def forward(self, image_camera_1, image_camera_2, state, environment_state=None):
         batch = {
             "observation.image_camera_1": image_camera_1,
             "observation.image_camera_2": image_camera_2,
             "observation.state": state,
         }
+        if "observation.environment_state" in self.policy.config.input_shapes:
+            batch["observation.environment_state"] = environment_state
         normalized = self.policy.normalize_inputs(batch)
         model_batch = self.policy._prepare_batch_for_model(normalized)
         chunk_normalized = self.policy.model(model_batch)[0]
@@ -71,11 +73,17 @@ def _dataset_stats_signature(checkpoint_path: str) -> str:
         return "nostats"
 
 
-def engine_path_for(checkpoint_path: str, action_dim: int, chunk_size: int, precision: str = "fp32") -> str:
+def engine_path_for(
+    checkpoint_path: str,
+    action_dim: int,
+    chunk_size: int,
+    precision: str = "fp32",
+    environment_state_dim: int = 0,
+) -> str:
     """Deterministic, version-scoped engine cache path next to the checkpoint.
 
     The TensorRT version, precision, the architecture dims baked into the engine
-    (action_dim, chunk_size), and a hash of the normalization stats are all in the
+    (action_dim, chunk_size, environment_state_dim), and a hash of the normalization stats are all in the
     filename so a TRT upgrade, a precision change, a checkpoint resolved with different
     dims, or regenerated stats transparently builds a fresh engine instead of silently
     reusing one whose I/O shapes or baked constants no longer match. The checkpoint path
@@ -85,7 +93,10 @@ def engine_path_for(checkpoint_path: str, action_dim: int, chunk_size: int, prec
     checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
     version = trt.__version__
     stats_sig = _dataset_stats_signature(checkpoint_path)
-    return f"{checkpoint_path}.{precision}.trt{version}.a{action_dim}.c{chunk_size}.s{stats_sig}.bs1.engine"
+    return (
+        f"{checkpoint_path}.{precision}.trt{version}.a{action_dim}.c{chunk_size}."
+        f"e{environment_state_dim}.s{stats_sig}.bs1.engine"
+    )
 
 
 def _timing_cache_path() -> str:
@@ -105,7 +116,14 @@ def build_engine(policy, checkpoint_path: str, device, precision: str = "fp32", 
     """
     action_dim = policy.config.output_shapes["action"][0]
     chunk_size = policy.config.chunk_size
-    engine_path = engine_path_for(checkpoint_path, action_dim, chunk_size, precision)
+    environment_state_dim = policy.config.input_shapes.get("observation.environment_state", [0])[0]
+    engine_path = engine_path_for(
+        checkpoint_path,
+        action_dim,
+        chunk_size,
+        precision,
+        environment_state_dim,
+    )
     if os.path.exists(engine_path):
         return engine_path
 
@@ -113,6 +131,7 @@ def build_engine(policy, checkpoint_path: str, device, precision: str = "fp32", 
 
     image_shape = policy.config.input_shapes["observation.image_camera_1"]
     state_dim = policy.config.input_shapes["observation.state"][0]
+    environment_state_dim = policy.config.input_shapes.get("observation.environment_state", [0])[0]
     # Per-process scratch paths: the startup sweep and the on-download pre-build can both build
     # the same checkpoint at once (the os.path.exists(engine_path) fast-path doesn't cover the
     # first-ever build). Sharing engine_path+".onnx" lets one build's torch.onnx.export truncate
@@ -126,6 +145,10 @@ def build_engine(policy, checkpoint_path: str, device, precision: str = "fp32", 
         torch.zeros(1, *image_shape, device=device),
         torch.zeros(1, state_dim, device=device),
     )
+    input_names = ["image_camera_1", "image_camera_2", "state"]
+    if environment_state_dim:
+        dummy = (*dummy, torch.zeros(1, environment_state_dim, device=device))
+        input_names.append("environment_state")
 
     tmp_path = scratch_prefix + ".tmp"
     # The ONNX export and the .tmp engine are scratch files; clean them up no matter how we
@@ -138,7 +161,7 @@ def build_engine(policy, checkpoint_path: str, device, precision: str = "fp32", 
             wrapper,
             dummy,
             onnx_path,
-            input_names=["image_camera_1", "image_camera_2", "state"],
+            input_names=input_names,
             output_names=["action_chunk"],
             opset_version=17,
             do_constant_folding=True,
@@ -225,6 +248,7 @@ class TRTACTPolicy:
         action_dim = config.output_shapes["action"][0]
         image_shape = config.input_shapes["observation.image_camera_1"]
         state_dim = config.input_shapes["observation.state"][0]
+        environment_state_dim = config.input_shapes.get("observation.environment_state", [0])[0]
 
         self._runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
         with open(engine_path, "rb") as f:
@@ -244,6 +268,8 @@ class TRTACTPolicy:
             "state": torch.empty(1, state_dim, device=device),
             "action_chunk": torch.empty(1, config.chunk_size, action_dim, device=device),
         }
+        if environment_state_dim:
+            self._buffers["environment_state"] = torch.empty(1, environment_state_dim, device=device)
         # Validate the deserialized engine's I/O against our buffers before binding raw
         # pointers: set_tensor_address does no size checking, so a cached engine built for a
         # different architecture (e.g. a stale file from older code) would otherwise read/write
@@ -303,6 +329,8 @@ class TRTACTPolicy:
             self._buffers["image_camera_1"].copy_(batch["observation.image_camera_1"])
             self._buffers["image_camera_2"].copy_(batch["observation.image_camera_2"])
             self._buffers["state"].copy_(batch["observation.state"])
+            if "environment_state" in self._buffers:
+                self._buffers["environment_state"].copy_(batch["observation.environment_state"])
             ok = self._context.execute_async_v3(self._stream.cuda_stream)
         self._stream.synchronize()
         if not ok:
@@ -361,6 +389,7 @@ def _main():
         DEFAULT_ACTION_DIM,
         create_act_config,
         infer_chunk_size,
+        infer_environment_state_dim,
         load_torch_file,
         normalize_state_dict,
         validate_action_dim,
@@ -379,10 +408,11 @@ def _main():
         raw_state_dict = load_torch_file(checkpoint_path, mmap=True, log=print)
         state_dict = normalize_state_dict(raw_state_dict)
         chunk_size = infer_chunk_size(state_dict)
+        environment_state_dim = infer_environment_state_dim(state_dict)
 
         # Fast path: if the current-version engine already exists, skip building the model.
         # Keeps the startup sweep cheap when engines exist.
-        existing = engine_path_for(checkpoint_path, action_dim, chunk_size, precision)
+        existing = engine_path_for(checkpoint_path, action_dim, chunk_size, precision, environment_state_dim)
         if os.path.exists(existing):
             print(f"Engine already current: {existing}")
             return
@@ -392,7 +422,11 @@ def _main():
         validate_action_dim(state_dict, action_dim, checkpoint_path)
 
         dataset_stats = load_torch_file(os.path.join(checkpoint_dir, "dataset_stats.pt"), log=print)
-        config = create_act_config(action_dim=action_dim, chunk_size=chunk_size)
+        config = create_act_config(
+            action_dim=action_dim,
+            chunk_size=chunk_size,
+            environment_state_dim=environment_state_dim,
+        )
         policy = ACTPolicy(config=config, dataset_stats=dataset_stats)
         policy.load_state_dict(state_dict, strict=False, assign=True)
         policy = policy.to(device).eval()

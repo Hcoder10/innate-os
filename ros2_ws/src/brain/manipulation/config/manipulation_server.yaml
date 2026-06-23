@@ -17,3 +17,8 @@ manipulation_server:
     #   < 0 : weight the LATEST chunk more (reactive/closed-loop; noisier)
     #   = 0 : disabled -- fall back to the chunked-queue path (replan every n_action_steps)
     temporal_ensemble_coeff: 0.01
+    sock_detector_checkpoint: ""           # optional fallback YOLO checkpoint for sock-state ACT policies
+    sock_detector_conf: 0.25               # YOLO confidence threshold used to build [valid,cx,cy,w,h] per camera
+    sock_detector_imgsz: 640               # YOLO inference image size
+    sock_detector_device: ""               # empty = ultralytics auto; use "0" / "cpu" to force
+    sock_state_required: true              # fail fast if a sock-state ACT checkpoint has no detector configured
