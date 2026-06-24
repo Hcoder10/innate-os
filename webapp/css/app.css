@@ -418,6 +418,110 @@ button {
   border-radius: 999px;
 }
 
+/* ---- profiling panel (Teleop) ------------------------------------------- */
+
+/* Discrete toggle: a small glass pulse button, top-right corner. */
+.profiling-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.profiling-toggle:hover {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.profiling-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* Panel sits just below the toggle; denser glass since it's over the feed. */
+.profiling {
+  position: absolute;
+  top: 54px;
+  right: 14px;
+  width: 232px;
+  padding: 11px 14px;
+  background: rgb(0 0 0 / 66%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.profiling-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.profiling-hint {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 1.5;
+}
+
+.profiling-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 11px 10px;
+}
+
+.profiling-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profiling-row {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.profiling-value {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.profiling-unit {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* The jitter buffer delay is the headline metric — span the row and accent it. */
+.profiling-item.headline {
+  grid-column: 1 / -1;
+}
+
+.profiling-item.headline .profiling-value {
+  font-size: 20px;
+  color: var(--accent);
+}
+
 /* ---- record HUD (Collect page) ------------------------------------------ */
 
 .overlay-record {

@@ -1,5 +1,7 @@
 #include "mars_cam/webrtc_streamer.hpp"
 
+#include <gst/rtp/rtp.h>
+
 #include <sstream>
 #include <algorithm>
 #include <cctype>
@@ -17,6 +19,81 @@ GstWebRTCPeerConnectionState peer_connection_state(GstElement* webrtc) {
 // has stayed down this many consecutive polls (~15 s) — long enough for webrtcbin to recover a
 // transient blip via ICE restart, short enough to free the video encoders + mic on a dead session.
 constexpr int kTeardownGracePolls = 75;
+
+// ---- WebRTC "playout-delay" RTP header extension -----------------------------------------------
+// Caps the receiver's de-jitter buffer. On a clean LAN libwebrtc's adaptive estimator sits on a
+// conservative buffer (~75 ms measured) even when the client asks for minimal delay via
+// jitterBufferTarget=0 — that only lowers the floor, not the ceiling. This extension's max bound is
+// a hard upper clamp libwebrtc honors, so it's the lever that actually pulls the delay down.
+// GStreamer < 1.24 ships no built-in element for this URI, so we implement it as a minimal
+// GstRTPHeaderExtension subclass and add it to each payloader; webrtcbin then emits the matching
+// a=extmap line and the payloader writes the bytes into every RTP packet.
+//
+// Wire format (WebRTC experiment): 3 bytes = MIN delay (12 bits) | MAX delay (12 bits), 10 ms units.
+#define MARS_PLAYOUT_DELAY_URI "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"
+
+// One-byte extmap id, kept at the top of the 1..14 range so it does not clash with the low ids
+// webrtcbin auto-assigns to the extensions it manages itself (mid, transport-cc, ...).
+constexpr guint kPlayoutDelayExtId = 14;
+
+struct MarsPlayoutDelayExt {
+    GstRTPHeaderExtension parent;
+    guint min_delay_ms;
+    guint max_delay_ms;
+};
+struct MarsPlayoutDelayExtClass {
+    GstRTPHeaderExtensionClass parent_class;
+};
+
+G_DEFINE_TYPE(MarsPlayoutDelayExt, mars_playout_delay_ext, GST_TYPE_RTP_HEADER_EXTENSION)
+
+GstRTPHeaderExtensionFlags mars_playout_delay_supported_flags(GstRTPHeaderExtension*) {
+    return static_cast<GstRTPHeaderExtensionFlags>(GST_RTP_HEADER_EXTENSION_ONE_BYTE |
+                                                   GST_RTP_HEADER_EXTENSION_TWO_BYTE);
+}
+
+gsize mars_playout_delay_max_size(GstRTPHeaderExtension*, const GstBuffer*) {
+    return 3;
+}
+
+gssize mars_playout_delay_write(GstRTPHeaderExtension* ext, const GstBuffer* /*input_meta*/,
+                                GstRTPHeaderExtensionFlags /*write_flags*/, GstBuffer* /*output*/, guint8* data,
+                                gsize size) {
+    if (size < 3) {
+        return -1;
+    }
+    auto* self = reinterpret_cast<MarsPlayoutDelayExt*>(ext);
+    const guint min_units = (self->min_delay_ms / 10) & 0xFFF;  // 12-bit, 10 ms units
+    const guint max_units = (self->max_delay_ms / 10) & 0xFFF;
+    data[0] = static_cast<guint8>(min_units >> 4);
+    data[1] = static_cast<guint8>(((min_units & 0xF) << 4) | ((max_units >> 8) & 0xF));
+    data[2] = static_cast<guint8>(max_units & 0xFF);
+    return 3;
+}
+
+void mars_playout_delay_ext_class_init(MarsPlayoutDelayExtClass* klass) {
+    GstRTPHeaderExtensionClass* ext_class = GST_RTP_HEADER_EXTENSION_CLASS(klass);
+    ext_class->get_supported_flags = mars_playout_delay_supported_flags;
+    ext_class->get_max_size = mars_playout_delay_max_size;
+    ext_class->write = mars_playout_delay_write;
+    gst_rtp_header_extension_class_set_uri(ext_class, MARS_PLAYOUT_DELAY_URI);
+    gst_element_class_set_metadata(GST_ELEMENT_CLASS(klass), "Playout delay RTP header extension",
+                                   GST_RTP_HDREXT_ELEMENT_CLASS, "WebRTC playout-delay header extension", "mars_cam");
+}
+
+void mars_playout_delay_ext_init(MarsPlayoutDelayExt* self) {
+    self->min_delay_ms = 0;
+    self->max_delay_ms = 0;
+}
+
+// Returns a floating ref; the payloader's "add-extension" (transfer full) takes ownership.
+GstRTPHeaderExtension* make_playout_delay_ext(guint ext_id, guint min_ms, guint max_ms) {
+    auto* self = static_cast<MarsPlayoutDelayExt*>(g_object_new(mars_playout_delay_ext_get_type(), nullptr));
+    self->min_delay_ms = min_ms;
+    self->max_delay_ms = max_ms;
+    gst_rtp_header_extension_set_id(GST_RTP_HEADER_EXTENSION(self), ext_id);
+    return GST_RTP_HEADER_EXTENSION(self);
+}
 }  // namespace
 
 WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
@@ -48,6 +125,12 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("audio_source_element", "alsasrc");
     this->declare_parameter("audio_capture_device", "");
 
+    // Receiver de-jitter buffer bounds (ms) signalled via the playout-delay RTP header extension.
+    // max caps libwebrtc's conservative buffer; min lets it go as low as the cap allows. Tunable
+    // from the launch file so the latency/jitter tradeoff can be retuned with a restart (no rebuild).
+    this->declare_parameter("playout_min_delay_ms", 0);
+    this->declare_parameter("playout_max_delay_ms", 40);
+
     // Get parameters
     use_compressed_images_ = this->get_parameter("use_compressed_images").as_bool();
     live_main_topic_ = this->get_parameter("live_main_camera_topic").as_string();
@@ -57,6 +140,8 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     enable_audio_ = this->get_parameter("enable_audio").as_bool();
     audio_source_element_ = this->get_parameter("audio_source_element").as_string();
     audio_capture_device_ = this->get_parameter("audio_capture_device").as_string();
+    playout_min_delay_ms_ = static_cast<guint>(this->get_parameter("playout_min_delay_ms").as_int());
+    playout_max_delay_ms_ = static_cast<guint>(this->get_parameter("playout_max_delay_ms").as_int());
 
     // Create publishers
     offer_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer", 10);
@@ -522,18 +607,22 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
         "caps=video/x-raw,format=BGR,width=640,height=480,framerate=30/1 ! "
         "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
         "videoconvert ! "
-        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 ! "
-        "rtpvp8pay pt=96 ! "
-        "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! "
+        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
+        "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
+        "rtpvp8pay name=pay_main pt=96 ! "
+        // Named so attach_playout_delay_extension() can add the playout-delay extmap field to the
+        // caps webrtcbin reads when building the offer. Base RTP caps are set there too.
+        "capsfilter name=rtpcaps_main ! "
         "webrtc.sink_0 "
 
         "appsrc name=src_arm is-live=true format=time "
         "caps=video/x-raw,format=BGR,width=640,height=480,framerate=15/1 ! "
         "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
         "videoconvert ! "
-        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 ! "
-        "rtpvp8pay pt=97 ! "
-        "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=97 ! "
+        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
+        "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
+        "rtpvp8pay name=pay_arm pt=97 ! "
+        "capsfilter name=rtpcaps_arm ! "
         "webrtc.sink_1";
 
     if (with_audio) {
@@ -588,6 +677,50 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
     return desc;
 }
 
+void WebRTCStreamer::attach_playout_delay_extension() {
+    // Apply the playout-delay header extension to both video tracks. Two pieces, agreeing on the
+    // extmap id: (1) the extmap field in the RTP caps webrtcbin reads -> emits the SDP a=extmap
+    // line, and (2) the extension object added to the payloader -> writes the 3 bytes into every
+    // RTP packet (GStreamer < 1.24 has no built-in writer for this URI).
+    const std::string extmap_field = "extmap-" + std::to_string(kPlayoutDelayExtId);
+
+    struct VideoTrack {
+        const char* payloader;
+        const char* capsfilter;
+        int payload;
+    };
+    for (const VideoTrack& track :
+         {VideoTrack{"pay_main", "rtpcaps_main", 96}, VideoTrack{"pay_arm", "rtpcaps_arm", 97}}) {
+        GstElement* pay = gst_bin_get_by_name(GST_BIN(pipeline_), track.payloader);
+        GstElement* caps_elem = gst_bin_get_by_name(GST_BIN(pipeline_), track.capsfilter);
+        if (!pay || !caps_elem) {
+            RCLCPP_WARN(this->get_logger(), "Missing %s/%s; playout-delay extension not applied to that track",
+                        track.payloader, track.capsfilter);
+            if (pay)
+                gst_object_unref(pay);
+            if (caps_elem)
+                gst_object_unref(caps_elem);
+            continue;
+        }
+
+        GstCaps* caps =
+            gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "video", "encoding-name", G_TYPE_STRING,
+                                "VP8", "clock-rate", G_TYPE_INT, 90000, "payload", G_TYPE_INT, track.payload, nullptr);
+        gst_caps_set_simple(caps, extmap_field.c_str(), G_TYPE_STRING, MARS_PLAYOUT_DELAY_URI, nullptr);
+        g_object_set(caps_elem, "caps", caps, nullptr);
+        gst_caps_unref(caps);
+
+        GstRTPHeaderExtension* ext =
+            make_playout_delay_ext(kPlayoutDelayExtId, playout_min_delay_ms_, playout_max_delay_ms_);
+        g_signal_emit_by_name(pay, "add-extension", ext);  // transfer full: payloader owns ext now
+
+        gst_object_unref(pay);
+        gst_object_unref(caps_elem);
+    }
+    RCLCPP_INFO(this->get_logger(), "Playout-delay extension applied (id=%u, min=%u ms, max=%u ms)", kPlayoutDelayExtId,
+                playout_min_delay_ms_, playout_max_delay_ms_);
+}
+
 bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
     GError* error = nullptr;
     std::string desc = build_pipeline_description(with_audio);
@@ -627,6 +760,8 @@ bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
                  "max-bytes", 2 * 640 * 480 * 3, nullptr);
     g_object_set(appsrc_arm_, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
                  "max-bytes", 2 * 640 * 480 * 3, nullptr);
+
+    attach_playout_delay_extension();
 
     // Connect signals
     g_signal_connect(webrtc_, "on-ice-candidate", G_CALLBACK(on_ice_candidate), this);

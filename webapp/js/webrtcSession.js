@@ -97,6 +97,14 @@ export class WebRtcSession {
   }
 
   /**
+   * Live RTCStatsReport for the profiling panel, or null when no pc is up.
+   * @returns {Promise<RTCStatsReport | null>}
+   */
+  getStats() {
+    return this.#pc ? this.#pc.getStats() : Promise.resolve(null);
+  }
+
+  /**
    * @param {(state: WebRtcState) => void} cb Fires immediately, then on change.
    * @returns {() => void} unsubscribe
    */
@@ -213,9 +221,28 @@ export class WebRtcSession {
     const track = event.track;
     if (track.kind === "audio") {
       // Start in the operator's chosen state; never audible by default.
+      // NB: deliberately not tuned below — zeroing the audio receiver's NetEq
+      // buffer starves mic audio under jitter, and the latency win is video-only.
       track.enabled = this.#state.audioRequested;
       this.#patch({ audioStream: new MediaStream([track]) });
       return;
+    }
+
+    // Minimize the receive-side jitter buffer on the video receiver. The
+    // playout-delay extension caps the ceiling; these pin the floor.
+    // Units differ: jitterBufferTarget is in milliseconds, playoutDelayHint in
+    // seconds. Both 0 here means "minimal delay". Modern Chrome honors
+    // jitterBufferTarget and ignores the hint (not a strict fallback — both are
+    // set whenever present). To match the robot-side max=40, the values diverge:
+    // jitterBufferTarget = 40, playoutDelayHint = 0.04.
+    const receiver = event.receiver;
+    if (receiver) {
+      try {
+        if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
+        if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
+      } catch {
+        // unsupported; default buffer applies
+      }
     }
 
     const stream = new MediaStream([track]);
