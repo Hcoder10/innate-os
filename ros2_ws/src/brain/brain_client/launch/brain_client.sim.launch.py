@@ -40,7 +40,7 @@ def generate_launch_description():
     )
     depth_image_topic_arg = DeclareLaunchArgument(
         "depth_image_topic",
-        default_value="/depth/image_raw",
+        default_value="/camera/depth/image_raw",
         description="Depth image topic",
     )
     amcl_pose_topic_arg = DeclareLaunchArgument(
