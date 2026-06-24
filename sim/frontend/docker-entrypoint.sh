@@ -17,7 +17,14 @@ node -e '
   const fs = require("fs");
   const out = JSON.parse(fs.readFileSync("/app/public/config.json", "utf8"));
   const set = (key, env, parse = String) => {
-    if (process.env[env] != null) out[key] = parse(process.env[env]);
+    if (process.env[env] == null) return;
+    try {
+      out[key] = parse(process.env[env]);
+    } catch (e) {
+      // A malformed value (e.g. non-JSON PINNED_SKILLS) must not abort config
+      // generation and leave the app with no runtime config; keep the default.
+      console.error(`[entrypoint] ignoring invalid ${env}: ${e.message}`);
+    }
   };
   set("simBaseUrl",     "SIM_BASE_URL");
   set("wsBaseUrl",      "WS_BASE_URL");
