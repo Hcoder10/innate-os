@@ -9,8 +9,11 @@ RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --s
 # Detect a missing service key up front so we can warn loudly once launch is done.
 # Uses the same /etc/innate.env + repo .env merge as the runtime env, so this
 # matches what the nodes actually see (and treats an empty value as missing).
+# Match on the explicit "missing" token rather than the exit code: a crash in the
+# checker would also exit non-zero, and we must not show a false "no key" banner
+# when a key is actually present. No token (crash/empty) => assume present.
 SERVICE_KEY_MISSING=false
-if ! python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --has-service-key >/dev/null 2>&1; then
+if [ "$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --has-service-key 2>/dev/null)" = "missing" ]; then
     SERVICE_KEY_MISSING=true
 fi
 

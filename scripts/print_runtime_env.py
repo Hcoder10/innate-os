@@ -46,7 +46,9 @@ def main() -> int:
     parser.add_argument(
         "--has-service-key",
         action="store_true",
-        help="Exit 0 if INNATE_SERVICE_KEY resolves to a non-empty value, 1 otherwise. Prints nothing.",
+        help="Print 'present' or 'missing' for INNATE_SERVICE_KEY, then exit 0. "
+        "A non-zero exit means the check itself failed (so callers can tell a "
+        "real 'missing' apart from a crash).",
     )
     args = parser.parse_args()
 
@@ -54,7 +56,8 @@ def main() -> int:
     env = build_runtime_env(repo_root)
 
     if args.has_service_key:
-        return 0 if env.get("INNATE_SERVICE_KEY", "").strip() else 1
+        print("present" if env.get("INNATE_SERVICE_KEY", "").strip() else "missing")
+        return 0
 
     if args.shell:
         print("; ".join(f"export {key}={shlex.quote(value)}" for key, value in sorted(env.items())))
