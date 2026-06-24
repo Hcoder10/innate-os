@@ -105,16 +105,6 @@ def convert_episodes_to_h264(
                 )
                 continue
 
-            if not raw_path.exists():
-                if not h5_path.exists():
-                    # Source vanished mid-pass — the episode was deleted while we
-                    # were encoding this skill. Skip it instead of crashing the
-                    # whole pass; _update_metadata re-reads fresh and drops it.
-                    logger.info("Source for %s gone — skipping (deleted?)", item["filename"])
-                    continue
-                shutil.move(str(h5_path), str(raw_path))
-                logger.info("Moved %s -> raw_data/%s", h5_path.name, raw_path.name)
-
             yield ProgressUpdate(
                 stage=ProgressStage.COMPRESSING,
                 message=f"[{idx}/{total}] Encoding {item['filename']}…",
@@ -122,15 +112,24 @@ def convert_episodes_to_h264(
             )
 
             try:
-                _encode_camera_to_mp4(
-                    raw_path,
-                    cam_name,
-                    mp4_path,
-                    fps,
-                    nice_level=nice_level,
-                    threads=threads,
-                    idle_io=idle_io,
-                )
+                with _convert_lock(data_dir):
+                    if mp4_path.exists():
+                        continue  # another converter finished it first
+                    if not raw_path.exists():
+                        if not h5_path.exists():
+                            # deleted mid-pass — _update_metadata drops it
+                            logger.info("Source for %s gone — skipping", item["filename"])
+                            continue
+                        shutil.move(str(h5_path), str(raw_path))
+                    _encode_camera_to_mp4(
+                        raw_path,
+                        cam_name,
+                        mp4_path,
+                        fps,
+                        nice_level=nice_level,
+                        threads=threads,
+                        idle_io=idle_io,
+                    )
             except Exception as e:
                 yield ProgressUpdate(
                     stage=ProgressStage.ERROR,
@@ -161,7 +160,10 @@ def convert_episodes_to_h264(
             )
 
             try:
-                _strip_images_from_h5(raw_path, h5_path)
+                with _convert_lock(data_dir):
+                    if h5_path.exists():
+                        continue  # another converter already stripped it
+                    _strip_images_from_h5(raw_path, h5_path)
             except Exception as e:
                 yield ProgressUpdate(
                     stage=ProgressStage.ERROR,
@@ -190,13 +192,14 @@ def convert_episodes_to_h264(
             )
 
             try:
-                _transcode_mp4_to_420(
-                    mp4_path,
-                    fps,
-                    nice_level=nice_level,
-                    threads=threads,
-                    idle_io=idle_io,
-                )
+                with _convert_lock(data_dir):
+                    _transcode_mp4_to_420(
+                        mp4_path,
+                        fps,
+                        nice_level=nice_level,
+                        threads=threads,
+                        idle_io=idle_io,
+                    )
             except Exception as e:
                 yield ProgressUpdate(
                     stage=ProgressStage.ERROR,
@@ -532,6 +535,18 @@ def _metadata_lock(data_dir: Path):
         yield
     finally:
         os.close(fd)  # closing the fd releases the flock
+
+
+@contextlib.contextmanager
+def _convert_lock(data_dir: Path):
+    """Exclusive lock so the background encoder and a training upload can't
+    convert the same item at once. Held only around one item's move/encode."""
+    fd = os.open(str(data_dir / ".convert.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def _update_metadata(data_dir: Path) -> None:
