@@ -15,6 +15,10 @@ function gitCommitHash(): string {
 export default defineConfig({
   base: "/",
   plugins: [react()],
+  build: {
+    // Keep production bundles readable for debugging on the remote server.
+    minify: false,
+  },
   define: {
     // Pull version from package.json
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
