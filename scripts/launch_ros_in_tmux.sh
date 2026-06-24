@@ -6,6 +6,17 @@ ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
 DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 
+# Detect a missing service key up front so we can warn loudly once launch is done.
+# Uses the same /etc/innate.env + repo .env merge as the runtime env, so this
+# matches what the nodes actually see (and treats an empty value as missing).
+# Match on the explicit "missing" token rather than the exit code: a crash in the
+# checker would also exit non-zero, and we must not show a false "no key" banner
+# when a key is actually present. No token (crash/empty) => assume present.
+SERVICE_KEY_MISSING=false
+if [ "$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --has-service-key 2>/dev/null)" = "missing" ]; then
+    SERVICE_KEY_MISSING=true
+fi
+
 # ROS launch commands grouped into windows (pipe-delimited; one pane per command)
 ROS_COMMAND_GROUPS=(
     "ros2 launch mars_control app.launch.py|ros2 launch mars_bringup mars_bringup.launch.py"
@@ -136,6 +147,26 @@ echo "  ║                                         ║"
 echo "  ║  Run 'innate view' to monitor nodes 👀  ║"
 echo "  ╚═════════════════════════════════════════╝"
 echo ""
+
+# Loud, hard-to-miss warning when the robot has no service key. Printed last so
+# it's the final thing on screen. Without a key the robot still boots, but it
+# can't reach the Innate cloud brain — AI behaviors, logging and training are
+# all dead until a key is configured.
+if [ "$SERVICE_KEY_MISSING" = true ]; then
+    printf '\033[1;31m'
+    echo "  ════════════════════════════════════════════════════════════════════"
+    echo "   ⚠  NO SERVICE KEY FOUND"
+    echo "  ════════════════════════════════════════════════════════════════════"
+    echo "   This robot has no INNATE_SERVICE_KEY, so it cannot connect to the"
+    echo "   Innate cloud brain. AI behaviors, logging, and on-device training"
+    echo "   will not work until a service key is configured."
+    echo ""
+    echo "   To get a new service key, contact Innate on Discord:"
+    echo "       https://discord.gg/innate"
+    echo "  ════════════════════════════════════════════════════════════════════"
+    printf '\033[0m'
+    echo ""
+fi
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
 (sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
