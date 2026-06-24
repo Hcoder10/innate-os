@@ -641,8 +641,13 @@ class ACTTemporalEnsembler:
     def reset(self):
         """Resets the online computation variables."""
         self.ensembled_actions = None
+        # Online weighted mean of squares, mirroring ensembled_actions; together they give the
+        # weighted variance of the chunk predictions voting on each step (the ensemble's
+        # disagreement / uncertainty). last_disagreement is the std of the emitted action.
+        self.ensembled_actions_sq = None
         # (chunk_size,) count of how many actions are in the ensemble for each time step
         self.ensembled_actions_count = None
+        self.last_disagreement = None
 
     def update(self, actions: Tensor) -> Tensor:
         """
@@ -651,25 +656,37 @@ class ACTTemporalEnsembler:
         """
         self.ensemble_weights = self.ensemble_weights.to(device=actions.device)
         self.ensemble_weights_cumsum = self.ensemble_weights_cumsum.to(device=actions.device)
+        actions_sq = actions * actions
 
         if self.ensembled_actions is None:
             # Initialize with the first sequence of actions
             self.ensembled_actions = actions.clone()
+            self.ensembled_actions_sq = actions_sq.clone()
             self.ensembled_actions_count = torch.ones(
                 (self.chunk_size, 1), dtype=torch.long, device=self.ensembled_actions.device
             )
         else:
-            # Update existing ensemble
-            self.ensembled_actions *= self.ensemble_weights_cumsum[self.ensembled_actions_count - 1]
-            self.ensembled_actions += actions[:, :-1] * self.ensemble_weights[self.ensembled_actions_count]
-            self.ensembled_actions /= self.ensemble_weights_cumsum[self.ensembled_actions_count]
+            # Update existing ensemble. Capture the weights once and apply the same online-mean
+            # recurrence to both the actions and their squares (for the variance).
+            prev_w = self.ensemble_weights_cumsum[self.ensembled_actions_count - 1]
+            add_w = self.ensemble_weights[self.ensembled_actions_count]
+            new_w = self.ensemble_weights_cumsum[self.ensembled_actions_count]
+            self.ensembled_actions = (self.ensembled_actions * prev_w + actions[:, :-1] * add_w) / new_w
+            self.ensembled_actions_sq = (self.ensembled_actions_sq * prev_w + actions_sq[:, :-1] * add_w) / new_w
             self.ensembled_actions_count = torch.clamp(self.ensembled_actions_count + 1, max=self.chunk_size)
 
             # Add the last action which has no prior online average
             self.ensembled_actions = torch.cat([self.ensembled_actions, actions[:, -1:]], dim=1)
+            self.ensembled_actions_sq = torch.cat([self.ensembled_actions_sq, actions_sq[:, -1:]], dim=1)
             self.ensembled_actions_count = torch.cat(
                 [self.ensembled_actions_count, torch.ones_like(self.ensembled_actions_count[-1:])]
             )
+
+        # Ensemble disagreement for the action about to be emitted: weighted std across the
+        # chunk predictions that voted on slot 0, averaged over action dims. Kept on-device
+        # (no host sync); the caller reads it only when profiling.
+        var0 = (self.ensembled_actions_sq[:, 0] - self.ensembled_actions[:, 0] ** 2).clamp_min(0)
+        self.last_disagreement = var0.sqrt().mean()
 
         # Return the first action and update the queue
         action, self.ensembled_actions, self.ensembled_actions_count = (
@@ -677,6 +694,7 @@ class ACTTemporalEnsembler:
             self.ensembled_actions[:, 1:],
             self.ensembled_actions_count[1:],
         )
+        self.ensembled_actions_sq = self.ensembled_actions_sq[:, 1:]
         return action
 
 

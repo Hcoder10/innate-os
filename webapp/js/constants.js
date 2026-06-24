@@ -15,6 +15,10 @@ export const HEAD_CURRENT_POSITION_TOPIC = "/mars/head/current_position";
 
 export const TTS_TOPIC = "/brain/tts";
 
+// Per-step ACT inference timing breakdown (std_msgs/String carrying JSON), published
+// by the manipulation server while a learned behavior runs. Drives the Profiling page.
+export const INFERENCE_PROFILE_TOPIC = "/brain/manipulation/inference_profile";
+
 export const BATTERY_STATE_TOPIC = "/battery_state";
 // std_msgs/String carrying JSON (RobotInfo).
 export const ROBOT_INFO_TOPIC = "/robot/info";

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import gc
+import json
 import math
 import os
 import threading
@@ -19,7 +20,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import Float64MultiArray, Int32
+from std_msgs.msg import Float64MultiArray, Int32, String
 from std_srvs.srv import Trigger
 
 # Import your policy class and trajectory generator
@@ -77,10 +78,9 @@ class ManipulationServer(Node):
         self.inference_hz = inference_hz
         self.policy_speed = self.get_parameter("speed").value
         # De-rate applied to the recorded/predicted base velocity at execution time. Replay and
-        # learned inference are tuned independently: replay plays back recorded cmd_vel 1:1 by
-        # default, the learned path de-rates the policy's predicted cmd_vel to half speed.
+        # learned inference are tuned independently; both play back base cmd_vel 1:1 by default.
         self.declare_parameter("replay_base_speed_scale", 1.0)
-        self.declare_parameter("learned_base_speed_scale", 0.5)
+        self.declare_parameter("learned_base_speed_scale", 1.0)
         self.replay_base_speed_scale = self.get_parameter("replay_base_speed_scale").value
         self.learned_base_speed_scale = self.get_parameter("learned_base_speed_scale").value
         # n_action_steps=0 means "auto" (min(40, chunk_size)); a per-skill value still wins.
@@ -103,6 +103,11 @@ class ManipulationServer(Node):
         self.bridge = CvBridge()
         self.image_size = (224, 224)  # Resize to match checkpoint expectations
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Cache of GPU resampling matrices keyed by source (h, w). INTER_AREA is a
+        # separable linear filter, so resize == two matmuls with content-independent
+        # weights; precomputing them lets the whole resize run on-GPU, bit-exact to
+        # cv2.INTER_AREA (up to uint8 rounding), instead of on the contended CPU.
+        self._resize_mats = {}
 
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
@@ -140,6 +145,12 @@ class ManipulationServer(Node):
         self.arm_state_pub = self.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
         # Head position command (degrees) — only published for head-enabled replay skills.
         self.head_set_position_pub = self.create_publisher(Int32, "/mars/head/set_position", 10)
+        # Per-step inference timing breakdown (JSON String), for the webapp Profiling page.
+        # Only published while a learned behavior is executing, so it's free when idle.
+        self.inference_profile_pub = self.create_publisher(String, "/brain/manipulation/inference_profile", 10)
+        self._inference_seq = 0
+        # Previous emitted action, for the per-step command-jerk (smoothness) metric.
+        self._prev_action_np = None
         # Service clients
         self.head_ai_position_client = self.create_client(Trigger, "/mars/head/set_ai_position")
         self.arm_goto_client = self.create_client(GotoJS, "/mars/arm/goto_js")
@@ -296,6 +307,9 @@ class ManipulationServer(Node):
             self._stop_sensor_subscriptions()
             self.execution_running = False
             self.current_goal_handle = None
+            # Drop the jerk reference so the next behavior's first step isn't compared
+            # against this one's final action.
+            self._prev_action_np = None
             self._release_policy()
 
     def _release_policy(self):
@@ -831,6 +845,37 @@ class ManipulationServer(Node):
         self.latest_joint_state = msg
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
+    def _resize_matrices(self, h, w):
+        """Cached (row, col) GPU matrices replicating cv2.INTER_AREA for an (h, w) ->
+        image_size resize. INTER_AREA is separable, so its weights recover exactly from
+        identity inputs and apply as two matmuls."""
+        key = (h, w)
+        mats = self._resize_mats.get(key)
+        if mats is None:
+            out_h, out_w = self.image_size[1], self.image_size[0]
+            row = cv2.resize(np.eye(h, dtype=np.float32), (h, out_h), interpolation=cv2.INTER_AREA)
+            col = cv2.resize(np.eye(w, dtype=np.float32), (out_w, w), interpolation=cv2.INTER_AREA)
+            mats = (
+                torch.from_numpy(row).to(self.device),
+                torch.from_numpy(col).to(self.device),
+            )
+            self._resize_mats[key] = mats
+        return mats
+
+    def _resize_normalize_gpu(self, img_bgr):
+        """Resize a HWC uint8 BGR frame to (3, image_size) float32 in [0, 1] on the GPU,
+        matching the cv2.INTER_AREA + /255 + CHW transpose the model was trained on."""
+        h, w = img_bgr.shape[:2]
+        row, col = self._resize_matrices(h, w)
+        src = torch.from_numpy(np.ascontiguousarray(img_bgr)).to(self.device, non_blocking=True).float()
+        # Contract columns first: the (h, out_w, 3) intermediate is the cheaper order for a
+        # landscape frame (torch.einsum has no per-call optimize flag).
+        cols = torch.einsum("jkc,kl->jlc", src, col)
+        resized = torch.einsum("ij,jlc->ilc", row, cols)
+        # Round to uint8 before normalizing: cv2.resize returns a uint8 image, so training
+        # saw integer-quantized pixels. Matmuls stay in float, so round here to match.
+        return resized.round().permute(2, 0, 1) / 255.0
+
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
 
@@ -846,21 +891,31 @@ class ManipulationServer(Node):
             return None
 
         try:
-            # Keep BGR + INTER_AREA to match the training pipeline (recorder -> H5 -> webdataset).
-            img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
-            img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
-            img1 = np.transpose(img1.astype(np.float32) / 255.0, (2, 0, 1))
-            img2 = np.transpose(img2.astype(np.float32) / 255.0, (2, 0, 1))
+            profiling = self.inference_profile_pub.get_subscription_count() > 0
+
+            t0 = time.perf_counter()
+            # BGR + INTER_AREA matches the training pipeline.
+            img1 = self._resize_normalize_gpu(self.latest_image1).unsqueeze(0)
+            img2 = self._resize_normalize_gpu(self.latest_image2).unsqueeze(0)
             qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
             batch = {
-                "observation.image_camera_1": torch.tensor(img1, device=self.device).unsqueeze(0),
-                "observation.image_camera_2": torch.tensor(img2, device=self.device).unsqueeze(0),
+                "observation.image_camera_1": img1,
+                "observation.image_camera_2": img2,
                 "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
+            # Sync so the GPU resize is attributed to preprocess, not inference; no net cost
+            # since the engine waits on it anyway. Only when profiling.
+            if profiling and self.device.type == "cuda":
+                torch.cuda.current_stream().synchronize()
+            t1 = time.perf_counter()
 
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
-            action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks until inference is done
+            t_sel = time.perf_counter()
+            action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks on the remaining GPU work
+            t2 = time.perf_counter()
+            engine_ran = bool(getattr(self.current_policy, "engine_ran", True))
+            engine_ms = float(getattr(self.current_policy, "last_engine_ms", 0.0))
 
             if action_np.shape[0] < self.current_action_dim:
                 self.get_logger().error(
@@ -871,12 +926,66 @@ class ManipulationServer(Node):
             # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z, [8] progress.
             self._publish_base(float(action_np[6]), float(action_np[7]), self.learned_base_speed_scale)
             self._publish_arm(action_np[:6])
+            t3 = time.perf_counter()
+
+            if profiling:
+                quality = {}
+                if self.current_action_dim >= 10:
+                    quality["progress"] = float(action_np[8])
+                # Update prev first so a failure below can't stall it, and guard on matching
+                # shape: switching to a behavior with a different action_dim leaves a stale
+                # prev whose slices won't broadcast.
+                prev = self._prev_action_np
+                self._prev_action_np = action_np
+                if prev is not None and prev.shape == action_np.shape:
+                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - prev[:6]))
+                    quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - prev[6:8]))
+                disagreement = getattr(self.current_policy, "last_disagreement", None)
+                if disagreement is not None:
+                    quality["disagreement"] = float(disagreement)
+                self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
             return float(action_np[8]) if self.current_action_dim >= 10 else None
 
         except Exception as e:
             self.get_logger().error(f"Error during inference: {e}")
             return None
+
+    def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality=None):
+        """Publish one inference step's timing breakdown (ms) as JSON for the Profiling page.
+
+        Non-finite values are coerced to null: a diverging policy emits NaN/Inf actions,
+        which turn the derived jerk/progress fields non-finite. json.dumps would then write
+        a bare `NaN` token (invalid JSON), and the page's JSON.parse would reject the whole
+        sample — blanking the profiler exactly when divergence is most worth seeing.
+        allow_nan=False is a tripwire for any field we missed; the publish is isolated so a
+        serialization error can never break the live inference path.
+        """
+        self._inference_seq += 1
+
+        def fin(v):
+            return v if math.isfinite(v) else None
+
+        payload = {
+            "seq": self._inference_seq,
+            "t": time.time(),
+            "preprocess_ms": fin((t1 - t0) * 1000.0),
+            "inference_ms": fin((t2 - t1) * 1000.0),
+            "engine_ms": fin(engine_ms),
+            "transfer_ms": fin((t2 - t_sel) * 1000.0),
+            "postprocess_ms": fin((t3 - t2) * 1000.0),
+            "total_ms": fin((t3 - t0) * 1000.0),
+            "engine_ran": bool(engine_ran),
+            "period_ms": fin(1000.0 / self.inference_hz),
+        }
+        if quality:
+            payload.update({k: fin(v) for k, v in quality.items()})
+        try:
+            msg = String()
+            msg.data = json.dumps(payload, allow_nan=False)
+            self.inference_profile_pub.publish(msg)
+        except (ValueError, TypeError) as e:
+            self.get_logger().warning(f"Skipping inference profile sample: {e}")
 
     def _publish_arm(self, positions):
         """Publish a single absolute joint-position command (first 6 joints)."""
