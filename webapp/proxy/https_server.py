@@ -48,15 +48,27 @@ ROOT = Path(__file__).resolve().parent.parent
 CERT_DIR = Path.home() / ".innate-webapp-tls"
 ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 
-# Recorded episodes live here (mirrors the recorder's data_directory). The
-# /episode* routes only ever serve files resolved under this root.
-SKILLS_ROOT = Path(
-    os.path.join(
-        os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os")),
-        "workspace",
-        "custom_skills",
+# Recorded episodes live here. The /episode* routes only ever serve files
+# resolved under one of these roots. Besides workspace/custom_skills we also
+# allow the legacy in-place locations the brain still scans for skills
+# (script_paths.get_skill_directories): $INNATE_OS_ROOT/skills and ~/skills,
+# used through 0.5.x. Without them a dataset recorded under ~/skills lists in the
+# app (the brain reports its absolute path) but its media would 404 here.
+_INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
+SKILLS_ROOTS = tuple(
+    p.resolve()
+    for p in (
+        Path(_INNATE_OS_ROOT) / "workspace" / "custom_skills",
+        Path(_INNATE_OS_ROOT) / "skills",
+        Path(os.path.expanduser("~")) / "skills",
     )
-).resolve()
+)
+
+
+def _under_skills_root(p: Path) -> bool:
+    """True if p resolves inside one of the allowed skill roots (the media
+    path-traversal fence)."""
+    return any(p.is_relative_to(root) for root in SKILLS_ROOTS)
 
 
 def _quiet_benign_disconnects() -> None:
@@ -160,7 +172,7 @@ def _resolve_under_root(rel: str):
         p = Path(rel).resolve()
     except (OSError, ValueError):
         return None
-    return p if p.is_relative_to(SKILLS_ROOT) else None
+    return p if _under_skills_root(p) else None
 
 
 def _safe_resolve(p: Path):
@@ -225,7 +237,7 @@ def episode_response(request, qs: dict) -> Response:
     if base is None or not eid or not cam:
         return _plain(404, "Not Found", "not found")
     mp4 = _safe_resolve(base / "data" / f"episode_{eid}_{cam}.mp4")
-    if mp4 is None or not mp4.is_relative_to(SKILLS_ROOT) or mp4.suffix != ".mp4" or not mp4.is_file():
+    if mp4 is None or not _under_skills_root(mp4) or mp4.suffix != ".mp4" or not mp4.is_file():
         return _plain(404, "Not Found", "no such episode video")
     return _serve_file_with_range(request, mp4, "video/mp4")
 
@@ -276,7 +288,7 @@ async def thumb_response(qs: dict) -> Response:
     if base is None or not eid:
         return _plain(404, "Not Found", "not found")
     mp4 = _safe_resolve(base / "data" / f"episode_{eid}_{cam}.mp4")
-    if mp4 is None or not mp4.is_relative_to(SKILLS_ROOT) or not mp4.is_file():
+    if mp4 is None or not _under_skills_root(mp4) or not mp4.is_file():
         return _plain(404, "Not Found", "no such episode video")
     # Cache beside data/ (not inside it) so thumbnails are never uploaded to the cloud.
     cache = base / "thumbs" / f"episode_{eid}_{cam}.jpg"
@@ -309,7 +321,7 @@ def joints_response(qs: dict) -> Response:
     if base is None or not eid:
         return _plain(404, "Not Found", "not found")
     h5 = _safe_resolve(base / "data" / f"episode_{eid}.h5")
-    if h5 is None or not h5.is_relative_to(SKILLS_ROOT) or h5.suffix != ".h5" or not h5.is_file():
+    if h5 is None or not _under_skills_root(h5) or h5.suffix != ".h5" or not h5.is_file():
         return _plain(404, "Not Found", "no such episode")
     try:
         import h5py  # available in the robot's system python
@@ -345,7 +357,7 @@ def run_info_response(qs: dict) -> Response:
     if base is None or not rid:
         return _plain(404, "Not Found", "not found")
     run_dir = _safe_resolve(base / rid)
-    if run_dir is None or not run_dir.is_relative_to(SKILLS_ROOT) or not run_dir.is_dir():
+    if run_dir is None or not _under_skills_root(run_dir) or not run_dir.is_dir():
         # Not downloaded yet (or never will be).
         body = json.dumps({"downloaded": False, "has_checkpoint": False, "files": []}).encode()
         return Response(
@@ -389,7 +401,7 @@ def run_log_response(qs: dict) -> Response:
     if (
         run_dir is None
         or target is None
-        or not run_dir.is_relative_to(SKILLS_ROOT)
+        or not _under_skills_root(run_dir)
         or not target.is_relative_to(run_dir)
         or not target.is_file()
     ):

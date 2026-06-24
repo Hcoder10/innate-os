@@ -57,6 +57,23 @@ class DatasetEncoder(Node):
         self.declare_parameter("scan_period_sec", 60.0)
 
         self.skills_root = os.path.expanduser(self.get_parameter("skills_root").value)
+        # Also scan the legacy in-place skill locations the brain still reports
+        # (script_paths.get_skill_directories): $INNATE_OS_ROOT/skills and
+        # ~/skills, used through 0.5.x. Without these a dataset recorded under
+        # ~/skills lists in the app but never gets encoded to MP4 (so it can't
+        # play or be downloaded for training).
+        innate_os_root = os.environ.get(
+            "INNATE_OS_ROOT", os.path.expanduser("~/innate-os")
+        )
+        self.skills_roots = []
+        for root in (
+            self.skills_root,
+            os.path.join(innate_os_root, "skills"),
+            os.path.expanduser("~/skills"),
+        ):
+            root = os.path.abspath(root)
+            if root not in self.skills_roots:
+                self.skills_roots.append(root)
         self.nice_level = int(self.get_parameter("nice_level").value)
         self.encode_threads = int(self.get_parameter("encode_threads").value)
         self.idle_io = bool(self.get_parameter("idle_io").value)
@@ -92,7 +109,7 @@ class DatasetEncoder(Node):
         self._scan_skills()  # catch up on anything left un-encoded across reboots
         self._publish_idle()
         self.get_logger().info(
-            f"dataset_encoder up; root={self.skills_root}, nice={self.nice_level}, "
+            f"dataset_encoder up; roots={self.skills_roots}, nice={self.nice_level}, "
             f"threads={self.encode_threads}, idle_io={self.idle_io}"
         )
 
@@ -131,13 +148,14 @@ class DatasetEncoder(Node):
         return any(not ep.get("video_files") for ep in episodes if ep.get("file_name"))
 
     def _scan_skills(self):
-        try:
-            entries = sorted(os.scandir(self.skills_root), key=lambda e: e.name)
-        except OSError:
-            return
-        for entry in entries:
-            if entry.is_dir():
-                self._enqueue(entry.path)
+        for root in self.skills_roots:
+            try:
+                entries = sorted(os.scandir(root), key=lambda e: e.name)
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.is_dir():
+                    self._enqueue(entry.path)
 
     # ---- service ---------------------------------------------------------
     def _on_encode_request(self, request, response):
