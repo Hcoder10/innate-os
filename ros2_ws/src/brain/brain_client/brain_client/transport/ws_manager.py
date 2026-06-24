@@ -125,9 +125,7 @@ class WebSocketManager:
             if self._ws_configured and not self._token_configured:
                 self._log_missing_service_key_once()
             else:
-                self._log_invalid_config_once(
-                    "Cannot send websocket message: hosted Innate agent is not configured."
-                )
+                self._log_invalid_config_once("Cannot send websocket message: hosted Innate agent is not configured.")
         elif self.ws_client.loop and self.ws_client.loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(self.ws_client.send(message_in), self.ws_client.loop)
