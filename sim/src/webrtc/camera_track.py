@@ -11,11 +11,17 @@ cameras a browser is actually watching.
 """
 
 import threading
+import time
 from typing import Callable, Optional
 
 import numpy as np
 from aiortc import VideoStreamTrack
 from av import VideoFrame
+
+# Stop re-encoding a frozen frame once the producer has been handing back the
+# same array for longer than this; the track then stalls (no new frames) instead
+# of streaming a stale frame as if it were live.
+STALE_AFTER_S = 2.0
 
 
 class CameraTrack(VideoStreamTrack):
@@ -31,6 +37,9 @@ class CameraTrack(VideoStreamTrack):
         self._id = name
         self._active = threading.Event()
         self._last_frame: Optional[np.ndarray] = None
+        # Wall-clock time the producer last handed back a *new* frame, used to
+        # detect a stalled producer (same array returned indefinitely).
+        self._last_change_t: Optional[float] = None
         # Diagnostics: counts frames actually handed to the encoder (lazy-encoding proof).
         self.frames_encoded = 0
 
@@ -61,6 +70,16 @@ class CameraTrack(VideoStreamTrack):
             if frame is None:
                 # No frame yet (startup); next_timestamp already paced the retry.
                 continue
+
+            now = time.monotonic()
+            if frame is self._last_frame:
+                # Producer handed back the same array. If it has been stale too
+                # long, stop encoding it so the stream stalls instead of looking
+                # live with a frozen frame.
+                if self._last_change_t is not None and now - self._last_change_t > STALE_AFTER_S:
+                    continue
+            else:
+                self._last_change_t = now
             self._last_frame = frame
 
             video_frame = VideoFrame.from_ndarray(np.ascontiguousarray(frame), format="bgr24")

@@ -12,10 +12,9 @@ cameras named in the latest `active_streams` message are fed to the encoder.
 """
 
 import asyncio
-import os
 import queue
 import threading
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import numpy as np
 from aiortc import RTCIceCandidate, RTCPeerConnection, RTCRtpSender
@@ -23,17 +22,9 @@ from aiortc.sdp import candidate_from_sdp
 
 from .camera_track import CameraTrack
 
-# Canonical order -> deterministic transceiver mids. Only the cameras that are
-# actually producing frames are offered, so the frontend (which derives the set
-# from the SDP) shows exactly what's streaming.
+# Canonical order -> deterministic transceiver mids. All three tracks are always
+# present in the SDP (sendonly); the frontend derives the camera set from it.
 CAMERAS = ["first_person", "arm_wrist", "chase"]
-
-
-def default_fps() -> float:
-    try:
-        return float(os.getenv("SIM_RENDER_FPS", "25"))
-    except ValueError:
-        return 25.0
 
 
 def _parse_ice(payload: dict) -> Optional[RTCIceCandidate]:
@@ -51,24 +42,10 @@ def _parse_ice(payload: dict) -> Optional[RTCIceCandidate]:
 class WebRTCManager:
     """Single-peer manager. A new `start` tears down the previous connection."""
 
-    def __init__(
-        self,
-        get_frame_for: Callable[[str], Optional[np.ndarray]],
-        fps: Optional[float] = None,
-        list_cameras: Optional[Callable[[], list[str]]] = None,
-    ):
+    def __init__(self, get_frame_for: Callable[[str], Optional[np.ndarray]]):
         self._get_frame_for = get_frame_for
-        self._fps = fps or default_fps()
-        # Returns the camera names currently available; defaults to all canonical
-        # cameras (used by the isolation harness, which synthesizes every camera).
-        self._list_cameras = list_cameras or (lambda: list(CAMERAS))
         self._pc: Optional[RTCPeerConnection] = None
         self._tracks: dict[str, CameraTrack] = {}
-
-    def _available(self) -> list[str]:
-        present = set(self._list_cameras())
-        cameras = [c for c in CAMERAS if c in present]
-        return cameras or list(CAMERAS)  # fall back if nothing has rendered yet
 
     async def on_start(self, payload: dict) -> str:
         """Build the peer connection + offer. Returns the offer SDP."""
@@ -80,20 +57,25 @@ class WebRTCManager:
 
         vp8 = [c for c in RTCRtpSender.getCapabilities("video").codecs if c.mimeType == "video/VP8"]
 
-        cameras = self._available()
-        for name in cameras:
+        # Offer all cameras up front so one that renders its first frame after the
+        # offer is still selectable; encoding stays lazy (tracks gated off below).
+        for name in CAMERAS:
             track = CameraTrack(lambda n=name: self._get_frame_for(n), name)
             self._tracks[name] = track
             transceiver = pc.addTransceiver(track, direction="sendonly")
             if vp8:
                 transceiver.setCodecPreferences(vp8)
 
-        # First available camera shows immediately; the rest stay gated off.
-        self._apply_active(cameras[:1])
+        # First camera shows immediately; the rest stay gated off.
+        self._apply_active(CAMERAS[:1])
 
         @pc.on("connectionstatechange")
         async def _on_state():
-            if pc.connectionState in ("failed", "closed", "disconnected"):
+            # Only tear down on terminal states — "disconnected" is transient and
+            # usually self-heals. Guard against a stale handler: a new `start`
+            # replaces self._pc, and the old pc's late state change must not close
+            # the live connection.
+            if pc is self._pc and pc.connectionState in ("failed", "closed"):
                 await self.close()
 
         offer = await pc.createOffer()
@@ -141,27 +123,23 @@ class WebRTCManager:
 # Live-sim runner: own thread + asyncio loop, bridged to rosbridge only via the
 # shared_queues seam (no cross-thread loop coupling).
 # --------------------------------------------------------------------------- #
-def start_webrtc_server(shared_queues, fps: Optional[float] = None) -> threading.Thread:
-    thread = threading.Thread(target=_run, args=(shared_queues, fps), daemon=True, name="webrtc-server")
+def start_webrtc_server(shared_queues) -> threading.Thread:
+    thread = threading.Thread(target=_run, args=(shared_queues,), daemon=True, name="webrtc-server")
     thread.start()
     return thread
 
 
-def _run(shared_queues, fps: Optional[float]) -> None:
+def _run(shared_queues) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(_main(shared_queues, fps))
+        loop.run_until_complete(_main(shared_queues))
     finally:
         loop.close()
 
 
-async def _main(shared_queues, fps: Optional[float]) -> None:
-    manager = WebRTCManager(
-        lambda name: shared_queues.latest_frames.get(name),
-        fps=fps,
-        list_cameras=lambda: [c for c in CAMERAS if shared_queues.latest_frames.get(c) is not None],
-    )
+async def _main(shared_queues) -> None:
+    manager = WebRTCManager(lambda name: shared_queues.latest_frames.get(name))
     sig_in: queue.Queue = shared_queues.webrtc_signal_in
     sig_out: queue.Queue = shared_queues.webrtc_signal_out
 
