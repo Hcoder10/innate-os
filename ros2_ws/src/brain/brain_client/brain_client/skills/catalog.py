@@ -380,8 +380,12 @@ class SkillRepository:
             self._write_json_atomic(Path(skill_dir) / "metadata.json", metadata)
 
             self._logger.info(f"Created physical skill '{display_name}' at {skill_dir}")
-            self.reload_all()
-            return True, f"Created skill '{display_name}' at {skill_dir}.", skill_dir, self._compute_skill_id(skill_dir)
+            # Register just this draft, not a full reload_all() — the latter takes
+            # seconds and overruns the bridge's service timeout ("Service call failed").
+            skill_id = self._compute_skill_id(skill_dir)
+            self._reload_physical_skill(skill_id)
+            self.publish_skills_list()
+            return True, f"Created skill '{display_name}' at {skill_dir}.", skill_dir, skill_id
         except Exception as e:
             self._logger.error(f"Error creating physical skill: {e}")
             return False, f"Failed to create skill: {e}", "", ""
