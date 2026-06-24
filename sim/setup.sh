@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Quiet uv output when not attached to a terminal (e.g. launched by the Python launcher)
+if [ -t 1 ]; then
+    QUIET=""
+else
+    QUIET="--quiet"
+fi
+
 # Detect OS and select appropriate requirements file
 if [[ "$OSTYPE" == "darwin"* ]]; then
     REQUIREMENTS_FILE="requirements.macos.txt"
@@ -22,20 +29,20 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo "Creating virtual environment with Python 3.11..."
-uv venv --python 3.11
+uv venv $QUIET --python 3.11 --allow-existing
 
 echo "Installing dependencies from $REQUIREMENTS_FILE..."
-uv pip install -r "$REQUIREMENTS_FILE" --python .venv/bin/python
+uv pip install $QUIET -r "$REQUIREMENTS_FILE" --python .venv/bin/python
 
 # Install PyTorch nightly with CUDA 12.8 for Blackwell (RTX 50xx, sm_120) support
 # Stable torch builds top out at sm_90 and will fall back to CPU on RTX 5090
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "")
 if echo "${GPU_NAME}" | grep -qi "RTX 50\|B200\|B100\|blackwell"; then
     echo "⚡ Blackwell GPU detected (${GPU_NAME}) - installing PyTorch nightly cu128..."
-    uv pip install --python .venv/bin/python --pre --reinstall torch \
+    uv pip install $QUIET --python .venv/bin/python --pre --reinstall torch \
         --index-url https://download.pytorch.org/whl/nightly/cu128
     # Pin numpy to <2.3 (numba compatibility)
-    uv pip install --python .venv/bin/python "numpy<2.3"
+    uv pip install $QUIET --python .venv/bin/python "numpy<2.3"
     echo "✅ PyTorch nightly cu128 installed"
 fi
 

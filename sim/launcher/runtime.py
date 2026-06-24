@@ -230,33 +230,20 @@ def ensure_frontend_container(config: dict[str, object]) -> None:
     )
 
 
-def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
+def ensure_sim_setup(config: dict[str, object]) -> Path:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
     sim_python = sim_repo / ".venv" / "bin" / "python"
 
     ensure_dependency("python3")
 
-    needs_setup = not sim_python.exists()
-    if sim_python.exists() and not python_import_succeeds(sim_python, "dotenv"):
-        if not allow_setup:
-            raise StackError(
-                f"Simulator virtualenv is incomplete.\nRun `{CLI_SIM} setup` to repair {sim_repo / '.venv'}."
-            )
-        warn("Simulator virtualenv is incomplete. Re-running setup to repair it...")
-        needs_setup = True
-
-    if needs_setup:
-        if not allow_setup:
-            raise StackError(
-                f"Simulator Python environment is not ready.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Setting up sim Python environment...")
-        run_logged(
-            ["bash", "./setup.sh"],
-            cwd=sim_repo,
-            log_path=BOOTSTRAP_LOG_PATH,
-            failure_message="Simulator environment setup failed.",
-        )
+    log(f"Setting up sim Python environment...")
+    log(f"Logs: {BOOTSTRAP_LOG_PATH}")
+    run_logged(
+        ["bash", "./setup.sh"],
+        cwd=sim_repo,
+        log_path=BOOTSTRAP_LOG_PATH,
+        failure_message="Simulator environment setup failed.",
+    )
 
     if not sim_python.exists():
         raise StackError(f"Simulator Python environment was not created at {sim_python}")

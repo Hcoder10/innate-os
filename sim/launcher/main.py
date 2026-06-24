@@ -122,7 +122,7 @@ def cmd_up(
 
         os_env_file = build_os_env(config)
         cloud_env_file = build_cloud_env(config)
-        sim_python = ensure_sim_setup(config, allow_setup=False)
+        sim_python = ensure_sim_setup(config)
         ensure_sim_data(config, allow_fetch=False)
         ensure_skill_assets(config)
 
@@ -231,7 +231,7 @@ def cmd_setup(config: dict[str, object]) -> None:
     ensure_docker_available(command_hint=f"{CLI_SIM} setup")
     print_banner()
     configure_hosted_service_key(config)
-    sim_python = ensure_sim_setup(config, allow_setup=True)
+    sim_python = ensure_sim_setup(config)
     ensure_sim_data(config, allow_fetch=True)
     prebuild_frontend_image(config)
     success("Simulator setup is ready.")
