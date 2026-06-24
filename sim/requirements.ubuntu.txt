@@ -242,7 +242,7 @@ pyflakes==3.4.0
     # via flake8
 pygel3d==0.6.1
     # via genesis-world
-pyglet==2.1.14
+pyglet==2.1.6
     # via genesis-world
 pygltflib==1.16.0
     # via genesis-world
