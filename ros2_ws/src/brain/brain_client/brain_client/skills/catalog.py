@@ -346,12 +346,19 @@ class SkillRepository:
             tmp_path.unlink(missing_ok=True)
             raise
 
-    def create_physical_skill(self, display_name: str) -> tuple[bool, str, str, str]:
-        """Create a learned-skill directory with metadata.json. Returns (ok, msg, dir, id)."""
+    def create_physical_skill(self, display_name: str, kind: str = "learned") -> tuple[bool, str, str, str]:
+        """Create a physical-skill directory with metadata.json. Returns (ok, msg, dir, id).
+
+        ``kind`` is the intended final type ("learned" or "replay")
+        """
         try:
             display_name = display_name.strip()
             if not display_name:
                 return False, "Skill name cannot be empty.", "", ""
+
+            kind = (kind or "learned").strip().lower()
+            if kind not in ("learned", "replay"):
+                kind = "learned"
 
             dir_name = self._slugify(display_name)
             if not dir_name:
@@ -363,19 +370,24 @@ class SkillRepository:
                 return True, f"Skill already exists at {skill_dir}.", skill_dir, self._compute_skill_id(skill_dir)
 
             os.makedirs(skill_dir, exist_ok=True)
-            metadata = {
-                "name": display_name,
-                "type": "learned",
-                "guidelines": "",
-                "guidelines_when_running": "",
-                "inputs": {},
-                "execution": {
+            execution = (
+                {}
+                if kind == "replay"
+                else {
                     "duration": None,
                     "progress_threshold": None,
                     "start_pose": None,
                     "end_pose": None,
                     "n_action_steps": None,
-                },
+                }
+            )
+            metadata = {
+                "name": display_name,
+                "type": kind,
+                "guidelines": "",
+                "guidelines_when_running": "",
+                "inputs": {},
+                "execution": execution,
             }
             self._write_json_atomic(Path(skill_dir) / "metadata.json", metadata)
 

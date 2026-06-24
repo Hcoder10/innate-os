@@ -131,6 +131,12 @@ def convert_episodes_to_h264(
                         idle_io=idle_io,
                     )
             except Exception as e:
+                if not data_dir.is_dir():
+                    # data/ removed mid-encode — the skill was converted to a replay
+                    # skill (which drops its dataset) or deleted. The trajectory is
+                    # preserved elsewhere, so this is benign; stop without erroring.
+                    logger.info("Data dir %s gone mid-encode — skipping", data_dir)
+                    return
                 yield ProgressUpdate(
                     stage=ProgressStage.ERROR,
                     message=f"[{idx}/{total}] Encoding failed for {item['filename']}: {e}",

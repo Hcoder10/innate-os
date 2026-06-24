@@ -388,7 +388,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
         nameInput.disabled = true;
         if (notes) notes.disabled = true;
         warn.textContent = "";
-        ros.callService(CREATE_PHYSICAL_SKILL_SERVICE, { name })
+        ros.callService(CREATE_PHYSICAL_SKILL_SERVICE, { name, kind })
           .then((res) => {
             if (!res || res.success === false || !res.skill_directory) {
               throw new Error((res && res.message) || "Couldn't create skill");
