@@ -2114,11 +2114,13 @@ class SimulationNode:
                 # millimeters, 0 = invalid/out-of-range. Halves the wire payload
                 # vs 32FC1 and is what brain_client decodes (16UC1 -> uint16 mm).
                 if depth is not None:
-                    depth_to_send = np.where(
-                        (depth > 0.0) & (depth <= DEPTH_MAX_M),
-                        depth * 1000.0,
-                        0.0,
-                    ).astype(np.uint16)
+                    # Only scale/cast valid pixels: the renderer emits inf for
+                    # background/no-hit, and inf*1000 -> inf casts to uint16 with a
+                    # per-frame RuntimeWarning. The mask excludes inf/nan (both fail
+                    # the <= DEPTH_MAX_M test), leaving out-of-range pixels at 0.
+                    valid = (depth > 0.0) & (depth <= DEPTH_MAX_M)
+                    depth_to_send = np.zeros(depth.shape, dtype=np.uint16)
+                    depth_to_send[valid] = (depth[valid] * 1000.0).astype(np.uint16)
                 else:
                     depth_to_send = None
 
