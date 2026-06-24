@@ -48,26 +48,25 @@ ROOT = Path(__file__).resolve().parent.parent
 CERT_DIR = Path.home() / ".innate-webapp-tls"
 ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 
-# Recorded episodes live here. The /episode* routes only ever serve files
-# resolved under one of these roots. Besides workspace/custom_skills we also
-# allow the legacy in-place locations the brain still scans for skills
-# (script_paths.get_skill_directories): $INNATE_OS_ROOT/skills and ~/skills,
-# used through 0.5.x. Without them a dataset recorded under ~/skills lists in the
-# app (the brain reports its absolute path) but its media would 404 here.
+# Roots the /episode* routes may serve from: workspace/custom_skills plus the
+# legacy in-place locations the brain still scans ($INNATE_OS_ROOT/skills,
+# ~/skills; used through 0.5.x). Deduped after resolve so INNATE_OS_ROOT=~ (which
+# collapses two of them) doesn't double-check.
 _INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
 SKILLS_ROOTS = tuple(
-    p.resolve()
-    for p in (
-        Path(_INNATE_OS_ROOT) / "workspace" / "custom_skills",
-        Path(_INNATE_OS_ROOT) / "skills",
-        Path(os.path.expanduser("~")) / "skills",
+    dict.fromkeys(
+        p.resolve()
+        for p in (
+            Path(_INNATE_OS_ROOT) / "workspace" / "custom_skills",
+            Path(_INNATE_OS_ROOT) / "skills",
+            Path(os.path.expanduser("~")) / "skills",
+        )
     )
 )
 
 
 def _under_skills_root(p: Path) -> bool:
-    """True if p resolves inside one of the allowed skill roots (the media
-    path-traversal fence)."""
+    """True if p is inside an allowed skill root (path-traversal fence)."""
     return any(p.is_relative_to(root) for root in SKILLS_ROOTS)
 
 

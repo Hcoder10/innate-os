@@ -58,20 +58,17 @@ class DatasetEncoder(Node):
 
         self.skills_root = os.path.expanduser(self.get_parameter("skills_root").value)
         # Also scan the legacy in-place skill locations the brain still reports
-        # (script_paths.get_skill_directories): $INNATE_OS_ROOT/skills and
-        # ~/skills, used through 0.5.x. Without these a dataset recorded under
-        # ~/skills lists in the app but never gets encoded to MP4 (so it can't
-        # play or be downloaded for training).
-        innate_os_root = os.environ.get(
-            "INNATE_OS_ROOT", os.path.expanduser("~/innate-os")
-        )
+        # ($INNATE_OS_ROOT/skills, ~/skills; used through 0.5.x), else datasets
+        # recorded there never get encoded. realpath (like the media server's
+        # resolve) so symlinked roots dedup correctly.
+        innate_os_root = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
         self.skills_roots = []
         for root in (
             self.skills_root,
             os.path.join(innate_os_root, "skills"),
             os.path.expanduser("~/skills"),
         ):
-            root = os.path.abspath(root)
+            root = os.path.realpath(root)
             if root not in self.skills_roots:
                 self.skills_roots.append(root)
         self.nice_level = int(self.get_parameter("nice_level").value)
