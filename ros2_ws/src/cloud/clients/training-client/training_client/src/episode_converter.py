@@ -161,6 +161,8 @@ def convert_episodes_to_h264(
 
             try:
                 with _convert_lock(data_dir):
+                    if h5_path.exists():
+                        continue  # another converter already stripped it
                     _strip_images_from_h5(raw_path, h5_path)
             except Exception as e:
                 yield ProgressUpdate(
