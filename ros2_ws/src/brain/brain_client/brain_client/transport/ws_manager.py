@@ -31,6 +31,17 @@ from brain_client.transport.messages import InternalMessage, InternalMessageType
 from brain_client.transport.ws_config import is_hosted_innate_uri, validate_token_for_uri, validate_ws_uri
 from brain_client.transport.ws_transport import WS_THREAD_STOP_JOIN_SECONDS, WSClient
 
+# Logged line-by-line at error level (one [ERROR] prefix per line) so a missing
+# service key is impossible to miss when scanning the brain_client logs.
+_MISSING_SERVICE_KEY_BANNER = (
+    "═══════════════════════════════════════════════════════════════════════",
+    "⚠  NO SERVICE KEY — ROBOT CANNOT REACH THE INNATE CLOUD BRAIN",
+    "INNATE_SERVICE_KEY is missing. AI behaviors, logging, and on-device",
+    "training will not work until a service key is configured.",
+    "Get a new service key — contact Innate on Discord: https://discord.gg/innate",
+    "═══════════════════════════════════════════════════════════════════════",
+)
+
 
 class WebSocketManager:
     def __init__(self, node, *, uri: str, token: str, client_version: str = "", on_incoming=None):
@@ -55,6 +66,7 @@ class WebSocketManager:
         self._last_backend_unavailable_log_key = None
         self._last_backend_unavailable_log_at = 0.0
         self._last_invalid_config_log_at = 0.0
+        self._last_missing_service_key_log_at = 0.0
         self._last_ws_error_message = ""
         self._last_ws_error_at = 0.0
 
@@ -99,9 +111,7 @@ class WebSocketManager:
             self.set_ws_status("invalid_config", False, "WebSocket URI is not configured or invalid.")
             return
         if not self._token_configured:
-            self._log_invalid_config_once(
-                "Hosted Innate agent selected but INNATE_SERVICE_KEY is missing. Skipping websocket connection."
-            )
+            self._log_missing_service_key_once()
             self.set_ws_status("invalid_config", False, "Missing INNATE_SERVICE_KEY for hosted Innate agent.")
             return
         self.get_logger().debug("Received ready for connection message.")
@@ -112,9 +122,12 @@ class WebSocketManager:
 
     def _send(self, message_in) -> None:
         if not self.ws_client:
-            self._log_invalid_config_once(
-                "Cannot send websocket message: hosted Innate agent is not configured (missing INNATE_SERVICE_KEY)."
-            )
+            if self._ws_configured and not self._token_configured:
+                self._log_missing_service_key_once()
+            else:
+                self._log_invalid_config_once(
+                    "Cannot send websocket message: hosted Innate agent is not configured."
+                )
         elif self.ws_client.loop and self.ws_client.loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(self.ws_client.send(message_in), self.ws_client.loop)
@@ -142,10 +155,7 @@ class WebSocketManager:
             return
         if not self._token_configured:
             if log_invalid:
-                self._log_invalid_config_once(
-                    "❌ Missing INNATE_SERVICE_KEY for hosted Innate agent. "
-                    "Set a service key before connecting to the hosted agent."
-                )
+                self._log_missing_service_key_once()
             self.ws_client = None
             self.set_ws_status("invalid_config", False, "Missing INNATE_SERVICE_KEY for hosted Innate agent.")
             return
@@ -246,6 +256,16 @@ class WebSocketManager:
             return
         self._last_invalid_config_log_at = now
         self.get_logger().error(message)
+
+    def _log_missing_service_key_once(self):
+        # Dedicated throttle (not the shared _log_invalid_config_once one) so the
+        # banner is never suppressed by an unrelated invalid-config line.
+        now = time.time()
+        if now - self._last_missing_service_key_log_at < 30.0:
+            return
+        self._last_missing_service_key_log_at = now
+        for line in _MISSING_SERVICE_KEY_BANNER:
+            self.get_logger().error(line)
 
     def _publish_ws_status(self):
         try:

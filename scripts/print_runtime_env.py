@@ -43,10 +43,18 @@ def build_runtime_env(repo_root: Path) -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print merged Innate OS runtime environment.")
     parser.add_argument("--shell", action="store_true", help="Print shell export commands")
+    parser.add_argument(
+        "--has-service-key",
+        action="store_true",
+        help="Exit 0 if INNATE_SERVICE_KEY resolves to a non-empty value, 1 otherwise. Prints nothing.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
     env = build_runtime_env(repo_root)
+
+    if args.has_service_key:
+        return 0 if env.get("INNATE_SERVICE_KEY", "").strip() else 1
 
     if args.shell:
         print("; ".join(f"export {key}={shlex.quote(value)}" for key, value in sorted(env.items())))
