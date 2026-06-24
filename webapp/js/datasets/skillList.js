@@ -76,8 +76,11 @@ export function createSkillList(parent, ros, opts) {
   const unsub = ros.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
     const all = Array.isArray(msg?.skills) ? /** @type {Skill[]} */ (msg.skills) : [];
     // Only physical skills carry a dataset directory; the rest have no episodes.
+    // Replay (recorded-movement) skills carry a directory too, but their dataset
+    // is dropped on save — they're deterministic trajectories, not datasets — so
+    // keep them out of the roster.
     skills = all
-      .filter((s) => s && s.directory)
+      .filter((s) => s && s.directory && s.type !== "replay")
       .sort((a, b) => a.name.localeCompare(b.name));
     // Drop the selection if its skill vanished from the roster.
     if (selectedId && !skills.some((s) => s.id === selectedId)) selectedId = null;

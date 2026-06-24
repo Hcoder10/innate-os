@@ -453,7 +453,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
             opts.onHeadControl?.(false); // back to learned mode — lock the head
             wizardHost.hidden = true;
             learnedHost.hidden = false;
-            flash = savedName ? `Saved “${savedName}”` : "";
+            flash = savedName ? `Saved “${savedName}” — use the mobile app to run this skill` : "";
             // Re-activate the previously selected learned skill, if any.
             if (selectedDir) activate();
             renderSelect();
