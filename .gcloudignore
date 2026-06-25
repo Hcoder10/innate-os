@@ -24,6 +24,9 @@ sim/.venv/
 !ros2_ws/apt-dependencies.common.txt
 !ros2_ws/apt-dependencies.hardware.txt
 !ros2_ws/pip-requirements.txt
+!scripts/
+!scripts/update/
+!scripts/update/setup_repos.sh
 !ros2_ws/src/
 !ros2_ws/src/**
 # Needed by ci/Dockerfile.test (COPY config/ and workspace/).

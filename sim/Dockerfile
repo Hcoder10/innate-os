@@ -28,11 +28,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         htop \
         btop
 
-# 2. Add Innate packages repository (for ros-humble-innate-rws, etc.).
-RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
-        gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ $(lsb_release -cs) main" | \
-        tee /etc/apt/sources.list.d/innate.list > /dev/null
+# 2. Add the third-party apt repositories (Innate packages + NodeSource 22.x)
+# via the same script the on-device updater uses, keeping the two in sync.
+COPY scripts/update/setup_repos.sh /tmp/setup_repos.sh
+RUN bash /tmp/setup_repos.sh && rm /tmp/setup_repos.sh
 
 # 3. Copy and install simulation apt dependencies.
 COPY sim/apt-dependencies.txt /tmp/apt-dependencies.txt
