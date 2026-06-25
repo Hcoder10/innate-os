@@ -38,6 +38,29 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   const wrap = document.createElement("div");
   wrap.className = "arm-panel";
 
+  // Collapsible header. On a phone the arm controls are mostly dead weight
+  // (no WebSerial for the leader arm), so the whole panel starts collapsed and
+  // the operator taps to reveal it. On desktop the header is hidden (CSS) and
+  // the panel is always open — unchanged.
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "arm-header";
+  header.innerHTML =
+    '<span class="microlabel">arm</span>' +
+    '<svg class="arm-caret" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+  wrap.appendChild(header);
+
+  let collapsed = window.matchMedia("(max-width: 640px)").matches;
+  function applyCollapsed() {
+    wrap.classList.toggle("collapsed", collapsed);
+    header.setAttribute("aria-expanded", String(!collapsed));
+  }
+  header.addEventListener("click", () => {
+    collapsed = !collapsed;
+    applyCollapsed();
+  });
+  applyCollapsed();
+
   const label = document.createElement("p");
   label.className = "microlabel";
   label.textContent = "leader arm";

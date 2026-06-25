@@ -1090,6 +1090,25 @@ button {
   width: 168px;
 }
 
+/* Collapse toggle — hidden on desktop (panel is always open); shown only on
+   the mobile layout below, where the panel starts collapsed. */
+.arm-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  color: rgb(255 255 255 / 62%);
+}
+
+.arm-caret {
+  transition: transform 150ms ease;
+}
+
+.arm-panel:not(.collapsed) .arm-caret {
+  transform: rotate(90deg);
+}
+
 /* Brighter section labels (LEADER ARM / ROBOT ARM) than the global muted —
    they were the hardest to read over the feed. */
 .arm-panel .microlabel {
@@ -3400,6 +3419,43 @@ button {
 @media (max-width: 720px) {
   .prof-charts {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---- mobile teleop layout ------------------------------------------------- */
+/* On a phone the centered joystick and the bottom-right arm panel collide, and
+   the keyboard-only WASD chips are dead weight (and overlap the speech bar).
+   Lift the arm controls out of the joystick's way — up to the left, under the
+   telemetry strip, and narrower so they read as secondary — and drop WASD. */
+
+@media (max-width: 640px) {
+  /* Keyboard drive has no place on a touch screen. */
+  .overlay-bottom-left {
+    display: none;
+  }
+
+  /* Dock the arm panel top-left (clear of the centered joystick), below the
+     telemetry strip. */
+  .overlay-arm {
+    inset: 70px auto auto 14px; /* top right bottom left */
+  }
+
+  .arm-panel {
+    width: 150px;
+  }
+
+  /* Phones can't drive the leader arm (no WebSerial), so the panel collapses to
+     a single tap-to-open header by default, freeing the feed. */
+  .arm-header {
+    display: flex;
+  }
+
+  .arm-panel.collapsed {
+    width: auto;
+  }
+
+  .arm-panel.collapsed > *:not(.arm-header) {
+    display: none;
   }
 }
 
