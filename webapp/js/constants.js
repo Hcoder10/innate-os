@@ -23,6 +23,11 @@ export const BATTERY_STATE_TOPIC = "/battery_state";
 // std_msgs/String carrying JSON (RobotInfo).
 export const ROBOT_INFO_TOPIC = "/robot/info";
 
+// Robot speaker volume (mars_msgs/srv/SetVolume): request volume_percent 0–100,
+// response {success, message}. Applies live (no restart). Same service the
+// mobile app's volume slider calls; current value rides on /robot/info.
+export const SET_VOLUME_SERVICE = "/set_volume";
+
 // WebRTC signaling over rosbridge. START payload is a std_msgs/String whose
 // data is JSON: {"source":"live","audio":bool}. The robot rebuilds its whole
 // pipeline on every START, so any config change means a full re-handshake.

@@ -10,11 +10,21 @@
 // *unsaved* edit (differs from what's saved) shows blue. Save is enabled only
 // while there are unsaved changes.
 
+import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE } from "../constants.js";
+import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
 import { CATALOG } from "./catalog.js";
 
 initShell("settings", "../");
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
+
+// The yaml knobs below talk to the proxy, but the speaker-volume control is a
+// live rosbridge service call, so this page needs the shared socket. Mirror
+// pageMount's bootstrap: reach the serving host, except on laptop dev.
+const servedHost = location.hostname;
+if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
+  ros.connect(servedHost);
+}
 
 /**
  * @typedef {Object} Entry
@@ -113,6 +123,11 @@ const STYLE = `
 .set-slider { width: 120px; accent-color: var(--primary, #401FFB); }
 .set-slider-read { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 62px; text-align: right; }
 .set-slider-read .mx { color: var(--muted, #8a90a0); }
+.set-live { border: 1px solid rgba(62,207,142,.30); background: rgba(62,207,142,.05);
+  border-radius: 10px; padding: 14px 16px; margin: 0 0 26px; }
+.set-live .set-row:hover { background: none; }
+.set-live-status { font-size: 12px; margin-left: 6px; }
+.set-live .set-slider { width: 200px; }
 `;
 
 /** Walk a path into the nested overrides dict; undefined if absent. */
@@ -192,6 +207,132 @@ function resetAll() {
   recompute();
 }
 
+const DEFAULT_VOLUME = 80; // robot's built-in default until /robot/info arrives.
+
+/** Clamp to an integer 0–100, mirroring the mobile app's clampVolumePercent. */
+function clampVolume(/** @type {number} */ value) {
+  if (!Number.isFinite(value)) return DEFAULT_VOLUME;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+/**
+ * Live speaker-volume control. Unlike the yaml knobs below, this is a rosbridge
+ * service call that applies immediately and persists on the robot — no restart.
+ * Reads the current value from /robot/info, writes via /set_volume on release.
+ */
+function buildVolumeSection() {
+  const section = document.createElement("section");
+  section.className = "set-live";
+
+  const row = document.createElement("div");
+  row.className = "set-row";
+
+  const info = document.createElement("div");
+  info.className = "set-info";
+  const label = document.createElement("span");
+  label.className = "set-label";
+  label.textContent = "Speaker volume";
+  const doc = document.createElement("span");
+  doc.className = "set-doc";
+  doc.textContent = "The robot's voice volume. Applies immediately — no restart.";
+  info.append(label, doc);
+  row.appendChild(info);
+
+  const ctl = document.createElement("div");
+  ctl.className = "set-ctl";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "set-slider";
+  slider.min = "0";
+  slider.max = "100";
+  slider.step = "1";
+  slider.value = String(DEFAULT_VOLUME);
+  ctl.appendChild(slider);
+
+  const read = document.createElement("span");
+  read.className = "set-slider-read";
+  const cur = document.createElement("span");
+  cur.textContent = String(DEFAULT_VOLUME);
+  const mx = document.createElement("span");
+  mx.className = "mx";
+  mx.textContent = " / 100";
+  read.append(cur, mx);
+  ctl.appendChild(read);
+
+  const status = document.createElement("span");
+  status.className = "set-live-status set-status muted";
+  ctl.appendChild(status);
+
+  row.appendChild(ctl);
+  section.appendChild(row);
+
+  // Last value known to be applied on the robot; the revert target on failure.
+  let robotVolume = DEFAULT_VOLUME;
+  let dragging = false;
+  let saving = false;
+
+  const setLiveStatus = (/** @type {string} */ msg, /** @type {string} */ cls) => {
+    status.textContent = msg;
+    status.className = "set-live-status set-status " + cls;
+  };
+
+  const renderValue = (/** @type {number} */ v) => {
+    slider.value = String(v);
+    cur.textContent = String(v);
+  };
+
+  ros.onStateChange((state) => {
+    const connected = state === "connected";
+    slider.disabled = !connected;
+    if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
+    else if (status.classList.contains("muted")) setLiveStatus("", "muted");
+  });
+
+  ros.subscribe(ROBOT_INFO_TOPIC, (/** @type {StringMsg} */ payload) => {
+    /** @type {RobotInfo} */
+    let infoData;
+    try {
+      infoData = JSON.parse(payload.data);
+    } catch {
+      return;
+    }
+    if (typeof infoData.volume_percent !== "number") return;
+    robotVolume = clampVolume(infoData.volume_percent);
+    // Don't clobber a value the operator is actively dragging or saving.
+    if (!dragging && !saving) renderValue(robotVolume);
+  });
+
+  slider.addEventListener("input", () => {
+    dragging = true;
+    cur.textContent = slider.value;
+  });
+
+  slider.addEventListener("change", async () => {
+    dragging = false;
+    const next = clampVolume(Number(slider.value));
+    renderValue(next);
+    if (next === robotVolume || saving) return;
+    const previous = robotVolume;
+    saving = true;
+    setLiveStatus("Saving…", "muted");
+    try {
+      /** @type {{ success: boolean, message?: string }} */
+      const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: next });
+      if (!res.success) throw new Error(res.message || "Failed to set volume.");
+      robotVolume = next;
+      setLiveStatus("Volume set.", "ok");
+    } catch {
+      renderValue(previous);
+      setLiveStatus("Couldn't set volume. Try again.", "err");
+    } finally {
+      saving = false;
+    }
+  });
+
+  return section;
+}
+
 function build() {
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -216,6 +357,8 @@ function build() {
   note.textContent =
     "Tunable parameter overrides. Blank = the robot's built-in default. Changes save to config/settings.yaml; restart the robot to apply.";
   wrap.appendChild(note);
+
+  wrap.appendChild(buildVolumeSection());
 
   for (const group of CATALOG) {
     const g = document.createElement("section");
