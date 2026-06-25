@@ -3402,3 +3402,26 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- mobile teleop layout ------------------------------------------------- */
+/* On a phone the centered joystick and the bottom-right arm panel collide, and
+   the keyboard-only WASD chips are dead weight (and overlap the speech bar).
+   Lift the arm controls out of the joystick's way — up to the left, under the
+   telemetry strip, and narrower so they read as secondary — and drop WASD. */
+
+@media (max-width: 640px) {
+  /* Keyboard drive has no place on a touch screen. */
+  .overlay-bottom-left {
+    display: none;
+  }
+
+  /* Dock the arm panel top-left (clear of the centered joystick), below the
+     telemetry strip. */
+  .overlay-arm {
+    inset: 70px auto auto 14px; /* top right bottom left */
+  }
+
+  .arm-panel {
+    width: 150px;
+  }
+}
