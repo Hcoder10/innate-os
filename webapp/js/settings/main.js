@@ -249,16 +249,19 @@ function buildVolumeSection() {
   slider.min = "0";
   slider.max = "100";
   slider.step = "1";
-  slider.value = String(DEFAULT_VOLUME);
+  // Resting thumb position while we wait for the robot's value; the readout shows
+  // "—" and the slider stays disabled, so this isn't read as a real setting.
+  slider.value = "50";
+  slider.disabled = true;
   ctl.appendChild(slider);
 
   const read = document.createElement("span");
   read.className = "set-slider-read";
   const cur = document.createElement("span");
-  cur.textContent = String(DEFAULT_VOLUME);
+  cur.textContent = "—"; // nothing until /robot/info reports the live volume
   const mx = document.createElement("span");
   mx.className = "mx";
-  mx.textContent = " / 100";
+  mx.textContent = "";
   read.append(cur, mx);
   ctl.appendChild(read);
 
@@ -271,6 +274,7 @@ function buildVolumeSection() {
 
   // Last percent known to be applied on the robot; the revert target on failure.
   let robotPercent = DEFAULT_VOLUME;
+  let hasValue = false; // false until /robot/info reports the live volume
   let dragging = false;
   let saving = false;
 
@@ -282,16 +286,17 @@ function buildVolumeSection() {
   const renderValue = (/** @type {number} */ percent) => {
     slider.value = String(percent);
     cur.textContent = String(percent);
+    mx.textContent = " / 100";
   };
 
-  // Disabled until connected, and while a save is in flight so a mid-save
-  // release can't be silently dropped (nor re-enabled by a state change).
-  // Clearing `dragging` on disable matters too: a disconnect mid-drag would
-  // otherwise leave it stuck true, so the subscription below would ignore every
-  // /robot/info after reconnect and the slider would freeze, diverging from the
-  // robot's real volume.
+  // Disabled until connected AND the live volume has loaded (so the page never
+  // shows a guessed default), and while a save is in flight so a mid-save release
+  // can't be silently dropped (nor re-enabled by a state change). Clearing
+  // `dragging` on disable matters too: a disconnect mid-drag would otherwise
+  // leave it stuck true, so the subscription below would ignore every /robot/info
+  // after reconnect and the slider would freeze, diverging from the real volume.
   const refreshEnabled = () => {
-    const shouldDisable = ros.state !== "connected" || saving;
+    const shouldDisable = ros.state !== "connected" || saving || !hasValue;
     if (shouldDisable) dragging = false;
     slider.disabled = shouldDisable;
   };
@@ -313,8 +318,11 @@ function buildVolumeSection() {
     }
     if (typeof infoData.volume_percent !== "number") return;
     robotPercent = clampVolume(infoData.volume_percent);
+    const firstValue = !hasValue;
+    hasValue = true;
     // Don't clobber a value the operator is actively dragging or saving.
     if (!dragging && !saving) renderValue(robotPercent);
+    if (firstValue) refreshEnabled(); // enable now that the live value has loaded
   });
 
   slider.addEventListener("input", () => {
