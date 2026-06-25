@@ -71,7 +71,7 @@ from runtime import (
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
-from setup_wizard import configure_hosted_service_key
+from setup_wizard import _prompt_yes_no, configure_hosted_service_key, is_interactive_terminal
 
 DASHBOARD_OPTIONS = DashboardOptions(
     hosted_mode=HOSTED_MODE,
@@ -188,7 +188,26 @@ def cmd_down(config: dict[str, object]) -> None:
     log("Innate sim runtime is down.")
 
 
-def cmd_clean(config: dict[str, object], *, delete_data: bool = False) -> None:
+def _confirm_clean(config: dict[str, object], *, delete_data: bool) -> bool:
+    sim_repo = config["sim_repo"]
+    print(f"{BOLD}This will permanently delete:{NC}")
+    print("  - Docker containers and volumes for the sim runtime")
+    print(f"  - local sim venv ({CLI_SIM} setup will rebuild it)")
+    if delete_data:
+        print(f"  - sim data: {sim_repo / 'data'} (multi-GB ReplicaCAD + asset pack; re-downloadable)")
+
+    if not is_interactive_terminal():
+        warn("Refusing to clean without confirmation. Re-run with --yes to proceed non-interactively.")
+        return False
+
+    return _prompt_yes_no("Continue?", default=False)
+
+
+def cmd_clean(config: dict[str, object], *, delete_data: bool = False, assume_yes: bool = False) -> None:
+    if not assume_yes and not _confirm_clean(config, delete_data=delete_data):
+        warn("Aborted. Nothing was deleted.")
+        return
+
     clean_runtime(config, delete_data=delete_data)
     success("Innate sim runtime cleaned (containers, volumes, and local venv removed).")
 
@@ -306,6 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also delete downloaded ReplicaCAD datasets and the simulator asset pack",
     )
+    clean_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (for non-interactive/scripted use)",
+    )
     sim_subparsers.add_parser(
         "sh",
         prog=f"{CLI_SIM} sh",
@@ -415,7 +440,7 @@ def main() -> int:
             cmd_down(config)
         elif args.sim_command == "clean":
             ensure_docker_available(command_hint=f"{CLI_SIM} clean")
-            cmd_clean(config, delete_data=args.data)
+            cmd_clean(config, delete_data=args.data, assume_yes=args.yes)
         elif args.sim_command == "sh":
             ensure_docker_available(command_hint=f"{CLI_SIM} sh")
             return open_os_container_shell()
