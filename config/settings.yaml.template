@@ -86,9 +86,9 @@
 #     inference_hz: 25.0            # policy inference loop rate (Hz)
 #     speed: 1.5                    # action execution speed multiplier
 #     replay_base_speed_scale: 1.0  # base-speed scale for replay; 1.0 = play base back at full recorded speed
-#     learned_base_speed_scale: 0.5 # base-speed de-rate for the learned policy; 1.0 = full predicted speed
+#     learned_base_speed_scale: 1.0 # base-speed scale for the learned policy; 1.0 = full predicted speed
 #     n_action_steps: 0            # replan horizon; 0 = auto (min(40, chunk_size)), clamped to chunk_size
-#     temporal_ensemble_coeff: 0.01  # ACT action smoothing; 0 = disabled (0.01 default enables it, pinning n_action_steps to 1)
+#     temporal_ensemble_coeff: 0.0   # ACT action smoothing; 0 = disabled (default). 0.01 is a good value to enable it (pins n_action_steps to 1)
 
 # ── Localization (grid localizer) ─────────────────────────────────────
 # navigation_grid_localizer:

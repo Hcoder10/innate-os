@@ -19,6 +19,7 @@ from config import (
     LOCAL_MODES,
     LOG_TARGETS,
     OS_SESSION_LOG_PATH,
+    SETTINGS_PATH,
     SHOW_LIVE_DASHBOARD_DEFAULT,
     SIM_CONFIG_PATH,
     STATE_DIR,
@@ -44,26 +45,34 @@ from runtime import (
     capture_agent_logs,
     capture_os_brain_logs,
     capture_simulator_logs,
+    clean_runtime,
     collect_status_snapshot,
+    config_frontend_port,
     config_simulator_port,
     down_cloud_agent,
     down_os,
     ensure_docker_available,
+    ensure_frontend_container,
     ensure_os_container,
     ensure_sim_data,
     ensure_sim_setup,
+    ensure_skill_assets,
+    open_os_container_shell,
+    prebuild_frontend_image,
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
+    sim_venv_python,
     start_cloud_agent,
     start_simulator,
     stop_simulator,
     tail_file,
     wait_for_brain_directives,
+    wait_for_frontend_ready,
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
-from setup_wizard import configure_hosted_service_key
+from setup_wizard import _prompt_yes_no, configure_hosted_service_key, is_interactive_terminal
 
 DASHBOARD_OPTIONS = DashboardOptions(
     hosted_mode=HOSTED_MODE,
@@ -100,6 +109,7 @@ def cmd_up(
     *,
     watch: bool = SHOW_LIVE_DASHBOARD_DEFAULT,
     sim_visualization_override: bool | None = None,
+    offline: bool = False,
 ) -> None:
     started = False
     try:
@@ -114,12 +124,42 @@ def cmd_up(
 
         os_env_file = build_os_env(config)
         cloud_env_file = build_cloud_env(config)
-        sim_python = ensure_sim_setup(config, allow_setup=False)
+        if offline:
+            sim_python = sim_venv_python(config)
+            if not sim_python.exists():
+                raise StackError(
+                    f"--offline was given but the sim Python environment is missing at {sim_python}.\n"
+                    f"Re-run `{CLI_SIM} up` once with internet access to set it up first."
+                )
+            log("Offline: skipping sim setup and skill asset downloads.")
+        else:
+            try:
+                sim_python = ensure_sim_setup(config)
+                ensure_skill_assets(config)
+            except StackError as exc:
+                raise StackError(
+                    f"{exc}\n\n"
+                    "This step needs internet access. Re-run with a connection, or re-run "
+                    f"`{CLI_SIM} up --offline` to start with whatever is already installed."
+                ) from exc
         ensure_sim_data(config, allow_fetch=False)
 
         started = True
-        start_cloud_agent(config, cloud_env_file)
-        ensure_os_container(config, os_env_file)
+        try:
+            start_cloud_agent(config, cloud_env_file)
+            ensure_os_container(config, os_env_file, offline=offline)
+            # Start the web frontend container; its build runs in the background while the
+            # simulator loads (we wait on it below).
+            ensure_frontend_container(config, offline=offline)
+        except StackError as exc:
+            if offline:
+                raise
+            raise StackError(
+                f"{exc}\n\n"
+                "This is a Docker pull/build that needs the network. If you have started the "
+                f"runtime successfully before and are now offline, re-run `{CLI_SIM} up --offline` "
+                "to reuse the existing images instead of pulling/building."
+            ) from exc
         start_simulator(config, sim_python)
 
         simulator_port = config_simulator_port(config)
@@ -141,6 +181,8 @@ def cmd_up(
             )
         log("Waiting for brain directives...")
         brain_directive_count = wait_for_brain_directives(simulator_port)
+        log("Waiting for the web frontend to build...")
+        wait_for_frontend_ready(config_frontend_port(config))
         print_startup_checks(
             config,
             simulator_http_ready=True,
@@ -174,6 +216,41 @@ def cmd_down(config: dict[str, object]) -> None:
     log("Innate sim runtime is down.")
 
 
+def _confirm_clean(config: dict[str, object], *, delete_data: bool) -> bool:
+    sim_repo = config["sim_repo"]
+    print(f"{BOLD}This will permanently delete:{NC}")
+    print("  - Docker containers and volumes for the sim runtime")
+    print(f"  - local sim venv ({CLI_SIM} setup will rebuild it)")
+    if delete_data:
+        print(f"  - sim data: {sim_repo / 'data'} (multi-GB ReplicaCAD + asset pack; re-downloadable)")
+
+    if not is_interactive_terminal():
+        warn("Refusing to clean without confirmation. Re-run with --yes to proceed non-interactively.")
+        return False
+
+    return _prompt_yes_no("Continue?", default=False)
+
+
+def cmd_clean(config: dict[str, object], *, delete_data: bool = False, assume_yes: bool = False) -> None:
+    if not assume_yes and not _confirm_clean(config, delete_data=delete_data):
+        warn("Aborted. Nothing was deleted.")
+        return
+
+    clean_runtime(config, delete_data=delete_data)
+    success("Innate sim runtime cleaned (containers, volumes, and local venv removed).")
+
+    sim_repo = config["sim_repo"]
+    print("Preserved (never deleted by clean):")
+    print(f"  - secrets:      {ENV_PATH}")
+    print(f"  - OS config:    {SETTINGS_PATH}")
+    print(f"  - sim config:   {SIM_CONFIG_PATH}")
+    print(f"  - env presets:  {sim_repo / 'data' / 'environments'}")
+    if not delete_data:
+        print(f"  - sim data:     {sim_repo / 'data'} (ReplicaCAD + asset pack; use --data to remove)")
+
+    log(f"Run `{CLI_SIM} setup` to rebuild the simulator environment.")
+
+
 def cmd_logs(target: str) -> None:
     if target == "startup":
         found_logs = False
@@ -198,11 +275,12 @@ def cmd_logs(target: str) -> None:
 
 
 def cmd_setup(config: dict[str, object]) -> None:
-    ensure_docker_available(command_hint=f"{CLI_ROOT} setup")
+    ensure_docker_available(command_hint=f"{CLI_SIM} setup")
     print_banner()
     configure_hosted_service_key(config)
-    sim_python = ensure_sim_setup(config, allow_setup=True)
+    sim_python = ensure_sim_setup(config)
     ensure_sim_data(config, allow_fetch=True)
+    prebuild_frontend_image(config)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
     print(f"Sim config: {SIM_CONFIG_PATH}")
@@ -233,11 +311,6 @@ def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="innate", description="Innate local development CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "setup",
-        prog=f"{CLI_ROOT} setup",
-        help="Prepare the simulator environment and first-run credentials",
-    )
     sim_parser = subparsers.add_parser(
         "sim",
         prog=f"{CLI_ROOT} sim",
@@ -264,10 +337,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Start the simulator with the native visualization window enabled for this run",
     )
+    up_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run without network: skip sim setup and asset downloads, and reuse already-built Docker images instead of pulling/building",
+    )
     sim_subparsers.add_parser(
         "down",
         prog=f"{CLI_SIM} down",
         help="Stop the local simulator-backed runtime",
+    )
+    clean_parser = sim_subparsers.add_parser(
+        "clean",
+        prog=f"{CLI_SIM} clean",
+        help="Stop the runtime and delete related Docker containers/volumes and the local sim venv",
+    )
+    clean_parser.add_argument(
+        "--data",
+        action="store_true",
+        help="Also delete downloaded ReplicaCAD datasets and the simulator asset pack",
+    )
+    clean_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (for non-interactive/scripted use)",
+    )
+    sim_subparsers.add_parser(
+        "sh",
+        prog=f"{CLI_SIM} sh",
+        help="Open an interactive shell inside the running ROS container",
     )
     status_parser = sim_subparsers.add_parser(
         "status",
@@ -357,10 +456,6 @@ def main() -> int:
     try:
         config = get_config()
 
-        if args.command == "setup":
-            cmd_setup(config)
-            return 0
-
         if args.command != "sim":
             parser.error(f"Unknown command group: {args.command}")
 
@@ -371,10 +466,17 @@ def main() -> int:
                 config,
                 watch=not args.once,
                 sim_visualization_override=True if args.vis else None,
+                offline=args.offline,
             )
         elif args.sim_command == "down":
             ensure_docker_available(command_hint=f"{CLI_SIM} down")
             cmd_down(config)
+        elif args.sim_command == "clean":
+            ensure_docker_available(command_hint=f"{CLI_SIM} clean")
+            cmd_clean(config, delete_data=args.data, assume_yes=args.yes)
+        elif args.sim_command == "sh":
+            ensure_docker_available(command_hint=f"{CLI_SIM} sh")
+            return open_os_container_shell()
         elif args.sim_command == "status":
             ensure_docker_available(command_hint=f"{CLI_SIM} status")
             print_status(

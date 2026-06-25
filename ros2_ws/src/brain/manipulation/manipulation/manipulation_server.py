@@ -90,13 +90,13 @@ class ManipulationServer(Node):
         # ensembling (see manipulation_server.yaml for the behavior of each sign). Resolve and
         # validate it once here, normalizing 0 -> None ("disabled"), so the same value drives
         # both create_act_config (which pins n_action_steps=1 when ensembling) and TRTACTPolicy.
-        self.declare_parameter("temporal_ensemble_coeff", 0.01)
+        self.declare_parameter("temporal_ensemble_coeff", 0.0)
         coeff = self.get_parameter("temporal_ensemble_coeff").value
         if not math.isfinite(coeff):
             # nan/inf pass the float param but poison the ensemble weights (exp(-nan*i)=nan),
             # which would publish NaN joint commands. Reject like a malformed value.
-            self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); using default 0.01")
-            coeff = 0.01
+            self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); disabling ensembling")
+            coeff = 0.0
         self.temporal_ensemble_coeff = coeff if coeff != 0 else None
 
         # Image size for policy inference (matches checkpoint training)

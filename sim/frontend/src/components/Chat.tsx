@@ -9,6 +9,7 @@ import { groupMessages, Message, DisplayMessage } from "../utils/groupMessages";
 import { CartesiaClient } from "@cartesia/cartesia-js";
 import type CartesiaWebsocket from "@cartesia/cartesia-js/wrapper/Websocket";
 import { stopAgentDirect } from "../services/rosbridgeService";
+import { appConfig } from "../config";
 
 const ChatContainer = styled.div`
   width: 100%;
@@ -411,10 +412,7 @@ export function Chat() {
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const [audioQueue, setAudioQueue] = useState<Float32Array[]>([]);
   const isPlayingRef = useRef<boolean>(false);
-  const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
-  const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
-  const backendWsBaseUrl =
-    import.meta.env.VITE_WS_BASE_URL ?? "ws://localhost:8000";
+  const robotWsUrl = appConfig.robotWsUrl;
   const handleScroll = () => {
     if (containerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
@@ -431,12 +429,7 @@ export function Chat() {
       return;
     }
 
-    // Use anonymous user ID
-    const userId = "anonymous";
-    // Add user ID as query parameter
-    const wsUrl = useDirectRobot
-      ? robotWsUrl
-      : `${backendWsBaseUrl}/ws/chat?user_id=${encodeURIComponent(userId)}`;
+    const wsUrl = robotWsUrl;
     let reconnectTimeout: number | null = null;
     let reconnectAttempts = 0;
     let shouldReconnect = true;
@@ -479,86 +472,41 @@ export function Chat() {
         socket.onopen = () => {
           reconnectAttempts = 0;
           clearReconnectTimeout();
-          if (useDirectRobot) {
-            socket.send(
-              JSON.stringify({ op: "subscribe", topic: CHAT_OUT_TOPIC }),
-            );
-            socket.send(
-              JSON.stringify({ op: "subscribe", topic: CHAT_IN_TOPIC }),
-            );
-            socket.send(
-              JSON.stringify({
-                op: "subscribe",
-                topic: SKILL_STATUS_UPDATE_TOPIC,
-              }),
-            );
-          }
+          socket.send(JSON.stringify({ op: "subscribe", topic: CHAT_OUT_TOPIC }));
+          socket.send(JSON.stringify({ op: "subscribe", topic: CHAT_IN_TOPIC }));
+          socket.send(
+            JSON.stringify({ op: "subscribe", topic: SKILL_STATUS_UPDATE_TOPIC }),
+          );
         };
 
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
 
-            if (useDirectRobot) {
-              if (
-                data.op === "publish" &&
-                (data.topic === CHAT_OUT_TOPIC || data.topic === CHAT_IN_TOPIC)
-              ) {
-                const parsedMessage = parseRosbridgeChatMessage(
-                  data.msg?.data ?? data.msg ?? data.data,
-                );
-                if (parsedMessage) {
-                  setMessages((prev) =>
-                    parsedMessage.sender === "task_activated"
-                      ? mergeSkillStatusMessage(prev, parsedMessage)
-                      : appendUniqueMessage(prev, parsedMessage),
-                  );
-                }
-              } else if (
-                data.op === "publish" &&
-                data.topic === SKILL_STATUS_UPDATE_TOPIC
-              ) {
-                const parsedMessage = parseSkillStatusMessage(
-                  data.msg?.data ?? data.msg ?? data.data,
-                );
-                if (parsedMessage) {
-                  setMessages((prev) =>
-                    mergeSkillStatusMessage(prev, parsedMessage),
-                  );
-                }
-              }
-              return;
-            }
-
-            // Handle error messages
-            if (data.error) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  sender: data.sender || "system",
-                  text: data.text,
-                  timestamp: data.timestamp || Date.now() / 1000,
-                  isError: true,
-                },
-              ]);
-              return;
-            }
-
-            if (data.sender && data.text) {
-              const parsedMessage = parseRosbridgeChatMessage({
-                sender: data.sender,
-                text: data.text,
-                timestamp: data.timestamp,
-                taskStatus: data.taskStatus,
-                primitiveId: data.primitiveId,
-                skillId: data.skillId,
-                failureReason: data.failureReason,
-              });
+            if (
+              data.op === "publish" &&
+              (data.topic === CHAT_OUT_TOPIC || data.topic === CHAT_IN_TOPIC)
+            ) {
+              const parsedMessage = parseRosbridgeChatMessage(
+                data.msg?.data ?? data.msg ?? data.data,
+              );
               if (parsedMessage) {
                 setMessages((prev) =>
                   parsedMessage.sender === "task_activated"
                     ? mergeSkillStatusMessage(prev, parsedMessage)
                     : appendUniqueMessage(prev, parsedMessage),
+                );
+              }
+            } else if (
+              data.op === "publish" &&
+              data.topic === SKILL_STATUS_UPDATE_TOPIC
+            ) {
+              const parsedMessage = parseSkillStatusMessage(
+                data.msg?.data ?? data.msg ?? data.data,
+              );
+              if (parsedMessage) {
+                setMessages((prev) =>
+                  mergeSkillStatusMessage(prev, parsedMessage),
                 );
               }
             }
@@ -605,7 +553,7 @@ export function Chat() {
         socket.close();
       }
     };
-  }, [useDirectRobot, robotWsUrl, backendWsBaseUrl]);
+  }, [robotWsUrl]);
 
   useEffect(() => {
     const handleManualSkillEvent = (event: Event) => {
@@ -639,61 +587,9 @@ export function Chat() {
         wsRef.current &&
         wsRef.current.readyState === WebSocket.OPEN
       ) {
-        if (useDirectRobot) {
-          const timestamp = Math.floor(Date.now() / 1000);
-          const outgoingMessage = {
-            text,
-            sender: "user",
-            timestamp,
-          } as const;
-
-          wsRef.current.send(
-            JSON.stringify({
-              op: "publish",
-              topic: CHAT_IN_TOPIC,
-              msg: { data: JSON.stringify(outgoingMessage) },
-            }),
-          );
-
-          setMessages((prev) =>
-            appendUniqueMessage(prev, {
-              sender: outgoingMessage.sender,
-              text: outgoingMessage.text,
-              timestamp: outgoingMessage.timestamp,
-            }),
-          );
-        } else {
-          wsRef.current.send(text);
-        }
-        console.log("Sent voice transcription to chat:", text);
-      }
-    };
-
-    window.addEventListener(
-      "voice-transcription",
-      handleVoiceTranscription as EventListener,
-    );
-    return () => {
-      window.removeEventListener(
-        "voice-transcription",
-        handleVoiceTranscription as EventListener,
-      );
-    };
-  }, [useDirectRobot]);
-
-  const handleSend = async () => {
-    const cleanDraft = draft.trim();
-    if (!cleanDraft || !wsRef.current) return;
-
-    // Initialize AudioContext on user interaction
-    await ensureAudioContext();
-
-    // Check if WebSocket is open
-    if (wsRef.current.readyState === WebSocket.OPEN) {
-      if (useDirectRobot) {
         const timestamp = Math.floor(Date.now() / 1000);
         const outgoingMessage = {
-          text: cleanDraft,
+          text,
           sender: "user",
           timestamp,
         } as const;
@@ -713,10 +609,53 @@ export function Chat() {
             timestamp: outgoingMessage.timestamp,
           }),
         );
-      } else {
-        // Send the draft message to the backend via WebSocket
-        wsRef.current.send(cleanDraft);
+        console.log("Sent voice transcription to chat:", text);
       }
+    };
+
+    window.addEventListener(
+      "voice-transcription",
+      handleVoiceTranscription as EventListener,
+    );
+    return () => {
+      window.removeEventListener(
+        "voice-transcription",
+        handleVoiceTranscription as EventListener,
+      );
+    };
+  }, []);
+
+  const handleSend = async () => {
+    const cleanDraft = draft.trim();
+    if (!cleanDraft || !wsRef.current) return;
+
+    // Initialize AudioContext on user interaction
+    await ensureAudioContext();
+
+    // Check if WebSocket is open
+    if (wsRef.current.readyState === WebSocket.OPEN) {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const outgoingMessage = {
+        text: cleanDraft,
+        sender: "user",
+        timestamp,
+      } as const;
+
+      wsRef.current.send(
+        JSON.stringify({
+          op: "publish",
+          topic: CHAT_IN_TOPIC,
+          msg: { data: JSON.stringify(outgoingMessage) },
+        }),
+      );
+
+      setMessages((prev) =>
+        appendUniqueMessage(prev, {
+          sender: outgoingMessage.sender,
+          text: outgoingMessage.text,
+          timestamp: outgoingMessage.timestamp,
+        }),
+      );
 
       // Clear the input
       setDraft("");
@@ -735,17 +674,7 @@ export function Chat() {
 
   const stopAgent = async () => {
     try {
-      if (useDirectRobot) {
-        await stopAgentDirect(robotWsUrl);
-      } else {
-        const baseUrl =
-          import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
-        const response = await fetch(`${baseUrl}/stop_agent`, {
-          method: "POST",
-        });
-        const data = await response.json();
-        console.log("Agent stopped:", data);
-      }
+      await stopAgentDirect(robotWsUrl);
 
       setMessages((prev) => [
         ...prev,
@@ -780,7 +709,7 @@ export function Chat() {
   useEffect(() => {
     if (!cartesiaRef.current) {
       cartesiaRef.current = new CartesiaClient({
-        apiKey: import.meta.env.VITE_CARTESIA_API_KEY || "",
+        apiKey: appConfig.cartesiaApiKey,
       });
     }
 
