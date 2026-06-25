@@ -30,7 +30,6 @@ node -e '
   set("wsBaseUrl",      "WS_BASE_URL");
   set("robotWsUrl",     "ROBOT_WS_URL");
   set("directRobot",    "DIRECT_ROBOT",     v => v === "true");
-  set("cartesiaApiKey", "CARTESIA_API_KEY");
   set("pinnedSkills",   "PINNED_SKILLS",    JSON.parse);
   fs.writeFileSync(process.argv[1], JSON.stringify(out));
 ' "$CONFIG_DIR/config.json"
