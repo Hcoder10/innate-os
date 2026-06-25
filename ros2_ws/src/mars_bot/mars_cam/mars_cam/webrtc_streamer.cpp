@@ -131,6 +131,11 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("playout_min_delay_ms", 0);
     this->declare_parameter("playout_max_delay_ms", 40);
 
+    // RTCP-inactivity watchdog: seconds without any RTCP from the peer before its pipeline (and the
+    // camera subscriptions / encoders / mic it holds) are released. Must comfortably exceed the
+    // peer's RTCP interval (RR ~1 s) to avoid tearing down a live session on a transient blip.
+    this->declare_parameter("rtcp_inactivity_timeout_s", 5.0);
+
     // Get parameters
     use_compressed_images_ = this->get_parameter("use_compressed_images").as_bool();
     live_main_topic_ = this->get_parameter("live_main_camera_topic").as_string();
@@ -142,6 +147,27 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     audio_capture_device_ = this->get_parameter("audio_capture_device").as_string();
     playout_min_delay_ms_ = static_cast<guint>(this->get_parameter("playout_min_delay_ms").as_int());
     playout_max_delay_ms_ = static_cast<guint>(this->get_parameter("playout_max_delay_ms").as_int());
+    rtcp_inactivity_timeout_s_ = this->get_parameter("rtcp_inactivity_timeout_s").as_double();
+    // Allow the inactivity timeout to be retuned live (ros2 param set) without a rebuild/restart.
+    rtcp_timeout_cb_ = this->add_on_set_parameters_callback(
+        [this](const std::vector<rclcpp::Parameter>& params) {
+            rcl_interfaces::msg::SetParametersResult result;
+            result.successful = true;
+            for (const auto& p : params) {
+                if (p.get_name() != "rtcp_inactivity_timeout_s") {
+                    continue;
+                }
+                const double v = p.as_double();
+                if (v <= 0.0) {
+                    result.successful = false;
+                    result.reason = "rtcp_inactivity_timeout_s must be > 0";
+                } else {
+                    rtcp_inactivity_timeout_s_ = v;
+                    RCLCPP_INFO(this->get_logger(), "rtcp_inactivity_timeout_s set to %.1f s", v);
+                }
+            }
+            return result;
+        });
 
     // Create publishers
     offer_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer", 10);
@@ -157,8 +183,8 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     start_sub_ = this->create_subscription<std_msgs::msg::String>(
         "/webrtc/start", 10, std::bind(&WebRTCStreamer::on_start, this, std::placeholders::_1));
 
-    // Create initial subscriptions for live source
-    create_subscriptions("live");
+    // Camera subscriptions are created lazily on START (start_pipeline_locked) and released on
+    // teardown, so the node does no decode/convert work while no peer is connected.
 
     health_timer_ =
         this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
@@ -173,6 +199,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     } else {
         RCLCPP_INFO(this->get_logger(), "  Mic audio: disabled");
     }
+    RCLCPP_INFO(this->get_logger(), "  RTCP-inactivity teardown: %.1f s", rtcp_inactivity_timeout_s_);
 }
 
 WebRTCStreamer::~WebRTCStreamer() {
@@ -453,6 +480,16 @@ void WebRTCStreamer::on_image_arm_compressed(const sensor_msgs::msg::CompressedI
 }
 
 void WebRTCStreamer::teardown_pipeline_locked() {
+    // Drop the camera subscriptions first so no frame callbacks fire while the pipeline is torn
+    // down; they are recreated on the next START. With no peer there is nothing to feed, so this
+    // is also what stops the per-frame decode/convert work when idle.
+    destroy_subscriptions();
+
+    // Disarm the RTCP-inactivity watchdog; the next connection re-arms it on CONNECTED. The probe
+    // itself lives on the rtpbin pad and is freed with the pipeline below.
+    last_rtcp_activity_ns_.store(0, std::memory_order_relaxed);
+    rtcp_probe_installed_ = false;
+
     // Deactivate and release pools
     if (pool_main_) {
         gst_buffer_pool_set_active(pool_main_, FALSE);
@@ -536,6 +573,29 @@ void WebRTCStreamer::poll_pipeline_health() {
                     closed ? "closed" : "down past grace window");
         teardown_pipeline_locked();
         terminal_polls_ = 0;
+        return;
+    }
+
+    // RTCP-inactivity watchdog: webrtcbin can sit in CONNECTED forever after a peer vanishes
+    // ungracefully. A live receiver streams RTCP continuously, so a gap longer than the timeout
+    // means the peer is gone — release the pipeline (and with it the camera subs, encoders, mic).
+    if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED && !rtcp_probe_installed_) {
+        // recv_rtcp_sink exists once the transport is negotiated; attach the liveness probe now.
+        rtcp_probe_installed_ = install_rtcp_probe_locked();
+        if (!rtcp_probe_installed_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "No recv_rtcp pad yet; RTCP-inactivity watchdog not armed");
+        }
+    }
+    const int64_t last = last_rtcp_activity_ns_.load(std::memory_order_relaxed);
+    if (last != 0 && rtcp_probe_installed_ && state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
+        const double idle_s = (std::chrono::steady_clock::now().time_since_epoch().count() - last) / 1e9;
+        if (idle_s > rtcp_inactivity_timeout_s_) {
+            RCLCPP_INFO(this->get_logger(), "No RTCP from peer for %.1f s (> %.1f s); releasing pipeline", idle_s,
+                        rtcp_inactivity_timeout_s_);
+            teardown_pipeline_locked();
+            terminal_polls_ = 0;
+        }
     }
 }
 
@@ -562,12 +622,8 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     RCLCPP_INFO(this->get_logger(), "START received (source=%s, audio=%s), creating offer...", source.c_str(),
                 request_audio ? "requested" : "off");
 
-    // Switch subscriptions if source changed
-    if (source != current_source_) {
-        create_subscriptions(source);
-    }
-
-    // Cleanup existing pipeline
+    // Subscriptions are (re)created below once the pipeline is up — for the requested source, and
+    // only while a peer is connected. cleanup_pipeline() releases any from a previous connection.
     cleanup_pipeline();
 
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
@@ -593,6 +649,9 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     }
 
     RCLCPP_INFO(this->get_logger(), "Pipeline PLAYING (audio=%s), creating offer...", with_audio ? "on" : "off");
+
+    // Now that the pipeline (and its appsrc feeds) exist, subscribe to the cameras for this source.
+    create_subscriptions(source);
 
     GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, this, nullptr);
     g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
@@ -768,6 +827,11 @@ bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
     g_signal_connect(webrtc_, "notify::connection-state", G_CALLBACK(on_connection_state_changed), this);
     g_signal_connect(webrtc_, "notify::ice-gathering-state", G_CALLBACK(on_ice_gathering_state_changed), this);
 
+    // The RTCP-liveness buffer probe is attached once the peer is CONNECTED (poll_pipeline_health),
+    // because rtpbin's recv_rtcp_sink pad only exists after the transport is negotiated.
+    last_rtcp_activity_ns_.store(0, std::memory_order_relaxed);  // disarmed until CONNECTED
+    rtcp_probe_installed_ = false;
+
     GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_ASYNC) {
         // Live sources (alsasrc/appsrc) open on a background thread and return ASYNC immediately.
@@ -882,11 +946,71 @@ void WebRTCStreamer::on_ice_candidate(GstElement* /*webrtc*/, guint mline, gchar
     RCLCPP_INFO(self->get_logger(), "Sent ICE %u: %.50s...", mline, candidate);
 }
 
+void WebRTCStreamer::note_rtcp_activity() {
+    last_rtcp_activity_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                std::memory_order_relaxed);
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Peer RTCP alive");
+}
+
+GstPadProbeReturn WebRTCStreamer::on_rtcp_buffer(GstPad* /*pad*/, GstPadProbeInfo* /*info*/, gpointer user_data) {
+    static_cast<WebRTCStreamer*>(user_data)->note_rtcp_activity();
+    return GST_PAD_PROBE_OK;
+}
+
+bool WebRTCStreamer::install_rtcp_probe_locked() {
+    // webrtcbin feeds decrypted incoming RTCP into its internal rtpbin via recv_rtcp_sink pad(s);
+    // a buffer probe there ticks once per RTCP packet from the peer. The pad is a request pad created
+    // during transport setup, so this is called once the connection reaches CONNECTED.
+    GstElement* rtpbin = gst_bin_get_by_name(GST_BIN(webrtc_), "rtpbin");
+    if (!rtpbin) {
+        return false;
+    }
+    bool installed = false;
+    GstIterator* it = gst_element_iterate_sink_pads(rtpbin);
+    GValue item = G_VALUE_INIT;
+    bool done = false;
+    while (!done) {
+        switch (gst_iterator_next(it, &item)) {
+            case GST_ITERATOR_OK: {
+                GstPad* pad = GST_PAD(g_value_get_object(&item));
+                gchar* name = gst_pad_get_name(pad);
+                if (name && g_str_has_prefix(name, "recv_rtcp_sink")) {
+                    gst_pad_add_probe(pad,
+                                      static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER |
+                                                                   GST_PAD_PROBE_TYPE_BUFFER_LIST),
+                                      on_rtcp_buffer, this, nullptr);
+                    installed = true;
+                }
+                g_free(name);
+                g_value_reset(&item);
+                break;
+            }
+            case GST_ITERATOR_RESYNC:
+                gst_iterator_resync(it);
+                break;
+            case GST_ITERATOR_ERROR:
+            case GST_ITERATOR_DONE:
+                done = true;
+                break;
+        }
+    }
+    g_value_unset(&item);
+    gst_iterator_free(it);
+    gst_object_unref(rtpbin);
+    return installed;
+}
+
 void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec* /*pspec*/, gpointer user_data) {
     auto* self = static_cast<WebRTCStreamer*>(user_data);
 
     GstWebRTCPeerConnectionState state;
     g_object_get(webrtc, "connection-state", &state, nullptr);
+
+    // Arm the RTCP-inactivity watchdog on connect: stamp "now" so the timeout is measured from when
+    // media could first flow, not from pipeline start (ICE/DTLS setup precedes any RTCP).
+    if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
+        self->note_rtcp_activity();
+    }
 
     const char* state_str = "unknown";
     switch (state) {

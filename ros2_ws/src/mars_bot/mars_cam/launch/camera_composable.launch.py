@@ -94,6 +94,12 @@ def generate_launch_description():
                 # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
                 "playout_min_delay_ms": 0,
                 "playout_max_delay_ms": 40,
+                # Seconds without any RTCP from the peer before the node tears the pipeline down and
+                # releases the camera subscriptions / encoders / mic. webrtcbin never reports a
+                # vanished (closed-tab/killed) peer, so this inactivity watchdog is what makes the
+                # subscriptions lazy. Must exceed the peer's RTCP interval (browsers send RR ~1/s +
+                # transport-cc ~10-20/s). Runtime-tunable via `ros2 param set`.
+                "rtcp_inactivity_timeout_s": 5.0,
             }
         ],
         extra_arguments=[{"use_intra_process_comms": True}],

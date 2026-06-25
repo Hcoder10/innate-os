@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <chrono>
+#include <atomic>
 
 namespace mars_cam {
 
@@ -43,6 +44,13 @@ class WebRTCStreamer : public rclcpp::Node {
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_ice_gathering_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
+
+    // Buffer probe on rtpbin's recv_rtcp_sink pad: fires for every decrypted RTCP packet the peer
+    // sends (receiver reports, transport-cc feedback), so it ticks continuously while the peer is
+    // alive. Used as the liveness signal for the inactivity watchdog.
+    static GstPadProbeReturn on_rtcp_buffer(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    bool install_rtcp_probe_locked();  // attach the probe once the session's rtcp pad exists
+    void note_rtcp_activity();          // stamps last_rtcp_activity_ns_ with the steady clock
 
     // Helper methods
     void create_subscriptions(const std::string& source);
@@ -112,6 +120,20 @@ class WebRTCStreamer : public rclcpp::Node {
     // Periodic bus drain + disconnect teardown
     rclcpp::TimerBase::SharedPtr health_timer_;
     int terminal_polls_ = 0;  // consecutive FAILED/DISCONNECTED polls (grace window before teardown)
+
+    // RTCP-inactivity watchdog. webrtcbin never reports FAILED/DISCONNECTED when a peer vanishes
+    // ungracefully (closed tab, killed process), so a "connected" pipeline — and its camera
+    // subscriptions, encoders and mic — would otherwise leak until the next START. A live receiver
+    // streams RTCP continuously (RR ~1/s, transport-cc ~10-20/s); if none arrives for longer than
+    // this timeout we treat the peer as gone and tear the pipeline down. Tunable via ros param.
+    double rtcp_inactivity_timeout_s_ = 5.0;
+    // Lets the timeout be retuned at runtime via `ros2 param set` (read on the executor thread, same
+    // as poll_pipeline_health, so no extra locking).
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr rtcp_timeout_cb_;
+    // Steady-clock ns of the last RTCP from the peer, or 0 when the watchdog is disarmed (no peer
+    // connected yet). Written from a GStreamer thread, read on the executor thread.
+    std::atomic<int64_t> last_rtcp_activity_ns_{0};
+    bool rtcp_probe_installed_ = false;  // recv-RTCP buffer probe attached for this connection
 
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;
