@@ -59,8 +59,8 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
       <sub>Mobile app</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-training-card.png" alt="Innate Training Manager skills view" width="100%"><br>
-      <sub>Training Manager</sub>
+      <img src="docs/assets/readme/screenshot-training-card.png" alt="Innate web app running an agent" width="100%"><br>
+      <sub>Web app</sub>
     </td>
   </tr>
 </table>
