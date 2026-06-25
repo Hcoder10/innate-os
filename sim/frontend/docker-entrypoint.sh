@@ -30,6 +30,10 @@ node -e '
   set("wsBaseUrl",      "WS_BASE_URL");
   set("robotWsUrl",     "ROBOT_WS_URL");
   set("directRobot",    "DIRECT_ROBOT",     v => v === "true");
+  // cartesiaApiKey is intentionally NOT mapped here: config.json is served
+  // unauthenticated at /config.json, so writing CARTESIA_API_KEY into it would
+  // leak a billable key to anyone who can reach the frontend. Browser TTS is
+  // not a feature we need, so we accept it being non-functional. Do not re-add.
   set("pinnedSkills",   "PINNED_SKILLS",    JSON.parse);
   fs.writeFileSync(process.argv[1], JSON.stringify(out));
 ' "$CONFIG_DIR/config.json"
