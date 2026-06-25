@@ -53,9 +53,25 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
   </tr>
 </table>
 
+## Control
+
+### Web app
+
+With the Innate web app, you can control the robot in real time. Use the gamepad or keyboard interface to drive the base, move the arm, and trigger skills manually.
+
+![Innate web app](docs/assets/readme/screenshot-webapp.png)
+
+It is available at https://<robot-address> which can either be its IP or hostname.
+
+### Mobile app
+
+The Innate mobile app is available on both iOS and Android. It allows you to control the robot in real time, just like the web app, but with a more convenient interface.
+
+![Innate mobile app](docs/assets/readme/screenshot-mobile.png)
+
 ## Skills
 
-Skills are the core unit of action on MARS. 
+Skills are the core unit of action on Innate robots.
 
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
@@ -78,13 +94,6 @@ You will find skills in two different directories:
 
 - **Built-in skills** — Located in `workspace/innate_skills/`.
 - **Your custom skills** — Stored in `workspace/custom_skills/` (gitignored).
-
-Skill IDs show where a skill came from:
-
-```text
-innate-os/wave      # built-in skill
-local/my-skill      # local custom skill
-```
 
 ### Skill definition
 
@@ -204,12 +213,6 @@ class NavigateAgent(Agent):
 ### Testing agents in sim
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
-
-## Teleoperation
-
-Control the robot in real time from the Innate web app. Use the gamepad or keyboard interface to drive the base, move the arm, and trigger skills manually.
-
-Open the web app, connect to your robot or the simulator, and switch to teleoperation mode to take over.
 
 ## Simulator
 
