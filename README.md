@@ -205,6 +205,32 @@ class NavigateAgent(Agent):
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
 
+## Teleoperation
+
+Control the robot in real time from the Innate web app. Use the gamepad or keyboard interface to drive the base, move the arm, and trigger skills manually.
+
+Open the web app, connect to your robot or the simulator, and switch to teleoperation mode to take over.
+
+## Simulator
+
+Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
+
+```bash
+./innate setup
+./innate sim up
+```
+
+This starts the Docker-based Innate OS runtime, the simulator, and the built frontend at [http://localhost:8000](http://localhost:8000). The terminal opens a live dashboard with startup logs, simulator logs, brain logs, and runtime health.
+
+```bash
+./innate sim up --vis       # open the native simulator viewer
+./innate sim status         # show current runtime state
+./innate sim logs simulator # inspect simulator logs
+./innate sim down           # stop the runtime
+```
+
+See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simulator workflow.
+
 ## Additional Inputs
 
 Innate OS provides an SDK for streaming new data into running agents. Innate robots are designed to be naturally expandable: add a new sensor, expose it as an input device, and let agents request it by name.
@@ -267,26 +293,6 @@ def get_inputs(self):
 </details>
 
 See [`docs/INPUT_DEVICES.md`](docs/INPUT_DEVICES.md) for the full input-device lifecycle.
-
-## Simulator
-
-Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
-
-```bash
-./innate setup
-./innate sim up
-```
-
-This starts the Docker-based Innate OS runtime, the simulator, and the built frontend at [http://localhost:8000](http://localhost:8000). The terminal opens a live dashboard with startup logs, simulator logs, brain logs, and runtime health.
-
-```bash
-./innate sim up --vis       # open the native simulator viewer
-./innate sim status         # show current runtime state
-./innate sim logs simulator # inspect simulator logs
-./innate sim down           # stop the runtime
-```
-
-See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simulator workflow.
 
 ## ROS Reference
 
