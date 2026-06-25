@@ -238,7 +238,10 @@ class ConditionalUnet1D(nn.Module):
         for m in self.mid_modules:
             x = m(x, gfeat)
         for resnet, resnet2, upsample in self.up_modules:
-            x = torch.cat((x, h.pop()), dim=1)
+            skip = h.pop()
+            if x.shape[-1] != skip.shape[-1]:
+                x = x[..., : skip.shape[-1]]
+            x = torch.cat((x, skip), dim=1)
             x = resnet(x, gfeat)
             x = resnet2(x, gfeat)
             x = upsample(x)
@@ -341,7 +344,7 @@ class DPRuntimeConfig:
     input_shapes: Dict[str, List[int]] = field(default_factory=dict)
     output_shapes: Dict[str, List[int]] = field(default_factory=dict)
     n_obs_steps: int = 1
-    horizon: int = 30
+    horizon: int = 16
     n_action_steps: int = 8
     num_train_timesteps: int = 100
     num_inference_steps: int = 16
