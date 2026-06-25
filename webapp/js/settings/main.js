@@ -286,8 +286,14 @@ function buildVolumeSection() {
 
   // Disabled until connected, and while a save is in flight so a mid-save
   // release can't be silently dropped (nor re-enabled by a state change).
+  // Clearing `dragging` on disable matters too: a disconnect mid-drag would
+  // otherwise leave it stuck true, so the subscription below would ignore every
+  // /robot/info after reconnect and the slider would freeze, diverging from the
+  // robot's real volume.
   const refreshEnabled = () => {
-    slider.disabled = ros.state !== "connected" || saving;
+    const shouldDisable = ros.state !== "connected" || saving;
+    if (shouldDisable) dragging = false;
+    slider.disabled = shouldDisable;
   };
 
   ros.onStateChange((state) => {
