@@ -24,6 +24,12 @@ from brain_client.skills.hot_reload_watcher import HotReloadWatcher
 from brain_client.skills.registration import AVAILABLE_SKILLS_QOS, registry_from_skills_msg
 from brain_client.skills.registry import SkillRegistry
 
+# A full reload reloads ALL on-disk skills/agents, so one that just ran already
+# reflects requests arriving right after it. Collapse /brain/reload calls within
+# this window so a burst can't each block the executor for the ~30s PEAS reload
+# and overflow the service queue.
+_RELOAD_COALESCE_SEC = 2.0
+
 
 class ReloadCoordinator:
     def __init__(
@@ -42,6 +48,7 @@ class ReloadCoordinator:
         self._lock = threading.Lock()
         self._watcher = None
         self._timer = None
+        self._last_full_reload = 0.0  # monotonic time of the last perform_full
 
     # --- watcher lifecycle ---
     def start_watcher(self) -> None:
@@ -123,6 +130,10 @@ class ReloadCoordinator:
         return reloaded_skills, reloaded_agents
 
     def perform_full(self) -> None:
+        now = time.monotonic()
+        if now - self._last_full_reload < _RELOAD_COALESCE_SEC:
+            self._logger.info("Skipping /brain/reload — a full reload just completed")
+            return
         try:
             self._lifecycle.deactivate_brain()
             self._state.directives = {}
@@ -163,6 +174,9 @@ class ReloadCoordinator:
                 self._lifecycle.reactivate_brain()
             except Exception:
                 pass
+        finally:
+            # Record even on failure so a persistent error can't drive a reload storm.
+            self._last_full_reload = time.monotonic()
 
     def _await_available_skills(self, timeout_sec: float):
         """Wait for the latched /brain/available_skills sample after a reload.
