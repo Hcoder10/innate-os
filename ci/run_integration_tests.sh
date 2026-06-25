@@ -13,8 +13,6 @@
 # is equivalent; the robot keeps SHM in production via the image entrypoint.
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 ROUTER_PID=""
 cleanup() {
   if [ -n "${ROUTER_PID}" ]; then
@@ -57,11 +55,30 @@ cd /root/innate-os/ros2_ws
 source install/setup.bash
 
 # The launch tests below only start brain_client nodes, so they cannot catch a
-# lost exec bit in the mars_* / manipulation packages. Statically guard every
-# install(PROGRAMS) node script across all packages so any such regression fails
-# here directly, regardless of which package it lives in.
+# lost exec bit in the mars_* / manipulation packages. Guard every package here:
+# a --symlink-install build symlinks the installed node straight at its source,
+# so a script tracked 0644 fails to launch ("executable not found on the libexec
+# directory"); a copy install masks it with 0755 copies. Read each CMakeLists'
+# install(PROGRAMS <files...> DESTINATION ...) list and require the source +x.
 echo "=== exec-bit guard: install(PROGRAMS) node scripts ==="
-python3 "${SCRIPT_DIR}/check_node_exec_bits.py"
+missing="$(
+  find src -name CMakeLists.txt | while read -r cmake; do
+    awk -v dir="$(dirname "$cmake")" '
+      { gsub(/[()]/, " & ") }                       # tokenize parens
+      { for (i = 1; i <= NF; i++) {
+          if ($i == "PROGRAMS") { prog = 1; continue }
+          if ($i == ")")        { prog = 0; continue }
+          if (prog && $i ~ /^(DESTINATION|RENAME|PERMISSIONS|CONFIGURATIONS|COMPONENT|OPTIONAL|EXCLUDE_FROM_ALL|TYPE)$/) { prog = 0; continue }
+          if (prog) print dir "/" $i
+      } }
+    ' "$cmake"
+  done | while read -r f; do [ -x "$f" ] || echo "$f"; done
+)"
+if [ -n "${missing}" ]; then
+  echo "install(PROGRAMS) node scripts missing the exec bit (chmod +x them):" >&2
+  echo "${missing}" >&2
+  exit 1
+fi
 
 echo "=== unit tests (fast, no ROS) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
