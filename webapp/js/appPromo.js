@@ -59,8 +59,12 @@ export function maybeShowAppPromo(root) {
   const cta = document.createElement("a");
   cta.className = "app-promo-cta";
   cta.href = platform === "ios" ? IOS_APP_URL : ANDROID_APP_URL;
-  cta.target = "_blank";
-  cta.rel = "noopener noreferrer";
+  // iOS TestFlight opens in a new tab; the Android .apk should download in place.
+  // A _blank to a downloadable file leaves an empty lingering tab on Chrome for Android.
+  if (platform === "ios") {
+    cta.target = "_blank";
+    cta.rel = "noopener noreferrer";
+  }
   cta.textContent = platform === "ios" ? "Download for iOS" : "Download for Android";
   cta.addEventListener("click", dismiss); // they've got the message — don't ask again
 
