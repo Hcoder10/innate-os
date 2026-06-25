@@ -207,13 +207,16 @@ export function createReplayWizard(host, ros, opts) {
       if (destroyed) return;
       destroyed = true;
       resetTimer();
-      // Abandon cleanup: delete the draft we created but never promoted. Stop an
-      // open episode first so the recorder isn't writing into a deleted dir.
+      // Abandon cleanup: delete the draft we created but never promoted. Cancel
+      // an open episode first — not stop — so the recorder discards it and returns
+      // to a clean state. Stopping would leave a stopped-but-unsaved episode
+      // stranded on the recorder (pointing at the dir we're about to delete),
+      // which then surfaces as the "unfinished recording open" banner.
       if (!saved) {
-        const stopFirst = recordingOpen
-          ? ros.callService(RECORDER_STOP_EPISODE_SERVICE, {}).catch(() => {})
+        const closeFirst = recordingOpen
+          ? ros.callService(RECORDER_CANCEL_EPISODE_SERVICE, {}).catch(() => {})
           : Promise.resolve();
-        stopFirst.finally(() =>
+        closeFirst.finally(() =>
           ros.callService(DELETE_SKILL_SERVICE, { skill_directory: opts.draftDir }).catch(() => {}),
         );
       }

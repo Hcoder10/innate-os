@@ -3199,9 +3199,11 @@ button {
 
 /* ---- profiling page ----------------------------------------------------- */
 /* Record-and-graph view for ACT inference timing. Inherits .page-head /
-   .page-title from the shared header. */
+   .page-title from the shared header. Note: the class is .profiling-page, not
+   .profiling — the latter is the teleop overlay panel (absolute, 232px, pinned
+   top-right), and sharing it would leak that positioning onto this full page. */
 
-.profiling {
+.profiling-page {
   display: flex;
   flex-direction: column;
   min-height: 0;

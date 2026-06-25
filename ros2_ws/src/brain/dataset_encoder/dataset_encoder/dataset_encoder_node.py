@@ -129,8 +129,19 @@ class DatasetEncoder(Node):
             self._queue.append(task_directory)
         self.get_logger().info(f"queued for encode: {task_directory} (depth={len(self._queue)})")
 
+    def _is_replay_skill(self, task_directory: str) -> bool:
+        """True if the skill's metadata declares type 'replay' — its take becomes a
+        deterministic trajectory, never a video, so there's nothing to encode."""
+        try:
+            with open(os.path.join(task_directory, "metadata.json")) as fh:
+                return json.load(fh).get("type") == "replay"
+        except (OSError, ValueError):
+            return False
+
     def _needs_conversion(self, task_directory: str) -> bool:
         """Cheap JSON-only check: any episode without video_files / not h264."""
+        if self._is_replay_skill(task_directory):
+            return False
         meta_path = os.path.join(task_directory, DATA_SUBDIR, DATASET_METADATA)
         try:
             with open(meta_path) as fh:

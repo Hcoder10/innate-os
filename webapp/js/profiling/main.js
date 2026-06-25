@@ -23,7 +23,7 @@ const MAX_SAMPLES = 30000;
 initShell("profiling", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-mountPage(stage, "profiling", buildView);
+mountPage(stage, "profiling-page", buildView);
 
 /**
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,

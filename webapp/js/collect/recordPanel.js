@@ -388,7 +388,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
         nameInput.disabled = true;
         if (notes) notes.disabled = true;
         warn.textContent = "";
-        ros.callService(CREATE_PHYSICAL_SKILL_SERVICE, { name })
+        ros.callService(CREATE_PHYSICAL_SKILL_SERVICE, { name, kind })
           .then((res) => {
             if (!res || res.success === false || !res.skill_directory) {
               throw new Error((res && res.message) || "Couldn't create skill");
@@ -453,7 +453,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
             opts.onHeadControl?.(false); // back to learned mode — lock the head
             wizardHost.hidden = true;
             learnedHost.hidden = false;
-            flash = savedName ? `Saved “${savedName}”` : "";
+            flash = savedName ? `Saved “${savedName}” — use the mobile app to run this skill` : "";
             // Re-activate the previously selected learned skill, if any.
             if (selectedDir) activate();
             renderSelect();
@@ -572,11 +572,13 @@ export function createRecordPanel(parent, ros, opts = {}) {
     // episode_number), and an episode actually recording (episode_number set).
     // Requiring an episode_number is what stops the banner firing just from
     // picking a skill. "stopped" always carries one.
+    // Skip the banner while the replay wizard is up — it owns the recorder, so an
+    // open episode is its in-progress take, not an orphan.
     const episodeOpen = status === "stopped" || (status === "active" && !!msg?.episode_number);
-    if (episodeOpen && recState === "idle" && !busy) {
+    if (episodeOpen && recState === "idle" && !wizard && !busy) {
       orphanOpen = true;
       orphanDir = msg.task_directory || "";
-    } else if (!episodeOpen) {
+    } else if (!episodeOpen || wizard) {
       orphanOpen = false;
     }
     renderOrphan();
