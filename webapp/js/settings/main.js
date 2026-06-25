@@ -10,11 +10,45 @@
 // *unsaved* edit (differs from what's saved) shows blue. Save is enabled only
 // while there are unsaved changes.
 
+import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE } from "../constants.js";
+import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
 import { CATALOG } from "./catalog.js";
 
 initShell("settings", "../");
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
+
+// The yaml knobs below talk to the proxy, but the speaker-volume control is a
+// live rosbridge service call, so this page needs the shared socket: connect to
+// the serving host (the robot).
+const servedHost = location.hostname;
+if (servedHost) {
+  ros.connect(servedHost);
+  // rosClient retries on its own after a drop that follows a successful open, but
+  // a first connect that never opens fails fast with no retry — which would strand
+  // the volume control with no in-page recovery (this page has no connect card,
+  // unlike the mountPage ones). So retry the initial-connect-failed case here,
+  // debounced so a refused connection can't spin, and only until we've connected
+  // once: after that, drops self-heal via rosClient and an explicit disconnect
+  // (header badge) is respected.
+  let everConnected = false;
+  /** @type {number | null} */
+  let connectRetry = null;
+  ros.onStateChange((state) => {
+    if (state === "connected") everConnected = true;
+    if (state === "disconnected" && !everConnected) {
+      if (connectRetry === null) {
+        connectRetry = setTimeout(() => {
+          connectRetry = null;
+          ros.connect(servedHost);
+        }, 5000);
+      }
+    } else if (connectRetry !== null) {
+      clearTimeout(connectRetry);
+      connectRetry = null;
+    }
+  });
+}
 
 /**
  * @typedef {Object} Entry
@@ -113,6 +147,11 @@ const STYLE = `
 .set-slider { width: 120px; accent-color: var(--primary, #401FFB); }
 .set-slider-read { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 62px; text-align: right; }
 .set-slider-read .mx { color: var(--muted, #8a90a0); }
+.set-live { border: 1px solid rgba(62,207,142,.30); background: rgba(62,207,142,.05);
+  border-radius: 10px; padding: 14px 16px; margin: 0 0 26px; }
+.set-live .set-row:hover { background: none; }
+.set-live-status { font-size: 12px; margin-left: 6px; }
+.set-live .set-slider { width: 200px; }
 `;
 
 /** Walk a path into the nested overrides dict; undefined if absent. */
@@ -192,6 +231,159 @@ function resetAll() {
   recompute();
 }
 
+const DEFAULT_VOLUME = 80; // robot's built-in default (percent) until /robot/info arrives.
+
+/** Clamp to an integer 0–100, mirroring the mobile app's clampVolumePercent. */
+function clampVolume(/** @type {number} */ value) {
+  if (!Number.isFinite(value)) return DEFAULT_VOLUME;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+/**
+ * Live speaker-volume control. Unlike the yaml knobs below, this is a rosbridge
+ * service call that applies immediately and persists on the robot — no restart.
+ * The slider is the raw volume_percent (0–100): it reads the current value from
+ * /robot/info and writes via /set_volume on release. The robot lifts the low end
+ * of the range so the bottom of the slider stays audible (see apply_alsa_volume).
+ */
+function buildVolumeSection() {
+  const section = document.createElement("section");
+  section.className = "set-live";
+
+  const row = document.createElement("div");
+  row.className = "set-row";
+
+  const info = document.createElement("div");
+  info.className = "set-info";
+  const label = document.createElement("span");
+  label.className = "set-label";
+  label.textContent = "Speaker volume";
+  const doc = document.createElement("span");
+  doc.className = "set-doc";
+  doc.textContent = "The robot's voice volume. Applies immediately — no restart.";
+  info.append(label, doc);
+  row.appendChild(info);
+
+  const ctl = document.createElement("div");
+  ctl.className = "set-ctl";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "set-slider";
+  slider.min = "0";
+  slider.max = "100";
+  slider.step = "1";
+  // Resting thumb position while we wait for the robot's value; the readout shows
+  // "—" and the slider stays disabled, so this isn't read as a real setting.
+  slider.value = "50";
+  slider.disabled = true;
+  ctl.appendChild(slider);
+
+  const read = document.createElement("span");
+  read.className = "set-slider-read";
+  const cur = document.createElement("span");
+  cur.textContent = "—"; // nothing until /robot/info reports the live volume
+  const mx = document.createElement("span");
+  mx.className = "mx";
+  mx.textContent = "";
+  read.append(cur, mx);
+  ctl.appendChild(read);
+
+  const status = document.createElement("span");
+  status.className = "set-live-status set-status muted";
+  ctl.appendChild(status);
+
+  row.appendChild(ctl);
+  section.appendChild(row);
+
+  // Last percent known to be applied on the robot; the revert target on failure.
+  let robotPercent = DEFAULT_VOLUME;
+  let hasValue = false; // false until /robot/info reports the live volume
+  let dragging = false;
+  let saving = false;
+
+  const setLiveStatus = (/** @type {string} */ msg, /** @type {string} */ cls) => {
+    status.textContent = msg;
+    status.className = "set-live-status set-status " + cls;
+  };
+
+  const renderValue = (/** @type {number} */ percent) => {
+    slider.value = String(percent);
+    cur.textContent = String(percent);
+    mx.textContent = " / 100";
+  };
+
+  // Disabled until connected AND the live volume has loaded (so the page never
+  // shows a guessed default), and while a save is in flight so a mid-save release
+  // can't be silently dropped (nor re-enabled by a state change). Clearing
+  // `dragging` on disable matters too: a disconnect mid-drag would otherwise
+  // leave it stuck true, so the subscription below would ignore every /robot/info
+  // after reconnect and the slider would freeze, diverging from the real volume.
+  const refreshEnabled = () => {
+    const shouldDisable = ros.state !== "connected" || saving || !hasValue;
+    if (shouldDisable) dragging = false;
+    slider.disabled = shouldDisable;
+  };
+
+  ros.onStateChange((state) => {
+    const connected = state === "connected";
+    refreshEnabled();
+    if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
+    else if (status.classList.contains("muted")) setLiveStatus("", "muted");
+  });
+
+  ros.subscribe(ROBOT_INFO_TOPIC, (/** @type {StringMsg} */ payload) => {
+    /** @type {RobotInfo} */
+    let infoData;
+    try {
+      infoData = JSON.parse(payload.data);
+    } catch {
+      return;
+    }
+    if (typeof infoData.volume_percent !== "number") return;
+    robotPercent = clampVolume(infoData.volume_percent);
+    const firstValue = !hasValue;
+    hasValue = true;
+    // Don't clobber a value the operator is actively dragging or saving.
+    if (!dragging && !saving) renderValue(robotPercent);
+    if (firstValue) refreshEnabled(); // enable now that the live value has loaded
+  });
+
+  slider.addEventListener("input", () => {
+    dragging = true;
+    cur.textContent = slider.value;
+  });
+
+  slider.addEventListener("change", async () => {
+    dragging = false;
+    const next = clampVolume(Number(slider.value));
+    renderValue(next);
+    if (next === robotPercent || saving) return;
+    const previous = robotPercent;
+    saving = true;
+    refreshEnabled();
+    setLiveStatus("Saving…", "muted");
+    try {
+      /** @type {{ success: boolean, message?: string }} */
+      const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: next });
+      if (!res.success) throw new Error(res.message || "Failed to set volume.");
+      robotPercent = next;
+      setLiveStatus("Volume set.", "ok");
+    } catch {
+      // Re-seed robotPercent too: a /robot/info update may have moved it during
+      // the save, and on failure the robot's volume is still `previous`.
+      robotPercent = previous;
+      renderValue(previous);
+      setLiveStatus("Couldn't set volume. Try again.", "err");
+    } finally {
+      saving = false;
+      refreshEnabled();
+    }
+  });
+
+  return section;
+}
+
 function build() {
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -216,6 +408,8 @@ function build() {
   note.textContent =
     "Tunable parameter overrides. Blank = the robot's built-in default. Changes save to config/settings.yaml; restart the robot to apply.";
   wrap.appendChild(note);
+
+  wrap.appendChild(buildVolumeSection());
 
   for (const group of CATALOG) {
     const g = document.createElement("section");
