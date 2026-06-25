@@ -143,12 +143,14 @@ async def _main(shared_queues) -> None:
     sig_in: queue.Queue = shared_queues.webrtc_signal_in
     sig_out: queue.Queue = shared_queues.webrtc_signal_out
 
+    loop = asyncio.get_running_loop()
     print("[WebRTC] server started (3 cameras, lazy VP8 encoding)")
     while not shared_queues.exit_event.is_set():
         try:
-            item = sig_in.get_nowait()
+            # Blocking get on a worker thread — no busy-poll. The timeout bounds
+            # how long we wait before re-checking exit_event.
+            item = await loop.run_in_executor(None, sig_in.get, True, 0.5)
         except queue.Empty:
-            await asyncio.sleep(0.005)
             continue
 
         try:
