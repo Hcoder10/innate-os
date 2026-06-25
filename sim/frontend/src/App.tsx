@@ -3,23 +3,23 @@ import { AlternativeSimDashboard } from "./components/AlternativeSimDashboard";
 import {
   AvailableAgentsResponse,
   BrainBackendStatus,
-  ExecuteSkillResult,
   RobotAgent,
   RobotSkill,
-  StackMetricsResponse,
   getAvailableAgentsDirect,
   resetBrainDirect,
+  resetPositionDirect,
   publishManualSkillEventDirect,
   setActiveSkillsDirect,
   setBrainActiveDirect,
   setBrainBackendConfigDirect,
   setDirectiveDirect,
   startSkillExecutionDirect,
+  subscribeBrainBackendStatus,
 } from "./services/rosbridgeService";
+import { appConfig } from "./config";
 
 const AGENT_BACKEND_WARNING_DELAY_MS = 15_000;
 const BACKEND_CONNECTED_STABLE_MS = 3_000;
-const BACKEND_STATUS_POLL_MS = 1_000;
 const BRAIN_URI_URL_PARAMS = ["brain_uri", "brain_websocket_uri", "websocket_uri"];
 const SERVICE_KEY_URL_PARAMS = ["innate_service_key", "service_key"];
 const BACKEND_OVERRIDE_URL_PARAMS = [
@@ -205,9 +205,7 @@ export default function App() {
   const agentsLoadStartedAtRef = useRef(Date.now());
   const backendOverrideAppliedRef = useRef(false);
   const activeHarnessRef = useRef<string | null>(null);
-  const useDirectRobot = import.meta.env.VITE_DIRECT_ROBOT === "true";
-  const robotWsUrl = import.meta.env.VITE_ROBOT_WS_URL ?? "ws://localhost:9090";
-  const simBaseUrl = import.meta.env.VITE_SIM_BASE_URL ?? "http://localhost:8000";
+  const robotWsUrl = appConfig.robotWsUrl;
 
   useEffect(() => {
     activeHarnessRef.current = activeHarnessId;
@@ -246,19 +244,7 @@ export default function App() {
 
     const applyBackendOverride = async () => {
       try {
-        if (useDirectRobot) {
-          await setBrainBackendConfigDirect(robotWsUrl, backendOverride);
-          return;
-        }
-
-        const response = await fetch(`${simBaseUrl}/brain_backend_config`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(backendOverride),
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+        await setBrainBackendConfigDirect(robotWsUrl, backendOverride);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setIsLoadingAgents(false);
@@ -270,10 +256,10 @@ export default function App() {
     };
 
     void applyBackendOverride();
-  }, [robotWsUrl, simBaseUrl, useDirectRobot]);
+  }, [robotWsUrl]);
 
   const fetchAgents = useCallback(
-    async ({ requestRefresh = false }: { requestRefresh?: boolean } = {}) => {
+    async () => {
       if (isFetchingAgentsRef.current) {
         return;
       }
@@ -285,26 +271,8 @@ export default function App() {
       setBackendWarmupTimedOut(false);
 
       try {
-        let data: AvailableAgentsResponse;
-
-        if (useDirectRobot) {
-          data = await getAvailableAgentsDirect(robotWsUrl);
-        } else if (requestRefresh) {
-          const refreshResponse = await fetch(
-            `${simBaseUrl}/reload_available_agents`,
-            { method: "POST" },
-          );
-          if (!refreshResponse.ok) {
-            throw new Error(`Reload failed: HTTP ${refreshResponse.status}`);
-          }
-          data = (await refreshResponse.json()) as AvailableAgentsResponse;
-        } else {
-          const response = await fetch(`${simBaseUrl}/available_agents`);
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          data = (await response.json()) as AvailableAgentsResponse;
-        }
+        const data: AvailableAgentsResponse =
+          await getAvailableAgentsDirect(robotWsUrl);
 
         if (data.brain_backend_status) {
           setBrainBackendStatus(data.brain_backend_status);
@@ -358,7 +326,7 @@ export default function App() {
         isFetchingAgentsRef.current = false;
       }
     },
-    [robotWsUrl, simBaseUrl, useDirectRobot],
+    [robotWsUrl],
   );
 
   useEffect(() => {
@@ -366,94 +334,37 @@ export default function App() {
   }, [fetchAgents]);
 
   useEffect(() => {
-    if (useDirectRobot) {
-      return;
-    }
-
-    let stopped = false;
-    const pollBackendStatus = async () => {
-      try {
-        const response = await fetch(`${simBaseUrl}/stack_metrics`);
-        if (!response.ok) {
-          return;
-        }
-        const data = (await response.json()) as StackMetricsResponse;
-        if (stopped || !data.brain_backend_status) {
-          return;
-        }
-
-        setBrainBackendStatus(data.brain_backend_status);
-        if (data.brain_backend_status.connected) {
-          setBackendWarmupTimedOut(false);
-          setAgentLoadTimedOut(false);
-        } else if (
-          Date.now() - agentsLoadStartedAtRef.current >=
-          AGENT_BACKEND_WARNING_DELAY_MS
-        ) {
-          setBackendWarmupTimedOut(true);
-        }
-      } catch {
-        // The video panel already handles simulator connectivity; keep this poll quiet.
+    return subscribeBrainBackendStatus(robotWsUrl, (status) => {
+      setBrainBackendStatus(status);
+      if (status.connected) {
+        setBackendWarmupTimedOut(false);
+        setAgentLoadTimedOut(false);
+      } else if (
+        Date.now() - agentsLoadStartedAtRef.current >=
+        AGENT_BACKEND_WARNING_DELAY_MS
+      ) {
+        setBackendWarmupTimedOut(true);
       }
-    };
-
-    void pollBackendStatus();
-    const intervalId = window.setInterval(
-      () => void pollBackendStatus(),
-      BACKEND_STATUS_POLL_MS,
-    );
-
-    return () => {
-      stopped = true;
-      window.clearInterval(intervalId);
-    };
-  }, [simBaseUrl, useDirectRobot]);
+    });
+  }, [robotWsUrl]);
 
   const handleReloadAgents = useCallback(() => {
-    void fetchAgents({ requestRefresh: true });
+    void fetchAgents();
   }, [fetchAgents]);
 
   async function handleResetBrain(memory_state?: string) {
     try {
       const isValidMemoryState = typeof memory_state === "string";
 
-      if (useDirectRobot) {
-        await resetBrainDirect(
-          robotWsUrl,
-          isValidMemoryState ? memory_state : undefined,
-        );
-        alert(
-          isValidMemoryState && memory_state
-            ? `Brain reset requested with memory state: ${memory_state}!`
-            : "Brain reset requested!",
-        );
-        return;
-      }
-
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      const response = await fetch(`${simBaseUrl}/reset_brain`, {
-        method: "POST",
-        headers,
-        body: isValidMemoryState
-          ? JSON.stringify({ memory_state })
-          : JSON.stringify({}),
-      });
-
-      if (!response.ok) {
-        alert(`Reset Brain failed (HTTP ${response.status}).`);
-        return;
-      }
-
-      const data = await response.json();
-      if (data.status === "reset_brain_enqueued") {
-        alert(
-          isValidMemoryState && memory_state
-            ? `Brain reset requested with memory state: ${memory_state}!`
-            : "Brain reset requested!",
-        );
-      }
+      await resetBrainDirect(
+        robotWsUrl,
+        isValidMemoryState ? memory_state : undefined,
+      );
+      alert(
+        isValidMemoryState && memory_state
+          ? `Brain reset requested with memory state: ${memory_state}!`
+          : "Brain reset requested!",
+      );
     } catch (error) {
       console.error("Error resetting brain:", error);
     }
@@ -461,23 +372,8 @@ export default function App() {
 
   async function handleResetPosition() {
     try {
-      const response = await fetch(`${simBaseUrl}/reset_position`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!response.ok) {
-        alert(`Reset Position failed (HTTP ${response.status}).`);
-        return;
-      }
-
-      const data = await response.json();
-      if (data.status === "reset_position_enqueued") {
-        alert("Position reset requested!");
-      }
+      await resetPositionDirect(robotWsUrl);
+      alert("Position reset requested!");
     } catch (error) {
       console.error("Error resetting position:", error);
       const errorMessage =
@@ -487,69 +383,18 @@ export default function App() {
   }
 
   async function handleSetBrainActive(active: boolean) {
-    if (useDirectRobot) {
-      await setBrainActiveDirect(robotWsUrl, active);
-      return;
-    }
-
-    const response = await fetch(`${simBaseUrl}/set_brain_active`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Set brain active failed (HTTP ${response.status})`);
-    }
+    await setBrainActiveDirect(robotWsUrl, active);
   }
 
   async function handleSetDirective(directive: string, activate = true) {
-    if (useDirectRobot) {
-      await setDirectiveDirect(robotWsUrl, directive);
-      if (activate) {
-        await handleSetBrainActive(true);
-      }
-      return;
-    }
-
-    const response = await fetch(`${simBaseUrl}/set_directive`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: directive }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Set directive failed (HTTP ${response.status})`);
-    }
-    const data = await response.json();
-    if (data.status !== "directive_enqueued") {
-      throw new Error(`Set directive failed: ${data.status ?? "unknown status"}`);
-    }
-
+    await setDirectiveDirect(robotWsUrl, directive);
     if (activate) {
       await handleSetBrainActive(true);
     }
   }
 
   async function handleSetActiveSkills(agentId: string | null, skills: string[]) {
-    if (useDirectRobot) {
-      await setActiveSkillsDirect(robotWsUrl, agentId, skills);
-      return;
-    }
-
-    const response = await fetch(`${simBaseUrl}/set_active_skills`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_id: agentId, skills }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Set active skills failed (HTTP ${response.status})`);
-    }
-    const data = await response.json();
-    if (data.status !== "active_skills_enqueued") {
-      throw new Error(`Set active skills failed: ${data.status ?? "unknown status"}`);
-    }
+    await setActiveSkillsDirect(robotWsUrl, agentId, skills);
   }
 
   async function handleHarnessRunningChange(running: boolean) {
@@ -621,18 +466,6 @@ export default function App() {
     const primitiveId = `manual_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const skillName = skill.name || skill.id;
     let terminalManualEventPublished = false;
-    const postSimulatorManualEvent = async (
-      event: Record<string, string | undefined>,
-    ) => {
-      const response = await fetch(`${simBaseUrl}/manual_skill_event`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(event),
-      });
-      if (!response.ok) {
-        throw new Error(`Manual skill event failed (HTTP ${response.status})`);
-      }
-    };
     const publishManualEvent = (
       status: "running" | "completed" | "failed" | "interrupted",
       reason?: string,
@@ -666,37 +499,13 @@ export default function App() {
         reason,
         source: "sim_ui",
       };
-      const publishEvent = useDirectRobot
-        ? publishManualSkillEventDirect(robotWsUrl, event)
-        : postSimulatorManualEvent(event);
-      void publishEvent.catch((error) => {
+      void publishManualSkillEventDirect(robotWsUrl, event).catch((error) => {
         console.warn("Failed to publish manual skill event:", error);
       });
     };
 
     publishManualEvent("running");
-    const action = useDirectRobot
-      ? startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson)
-      : {
-          cancel: () => {
-            void fetch(`${simBaseUrl}/cancel_skill_execution`, {
-              method: "POST",
-            }).catch((error) => {
-              console.error("Failed to cancel skill execution:", error);
-            });
-          },
-          promise: fetch(`${simBaseUrl}/execute_skill`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ skill_type: skill.id, inputs: inputsJson }),
-          }).then(async (response) => {
-            const result = (await response.json()) as ExecuteSkillResult;
-            if (!response.ok) {
-              throw new Error(result.message || `HTTP ${response.status}`);
-            }
-            return result;
-          }),
-        };
+    const action = startSkillExecutionDirect(robotWsUrl, skill.id, inputsJson);
     return {
       cancel: action.cancel,
       promise: action.promise
@@ -770,6 +579,7 @@ export default function App() {
       onSetHarnessRunning={(running) => void handleHarnessRunningChange(running)}
       onToggleActiveSkill={(skillId) => void handleToggleActiveSkill(skillId)}
       onRunSkill={handleRunSkill}
+      robotWsUrl={robotWsUrl}
     />
   );
 }

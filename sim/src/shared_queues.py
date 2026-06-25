@@ -81,6 +81,12 @@ class SharedQueues:
         self._sim_log_mode = normalize_sim_log_mode(sim_log_mode)
         self.sim_log_mode_lock = threading.Lock()
 
+        # WebRTC signaling relay between the rosbridge thread and the aiortc
+        # server thread (decoupled, queue-only). _in: rosbridge->aiortc (start /
+        # answer / ice / active_streams); _out: aiortc->rosbridge (offer / ice).
+        self.webrtc_signal_in = queue.Queue(maxsize=256)
+        self.webrtc_signal_out = queue.Queue(maxsize=256)
+
         # Queues specifically for chat messages
         self.chat_to_bridge = queue.Queue(maxsize=5000)
         self.chat_from_bridge = queue.Queue(maxsize=200)

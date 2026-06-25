@@ -9,6 +9,9 @@
 # render_fps = 25
 # Genesis simulation timestep in seconds. Default: 0.04 (25 Hz).
 # scene_dt = 0.04
+# Target FPS for camera images published to ROS (brain). Clamped to render_fps.
+# Default: 10.
+# ros_image_fps = 10
 # Near clipping plane for first-person and wrist cameras, in meters. Default: 0.03.
 # camera_near = 0.03
 
