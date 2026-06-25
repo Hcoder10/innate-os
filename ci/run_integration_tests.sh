@@ -122,11 +122,6 @@ echo "=== integration tests: --symlink-install ==="
 # removed `setup.py develop`, after which none of these pins stay load-bearing.
 python3 -m pip install --quiet 'setuptools<80'
 rm -rf build install log
-# The copy-install dirs sourced above were just rm -rf'd; clear the overlay
-# before building so neither the build nor the following setup.bash inherits
-# stale, duplicated AMENT_PREFIX_PATH entries that manifest-walking tools would
-# process twice.
-unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH
 colcon build --symlink-install \
   --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
   -DCMAKE_BUILD_TYPE=Release \
