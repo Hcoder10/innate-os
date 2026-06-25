@@ -499,18 +499,28 @@ class SkillManager:
             if "execution" not in meta:
                 meta["execution"] = {}
 
+            # Infer policy family from the checkpoint name so the robot loads the
+            # right policy: DP emits dp_policy_step_*.pth, ACT emits act_policy_step_*.pth.
+            policy_type = "dp" if Path(checkpoint).name.startswith("dp_policy") else "act"
+
             meta["execution"]["checkpoint"] = checkpoint
             meta["execution"]["stats_file"] = stats_file
+            meta["execution"]["policy_type"] = policy_type
 
             _write_meta(meta_path, meta)
         logger.info(
-            "Activated run %d: checkpoint=%s stats_file=%s",
+            "Activated run %d: checkpoint=%s stats_file=%s policy_type=%s",
             run_id,
             checkpoint,
             stats_file,
+            policy_type,
         )
 
-        return {"checkpoint": checkpoint, "stats_file": stats_file}
+        return {
+            "checkpoint": checkpoint,
+            "stats_file": stats_file,
+            "policy_type": policy_type,
+        }
 
     # ── Fetch input data ────────────────────────────────────────────
 

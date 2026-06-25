@@ -476,6 +476,7 @@ def activate(ctx: click.Context, skill_dir: str, run_id: int) -> None:
     click.echo(f"Activated run {run_id}:")
     click.echo(f"  checkpoint:  {result['checkpoint']}")
     click.echo(f"  stats_file:  {result['stats_file']}")
+    click.echo(f"  policy_type: {result.get('policy_type', 'act')}")
 
 
 # ── Web UI ──────────────────────────────────────────────────────────

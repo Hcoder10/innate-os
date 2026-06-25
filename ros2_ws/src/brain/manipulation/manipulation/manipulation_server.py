@@ -347,12 +347,14 @@ class ManipulationServer(Node):
             n_action_steps_override = params.n_action_steps
             if n_action_steps_override is None and self.default_n_action_steps > 0:
                 n_action_steps_override = self.default_n_action_steps
+            policy_type = params.policy_type
 
-            # Load policy
+            # Load policy (ACT by default; Diffusion Policy when policy_type == "dp")
             if not self._load_policy_for_behavior(
                 checkpoint_path,
                 action_dim,
                 n_action_steps_override=n_action_steps_override,
+                policy_type=policy_type,
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
 
@@ -627,11 +629,14 @@ class ManipulationServer(Node):
             self._stop_robot()
             return "FAILURE", f"Exception during replay execution: {str(e)}"
 
-    def _load_policy_for_behavior(self, checkpoint_path, action_dim, n_action_steps_override=None):
-        """Load ACT policy for a specific behavior.
+    def _load_policy_for_behavior(self, checkpoint_path, action_dim, n_action_steps_override=None,
+                                  policy_type="act"):
+        """Load a policy for a specific behavior.
 
-        n_action_steps_override: optional override for the ACT replanning horizon.
-        When None, create_act_config falls back to min(40, chunk_size).
+        policy_type: "act" (default) builds an ACTPolicy; "dp" builds a Diffusion
+        Policy (see DP.py). Both consume the same dataset_stats.pt and expose the
+        same select_action interface, so inference downstream is identical.
+        n_action_steps_override: optional override for the replanning horizon.
         """
         try:
             load_start = time.time()
@@ -640,6 +645,22 @@ class ManipulationServer(Node):
 
             # Expand user path
             checkpoint_path = os.path.expanduser(checkpoint_path)
+
+            # Diffusion Policy: self-contained loader, separate from the ACT/TRT path
+            # below. Load its normalization stats here — the ACT path loads stats lazily
+            # (only on an engine-cache miss), but DP always needs them.
+            if policy_type == "dp":
+                stats_path = os.path.join(os.path.dirname(checkpoint_path), 'dataset_stats.pt')
+                dataset_stats = None
+                try:
+                    dataset_stats = torch.load(stats_path, map_location='cpu')
+                    self.get_logger().info("Dataset stats loaded")
+                except Exception as e:
+                    self.get_logger().warn(f"Could not load dataset stats: {e}")
+                return self._load_dp_policy_for_behavior(
+                    checkpoint_path, dataset_stats, action_dim,
+                    n_action_steps_override, load_start,
+                )
 
             # Load checkpoint first so we can infer architecture params from it.
             # Load onto CPU (mmap avoids reading the whole file into RAM up front,
@@ -793,6 +814,68 @@ class ManipulationServer(Node):
 
         except Exception as e:
             self.get_logger().error(f"Failed to load policy: {e}")
+            return False
+
+    def _load_dp_policy_for_behavior(self, checkpoint_path, dataset_stats, action_dim,
+                                     n_action_steps_override, load_start):
+        """Load a Diffusion Policy checkpoint (self-contained, see DP.py).
+
+        Shares the dataset_stats + select_action contract with ACT, so the
+        inference loop in _run_inference_once is unchanged. The denoising U-Net
+        call is isolated inside DiffusionPolicy._unet_forward for a future
+        TensorRT swap.
+        """
+        try:
+            from manipulation.DP import load_dp_policy
+
+            self.get_logger().info(f"Loading Diffusion Policy checkpoint: {checkpoint_path}")
+            policy, load_result = load_dp_policy(
+                checkpoint_path,
+                dataset_stats,
+                action_dim=action_dim,
+                device=self.device,
+                n_action_steps=n_action_steps_override,
+            )
+            if load_result.missing_keys:
+                self.get_logger().warn(
+                    f"DP missing keys: {load_result.missing_keys[:5]}"
+                    + ("..." if len(load_result.missing_keys) > 5 else "")
+                )
+            if load_result.unexpected_keys:
+                self.get_logger().warn(
+                    f"DP unexpected keys: {load_result.unexpected_keys[:5]}"
+                    + ("..." if len(load_result.unexpected_keys) > 5 else "")
+                )
+            self.current_policy = policy
+            self.current_action_dim = action_dim
+
+            param_count = sum(p.numel() for p in self.current_policy.parameters())
+            self.get_logger().info(
+                f"Diffusion Policy loaded in {time.time() - load_start:.2f}s "
+                f"({param_count/1e6:.1f}M params), n_action_steps={policy.config.n_action_steps}, "
+                f"inference_steps={policy.config.num_inference_steps}"
+            )
+
+            # Warm-up (denoising is heavier than ACT — a couple of iterations).
+            dummy_batch = {
+                "observation.image_camera_1": torch.zeros(1, 3, 224, 224, device=self.device),
+                "observation.image_camera_2": torch.zeros(1, 3, 224, 224, device=self.device),
+                "observation.state": torch.zeros(1, 6, device=self.device),
+            }
+            warmup_start = time.time()
+            self.current_policy.reset()
+            for _ in range(3):
+                with torch.no_grad():
+                    _ = self.current_policy.select_action(dummy_batch)
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+            self.current_policy.reset()
+            self.get_logger().info(
+                f"DP warm-up done in {time.time() - warmup_start:.2f}s"
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"Failed to load Diffusion Policy: {e}")
             return False
 
     def _start_sensor_subscriptions(self):

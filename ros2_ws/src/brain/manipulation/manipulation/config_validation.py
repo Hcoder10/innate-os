@@ -31,7 +31,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import Annotated, Any, Union
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import (
     BaseModel,
@@ -150,6 +150,10 @@ class LearnedExecCfg(_BaseExecCfg):
     # chunk_size-aware clamping happens inside create_act_config once the
     # checkpoint is loaded; the schema only enforces ``>= 1``.
     n_action_steps: int | None = Field(None, ge=1)
+    # Which policy family the checkpoint belongs to. Set by `training-client
+    # activate` from the training preset. "act" (default) keeps every existing
+    # skill unchanged; "dp" selects the Diffusion Policy loader/inference path.
+    policy_type: Literal["act", "dp"] = "act"
 
     @field_validator("start_pose", "end_pose", mode="before")
     @classmethod
