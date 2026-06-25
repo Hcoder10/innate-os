@@ -91,24 +91,26 @@ local/my-skill      # local custom skill
 
 ### Skill definition
 
-A minimal skill file, saved as `workspace/custom_skills/greet.py`:
+A minimal replay skill, saved as `workspace/custom_skills/greet/metadata.json`:
 
-```python
-from brain_client.skills.types import Skill, SkillResult
-
-
-class Greet(Skill):
-    """A simple skill that returns a friendly greeting."""
-
-    @property
-    def name(self):
-        return "greet"
-
-    def guidelines(self):
-        return "Greet the user. Optional 'name' parameter."
-
-    def execute(self, name: str = "friend"):
-        return f"Hello, {name}!", SkillResult.SUCCESS
+```json
+{
+    "name": "greet",
+    "type": "replay",
+    "guidelines": "Greet the user with a friendly arm wave.",
+    "inputs": {},
+    "wheeled": false,
+    "downloads": {
+        "episode_0.h5": "https://your-cdn.com/greet/episode_0.h5"
+    },
+    "execution": {
+        "model_type": "replay",
+        "replay_file": "episode_0.h5",
+        "replay_frequency": 50.0,
+        "start_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "end_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+}
 ```
 
 ## Agents
