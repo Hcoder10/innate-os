@@ -940,13 +940,8 @@ class AppControl : public rclcpp::Node {
      * audible rather than ~-70dB (INN-467).
      */
     void apply_alsa_volume(int percent) {
-        // Lift the low end: across roughly the lower half of amixer's range the
-        // speaker is inaudible on this hardware (~25% silent, ~60% barely audible)
-        // even with -M, so remap the stored 0-100 onto an audible
-        // [AUDIBLE_FLOOR, 100] band before handing it to amixer (which still
-        // applies its -M perceptual curve on top). 0 stays muted; the stored
-        // volume_percent (and /robot/info) keep the user-facing value. Retune
-        // AUDIBLE_FLOOR if the bottom of the slider still feels off.
+        // Remap 0-100 onto the audible [AUDIBLE_FLOOR, 100] band; the speaker is
+        // silent across the lower range even with -M. 0 still mutes.
         constexpr int AUDIBLE_FLOOR = 55;
         int mixer_percent;
         if (percent <= 0) {
