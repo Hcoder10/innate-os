@@ -26,27 +26,15 @@ Teach your robots today with Innate OS.
 
 <div align="center">
 
-<table>
-  <tr>
-    <td width="34%" align="center" valign="middle">
-      <img src="docs/assets/readme/mars-compatible.png" alt="MARS robot, the first robot compatible with Innate OS" width="200px"><br>
-      <sub><strong>MARS</strong>, Innate's first compatible robot.</sub>
-    </td>
-    <td width="66%" align="center" valign="middle">
-      <img src="docs/assets/readme/mars-in-action.gif" alt="MARS running physical AI demos including manipulation, chess, and navigation" width="200px"><br>
-      <sub>Website demo footage: manipulation, chess, navigation.</sub>
-    </td>
-  </tr>
-</table>
+<img src="docs/assets/readme/mars-compatible.png" alt="MARS robot, the first robot compatible with Innate OS" width="250px"><br>
+<sub><strong>MARS</strong>, a small agentic robot for your home.</sub>
 
 </div>
 
 If you have an Innate-compatible robot, start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
 
 > [!TIP]
-> Don't have a robot?
->
-> You can still experiment with the simulator!
+> Don't have a robot? You can still experiment with the simulator!
 
 <table>
   <tr>
