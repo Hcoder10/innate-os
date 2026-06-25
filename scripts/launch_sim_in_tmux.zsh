@@ -121,6 +121,19 @@ echo "Started arm IK..."
 tmux new-window -t "$SESSION_NAME" -n vision-nav
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:vision-nav" "ros2 launch innate_uninavid uninavid.launch.py cmd_vel_topic:=/cmd_vel" C-m
 echo "Started vision navigation inference client..."
+settle_after_launch
+
+# === Window 7: Console + Webapp UI ===
+# The robot webapp serves the sim UI too (replacing sim/frontend). Its python
+# front door binds 443 (https) + 80 (http) inside the container — both exposed by
+# docker-compose.dev.yml — and proxies /ws to the sim rosbridge on 9090.
+tmux new-window -t "$SESSION_NAME" -n console-webapp
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp" "ros2 launch innate_console console.launch.py" C-m
+echo "Started console..."
+settle_after_launch
+tmux split-window -t "${TMUX_TARGET_PREFIX}:console-webapp" -h
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do python3 proxy/https_server.py; sleep 2; done" C-m
+echo "Started webapp (https :443 + http :80)..."
 
 # Select the rosbridge-app window
 tmux select-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app"

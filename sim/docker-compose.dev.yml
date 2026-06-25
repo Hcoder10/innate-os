@@ -36,6 +36,10 @@ services:
       - CCACHE_DIR=/root/.cache/ccache
     ports:
       - "9090:9090"
+      # webapp front door (replaces the deprecated sim/frontend UI): the in-container
+      # python server binds 443 (https) + 80 (http); the frontend redirects http->https.
+      - "443:443"
+      - "80:80"
 
     volumes:
       # 1) Mount your local code (paths are relative to this file's directory)
@@ -43,6 +47,7 @@ services:
       - ../scripts:/root/innate-os/scripts:rw
       - ../config:/root/innate-os/config:ro
       - ../workspace:/root/innate-os/workspace:rw
+      - ../webapp:/root/innate-os/webapp:ro
       - ${INNATE_OS_ENV_FILE:-../.env}:/root/innate-os/.env:ro
 
       # 2) Keep build/install/log folders as Docker named volumes, so they won't pollute your host
