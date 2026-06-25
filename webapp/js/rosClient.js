@@ -168,14 +168,29 @@ export class RosClient {
   // ---- internals ----------------------------------------------------------
 
   /**
-   * Through the robot's HTTPS front door, rosbridge rides the same-origin
-   * wss proxy (plain ws:// would be blocked as mixed content). Everywhere
-   * else, talk to rws directly.
+   * True when `ip` points at the same host that served this page, so the
+   * connection can ride the same-origin `/ws` proxy. Beyond an exact match,
+   * the loopback aliases (localhost / 127.0.0.1 / ::1) name the same machine
+   * even though they differ as strings — the case that broke local dev.
+   * @param {string} ip
+   */
+  #isServingHost(ip) {
+    if (ip === location.hostname) return true;
+    const loopback = new Set(["localhost", "127.0.0.1", "::1"]);
+    return loopback.has(ip) && loopback.has(location.hostname);
+  }
+
+  /**
+   * Through the front door, rosbridge rides the same-origin `/ws` proxy, with
+   * the transport matched to the page: wss under https (plain ws:// would be
+   * blocked as mixed content), ws under http. A different host means talking
+   * to rws directly on its own port.
    * @param {string} ip
    */
   #urlFor(ip) {
-    if (location.protocol === "https:" && ip === location.hostname) {
-      return `wss://${location.host}/ws`;
+    if (this.#isServingHost(ip)) {
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      return `${scheme}://${location.host}/ws`;
     }
     return `ws://${ip}:${ROSBRIDGE_PORT}`;
   }
