@@ -1090,6 +1090,25 @@ button {
   width: 168px;
 }
 
+/* Collapse toggle — hidden on desktop (panel is always open); shown only on
+   the mobile layout below, where the panel starts collapsed. */
+.arm-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  color: rgb(255 255 255 / 62%);
+}
+
+.arm-caret {
+  transition: transform 150ms ease;
+}
+
+.arm-panel:not(.collapsed) .arm-caret {
+  transform: rotate(90deg);
+}
+
 /* Brighter section labels (LEADER ARM / ROBOT ARM) than the global muted —
    they were the hardest to read over the feed. */
 .arm-panel .microlabel {
@@ -3423,5 +3442,19 @@ button {
 
   .arm-panel {
     width: 150px;
+  }
+
+  /* Phones can't drive the leader arm (no WebSerial), so the panel collapses to
+     a single tap-to-open header by default, freeing the feed. */
+  .arm-header {
+    display: flex;
+  }
+
+  .arm-panel.collapsed {
+    width: auto;
+  }
+
+  .arm-panel.collapsed > *:not(.arm-header) {
+    display: none;
   }
 }
