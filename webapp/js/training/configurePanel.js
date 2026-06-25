@@ -52,11 +52,12 @@ export function createConfigurePanel(parent, ros, store, opts) {
   const formEl = document.createElement("div");
   formEl.className = "modal-body";
 
-  // skill selector
+  // skill selector — only learned skills are trainable (not replay/code/poses)
   const skillRow = field("Skill");
   const skillSel = document.createElement("select");
   skillSel.className = "modal-select";
   for (const s of store.skills) {
+    if (s.type !== "learned") continue;
     const o = document.createElement("option");
     o.value = s.directory || "";
     o.textContent = s.name;
