@@ -77,7 +77,7 @@ innate skill run innate-os/wave
 innate skill run local/my-skill @x=1 @name=alice
 ```
 
-
+You will find skills in two different directories:
 
 - **Built-in skills** — Located in `workspace/innate_skills/`.
 - **Your custom skills** — Stored in `workspace/custom_skills/` (gitignored).
@@ -87,6 +87,28 @@ Skill IDs show where a skill came from:
 ```text
 innate-os/wave      # built-in skill
 local/my-skill      # local custom skill
+```
+
+### Skill definition
+
+A minimal skill file, saved as `workspace/custom_skills/greet.py`:
+
+```python
+from brain_client.skills.types import Skill, SkillResult
+
+
+class Greet(Skill):
+    """A simple skill that returns a friendly greeting."""
+
+    @property
+    def name(self):
+        return "greet"
+
+    def guidelines(self):
+        return "Greet the user. Optional 'name' parameter."
+
+    def execute(self, name: str = "friend"):
+        return f"Hello, {name}!", SkillResult.SUCCESS
 ```
 
 ## Agents
@@ -101,15 +123,51 @@ An agent consists of:
 - A **system prompt** that defines the robot's behavior
 - A **harness** that connects the model to observations, memory, tools, and robot actions
 
+### Specificities of multimodal agents
+
+Multimodal agents harnesses have different constraints than purely digital agents: they need to **observe continuously**, run at a **high frequency** to react, and to be able to **interrupt** a running skill when the world has changed.
+
 You can use Innate's harness or bring your own.
 
-### The Innate Harness
+Learn more about multimodal agents [here (TBD)]().
 
-Multimodal robot agents have different constraints than purely digital agents: they need to observe continuously, run at a high enough frequency to react, and interrupt a running skill when the world has changed.
+### Agent definitions
+
+You can find agents in two different directories:
 
 - **[`workspace/innate_agents/`](workspace/innate_agents/)** — Built-in agents shipped with Innate OS.
 - **[`workspace/custom_agents/`](workspace/custom_agents/)** — Your local agents. Gitignored and created automatically.
-- **[`~/agents/`](~/agents/)** — Optional personal agents directory, scanned in place when it exists.
+
+Here is an example of a simple agent to navigate:
+
+A minimal agent file, saved as `workspace/custom_agents/navigate_agent.py`:
+
+```python
+from brain_client.agents.types import Agent
+
+
+class NavigateAgent(Agent):
+    """An agent that can navigate to requested positions."""
+
+    @property
+    def id(self):
+        return "navigate_agent"
+
+    @property
+    def display_name(self):
+        return "Navigate"
+
+    def get_skills(self):
+        return ["innate-os/navigate_to_position"]
+
+    def get_inputs(self):
+        return ["micro"]
+
+    def get_prompt(self):
+        return "You are a helpful robot. When asked, navigate to the requested location using the navigate_to_position skill."
+```
+
+### Testing agents in sim
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
 
