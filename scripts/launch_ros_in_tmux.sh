@@ -1,12 +1,23 @@
 #!/bin/zsh
-# Launch ROS nodes in tmux windows with 2 panes each
+# Launch ROS nodes in tmux windows, one pane per |-delimited command
 
 SESSION_NAME="ros_nodes"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
 DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 
-# ROS launch commands grouped into windows (pipe-delimited for 2 panes)
+# Detect a missing service key up front so we can warn loudly once launch is done.
+# Uses the same /etc/innate.env + repo .env merge as the runtime env, so this
+# matches what the nodes actually see (and treats an empty value as missing).
+# Match on the explicit "missing" token rather than the exit code: a crash in the
+# checker would also exit non-zero, and we must not show a false "no key" banner
+# when a key is actually present. No token (crash/empty) => assume present.
+SERVICE_KEY_MISSING=false
+if [ "$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --has-service-key 2>/dev/null)" = "missing" ]; then
+    SERVICE_KEY_MISSING=true
+fi
+
+# ROS launch commands grouped into windows (pipe-delimited; one pane per command)
 ROS_COMMAND_GROUPS=(
     "ros2 launch mars_control app.launch.py|ros2 launch mars_bringup mars_bringup.launch.py"
     "ros2 launch mars_arm arm.launch.py|ros2 launch manipulation recorder.launch.py"
@@ -15,6 +26,8 @@ ROS_COMMAND_GROUPS=(
     "ros2 launch mars_cam camera_composable.launch.py|ros2 launch mars_control udp_leader_receiver.launch.py"
     "ros2 launch mars_arm ik.launch.py|cd ~/innate-os && ros2 launch innate_logger logger.launch.py"
     "cd ~/innate-os && ros2 run innate_training_node training_node|cd ~/innate-os && ros2 launch innate_uninavid uninavid.launch.py"
+    "cd ~/innate-os && ros2 launch innate_console console.launch.py|cd ~/innate-os/webapp && while true; do python3 proxy/https_server.py 4443; sleep 2; done"
+    "ros2 launch dataset_encoder dataset_encoder.launch.py"
 )
 
 WINDOW_NAMES=(
@@ -25,6 +38,8 @@ WINDOW_NAMES=(
     "cam-leader"
     "ik-logger"
     "training-uninavid"
+    "console-webapp"
+    "encoder"
 )
 
 # Collapse the per-pane environment setup (runtime env exports + DDS/ROS
@@ -83,21 +98,26 @@ process_command_group() {
     fi
     
     sleep 0.1
-    
-    local first_cmd="${commands[1]}"
-    local first_cmd_full="$PANE_SETUP_CMD && $first_cmd"
-    tmux send-keys -t $SESSION_NAME:"$window_name".0 "$first_cmd_full" C-m || return 1
-    
+
+    # Address each pane by its unique pane-id (captured from split-window) rather
+    # than the window's *active* pane. The active-pane approach relied on
+    # split-window having just made the intended pane active plus a fixed sleep,
+    # so a slow/loaded box, a tmux hook, or a layout side-effect could misroute
+    # keys to the wrong pane. Pane-ids are exact, with no timing dependency.
+    local first_pane
+    first_pane=$(tmux display-message -p -t $SESSION_NAME:"$window_name" '#{pane_id}')
+    tmux send-keys -t "$first_pane" "$PANE_SETUP_CMD && ${commands[1]}" C-m || return 1
+
+    local idx pane_id
+    for (( idx = 2; idx <= ${#commands[@]}; idx++ )); do
+        pane_id=$(tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" -P -F '#{pane_id}') || return 1
+        tmux send-keys -t "$pane_id" "$PANE_SETUP_CMD && ${commands[$idx]}" C-m || return 1
+    done
+
     if [ ${#commands[@]} -gt 1 ]; then
-        local second_cmd="${commands[2]}"
-        local second_cmd_full="$PANE_SETUP_CMD && $second_cmd"
-        
-        tmux split-window -h -c ~ -t $SESSION_NAME:"$window_name" || return 1
-        sleep 0.1
-        tmux send-keys -t $SESSION_NAME:"$window_name".1 "$second_cmd_full" C-m || return 1
         tmux select-layout -t $SESSION_NAME:"$window_name" even-horizontal
     fi
-    
+
     sleep 0.1
     return 0
 }
@@ -127,6 +147,26 @@ echo "  ║                                         ║"
 echo "  ║  Run 'innate view' to monitor nodes 👀  ║"
 echo "  ╚═════════════════════════════════════════╝"
 echo ""
+
+# Loud, hard-to-miss warning when the robot has no service key. Printed last so
+# it's the final thing on screen. Without a key the robot still boots, but it
+# can't reach the Innate cloud brain — AI behaviors, logging and training are
+# all dead until a key is configured.
+if [ "$SERVICE_KEY_MISSING" = true ]; then
+    printf '\033[1;31m'
+    echo "  ════════════════════════════════════════════════════════════════════"
+    echo "   ⚠  NO SERVICE KEY FOUND"
+    echo "  ════════════════════════════════════════════════════════════════════"
+    echo "   This robot has no INNATE_SERVICE_KEY, so it cannot connect to the"
+    echo "   Innate cloud brain. AI behaviors, logging, and on-device training"
+    echo "   will not work until a service key is configured."
+    echo ""
+    echo "   To get a new service key, contact Innate on Discord:"
+    echo "       https://discord.gg/innate"
+    echo "  ════════════════════════════════════════════════════════════════════"
+    printf '\033[0m'
+    echo ""
+fi
 
 # Play startup sound after processes initialize (backgrounded, detached from terminal)
 (sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &

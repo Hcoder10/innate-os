@@ -1,9 +1,8 @@
 import math
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from itertools import chain  # For _reset_parameters
+from itertools import chain
 
 import einops
 import numpy as np
@@ -28,7 +27,7 @@ class FeatureType(Enum):
     VISUAL = "VISUAL"
     STATE = "STATE"
     ACTION = "ACTION"
-    ENVIRONMENT_STATE = "ENVIRONMENT_STATE"  # Added for completeness
+    ENVIRONMENT_STATE = "ENVIRONMENT_STATE"
 
 
 @dataclass
@@ -78,7 +77,7 @@ def create_stats_buffers(
             }
         elif norm_mode == NormalizationMode.MIN_MAX:
             min_val = torch.ones(shape, dtype=torch.float32) * torch.inf
-            max_val = torch.ones(shape, dtype=torch.float32) * torch.inf  # Renamed to avoid conflict with builtin max
+            max_val = torch.ones(shape, dtype=torch.float32) * torch.inf
             buffer_dict = {
                 "min": nn.Parameter(min_val, requires_grad=False),
                 "max": nn.Parameter(max_val, requires_grad=False),
@@ -154,8 +153,8 @@ class Normalize(nn.Module):
                     raise ValueError(_no_stats_error_str(f"{key} std"))
                 processed_batch[key] = (processed_batch[key] - mean) / (std + 1e-8)
             elif norm_mode == NormalizationMode.MIN_MAX:
-                min_val = buffer["min"]  # Renamed to avoid conflict
-                max_val = buffer["max"]  # Renamed to avoid conflict
+                min_val = buffer["min"]
+                max_val = buffer["max"]
                 if torch.isinf(min_val).any():
                     raise ValueError(_no_stats_error_str(f"{key} min"))
                 if torch.isinf(max_val).any():
@@ -346,13 +345,6 @@ class ACTPolicy(nn.Module):
 
         self.model = ACT(config)
 
-        if config.temporal_ensemble_coeff is not None:
-            # Calculate effective chunk size after resampling
-            effective_chunk_size = int(config.chunk_size / config.speed)
-            self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, effective_chunk_size)
-
-        self.reset()
-
     def get_optim_params(self) -> dict:
         return [
             {
@@ -365,12 +357,6 @@ class ACTPolicy(nn.Module):
                 "lr": self.config.optimizer_lr_backbone,
             },
         ]
-
-    def reset(self):
-        if self.config.temporal_ensemble_coeff is not None:
-            self.temporal_ensembler.reset()
-        else:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def _prepare_batch_for_model(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         # Create a shallow copy to avoid modifying the original batch
@@ -404,72 +390,6 @@ class ACTPolicy(nn.Module):
             processed_batch["action_is_pad"] = batch["action_is_pad"]
 
         return processed_batch
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        self.eval()
-        # Create a working copy of the batch to avoid in-place modification of external batch
-        working_batch = {k: v.clone() if isinstance(v, Tensor) else v for k, v in batch.items()}
-
-        # Normalize inputs (observations)
-        working_batch = self.normalize_inputs(working_batch)
-
-        model_batch = self._prepare_batch_for_model(working_batch)
-
-        if self.config.temporal_ensemble_coeff is not None:
-            actions_chunk_normalized = self.model(model_batch)[0]
-            actions_chunk = self.unnormalize_outputs({"action": actions_chunk_normalized})["action"]
-
-            # Resample actions based on speed parameter
-            if self.config.speed != 1:
-                actions_chunk = self._resample_actions(actions_chunk, self.config.speed)
-
-            action = self.temporal_ensembler.update(actions_chunk)
-            return action
-
-        if len(self._action_queue) == 0:
-            actions_chunk_normalized = self.model(model_batch)[0]
-            actions_to_queue_normalized = actions_chunk_normalized[:, : self.config.n_action_steps]
-            actions_to_queue = self.unnormalize_outputs({"action": actions_to_queue_normalized})["action"]
-
-            # Resample actions based on speed parameter
-            if self.config.speed != 1:
-                actions_to_queue = self._resample_actions(actions_to_queue, self.config.speed)
-
-            self._action_queue.extend(actions_to_queue.transpose(0, 1))
-
-        return self._action_queue.popleft()
-
-    def _resample_actions(self, actions: Tensor, speed: float) -> Tensor:
-        """Linearly resample actions based on speed factor.
-
-        Args:
-            actions: Input tensor of shape (batch, seq_len, action_dim)
-            speed: Speed factor. If > 1, downsample. If < 1, upsample. If = 1, no change.
-
-        Returns:
-            Resampled actions tensor
-        """
-        batch_size, seq_len, action_dim = actions.shape
-
-        new_seq_len = int(seq_len / speed)
-
-        if new_seq_len == 0:
-            raise ValueError(f"Speed factor {speed} results in zero sequence length for input length {seq_len}")
-
-        if new_seq_len == seq_len:
-            # No resampling needed
-            return actions
-
-        # Use interpolate to linearly resample along the sequence dimension
-        # actions: (batch, seq_len, action_dim) -> (batch, action_dim, seq_len)
-        actions_transposed = actions.transpose(1, 2)
-
-        # Interpolate along the last dimension (sequence)
-        resampled = F.interpolate(actions_transposed, size=new_seq_len, mode="linear", align_corners=True)
-
-        # Transpose back: (batch, action_dim, new_seq_len) -> (batch, new_seq_len, action_dim)
-        return resampled.transpose(1, 2)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         # Create a working copy of the batch to avoid in-place modification
@@ -721,8 +641,13 @@ class ACTTemporalEnsembler:
     def reset(self):
         """Resets the online computation variables."""
         self.ensembled_actions = None
+        # Online weighted mean of squares, mirroring ensembled_actions; together they give the
+        # weighted variance of the chunk predictions voting on each step (the ensemble's
+        # disagreement / uncertainty). last_disagreement is the std of the emitted action.
+        self.ensembled_actions_sq = None
         # (chunk_size,) count of how many actions are in the ensemble for each time step
         self.ensembled_actions_count = None
+        self.last_disagreement = None
 
     def update(self, actions: Tensor) -> Tensor:
         """
@@ -731,25 +656,37 @@ class ACTTemporalEnsembler:
         """
         self.ensemble_weights = self.ensemble_weights.to(device=actions.device)
         self.ensemble_weights_cumsum = self.ensemble_weights_cumsum.to(device=actions.device)
+        actions_sq = actions * actions
 
         if self.ensembled_actions is None:
             # Initialize with the first sequence of actions
             self.ensembled_actions = actions.clone()
+            self.ensembled_actions_sq = actions_sq.clone()
             self.ensembled_actions_count = torch.ones(
                 (self.chunk_size, 1), dtype=torch.long, device=self.ensembled_actions.device
             )
         else:
-            # Update existing ensemble
-            self.ensembled_actions *= self.ensemble_weights_cumsum[self.ensembled_actions_count - 1]
-            self.ensembled_actions += actions[:, :-1] * self.ensemble_weights[self.ensembled_actions_count]
-            self.ensembled_actions /= self.ensemble_weights_cumsum[self.ensembled_actions_count]
+            # Update existing ensemble. Capture the weights once and apply the same online-mean
+            # recurrence to both the actions and their squares (for the variance).
+            prev_w = self.ensemble_weights_cumsum[self.ensembled_actions_count - 1]
+            add_w = self.ensemble_weights[self.ensembled_actions_count]
+            new_w = self.ensemble_weights_cumsum[self.ensembled_actions_count]
+            self.ensembled_actions = (self.ensembled_actions * prev_w + actions[:, :-1] * add_w) / new_w
+            self.ensembled_actions_sq = (self.ensembled_actions_sq * prev_w + actions_sq[:, :-1] * add_w) / new_w
             self.ensembled_actions_count = torch.clamp(self.ensembled_actions_count + 1, max=self.chunk_size)
 
             # Add the last action which has no prior online average
             self.ensembled_actions = torch.cat([self.ensembled_actions, actions[:, -1:]], dim=1)
+            self.ensembled_actions_sq = torch.cat([self.ensembled_actions_sq, actions_sq[:, -1:]], dim=1)
             self.ensembled_actions_count = torch.cat(
                 [self.ensembled_actions_count, torch.ones_like(self.ensembled_actions_count[-1:])]
             )
+
+        # Ensemble disagreement for the action about to be emitted: weighted std across the
+        # chunk predictions that voted on slot 0, averaged over action dims. Kept on-device
+        # (no host sync); the caller reads it only when profiling.
+        var0 = (self.ensembled_actions_sq[:, 0] - self.ensembled_actions[:, 0] ** 2).clamp_min(0)
+        self.last_disagreement = var0.sqrt().mean()
 
         # Return the first action and update the queue
         action, self.ensembled_actions, self.ensembled_actions_count = (
@@ -757,6 +694,7 @@ class ACTTemporalEnsembler:
             self.ensembled_actions[:, 1:],
             self.ensembled_actions_count[1:],
         )
+        self.ensembled_actions_sq = self.ensembled_actions_sq[:, 1:]
         return action
 
 
@@ -872,11 +810,7 @@ class ACT(nn.Module):
             if self.config.use_vae and "action" in batch:
                 batch_size = batch["action"].shape[0]
             else:
-                # print("Warning: Could not infer batch_size from standard observation keys.") # Removed
-                # Fallback, assuming latent_sample will handle device.
-                batch_size = 1
-                if "action" in batch:
-                    batch_size = batch["action"].shape[0]  # override
+                batch_size = batch["action"].shape[0] if "action" in batch else 1
 
         mu: Tensor | None = None
         log_sigma_x2: Tensor | None = None
@@ -971,9 +905,7 @@ class ACT(nn.Module):
             and hasattr(self, "backbone")
             and batch["observation.images"]
         ):
-            # print(f"[ACT.forward] Processing {len(batch['observation.images'])} image tensors.") # Removed
-            for i, img_tensor in enumerate(batch["observation.images"]):  # list of (B, C, H, W)  # noqa: B007
-                # print(f"[ACT.forward] Image tensor {i} input shape: {img_tensor.shape}") # Removed
+            for img_tensor in batch["observation.images"]:  # list of (B, C, H, W)
                 if img_tensor.shape[0] != batch_size:
                     raise ValueError(
                         f"Image tensor batch size {img_tensor.shape[0]} "
@@ -981,76 +913,29 @@ class ACT(nn.Module):
                     )
 
                 feature_map = self.backbone(img_tensor)["feature_map"]  # (B, D_backbone, H', W')
-                # print(f"[ACT.forward] Image tensor {i} feature_map shape: {feature_map.shape}") # Removed
-
-                if feature_map.shape[0] != batch_size:
-                    pass  # Warning was here, removed for profiling
-                    # print( # Removed
-                    #     f"Warning: Backbone output feature_map batch size {feature_map.shape[0]} "
-                    #     f"does not match expected batch_size {batch_size}. "
-                    #     f"Input image batch was {img_tensor.shape[0]}."
-                    # )
-
                 projected_feature = self.encoder_img_feat_input_proj(feature_map)  # (B, D_model, H', W')
-                # print(f"[ACT.forward] Image tensor {i} projected_feature shape: {projected_feature.shape}") # Removed
-
-                if projected_feature.shape[0] != batch_size:
-                    pass  # Warning was here, removed for profiling
-                #  print( # Removed
-                #     f"Warning: Projected feature batch size {projected_feature.shape[0]} "
-                #     f"does not match expected batch_size {batch_size}."
-                # )
 
                 pos_embed_template_2d = self.encoder_cam_feat_pos_embed(projected_feature[:1]).to(
                     dtype=projected_feature.dtype
                 )  # (1, D_model, H', W')
-                # print(f"[ACT.forward] Image tensor {i} pos_embed_template_2d shape: {pos_embed_template_2d.shape}") # Removed
-
-                pos_embed_2d_batched = pos_embed_template_2d.repeat(
-                    batch_size, 1, 1, 1
-                )  # (batch_size, D_model, H', W')
-                # print(f"[ACT.forward] Image tensor {i} pos_embed_2d_batched shape: {pos_embed_2d_batched.shape}") # Removed
+                pos_embed_2d_batched = pos_embed_template_2d.repeat(batch_size, 1, 1, 1)  # (B, D_model, H', W')
 
                 rearranged_projected_feature = einops.rearrange(projected_feature, "b c h w -> (h w) b c")
                 rearranged_pos_embed = einops.rearrange(pos_embed_2d_batched, "b c h w -> (h w) b c")
-                # print(f"[ACT.forward] Image tensor {i} rearranged_projected_feature shape: {rearranged_projected_feature.shape}") # Removed
-                # print(f"[ACT.forward] Image tensor {i} rearranged_pos_embed shape: {rearranged_pos_embed.shape}") # Removed
 
                 all_cam_features_processed.append(rearranged_projected_feature)
                 all_cam_pos_embeds_processed.append(rearranged_pos_embed)
 
         # Concatenate 1D and 2D (image) features for the main encoder
-        # --- Start Logging before torch.cat for positional embeddings ---
-        # print(f"[ACT.forward] Shape of encoder_1d_pos_embed_sequence: {encoder_1d_pos_embed_sequence.shape}") # Removed
-        for idx, tensor in enumerate(all_cam_pos_embeds_processed):  # noqa: B007
-            # print(f"[ACT.forward] Shape of all_cam_pos_embeds_processed[{idx}]: {tensor.shape}") # Removed
-            pass
-        # --- End Logging ---
-        if all_cam_features_processed:  # Check if there are camera features to concatenate
+        if all_cam_features_processed:
             full_encoder_input_sequence = torch.cat([encoder_1d_sequence] + all_cam_features_processed, dim=0)
             full_encoder_pos_embed = torch.cat([encoder_1d_pos_embed_sequence] + all_cam_pos_embeds_processed, dim=0)
-            # --- Start Logging after torch.cat ---
-            # print(f"[ACT.forward] Shape of full_encoder_input_sequence (with images): {full_encoder_input_sequence.shape}") # Removed
-            # print(f"[ACT.forward] Shape of full_encoder_pos_embed (with images): {full_encoder_pos_embed.shape}") # Removed
-            # --- End Logging ---
         else:
             full_encoder_input_sequence = encoder_1d_sequence
             full_encoder_pos_embed = encoder_1d_pos_embed_sequence
-            # --- Start Logging after torch.cat ---
-            # print(f"[ACT.forward] Shape of full_encoder_input_sequence (1D only): {full_encoder_input_sequence.shape}") # Removed
-            # print(f"[ACT.forward] Shape of full_encoder_pos_embed (1D only): {full_encoder_pos_embed.shape}") # Removed
-            # --- End Logging ---
 
         # Main Encoder Forward Pass
         encoder_output = self.encoder(full_encoder_input_sequence, pos_embed=full_encoder_pos_embed)  # (S_total, B, D)
-
-        # Main Transformer Decoder
-        # Decoder queries are learnable embeddings.
-        # Original DETR uses zeros as query input and adds pos_embed to q, k.
-        # ACT modeling_act.py does:
-        # decoder_in = torch.zeros_like(self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1))
-        # decoder_out = self.decoder(decoder_in, encoder_out, encoder_pos_embed=..., decoder_pos_embed=self.decoder_pos_embed.weight.unsqueeze(1))
-        # This means decoder_pos_embed is added to query and key inside ACTDecoderLayer.
 
         # Prepare decoder input (usually zeros) and query positional embeddings
         decoder_query_embed = self.decoder_pos_embed.weight.unsqueeze(1).repeat(1, batch_size, 1)  # (chunk_size, B, D)
@@ -1068,6 +953,3 @@ class ACT(nn.Module):
         predicted_actions = self.action_head(decoder_output.permute(1, 0, 2))
 
         return predicted_actions, (mu, log_sigma_x2)
-
-
-# Continue with ACT, ACTTemporalEnsembler, and other supporting classes...

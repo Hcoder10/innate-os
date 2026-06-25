@@ -1,0 +1,19 @@
+# File: brain/manipulation/config/manipulation_server.yaml
+# Runtime knobs for the learned-policy manipulation server (behavior.launch.py).
+# Data-collection config lives in recorder.yaml; this file is inference-only.
+# Override any of these per-robot via config/settings.yaml's manipulation_server: section.
+manipulation_server:
+  ros__parameters:
+    data_directory: "~/innate-os/workspace/custom_skills"  # Fallback default; behavior.launch.py overrides this with $INNATE_OS_ROOT/workspace/custom_skills.
+    # Learned-policy inference
+    inference_hz: 25.0                      # policy inference loop rate (Hz)
+    speed: 1.5                             # action execution speed multiplier
+    replay_base_speed_scale: 1.0            # scale on replayed base cmd_vel; 1.0 = full recorded speed
+    learned_base_speed_scale: 1.0           # scale on learned-policy predicted base cmd_vel; 1.0 = full predicted speed
+    n_action_steps: 0                      # replan horizon; 0 = auto (min(40, chunk_size)), per-skill config wins
+    # ACT temporal-ensemble smoothing. Runs the TRT engine every step and exponentially blends
+    # overlapping chunk predictions to remove the per-replan motion discontinuity.
+    #   > 0 : weight OLDER predictions more (smoother; can over-commit to stale far-horizon steps)
+    #   < 0 : weight the LATEST chunk more (reactive/closed-loop; noisier)
+    #   = 0 : disabled -- fall back to the chunked-queue path (replan every n_action_steps)
+    temporal_ensemble_coeff: 0.01

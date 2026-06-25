@@ -31,6 +31,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>mars_bringup</exec_depend>
 
   <!-- WebRTC streamer system dependencies -->
   <build_depend>libopencv-dev</build_depend>

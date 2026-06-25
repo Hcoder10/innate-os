@@ -13,3 +13,11 @@ cuda-toolkit-12-6
 
 # cuDNN is separate from CUDA toolkit
 libcudnn9-cuda-12
+
+# TensorRT (the ACT policy inference path; see manipulation/act_trt.py).
+# nvidia-l4t-dla-compiler provides libnvdla_compiler.so, which libnvinfer dlopens
+# at import time -- without it the tensorrt Python import fails and the policy can't
+# load. post_update.sh runs ldconfig after install so the linker finds it.
+tensorrt
+python3-libnvinfer
+nvidia-l4t-dla-compiler

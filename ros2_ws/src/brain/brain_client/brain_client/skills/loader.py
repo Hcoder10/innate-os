@@ -88,6 +88,11 @@ class SkillLoader(DynamicLoader):
             episode_count = self._get_episode_count(skill_dir)
             return (is_valid, is_in_training, episode_count)
         elif skill_type == "replay":
+            # A replay draft (created up front, still being recorded into data/) has no
+            # replay_file yet — treat it as in_training rather than invalid so it loads
+            # cleanly until the take is saved and the trajectory is written.
+            if not execution.get("replay_file") and os.path.isdir(os.path.join(skill_dir, "data")):
+                return (True, True, 0)
             is_valid = self._validate_replay_skill(skill_dir, execution)
             return (
                 is_valid,

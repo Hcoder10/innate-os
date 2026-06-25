@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from mars_bringup.env_loader import get_env, load_env_file
+from mars_bringup.config_loader import get_env, load_env_file, settings_params
 
 from brain_client.common.logging import get_logging_env_vars
 
@@ -97,7 +97,6 @@ def generate_launch_description():
         default_value="/nav/current_mode",
         description="Topic for current navigation mode (mapfree, mapping, navigation)",
     )
-    # Launch the BrainClientNode
     brain_client_node = Node(
         package="brain_client",
         executable="brain_client_node.py",
@@ -124,7 +123,8 @@ def generate_launch_description():
                 "x_cam": LaunchConfiguration("x_cam"),
                 "height_cam": LaunchConfiguration("height_cam"),
                 "current_nav_mode_topic": LaunchConfiguration("current_nav_mode_topic"),
-            }
+            },
+            *settings_params(),
         ],
         output="screen",
     )

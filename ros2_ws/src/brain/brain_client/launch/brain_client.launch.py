@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from mars_bringup.env_loader import get_env, load_env_file
+from mars_bringup.config_loader import get_env, load_env_file, settings_params
 
 from brain_client.common.logging import get_logging_env_vars
 
@@ -120,7 +120,6 @@ def generate_launch_description():
         description="OpenAI transcription model",
     )
 
-    # Launch the BrainClientNode
     brain_client_node = Node(
         package="brain_client",
         executable="brain_client_node.py",
@@ -151,7 +150,8 @@ def generate_launch_description():
                 "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
                 "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
                 "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
-            }
+            },
+            *settings_params(),
         ],
         output="screen",
         # Mute the benign "Publisher already registered" rosout-plumbing warning

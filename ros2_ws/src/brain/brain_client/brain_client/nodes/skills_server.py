@@ -133,7 +133,7 @@ class SkillsActionServer(Node):
         return response
 
     def _handle_create_physical_skill(self, request, response):
-        success, message, skill_dir, skill_id = self.catalog.create_physical_skill(request.name)
+        success, message, skill_dir, skill_id = self.catalog.create_physical_skill(request.name, request.kind)
         response.success = success
         response.message = message
         response.skill_directory = skill_dir

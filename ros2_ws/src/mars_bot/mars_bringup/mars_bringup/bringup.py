@@ -6,6 +6,7 @@ from geometry_msgs.msg import Twist
 from mars_msgs.srv import LightCommand
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import BatteryState
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
@@ -57,10 +58,15 @@ class Bringup(Node):
                 ("battery.critical_percentage", 10),
                 ("ros_topics.odom_frequency", 30.0),
                 ("ros_topics.battery_state_frequency", 0.2),
-                ("motion_control.max_speed", 2.5),
-                ("motion_control.max_angular_speed", 2.5),
             ],
         )
+
+        # Hardware safety clamp applied to every /cmd_vel before the motors — the final
+        # ceiling that every velocity source (teleop, nav2, brain) passes through. Kept
+        # separate from the motion_control driving caps so tuning driving feel can't lower
+        # this backstop. No literal defaults: comes from config/robot_config.yaml.
+        self.declare_parameter("safety.max_speed", Parameter.Type.DOUBLE)
+        self.declare_parameter("safety.max_angular_speed", Parameter.Type.DOUBLE)
 
         # Build a structured dictionary with only the parameters needed by I2CManager
         params = {
@@ -74,9 +80,9 @@ class Bringup(Node):
                 "warning_percentage": self.get_parameter("battery.warning_percentage").value,
                 "critical_percentage": self.get_parameter("battery.critical_percentage").value,
             },
-            "motion_control": {
-                "max_speed": self.get_parameter("motion_control.max_speed").value,
-                "max_angular_speed": self.get_parameter("motion_control.max_angular_speed").value,
+            "safety": {
+                "max_speed": self.get_parameter("safety.max_speed").value,
+                "max_angular_speed": self.get_parameter("safety.max_angular_speed").value,
             },
             "ros_topics": {
                 "odom_frequency": self.get_parameter("ros_topics.odom_frequency").value,
@@ -145,12 +151,10 @@ class Bringup(Node):
     def _cmd_vel_callback(self, msg: Twist):
         """Handle incoming velocity commands."""
         # Apply speed limits
-        limited_linear = max(
-            min(msg.linear.x, self.params["motion_control"]["max_speed"]), -self.params["motion_control"]["max_speed"]
-        )
+        limited_linear = max(min(msg.linear.x, self.params["safety"]["max_speed"]), -self.params["safety"]["max_speed"])
         limited_angular = max(
-            min(-msg.angular.z, self.params["motion_control"]["max_angular_speed"]),
-            -self.params["motion_control"]["max_angular_speed"],
+            min(-msg.angular.z, self.params["safety"]["max_angular_speed"]),
+            -self.params["safety"]["max_angular_speed"],
         )
 
         if self.debug:

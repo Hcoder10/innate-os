@@ -42,22 +42,38 @@ DEFAULT_WS_URL = "wss://nav-v1.innate.bot"
 DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
 RUNTIME_BACKEND_CONFIG_TOPIC = "/brain/backend_config"
 
-_CMD_VEL: dict[int, tuple[float, float]] = {
-    Action.STOP: (0.0, 0.0),
-    Action.FORWARD: (0.3, 0.0),
-    Action.LEFT: (0.0, 0.8),
-    Action.RIGHT: (0.0, -0.8),
-}
+# Default drive speeds for UniNavid's discrete actions (overridable via uninavid_node params).
+_DEFAULT_FORWARD_SPEED = 0.3  # m/s, FORWARD action
+_DEFAULT_TURN_SPEED = 0.8  # rad/s, LEFT / RIGHT actions
 
 _STOP = Twist()
 
 
-def _twist(action: int) -> Twist | None:
-    if action not in _CMD_VEL:
+def _twist(cmd_vel: dict[int, tuple[float, float]], action: int) -> Twist | None:
+    if action not in cmd_vel:
         return None
     t = Twist()
-    t.linear.x, t.angular.z = _CMD_VEL[action]
+    t.linear.x, t.angular.z = cmd_vel[action]
     return t
+
+
+def _positive_or_default(value, default: float, name: str, logger) -> float:
+    """Clamp a non-positive rate/period override to ``default``, warning when it does.
+
+    These knobs feed ``1.0 / x`` divisions (cmd_publish_hz, image_send_hz) and
+    ``time.sleep`` (poll_period_sec, cmd_duration_sec). A 0 or negative value — which
+    config/settings.yaml's int-vs-double guard does not reject — would otherwise crash
+    mid-goal with ZeroDivisionError or a negative ``time.sleep``. Mirrors the
+    inference_hz guard in manipulation_server.py.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.0
+    if v > 0.0:
+        return v
+    logger.warn(f"{name} must be > 0 (got {value!r}); falling back to {default}.")
+    return default
 
 
 class UninavidNode(Node):
@@ -77,6 +93,17 @@ class UninavidNode(Node):
         self.declare_parameter("latency_report_sec", 5.0)
         self.declare_parameter("image_send_hz", 49.0)
         self.declare_parameter("consecutive_stops_to_complete", 20)
+        # Drive speeds, tuned independently of teleop (motion_control) and nav2 (nav).
+        self.declare_parameter("forward_speed", _DEFAULT_FORWARD_SPEED)
+        self.declare_parameter("turn_speed", _DEFAULT_TURN_SPEED)
+        forward_speed = float(self.get_parameter("forward_speed").value)
+        turn_speed = float(self.get_parameter("turn_speed").value)
+        self._cmd_vel: dict[int, tuple[float, float]] = {
+            Action.STOP: (0.0, 0.0),
+            Action.FORWARD: (forward_speed, 0.0),
+            Action.LEFT: (0.0, turn_speed),
+            Action.RIGHT: (0.0, -turn_speed),
+        }
 
         self._ws_url = str(self.get_parameter("ws_url").value)
         service_key = str(self.get_parameter("service_key").value)
@@ -213,11 +240,13 @@ class UninavidNode(Node):
                 "Missing INNATE_SERVICE_KEY for UniNavid.",
             )
 
-        cmd_duration = float(self.get_parameter("cmd_duration_sec").value)
-        cmd_publish_hz = float(self.get_parameter("cmd_publish_hz").value)
-        poll_period = float(self.get_parameter("poll_period_sec").value)
+        log = self.get_logger()
+        cmd_duration = _positive_or_default(self.get_parameter("cmd_duration_sec").value, 0.1, "cmd_duration_sec", log)
+        cmd_publish_hz = _positive_or_default(self.get_parameter("cmd_publish_hz").value, 50.0, "cmd_publish_hz", log)
+        poll_period = _positive_or_default(self.get_parameter("poll_period_sec").value, 0.02, "poll_period_sec", log)
         latency_report = float(self.get_parameter("latency_report_sec").value)
-        image_send_hz = float(self.get_parameter("image_send_hz").value)
+        # Must stay positive: UninavidWsClient divides 1.0 / hz.
+        image_send_hz = _positive_or_default(self.get_parameter("image_send_hz").value, 49.0, "image_send_hz", log)
         consecutive_stops = int(self.get_parameter("consecutive_stops_to_complete").value)
 
         client = UninavidWsClient(
@@ -269,7 +298,7 @@ class UninavidNode(Node):
                     label = Action(code).name if code in Action._value2member_map_ else str(code)
                     self.get_logger().info(f"Executing action: {label}")
 
-                    tw = _twist(code)
+                    tw = _twist(self._cmd_vel, code)
                     if tw is not None:
                         deadline = time.monotonic() + cmd_duration
                         dt = 1.0 / cmd_publish_hz

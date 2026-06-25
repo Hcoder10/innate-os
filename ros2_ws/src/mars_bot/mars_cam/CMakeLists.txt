@@ -25,7 +25,7 @@ find_package(OpenCV REQUIRED)
 # Find GStreamer (for webrtc_streamer)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TURBOJPEG REQUIRED libturbojpeg)
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-sdp-1.0)
+pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-sdp-1.0 gstreamer-rtp-1.0)
 
 # Find nlohmann_json (for webrtc_streamer and stereo_depth_estimator)
 find_package(nlohmann_json QUIET)

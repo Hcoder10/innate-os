@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from mars_bringup.config_loader import settings_params
 
 
 def generate_launch_description():
@@ -12,12 +13,11 @@ def generate_launch_description():
     # Path to the config file
     config_file = os.path.join(pkg_dir, "config", "motion_control.yaml")
 
-    # Create the joystick node
     joystick_node = Node(
         package="mars_control",
         executable="joystick.py",
         name="joystick_controller",
-        parameters=[config_file],
+        parameters=[config_file, *settings_params()],
         output="screen",
     )
 

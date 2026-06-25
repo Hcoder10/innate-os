@@ -5,8 +5,8 @@ This directory holds the implementation of the local `innate` CLI. User-facing c
 The local workflow uses:
 
 - Python 3.10 or newer for the launcher
-- [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env) for secrets only
-- [`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) for optional non-secret OS overrides
+- [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env) for secrets and cloud endpoint URLs
+- [`config/settings.yaml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/settings.yaml.template) for optional non-secret tunable ROS parameters and extra agent/skill dirs
 - [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) for optional non-secret simulator overrides
 
 The CLI brings up:
@@ -21,7 +21,7 @@ By default, the launcher expects this layout:
 innate-os/
 ├── innate
 ├── .env
-├── config/os.toml
+├── config/settings.yaml
 ├── sim/launcher/
 ├── sim/config.toml
 └── ../innate-cloud-agent/   # optional
@@ -88,11 +88,13 @@ To inspect the current state:
 
 ## Config Files
 
-[`config/os.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/os.toml.template) is for optional non-secret OS overrides such as:
+[`config/settings.yaml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/settings.yaml.template) is for optional non-secret tunable ROS parameters such as:
 
-- brain websocket URI
-- telemetry URL
-- Cartesia voice id
+- driving speed, camera, arm, and navigation knobs
+- Cartesia TTS voice id
+- extra agent/skill dirs (`script_paths.extra_agent_dirs` / `extra_skill_dirs`)
+
+Cloud endpoint URLs (brain websocket URI, telemetry URL, …) live in [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env).
 
 [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) is for optional non-secret simulator overrides such as:
 

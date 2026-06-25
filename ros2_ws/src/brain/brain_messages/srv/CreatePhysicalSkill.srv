@@ -1,6 +1,7 @@
-# Create a new physical (learned) skill directory with metadata.json
+# Create a new physical skill directory with metadata.json
 # Request
 string name               # Display name for the skill (e.g. "Pick Up Socks")
+string kind               # Intended final type: "learned" (default if empty) or "replay"
 ---
 # Response
 bool success

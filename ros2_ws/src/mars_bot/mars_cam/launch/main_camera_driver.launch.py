@@ -5,6 +5,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from mars_bringup.config_loader import settings_params
 
 
 def generate_launch_description():
@@ -97,7 +98,6 @@ def generate_launch_description():
 
     use_sim_time_arg = DeclareLaunchArgument("use_sim_time", default_value="false", description="Use simulation time")
 
-    # Main camera driver node
     main_camera_driver_node = Node(
         package="mars_cam",
         executable="main_camera_driver",
@@ -125,7 +125,8 @@ def generate_launch_description():
                 "ae_kp": LaunchConfiguration("ae_kp"),
                 "auto_exposure_update_interval": LaunchConfiguration("auto_exposure_update_interval"),
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
+            },
+            *settings_params(),
         ],
         remappings=[
             # You can add remappings here if needed

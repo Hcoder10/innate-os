@@ -23,6 +23,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
+from mars_bringup.config_loader import settings_params
 
 from mars_cam.remote_throttle_nodes import make_remote_throttle_nodes
 
@@ -48,7 +49,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::MainCameraDriver",
         name="main_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -56,7 +61,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::ArmCameraDriver",
         name="arm_camera_driver",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 
@@ -76,6 +85,15 @@ def generate_launch_description():
                 "enable_audio": True,
                 "audio_source_element": "alsasrc",
                 "audio_capture_device": "sysdefault:CARD=Light",
+                # Bound the teleop receiver's de-jitter buffer (ms) via the playout-delay RTP
+                # extension. Measured effect on the LAN: once this extension advertises playout-delay
+                # support, Chrome (which already pins jitterBufferTarget=0) drops the buffer from
+                # ~75 ms to ~2 ms with no added loss. max is the effective lever — it caps how far the
+                # buffer may grow during jitter spikes, bounding worst-case latency below the 75 ms
+                # default. min is inert while the client pins target=0 (kept at 0). Raise max for
+                # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
+                "playout_min_delay_ms": 0,
+                "playout_max_delay_ms": 40,
             }
         ],
         extra_arguments=[{"use_intra_process_comms": True}],
@@ -85,7 +103,11 @@ def generate_launch_description():
         package="mars_cam",
         plugin="mars_cam::StereoDepthEstimator",
         name="stereo_depth_estimator",
-        parameters=[LaunchConfiguration("camera_config"), {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("camera_config"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            *settings_params(),
+        ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )
 

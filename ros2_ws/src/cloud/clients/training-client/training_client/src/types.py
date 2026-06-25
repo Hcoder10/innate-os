@@ -119,6 +119,9 @@ class RunInfo:
     finished_at: str | None = None
     instance_ip: str | None = None
     instance_type: str | None = None
+    wandb_run_url: str | None = None
+    current_step: int | None = None
+    total_steps: int | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> RunInfo:
@@ -136,6 +139,9 @@ class RunInfo:
             finished_at=data.get("finished_at"),
             instance_ip=data.get("instance_ip"),
             instance_type=data.get("instance_type"),
+            wandb_run_url=data.get("wandb_run_url"),
+            current_step=data.get("current_step"),
+            total_steps=data.get("total_steps"),
         )
 
     @property
@@ -145,4 +151,4 @@ class RunInfo:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in ("done", "rejected", "downloaded")
+        return self.status in ("done", "rejected", "downloaded", "cancelled")

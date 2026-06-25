@@ -1,0 +1,150 @@
+# Innate OS — tunable parameter overrides (native ROS 2 params).
+#
+# This is the single place to tune robot parameters. ROS layers this file on top of
+# each node's own config (last-wins), so anything you set here beats the package default.
+#
+# HOW TO USE: uncomment a whole stanza — the `node:`, `ros__parameters:`, and the value
+# line(s) together. (Select the block and hit your editor's comment-toggle.) Leave the
+# rest commented; an all-commented file is treated as "no overrides".
+#
+# `/**` applies to every node that declares the parameter; a named section targets one node.
+# Use decimals for float values (e.g. 0.4, not 4) so ROS keeps them as floats.
+#
+# config/settings.yaml is auto-created from this template on update; your edits are never
+# overwritten. Secrets and cloud endpoint URLs live in .env (they aren't ROS params, so not
+# here); TTS voice and extra agent/skill dirs are tunables and live in this file.
+
+# ── Global knobs (`/**` — apply to every node that declares the parameter) ──
+# All `/**` settings share ONE block: YAML keeps only the last `/**:` key, so a
+# second `/**:` stanza would silently drop the first. Uncomment `/**:` and
+# `ros__parameters:` once, then uncomment whichever groups below you want.
+#
+# Driving speed — teleop and autonomy are capped independently:
+#   motion_control = manual driving — the joystick, keyboard & app scale to it.
+#   nav            = autonomous nav2 — the nav remap maps it onto nav2's planners +
+#                    velocity smoother.
+# Tune them separately, e.g. turn nav down for safety without slowing manual driving.
+# Neither is the hard ceiling: bringup's `safety` clamp (under `bringup:` below) caps
+# every /cmd_vel at the motors. Keep that safety clamp >= motion_control and nav.
+# /**:
+#   ros__parameters:
+#     motion_control:               # teleop / manual driving
+#       max_speed: 0.4              # m/s, top translational speed
+#       max_angular_speed: 1.0      # rad/s, top rotational speed
+#     nav:                          # autonomous (nav2)
+#       max_speed: 0.45             # m/s, top translational speed
+#       max_angular_speed: 0.6      # rad/s, top rotational speed
+#     inflation_layer:              # costmap obstacle inflation (every costmap)
+#       inflation_radius: 0.3       # metres of inflation around obstacles
+#       cost_scaling_factor: 10.0   # higher = cost decays faster with distance
+
+# ── Teleop: joystick ──────────────────────────────────────────────────
+# joystick_controller:
+#   ros__parameters:
+#     joystick:
+#       slow_mode_factor: 0.25      # speed multiplier while the slow-mode button is held
+
+# ── Battery thresholds + safety speed clamp (bringup) ─────────────────
+# bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling
+# every velocity source (teleop, nav2, brain) passes through. It is a backstop, not the
+# driving feel, so keep it >= the motion_control / nav driving caps above. (battery and
+# safety share ONE bringup: block — uncomment the block once, then the groups you want.)
+# bringup:
+#   ros__parameters:
+#     battery:
+#       warning_percentage: 20      # low-battery warning level (%)
+#       critical_percentage: 10     # critical-battery level (%)
+#     safety:
+#       max_speed: 0.4              # m/s, hard /cmd_vel linear ceiling at the motors
+#       max_angular_speed: 2.5      # rad/s, hard /cmd_vel angular ceiling at the motors
+
+# ── Arm ───────────────────────────────────────────────────────────────
+# mars_arm:
+#   ros__parameters:
+#     max_jerk: 150.0               # rad/s^3 trajectory jerk limit (0 disables)
+#     stress_enabled: false         # motor-protection cooldown
+
+# ── Camera (physical main camera; hardware only) ──────────────────────
+# main_camera_driver:
+#   ros__parameters:
+#     publish_left_width: 640       # streamed main-camera image width (px)
+#     publish_left_height: 480      # streamed main-camera image height (px)
+#     fps: 30.0                     # camera frame rate
+#     jpeg_quality: 80              # JPEG compression quality (1-100)
+#     auto_exposure_mode: 0         # 0=hardware AE, 1=custom PID, 2=manual
+#     exposure: -1                  # manual exposure time (-1 = keep current; 1-10000)
+#     gain: -1                      # manual gain (-1 = keep current; 0-255)
+#     default_gain: 110             # gain used in auto-exposure mode (0-255)
+#     target_brightness: 128.0      # auto-exposure target brightness (0-255)
+#     ae_kp: 0.8                    # auto-exposure proportional gain
+
+# ── Manipulation (learned-skill execution) ────────────────────────────
+# chunk_size is fixed by the trained model. These are node-level (restart to apply);
+# only n_action_steps accepts a per-skill behavior_config override.
+# manipulation_server:
+#   ros__parameters:
+#     inference_hz: 25.0            # policy inference loop rate (Hz)
+#     speed: 1.5                    # action execution speed multiplier
+#     replay_base_speed_scale: 1.0  # base-speed scale for replay; 1.0 = play base back at full recorded speed
+#     learned_base_speed_scale: 0.5 # base-speed de-rate for the learned policy; 1.0 = full predicted speed
+#     n_action_steps: 0            # replan horizon; 0 = auto (min(40, chunk_size)), clamped to chunk_size
+#     temporal_ensemble_coeff: 0.01  # ACT action smoothing; 0 = disabled (0.01 default enables it, pinning n_action_steps to 1)
+
+# ── Localization (grid localizer) ─────────────────────────────────────
+# navigation_grid_localizer:
+#   ros__parameters:
+#     max_score_threshold: 0.3      # lower = stricter match required to accept a pose
+#     max_range: 12.0               # max lidar range used for matching (m)
+#     auto_localize_timeout: 30.0   # seconds to keep trying auto-localization on startup
+
+# ── Brain runtime (vision agent) ──────────────────────────────────────
+# (Cloud endpoint URLs are connectivity and live in .env.) The voice/model lines at
+# the end are also read by input_manager_node (see "Voice & speech" below) — if you
+# change them, change both blocks so the two speech paths stay consistent.
+# brain_client_node:
+#   ros__parameters:
+#     vertical_fov: 80.0            # camera vertical field of view (degrees)
+#     pose_image_interval: 0.5      # seconds between pose-image sends
+#     scan_stale_after_sec: 10.0    # seconds without a lidar scan before flagging stale
+#     send_depth: false             # also send depth images to the agent
+#     send_arm_camera_image: true   # also send the arm camera image
+#     log_everything: true          # verbose vision-agent output logging
+#     cartesia_voice_id: "9fdaae0b-f885-4813-b589-3c07cf9d5fea"  # TTS voice
+#     openai_realtime_model: "gpt-4o-realtime-preview"
+#     openai_transcribe_model: "gpt-4o-mini-transcribe"
+
+# ── Voice & speech (realtime voice loop) ──────────────────────────────
+# input_manager_node runs the realtime voice / transcription loop and reads the SAME
+# voice + model settings as brain_client_node above. They live on two separate nodes,
+# so set them in BOTH blocks to keep the chat-TTS and realtime-voice paths in sync.
+# (The default voice for both can also be set once via .env CARTESIA_VOICE_ID.)
+# input_manager_node:
+#   ros__parameters:
+#     cartesia_voice_id: "9fdaae0b-f885-4813-b589-3c07cf9d5fea"  # TTS voice
+#     openai_realtime_model: "gpt-4o-realtime-preview"
+#     openai_transcribe_model: "gpt-4o-mini-transcribe"
+
+# ── Vision-language navigation (UniNavid) ─────────────────────────────
+# (The cloud endpoint URL is connectivity and lives in .env as UNINAVID_WS_URL.)
+# UniNavid drives in discrete action bursts; forward_speed / turn_speed set how fast.
+# This is UniNavid's own autonomous-speed knob — separate from nav (nav2) and
+# motion_control (teleop). The bringup `safety` /cmd_vel clamp is still the ceiling.
+# uninavid_node:
+#   ros__parameters:
+#     forward_speed: 0.3                    # m/s, FORWARD action speed
+#     turn_speed: 0.8                       # rad/s, LEFT / RIGHT action speed
+#     cmd_duration_sec: 0.1                 # how long each movement command runs
+#     image_send_hz: 49.0                   # camera frames sent to the nav model per second
+#     consecutive_stops_to_complete: 30     # stop predictions in a row before "reached"
+#     cmd_publish_hz: 50.0                  # cmd_vel republish rate during a move
+#     poll_period_sec: 0.02                 # action-loop poll interval
+
+# ── Extra agent / skill directories ───────────────────────────────────
+# Scan agents/skills from extra locations, on top of the built-in workspace/ dirs.
+# Absolute paths anywhere on the machine, scanned in place (never created); in a Docker/sim
+# setup, host paths must also be mounted into the container. (Read directly by the agent /
+# skill loaders — not a ROS node, so leave the section name as `script_paths`.)
+# script_paths:
+#   ros__parameters:
+#     extra_agent_dirs: ["/home/me/my-agents", "/opt/team/agents"]
+#     extra_skill_dirs: ["/home/me/my-skills"]

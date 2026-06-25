@@ -7,6 +7,10 @@ uninavid_node:
     # service_key: ""
     # auth_issuer_url: "https://auth-v1.innate.bot"
 
+    # ── Motion ───────────────────────────────────────────────────────────
+    forward_speed: 0.3
+    turn_speed: 0.8
+
     # ── Timing / control ─────────────────────────────────────────────────
     cmd_duration_sec: 0.1
     cmd_publish_hz: 50.0

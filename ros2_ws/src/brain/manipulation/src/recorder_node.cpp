@@ -142,6 +142,14 @@ RecorderNode::RecorderNode()
         "brain/recorder/get_task_metadata",
         std::bind(&RecorderNode::handle_get_task_metadata, this, std::placeholders::_1, std::placeholders::_2));
 
+    set_episode_outcome_srv_ = this->create_service<brain_messages::srv::SetEpisodeOutcome>(
+        "brain/recorder/set_episode_outcome",
+        std::bind(&RecorderNode::handle_set_episode_outcome, this, std::placeholders::_1, std::placeholders::_2));
+
+    delete_episode_srv_ = this->create_service<brain_messages::srv::DeleteEpisode>(
+        "brain/recorder/delete_episode",
+        std::bind(&RecorderNode::handle_delete_episode, this, std::placeholders::_1, std::placeholders::_2));
+
     RCLCPP_DEBUG(this->get_logger(), "Hosting services:");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/activate_physical_primitive");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/new_episode");
@@ -151,8 +159,15 @@ RecorderNode::RecorderNode()
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/end_task");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/get_task_metadata");
 
-    // Create status publisher
-    status_pub_ = this->create_publisher<brain_messages::msg::RecorderStatus>("/brain/recorder/status", 10);
+    // Create status publisher. Latched (transient_local, depth 1) so a client
+    // that (re)connects mid-recording immediately learns the current state — e.g.
+    // the web Collect page can detect an episode still open on the robot after a
+    // dropped connection and offer to discard it, instead of silently orphaning
+    // it. Status is edge-published on transitions, so without latching a late
+    // subscriber would see nothing until the next transition.
+    rclcpp::QoS status_qos(rclcpp::KeepLast(1));
+    status_qos.transient_local();
+    status_pub_ = this->create_publisher<brain_messages::msg::RecorderStatus>("/brain/recorder/status", status_qos);
 
     // Create recording timer
     auto timer_period = std::chrono::duration<double>(1.0 / data_frequency_);
@@ -749,6 +764,56 @@ void RecorderNode::handle_get_task_metadata(
     }
 }
 
+void RecorderNode::handle_set_episode_outcome(
+    const std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Request> request,
+    std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Set outcome '%s' for episode %d in %s", request->outcome.c_str(),
+                request->episode_id, request->task_directory.c_str());
+    try {
+        auto [success, message] =
+            task_manager_->set_episode_outcome(request->task_directory, request->episode_id, request->outcome);
+        response->success = success;
+        response->message = message;
+        if (!success) {
+            RCLCPP_WARN(this->get_logger(), "set_episode_outcome failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error setting episode outcome: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+    }
+}
+
+void RecorderNode::handle_delete_episode(const std::shared_ptr<brain_messages::srv::DeleteEpisode::Request> request,
+                                         std::shared_ptr<brain_messages::srv::DeleteEpisode::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Delete episode %d in %s", request->episode_id, request->task_directory.c_str());
+
+    // Guard: don't delete out from under an in-flight episode of this task.
+    // (TASK_ACTIVE between episodes is fine; only refuse mid-episode.)
+    const bool mid_episode = state_ == State::EPISODE_ACTIVE || state_ == State::EPISODE_STOPPED;
+    if (mid_episode && task_manager_->get_current_task_dir() == request->task_directory) {
+        response->success = false;
+        response->message = "Refusing to delete while this skill is actively recording.";
+        RCLCPP_WARN(this->get_logger(), "%s", response->message.c_str());
+        return;
+    }
+
+    try {
+        auto [success, message] = task_manager_->delete_episode(request->task_directory, request->episode_id);
+        response->success = success;
+        response->message = message;
+        if (success) {
+            RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
+        } else {
+            RCLCPP_WARN(this->get_logger(), "delete_episode failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error deleting episode: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+    }
+}
+
 // ========== REPLAY FUNCTIONALITY ==========
 
 void RecorderNode::handle_load_episode(const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
@@ -763,11 +828,34 @@ void RecorderNode::handle_load_episode(const std::shared_ptr<brain_messages::srv
         }
 
         std::string data_dir = request->task_directory + "/data";
-        std::string h5_path = data_dir + "/episode_" + std::to_string(request->episode_id) + ".h5";
+        std::string raw_dir = request->task_directory + "/raw_data";
+        const std::string fname = "/episode_" + std::to_string(request->episode_id) + ".h5";
 
-        if (!fs::exists(h5_path)) {
+        // The replay needs raw images. The MP4 encoder moves the original episode
+        // to raw_data/ and leaves a stripped (image-less) copy in data/, so while
+        // an episode is encoding (and after) the frames live in raw_data/. Prefer
+        // data/, fall back to raw_data/ — otherwise an episode is un-replayable for
+        // the minute-plus it takes to encode, and the app shows a misleading
+        // "Update the OS to play this episode."
+        std::string h5_path;
+        for (const std::string& cand : {data_dir + fname, raw_dir + fname}) {
+            if (!fs::exists(cand)) {
+                continue;
+            }
+            hid_t probe = H5Fopen(cand.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+            if (probe < 0) {
+                continue;
+            }
+            bool has_images = H5Lexists(probe, "/observations/images", H5P_DEFAULT) > 0;
+            H5Fclose(probe);
+            if (has_images) {
+                h5_path = cand;
+                break;
+            }
+        }
+        if (h5_path.empty()) {
             response->success = false;
-            response->message = "Episode file not found: " + h5_path;
+            response->message = "No images found for episode " + std::to_string(request->episode_id);
             response->num_frames = 0;
             response->fps = 0.0;
             response->duration_sec = 0.0;

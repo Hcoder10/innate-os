@@ -47,3 +47,15 @@ The main ROS packages that make up the runtime. See [scripts/launch_ros_in_tmux.
 - **[innate_logger](ros2_ws/src/cloud/innate_logger)** — uploads robot logs and telemetry to the Innate cloud.
 - **[innate_training_node](ros2_ws/src/cloud/innate_training_node)** — collects training episodes and pushes them to the training cloud.
 - **[innate_uninavid](ros2_ws/src/cloud/innate_uninavid)** — Uninavid vision-language navigation client (talks to `nav-v1.innate.bot`).
+
+## Configuration
+
+How the robot **behaves** is tuned in **`config/settings.yaml`** — a native ROS 2 params
+file layered on top of each node's defaults (uncomment a stanza to override): driving speed,
+camera, arm, navigation, brain runtime knobs, TTS voice, extra agent/skill dirs. How it
+**reaches the cloud** + the environment lives in **`.env`**: secrets (`INNATE_SERVICE_KEY`)
+and all cloud endpoint URLs (`BRAIN_WEBSOCKET_URI`, …). Both are auto-created from their
+`.template`. See [docs/PARAMETERS.md](docs/PARAMETERS.md).
+## Web app
+
+- **[webapp](webapp)** — the operator web app (teleop, data collection, datasets, training, debugging). A static front end plus an HTTPS front door (`webapp/proxy/https_server.py`) that serves the app, proxies `wss` → the local rosbridge, and serves episode media (HTTPS `:4443`, plus a cleartext `:4080` media listener for the mobile app). It's launched on boot in the `console-webapp` tmux window (next to the `innate_console` log bridge it feeds) in [scripts/launch_ros_in_tmux.sh](scripts/launch_ros_in_tmux.sh).

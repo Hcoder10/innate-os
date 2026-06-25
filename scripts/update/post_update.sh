@@ -7,6 +7,7 @@
 #
 # This script handles:
 #   0a. Migrate root-level agents/, inputs/, skills/ into workspace/
+#   0a2. Create config/settings.yaml from template if missing
 #   0b. Enable a disk-backed swap file (INN-530)
 #   0c. Use a headless (no-GUI) boot when no display is attached
 #   0d. Disable desktop/update daemons with no robot function
@@ -205,6 +206,28 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 0·1 Seed /etc/innate.env with the service key, so INNATE_SERVICE_KEY survives a repo
+# reset that loses the .env. Readers use it only as a fallback (repo .env wins). Write-once:
+# an existing key is left untouched. Mode 640 root:$ACTUAL_USER — root-owned but group-readable
+# so the non-root launch readers can reach it.
+# -----------------------------------------------------------------------------
+SYSTEM_ENV_FILE="/etc/innate.env"
+if [ -f "$ENV_FILE" ]; then
+    # Require a non-empty value (.+) so the empty template default never gets copied.
+    SERVICE_KEY_LINE=$(grep -E '^INNATE_SERVICE_KEY=.+' "$ENV_FILE" | tail -n1 || true)
+    if [ -n "$SERVICE_KEY_LINE" ]; then
+        if [ -f "$SYSTEM_ENV_FILE" ] && grep -qE '^INNATE_SERVICE_KEY=.+' "$SYSTEM_ENV_FILE"; then
+            log "Service key already present in $SYSTEM_ENV_FILE (leaving its contents untouched)"
+        else
+            (umask 077; printf '%s\n' "$SERVICE_KEY_LINE" > "$SYSTEM_ENV_FILE")
+            chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
+            chmod 640 "$SYSTEM_ENV_FILE"
+            log "Copied INNATE_SERVICE_KEY from .env to $SYSTEM_ENV_FILE"
+        fi
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # 0a. Migrate user-created data into the post-refactor layout.
 # The refactor moved agents/skills/inputs under workspace/ and maps + nav-state
 # (.last_mode/.last_map) under data/. git checkout relocated the *tracked*
@@ -217,6 +240,21 @@ fi
 # shellcheck source=scripts/update/migrate_user_data.sh
 source "$SCRIPT_DIR/migrate_user_data.sh"
 MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
+
+# -----------------------------------------------------------------------------
+# 0a2. Create config/settings.yaml from template if missing.
+# settings.yaml = tunable ROS parameters (the file users edit). Only created when missing,
+# so an existing robot's config is never overwritten on upgrade.
+# -----------------------------------------------------------------------------
+SETTINGS_CONFIG="$REPO_DIR/config/settings.yaml"
+SETTINGS_TEMPLATE="$REPO_DIR/config/settings.yaml.template"
+
+if [ ! -f "$SETTINGS_CONFIG" ] && [ -f "$SETTINGS_TEMPLATE" ]; then
+    log "Creating config/settings.yaml from template..."
+    cp "$SETTINGS_TEMPLATE" "$SETTINGS_CONFIG"
+    chown "$ACTUAL_USER:$ACTUAL_USER" "$SETTINGS_CONFIG"
+    log "  Created $SETTINGS_CONFIG (uncomment a stanza to tune a parameter)"
+fi
 
 # -----------------------------------------------------------------------------
 # 0b. Enable a disk-backed swap file (INN-530)
@@ -616,14 +654,6 @@ fi
         add-apt-repository -y ppa:git-core/ppa
     fi
 
-    # Add NodeSource repo for Node.js 20 LTS (used to build Training Manager frontend)
-    if ! dpkg -l | grep -q "^ii.*nodejs"; then
-        if [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
-            log "  Adding NodeSource repository for Node.js 20..."
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-        fi
-    fi
-
     apt-get update
 
     # Install all apt dependencies (common + hardware-specific) in one go
@@ -631,6 +661,14 @@ fi
         log "  Installing apt dependencies (common + hardware)..."
         cat "$APT_DEPS_COMMON" "$APT_DEPS_HARDWARE" | grep -v '^#' | grep -v '^$' | xargs apt-get -o DPkg::Lock::Timeout=45 install -y
         log "  Apt dependencies installed"
+
+        # Refresh the linker cache so freshly installed libs are discoverable. In
+        # particular libnvdla_compiler.so (from nvidia-l4t-dla-compiler) lands in
+        # /usr/lib/aarch64-linux-gnu/nvidia -- that path is in ld.so.conf.d but the
+        # cache can be stale, and libnvinfer dlopens it at `import tensorrt`. Without
+        # this, TensorRT can't import and the ACT policy fails to load.
+        ldconfig
+        log "  Refreshed linker cache (ldconfig)"
     fi
 
     # Remove PulseAudio (conflicts with ALSA-only audio setup)
@@ -681,25 +719,6 @@ fi
         sudo -u "$ACTUAL_USER" pip3 install -r "$PIP_DEPS_FILE" --upgrade-strategy only-if-needed
         log "  Pip dependencies installed"
     fi
-
-# -----------------------------------------------------------------------------
-# 6a. Build Training Manager frontend (Node.js / npm)
-# -----------------------------------------------------------------------------
-TRAINING_MANAGER_FRONTEND="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/frontend"
-TRAINING_MANAGER_STATIC="$REPO_DIR/ros2_ws/src/cloud/clients/training-manager/training_manager/static"
-
-if [ -d "$TRAINING_MANAGER_FRONTEND" ]; then
-    log "Building Training Manager frontend..."
-    log "  Node.js $(node --version)"
-
-    sudo -u "$ACTUAL_USER" bash -c "cd \"$TRAINING_MANAGER_FRONTEND\" && npm install && npm run build"
-
-    if [ -f "$TRAINING_MANAGER_STATIC/index.html" ]; then
-        log "  Training Manager frontend built successfully"
-    else
-        log "  WARNING: Training Manager frontend build may have failed"
-    fi
-fi
 
 # -----------------------------------------------------------------------------
 # 6b. Rebuild ROS2 workspace if needed
@@ -895,6 +914,13 @@ if [ -f "/etc/systemd/system/shutdown-sound.service" ]; then
     SERVICES+=("shutdown-sound.service")
 fi
 
+# Add the 443->4443 port redirect if the service file exists (lets the webapp be
+# reached at https://<robot>.local with no :4443). In RESTART_SERVICES below so
+# an update re-applies the rule live instead of waiting for a reboot.
+if [ -f "/etc/systemd/system/innate-port-redirect.service" ]; then
+    SERVICES+=("innate-port-redirect.service")
+fi
+
 # Add bluetooth if available
 if systemctl list-unit-files bluetooth.service &>/dev/null; then
     SERVICES+=("bluetooth.service")
@@ -906,7 +932,7 @@ fi
 # previous node generation and the old node binaries in place — surfacing as
 # `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
 # the router before the nodes so the fresh graph comes up against a fresh router.
-RESTART_SERVICES=("zenoh-router.service" "ros-app.service")
+RESTART_SERVICES=("zenoh-router.service" "ros-app.service" "innate-port-redirect.service")
 
 # Always enable services (so they start on boot after reboot)
 # But only start/restart them if reboot is not required

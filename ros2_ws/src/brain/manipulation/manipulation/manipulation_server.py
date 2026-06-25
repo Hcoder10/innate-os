@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import gc
+import json
+import math
 import os
 import threading
 import time
@@ -18,15 +20,24 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, JointState
-from std_msgs.msg import Float64MultiArray, Int32
+from std_msgs.msg import Float64MultiArray, Int32, String
 from std_srvs.srv import Trigger
 
-# Enable CUDNN for better performance
-torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = True
-
 # Import your policy class and trajectory generator
-from manipulation.ACT import ACTConfig, ACTPolicy  # noqa: E402
+from manipulation.ACT import ACTPolicy  # noqa: E402
+from manipulation.act_config import (  # noqa: E402
+    create_act_config,
+    infer_chunk_size,
+    load_torch_file,
+    normalize_state_dict,
+    validate_action_dim,
+)
+
+# NOTE: manipulation.act_trt is imported lazily inside _load_policy_for_behavior, not here.
+# It imports `tensorrt` at module load, which is only installed on hardware units. Importing
+# it at module top would crash the whole behavior server (respawn loop) on a sim/dev box and
+# take down the poses/replay behaviors too -- which don't need TensorRT. TensorRT stays a hard
+# requirement for the learned path: the lazy import raises there, failing that load loudly.
 from manipulation.config_validation import (  # noqa: E402
     BehaviorConfigError,
     LearnedExecCfg,
@@ -35,84 +46,6 @@ from manipulation.config_validation import (  # noqa: E402
     ValidatedBehavior,
     validate_behavior_config,
 )
-
-
-def create_act_config(action_dim=10, chunk_size=30, n_action_steps=None):
-    """Create ACT configuration matching the training setup.
-
-    n_action_steps: optional override for the ACT replanning horizon.
-    When None, falls back to min(40, chunk_size). Values exceeding chunk_size
-    are clamped with a warning (ACTConfig would otherwise raise ValueError).
-    """
-    input_shapes = {
-        "observation.image_camera_1": [3, 224, 224],  # [C, H, W]
-        "observation.image_camera_2": [3, 224, 224],  # [C, H, W]
-        "observation.state": [6],  # state_dim
-    }
-
-    output_shapes = {
-        "action": [action_dim]  # action_dim - now configurable
-    }
-
-    default_n_action_steps = min(40, chunk_size)
-    if n_action_steps is None:
-        effective_n_action_steps = default_n_action_steps
-    else:
-        try:
-            # Reject bools (bool is an int subclass in Python) and anything
-            # that isn't a numeric type outright, so malformed metadata
-            # (e.g. a string or NaN) doesn't crash policy loading.
-            if isinstance(n_action_steps, bool) or not isinstance(n_action_steps, (int, float)):
-                raise TypeError(f"expected int or float, got {type(n_action_steps).__name__}")
-            # int() on NaN -> ValueError, on inf -> OverflowError, both caught below.
-            effective_n_action_steps = int(n_action_steps)
-        except (TypeError, ValueError, OverflowError) as exc:
-            print(
-                f"[create_act_config] Invalid n_action_steps={n_action_steps!r} "
-                f"({exc}); falling back to default "
-                f"min(40, chunk_size)={default_n_action_steps}."
-            )
-            effective_n_action_steps = default_n_action_steps
-        else:
-            if effective_n_action_steps > chunk_size:
-                print(
-                    f"[create_act_config] n_action_steps={effective_n_action_steps} "
-                    f"exceeds chunk_size={chunk_size}; clamping to chunk_size."
-                )
-                effective_n_action_steps = chunk_size
-            if effective_n_action_steps < 1:
-                print(f"[create_act_config] n_action_steps={effective_n_action_steps} is < 1; clamping to 1.")
-                effective_n_action_steps = 1
-
-    return ACTConfig(
-        n_obs_steps=1,
-        chunk_size=chunk_size,
-        n_action_steps=effective_n_action_steps,
-        speed=1.5,
-        input_shapes=input_shapes,
-        output_shapes=output_shapes,
-        # Architecture parameters
-        vision_backbone="resnet18",
-        replace_final_stride_with_dilation=False,
-        # Transformer parameters
-        pre_norm=False,
-        dim_model=512,
-        n_heads=8,
-        dim_feedforward=3200,
-        n_encoder_layers=4,
-        n_decoder_layers=4,
-        # VAE parameters
-        use_vae=True,
-        # Training parameters
-        dropout=0.1,
-        kl_weight=10.0,
-        # Temporal ensembling
-        temporal_ensemble_coeff=None,
-        # Optimizer settings
-        optimizer_lr=1e-5,
-        optimizer_weight_decay=1e-4,
-        optimizer_lr_backbone=1e-5,
-    )
 
 
 class ManipulationServer(Node):
@@ -134,17 +67,53 @@ class ManipulationServer(Node):
             self.get_logger().warn(f"Could not load data_directory parameter: {e}")
             self.data_directory = default_data_dir
 
+        # Learned-policy runtime knobs (from manipulation_server.yaml; overridable via config/settings.yaml).
+        self.declare_parameter("inference_hz", 25.0)
+        self.declare_parameter("speed", 1.5)
+        # inference_hz drives the loop period (1.0 / inference_hz); guard against <= 0.
+        inference_hz = self.get_parameter("inference_hz").value
+        if inference_hz <= 0:
+            self.get_logger().warn(f"inference_hz must be > 0 (got {inference_hz}); falling back to 25.0 Hz.")
+            inference_hz = 25.0
+        self.inference_hz = inference_hz
+        self.policy_speed = self.get_parameter("speed").value
+        # De-rate applied to the recorded/predicted base velocity at execution time. Replay and
+        # learned inference are tuned independently; both play back base cmd_vel 1:1 by default.
+        self.declare_parameter("replay_base_speed_scale", 1.0)
+        self.declare_parameter("learned_base_speed_scale", 1.0)
+        self.replay_base_speed_scale = self.get_parameter("replay_base_speed_scale").value
+        self.learned_base_speed_scale = self.get_parameter("learned_base_speed_scale").value
+        # n_action_steps=0 means "auto" (min(40, chunk_size)); a per-skill value still wins.
+        self.declare_parameter("n_action_steps", 0)
+        self.default_n_action_steps = self.get_parameter("n_action_steps").value
+        # ACT temporal-ensemble smoothing coefficient -- the single control surface for
+        # ensembling (see manipulation_server.yaml for the behavior of each sign). Resolve and
+        # validate it once here, normalizing 0 -> None ("disabled"), so the same value drives
+        # both create_act_config (which pins n_action_steps=1 when ensembling) and TRTACTPolicy.
+        self.declare_parameter("temporal_ensemble_coeff", 0.01)
+        coeff = self.get_parameter("temporal_ensemble_coeff").value
+        if not math.isfinite(coeff):
+            # nan/inf pass the float param but poison the ensemble weights (exp(-nan*i)=nan),
+            # which would publish NaN joint commands. Reject like a malformed value.
+            self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); using default 0.01")
+            coeff = 0.01
+        self.temporal_ensemble_coeff = coeff if coeff != 0 else None
+
         # Image size for policy inference (matches checkpoint training)
         self.bridge = CvBridge()
         self.image_size = (224, 224)  # Resize to match checkpoint expectations
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Cache of GPU resampling matrices keyed by source (h, w). INTER_AREA is a
+        # separable linear filter, so resize == two matmuls with content-independent
+        # weights; precomputing them lets the whole resize run on-GPU, bit-exact to
+        # cv2.INTER_AREA (up to uint8 rounding), instead of on the contended CPU.
+        self._resize_mats = {}
 
-        # Log device info
-        self.get_logger().info(f"PyTorch device: {self.device}")
-        self.get_logger().info(f"CUDA available: {torch.cuda.is_available()}")
         if torch.cuda.is_available():
-            self.get_logger().info(f"CUDA device: {torch.cuda.get_device_name(0)}")
-            self.get_logger().info(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+            props = torch.cuda.get_device_properties(0)
+            self.get_logger().info(f"PyTorch device: {self.device} ({props.name}, {props.total_memory / 1e9:.1f} GB)")
+        else:
+            self.get_logger().info(f"PyTorch device: {self.device} (CUDA unavailable)")
 
         # Current execution state
         self.execution_running = False
@@ -161,8 +130,12 @@ class ManipulationServer(Node):
         self.latest_image2_timestamp = None
         self.latest_joint_timestamp = None
 
-        # Sensor subscriptions are created on-demand to avoid idle CPU usage
-        # from deserializing 30fps camera frames when no behavior is running
+        # Sensor subscriptions are created once on the first behavior and then kept for
+        # the node's lifetime. They are deliberately NEVER destroyed: under the
+        # MultiThreadedExecutor, destroying a subscription that the executor has already
+        # selected as "ready" races _take_subscription and crashes the process
+        # (InvalidHandle: "destruction was requested"). Idle CPU is instead bounded by
+        # early-returning in the image callbacks when no behavior is running.
         self._image1_sub = None
         self._image2_sub = None
         self._joint_sub = None
@@ -172,6 +145,12 @@ class ManipulationServer(Node):
         self.arm_state_pub = self.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
         # Head position command (degrees) — only published for head-enabled replay skills.
         self.head_set_position_pub = self.create_publisher(Int32, "/mars/head/set_position", 10)
+        # Per-step inference timing breakdown (JSON String), for the webapp Profiling page.
+        # Only published while a learned behavior is executing, so it's free when idle.
+        self.inference_profile_pub = self.create_publisher(String, "/brain/manipulation/inference_profile", 10)
+        self._inference_seq = 0
+        # Previous emitted action, for the per-step command-jerk (smoothness) metric.
+        self._prev_action_np = None
         # Service clients
         self.head_ai_position_client = self.create_client(Trigger, "/mars/head/set_ai_position")
         self.arm_goto_client = self.create_client(GotoJS, "/mars/arm/goto_js")
@@ -328,6 +307,9 @@ class ManipulationServer(Node):
             self._stop_sensor_subscriptions()
             self.execution_running = False
             self.current_goal_handle = None
+            # Drop the jerk reference so the next behavior's first step isn't compared
+            # against this one's final action.
+            self._prev_action_np = None
             self._release_policy()
 
     def _release_policy(self):
@@ -340,7 +322,6 @@ class ManipulationServer(Node):
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            torch._dynamo.reset()
             self.get_logger().info("Policy released and GPU memory freed")
         except Exception as e:
             self.get_logger().warn(f"Error releasing policy: {e}")
@@ -362,6 +343,8 @@ class ManipulationServer(Node):
             start_pose_time = params.start_pose_time
             end_pose_time = params.end_pose_time
             n_action_steps_override = params.n_action_steps
+            if n_action_steps_override is None and self.default_n_action_steps > 0:
+                n_action_steps_override = self.default_n_action_steps
 
             # Load policy
             if not self._load_policy_for_behavior(
@@ -376,7 +359,11 @@ class ManipulationServer(Node):
             while not self._check_sensor_availability():
                 if time.time() > sensor_wait_deadline:
                     self.get_logger().error("Required sensors not available after 2s. Cannot execute learned behavior.")
-                    return "FAILURE", "Required sensors not available (cameras or joint state)"
+                    return (
+                        "FAILURE",
+                        "Required sensors not available (cameras or joint state). "
+                        "If the arm joint state is missing, please check that the arm's USB-C cable is plugged in.",
+                    )
                 time.sleep(0.1)
             self.get_logger().info("All sensors available")
 
@@ -393,21 +380,10 @@ class ManipulationServer(Node):
 
             # Execute policy inference
             start_time = time.time()
-            inference_hz = 25.0
+            inference_hz = self.inference_hz
             period = 1.0 / inference_hz
             early_termination = False
 
-            # Timing metrics for jitter analysis
-            loop_times = []
-            inference_times = []
-            # Detailed timing breakdowns
-            preprocess_times = []
-            tensor_creation_times = []
-            model_inference_times = []
-            cpu_transfer_times = []
-            publish_times = []
-            prev_loop_start = None
-            timing_log_interval = 10  # Log stats every N iterations
             iteration_count = 0
 
             self.get_logger().info(
@@ -418,14 +394,6 @@ class ManipulationServer(Node):
                 loop_start = time.time()
                 elapsed_time = loop_start - start_time
                 iteration_count += 1
-
-                # Track loop-to-loop timing (jitter measurement)
-                # Measure from start of previous iteration to start of current iteration
-                # This captures the full loop period including inference and sleep time
-                if prev_loop_start is not None:
-                    loop_interval = loop_start - prev_loop_start
-                    loop_times.append(loop_interval)
-                prev_loop_start = loop_start
 
                 # Check for cancellation
                 if self._cancel_requested.is_set():
@@ -440,20 +408,7 @@ class ManipulationServer(Node):
                     self.get_logger().info(f"Behavior timeout reached after {elapsed_time:.2f} seconds")
                     break
 
-                # Run inference and get progress value
-                inference_start = time.time()
-                detailed_timing = {}
-                progress = self._run_inference_once(detailed_timing=detailed_timing)
-                inference_end = time.time()
-                inference_times.append(inference_end - inference_start)
-
-                # Store detailed timing breakdowns
-                if detailed_timing:
-                    preprocess_times.append(detailed_timing.get("preprocess", 0))
-                    tensor_creation_times.append(detailed_timing.get("tensor_creation", 0))
-                    model_inference_times.append(detailed_timing.get("model_inference", 0))
-                    cpu_transfer_times.append(detailed_timing.get("cpu_transfer", 0))
-                    publish_times.append(detailed_timing.get("publish", 0))
+                progress = self._run_inference_once()
 
                 # Check if inference failed due to missing sensor data
                 if progress is None:
@@ -473,45 +428,6 @@ class ManipulationServer(Node):
                         )
                         break
 
-                # Log timing stats periodically
-                if iteration_count % timing_log_interval == 0 and len(loop_times) > 0:
-                    avg_loop = np.mean(loop_times[-timing_log_interval:]) * 1000
-                    max_loop = np.max(loop_times[-timing_log_interval:]) * 1000
-                    min_loop = np.min(loop_times[-timing_log_interval:]) * 1000
-                    std_loop = np.std(loop_times[-timing_log_interval:]) * 1000
-                    avg_inference = np.mean(inference_times[-timing_log_interval:]) * 1000
-                    max_inference = np.max(inference_times[-timing_log_interval:]) * 1000
-                    actual_hz = 1000.0 / avg_loop if avg_loop > 0 else 0
-
-                    self.get_logger().debug(
-                        f"[TIMING] iter={iteration_count} | "
-                        f"loop: avg={avg_loop:.1f}ms, min={min_loop:.1f}ms, max={max_loop:.1f}ms, jitter(std)={std_loop:.2f}ms | "
-                        f"inference: avg={avg_inference:.1f}ms, max={max_inference:.1f}ms | "
-                        f"actual_hz={actual_hz:.1f} (target={inference_hz})"
-                    )
-
-                    # Log detailed inference timing breakdown
-                    if (
-                        len(preprocess_times) >= timing_log_interval
-                        and len(tensor_creation_times) >= timing_log_interval
-                        and len(model_inference_times) >= timing_log_interval
-                    ):
-                        avg_preprocess = np.mean(preprocess_times[-timing_log_interval:]) * 1000
-                        avg_tensor = np.mean(tensor_creation_times[-timing_log_interval:]) * 1000
-                        avg_model = np.mean(model_inference_times[-timing_log_interval:]) * 1000
-                        avg_cpu = np.mean(cpu_transfer_times[-timing_log_interval:]) * 1000
-                        avg_publish = np.mean(publish_times[-timing_log_interval:]) * 1000
-
-                        self.get_logger().debug(
-                            f"[DETAILED TIMING] iter={iteration_count} | "
-                            f"preprocess: {avg_preprocess:.1f}ms | "
-                            f"tensor_creation: {avg_tensor:.1f}ms | "
-                            f"model_inference: {avg_model:.1f}ms | "
-                            f"cpu_transfer: {avg_cpu:.1f}ms | "
-                            f"publish: {avg_publish:.1f}ms | "
-                            f"total: {avg_inference:.1f}ms"
-                        )
-
                 # Send feedback
                 remaining_time = max(0.0, duration - elapsed_time)
                 feedback_msg = ExecuteBehavior.Feedback()
@@ -525,45 +441,6 @@ class ManipulationServer(Node):
                 if sleep_time > 0:
                     time.sleep(sleep_time)
 
-            # Log final timing summary
-            if len(loop_times) > 0:
-                overall_avg_loop = np.mean(loop_times) * 1000
-                overall_max_loop = np.max(loop_times) * 1000
-                overall_min_loop = np.min(loop_times) * 1000
-                overall_std_loop = np.std(loop_times) * 1000
-                overall_avg_inference = np.mean(inference_times) * 1000
-                overall_max_inference = np.max(inference_times) * 1000
-                overall_actual_hz = 1000.0 / overall_avg_loop if overall_avg_loop > 0 else 0
-
-                # Calculate jitter as percentage of target period
-                jitter_percent = (overall_std_loop / (period * 1000)) * 100
-
-                self.get_logger().debug(
-                    f"[TIMING SUMMARY] total_iterations={iteration_count} | "
-                    f"loop: avg={overall_avg_loop:.1f}ms, min={overall_min_loop:.1f}ms, max={overall_max_loop:.1f}ms | "
-                    f"jitter(std)={overall_std_loop:.2f}ms ({jitter_percent:.1f}% of target period) | "
-                    f"inference: avg={overall_avg_inference:.1f}ms, max={overall_max_inference:.1f}ms | "
-                    f"actual_hz={overall_actual_hz:.1f} (target={inference_hz})"
-                )
-
-                # Log final detailed timing breakdown
-                if len(preprocess_times) > 0:
-                    overall_avg_preprocess = np.mean(preprocess_times) * 1000
-                    overall_avg_tensor = np.mean(tensor_creation_times) * 1000
-                    overall_avg_model = np.mean(model_inference_times) * 1000
-                    overall_avg_cpu = np.mean(cpu_transfer_times) * 1000
-                    overall_avg_publish = np.mean(publish_times) * 1000
-
-                    self.get_logger().debug(
-                        f"[DETAILED TIMING SUMMARY] total_iterations={iteration_count} | "
-                        f"preprocess: avg={overall_avg_preprocess:.1f}ms | "
-                        f"tensor_creation: avg={overall_avg_tensor:.1f}ms | "
-                        f"model_inference: avg={overall_avg_model:.1f}ms | "
-                        f"cpu_transfer: avg={overall_avg_cpu:.1f}ms | "
-                        f"publish: avg={overall_avg_publish:.1f}ms | "
-                        f"total_inference: avg={overall_avg_inference:.1f}ms"
-                    )
-
             # Stop robot and move to end pose
             self._stop_robot()
             if end_pose:
@@ -572,7 +449,7 @@ class ManipulationServer(Node):
                     self.get_logger().error("Failed to move to end pose")
                     return "FAILURE", "Failed to move arm to end pose"
 
-            # One concise info summary per policy execution (detailed timing is at debug above).
+            # One concise summary per policy execution.
             total_elapsed = time.time() - start_time
             actual_hz = iteration_count / total_elapsed if total_elapsed > 0 else 0.0
             run_summary = f"{iteration_count} iters in {total_elapsed:.1f}s (~{actual_hz:.1f} Hz)"
@@ -701,15 +578,10 @@ class ManipulationServer(Node):
                 action = actions[step_idx]
 
                 # Extract arm commands (first 6 elements = joint positions)
-                arm_msg = Float64MultiArray()
-                arm_msg.data = [float(v) for v in action[0:6]]
-                self.arm_state_pub.publish(arm_msg)
+                self._publish_arm(action[0:6])
 
-                # Extract cmd_vel commands (elements 6-7 = linear.x, angular.z)
-                twist_msg = Twist()
-                twist_msg.linear.x = float(action[6]) / 2.0
-                twist_msg.angular.z = float(action[7]) / 2.0
-                self.cmd_vel_pub.publish(twist_msg)
+                # Extract cmd_vel commands (elements 6-7 = linear.x, angular.z).
+                self._publish_base(float(action[6]), float(action[7]), self.replay_base_speed_scale)
 
                 # Extract head command (element 8 = head angle in degrees), present only
                 # for head-enabled replay skills; arm/base-only skills have width 8.
@@ -757,7 +629,7 @@ class ManipulationServer(Node):
             self._stop_robot()
             return "FAILURE", f"Exception during replay execution: {str(e)}"
 
-    def _load_policy_for_behavior(self, checkpoint_path, action_dim=8, n_action_steps_override=None):
+    def _load_policy_for_behavior(self, checkpoint_path, action_dim, n_action_steps_override=None):
         """Load ACT policy for a specific behavior.
 
         n_action_steps_override: optional override for the ACT replanning horizon.
@@ -771,106 +643,126 @@ class ManipulationServer(Node):
             # Expand user path
             checkpoint_path = os.path.expanduser(checkpoint_path)
 
-            # Load normalization stats
-            checkpoint_dir = os.path.dirname(checkpoint_path)
-            stats_path = os.path.join(checkpoint_dir, "dataset_stats.pt")
-
-            dataset_stats = None
-            try:
-                dataset_stats = torch.load(stats_path, map_location="cpu")
-                self.get_logger().info("Dataset stats loaded")
-            except Exception as e:
-                self.get_logger().warn(f"Could not load dataset stats: {e}")
-
-            # Load checkpoint first so we can infer architecture params from it
+            # Load checkpoint first so we can infer architecture params from it.
+            # Load onto CPU (mmap avoids reading the whole file into RAM up front,
+            # weights_only is faster/safer for a pure tensor state_dict). With mmap the
+            # load below and the chunk_size inference touch only tensor metadata, so this
+            # stays cheap on the cache-hit path where the weights are never materialized
+            # into a model (see the engine-cache fast path further down). dataset_stats is
+            # loaded lazily, only on a cache miss, for the same reason.
             self.get_logger().info(f"Loading checkpoint: {checkpoint_path}")
-            state_dict = torch.load(checkpoint_path, map_location=self.device)
+            state_dict = load_torch_file(checkpoint_path, mmap=True, log=self.get_logger().warn)
 
-            # Handle different checkpoint formats (direct state_dict or wrapped in dict)
-            if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
-                state_dict = state_dict["model_state_dict"]
-                self.get_logger().info("Extracted state_dict from checkpoint dict")
-            elif isinstance(state_dict, dict) and "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-                self.get_logger().info("Extracted state_dict from checkpoint dict")
-
-            # Strip prefixes from keys if present (from torch.compile() and/or DDP)
-            # Check for _orig_mod. prefix (from torch.compile())
-            has_orig_mod = any(key.startswith("_orig_mod.") for key in state_dict.keys())
-            # Check for module. prefix (from DDP, though train_dist.py uses policy.module so shouldn't have this)
-            has_module = any(key.startswith("module.") for key in state_dict.keys())
-
-            if has_orig_mod or has_module:
-                self.get_logger().info(
-                    f"Stripping prefixes from checkpoint keys (orig_mod: {has_orig_mod}, module: {has_module})"
-                )
-                cleaned_state_dict = {}
-                for key, value in state_dict.items():
-                    # Remove both prefixes if present (handle nested cases like module._orig_mod.)
-                    cleaned_key = key
-                    if cleaned_key.startswith("module."):
-                        cleaned_key = cleaned_key.replace("module.", "", 1)
-                    if cleaned_key.startswith("_orig_mod."):
-                        cleaned_key = cleaned_key.replace("_orig_mod.", "", 1)
-                    cleaned_state_dict[cleaned_key] = value
-                state_dict = cleaned_state_dict
+            # Unwrap checkpoint containers and strip torch.compile()/DDP key prefixes.
+            # Shared with the offline engine pre-build (act_trt._main) so both infer the
+            # same architecture from the same checkpoint.
+            state_dict = normalize_state_dict(state_dict)
 
             # Infer chunk_size from checkpoint weights so the model matches the checkpoint
-            chunk_size = 50  # default matching most training configs
-            pos_embed_key = "model.decoder_pos_embed.weight"
-            if pos_embed_key in state_dict:
-                chunk_size = state_dict[pos_embed_key].shape[0]
-                self.get_logger().info(f"Inferred chunk_size={chunk_size} from checkpoint")
+            chunk_size = infer_chunk_size(state_dict)
+            self.get_logger().info(f"Using chunk_size={chunk_size} (inferred from checkpoint)")
 
-            self.get_logger().info(
-                f"Creating ACTPolicy with action_dim={action_dim}, chunk_size={chunk_size}, "
-                f"n_action_steps_override={n_action_steps_override} on device={self.device}"
-            )
+            # Fail loudly if the metadata action_dim disagrees with the checkpoint's action
+            # head. Otherwise load_state_dict(assign=True) silently exports a wrong-width head
+            # and build_engine bakes it into a cached engine that persists across runs.
+            validate_action_dim(state_dict, action_dim, checkpoint_path)
+
             policy_config = create_act_config(
                 action_dim=action_dim,
                 chunk_size=chunk_size,
                 n_action_steps=n_action_steps_override,
+                speed=self.policy_speed,
+                temporal_ensemble_coeff=self.temporal_ensemble_coeff,
             )
-            self.get_logger().info(f"Resolved n_action_steps={policy_config.n_action_steps} (chunk_size={chunk_size})")
-            self.current_policy = ACTPolicy(config=policy_config, dataset_stats=dataset_stats).to(self.device)
 
-            # Load state dict with strict=False to handle potential mismatches gracefully
-            load_result = self.current_policy.load_state_dict(state_dict, strict=False)
+            # TensorRT is the only inference path: a fused engine runs the ACT forward ~10x
+            # faster (~6ms vs ~64ms eager) with near-exact accuracy (~0.02% RMSE). The engine
+            # is built once per checkpoint and cached next to it (ideally pre-built at download
+            # time; see innate_training_node).
+            #
+            # Because the TRT forward fits the 25Hz loop, we run the model every step with
+            # temporal ensembling (coeff from the temporal_ensemble_coeff ROS param, see
+            # manipulation_server.yaml) to blend overlapping chunk predictions and remove the
+            # per-replan motion discontinuity. The coeff was resolved/validated at construction
+            # (0 -> None = disabled, fall back to the chunked queue path); it feeds both
+            # create_act_config above and TRTACTPolicy below.
+            ensemble_coeff = self.temporal_ensemble_coeff
 
-            # Log any missing or unexpected keys for debugging
-            if load_result.missing_keys:
-                self.get_logger().warn(
-                    f"Missing keys in checkpoint: {load_result.missing_keys[:5]}..."
-                    if len(load_result.missing_keys) > 5
-                    else f"Missing keys: {load_result.missing_keys}"
+            if ensemble_coeff is not None:
+                self.get_logger().info(
+                    f"Resolved n_action_steps={policy_config.n_action_steps} "
+                    "(unused while temporal ensembling is active; the model runs every step)"
                 )
-            if load_result.unexpected_keys:
-                self.get_logger().warn(
-                    f"Unexpected keys in checkpoint: {load_result.unexpected_keys[:5]}..."
-                    if len(load_result.unexpected_keys) > 5
-                    else f"Unexpected keys: {load_result.unexpected_keys}"
+            else:
+                self.get_logger().info(
+                    f"Resolved n_action_steps={policy_config.n_action_steps} "
+                    f"(chunked-queue replan interval; chunk_size={chunk_size})"
                 )
 
-            if not load_result.missing_keys and not load_result.unexpected_keys:
-                self.get_logger().info("Checkpoint loaded successfully with all keys matching")
-            self.current_policy.eval()
+            # Imported lazily: tensorrt is hardware-only, so importing at module top would
+            # crash the whole node (incl. poses/replay) on a sim/dev box. Here it raises
+            # only on the learned path, failing this load loudly -- TRT stays required.
+            from manipulation.act_trt import TRTACTPolicy, build_engine, engine_path_for  # noqa: PLC0415
 
-            # Reset policy to clear any cached states
-            self.current_policy.reset()
+            # Engine-cache fast path: after pre-build (the intended common case) the engine
+            # already exists, and TRTACTPolicy deserializes it directly -- it needs neither the
+            # eager model nor the loaded dataset_stats. So only on a genuine cache miss do we
+            # pay for the eager ACTPolicy (random-init backbone + transformer), the full
+            # load_state_dict, the host->device transfer and the dataset_stats load -- all of
+            # which exist purely to export the engine. engine_path_for matches build_engine's
+            # own cache key, so a miss here is exactly a miss inside build_engine.
+            engine_path = engine_path_for(checkpoint_path, action_dim, chunk_size, "fp32")
+            if not os.path.exists(engine_path):
+                stats_path = os.path.join(os.path.dirname(checkpoint_path), "dataset_stats.pt")
+                dataset_stats = None
+                try:
+                    dataset_stats = load_torch_file(stats_path)
+                    self.get_logger().info("Dataset stats loaded")
+                except Exception as e:
+                    self.get_logger().warn(f"Could not load dataset stats: {e}")
 
-            # Apply torch.compile() for optimized inference (matching training setup)
-            try:
-                self.get_logger().info("Compiling model with torch.compile() for optimized inference...")
-                self.current_policy = torch.compile(self.current_policy, mode="default")
-                self.get_logger().info("Model compilation setup completed")
-                self.get_logger().info("Note: First inference will trigger actual compilation")
-                # Verify compilation was applied
-                if hasattr(self.current_policy, "_orig_mod"):
-                    self.get_logger().info("✓ Compilation verified: model has _orig_mod attribute")
-                else:
-                    self.get_logger().warn("⚠ Compilation may not have been applied (no _orig_mod attribute)")
-            except Exception as e:
-                self.get_logger().warn(f"Model compilation failed: {e}, falling back to uncompiled model")
+                self.get_logger().info(
+                    f"Engine not cached; building eager ACTPolicy to export it "
+                    f"(action_dim={action_dim}, chunk_size={chunk_size}) on device={self.device}"
+                )
+                # Build on CPU and adopt the checkpoint tensors directly (assign=True) to avoid
+                # allocating random weights on the GPU and a redundant device transfer. The model
+                # is moved to the device once, after the state dict is loaded.
+                eager_policy = ACTPolicy(config=policy_config, dataset_stats=dataset_stats)
+
+                # Load state dict with strict=False to handle potential mismatches gracefully
+                load_result = eager_policy.load_state_dict(state_dict, strict=False, assign=True)
+
+                # Log any missing or unexpected keys for debugging
+                if load_result.missing_keys:
+                    self.get_logger().warn(
+                        f"Missing keys in checkpoint: {load_result.missing_keys[:5]}..."
+                        if len(load_result.missing_keys) > 5
+                        else f"Missing keys: {load_result.missing_keys}"
+                    )
+                if load_result.unexpected_keys:
+                    self.get_logger().warn(
+                        f"Unexpected keys in checkpoint: {load_result.unexpected_keys[:5]}..."
+                        if len(load_result.unexpected_keys) > 5
+                        else f"Unexpected keys: {load_result.unexpected_keys}"
+                    )
+                if not load_result.missing_keys and not load_result.unexpected_keys:
+                    self.get_logger().info("Checkpoint loaded successfully with all keys matching")
+
+                # Single host->device transfer now that weights are loaded on CPU
+                eager_policy = eager_policy.to(self.device).eval()
+                engine_path = build_engine(
+                    eager_policy, checkpoint_path, self.device, precision="fp32", log=self.get_logger().info
+                )
+                # Release the eager export model; only the engine is needed from here on.
+                del eager_policy
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            trt_policy = TRTACTPolicy(engine_path, policy_config, self.device, temporal_ensemble_coeff=ensemble_coeff)
+            self.current_policy = trt_policy
+            self.get_logger().info(f"Using TensorRT engine for inference (temporal_ensemble_coeff={ensemble_coeff})")
 
             # Store the current action dimension
             self.current_action_dim = action_dim
@@ -880,29 +772,24 @@ class ManipulationServer(Node):
                 f"Policy loaded in {load_time:.2f}s from {checkpoint_path} with action_dim={action_dim}"
             )
 
-            # Log model info
-            param_count = sum(p.numel() for p in self.current_policy.parameters())
-            self.get_logger().info(f"Policy parameters: {param_count:,} ({param_count / 1e6:.1f}M)")
-
-            # Warm-up inference (run multiple times to trigger compilation)
-            self.get_logger().info("Running warm-up inference (triggering compilation)...")
+            # Warm-up inference: one pass exercises the engine and triggers any lazy CUDA init.
+            self.get_logger().info("Running warm-up inference...")
             warmup_start = time.time()
             dummy_batch = {
                 "observation.image_camera_1": torch.zeros(1, 3, 224, 224, device=self.device),
                 "observation.image_camera_2": torch.zeros(1, 3, 224, 224, device=self.device),
                 "observation.state": torch.zeros(1, 6, device=self.device),
             }
-            # Run multiple warmup iterations to ensure compilation completes
-            num_warmup = 5
-            for i in range(num_warmup):  # noqa: B007
-                with torch.no_grad():
-                    _ = self.current_policy.select_action(dummy_batch)
-                if self.device.type == "cuda":
-                    torch.cuda.synchronize()
+            with torch.no_grad():
+                _ = self.current_policy.select_action(dummy_batch)
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
             warmup_time = time.time() - warmup_start
-            self.get_logger().info(
-                f"Warm-up inference completed ({num_warmup} iterations) in {warmup_time:.2f}s (avg: {warmup_time / num_warmup * 1000:.1f}ms per inference)"
-            )
+            self.get_logger().info(f"Warm-up inference completed in {warmup_time:.2f}s")
+
+            # Clear any state the warmup left behind (queued dummy actions / seeded
+            # ensemble) so real execution starts from a clean slate.
+            self.current_policy.reset()
 
             return True
 
@@ -911,7 +798,13 @@ class ManipulationServer(Node):
             return False
 
     def _start_sensor_subscriptions(self):
-        """Create sensor subscriptions when a behavior begins executing."""
+        """Create sensor subscriptions once; they live for the node's lifetime.
+
+        They are never destroyed (see __init__) -- destroying a subscription under the
+        MultiThreadedExecutor races _take_subscription and crashes the process. When no
+        behavior is running the image callbacks early-return, so the only idle cost is
+        message deserialization, not the cv_bridge conversion.
+        """
         if self._image1_sub is not None:
             return
         image_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -923,22 +816,18 @@ class ManipulationServer(Node):
         self.get_logger().info("Sensor subscriptions started")
 
     def _stop_sensor_subscriptions(self):
-        """Destroy sensor subscriptions when idle to avoid wasting CPU on image deserialization."""
-        for sub in (self._image1_sub, self._image2_sub, self._joint_sub):
-            if sub is not None:
-                self.destroy_subscription(sub)
-        self._image1_sub = None
-        self._image2_sub = None
-        self._joint_sub = None
+        """Drop cached sensor data when idle. Subscriptions are kept alive (see __init__);
+        the image callbacks early-return while idle so they cost almost nothing."""
         self.latest_image1 = None
         self.latest_image2 = None
         self.latest_joint_state = None
         self.latest_image1_timestamp = None
         self.latest_image2_timestamp = None
         self.latest_joint_timestamp = None
-        self.get_logger().info("Sensor subscriptions stopped")
 
     def image1_callback(self, msg: Image):
+        if not self.execution_running:
+            return
         try:
             self.latest_image1 = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.latest_image1_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
@@ -946,6 +835,8 @@ class ManipulationServer(Node):
             self.get_logger().error(f"Error converting image1: {e}")
 
     def image2_callback(self, msg: Image):
+        if not self.execution_running:
+            return
         try:
             self.latest_image2 = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
             self.latest_image2_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
@@ -953,14 +844,47 @@ class ManipulationServer(Node):
             self.get_logger().error(f"Error converting image2: {e}")
 
     def joint_state_callback(self, msg: JointState):
+        if not self.execution_running:
+            return
         self.latest_joint_state = msg
         self.latest_joint_timestamp = rclpy.time.Time.from_msg(msg.header.stamp)
 
-    def _run_inference_once(self, detailed_timing=None):
-        """Run one inference step with current policy.
+    def _resize_matrices(self, h, w):
+        """Cached (row, col) GPU matrices replicating cv2.INTER_AREA for an (h, w) ->
+        image_size resize. INTER_AREA is separable, so its weights recover exactly from
+        identity inputs and apply as two matmuls."""
+        key = (h, w)
+        mats = self._resize_mats.get(key)
+        if mats is None:
+            out_h, out_w = self.image_size[1], self.image_size[0]
+            row = cv2.resize(np.eye(h, dtype=np.float32), (h, out_h), interpolation=cv2.INTER_AREA)
+            col = cv2.resize(np.eye(w, dtype=np.float32), (out_w, w), interpolation=cv2.INTER_AREA)
+            mats = (
+                torch.from_numpy(row).to(self.device),
+                torch.from_numpy(col).to(self.device),
+            )
+            self._resize_mats[key] = mats
+        return mats
 
-        Args:
-            detailed_timing: Optional dict to store detailed timing breakdowns
+    def _resize_normalize_gpu(self, img_bgr):
+        """Resize a HWC uint8 BGR frame to (3, image_size) float32 in [0, 1] on the GPU,
+        matching the cv2.INTER_AREA + /255 + CHW transpose the model was trained on."""
+        h, w = img_bgr.shape[:2]
+        row, col = self._resize_matrices(h, w)
+        src = torch.from_numpy(np.ascontiguousarray(img_bgr)).to(self.device, non_blocking=True).float()
+        # Contract columns first: the (h, out_w, 3) intermediate is the cheaper order for a
+        # landscape frame (torch.einsum has no per-call optimize flag).
+        cols = torch.einsum("jkc,kl->jlc", src, col)
+        resized = torch.einsum("ij,jlc->ilc", row, cols)
+        # Round to uint8 before normalizing: cv2.resize returns a uint8 image, so training
+        # saw integer-quantized pixels. Matmuls stay in float, so round here to match.
+        return resized.round().permute(2, 0, 1) / 255.0
+
+    def _run_inference_once(self):
+        """Run one inference step and publish its commands.
+
+        Returns the progress scalar (action[8]) for the early-termination check, or
+        None if inputs aren't ready yet or inference failed.
         """
         if (
             not self.current_policy
@@ -971,95 +895,114 @@ class ManipulationServer(Node):
             return None
 
         try:
-            # Image preprocessing timing
-            preprocess_start = time.time()
-            # Keep images in BGR format to match training pipeline (recorder → H5 → WebDataset → model all use BGR)
-            # Use INTER_AREA to match training preprocessing (webdataset.py uses INTER_AREA)
-            img1 = cv2.resize(self.latest_image1, self.image_size, interpolation=cv2.INTER_AREA)
-            img2 = cv2.resize(self.latest_image2, self.image_size, interpolation=cv2.INTER_AREA)
-            img1 = img1.astype(np.float32) / 255.0
-            img2 = img2.astype(np.float32) / 255.0
-            img1 = np.transpose(img1, (2, 0, 1))
-            img2 = np.transpose(img2, (2, 0, 1))
-            preprocess_time = time.time() - preprocess_start
+            profiling = self.inference_profile_pub.get_subscription_count() > 0
 
-            # Tensor creation and CPU->GPU transfer timing
-            tensor_start = time.time()
-            img1_tensor = torch.tensor(img1, device=self.device).unsqueeze(0)
-            img2_tensor = torch.tensor(img2, device=self.device).unsqueeze(0)
-
-            # Joint state preprocessing
+            t0 = time.perf_counter()
+            # BGR + INTER_AREA matches the training pipeline.
+            img1 = self._resize_normalize_gpu(self.latest_image1).unsqueeze(0)
+            img2 = self._resize_normalize_gpu(self.latest_image2).unsqueeze(0)
             qpos = np.asarray(self.latest_joint_state.position, dtype=np.float32)
-            qpos_tensor = torch.tensor(qpos, device=self.device).unsqueeze(0)
-
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()  # Wait for GPU transfers to complete
-            tensor_creation_time = time.time() - tensor_start
-
             batch = {
-                "observation.image_camera_1": img1_tensor,
-                "observation.image_camera_2": img2_tensor,
-                "observation.state": qpos_tensor,
+                "observation.image_camera_1": img1,
+                "observation.image_camera_2": img2,
+                "observation.state": torch.tensor(qpos, device=self.device).unsqueeze(0),
             }
+            # Sync so the GPU resize is attributed to preprocess, not inference; no net cost
+            # since the engine waits on it anyway. Only when profiling.
+            if profiling and self.device.type == "cuda":
+                torch.cuda.current_stream().synchronize()
+            t1 = time.perf_counter()
 
-            # Policy forward pass timing
-            inference_start = time.time()
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()  # Ensure previous operations are done
             with torch.no_grad():
                 action = self.current_policy.select_action(batch)
-                if self.device.type == "cuda":
-                    torch.cuda.synchronize()  # Wait for inference to complete
-            inference_time = time.time() - inference_start
+            t_sel = time.perf_counter()
+            action_np = action.cpu().numpy().squeeze(0)  # .cpu() blocks on the remaining GPU work
+            t2 = time.perf_counter()
+            engine_ran = bool(getattr(self.current_policy, "engine_ran", True))
+            engine_ms = float(getattr(self.current_policy, "last_engine_ms", 0.0))
 
-            # GPU->CPU transfer timing
-            cpu_transfer_start = time.time()
-            action_np = action.cpu().numpy().squeeze(0)
-            cpu_transfer_time = time.time() - cpu_transfer_start
-
-            # Check action dimensions match expected
             if action_np.shape[0] < self.current_action_dim:
                 self.get_logger().error(
                     f"Action has wrong dimensions. Expected {self.current_action_dim}, got {action_np.shape[0]}"
                 )
                 return None
 
-            progress = None
+            # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z, [8] progress.
+            self._publish_base(float(action_np[6]), float(action_np[7]), self.learned_base_speed_scale)
+            self._publish_arm(action_np[:6])
+            t3 = time.perf_counter()
 
-            # Extract progress value for 10-dimensional actions
-            if self.current_action_dim >= 10:
-                progress = float(action_np[8])  # 9th element (index 8) - progress
+            if profiling:
+                quality = {}
+                if self.current_action_dim >= 10:
+                    quality["progress"] = float(action_np[8])
+                # Update prev first so a failure below can't stall it, and guard on matching
+                # shape: switching to a behavior with a different action_dim leaves a stale
+                # prev whose slices won't broadcast.
+                prev = self._prev_action_np
+                self._prev_action_np = action_np
+                if prev is not None and prev.shape == action_np.shape:
+                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - prev[:6]))
+                    quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - prev[6:8]))
+                disagreement = getattr(self.current_policy, "last_disagreement", None)
+                if disagreement is not None:
+                    quality["disagreement"] = float(disagreement)
+                self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
-            # Publish commands timing
-            publish_start = time.time()
-            # Publish commands (using first 8 dimensions)
-            twist_msg = Twist()
-            twist_msg.linear.x = float(action_np[6]) / 2.0  # 7th element
-            twist_msg.angular.z = float(action_np[7]) / 2.0  # 8th element
-            self.cmd_vel_pub.publish(twist_msg)
-
-            arm_msg = Float64MultiArray()
-            arm_msg.data = [float(v) for v in action_np[:6]]  # First 6 elements
-            self.arm_state_pub.publish(arm_msg)
-            publish_time = time.time() - publish_start
-
-            # Store detailed timing if requested
-            if detailed_timing is not None:
-                detailed_timing["preprocess"] = preprocess_time
-                detailed_timing["tensor_creation"] = tensor_creation_time
-                detailed_timing["model_inference"] = inference_time
-                detailed_timing["cpu_transfer"] = cpu_transfer_time
-                detailed_timing["publish"] = publish_time
-                detailed_timing["total"] = (
-                    preprocess_time + tensor_creation_time + inference_time + cpu_transfer_time + publish_time
-                )
-
-            # Return progress value for early termination check
-            return progress
+            return float(action_np[8]) if self.current_action_dim >= 10 else None
 
         except Exception as e:
             self.get_logger().error(f"Error during inference: {e}")
             return None
+
+    def _publish_inference_profile(self, t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality=None):
+        """Publish one inference step's timing breakdown (ms) as JSON for the Profiling page.
+
+        Non-finite values are coerced to null: a diverging policy emits NaN/Inf actions,
+        which turn the derived jerk/progress fields non-finite. json.dumps would then write
+        a bare `NaN` token (invalid JSON), and the page's JSON.parse would reject the whole
+        sample — blanking the profiler exactly when divergence is most worth seeing.
+        allow_nan=False is a tripwire for any field we missed; the publish is isolated so a
+        serialization error can never break the live inference path.
+        """
+        self._inference_seq += 1
+
+        def fin(v):
+            return v if math.isfinite(v) else None
+
+        payload = {
+            "seq": self._inference_seq,
+            "t": time.time(),
+            "preprocess_ms": fin((t1 - t0) * 1000.0),
+            "inference_ms": fin((t2 - t1) * 1000.0),
+            "engine_ms": fin(engine_ms),
+            "transfer_ms": fin((t2 - t_sel) * 1000.0),
+            "postprocess_ms": fin((t3 - t2) * 1000.0),
+            "total_ms": fin((t3 - t0) * 1000.0),
+            "engine_ran": bool(engine_ran),
+            "period_ms": fin(1000.0 / self.inference_hz),
+        }
+        if quality:
+            payload.update({k: fin(v) for k, v in quality.items()})
+        try:
+            msg = String()
+            msg.data = json.dumps(payload, allow_nan=False)
+            self.inference_profile_pub.publish(msg)
+        except (ValueError, TypeError) as e:
+            self.get_logger().warning(f"Skipping inference profile sample: {e}")
+
+    def _publish_arm(self, positions):
+        """Publish a single absolute joint-position command (first 6 joints)."""
+        arm_msg = Float64MultiArray()
+        arm_msg.data = [float(v) for v in positions]
+        self.arm_state_pub.publish(arm_msg)
+
+    def _publish_base(self, raw_linear_x, raw_angular_z, scale):
+        """Publish a base velocity command, de-rated by `scale`, used by the learned and replay paths."""
+        twist_msg = Twist()
+        twist_msg.linear.x = raw_linear_x * scale
+        twist_msg.angular.z = raw_angular_z * scale
+        self.cmd_vel_pub.publish(twist_msg)
 
     def _stop_robot(self):
         """Stop the robot by sending zero commands."""
@@ -1096,7 +1039,10 @@ class ManipulationServer(Node):
             return False
 
         if self.latest_joint_state is None:
-            self.get_logger().warn("Joint state (/mars/arm/state) has never received data")
+            self.get_logger().warn(
+                "Joint state (/mars/arm/state) has never received data "
+                "- please check that the arm's USB-C cable is plugged in"
+            )
             return False
 
         # Check if data is recent (within timeout threshold)

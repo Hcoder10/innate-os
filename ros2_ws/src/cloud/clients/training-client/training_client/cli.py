@@ -486,47 +486,6 @@ _DEFAULT_SKILLS_DIR = os.path.join(
 )
 
 
-@cli.command("ui")
-@click.option("--port", type=int, default=8080, help="HTTP port")
-@click.option(
-    "--skills-dir",
-    type=click.Path(exists=True, file_okay=False),
-    default=_DEFAULT_SKILLS_DIR,
-    help=f"Root skills directory (default: {_DEFAULT_SKILLS_DIR})",
-)
-@click.pass_context
-def launch_ui(ctx: click.Context, port: int, skills_dir: str) -> None:
-    """Launch the Training Manager web UI.
-
-    Starts a local web server that lets you browse skills, manage datasets,
-    and create training runs from your browser.
-    """
-    try:
-        from training_manager.server import _get_lan_ip, create_app
-    except ImportError:
-        raise click.UsageError(  # noqa: B904
-            "training-manager package is not installed. Install it with: pip install -e clients/training-manager"
-        )
-
-    import uvicorn
-
-    os.environ.setdefault("TRAINING_SERVER_URL", ctx.obj.get("server", ""))
-    os.environ.setdefault("INNATE_SERVICE_KEY", ctx.obj.get("token", ""))
-    os.environ.setdefault("INNATE_AUTH_ISSUER_URL", ctx.obj.get("issuer", ""))
-
-    app = create_app(skills_dir=skills_dir)
-
-    host_ip = _get_lan_ip()
-    click.echo()
-    click.secho("  Training Manager", bold=True)
-    click.echo(f"    Local:   http://localhost:{port}")
-    if host_ip:
-        click.echo(f"    Network: http://{host_ip}:{port}")
-    click.echo()
-
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
-
-
 # ── Entry point ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":

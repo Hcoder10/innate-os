@@ -1,0 +1,9 @@
+# Fetch the live training-log tail for a run from the orchestrator.
+# Only populated while the run is training (in-memory tail, best-effort);
+# full history comes from the downloaded result files once a run is done.
+string skill_dir            # absolute path to skill directory
+int32 run_id
+---
+bool success
+string message
+string[] lines              # most-recent log lines, oldest first

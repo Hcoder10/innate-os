@@ -5,6 +5,7 @@ from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from mars_bringup.config_loader import settings_params
 
 
 def generate_launch_description():
@@ -17,9 +18,12 @@ def generate_launch_description():
     # Path to planning launch file
     planning_launch_file = os.path.join(mars_arm_dir, "launch", "planning.launch.py")
 
-    # Create the arm node (C++ - includes arm + head servo 7 + MoveIt planning client)
     mars_arm_node = Node(
-        package="mars_arm", executable="arm", name="mars_arm", parameters=[config_file], output="screen"
+        package="mars_arm",
+        executable="arm",
+        name="mars_arm",
+        parameters=[config_file, *settings_params()],
+        output="screen",
     )
 
     # Include the planning launch file (MoveIt move_group)

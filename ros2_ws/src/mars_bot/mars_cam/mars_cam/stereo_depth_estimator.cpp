@@ -464,7 +464,7 @@ int main(int argc, char** argv) {
         auto node = std::make_shared<mars_cam::StereoDepthEstimator>();
         rclcpp::spin(node);
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(rclcpp::get_logger("main"), "Exception: %s", e.what());
+        RCLCPP_ERROR(rclcpp::get_logger("stereo_depth_estimator"), "Exception: %s", e.what());
         return 1;
     }
     rclcpp::shutdown();

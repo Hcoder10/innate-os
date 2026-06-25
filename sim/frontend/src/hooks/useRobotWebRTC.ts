@@ -205,6 +205,17 @@ export function useRobotWebRTC({
           return;
         }
 
+        const receiver = event.receiver as RTCRtpReceiver & {
+          jitterBufferTarget?: number | null;
+          playoutDelayHint?: number | null;
+        };
+        try {
+          if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = 0;
+          if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = 0;
+        } catch {
+          // unsupported; default buffer applies
+        }
+
         const mid = event.transceiver?.mid;
         if (!mid) {
           return;
