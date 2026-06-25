@@ -207,83 +207,20 @@ function resetAll() {
   recompute();
 }
 
-const DEFAULT_VOLUME = 80; // robot's built-in default (raw percent) until /robot/info arrives.
+const DEFAULT_VOLUME = 80; // robot's built-in default (percent) until /robot/info arrives.
 
-// On this hardware the speaker is effectively silent below ~AUDIBLE_FLOOR% even
-// though the robot already applies amixer's perceptual -M scaling (INN-467), so
-// a raw 0–100 slider wastes its lower half and then jumps loud near the top.
-// Instead the slider is a perceptual *position* (0–100) mapped onto the audible
-// band only: position 0 = muted, any audible position lands in
-// [AUDIBLE_FLOOR, 100] and reads as a friendly level (Low/Medium/High/Max)
-// rather than a misleading number. AUDIBLE_FLOOR is the one knob to retune if
-// the quietest audible step still feels off or too loud on real hardware.
-const AUDIBLE_FLOOR = 60;
-
-/** Clamp to an integer in 0–100 (shared by slider positions and percents). */
-function clampPercent(/** @type {number} */ value) {
-  if (!Number.isFinite(value)) return 0;
+/** Clamp to an integer 0–100, mirroring the mobile app's clampVolumePercent. */
+function clampVolume(/** @type {number} */ value) {
+  if (!Number.isFinite(value)) return DEFAULT_VOLUME;
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-/** Perceptual slider position (0–100) → robot volume_percent (0, or FLOOR–100). */
-function positionToPercent(/** @type {number} */ pos) {
-  const p = clampPercent(pos);
-  if (p === 0) return 0;
-  return Math.round(AUDIBLE_FLOOR + ((100 - AUDIBLE_FLOOR) * p) / 100);
-}
-
-/** Inverse: robot volume_percent → slider position (0–100). */
-function percentToPosition(/** @type {number} */ percent) {
-  const v = clampPercent(percent);
-  if (v === 0) return 0;
-  // A sub-floor value (e.g. one set by another client) sits at the quietest
-  // audible step rather than reading as "Off".
-  if (v <= AUDIBLE_FLOOR) return 1;
-  return Math.round(((v - AUDIBLE_FLOOR) * 100) / (100 - AUDIBLE_FLOOR));
-}
-
-/** Friendly level name for a slider position, so users pick a feel, not a number. */
-function levelLabel(/** @type {number} */ pos) {
-  if (pos <= 0) return "Off";
-  if (pos < 34) return "Low";
-  if (pos < 67) return "Medium";
-  if (pos < 100) return "High";
-  return "Max";
-}
-
-const VOLUME_POS_KEY = "innate.speakerVolumePos";
-
-// Persist the operator's exact slider position across page loads. position→percent
-// is many-to-one (the audible band is compressed), so re-deriving the thumb from
-// the robot's percent alone lands on the *canonical* position — a step or two off
-// from where they left it, which made the thumb "pop" on every revisit. Restoring
-// the saved position keeps it put (the percent-space guard below leaves it alone
-// whenever it still maps to the robot's live value).
-function loadSavedPosition() {
-  try {
-    const raw = localStorage.getItem(VOLUME_POS_KEY);
-    if (raw === null) return null;
-    const n = Number(raw);
-    return Number.isFinite(n) ? clampPercent(n) : null;
-  } catch {
-    return null; // storage unavailable (e.g. private mode)
-  }
-}
-
-function saveSavedPosition(/** @type {number} */ pos) {
-  try {
-    localStorage.setItem(VOLUME_POS_KEY, String(clampPercent(pos)));
-  } catch {
-    // Storage unavailable; a revisit just falls back to the robot's value.
-  }
 }
 
 /**
  * Live speaker-volume control. Unlike the yaml knobs below, this is a rosbridge
  * service call that applies immediately and persists on the robot — no restart.
- * The slider is a perceptual position mapped onto the audible band (see
- * positionToPercent) and reads as a level name; it seeds from /robot/info and
- * writes the mapped percent via /set_volume on release.
+ * The slider is the raw volume_percent (0–100): it reads the current value from
+ * /robot/info and writes via /set_volume on release. The robot lifts the low end
+ * of the range so the bottom of the slider stays audible (see apply_alsa_volume).
  */
 function buildVolumeSection() {
   const section = document.createElement("section");
@@ -306,23 +243,23 @@ function buildVolumeSection() {
   const ctl = document.createElement("div");
   ctl.className = "set-ctl";
 
-  // Restore the operator's last position so revisits are stable; fall back to the
-  // robot's default until /robot/info confirms the live value.
-  const savedPos = loadSavedPosition();
-  const startPos = savedPos ?? percentToPosition(DEFAULT_VOLUME);
-
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "set-slider";
   slider.min = "0";
   slider.max = "100";
   slider.step = "1";
-  slider.value = String(startPos);
+  slider.value = String(DEFAULT_VOLUME);
   ctl.appendChild(slider);
 
   const read = document.createElement("span");
   read.className = "set-slider-read";
-  read.textContent = levelLabel(startPos);
+  const cur = document.createElement("span");
+  cur.textContent = String(DEFAULT_VOLUME);
+  const mx = document.createElement("span");
+  mx.className = "mx";
+  mx.textContent = " / 100";
+  read.append(cur, mx);
   ctl.appendChild(read);
 
   const status = document.createElement("span");
@@ -332,10 +269,8 @@ function buildVolumeSection() {
   row.appendChild(ctl);
   section.appendChild(row);
 
-  // Last raw percent known to be applied on the robot; the revert target on failure.
-  // Seeded from the restored position so the first /robot/info echo leaves the
-  // thumb untouched when it already matches the live value.
-  let robotPercent = positionToPercent(startPos);
+  // Last percent known to be applied on the robot; the revert target on failure.
+  let robotPercent = DEFAULT_VOLUME;
   let dragging = false;
   let saving = false;
 
@@ -344,9 +279,9 @@ function buildVolumeSection() {
     status.className = "set-live-status set-status " + cls;
   };
 
-  const renderPosition = (/** @type {number} */ pos) => {
-    slider.value = String(pos);
-    read.textContent = levelLabel(pos);
+  const renderValue = (/** @type {number} */ percent) => {
+    slider.value = String(percent);
+    cur.textContent = String(percent);
   };
 
   // Disabled until connected, and while a save is in flight so a mid-save
@@ -371,45 +306,36 @@ function buildVolumeSection() {
       return;
     }
     if (typeof infoData.volume_percent !== "number") return;
-    robotPercent = clampPercent(infoData.volume_percent);
-    // Don't clobber a value the operator is actively dragging or saving. Skip our
-    // own echo too: if the current position already maps to the robot's percent,
-    // re-deriving it would jitter the thumb by a step (inverse-rounding).
-    if (dragging || saving) return;
-    if (positionToPercent(Number(slider.value)) !== robotPercent) {
-      const pos = percentToPosition(robotPercent);
-      renderPosition(pos);
-      saveSavedPosition(pos);
-    }
+    robotPercent = clampVolume(infoData.volume_percent);
+    // Don't clobber a value the operator is actively dragging or saving.
+    if (!dragging && !saving) renderValue(robotPercent);
   });
 
   slider.addEventListener("input", () => {
     dragging = true;
-    read.textContent = levelLabel(Number(slider.value));
+    cur.textContent = slider.value;
   });
 
   slider.addEventListener("change", async () => {
     dragging = false;
-    const pos = clampPercent(Number(slider.value));
-    const nextPercent = positionToPercent(pos);
-    renderPosition(pos);
-    if (nextPercent === robotPercent || saving) return;
+    const next = clampVolume(Number(slider.value));
+    renderValue(next);
+    if (next === robotPercent || saving) return;
     const previous = robotPercent;
     saving = true;
     refreshEnabled();
     setLiveStatus("Saving…", "muted");
     try {
       /** @type {{ success: boolean, message?: string }} */
-      const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: nextPercent });
+      const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: next });
       if (!res.success) throw new Error(res.message || "Failed to set volume.");
-      robotPercent = nextPercent;
-      saveSavedPosition(pos);
+      robotPercent = next;
       setLiveStatus("Volume set.", "ok");
     } catch {
       // Re-seed robotPercent too: a /robot/info update may have moved it during
       // the save, and on failure the robot's volume is still `previous`.
       robotPercent = previous;
-      renderPosition(percentToPosition(previous));
+      renderValue(previous);
       setLiveStatus("Couldn't set volume. Try again.", "err");
     } finally {
       saving = false;
