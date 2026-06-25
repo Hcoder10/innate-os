@@ -1,25 +1,20 @@
 import styled from "styled-components";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { PreviewContainer, MainImage, MainVideo } from "../styles/StyledImages";
+import { useState, useEffect, useRef } from "react";
+import { PreviewContainer, MainVideo } from "../styles/StyledImages";
 import { useRobotWebRTC } from "../hooks/useRobotWebRTC";
 import { Costmap2DView } from "./Costmap2DView";
 import { appConfig } from "../config";
 
 type ViewMode = "frontFocus" | "map";
 
-type CameraId = "first_person" | "arm" | "chase";
-
-const CAMERA_ENDPOINTS: Record<CameraId, string> = {
-  first_person: "/video_feed",
-  arm: "/video_feed_arm",
-  chase: "/video_feed_chase",
-};
-
-const CAMERA_LABELS: Record<CameraId, string> = {
-  first_person: "First Person",
-  arm: "Arm",
-  chase: "Chase",
-};
+// Cameras are discovered dynamically from the WebRTC offer (see useRobotWebRTC),
+// so nothing about which cameras exist is hardcoded here. Turn a server-provided
+// camera name ("first_person", "arm_wrist", ...) into a tab label.
+function humanizeCamera(name: string): string {
+  return name
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 type ImageDisplayProps = {
   viewMode: ViewMode;
@@ -383,131 +378,76 @@ const RetryButton = styled.button`
   }
 `;
 
-// Interface for the video feeds ready response
-interface SimulationReadyResponse {
-  ready: boolean;
-  message: string;
-}
-
 export function ImageDisplay({
   viewMode,
   setViewMode,
   onSetDirective,
 }: ImageDisplayProps) {
   const isMapView = viewMode === "map";
-  const [backendShowLoading, setBackendShowLoading] = useState(true);
-  const [backendConnectionFailed, setBackendConnectionFailed] = useState(false);
-  const [backendErrorMessage, setBackendErrorMessage] = useState(
-    "Simulation not running",
-  );
-  const [isCheckingBackend, setIsCheckingBackend] = useState(false);
   const [showDirectiveModal, setShowDirectiveModal] = useState(false);
   const [directiveText, setDirectiveText] = useState("");
-  const [camera, setCamera] = useState<CameraId>("first_person");
+  // Which camera (by SDP mid) is shown; chosen from the dynamically discovered set.
+  const [selectedMid, setSelectedMid] = useState<string | null>(null);
 
-  const useDirectRobot = appConfig.directRobot;
   const robotWsUrl = appConfig.robotWsUrl;
   const {
-    mainStream,
+    cameras,
+    streamsByMid,
     hasMedia,
     isConnecting: isWebRTCConnecting,
     error: webRTCError,
     reconnect: reconnectWebRTC,
+    setActiveCameras,
   } = useRobotWebRTC({
-    enabled: useDirectRobot,
+    enabled: true,
     wsUrl: robotWsUrl,
     source: "live",
   });
 
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  const connectionFailed = useDirectRobot
-    ? Boolean(webRTCError)
-    : backendConnectionFailed;
-  const directMainStream = mainStream;
-  const showLoading = useDirectRobot
-    ? !hasMedia && !webRTCError
-    : backendShowLoading;
-  const errorMessage = useDirectRobot
-    ? (webRTCError ?? "Failed to connect to robot WebRTC stream.")
-    : backendErrorMessage;
+  const selectedCamera =
+    cameras.find((c) => c.mid === selectedMid) ?? cameras[0] ?? null;
+  const selectedStream = selectedCamera
+    ? (streamsByMid[selectedCamera.mid] ?? null)
+    : null;
 
-  const baseUrl = appConfig.simBaseUrl;
+  const connectionFailed = Boolean(webRTCError);
+  const showLoading = !hasMedia && !webRTCError;
+  const errorMessage = webRTCError ?? "Failed to connect to the camera stream.";
 
-  // Set up the sources for the main and secondary feeds based on view mode
-  const mainSrc = baseUrl + CAMERA_ENDPOINTS[camera];
-
-  // Function to check if the simulation is running
-  const checkSimulationReady = useCallback(async () => {
-    if (useDirectRobot) {
-      return;
-    }
-
-    setIsCheckingBackend(true);
-
-    try {
-      const response = await fetch(`${baseUrl}/video_feeds_ready`);
-
-      if (response.ok) {
-        const data: SimulationReadyResponse = await response.json();
-
-        if (data.ready) {
-          // Simulation is running, hide loading screen
-          setBackendShowLoading(false);
-          setBackendConnectionFailed(false);
-        } else {
-          // Simulation is not running, show error message
-          setBackendConnectionFailed(true);
-          setBackendErrorMessage(data.message);
-        }
-      } else {
-        // API call failed
-        setBackendConnectionFailed(true);
-        setBackendErrorMessage("Failed to connect to the server");
-      }
-    } catch (error) {
-      console.error("Error checking simulation status:", error);
-      setBackendConnectionFailed(true);
-      setBackendErrorMessage("Error connecting to the server");
-    } finally {
-      setIsCheckingBackend(false);
-    }
-  }, [baseUrl, useDirectRobot]);
-
-  // Check simulation when component mounts or viewMode changes
+  // Once cameras are discovered, default to the first and ask the server to
+  // encode it (lazy encoding). Re-runs only when the discovered set changes.
   useEffect(() => {
-    if (useDirectRobot) {
+    if (cameras.length === 0) {
+      setSelectedMid(null);
       return;
     }
+    if (!cameras.some((c) => c.mid === selectedMid)) {
+      setSelectedMid(cameras[0].mid);
+      setActiveCameras([cameras[0].name]);
+    }
+  }, [cameras, selectedMid, setActiveCameras]);
 
-    checkSimulationReady();
+  const selectCamera = (cam: { mid: string; name: string }) => {
+    setSelectedMid(cam.mid);
+    setActiveCameras([cam.name]);
+  };
 
-    // Set up polling to periodically check if simulation becomes available
-    const intervalId = setInterval(() => {
-      if (backendConnectionFailed) {
-        checkSimulationReady();
-      }
-    }, 5000); // Check every 5 seconds if in failed state
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [viewMode, useDirectRobot, backendConnectionFailed, checkSimulationReady]);
-
+  // Attach the selected camera's WebRTC stream to the video element.
   useEffect(() => {
-    if (!useDirectRobot || !mainVideoRef.current) {
-      return;
-    }
-
     const video = mainVideoRef.current;
-    video.srcObject = directMainStream;
+    if (!video) {
+      return;
+    }
+    video.srcObject = selectedStream;
     video.autoplay = true;
     video.muted = true;
     video.playsInline = true;
-    if (directMainStream) {
+    if (selectedStream) {
       void video.play().catch(() => {});
     }
-  }, [useDirectRobot, directMainStream]);
+  }, [selectedStream]);
 
   const modes: ViewMode[] = ["frontFocus", "map"];
 
@@ -550,21 +490,13 @@ export function ImageDisplay({
           }
         >
           {isMapView && <MiniLabel>{labels.frontFocus}</MiniLabel>}
-          {useDirectRobot ? (
-            <MainVideo
-              ref={mainVideoRef}
-              $viewMode={"frontFocus"}
-              muted
-              autoPlay
-              playsInline
-            />
-          ) : (
-            <MainImage
-              $viewMode={"frontFocus"}
-              src={mainSrc}
-              alt="Main Camera"
-            />
-          )}
+          <MainVideo
+            ref={mainVideoRef}
+            $viewMode={"frontFocus"}
+            muted
+            autoPlay
+            playsInline
+          />
         </ViewLayer>
 
         {/* Map layer — always mounted, swaps between main and mini */}
@@ -576,16 +508,18 @@ export function ImageDisplay({
           <Costmap2DView wsUrl={robotWsUrl} isMini={!isMapView} />
         </ViewLayer>
 
-        {/* Camera selector — sim (MJPEG) feeds only */}
-        {!isMapView && !useDirectRobot && (
+        {/* Camera selector — built from the cameras the server advertised in the
+            offer. Switching shows that track and (for servers that support it)
+            asks for only the watched camera to be encoded. */}
+        {!isMapView && cameras.length > 1 && (
           <CameraSelector>
-            {(Object.keys(CAMERA_ENDPOINTS) as CameraId[]).map((id) => (
+            {cameras.map((cam) => (
               <CameraButton
-                key={id}
-                $isActive={camera === id}
-                onClick={() => setCamera(id)}
+                key={cam.mid}
+                $isActive={selectedCamera?.mid === cam.mid}
+                onClick={() => selectCamera(cam)}
               >
-                {CAMERA_LABELS[id]}
+                {humanizeCamera(cam.name)}
               </CameraButton>
             ))}
           </CameraSelector>
@@ -598,23 +532,10 @@ export function ImageDisplay({
               <>
                 <ErrorText>{errorMessage}</ErrorText>
                 <LoadingText>
-                  {useDirectRobot
-                    ? "Please check robot WebRTC availability and try again."
-                    : "Please check if the simulation is running and try again."}
+                  Please check the camera stream availability and try again.
                 </LoadingText>
-                <RetryButton
-                  onClick={
-                    useDirectRobot ? reconnectWebRTC : checkSimulationReady
-                  }
-                  disabled={useDirectRobot ? false : isCheckingBackend}
-                >
-                  {useDirectRobot
-                    ? isWebRTCConnecting
-                      ? "Reconnecting..."
-                      : "Retry Connection"
-                    : isCheckingBackend
-                      ? "Checking..."
-                      : "Retry Connection"}
+                <RetryButton onClick={reconnectWebRTC}>
+                  {isWebRTCConnecting ? "Reconnecting..." : "Retry Connection"}
                 </RetryButton>
               </>
             ) : (

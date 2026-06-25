@@ -217,11 +217,14 @@ def prebuild_frontend_image(config: dict[str, object]) -> None:
     )
 
 
-def ensure_frontend_container(config: dict[str, object]) -> None:
+def ensure_frontend_container(config: dict[str, object], *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     log("Starting simulator web frontend container...")
+    # Offline: reuse the already-built frontend image instead of rebuilding, which
+    # would re-resolve the node/caddy base images over the network.
+    build_flag = "--no-build" if offline else "--build"
     run_logged_with_heartbeat(
-        docker_compose_cmd("up", "-d", "--build", "frontend"),
+        docker_compose_cmd("up", "-d", build_flag, "frontend"),
         cwd=os_repo,
         env=frontend_compose_env(config),
         log_path=FRONTEND_LOG_PATH,
@@ -230,33 +233,25 @@ def ensure_frontend_container(config: dict[str, object]) -> None:
     )
 
 
-def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
+def sim_venv_python(config: dict[str, object]) -> Path:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    sim_python = sim_repo / ".venv" / "bin" / "python"
+    return sim_repo / ".venv" / "bin" / "python"
+
+
+def ensure_sim_setup(config: dict[str, object]) -> Path:
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    sim_python = sim_venv_python(config)
 
     ensure_dependency("python3")
 
-    needs_setup = not sim_python.exists()
-    if sim_python.exists() and not python_import_succeeds(sim_python, "dotenv"):
-        if not allow_setup:
-            raise StackError(
-                f"Simulator virtualenv is incomplete.\nRun `{CLI_SIM} setup` to repair {sim_repo / '.venv'}."
-            )
-        warn("Simulator virtualenv is incomplete. Re-running setup to repair it...")
-        needs_setup = True
-
-    if needs_setup:
-        if not allow_setup:
-            raise StackError(
-                f"Simulator Python environment is not ready.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Setting up sim Python environment...")
-        run_logged(
-            ["bash", "./setup.sh"],
-            cwd=sim_repo,
-            log_path=BOOTSTRAP_LOG_PATH,
-            failure_message="Simulator environment setup failed.",
-        )
+    log(f"Setting up sim Python environment...")
+    log(f"Logs: {BOOTSTRAP_LOG_PATH}")
+    run_logged(
+        ["bash", "./setup.sh"],
+        cwd=sim_repo,
+        log_path=BOOTSTRAP_LOG_PATH,
+        failure_message="Simulator environment setup failed.",
+    )
 
     if not sim_python.exists():
         raise StackError(f"Simulator Python environment was not created at {sim_python}")
@@ -322,7 +317,7 @@ def ensure_os_image_available(
     )
 
 
-def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
+def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
     os_image_auto = bool(config["os_image_auto"])
@@ -332,7 +327,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
         log("Innate OS dev container already running.")
     else:
         up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
-        if os_image:
+        if offline:
+            # Reuse the locally-built OS image; never pull or build, which would
+            # reach for the prebuilt tag and base images over the network.
+            os_image = ""
+            up_cmd.append("--no-build")
+        elif os_image:
             try:
                 ensure_os_image_available(
                     os_image,
@@ -687,6 +687,8 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
         env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
     if config.get("sim_scene_dt") is not None:
         env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
+    if config.get("sim_ros_image_fps") is not None:
+        env["SIM_ROS_IMAGE_FPS"] = str(config["sim_ros_image_fps"])
     if config.get("sim_camera_near") is not None:
         env["SIM_CAMERA_NEAR"] = str(config["sim_camera_near"])
 
@@ -774,12 +776,6 @@ def command_succeeds(cmd: list[str], *, cwd: Path | None = None, env: dict[str, 
     return result.returncode == 0
 
 
-def tcp_port_open(port: int) -> bool:
-    with socket.socket() as sock:
-        sock.settimeout(1.0)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
-
-
 def websocket_port_open(port: int) -> bool:
     request = (
         f"GET / HTTP/1.1\r\n"
@@ -847,7 +843,7 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and tcp_port_open(9090)
+    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
     agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}

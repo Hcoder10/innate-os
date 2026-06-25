@@ -506,6 +506,7 @@ def get_config() -> dict[str, object]:
         else False,
         "sim_render_fps": get_nested_float(sim_config, "display", "render_fps"),
         "sim_scene_dt": get_nested_float(sim_config, "display", "scene_dt"),
+        "sim_ros_image_fps": get_nested_float(sim_config, "display", "ros_image_fps"),
         "sim_camera_near": get_nested_float(sim_config, "display", "camera_near"),
         "sim_log_mode": "quiet",
         "sim_args": "--log-everything",

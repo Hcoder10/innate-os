@@ -78,10 +78,15 @@ tmux split-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch mars_control app.sim.launch.py" C-m
 echo "Started app control..."
 
-# === Window 2: WebRTC Streamer ===
-tmux new-window -t "$SESSION_NAME" -n webrtc
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
-echo "Started webrtc streamer (sim mode with compressed images)..."
+# === Window 2: WebRTC Streamer (sim) ===
+# The C++ GStreamer streamer (mars_cam) routes camera video through ROS image
+# topics. In the sim it is replaced by the Python aiortc server in sim/ (started
+# by sim/main.py), which pulls frames directly and streams sim->browser without
+# the ROS hop. Both speak the same /webrtc/* rosbridge signaling, so running both
+# would conflict — leave the C++ streamer disabled here for the sim.
+# tmux new-window -t "$SESSION_NAME" -n webrtc
+# tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
+echo "WebRTC: using sim/ aiortc server (C++ mars_cam streamer disabled for sim)..."
 
 # === Window 3: Nav + Brain ===
 tmux new-window -t "$SESSION_NAME" -n nav-brain

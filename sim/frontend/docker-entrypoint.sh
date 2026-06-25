@@ -11,16 +11,28 @@ BUILD_LOG="$STATUS_DIR/build.log"
 
 mkdir -p "$WEB_DIR" "$STATUS_DIR" "$CONFIG_DIR"
 
-# 1. Runtime config.json from env (browser-facing URLs).
-cat > "$CONFIG_DIR/config.json" <<EOF
-{
-  "simBaseUrl": "${SIM_BASE_URL:-http://localhost:8000}",
-  "wsBaseUrl": "${WS_BASE_URL:-ws://localhost:8000}",
-  "robotWsUrl": "${ROBOT_WS_URL:-ws://localhost:9090}",
-  "directRobot": ${DIRECT_ROBOT:-false},
-  "cartesiaApiKey": "${CARTESIA_API_KEY:-}"
-}
-EOF
+# 1. Runtime config.json: start from the shipped defaults (public/config.json,
+#    the single source of truth) and overlay only the env vars that are set.
+node -e '
+  const fs = require("fs");
+  const out = JSON.parse(fs.readFileSync("/app/public/config.json", "utf8"));
+  const set = (key, env, parse = String) => {
+    if (process.env[env] == null) return;
+    try {
+      out[key] = parse(process.env[env]);
+    } catch (e) {
+      // A malformed value (e.g. non-JSON PINNED_SKILLS) must not abort config
+      // generation and leave the app with no runtime config; keep the default.
+      console.error(`[entrypoint] ignoring invalid ${env}: ${e.message}`);
+    }
+  };
+  set("simBaseUrl",     "SIM_BASE_URL");
+  set("wsBaseUrl",      "WS_BASE_URL");
+  set("robotWsUrl",     "ROBOT_WS_URL");
+  set("directRobot",    "DIRECT_ROBOT",     v => v === "true");
+  set("pinnedSkills",   "PINNED_SKILLS",    JSON.parse);
+  fs.writeFileSync(process.argv[1], JSON.stringify(out));
+' "$CONFIG_DIR/config.json"
 
 # 2. Seed build state + a self-refreshing placeholder page.
 echo '{"state":"building"}' > "$STATUS_FILE"

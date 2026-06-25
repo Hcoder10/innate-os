@@ -19,6 +19,12 @@ services:
       context: ..
       dockerfile: sim/Dockerfile
       target: dev-runtime
+      # Build with the host network namespace so `RUN apt-get` can reach DNS.
+      # On hosts using systemd-resolved (nameserver 127.0.0.53) the default
+      # bridge build network can't reach that host-loopback resolver, so apt
+      # fails with "Temporary failure resolving ...". Harmless where bridge
+      # DNS already works.
+      network: host
     container_name: innate-dev
     # Use host networking if you need direct access to hardware, or use your own approach
     depends_on:
@@ -45,6 +51,10 @@ services:
       - ros2_ws_log:/root/innate-os/ros2_ws/log
       - ccache:/root/.cache/ccache
 
+      # Persist ROS runtime node logs (~/.ros/log) to the host so per-node
+      # stdout/stderr survives `docker compose down` on a failed startup.
+      - ./launcher/.state/ros-log:/root/.ros/log
+
       # 3) Mount git credentials from host (read-only for security)
       - ~/.ssh:/root/.ssh:ro
       - ~/.gitconfig:/root/.gitconfig:ro
@@ -56,6 +66,14 @@ services:
     tty: true
     stdin_open: true
     shm_size: "2g"
+    # rmw_zenoh mlock()s its POSIX SHM pool. The container's default 64 KiB
+    # memlock ceiling makes the receive-side mmap fail with ENOMEM ("OS error
+    # 12"), silently dropping SHM back to TCP. Lift the lock limit so the SHM
+    # transport actually works. (shm_size only sizes /dev/shm, not the lock.)
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     networks:
       - x11
     extra_hosts:

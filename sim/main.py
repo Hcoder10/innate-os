@@ -21,6 +21,7 @@ from src.runtime_logging import (
 )
 from src.shared_queues import SharedQueues
 from src.simulation.simulation_node import SimulationNode
+from src.webrtc.webrtc_server import start_webrtc_server
 
 # Load environment variables from .env file
 load_dotenv()
@@ -128,6 +129,12 @@ def main():
         help="Run without connecting to rosbridge/brain agent",
     )
     parser.add_argument(
+        "--no-webrtc",
+        action="store_true",
+        default=not env_bool("SIM_ENABLE_WEBRTC", True),
+        help="Disable the WebRTC camera streaming server (signaling rides rosbridge).",
+    )
+    parser.add_argument(
         "--initial-environment",
         type=str,
         default=None,
@@ -195,6 +202,13 @@ def main():
             SHARED_QUEUES,
             rosbridge_uri=ROSBRIDGE_URI,
         )
+
+        # WebRTC camera streaming. Signaling rides the rosbridge connection
+        # (above), so it only runs when the agent/rosbridge is enabled.
+        if args.no_webrtc:
+            print("[Main] --no-webrtc enabled. Skipping WebRTC camera server.")
+        else:
+            start_webrtc_server(SHARED_QUEUES)
 
     # 4) Start Uvicorn in another thread (unless --no-web)
     if not args.no_web:

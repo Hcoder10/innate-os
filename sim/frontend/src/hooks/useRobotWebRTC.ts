@@ -5,8 +5,19 @@ const WEBRTC_OFFER_TOPIC = "/webrtc/offer";
 const WEBRTC_ANSWER_TOPIC = "/webrtc/answer";
 const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in";
 const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out";
+// Additive: tells the server which cameras to encode (lazy encoding). A server
+// that doesn't support it (e.g. the robot streamer) simply ignores the topic.
+const WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams";
 
 type WebRTCSource = "live" | "episode_replay";
+
+// One video camera advertised by whatever WebRTC server we connected to. `mid`
+// is the SDP media id (the transceiver key); `name` is the camera identity the
+// server labelled the track with (SDP msid), falling back to a positional name.
+export interface CameraInfo {
+  mid: string;
+  name: string;
+}
 
 interface UseRobotWebRTCOptions {
   enabled: boolean;
@@ -15,31 +26,83 @@ interface UseRobotWebRTCOptions {
 }
 
 interface UseRobotWebRTCReturn {
-  mainStream: MediaStream | null;
-  secondaryStream: MediaStream | null;
+  cameras: CameraInfo[];
+  streamsByMid: Record<string, MediaStream>;
   hasMedia: boolean;
   isConnecting: boolean;
   error: string | null;
   reconnect: () => void;
+  setActiveCameras: (cameras: string[]) => void;
 }
 
 const CONNECTION_TIMEOUT_MS = 30000;
 const START_SIGNAL_DELAY_MS = 100;
+
+// Derive the video cameras (mid + name) straight from the offer SDP, so the UI
+// adapts to whatever the connected source advertises — robot or sim, 1..N cams.
+// Identity comes from the track label (`a=msid:<stream> <name>`, or the older
+// `a=ssrc:<id> msid:<stream> <name>` form); absent that we fall back to the mid.
+function parseVideoCameras(sdp: string): CameraInfo[] {
+  const cameras: CameraInfo[] = [];
+  let inVideo = false;
+  let mid: string | null = null;
+  let name: string | null = null;
+
+  const flush = () => {
+    if (inVideo && mid !== null) {
+      cameras.push({ mid, name: name ?? `camera_${mid}` });
+    }
+    mid = null;
+    name = null;
+  };
+
+  for (const raw of sdp.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("m=")) {
+      flush();
+      inVideo = line.startsWith("m=video");
+    } else if (inVideo && line.startsWith("a=mid:")) {
+      mid = line.slice("a=mid:".length).trim();
+    } else if (inVideo && name === null && line.startsWith("a=msid:")) {
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2) name = parts[parts.length - 1];
+    } else if (inVideo && name === null && line.startsWith("a=ssrc:")) {
+      const m = line.match(/\bmsid:\S+\s+(\S+)/);
+      if (m) name = m[1];
+    }
+  }
+  flush();
+  return cameras;
+}
 
 export function useRobotWebRTC({
   enabled,
   wsUrl,
   source = "live",
 }: UseRobotWebRTCOptions): UseRobotWebRTCReturn {
-  const [mainStream, setMainStream] = useState<MediaStream | null>(null);
-  const [secondaryStream, setSecondaryStream] = useState<MediaStream | null>(
-    null,
+  const [cameras, setCameras] = useState<CameraInfo[]>([]);
+  const [streamsByMid, setStreamsByMid] = useState<Record<string, MediaStream>>(
+    {},
   );
   const [hasMedia, setHasMedia] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const hasMediaRef = useRef(false);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const setActiveCameras = useCallback((names: string[]) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          op: "publish",
+          topic: WEBRTC_ACTIVE_STREAMS_TOPIC,
+          msg: { data: JSON.stringify({ cameras: names }) },
+        }),
+      );
+    }
+  }, []);
 
   const reconnect = useCallback(() => {
     setReconnectCount((count) => count + 1);
@@ -50,10 +113,14 @@ export function useRobotWebRTC({
   }, [hasMedia]);
 
   useEffect(() => {
-    if (!enabled) {
-      setMainStream(null);
-      setSecondaryStream(null);
+    const resetState = () => {
+      setCameras([]);
+      setStreamsByMid({});
       setHasMedia(false);
+    };
+
+    if (!enabled) {
+      resetState();
       setIsConnecting(false);
       setError(null);
       return;
@@ -67,7 +134,6 @@ export function useRobotWebRTC({
     let processingOffer = false;
     let remoteDescriptionSet = false;
     const iceCandidateQueue: RTCIceCandidateInit[] = [];
-    let videoTrackCount = 0;
 
     const clearTimers = () => {
       if (connectionTimeout !== null) {
@@ -99,6 +165,7 @@ export function useRobotWebRTC({
         ws.close();
         ws = null;
       }
+      wsRef.current = null;
     };
 
     const sendRosbridgeMessage = (payload: object) => {
@@ -116,7 +183,6 @@ export function useRobotWebRTC({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
 
-      videoTrackCount = 0;
       remoteDescriptionSet = false;
       iceCandidateQueue.length = 0;
 
@@ -139,41 +205,17 @@ export function useRobotWebRTC({
           return;
         }
 
-        const stream = new MediaStream([event.track]);
         const mid = event.transceiver?.mid;
-        const isMainMid = mid === "0" || mid === "video0";
-        const isSecondaryMid = mid === "1" || mid === "video1";
-
-        if (isMainMid) {
-          setMainStream(stream);
-        } else if (isSecondaryMid) {
-          setSecondaryStream(stream);
-          setMainStream((current) => current ?? stream);
-        } else {
-          videoTrackCount += 1;
-          if (videoTrackCount === 1) {
-            setMainStream(stream);
-          } else if (videoTrackCount === 2) {
-            setSecondaryStream(stream);
-          }
+        if (!mid) {
+          return;
         }
 
+        const stream = new MediaStream([event.track]);
+        setStreamsByMid((prev) => ({ ...prev, [mid]: stream }));
         setHasMedia(true);
         setIsConnecting(false);
         setError(null);
         clearTimers();
-      };
-
-      pc.oniceconnectionstatechange = () => {
-        if (!pc || !isMounted) {
-          return;
-        }
-      };
-
-      pc.onsignalingstatechange = () => {
-        if (!pc) {
-          return;
-        }
       };
     };
 
@@ -186,6 +228,9 @@ export function useRobotWebRTC({
       try {
         await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
         remoteDescriptionSet = true;
+
+        // The advertised camera set lives entirely in the offer.
+        setCameras(parseVideoCameras(offerSdp));
 
         for (const candidate of iceCandidateQueue) {
           try {
@@ -241,9 +286,7 @@ export function useRobotWebRTC({
 
     const connectWebSocket = () => {
       closeConnections();
-      setMainStream(null);
-      setSecondaryStream(null);
-      setHasMedia(false);
+      resetState();
       setError(null);
       setIsConnecting(true);
 
@@ -251,11 +294,12 @@ export function useRobotWebRTC({
         if (!isMounted) {
           return;
         }
-        setError("Timed out while waiting for WebRTC media from robot.");
+        setError("Timed out while waiting for the WebRTC video stream.");
         setIsConnecting(false);
       }, CONNECTION_TIMEOUT_MS);
 
       ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
       ws.onopen = () => {
         if (!isMounted) {
@@ -307,7 +351,7 @@ export function useRobotWebRTC({
         if (!isMounted) {
           return;
         }
-        setError("Failed to connect to robot signaling WebSocket.");
+        setError("Failed to connect to the signaling WebSocket.");
       };
 
       ws.onclose = () => {
@@ -316,7 +360,7 @@ export function useRobotWebRTC({
         }
 
         if (!hasMediaRef.current) {
-          setError("Robot signaling WebSocket closed.");
+          setError("Signaling WebSocket closed.");
           setIsConnecting(false);
         }
       };
@@ -327,19 +371,18 @@ export function useRobotWebRTC({
     return () => {
       isMounted = false;
       closeConnections();
-      setMainStream(null);
-      setSecondaryStream(null);
-      setHasMedia(false);
+      resetState();
       setIsConnecting(false);
     };
   }, [enabled, wsUrl, source, reconnectCount]);
 
   return {
-    mainStream,
-    secondaryStream,
+    cameras,
+    streamsByMid,
     hasMedia,
     isConnecting,
     error,
     reconnect,
+    setActiveCameras,
   };
 }
