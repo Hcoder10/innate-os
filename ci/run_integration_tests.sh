@@ -13,6 +13,8 @@
 # is equivalent; the robot keeps SHM in production via the image entrypoint.
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROUTER_PID=""
 cleanup() {
   if [ -n "${ROUTER_PID}" ]; then
@@ -29,6 +31,7 @@ run_ros_integration_tests() {
   ROUTER_PID=$!
   sleep 2
   colcon test --packages-select brain_client \
+    --return-code-on-test-failure \
     --ctest-args -R "test_pose_image|test_fake_cloud_loop" \
     --event-handlers console_direct+
   colcon test-result --verbose
@@ -53,6 +56,13 @@ export ZENOH_CONFIG_OVERRIDE="transport/shared_memory/enabled=false"
 cd /root/innate-os/ros2_ws
 source install/setup.bash
 
+# The launch tests below only start brain_client nodes, so they cannot catch a
+# lost exec bit in the mars_* / manipulation packages. Statically guard every
+# install(PROGRAMS) node script across all packages so any such regression fails
+# here directly, regardless of which package it lives in.
+echo "=== exec-bit guard: install(PROGRAMS) node scripts ==="
+python3 "${SCRIPT_DIR}/check_node_exec_bits.py"
+
 echo "=== unit tests (fast, no ROS) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
   src/brain/brain_client/test/test_fake_cloud_selftest.py \
@@ -62,8 +72,10 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
 # Run the launch tests under both install modes. The copy build baked into the
 # image (ci/Dockerfile.test) masks missing exec bits by installing 0755 copies;
 # the --symlink-install build (what the local sim launcher uses) symlinks the
-# install executable straight at the source, so a node script that lost its exec
-# bit fails to launch. Running both catches bugs specific to either mode.
+# install executable straight at the source, so a brain_client node that lost
+# its exec bit fails to launch here. Running both catches bugs specific to
+# either mode. (Exec bits outside brain_client are covered by the static guard
+# above, since these tests only start brain_client nodes.)
 echo "=== integration tests: regular (copy) install ==="
 run_ros_integration_tests
 
@@ -77,16 +89,31 @@ echo "=== integration tests: --symlink-install ==="
 # This downgrades setuptools globally in the container, but it's the last thing
 # the script does: this pass is the final step and nothing runs in this layer
 # afterward, so the global mutation has no consumer to leak into.
+#
+# TRACKING: this is the same "colcon needs `setup.py develop`" constraint that is
+# pinned independently in three other places, none cross-referenced:
+#   sim/Dockerfile              setuptools==59.6.0 (re-pinned after torch resolves)
+#   sim/requirements.ubuntu.txt setuptools==81.0.0
+#   sim/requirements.macos.txt  setuptools==80.9.0
+# The real owner of the *working* constraint is torch, not colcon: sim/Dockerfile
+# pins 59.6.0 to re-pin packaging/setuptools after torch resolves its deps, and
+# that just happens to be < 80. A torch bump that needs setuptools >= 80 would
+# raise that pin and silently break `colcon build --symlink-install`
+# (scripts/validate_sim_ros_install.zsh) — and this pass would not catch it, since
+# the two derive the constraint independently. The durable fix is upstream:
+# colcon-ros adopting PEP 660 editable installs (`pip install -e`) instead of the
+# removed `setup.py develop`, after which none of these pins stay load-bearing.
 python3 -m pip install --quiet 'setuptools<80'
 rm -rf build install log
+# The copy-install dirs sourced above were just rm -rf'd; clear the overlay
+# before building so neither the build nor the following setup.bash inherits
+# stale, duplicated AMENT_PREFIX_PATH entries that manifest-walking tools would
+# process twice.
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH
 colcon build --symlink-install \
   --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-# The copy-install dirs sourced above were just rm -rf'd; clear the overlay so
-# setup.bash rebuilds the chain from scratch instead of leaving stale, duplicated
-# AMENT_PREFIX_PATH entries that manifest-walking tools would process twice.
-unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH
 source install/setup.bash
 run_ros_integration_tests
