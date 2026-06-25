@@ -12,7 +12,7 @@ cameras a browser is actually watching.
 
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 from aiortc import VideoStreamTrack
@@ -27,7 +27,7 @@ STALE_AFTER_S = 2.0
 class CameraTrack(VideoStreamTrack):
     kind = "video"
 
-    def __init__(self, get_frame: Callable[[], Optional[np.ndarray]], name: str):
+    def __init__(self, get_frame: Callable[[], np.ndarray | None], name: str):
         super().__init__()
         self._get_frame = get_frame
         self.name = name
@@ -36,10 +36,10 @@ class CameraTrack(VideoStreamTrack):
         # straight from the offer (no separate metadata channel).
         self._id = name
         self._active = threading.Event()
-        self._last_frame: Optional[np.ndarray] = None
+        self._last_frame: np.ndarray | None = None
         # Wall-clock time the producer last handed back a *new* frame, used to
         # detect a stalled producer (same array returned indefinitely).
-        self._last_change_t: Optional[float] = None
+        self._last_change_t: float | None = None
         # Diagnostics: counts frames actually handed to the encoder (lazy-encoding proof).
         self.frames_encoded = 0
 

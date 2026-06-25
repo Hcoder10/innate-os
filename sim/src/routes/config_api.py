@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-
 from src.runtime_logging import SIM_LOG_MODES
 
 router = APIRouter()

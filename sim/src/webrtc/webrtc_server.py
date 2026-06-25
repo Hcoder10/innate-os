@@ -14,7 +14,7 @@ cameras named in the latest `active_streams` message are fed to the encoder.
 import asyncio
 import queue
 import threading
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 from aiortc import RTCIceCandidate, RTCPeerConnection, RTCRtpSender
@@ -27,7 +27,7 @@ from .camera_track import CameraTrack
 CAMERAS = ["first_person", "arm_wrist", "chase"]
 
 
-def _parse_ice(payload: dict) -> Optional[RTCIceCandidate]:
+def _parse_ice(payload: dict) -> RTCIceCandidate | None:
     candidate_str = (payload or {}).get("candidate") or ""
     if not candidate_str:
         return None  # end-of-candidates / empty
@@ -42,9 +42,9 @@ def _parse_ice(payload: dict) -> Optional[RTCIceCandidate]:
 class WebRTCManager:
     """Single-peer manager. A new `start` tears down the previous connection."""
 
-    def __init__(self, get_frame_for: Callable[[str], Optional[np.ndarray]]):
+    def __init__(self, get_frame_for: Callable[[str], np.ndarray | None]):
         self._get_frame_for = get_frame_for
-        self._pc: Optional[RTCPeerConnection] = None
+        self._pc: RTCPeerConnection | None = None
         self._tracks: dict[str, CameraTrack] = {}
 
     async def on_start(self, payload: dict) -> str:

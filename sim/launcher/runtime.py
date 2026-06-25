@@ -244,7 +244,7 @@ def ensure_sim_setup(config: dict[str, object]) -> Path:
 
     ensure_dependency("python3")
 
-    log(f"Setting up sim Python environment...")
+    log("Setting up sim Python environment...")
     log(f"Logs: {BOOTSTRAP_LOG_PATH}")
     run_logged(
         ["bash", "./setup.sh"],
@@ -743,9 +743,7 @@ def open_os_container_shell() -> int:
     non-interactive `zsh -lc` would leave `ros2` and the workspace unsourced.
     """
     if not container_running("innate-dev"):
-        raise StackError(
-            f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first."
-        )
+        raise StackError(f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first.")
     return subprocess.run(["docker", "exec", "-it", "innate-dev", "zsh"]).returncode
 
 
@@ -843,7 +841,9 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
+    rosbridge_live = (
+        os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
+    )
     agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
@@ -1360,10 +1360,7 @@ def wait_for_frontend_ready(
             next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
         time.sleep(SIM_HTTP_POLL_SECONDS)
 
-    raise StackError(
-        f"Timed out waiting for the simulator web frontend to build.\n"
-        f"Check: {CLI_SIM} logs frontend"
-    )
+    raise StackError(f"Timed out waiting for the simulator web frontend to build.\nCheck: {CLI_SIM} logs frontend")
 
 
 def fetch_simulator_metrics(port: str) -> dict[str, object]:

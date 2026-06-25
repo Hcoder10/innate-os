@@ -12,18 +12,23 @@ they cannot catch a lost exec bit in the mars_* / manipulation packages. This
 guard checks the source script behind every install(PROGRAMS) entry across all
 packages, so any such regression fails CI directly.
 """
+
 import os
 import re
 import sys
 
-SRC_ROOT = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "ros2_ws", "src")
-)
+SRC_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "ros2_ws", "src"))
 
 # Keywords that terminate the file list inside install(PROGRAMS <files...> ...).
 STOP_KEYWORDS = {
-    "DESTINATION", "PERMISSIONS", "CONFIGURATIONS", "COMPONENT",
-    "RENAME", "OPTIONAL", "EXCLUDE_FROM_ALL", "TYPE",
+    "DESTINATION",
+    "PERMISSIONS",
+    "CONFIGURATIONS",
+    "COMPONENT",
+    "RENAME",
+    "OPTIONAL",
+    "EXCLUDE_FROM_ALL",
+    "TYPE",
 }
 
 # install(...) blocks. Paths in this repo never contain ')', and CMake install()
@@ -36,7 +41,7 @@ def program_files(cmake_text):
         tokens = body.split()
         if "PROGRAMS" not in tokens:
             continue
-        for tok in tokens[tokens.index("PROGRAMS") + 1:]:
+        for tok in tokens[tokens.index("PROGRAMS") + 1 :]:
             if tok in STOP_KEYWORDS:
                 break
             yield tok
@@ -58,9 +63,7 @@ def main():
                 failures.append(f"{path}: listed in {cmake} but does not exist")
             elif not os.access(path, os.X_OK):
                 rel_cmake = os.path.relpath(cmake, SRC_ROOT)
-                failures.append(
-                    f"{path}: missing exec bit (install(PROGRAMS) in {rel_cmake})"
-                )
+                failures.append(f"{path}: missing exec bit (install(PROGRAMS) in {rel_cmake})")
 
     if failures:
         print("install(PROGRAMS) node scripts are not executable:", file=sys.stderr)
