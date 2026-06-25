@@ -5,6 +5,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace mars_cam {
 
@@ -94,6 +95,23 @@ GstRTPHeaderExtension* make_playout_delay_ext(guint ext_id, guint min_ms, guint 
     gst_rtp_header_extension_set_id(GST_RTP_HEADER_EXTENSION(self), ext_id);
     return GST_RTP_HEADER_EXTENSION(self);
 }
+
+// Context handed to the async create-offer callback. Holds a ref to the webrtcbin the offer is being
+// built for (so it survives a concurrent teardown) and the pipeline generation at offer time (so a
+// stale offer from a torn-down pipeline is dropped rather than applied to a replaced/freed element).
+struct OfferContext {
+    WebRTCStreamer* self;
+    GstElement* webrtc;  // owns a ref, released in offer_context_free
+    uint64_t generation;
+};
+
+void offer_context_free(gpointer data) {
+    auto* ctx = static_cast<OfferContext*>(data);
+    if (ctx->webrtc) {
+        gst_object_unref(ctx->webrtc);
+    }
+    delete ctx;
+}
 }  // namespace
 
 WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
@@ -172,6 +190,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     // Create publishers
     offer_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer", 10);
     ice_out_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/ice_out", 10);
+    active_streams_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/active_streams", 10);
 
     // Create subscribers
     answer_sub_ = this->create_subscription<std_msgs::msg::String>(
@@ -189,6 +208,11 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     health_timer_ =
         this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
 
+    // 0.5 Hz status snapshot on /webrtc/active_streams for the debug dashboard.
+    prev_status_time_ = std::chrono::steady_clock::now();
+    status_timer_ =
+        this->create_wall_timer(std::chrono::seconds(2), std::bind(&WebRTCStreamer::publish_status, this));
+
     RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (source: %s, compressed: %s)", current_source_.c_str(),
                 use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Live topics: %s, %s", live_main_topic_.c_str(), live_arm_topic_.c_str());
@@ -204,6 +228,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
 
 WebRTCStreamer::~WebRTCStreamer() {
     health_timer_.reset();  // stop the poll before tearing the pipeline down
+    status_timer_.reset();
     cleanup_pipeline();
 }
 
@@ -377,6 +402,14 @@ void WebRTCStreamer::push_frame(GstElement* appsrc, const cv::Mat& frame, GstBuf
     GstFlowReturn ret;
     g_signal_emit_by_name(appsrc, "push-buffer", buffer, &ret);
     gst_buffer_unref(buffer);  // Returns to pool
+
+    // Count frames entering each encoder for the active_streams status (which stream is actually
+    // being fed -> "rendered"). Member read is racy vs teardown but only mis-attributes a tick.
+    if (appsrc == appsrc_main_) {
+        main_frames_.fetch_add(1, std::memory_order_relaxed);
+    } else if (appsrc == appsrc_arm_) {
+        arm_frames_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 void WebRTCStreamer::on_image_main_raw(const sensor_msgs::msg::Image::SharedPtr msg) {
@@ -489,6 +522,9 @@ void WebRTCStreamer::teardown_pipeline_locked() {
     // itself lives on the rtpbin pad and is freed with the pipeline below.
     last_rtcp_activity_ns_.store(0, std::memory_order_relaxed);
     rtcp_probe_installed_ = false;
+    audio_probe_installed_ = false;
+    // Invalidate any in-flight create-offer callback that targets the pipeline we're tearing down.
+    pipeline_generation_.fetch_add(1, std::memory_order_relaxed);
 
     // Deactivate and release pools
     if (pool_main_) {
@@ -605,6 +641,7 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     // streams (and never grabs the peer's audio session) until a page asks for it.
     std::string source = "live";
     bool request_audio = false;
+    std::string client_id;
     if (!msg->data.empty()) {
         try {
             auto json = nlohmann::json::parse(msg->data);
@@ -613,6 +650,9 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
             }
             if (json.contains("audio")) {
                 request_audio = json["audio"].get<bool>();
+            }
+            if (json.contains("client_id")) {
+                client_id = json["client_id"].get<std::string>();
             }
         } catch (const nlohmann::json::exception&) {
             // Not JSON, use defaults
@@ -653,7 +693,16 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     // Now that the pipeline (and its appsrc feeds) exist, subscribe to the cameras for this source.
     create_subscriptions(source);
 
-    GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, this, nullptr);
+    // Record connection info for /webrtc/active_streams.
+    client_id_ = client_id;
+    active_source_ = source;
+    with_audio_ = with_audio;
+
+    // Pass a ref'd snapshot of this pipeline's webrtcbin + generation to the async offer callback so
+    // it can drop the offer (instead of crashing on a freed element) if a follow-up START tore this
+    // pipeline down while the offer was being built — the live->replay->live race.
+    auto* ctx = new OfferContext{this, GST_ELEMENT(gst_object_ref(webrtc_)), pipeline_generation_.load()};
+    GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, ctx, offer_context_free);
     g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
 }
 
@@ -723,7 +772,7 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
             "audioconvert ! audioresample ! "
             "audio/x-raw,rate=48000,channels=1 ! "
             "opusenc bitrate=24000 audio-type=voice ! "
-            "rtpopuspay pt=98 ! "
+            "rtpopuspay name=pay_audio pt=98 ! "
             // encoding-params=2 is mandatory: RFC 7587 requires the Opus rtpmap to be
             // "opus/48000/2" regardless of the actual channel count. Without it libwebrtc
             // (the app) finds no matching codec and rejects the audio m-line, which strands
@@ -832,6 +881,22 @@ bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
     last_rtcp_activity_ns_.store(0, std::memory_order_relaxed);  // disarmed until CONNECTED
     rtcp_probe_installed_ = false;
 
+    // Monitor the Opus branch for the active_streams status (video is counted in push_frame).
+    audio_probe_installed_ = false;
+    if (with_audio) {
+        if (GstElement* pay = gst_bin_get_by_name(GST_BIN(pipeline_), "pay_audio")) {
+            if (GstPad* src = gst_element_get_static_pad(pay, "src")) {
+                gst_pad_add_probe(src,
+                                  static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER |
+                                                               GST_PAD_PROBE_TYPE_BUFFER_LIST),
+                                  on_audio_buffer, this, nullptr);
+                gst_object_unref(src);
+                audio_probe_installed_ = true;
+            }
+            gst_object_unref(pay);
+        }
+    }
+
     GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_ASYNC) {
         // Live sources (alsasrc/appsrc) open on a background thread and return ASYNC immediately.
@@ -849,7 +914,8 @@ bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
 }
 
 void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
-    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    auto* ctx = static_cast<OfferContext*>(user_data);  // freed by offer_context_free when the promise is
+    auto* self = ctx->self;                             // released; do not delete here.
 
     gst_promise_wait(promise);
     const GstStructure* reply = gst_promise_get_reply(promise);
@@ -863,11 +929,20 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
         return;
     }
 
+    // If a follow-up START tore this pipeline down while the offer was being built, the offer is for
+    // a webrtcbin that's gone. Drop it — applying it (or touching self->webrtc_) is the crash.
+    if (self->pipeline_generation_.load(std::memory_order_relaxed) != ctx->generation) {
+        RCLCPP_INFO(self->get_logger(), "Discarding stale offer (pipeline rebuilt before it was sent)");
+        gst_webrtc_session_description_free(offer);
+        gst_promise_unref(promise);
+        return;
+    }
+
     RCLCPP_INFO(self->get_logger(), "Offer created");
 
-    // Set local description
+    // Set local description on the exact webrtcbin the offer was built for (ref'd in ctx).
     GstPromise* local_promise = gst_promise_new();
-    g_signal_emit_by_name(self->webrtc_, "set-local-description", offer, local_promise);
+    g_signal_emit_by_name(ctx->webrtc, "set-local-description", offer, local_promise);
 
     // Get SDP text
     gchar* sdp_text = gst_sdp_message_as_text(offer->sdp);
@@ -998,6 +1073,106 @@ bool WebRTCStreamer::install_rtcp_probe_locked() {
     gst_iterator_free(it);
     gst_object_unref(rtpbin);
     return installed;
+}
+
+GstPadProbeReturn WebRTCStreamer::on_audio_buffer(GstPad* /*pad*/, GstPadProbeInfo* /*info*/, gpointer user_data) {
+    static_cast<WebRTCStreamer*>(user_data)->audio_pkts_.fetch_add(1, std::memory_order_relaxed);
+    return GST_PAD_PROBE_OK;
+}
+
+namespace {
+const char* conn_state_name(GstWebRTCPeerConnectionState s) {
+    switch (s) {
+        case GST_WEBRTC_PEER_CONNECTION_STATE_NEW: return "new";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTING: return "connecting";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED: return "connected";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED: return "disconnected";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_FAILED: return "failed";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED: return "closed";
+    }
+    return "unknown";
+}
+double round1(double v) { return std::round(v * 10.0) / 10.0; }
+}  // namespace
+
+void WebRTCStreamer::publish_status() {
+    const auto now = std::chrono::steady_clock::now();
+    double dt = std::chrono::duration<double>(now - prev_status_time_).count();
+    if (dt <= 1e-3) dt = 1e-3;
+    prev_status_time_ = now;
+
+    const uint64_t m = main_frames_.load(std::memory_order_relaxed);
+    const uint64_t a = arm_frames_.load(std::memory_order_relaxed);
+    const uint64_t au = audio_pkts_.load(std::memory_order_relaxed);
+    const double main_fps = (m - prev_main_frames_) / dt;
+    const double arm_fps = (a - prev_arm_frames_) / dt;
+    const double audio_rate = (au - prev_audio_pkts_) / dt;
+    prev_main_frames_ = m;
+    prev_arm_frames_ = a;
+    prev_audio_pkts_ = au;
+
+    // Snapshot the connection under the lock; build the JSON outside it.
+    bool have_peer = false, with_audio = false;
+    std::string conn = "none", client_id, source, main_topic, arm_topic;
+    double rtcp_age = -1.0;
+    {
+        std::lock_guard<std::mutex> lock(pipeline_mutex_);
+        if (pipeline_ && webrtc_) {
+            have_peer = true;
+            conn = conn_state_name(peer_connection_state(webrtc_));
+            client_id = client_id_;
+            source = active_source_;
+            with_audio = with_audio_;
+            const bool replay = active_source_ == "replay";
+            main_topic = replay ? replay_main_topic_ : live_main_topic_;
+            arm_topic = replay ? replay_arm_topic_ : live_arm_topic_;
+            const int64_t last = last_rtcp_activity_ns_.load(std::memory_order_relaxed);
+            if (last != 0) {
+                rtcp_age = (now.time_since_epoch().count() - last) / 1e9;
+            }
+        }
+    }
+
+    auto video_stream = [](const std::string& name, const std::string& topic, double fps) {
+        nlohmann::json s;
+        s["name"] = name;
+        s["topic"] = topic;
+        s["fps"] = round1(fps);
+        s["encoding"] = fps > 0.5;  // frames actually entering the encoder => being rendered
+        return s;
+    };
+
+    nlohmann::json clients = nlohmann::json::array();
+    if (have_peer) {
+        nlohmann::json streams = nlohmann::json::array();
+        streams.push_back(video_stream("main", main_topic, main_fps));
+        streams.push_back(video_stream("arm", arm_topic, arm_fps));
+        if (with_audio) {
+            nlohmann::json s;
+            s["name"] = "audio";
+            s["rate_hz"] = round1(audio_rate);
+            s["encoding"] = audio_rate > 0.5;
+            streams.push_back(s);
+        }
+        nlohmann::json c;
+        c["client_id"] = client_id;
+        c["source"] = source;
+        c["audio"] = with_audio;
+        c["connection_state"] = conn;
+        if (rtcp_age >= 0.0) {
+            c["rtcp_age_s"] = std::round(rtcp_age * 100.0) / 100.0;
+        }
+        c["streams"] = streams;
+        clients.push_back(c);
+    }
+
+    nlohmann::json root;
+    root["count"] = clients.size();
+    root["clients"] = clients;
+
+    std_msgs::msg::String msg;
+    msg.data = root.dump();
+    active_streams_pub_->publish(msg);
 }
 
 void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec* /*pspec*/, gpointer user_data) {

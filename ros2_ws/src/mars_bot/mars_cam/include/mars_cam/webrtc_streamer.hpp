@@ -52,6 +52,9 @@ class WebRTCStreamer : public rclcpp::Node {
     bool install_rtcp_probe_locked();  // attach the probe once the session's rtcp pad exists
     void note_rtcp_activity();          // stamps last_rtcp_activity_ns_ with the steady clock
 
+    // Builds the /webrtc/active_streams JSON from the live pipeline and publishes it (0.5 Hz timer).
+    void publish_status();
+
     // Helper methods
     void create_subscriptions(const std::string& source);
     void destroy_subscriptions();
@@ -82,6 +85,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // Publishers
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr offer_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ice_out_pub_;
+    // /webrtc/active_streams: a JSON snapshot of the connected client(s) and each video/audio
+    // stream's live encode status, published at 0.5 Hz for the debug dashboard.
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr active_streams_pub_;
 
     // Subscribers
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr answer_sub_;
@@ -134,6 +140,28 @@ class WebRTCStreamer : public rclcpp::Node {
     // connected yet). Written from a GStreamer thread, read on the executor thread.
     std::atomic<int64_t> last_rtcp_activity_ns_{0};
     bool rtcp_probe_installed_ = false;  // recv-RTCP buffer probe attached for this connection
+
+    // Bumped on every teardown so an in-flight create-offer callback (which runs on a GStreamer
+    // thread, after on_start has released the lock) can tell its pipeline was torn down underneath
+    // it and drop the stale offer instead of touching a freed webrtcbin. This is the live->replay->
+    // live crash fix: rapid STARTs used to race teardown against the offer callback.
+    std::atomic<uint64_t> pipeline_generation_{0};
+
+    // Per-connection client info (from START) + live stream-status monitoring for active_streams.
+    std::string client_id_;
+    std::string active_source_;  // "live" / "replay" actually subscribed
+    bool with_audio_ = false;
+    // Frames pushed into each encoder appsrc / audio RTP packets seen — sampled by the status timer
+    // to report per-stream encode fps (0 fps => source silent => "not being rendered").
+    std::atomic<uint64_t> main_frames_{0};
+    std::atomic<uint64_t> arm_frames_{0};
+    std::atomic<uint64_t> audio_pkts_{0};
+    static GstPadProbeReturn on_audio_buffer(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    bool audio_probe_installed_ = false;
+    // Previous sample for fps deltas in publish_status().
+    uint64_t prev_main_frames_ = 0, prev_arm_frames_ = 0, prev_audio_pkts_ = 0;
+    std::chrono::steady_clock::time_point prev_status_time_;
+    rclcpp::TimerBase::SharedPtr status_timer_;
 
     // Use compressed images (for sim/rosbridge)
     bool use_compressed_images_;
