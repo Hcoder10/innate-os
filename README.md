@@ -43,7 +43,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
       <sub>Web app</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" width="100%" height="400" style="object-fit: cover;"><br>
+      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" height="300"><br>
       <sub>Mobile app</sub>
     </td>
     <td width="33%" align="center" valign="top">
