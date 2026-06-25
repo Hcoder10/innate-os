@@ -53,6 +53,20 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
   </tr>
 </table>
 
+---
+
+## Table of Contents
+
+- [Control](#control)
+- [Skills](#skills)
+- [Agents](#agents)
+- [Simulator](#simulator)
+- [Additional Inputs](#additional-inputs)
+- [ROS Reference](#ros-reference)
+- [More Docs](#more-docs)
+
+---
+
 ## Control
 
 ### Web app
@@ -61,13 +75,15 @@ With the Innate web app, you can control the robot in real time. Use the gamepad
 
 <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app" height="300">
 
-It is available at https://\<robot-address\> which can either be its IP or hostname.
+It is available at `https://<robot-address>` which can either be its IP or hostname.
 
 ### Mobile app
 
 The Innate mobile app is available on both iOS and Android. It allows you to control the robot in real time, just like the web app, but with a more convenient interface.
 
 <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app" height="300">
+
+---
 
 ## Skills
 
@@ -154,6 +170,8 @@ class MoveForward(Skill):
   </tr>
 </table>
 
+---
+
 ## Agents
 
 Agents allow Innate robots to run autonomously following your instructions.
@@ -214,6 +232,8 @@ class NavigateAgent(Agent):
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
 
+---
+
 ## Simulator
 
 Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
@@ -233,6 +253,8 @@ This starts the Docker-based Innate OS runtime, the simulator, and the built fro
 ```
 
 See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simulator workflow.
+
+---
 
 ## Additional Inputs
 
@@ -297,6 +319,8 @@ def get_inputs(self):
 
 See [`docs/INPUT_DEVICES.md`](docs/INPUT_DEVICES.md) for the full input-device lifecycle.
 
+---
+
 ## ROS Reference
 
 Innate OS is currently based on ROS 2, the reference framework for robotics operating systems. Most builders should start with skills, agents, inputs, and the simulator. Changing the core OS is not recommended for normal usage, but it is possible.
@@ -326,6 +350,8 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 - **[innate_uninavid](ros2_ws/src/cloud/innate_uninavid)** - UniNaVid vision-language navigation client.
 
 </details>
+
+---
 
 ## More Docs
 
