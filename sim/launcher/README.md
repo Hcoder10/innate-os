@@ -72,7 +72,7 @@ asset pack:
 ./innate sim clean --data
 ```
 
-`clean` never deletes your secrets (`.env`), OS/sim config (`config/os.toml`,
+`clean` never deletes your secrets (`.env`), OS/sim config (`config/settings.yaml`,
 `sim/config.toml`), or environment presets (`sim/data/environments/`); it prints
 what it preserved when it finishes.
 

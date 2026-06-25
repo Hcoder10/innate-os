@@ -19,6 +19,7 @@ from config import (
     LOCAL_MODES,
     LOG_TARGETS,
     OS_SESSION_LOG_PATH,
+    SETTINGS_PATH,
     SHOW_LIVE_DASHBOARD_DEFAULT,
     SIM_CONFIG_PATH,
     STATE_DIR,
@@ -241,7 +242,7 @@ def cmd_clean(config: dict[str, object], *, delete_data: bool = False, assume_ye
     sim_repo = config["sim_repo"]
     print("Preserved (never deleted by clean):")
     print(f"  - secrets:      {ENV_PATH}")
-    print(f"  - OS config:    {OS_CONFIG_PATH}")
+    print(f"  - OS config:    {SETTINGS_PATH}")
     print(f"  - sim config:   {SIM_CONFIG_PATH}")
     print(f"  - env presets:  {sim_repo / 'data' / 'environments'}")
     if not delete_data:
