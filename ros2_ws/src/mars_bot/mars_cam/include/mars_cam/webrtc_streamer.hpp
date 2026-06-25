@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 #include <memory>
 #include <mutex>
 #include <chrono>
@@ -55,8 +56,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // Builds the /webrtc/active_streams JSON from the live pipeline and publishes it (0.5 Hz timer).
     void publish_status();
 
-    // Helper methods
-    void create_subscriptions(const std::string& source);
+    // Helper methods. `videos` is the ordered set of requested video streams ("main"/"arm"); only
+    // those are subscribed/encoded/offered, so a client can ask for a subset (selective encode).
+    void create_subscriptions(const std::string& source, const std::vector<std::string>& videos);
     void destroy_subscriptions();
     void cleanup_pipeline();
 
@@ -65,17 +67,18 @@ class WebRTCStreamer : public rclcpp::Node {
     void poll_pipeline_health();
     void drain_bus_locked();  // caller must hold pipeline_mutex_
 
-    // with_audio appends an Opus mic branch (webrtc.sink_2) to the video pipeline.
-    // It is cleared to false if the audio params are unsafe, so callers log the real state.
-    std::string build_pipeline_description(bool& with_audio) const;
+    // Builds the pipeline for the requested video streams (in order: sink_0, sink_1, ...) plus an
+    // optional Opus mic branch on the next sink. with_audio is cleared to false if the audio params
+    // are unsafe, so callers log the real state.
+    std::string build_pipeline_description(const std::vector<std::string>& videos, bool& with_audio) const;
 
     // *_locked: caller must hold pipeline_mutex_. start_ returns false (and tears down) on failure.
     // with_audio is updated to reflect whether audio actually made it into the pipeline.
-    bool start_pipeline_locked(bool& with_audio);
+    bool start_pipeline_locked(const std::vector<std::string>& videos, bool& with_audio);
     void teardown_pipeline_locked();
 
-    // Adds the playout-delay RTP header extension to both video tracks (caller holds the mutex).
-    void attach_playout_delay_extension();
+    // Adds the playout-delay RTP header extension to each present video track (caller holds the mutex).
+    void attach_playout_delay_extension(const std::vector<std::string>& videos);
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int target_width, int target_height);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int target_width,
                                      int target_height);
@@ -150,6 +153,7 @@ class WebRTCStreamer : public rclcpp::Node {
     // Per-connection client info (from START) + live stream-status monitoring for active_streams.
     std::string client_id_;
     std::string active_source_;  // "live" / "replay" actually subscribed
+    std::vector<std::string> active_video_;  // video streams actually built/encoded, in m-line order
     bool with_audio_ = false;
     // Frames pushed into each encoder appsrc / audio RTP packets seen — sampled by the status timer
     // to report per-stream encode fps (0 fps => source silent => "not being rendered").

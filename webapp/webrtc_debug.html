@@ -78,7 +78,6 @@
       <label class="inline">source
         <select id="source"><option value="live">live</option><option value="replay">replay</option></select>
       </label>
-      <label class="inline"><input type="checkbox" id="audio" /> audio</label>
       <button id="restart">Restart stream</button>
     </header>
 
@@ -95,11 +94,11 @@
         <audio id="aud" autoplay></audio>
 
         <div class="row" style="margin-top:8px">
-          <span class="muted">render:</span>
+          <span class="muted">streams:</span>
           <button class="tog" data-l="main">main</button>
           <button class="tog" data-l="arm">arm</button>
           <button class="tog" data-l="audio">audio</button>
-          <span class="muted" style="font-size:11px">(client-side track.enabled — robot keeps encoding)</span>
+          <span class="muted" style="font-size:11px">(re-negotiates — robot only encodes the enabled ones)</span>
         </div>
 
         <div class="panel" style="margin-top:12px">
@@ -107,8 +106,8 @@
           <div class="body" style="padding:0">
             <table id="stats">
               <thead><tr><th>track</th><th>fps</th><th>res</th><th>kbps</th>
-                <th>frames</th><th>lost</th><th>jitter</th><th>nack</th><th>pli</th></tr></thead>
-              <tbody><tr><td colspan="9" class="muted" style="text-align:center">no media</td></tr></tbody>
+                <th>frames</th><th>lost</th><th>jitter</th><th>nack</th><th>pli</th><th>last</th></tr></thead>
+              <tbody><tr><td colspan="10" class="muted" style="text-align:center">no media</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -215,23 +214,30 @@
       }
       const ros = new Rws();
 
-      // ---------------- WebRTC answerer (keeps BOTH video tracks) ----------------
+      // ---------------- WebRTC answerer (maps each video m-line to a requested stream) ----------------
       let pc = null, clientId = null, remoteSet = false, iceQueue = [], processingOffer = false;
+      let videoArrival = 0; // fallback index when a track has no usable mid
       const trackLabel = new Map(); // track.id -> "main"|"arm"|"audio"
-      const trackByLabel = {}; // "main"|"arm"|"audio" -> MediaStreamTrack
-      const rendered = { main: true, arm: true, audio: true }; // client-side enable per stream
-      let arrival = 0;
+      // Which streams the client asks the robot to encode. Toggling re-negotiates so the robot
+      // actually stops encoding a disabled stream (not just a client-side mute).
+      const requested = { main: true, arm: true, audio: false };
+      // The video streams we asked for, in order — the i-th video m-line maps back to requestedVideo[i].
+      let requestedVideo = [];
 
-      function applyToggle(label) {
-        const tr = trackByLabel[label];
-        if (tr) tr.enabled = rendered[label];
-        const btn = document.querySelector(`.tog[data-l="${label}"]`);
-        if (btn) btn.classList.toggle("off", !rendered[label]);
-        const tile = label === "main" ? $("vMain").parentElement : label === "arm" ? $("vArm").parentElement : null;
-        if (tile) tile.classList.toggle("off", !rendered[label]);
+      function refreshTogVisuals() {
+        for (const l of ["main", "arm", "audio"]) {
+          const btn = document.querySelector(`.tog[data-l="${l}"]`);
+          if (btn) btn.classList.toggle("off", !requested[l]);
+        }
+        $("vMain").parentElement.classList.toggle("off", !requested.main);
+        $("vArm").parentElement.classList.toggle("off", !requested.arm);
       }
       document.querySelectorAll(".tog").forEach((b) =>
-        b.addEventListener("click", () => { const l = b.dataset.l; rendered[l] = !rendered[l]; applyToggle(l); }));
+        b.addEventListener("click", () => {
+          requested[b.dataset.l] = !requested[b.dataset.l];
+          refreshTogVisuals();
+          if (ros.connected) startStream(); // re-negotiate with the new stream set
+        }));
 
       function setConn() {
         if (!pc) return;
@@ -245,7 +251,7 @@
         if (pc) { pc.onicecandidate = pc.ontrack = pc.onconnectionstatechange = pc.oniceconnectionstatechange = null;
           try { pc.close(); } catch {} }
         pc = null; remoteSet = false; iceQueue = []; processingOffer = false;
-        trackLabel.clear(); arrival = 0; lastStats.clear();
+        trackLabel.clear(); videoArrival = 0; lastStats.clear();
       }
 
       function startStream() {
@@ -262,10 +268,11 @@
         pc.onconnectionstatechange = () => { setConn(); logLine("pc: " + pc.connectionState, "o"); };
         pc.oniceconnectionstatechange = setConn;
         pc.ontrack = onTrack;
-        const audio = $("audio").checked;
         const source = $("source").value;
-        ros.publish(T.START, { data: JSON.stringify({ source, audio, client_id: clientId }) });
-        logLine(`→ START {source:${source}, audio:${audio}}`, "o");
+        const audio = requested.audio;
+        requestedVideo = ["main", "arm"].filter((x) => requested[x]); // order = m-line order
+        ros.publish(T.START, { data: JSON.stringify({ source, audio, video: requestedVideo, client_id: clientId }) });
+        logLine(`→ START {source:${source}, video:[${requestedVideo.join(",")}], audio:${audio}}`, "o");
         setConn();
       }
 
@@ -273,17 +280,21 @@
         const tr = e.track;
         const mid = e.transceiver && e.transceiver.mid;
         let label;
-        if (tr.kind === "audio") label = "audio";
-        else if (mid === "0" || mid === "video0") label = "main";
-        else if (mid === "1" || mid === "video1") label = "arm";
-        else label = ++arrival === 1 ? "main" : "arm"; // fallback: arrival order
+        if (tr.kind === "audio") {
+          label = "audio";
+        } else {
+          // Video m-lines come first and in the order we requested, so the trailing number in the
+          // mid (e.g. "video0","video1") indexes requestedVideo. Fall back to arrival order.
+          const m = /(\d+)\s*$/.exec(mid || "");
+          const idx = m ? parseInt(m[1], 10) : videoArrival;
+          videoArrival++;
+          label = requestedVideo[idx] || requestedVideo[videoArrival - 1] || "video" + idx;
+        }
         trackLabel.set(tr.id, label);
-        trackByLabel[label] = tr;
-        tr.enabled = rendered[label]; // honor the current client-side toggle
-        applyToggle(label);
         const stream = new MediaStream([tr]);
         if (label === "audio") $("aud").srcObject = stream;
-        else $(label === "main" ? "vMain" : "vArm").srcObject = stream;
+        else if (label === "main") $("vMain").srcObject = stream;
+        else if (label === "arm") $("vArm").srcObject = stream;
         logLine(`◀ track ${label} (mid=${mid}, ${tr.kind})`, "o");
       }
 
@@ -325,28 +336,39 @@
           if (r.type !== "inbound-rtp") return;
           const label = trackLabel.get(r.trackIdentifier) || (r.kind === "audio" ? "audio" : r.kind);
           const prev = lastStats.get(r.ssrc);
+          const now = Date.now();
           let kbps = 0, fps = r.framesPerSecond || 0;
           if (prev && r.timestamp > prev.ts) {
             const dt = (r.timestamp - prev.ts) / 1000;
             kbps = Math.round(((r.bytesReceived - prev.bytes) * 8) / dt / 1000);
             if (!fps && r.framesDecoded != null) fps = Math.round((r.framesDecoded - prev.frames) / dt);
           }
-          lastStats.set(r.ssrc, { bytes: r.bytesReceived || 0, frames: r.framesDecoded || 0, ts: r.timestamp });
+          // "last frame" age: video keys off framesDecoded, audio off bytesReceived (no frames).
+          const isVideo = r.kind === "video" || r.frameWidth != null;
+          const metric = isVideo ? (r.framesDecoded || 0) : (r.bytesReceived || 0);
+          const prevMetric = prev ? (isVideo ? prev.frames : prev.bytes) : -1;
+          const advanced = metric > prevMetric;
+          const lastWall = advanced ? now : (prev && prev.lastWall) || now;
+          lastStats.set(r.ssrc, { bytes: r.bytesReceived || 0, frames: r.framesDecoded || 0, ts: r.timestamp, lastWall });
           rows.push({
             label, fps: Math.round(fps),
             res: r.frameWidth ? `${r.frameWidth}×${r.frameHeight}` : "—",
             kbps, frames: r.framesDecoded ?? "—", lost: r.packetsLost ?? 0,
             jitter: r.jitter != null ? Math.round(r.jitter * 1000) + "ms" : "—",
             nack: r.nackCount ?? 0, pli: r.pliCount ?? 0,
+            lastAge: (now - lastWall) / 1000,
           });
         });
         const order = { main: 0, arm: 1, audio: 2 };
         rows.sort((a, b) => (order[a.label] ?? 9) - (order[b.label] ?? 9));
         const tb = $("stats").tBodies[0];
         if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center">no media</td></tr>'; return; }
-        tb.innerHTML = rows.map((x) =>
-          `<tr><td>${x.label}</td><td>${x.fps}</td><td>${x.res}</td><td>${x.kbps}</td><td>${x.frames}</td>` +
-          `<td>${x.lost}</td><td>${x.jitter}</td><td>${x.nack}</td><td>${x.pli}</td></tr>`).join("");
+        tb.innerHTML = rows.map((x) => {
+          const stale = x.lastAge > 1;
+          const last = `<td style="color:${stale ? "var(--bad)" : "var(--ok)"}">${x.lastAge.toFixed(1)}s</td>`;
+          return `<tr><td>${x.label}</td><td>${x.fps}</td><td>${x.res}</td><td>${x.kbps}</td><td>${x.frames}</td>` +
+            `<td>${x.lost}</td><td>${x.jitter}</td><td>${x.nack}</td><td>${x.pli}</td>${last}</tr>`;
+        }).join("");
         // tile overlays
         for (const x of rows) {
           if (x.label === "main") $("ovMain").innerHTML = `<b>${x.fps}</b> fps · ${x.res} · <b>${x.kbps}</b> kbps · lost ${x.lost}`;
@@ -447,8 +469,8 @@
       };
       $("wsBtn").onclick = () => { ros.connected ? ros.disconnect() : ros.connect($("wsUrl").value.trim()); };
       $("restart").onclick = () => { if (ros.connected) startStream(); };
-      $("audio").onchange = () => { if (ros.connected) startStream(); };
       $("source").onchange = () => { if (ros.connected) startStream(); };
+      refreshTogVisuals();
 
       setInterval(pollStats, 1000);
       setInterval(pollLazy, 1500);

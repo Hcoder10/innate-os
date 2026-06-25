@@ -571,10 +571,41 @@ def test_multi(h):
         b.destroy(); h.remove(b)
 
 
+def test_streams(h):
+    print("\n[selective encode] client requests a subset of video streams via START 'video'")
+    results = []
+    for want in ("arm", "main"):
+        other = "main" if want == "arm" else "arm"
+        want_topic = ARM_TOPIC if want == "arm" else MAIN_TOPIC
+        other_topic = MAIN_TOPIC if want == "arm" else ARM_TOPIC
+        peer = WebRTCPeer(f"webrtc_tester_sel_{want}", source="live", start_extra={"video": [want]})
+        ok = False
+        try:
+            connect_peer(h, peer, want_video=1, timeout=20)
+            time.sleep(1.5)
+            labels = peer.video_tracks()
+            has_want = any(want in lbl for lbl in labels)
+            has_other = any(other in lbl for lbl in labels)
+            # The node must subscribe ONLY to the requested camera (debounced vs graph flakiness).
+            sub_only = wait_for(
+                lambda: want_topic in h.node_subscriptions() and other_topic not in h.node_subscriptions(), 8)
+            ok = has_want and not has_other and sub_only
+            print(f"  video=[{want}]: decoded={labels}  node_sub_only_{want}={sub_only}  "
+                  f"-> {'PASS' if ok else 'FAIL'}")
+        finally:
+            peer.destroy()
+            h.remove(peer)
+        results.append(ok)
+    allok = all(results)
+    print(f"  {'PASS (selective encode)' if allok else 'FAIL — node still sends/encodes unrequested streams'}")
+    return allok
+
+
 def run_full(h, args):
     results = {}
     results["baseline"] = test_connect(h, source=args.source, audio=args.audio, duration=args.duration)
     results["goal1_lazy"] = test_lazy(h, rtcp_timeout=args.rtcp_timeout)
+    results["selective"] = test_streams(h)
     results["goal2_dynamic"] = test_dynamic(h)
     results["goal3_multi"] = test_multi(h)
 
@@ -591,7 +622,7 @@ def run_full(h, args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", nargs="?", default="full",
-                    choices=["full", "connect", "lazy", "dynamic", "multi"])
+                    choices=["full", "connect", "lazy", "streams", "dynamic", "multi"])
     ap.add_argument("--source", default="live", choices=["live", "replay"])
     ap.add_argument("--audio", action="store_true", help="request the robot mic track")
     ap.add_argument("--duration", type=float, default=8.0, help="fps measurement window (s)")
@@ -611,6 +642,8 @@ def main():
             ok = test_connect(h, source=args.source, audio=args.audio, duration=args.duration)
         elif args.mode == "lazy":
             ok = test_lazy(h, rtcp_timeout=args.rtcp_timeout)
+        elif args.mode == "streams":
+            ok = test_streams(h)
         elif args.mode == "dynamic":
             ok = test_dynamic(h)
         elif args.mode == "multi":

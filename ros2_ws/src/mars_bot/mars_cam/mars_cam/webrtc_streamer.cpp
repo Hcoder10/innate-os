@@ -96,6 +96,24 @@ GstRTPHeaderExtension* make_playout_delay_ext(guint ext_id, guint min_ms, guint 
     return GST_RTP_HEADER_EXTENSION(self);
 }
 
+// One VP8 video branch (appsrc -> encoder -> payloader -> webrtc.sink_<sink>). Element names are
+// keyed by stream name so attach_playout_delay_extension() and the appsrc lookups still find them.
+std::string video_branch(const std::string& name, int sink, int pt, int fps) {
+    return "appsrc name=src_" + name +
+           " is-live=true format=time caps=video/x-raw,format=BGR,width=640,height=480,framerate=" +
+           std::to_string(fps) +
+           "/1 ! "
+           "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
+           "videoconvert ! "
+           "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
+           "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
+           "rtpvp8pay name=pay_" +
+           name + " pt=" + std::to_string(pt) +
+           " ! "
+           "capsfilter name=rtpcaps_" +
+           name + " ! webrtc.sink_" + std::to_string(sink) + " ";
+}
+
 // Context handed to the async create-offer callback. Holds a ref to the webrtcbin the offer is being
 // built for (so it survives a concurrent teardown) and the pipeline generation at offer time (so a
 // stale offer from a torn-down pipeline is dropped rather than applied to a replaced/freed element).
@@ -239,37 +257,40 @@ void WebRTCStreamer::destroy_subscriptions() {
     image_sub_arm_compressed_.reset();
 }
 
-void WebRTCStreamer::create_subscriptions(const std::string& source) {
+void WebRTCStreamer::create_subscriptions(const std::string& source, const std::vector<std::string>& videos) {
     destroy_subscriptions();
 
-    std::string main_topic, arm_topic;
-    if (source == "replay") {
-        main_topic = replay_main_topic_;
-        arm_topic = replay_arm_topic_;
-    } else {
-        main_topic = live_main_topic_;
-        arm_topic = live_arm_topic_;
-    }
+    const bool replay = source == "replay";
+    const std::string main_topic = replay ? replay_main_topic_ : live_main_topic_;
+    const std::string arm_topic = replay ? replay_arm_topic_ : live_arm_topic_;
+    const bool want_main = std::find(videos.begin(), videos.end(), "main") != videos.end();
+    const bool want_arm = std::find(videos.begin(), videos.end(), "arm") != videos.end();
 
+    // Only subscribe to the cameras the client actually requested: an unrequested stream isn't
+    // decoded/encoded (per-stream laziness), and a silent camera topic isn't even subscribed.
     if (use_compressed_images_) {
-        // Subscribe to compressed image topics (for sim/rosbridge)
-        image_sub_main_compressed_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
-            main_topic + "/compressed", camera_qos_,
-            std::bind(&WebRTCStreamer::on_image_main_compressed, this, std::placeholders::_1));
-        image_sub_arm_compressed_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
-            arm_topic + "/compressed", camera_qos_,
-            std::bind(&WebRTCStreamer::on_image_arm_compressed, this, std::placeholders::_1));
-        RCLCPP_INFO(this->get_logger(), "Subscribed to %s compressed sources: %s/compressed, %s/compressed",
-                    source.c_str(), main_topic.c_str(), arm_topic.c_str());
+        if (want_main) {
+            image_sub_main_compressed_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+                main_topic + "/compressed", camera_qos_,
+                std::bind(&WebRTCStreamer::on_image_main_compressed, this, std::placeholders::_1));
+        }
+        if (want_arm) {
+            image_sub_arm_compressed_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+                arm_topic + "/compressed", camera_qos_,
+                std::bind(&WebRTCStreamer::on_image_arm_compressed, this, std::placeholders::_1));
+        }
     } else {
-        // Subscribe to raw image topics (default)
-        image_sub_main_raw_ = this->create_subscription<sensor_msgs::msg::Image>(
-            main_topic, camera_qos_, std::bind(&WebRTCStreamer::on_image_main_raw, this, std::placeholders::_1));
-        image_sub_arm_raw_ = this->create_subscription<sensor_msgs::msg::Image>(
-            arm_topic, camera_qos_, std::bind(&WebRTCStreamer::on_image_arm_raw, this, std::placeholders::_1));
-        RCLCPP_INFO(this->get_logger(), "Subscribed to %s raw sources: %s, %s", source.c_str(), main_topic.c_str(),
-                    arm_topic.c_str());
+        if (want_main) {
+            image_sub_main_raw_ = this->create_subscription<sensor_msgs::msg::Image>(
+                main_topic, camera_qos_, std::bind(&WebRTCStreamer::on_image_main_raw, this, std::placeholders::_1));
+        }
+        if (want_arm) {
+            image_sub_arm_raw_ = this->create_subscription<sensor_msgs::msg::Image>(
+                arm_topic, camera_qos_, std::bind(&WebRTCStreamer::on_image_arm_raw, this, std::placeholders::_1));
+        }
     }
+    RCLCPP_INFO(this->get_logger(), "Subscribed to %s sources: main=%s arm=%s", source.c_str(),
+                want_main ? "yes" : "no", want_arm ? "yes" : "no");
 
     current_source_ = source;
 }
@@ -642,6 +663,10 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     std::string source = "live";
     bool request_audio = false;
     std::string client_id;
+    // Which video streams the client wants. A "video" array selects a subset (selective encode);
+    // when the field is absent we default to both cameras (backward compat with the web client).
+    std::vector<std::string> videos;
+    bool video_specified = false;
     if (!msg->data.empty()) {
         try {
             auto json = nlohmann::json::parse(msg->data);
@@ -654,13 +679,32 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
             if (json.contains("client_id")) {
                 client_id = json["client_id"].get<std::string>();
             }
+            if (json.contains("video") && json["video"].is_array()) {
+                video_specified = true;
+                for (const auto& e : json["video"]) {
+                    if (!e.is_string()) {
+                        continue;
+                    }
+                    const std::string s = e.get<std::string>();
+                    if ((s == "main" || s == "arm") && std::find(videos.begin(), videos.end(), s) == videos.end()) {
+                        videos.push_back(s);
+                    }
+                }
+            }
         } catch (const nlohmann::json::exception&) {
             // Not JSON, use defaults
         }
     }
+    if (!video_specified) {
+        videos = {"main", "arm"};
+    }
 
-    RCLCPP_INFO(this->get_logger(), "START received (source=%s, audio=%s), creating offer...", source.c_str(),
-                request_audio ? "requested" : "off");
+    std::string video_list;
+    for (const auto& v : videos) {
+        video_list += (video_list.empty() ? "" : "+") + v;
+    }
+    RCLCPP_INFO(this->get_logger(), "START received (source=%s, video=[%s], audio=%s), creating offer...",
+                source.c_str(), video_list.c_str(), request_audio ? "requested" : "off");
 
     // Subscriptions are (re)created below once the pipeline is up — for the requested source, and
     // only while a peer is connected. cleanup_pipeline() releases any from a previous connection.
@@ -668,17 +712,23 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
 
     std::lock_guard<std::mutex> lock(pipeline_mutex_);
 
+    // Nothing to send (every stream toggled off): stay torn down, no offer.
+    if (videos.empty() && !(enable_audio_ && request_audio)) {
+        RCLCPP_INFO(this->get_logger(), "START requested no streams; nothing to offer");
+        return;
+    }
+
     // enable_audio_ is the master capability switch (e.g. false in sim, which has no mic); the client
     // must also opt in for this connection. Either off => video-only, so the agent page (audio=false)
     // gets no audio m-line and leaves the OS audio session free for its speech APIs.
     // If audio fails to start (no/busy mic, missing opus plugin), retry video-only.
     bool with_audio = enable_audio_ && request_audio;
-    if (!start_pipeline_locked(with_audio)) {
+    if (!start_pipeline_locked(videos, with_audio)) {
         if (with_audio) {
             RCLCPP_WARN(this->get_logger(),
                         "Pipeline failed to start with audio; retrying video-only (mic unavailable?)");
             with_audio = false;
-            if (!start_pipeline_locked(with_audio)) {
+            if (!start_pipeline_locked(videos, with_audio)) {
                 RCLCPP_ERROR(this->get_logger(), "Failed to start pipeline");
                 return;
             }
@@ -690,12 +740,13 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
 
     RCLCPP_INFO(this->get_logger(), "Pipeline PLAYING (audio=%s), creating offer...", with_audio ? "on" : "off");
 
-    // Now that the pipeline (and its appsrc feeds) exist, subscribe to the cameras for this source.
-    create_subscriptions(source);
+    // Now that the pipeline (and its appsrc feeds) exist, subscribe to the requested cameras.
+    create_subscriptions(source, videos);
 
     // Record connection info for /webrtc/active_streams.
     client_id_ = client_id;
     active_source_ = source;
+    active_video_ = videos;
     with_audio_ = with_audio;
 
     // Pass a ref'd snapshot of this pipeline's webrtcbin + generation to the async offer callback so
@@ -706,32 +757,19 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     g_signal_emit_by_name(webrtc_, "create-offer", nullptr, promise);
 }
 
-std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
-    // Two VP8 video tracks: main camera (sink_0) and arm camera (sink_1).
-    std::string desc =
-        "webrtcbin name=webrtc bundle-policy=max-bundle "
-
-        "appsrc name=src_main is-live=true format=time "
-        "caps=video/x-raw,format=BGR,width=640,height=480,framerate=30/1 ! "
-        "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
-        "videoconvert ! "
-        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
-        "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
-        "rtpvp8pay name=pay_main pt=96 ! "
-        // Named so attach_playout_delay_extension() can add the playout-delay extmap field to the
-        // caps webrtcbin reads when building the offer. Base RTP caps are set there too.
-        "capsfilter name=rtpcaps_main ! "
-        "webrtc.sink_0 "
-
-        "appsrc name=src_arm is-live=true format=time "
-        "caps=video/x-raw,format=BGR,width=640,height=480,framerate=15/1 ! "
-        "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
-        "videoconvert ! "
-        "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
-        "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
-        "rtpvp8pay name=pay_arm pt=97 ! "
-        "capsfilter name=rtpcaps_arm ! "
-        "webrtc.sink_1";
+std::string WebRTCStreamer::build_pipeline_description(const std::vector<std::string>& videos, bool& with_audio) const {
+    // One VP8 branch per requested video stream, in order (sink_0, sink_1, ...). pt is fixed per
+    // stream (main=96, arm=97) so the SDP rtpmap is stable regardless of which subset is sent; the
+    // client maps the i-th video m-line back to videos[i].
+    std::string desc = "webrtcbin name=webrtc bundle-policy=max-bundle ";
+    int sink = 0;
+    for (const auto& v : videos) {
+        if (v == "main") {
+            desc += video_branch("main", sink++, 96, 30);
+        } else if (v == "arm") {
+            desc += video_branch("arm", sink++, 97, 15);
+        }
+    }
 
     if (with_audio) {
         // One-way Opus mic track (sink_2); leaky queue drops audio rather than stalling video.
@@ -779,31 +817,32 @@ std::string WebRTCStreamer::build_pipeline_description(bool& with_audio) const {
             // webrtcbin's max-bundle session in "connecting" forever.
 
             "application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,encoding-params=(string)2,payload=98 ! "
-            "webrtc.sink_2";
+            "webrtc.sink_" +
+            std::to_string(sink);  // audio rides the sink after the video streams
     }
 
     return desc;
 }
 
-void WebRTCStreamer::attach_playout_delay_extension() {
-    // Apply the playout-delay header extension to both video tracks. Two pieces, agreeing on the
-    // extmap id: (1) the extmap field in the RTP caps webrtcbin reads -> emits the SDP a=extmap
+void WebRTCStreamer::attach_playout_delay_extension(const std::vector<std::string>& videos) {
+    // Apply the playout-delay header extension to each present video track. Two pieces, agreeing on
+    // the extmap id: (1) the extmap field in the RTP caps webrtcbin reads -> emits the SDP a=extmap
     // line, and (2) the extension object added to the payloader -> writes the 3 bytes into every
     // RTP packet (GStreamer < 1.24 has no built-in writer for this URI).
     const std::string extmap_field = "extmap-" + std::to_string(kPlayoutDelayExtId);
 
-    struct VideoTrack {
-        const char* payloader;
-        const char* capsfilter;
-        int payload;
-    };
-    for (const VideoTrack& track :
-         {VideoTrack{"pay_main", "rtpcaps_main", 96}, VideoTrack{"pay_arm", "rtpcaps_arm", 97}}) {
-        GstElement* pay = gst_bin_get_by_name(GST_BIN(pipeline_), track.payloader);
-        GstElement* caps_elem = gst_bin_get_by_name(GST_BIN(pipeline_), track.capsfilter);
+    for (const auto& v : videos) {
+        const int payload = v == "main" ? 96 : (v == "arm" ? 97 : 0);
+        if (payload == 0) {
+            continue;
+        }
+        const std::string payloader = "pay_" + v;
+        const std::string capsfilter = "rtpcaps_" + v;
+        GstElement* pay = gst_bin_get_by_name(GST_BIN(pipeline_), payloader.c_str());
+        GstElement* caps_elem = gst_bin_get_by_name(GST_BIN(pipeline_), capsfilter.c_str());
         if (!pay || !caps_elem) {
             RCLCPP_WARN(this->get_logger(), "Missing %s/%s; playout-delay extension not applied to that track",
-                        track.payloader, track.capsfilter);
+                        payloader.c_str(), capsfilter.c_str());
             if (pay)
                 gst_object_unref(pay);
             if (caps_elem)
@@ -813,7 +852,7 @@ void WebRTCStreamer::attach_playout_delay_extension() {
 
         GstCaps* caps =
             gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "video", "encoding-name", G_TYPE_STRING,
-                                "VP8", "clock-rate", G_TYPE_INT, 90000, "payload", G_TYPE_INT, track.payload, nullptr);
+                                "VP8", "clock-rate", G_TYPE_INT, 90000, "payload", G_TYPE_INT, payload, nullptr);
         gst_caps_set_simple(caps, extmap_field.c_str(), G_TYPE_STRING, MARS_PLAYOUT_DELAY_URI, nullptr);
         g_object_set(caps_elem, "caps", caps, nullptr);
         gst_caps_unref(caps);
@@ -829,9 +868,9 @@ void WebRTCStreamer::attach_playout_delay_extension() {
                 playout_min_delay_ms_, playout_max_delay_ms_);
 }
 
-bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
+bool WebRTCStreamer::start_pipeline_locked(const std::vector<std::string>& videos, bool& with_audio) {
     GError* error = nullptr;
-    std::string desc = build_pipeline_description(with_audio);
+    std::string desc = build_pipeline_description(videos, with_audio);
     pipeline_ = gst_parse_launch(desc.c_str(), &error);
     if (error) {
         RCLCPP_ERROR(this->get_logger(), "Failed to create pipeline (audio=%s): %s", with_audio ? "on" : "off",
@@ -845,31 +884,34 @@ bool WebRTCStreamer::start_pipeline_locked(bool& with_audio) {
         return false;
     }
 
-    // Get elements
-    appsrc_main_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src_main");
-    appsrc_arm_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src_arm");
+    // Only the requested video branches exist; fetch each appsrc accordingly (null = not built).
+    const bool want_main = std::find(videos.begin(), videos.end(), "main") != videos.end();
+    const bool want_arm = std::find(videos.begin(), videos.end(), "arm") != videos.end();
+    appsrc_main_ = want_main ? gst_bin_get_by_name(GST_BIN(pipeline_), "src_main") : nullptr;
+    appsrc_arm_ = want_arm ? gst_bin_get_by_name(GST_BIN(pipeline_), "src_arm") : nullptr;
     webrtc_ = gst_bin_get_by_name(GST_BIN(pipeline_), "webrtc");
 
-    // gst_bin_get_by_name returns null if an element is missing. The pipeline string
-    // always names these, but guard anyway so a malformed/renamed element fails loudly
-    // here instead of segfaulting in the g_object_set/g_signal_connect calls below.
-    if (!appsrc_main_ || !appsrc_arm_ || !webrtc_) {
+    // Guard: webrtcbin must exist, and each requested stream's appsrc must have been built. A
+    // malformed/renamed element fails loudly here instead of segfaulting below.
+    if (!webrtc_ || (want_main && !appsrc_main_) || (want_arm && !appsrc_arm_)) {
         RCLCPP_ERROR(this->get_logger(), "Pipeline is missing expected elements (src_main/src_arm/webrtc)");
         teardown_pipeline_locked();
         return false;
     }
 
-    // Create buffer pools (640x480 BGR = 921600 bytes per frame)
-    pool_main_ = create_frame_pool(640, 480, 3);
-    pool_arm_ = create_frame_pool(640, 480, 3);
+    // Buffer pools + appsrc config, only for the streams that were built (640x480 BGR per frame).
+    if (appsrc_main_) {
+        pool_main_ = create_frame_pool(640, 480, 3);
+        g_object_set(appsrc_main_, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
+                     "max-bytes", 2 * 640 * 480 * 3, nullptr);
+    }
+    if (appsrc_arm_) {
+        pool_arm_ = create_frame_pool(640, 480, 3);
+        g_object_set(appsrc_arm_, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
+                     "max-bytes", 2 * 640 * 480 * 3, nullptr);
+    }
 
-    // Configure appsrc elements - non-blocking with limited buffer
-    g_object_set(appsrc_main_, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
-                 "max-bytes", 2 * 640 * 480 * 3, nullptr);
-    g_object_set(appsrc_arm_, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
-                 "max-bytes", 2 * 640 * 480 * 3, nullptr);
-
-    attach_playout_delay_extension();
+    attach_playout_delay_extension(videos);
 
     // Connect signals
     g_signal_connect(webrtc_, "on-ice-candidate", G_CALLBACK(on_ice_candidate), this);
@@ -1114,6 +1156,7 @@ void WebRTCStreamer::publish_status() {
     // Snapshot the connection under the lock; build the JSON outside it.
     bool have_peer = false, with_audio = false;
     std::string conn = "none", client_id, source, main_topic, arm_topic;
+    std::vector<std::string> videos;
     double rtcp_age = -1.0;
     {
         std::lock_guard<std::mutex> lock(pipeline_mutex_);
@@ -1122,6 +1165,7 @@ void WebRTCStreamer::publish_status() {
             conn = conn_state_name(peer_connection_state(webrtc_));
             client_id = client_id_;
             source = active_source_;
+            videos = active_video_;
             with_audio = with_audio_;
             const bool replay = active_source_ == "replay";
             main_topic = replay ? replay_main_topic_ : live_main_topic_;
@@ -1145,8 +1189,14 @@ void WebRTCStreamer::publish_status() {
     nlohmann::json clients = nlohmann::json::array();
     if (have_peer) {
         nlohmann::json streams = nlohmann::json::array();
-        streams.push_back(video_stream("main", main_topic, main_fps));
-        streams.push_back(video_stream("arm", arm_topic, arm_fps));
+        // Only the streams actually built/encoded for this client (selective encode).
+        for (const auto& v : videos) {
+            if (v == "main") {
+                streams.push_back(video_stream("main", main_topic, main_fps));
+            } else if (v == "arm") {
+                streams.push_back(video_stream("arm", arm_topic, arm_fps));
+            }
+        }
         if (with_audio) {
             nlohmann::json s;
             s["name"] = "audio";
