@@ -39,7 +39,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 <table>
   <tr>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" width="100%" height="400" style="object-fit: cover;"><br>
+      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" height="300"><br>
       <sub>Web app</sub>
     </td>
     <td width="33%" align="center" valign="top">
@@ -47,7 +47,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
       <sub>Mobile app</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" width="100%" height="400" style="object-fit: cover;"><br>
+      <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" height="300"><br>
       <sub>Simulator</sub>
     </td>
   </tr>
@@ -71,7 +71,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 
 ### Web app
 
-With the Innate web app, you can control the robot in real time. Use the gamepad or keyboard interface to drive the base, move the arm, and trigger skills manually.
+With the Innate web app, you can control the robot in real time. Use the virtual joystick controls to drive the base, move the arm, and trigger skills manually.
 
 <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app" height="300">
 
@@ -91,25 +91,30 @@ Skills are the core unit of action on Innate robots.
 
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
+<p align="center">
+  <img src="docs/assets/readme/skill-pick-socks.gif" alt="MARS running a physical skill to pick up a sock" width="520"><br>
+  <sub>A physical skill running on MARS.</sub>
+</p>
+
 - **Execute manually** — Run skills from the `innate` CLI.
 - **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
 - **Run autonomously** — Let agents select and interrupt skills as the world changes.
 
 ### Running a skill
 
-On the robot, skills can be called through the CLI:
+On the robot, skills can be inspected and called through the CLI:
 
 ```bash
-innate skill list
-innate skill type innate-os/wave
-innate skill run innate-os/wave
-innate skill run local/my-skill @x=1 @name=alice
+innate skill type innate-os/arm_zero_position
+innate skill run innate-os/arm_zero_position @duration=3
 ```
+
+Custom skills use the same `@name=value` input syntax.
 
 You will find skills in two different directories:
 
 - **Built-in skills** — Located in `workspace/innate_skills/`.
-- **Your custom skills** — Stored in `workspace/custom_skills/` (gitignored).
+- **Your custom skills** — Stored in `workspace/custom_skills/`. Gitignored and yours to play with.
 
 ### Skill definition
 
@@ -148,6 +153,10 @@ class MoveForward(Skill):
 
     mobility = Interface(InterfaceType.MOBILITY)
 
+    def __init__(self, logger):
+        super().__init__(logger)
+        self._cancelled = False
+
     @property
     def name(self):
         return "move_forward"
@@ -156,15 +165,30 @@ class MoveForward(Skill):
         return "Move the robot forward by a given distance in meters."
 
     def execute(self, distance_m: float = 0.5):
+        self._cancelled = False
+
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
 
         speed = 0.2  # m/s
         duration = distance_m / speed
         self.mobility.send_cmd_vel(linear_x=speed, duration=duration)
-        time.sleep(duration)
+
+        stop_at = time.time() + duration
+        while True:
+            remaining = stop_at - time.time()
+            if not remaining > 0:
+                break
+            if self._cancelled:
+                self.mobility.send_cmd_vel(linear_x=0.0)
+                return "Move cancelled", SkillResult.CANCELLED
+            time.sleep(min(0.05, remaining))
 
         return f"Moved forward {distance_m} m", SkillResult.SUCCESS
+
+    def cancel(self):
+        self._cancelled = True
+        return "Move cancelled"
 </pre>
     </td>
   </tr>
@@ -186,18 +210,16 @@ An agent consists of:
 
 ### Specificities of multimodal agents
 
-Multimodal agents harnesses have different constraints than purely digital agents: they need to **observe continuously**, run at a **high frequency** to react, and to be able to **interrupt** a running skill when the world has changed.
+Multimodal agent harnesses have different constraints than purely digital agents: they need to **observe continuously**, run at a **high frequency** to react, and to be able to **interrupt** a running skill when the world has changed.
 
 You can use Innate's harness or bring your own.
-
-Learn more about multimodal agents [here (TBD)]().
 
 ### Agent definitions
 
 You can find agents in two different directories:
 
 - **[`workspace/innate_agents/`](workspace/innate_agents/)** — Built-in agents shipped with Innate OS.
-- **[`workspace/custom_agents/`](workspace/custom_agents/)** — Your local agents. Gitignored and created automatically.
+- **[`workspace/custom_agents/`](workspace/custom_agents/)** — Your local agents. Gitignored and yours to play with.
 
 Here is an example of a simple agent to navigate:
 
@@ -239,7 +261,7 @@ Use the [simulator](#simulator) to test custom agents and custom harnesses befor
 Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
 
 ```bash
-./innate setup
+./innate sim setup
 ./innate sim up
 ```
 
