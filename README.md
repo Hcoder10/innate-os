@@ -55,15 +55,17 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 
 ## Skills
 
-Skills are the core unit of action on MARS. A skill can be digital, like calling a tool or service, or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
+Skills are the core unit of action on MARS. 
 
-<table>
-  <tr>
-    <td width="33%" valign="top"><strong>Execute manually</strong><br>Run skills from the <code>innate</code> CLI.</td>
-    <td width="33%" valign="top"><strong>Operate from apps</strong><br>Trigger skills through the web app or Innate mobile apps.</td>
-    <td width="33%" valign="top"><strong>Run autonomously</strong><br>Let agents select and interrupt skills as the world changes.</td>
-  </tr>
-</table>
+A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
+
+
+
+- **Execute manually** — Run skills from the `innate` CLI.
+- **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
+- **Run autonomously** — Let agents select and interrupt skills as the world changes.
+
+On the robot, skills can be called through the CLI:
 
 ```bash
 innate skill list
