@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD033 -->
+<!-- markdownlint-disable MD033 MD046 -->
 <div align="center">
 
 <p>
@@ -59,12 +59,9 @@ Skills are the core unit of action on MARS.
 
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
-
-
 - **Execute manually** — Run skills from the `innate` CLI.
 - **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
 - **Run autonomously** — Let agents select and interrupt skills as the world changes.
-
 
 ### Running a skill
 
@@ -91,10 +88,12 @@ local/my-skill      # local custom skill
 
 ### Skill definition
 
-A minimal replay skill, saved as `workspace/custom_skills/greet/metadata.json`:
-
-```json
-{
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Replay skill</strong> — replay a recorded motion file.<br>
+      Saved as <code>workspace/custom_skills/greet/metadata.json</code>:
+      <pre lang="json">{
     "name": "greet",
     "type": "replay",
     "guidelines": "Greet the user with a friendly arm wave.",
@@ -110,8 +109,41 @@ A minimal replay skill, saved as `workspace/custom_skills/greet/metadata.json`:
         "start_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "end_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
-}
-```
+}</pre>
+    </td>
+    <td width="50%" valign="top">
+      <strong>Code skill</strong> — call the mobility interface to move forward.<br>
+      Saved as <code>workspace/custom_skills/move_forward.py</code>:
+      <pre lang="python">from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+import time
+
+
+class MoveForward(Skill):
+    """Move the robot forward by a given distance."""
+
+    mobility = Interface(InterfaceType.MOBILITY)
+
+    @property
+    def name(self):
+        return "move_forward"
+
+    def guidelines(self):
+        return "Move the robot forward by a given distance in meters."
+
+    def execute(self, distance_m: float = 0.5):
+        if self.mobility is None:
+            return "Mobility interface not available", SkillResult.FAILURE
+
+        speed = 0.2  # m/s
+        duration = distance_m / speed
+        self.mobility.send_cmd_vel(linear_x=speed, duration=duration)
+        time.sleep(duration)
+
+        return f"Moved forward {distance_m} m", SkillResult.SUCCESS
+</pre>
+    </td>
+  </tr>
+</table>
 
 ## Agents
 
