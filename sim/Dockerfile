@@ -58,6 +58,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         'setuptools==59.6.0' \
         'numpy<2' \
         h5py \
+        opencv-python-headless \
+        pyyaml \
         cartesia \
         einops \
         python-dotenv \
