@@ -121,7 +121,9 @@ def main():
         fits = "yes" if per_tick <= BUDGET_MS else "NO"
         print(f"{steps:>6} {med:>12.1f} {p90:>12.1f} {per_tick:>12.2f} {max_hz:>8.0f} {fits:>9}")
     print("\nNote: per_tick_ms = plan_med_ms / n_action_steps (one denoise feeds the action queue).")
-    print("This is the CPU/torch reference; the TensorRT engine (DP._unet_forward) is the path to the Jetson budget.")
+    print("      per_tick is the AMORTIZED cost and only holds if replanning runs asynchronously;")
+    print("      synchronously (current select_action), plan_med_ms is a hard stall every n_action_steps ticks.")
+    print("This is the torch-eager reference (no TensorRT); a TRT engine at DP._unet_forward is the path to budget.")
 
 
 if __name__ == "__main__":
