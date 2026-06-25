@@ -3,15 +3,12 @@ import json
 import os
 import threading
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from src.agent.agent_websocket_bridge import run_agent_async
-from src.routes.chat_api import router as chat_api_router
 from src.routes.config_api import router as config_api_router
 
 # Import the new video & reset endpoints router
@@ -24,6 +21,7 @@ from src.runtime_logging import (
 )
 from src.shared_queues import SharedQueues
 from src.simulation.simulation_node import SimulationNode
+from src.webrtc.webrtc_server import start_webrtc_server
 
 # Load environment variables from .env file
 load_dotenv()
@@ -31,7 +29,6 @@ load_dotenv()
 # Define constants
 ROSBRIDGE_URI = os.getenv("ROSBRIDGE_URI", "ws://localhost:9090")
 SIMULATOR_PORT = int(os.getenv("SIMULATOR_PORT", "8000"))
-SENSITIVE_QUERY_PARAMS = {"innate_service_key", "service_key"}
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -44,31 +41,6 @@ def env_bool(name: str, default: bool = False) -> bool:
 app = FastAPI()
 
 
-def redact_sensitive_query_string(query_string: bytes) -> bytes:
-    if not query_string:
-        return query_string
-
-    query = query_string.decode("latin-1")
-    changed = False
-    redacted_pairs: list[tuple[str, str]] = []
-    for key, value in parse_qsl(query, keep_blank_values=True):
-        if key.lower() in SENSITIVE_QUERY_PARAMS and value:
-            redacted_pairs.append((key, "redacted"))
-            changed = True
-        else:
-            redacted_pairs.append((key, value))
-
-    if not changed:
-        return query_string
-    return urlencode(redacted_pairs).encode("latin-1")
-
-
-@app.middleware("http")
-async def redact_sensitive_query_params(request, call_next):
-    request.scope["query_string"] = redact_sensitive_query_string(request.scope.get("query_string", b""))
-    return await call_next(request)
-
-
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
@@ -79,25 +51,8 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def disable_frontend_cache(request, call_next):
-    response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-# Mount the React build directory
-frontend_build_path = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-app.mount(
-    "/static",
-    StaticFiles(directory=frontend_build_path, html=True),
-    name="static",
-)
-
 # Include the routers
 app.include_router(video_api_router)
-app.include_router(chat_api_router)
 app.include_router(config_api_router)
 
 # Initialize a placeholder on the application's state so that downstream
@@ -174,6 +129,12 @@ def main():
         help="Run without connecting to rosbridge/brain agent",
     )
     parser.add_argument(
+        "--no-webrtc",
+        action="store_true",
+        default=not env_bool("SIM_ENABLE_WEBRTC", True),
+        help="Disable the WebRTC camera streaming server (signaling rides rosbridge).",
+    )
+    parser.add_argument(
         "--initial-environment",
         type=str,
         default=None,
@@ -241,6 +202,13 @@ def main():
             SHARED_QUEUES,
             rosbridge_uri=ROSBRIDGE_URI,
         )
+
+        # WebRTC camera streaming. Signaling rides the rosbridge connection
+        # (above), so it only runs when the agent/rosbridge is enabled.
+        if args.no_webrtc:
+            print("[Main] --no-webrtc enabled. Skipping WebRTC camera server.")
+        else:
+            start_webrtc_server(SHARED_QUEUES)
 
     # 4) Start Uvicorn in another thread (unless --no-web)
     if not args.no_web:

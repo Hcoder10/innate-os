@@ -821,6 +821,7 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
       }
 
       renderer.dispose();
+      renderer.forceContextLoss();
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
@@ -830,7 +831,12 @@ export function Costmap2DView({ wsUrl, isMini = false }: Costmap2DViewProps) {
       sceneRef.current = null;
       rendererRef.current = null;
     };
-  }, [isMini, wsUrl]);
+    // Intentionally runs once on mount: this effect only touches refs and the
+    // stable setError/setStatus setters. isMini affects only JSX, and wsUrl is
+    // owned by the websocket effect below. Recreating the WebGLRenderer on every
+    // map-view toggle leaked GL contexts and eventually threw "Map renderer
+    // unavailable" once the browser's context limit was hit.
+  }, []);
 
   useEffect(() => {
     setError(null);

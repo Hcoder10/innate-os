@@ -224,6 +224,49 @@ export function publishRosbridgeTopic(
   });
 }
 
+export interface RosbridgePublisher {
+  publish: (topic: string, msg: Record<string, unknown>) => void;
+  close: () => void;
+}
+
+/**
+ * Opens a single persistent ROSBridge connection for repeated publishing.
+ * Unlike publishRosbridgeTopic (which opens/closes a socket per message),
+ * this keeps the socket open so high-rate publishing (e.g. teleop /cmd_vel)
+ * is cheap. Messages sent while the socket is still connecting are buffered
+ * and flushed on open.
+ */
+export function createRosbridgePublisher(wsUrl: string): RosbridgePublisher {
+  const ws = new WebSocket(wsUrl);
+  const pending: string[] = [];
+
+  ws.onopen = () => {
+    while (pending.length > 0) {
+      ws.send(pending.shift() as string);
+    }
+  };
+
+  const publish = (topic: string, msg: Record<string, unknown>) => {
+    const payload = JSON.stringify({ op: "publish", topic, msg });
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    } else if (ws.readyState === WebSocket.CONNECTING) {
+      pending.push(payload);
+    }
+  };
+
+  const close = () => {
+    pending.length = 0;
+    try {
+      ws.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  return { publish, close };
+}
+
 function parseRobotAgents(rawAgents: unknown): RobotAgent[] {
   return Array.isArray(rawAgents)
     ? rawAgents
@@ -540,6 +583,10 @@ function getAvailableSkillsFromTopicDirect(
           op: "subscribe",
           topic: "/brain/available_skills",
           type: "brain_messages/msg/AvailableSkills",
+          // /brain/available_skills is latched (transient_local). Request the
+          // same durability so we reliably receive the retained sample
+          // regardless of whether we subscribe before or after the publisher.
+          qos: { durability: "transient_local" },
         }),
       );
     };
@@ -571,6 +618,59 @@ function getAvailableSkillsFromTopicDirect(
       finish(() => reject(new Error(`Closed before /brain/available_skills was received from ${wsUrl}`)));
     };
   });
+}
+
+// Persistent subscription to the brain's backend status. Replaces the old
+// /stack_metrics HTTP poll. Returns an unsubscribe function.
+export function subscribeBrainBackendStatus(
+  wsUrl: string,
+  onStatus: (status: BrainBackendStatus) => void,
+): () => void {
+  const ws = new WebSocket(wsUrl);
+  let disposed = false;
+
+  ws.onopen = () => {
+    ws.send(
+      JSON.stringify({
+        op: "subscribe",
+        topic: "/brain/websocket_status",
+        type: "std_msgs/msg/String",
+        throttle_rate: 500,
+        queue_length: 1,
+      }),
+    );
+  };
+
+  ws.onmessage = (event) => {
+    let payload: { op?: string; topic?: string; msg?: { data?: string } };
+    try {
+      payload = JSON.parse(event.data as string);
+    } catch {
+      return;
+    }
+    if (payload.op !== "publish" || payload.topic !== "/brain/websocket_status") {
+      return;
+    }
+    try {
+      const status = JSON.parse(payload.msg?.data ?? "") as BrainBackendStatus;
+      if (!disposed) {
+        // The raw topic has no `updated_at`; the sim used to stamp it with its
+        // receive time when caching for /stack_metrics. Mirror that here so the
+        // connection-stability debounce (timestamp ?? updated_at) still works.
+        onStatus({ ...status, updated_at: Date.now() / 1000 });
+      }
+    } catch {
+      // Ignore malformed status payloads.
+    }
+  };
+
+  return () => {
+    disposed = true;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ op: "unsubscribe", topic: "/brain/websocket_status" }));
+    }
+    ws.close();
+  };
 }
 
 export async function getAvailableAgentsDirect(
@@ -674,8 +774,17 @@ export async function setBrainBackendConfigDirect(
   wsUrl: string,
   config: { websocket_uri?: string; service_key?: string },
 ): Promise<void> {
+  // Mirror the bridge: only include non-empty fields, so an empty value reads
+  // as "unchanged" to the brain rather than "clear this setting".
+  const payload: Record<string, string> = {};
+  if (config.websocket_uri) {
+    payload.websocket_uri = config.websocket_uri;
+  }
+  if (config.service_key) {
+    payload.service_key = config.service_key;
+  }
   await publishRosbridgeTopic(wsUrl, "/brain/backend_config", {
-    data: JSON.stringify(config),
+    data: JSON.stringify(payload),
   });
 }
 
@@ -698,6 +807,10 @@ export async function resetBrainDirect(
   await callRosbridgeService(wsUrl, "/brain/reset_brain", {
     memory_state: memoryState ?? "",
   });
+}
+
+export async function resetPositionDirect(wsUrl: string): Promise<void> {
+  await callRosbridgeService(wsUrl, "/sim/reset_position", {});
 }
 
 export async function stopAgentDirect(wsUrl: string): Promise<void> {
