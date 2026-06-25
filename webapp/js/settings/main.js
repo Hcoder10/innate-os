@@ -282,9 +282,15 @@ function buildVolumeSection() {
     cur.textContent = String(v);
   };
 
+  // Disabled until connected, and while a save is in flight so a mid-save
+  // release can't be silently dropped (nor re-enabled by a state change).
+  const refreshEnabled = () => {
+    slider.disabled = ros.state !== "connected" || saving;
+  };
+
   ros.onStateChange((state) => {
     const connected = state === "connected";
-    slider.disabled = !connected;
+    refreshEnabled();
     if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
     else if (status.classList.contains("muted")) setLiveStatus("", "muted");
   });
@@ -315,6 +321,7 @@ function buildVolumeSection() {
     if (next === robotVolume || saving) return;
     const previous = robotVolume;
     saving = true;
+    refreshEnabled();
     setLiveStatus("Saving…", "muted");
     try {
       /** @type {{ success: boolean, message?: string }} */
@@ -323,10 +330,14 @@ function buildVolumeSection() {
       robotVolume = next;
       setLiveStatus("Volume set.", "ok");
     } catch {
+      // Re-seed robotVolume too: a /robot/info update may have moved it during
+      // the save, and on failure the robot's volume is still `previous`.
+      robotVolume = previous;
       renderValue(previous);
       setLiveStatus("Couldn't set volume. Try again.", "err");
     } finally {
       saving = false;
+      refreshEnabled();
     }
   });
 
