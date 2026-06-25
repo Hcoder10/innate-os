@@ -251,6 +251,33 @@ function levelLabel(/** @type {number} */ pos) {
   return "Max";
 }
 
+const VOLUME_POS_KEY = "innate.speakerVolumePos";
+
+// Persist the operator's exact slider position across page loads. position→percent
+// is many-to-one (the audible band is compressed), so re-deriving the thumb from
+// the robot's percent alone lands on the *canonical* position — a step or two off
+// from where they left it, which made the thumb "pop" on every revisit. Restoring
+// the saved position keeps it put (the percent-space guard below leaves it alone
+// whenever it still maps to the robot's live value).
+function loadSavedPosition() {
+  try {
+    const raw = localStorage.getItem(VOLUME_POS_KEY);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? clampPercent(n) : null;
+  } catch {
+    return null; // storage unavailable (e.g. private mode)
+  }
+}
+
+function saveSavedPosition(/** @type {number} */ pos) {
+  try {
+    localStorage.setItem(VOLUME_POS_KEY, String(clampPercent(pos)));
+  } catch {
+    // Storage unavailable; a revisit just falls back to the robot's value.
+  }
+}
+
 /**
  * Live speaker-volume control. Unlike the yaml knobs below, this is a rosbridge
  * service call that applies immediately and persists on the robot — no restart.
@@ -279,7 +306,10 @@ function buildVolumeSection() {
   const ctl = document.createElement("div");
   ctl.className = "set-ctl";
 
-  const startPos = percentToPosition(DEFAULT_VOLUME);
+  // Restore the operator's last position so revisits are stable; fall back to the
+  // robot's default until /robot/info confirms the live value.
+  const savedPos = loadSavedPosition();
+  const startPos = savedPos ?? percentToPosition(DEFAULT_VOLUME);
 
   const slider = document.createElement("input");
   slider.type = "range";
@@ -303,7 +333,9 @@ function buildVolumeSection() {
   section.appendChild(row);
 
   // Last raw percent known to be applied on the robot; the revert target on failure.
-  let robotPercent = DEFAULT_VOLUME;
+  // Seeded from the restored position so the first /robot/info echo leaves the
+  // thumb untouched when it already matches the live value.
+  let robotPercent = positionToPercent(startPos);
   let dragging = false;
   let saving = false;
 
@@ -345,7 +377,9 @@ function buildVolumeSection() {
     // re-deriving it would jitter the thumb by a step (inverse-rounding).
     if (dragging || saving) return;
     if (positionToPercent(Number(slider.value)) !== robotPercent) {
-      renderPosition(percentToPosition(robotPercent));
+      const pos = percentToPosition(robotPercent);
+      renderPosition(pos);
+      saveSavedPosition(pos);
     }
   });
 
@@ -369,6 +403,7 @@ function buildVolumeSection() {
       const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: nextPercent });
       if (!res.success) throw new Error(res.message || "Failed to set volume.");
       robotPercent = nextPercent;
+      saveSavedPosition(pos);
       setLiveStatus("Volume set.", "ok");
     } catch {
       // Re-seed robotPercent too: a /robot/info update may have moved it during
