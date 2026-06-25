@@ -24,6 +24,30 @@ const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 const servedHost = location.hostname;
 if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
   ros.connect(servedHost);
+  // rosClient retries on its own after a drop that follows a successful open, but
+  // a first connect that never opens fails fast with no retry — which would strand
+  // the volume control with no in-page recovery (this page has no connect card,
+  // unlike the mountPage ones). So retry the initial-connect-failed case here,
+  // debounced so a refused connection can't spin, and only until we've connected
+  // once: after that, drops self-heal via rosClient and an explicit disconnect
+  // (header badge) is respected.
+  let everConnected = false;
+  /** @type {number | null} */
+  let connectRetry = null;
+  ros.onStateChange((state) => {
+    if (state === "connected") everConnected = true;
+    if (state === "disconnected" && !everConnected) {
+      if (connectRetry === null) {
+        connectRetry = setTimeout(() => {
+          connectRetry = null;
+          ros.connect(servedHost);
+        }, 5000);
+      }
+    } else if (connectRetry !== null) {
+      clearTimeout(connectRetry);
+      connectRetry = null;
+    }
+  });
 }
 
 /**
