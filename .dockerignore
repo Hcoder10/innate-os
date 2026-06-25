@@ -5,9 +5,9 @@
 
 !sim/
 !sim/Dockerfile
-!sim/apt-dependencies.txt
 !ros2_ws/
 !ros2_ws/apt-dependencies.common.txt
+!ros2_ws/apt-dependencies.sim.txt
 !scripts/
 !scripts/update/
 !scripts/update/setup_repos.sh

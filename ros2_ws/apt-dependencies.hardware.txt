@@ -1,5 +1,8 @@
-# Hardware-specific dependencies for innate-os (NVIDIA Jetson)
-# These are only required when running on physical robot hardware
+# Physical-robot-only dependencies for innate-os.
+# Installed only on the robot (post_update.sh installs common + hardware); the
+# simulation image uses common + apt-dependencies.sim.txt instead.
+# Split into NVIDIA/Jetson packages and robot-only ROS/system packages that the
+# sim build does not need (the sim stack uses lighter equivalents or omits them).
 # Install with: xargs -a apt-dependencies.hardware.txt sudo apt-get install -y
 
 # NVIDIA VPI (for stereo depth estimation in mars_cam)
@@ -21,3 +24,57 @@ libcudnn9-cuda-12
 tensorrt
 python3-libnvinfer
 nvidia-l4t-dla-compiler
+
+# -----------------------------------------------------------------------------
+# Robot-only ROS 2 packages (sim builds lighter equivalents or omits these).
+# CI installs `common` alone and resolves any of these it needs to build via
+# `rosdep install --from-paths src` (they are declared in package.xml).
+# -----------------------------------------------------------------------------
+
+# Navigation / SLAM full stack (sim assembles a trimmed nav stack from the
+# nav2 sub-packages in apt-dependencies.sim.txt)
+ros-humble-navigation2
+ros-humble-nav2-bringup
+ros-humble-nav2-amcl
+ros-humble-nav2-map-server
+ros-humble-nav2-velocity-smoother
+ros-humble-spatio-temporal-voxel-layer
+ros-humble-slam-toolbox-humble-lifecycle
+
+# Manipulation (sim pulls only ros-humble-moveit-msgs)
+ros-humble-moveit
+ros-humble-moveit-ros-move-group
+
+# Real-sensor perception, lidar, point cloud
+ros-humble-rplidar-ros
+ros-humble-pcl-ros
+ros-humble-vision-msgs
+ros-humble-image-pipeline
+ros-humble-image-transport-plugins
+ros-humble-depth-image-proc
+ros-humble-camera-calibration
+
+# State publishers / lifecycle helpers
+ros-humble-joint-state-publisher
+ros-humble-joint-state-publisher-gui
+ros-humble-bondpy
+
+# Default Fast-RTPS middleware (sim/robot run rmw-zenoh; kept for fallback)
+ros-humble-fastrtps
+
+# -----------------------------------------------------------------------------
+# Robot-only system packages
+# -----------------------------------------------------------------------------
+
+# USB / serial / audio hardware
+libudev-dev
+libusb-1.0-0-dev
+portaudio19-dev
+python3-serial
+python3-pygame
+
+# On-robot convenience tools
+htop
+btop
+nano
+vim

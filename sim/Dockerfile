@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# 1. Install base packages needed before apt-dependencies.txt.
+# 1. Install base packages needed before the apt dependency lists.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -33,14 +33,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY scripts/update/setup_repos.sh /tmp/setup_repos.sh
 RUN bash /tmp/setup_repos.sh && rm /tmp/setup_repos.sh
 
-# 3. Copy and install simulation apt dependencies.
-COPY sim/apt-dependencies.txt /tmp/apt-dependencies.txt
+# 3. Copy and install simulation apt dependencies (shared common + sim overlay).
+COPY ros2_ws/apt-dependencies.common.txt ros2_ws/apt-dependencies.sim.txt /tmp/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
-    grep -v '^#' /tmp/apt-dependencies.txt | grep -v '^$' | \
+    cat /tmp/apt-dependencies.common.txt /tmp/apt-dependencies.sim.txt | \
+        grep -v '^#' | grep -v '^$' | \
         xargs apt-get install -y --no-install-recommends && \
-    rm /tmp/apt-dependencies.txt
+    rm /tmp/apt-dependencies.common.txt /tmp/apt-dependencies.sim.txt
 
 # 4. Install uv for fast, cached Python package installation.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
