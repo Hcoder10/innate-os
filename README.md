@@ -39,15 +39,15 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 <table>
   <tr>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" width="100%"><br>
+      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" width="100%" height="400" style="object-fit: cover;"><br>
       <sub>Web app</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" width="100%"><br>
+      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" width="100%" height="400" style="object-fit: cover;"><br>
       <sub>Mobile app</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" width="100%"><br>
+      <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" width="100%" height="400" style="object-fit: cover;"><br>
       <sub>Simulator</sub>
     </td>
   </tr>
