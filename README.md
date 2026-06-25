@@ -61,7 +61,7 @@ With the Innate web app, you can control the robot in real time. Use the gamepad
 
 <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app" height="300">
 
-It is available at https://<robot-address> which can either be its IP or hostname.
+It is available at https://\<robot-address\> which can either be its IP or hostname.
 
 ### Mobile app
 
