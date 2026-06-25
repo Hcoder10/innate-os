@@ -4,6 +4,14 @@
 
 !ros2_ws/
 !ros2_ws/**
+
+# ...but never local colcon outputs. Dockerfile.test only COPYs ros2_ws/src so
+# there's no CMakeCache collision, but re-including these would still upload a
+# local dev build (often multi-GB) into the build context for nothing.
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
 !config/
 !config/**
 !workspace/
