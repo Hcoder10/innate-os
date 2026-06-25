@@ -24,10 +24,8 @@ from brain_client.skills.hot_reload_watcher import HotReloadWatcher
 from brain_client.skills.registration import AVAILABLE_SKILLS_QOS, registry_from_skills_msg
 from brain_client.skills.registry import SkillRegistry
 
-# A full reload reloads ALL on-disk skills/agents, so one that just ran already
-# reflects requests arriving right after it. Collapse /brain/reload calls within
-# this window so a burst can't each block the executor for the ~30s PEAS reload
-# and overflow the service queue.
+# Collapse /brain/reload bursts: a full reload reloads all on-disk state, so one
+# that just ran already covers requests arriving within this window.
 _RELOAD_COALESCE_SEC = 2.0
 
 
@@ -132,7 +130,7 @@ class ReloadCoordinator:
     def perform_full(self) -> None:
         now = time.monotonic()
         if now - self._last_full_reload < _RELOAD_COALESCE_SEC:
-            self._logger.info("Skipping /brain/reload — a full reload just completed")
+            self._logger.info("Skipping /brain/reload — a full reload ran recently (coalescing)")
             return
         try:
             self._lifecycle.deactivate_brain()

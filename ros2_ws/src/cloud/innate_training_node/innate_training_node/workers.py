@@ -334,17 +334,14 @@ def do_download(
         except Exception as e:
             run_dir = os.path.join(dest_dir, str(run_id))
             if not glob.glob(os.path.join(run_dir, "*_step_*.pth")):
-                # No model checkpoint => training failed; this run can never be
-                # activated. Don't re-arm the download — retrying re-downloads and
-                # re-triggers brain reloads forever. The dataset + metadata stay on
-                # disk so the skill can be re-trained.
+                # No checkpoint => training failed; don't retry (it would loop
+                # re-downloading + reloading). Dataset stays for re-training.
                 _ros.warning(
                     f"Run {sid}/{run_id} has no checkpoint (training failed) — "
-                    f"not retrying activation; dataset left in place"
+                    f"not retrying activation; dataset left in place. Error: {e}"
                 )
             else:
-                # Checkpoint present but activation hit a transient error — clear
-                # the download mark so a later poll retries.
+                # Checkpoint present — transient error; retry on a later poll.
                 _ros.error(f"Download OK but activation failed for {sid}/{run_id}: {e}")
                 store.unmark_download(skill_id, run_id)
 
