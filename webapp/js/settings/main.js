@@ -19,10 +19,10 @@ initShell("settings", "../");
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
 // The yaml knobs below talk to the proxy, but the speaker-volume control is a
-// live rosbridge service call, so this page needs the shared socket. Mirror
-// pageMount's bootstrap: reach the serving host, except on laptop dev.
+// live rosbridge service call, so this page needs the shared socket: connect to
+// the serving host (the robot).
 const servedHost = location.hostname;
-if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
+if (servedHost) {
   ros.connect(servedHost);
   // rosClient retries on its own after a drop that follows a successful open, but
   // a first connect that never opens fails fast with no retry — which would strand
