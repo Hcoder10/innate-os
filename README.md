@@ -65,6 +65,9 @@ A skill can be digital, like calling a tool, a service or another agent; or phys
 - **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
 - **Run autonomously** — Let agents select and interrupt skills as the world changes.
 
+
+### Running a skill
+
 On the robot, skills can be called through the CLI:
 
 ```bash
@@ -74,13 +77,10 @@ innate skill run innate-os/wave
 innate skill run local/my-skill @x=1 @name=alice
 ```
 
-<table>
-  <tr>
-    <td width="33%" valign="top"><strong><a href="workspace/innate_skills/">workspace/innate_skills/</a></strong><br>Built-in skills shipped with Innate OS.</td>
-    <td width="33%" valign="top"><strong><code>workspace/custom_skills/</code></strong><br>Your local, recorded, or trained skills. Gitignored and created automatically.</td>
-    <td width="33%" valign="top"><strong><code>~/skills/</code></strong><br>Optional personal skills directory, scanned in place when it exists.</td>
-  </tr>
-</table>
+
+
+- **Built-in skills** — Located in `workspace/innate_skills/`.
+- **Your custom skills** — Stored in `workspace/custom_skills/` (gitignored).
 
 Skill IDs show where a skill came from:
 
@@ -89,27 +89,27 @@ innate-os/wave      # built-in skill
 local/my-skill      # local custom skill
 ```
 
-Physical skills are recorded under `workspace/custom_skills/`. The Training Manager can help with skills, datasets, training runs, logs, and downloads.
-
 ## Agents
 
-Agents allow Innate robots to run autonomously. They make the robot think in a high-frequency loop using a multimodal model, for example a VLM that is constantly observing the world.
+Agents allow Innate robots to run autonomously following your instructions.
 
-An agent is usually a composition of:
+They make the robot think in a high-frequency loop using a multimodal model, for example a VLM that is constantly observing the world.
 
-- A set of skills the robot is allowed to use
-- A system prompt that defines the robot's behavior
-- A harness that connects the model to observations, memory, tools, and robot actions
+An agent consists of:
 
-You can use Innate's harness or bring your own. Multimodal robot agents have different constraints than purely digital agents: they need to observe continuously, run at a high enough frequency to react, and interrupt a running skill when the world has changed.
+- A **set of skills** the robot is allowed to use
+- A **system prompt** that defines the robot's behavior
+- A **harness** that connects the model to observations, memory, tools, and robot actions
 
-<table>
-  <tr>
-    <td width="33%" valign="top"><strong><a href="workspace/innate_agents/">workspace/innate_agents/</a></strong><br>Built-in agents shipped with Innate OS.</td>
-    <td width="33%" valign="top"><strong><code>workspace/custom_agents/</code></strong><br>Your local agents. Gitignored and created automatically.</td>
-    <td width="33%" valign="top"><strong><code>~/agents/</code></strong><br>Optional personal agents directory, scanned in place when it exists.</td>
-  </tr>
-</table>
+You can use Innate's harness or bring your own.
+
+### The Innate Harness
+
+Multimodal robot agents have different constraints than purely digital agents: they need to observe continuously, run at a high enough frequency to react, and interrupt a running skill when the world has changed.
+
+- **[`workspace/innate_agents/`](workspace/innate_agents/)** — Built-in agents shipped with Innate OS.
+- **[`workspace/custom_agents/`](workspace/custom_agents/)** — Your local agents. Gitignored and created automatically.
+- **[`~/agents/`](~/agents/)** — Optional personal agents directory, scanned in place when it exists.
 
 Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
 
