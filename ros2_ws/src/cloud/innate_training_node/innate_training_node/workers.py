@@ -10,6 +10,7 @@ Downloads automatically activate the run (set checkpoint + stats in
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import subprocess
@@ -331,11 +332,18 @@ def do_download(
                 f"Activated run {sid}/{run_id}: checkpoint={result['checkpoint']} stats_file={result['stats_file']}"
             )
         except Exception as e:
-            # Activation failed: files are on disk but execution.checkpoint was
-            # never written, so the skill is un-runnable and the startup sweep
-            # can't recover it. Clear the download mark so a later poll retries.
-            _ros.error(f"Download OK but activation failed for {sid}/{run_id}: {e}")
-            store.unmark_download(skill_id, run_id)
+            run_dir = os.path.join(dest_dir, str(run_id))
+            if not glob.glob(os.path.join(run_dir, "*_step_*.pth")):
+                # No checkpoint => training failed; don't retry (it would loop
+                # re-downloading + reloading). Dataset stays for re-training.
+                _ros.warning(
+                    f"Run {sid}/{run_id} has no checkpoint (training failed) — "
+                    f"not retrying activation; dataset left in place. Error: {e}"
+                )
+            else:
+                # Checkpoint present — transient error; retry on a later poll.
+                _ros.error(f"Download OK but activation failed for {sid}/{run_id}: {e}")
+                store.unmark_download(skill_id, run_id)
 
         # Pre-build the TensorRT inference engine so the first execution is fast
         # (the engine is otherwise built lazily on first run, costing ~1 min).
