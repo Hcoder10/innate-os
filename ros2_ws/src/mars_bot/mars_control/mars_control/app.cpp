@@ -940,7 +940,23 @@ class AppControl : public rclcpp::Node {
      * audible rather than ~-70dB (INN-467).
      */
     void apply_alsa_volume(int percent) {
-        std::string cmd = "amixer -M sset Master " + std::to_string(percent) + "% 2>/dev/null";
+        // Lift the low end: across roughly the lower half of amixer's range the
+        // speaker is inaudible on this hardware (~25% silent, ~60% barely audible)
+        // even with -M, so remap the stored 0-100 onto an audible
+        // [AUDIBLE_FLOOR, 100] band before handing it to amixer (which still
+        // applies its -M perceptual curve on top). 0 stays muted; the stored
+        // volume_percent (and /robot/info) keep the user-facing value. Retune
+        // AUDIBLE_FLOOR if the bottom of the slider still feels off.
+        constexpr int AUDIBLE_FLOOR = 55;
+        int mixer_percent;
+        if (percent <= 0) {
+            mixer_percent = 0;
+        } else if (percent >= 100) {
+            mixer_percent = 100;
+        } else {
+            mixer_percent = AUDIBLE_FLOOR + (100 - AUDIBLE_FLOOR) * percent / 100;
+        }
+        std::string cmd = "amixer -M sset Master " + std::to_string(mixer_percent) + "% 2>/dev/null";
         int ret = std::system(cmd.c_str());
         if (ret != 0) {
             RCLCPP_WARN(this->get_logger(), "amixer sset Master failed (rc=%d)", ret);
