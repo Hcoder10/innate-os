@@ -8,11 +8,12 @@ teleop) without serving the app from the operator's laptop.
 
 The read-only episode/run media endpoints live in media_routes.py and the
 settings read/write endpoints in settings_routes.py; this module is the server
-itself (TLS, static, dispatch, the /ws relay) plus the plain-HTTP media
-listener. A self-signed certificate is generated on first run (10 years) under
-~/.innate-webapp-tls/ via openssl.
+itself (TLS, static, dispatch, the /ws relay). It serves the same app on both a
+TLS port (HTTPS) and a cleartext port (HTTP) — the frontend redirects http ->
+https for the secure-origin features (WebSerial). A self-signed certificate is
+generated on first run (10 years) under ~/.innate-webapp-tls/ via openssl.
 
-Run:        python3 proxy/https_server.py        # https://<robot>:4443
+Run:        python3 proxy/https_server.py        # https://<robot>:443 + http://<robot>:80
 Persist:    launched on boot in the `console-webapp` tmux window
             (innate-os/scripts/launch_ros_in_tmux.sh).
 """
@@ -44,15 +45,25 @@ from media_routes import (
 )
 from settings_routes import settings_get_response, settings_ws
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 4443
-# Plain-HTTP listener for the episode media routes only. Native clients (the
-# mobile app) can't accept the self-signed TLS cert that the browser clicks
-# through, so the same /episode* bytes are also served cleartext on the LAN.
-# 0 disables it (env override for locked-down deployments).
-HTTP_PORT = int(os.environ.get("INNATE_HTTP_PORT", "4080"))
+HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
+# Cleartext HTTP listener serving the SAME app as the TLS front door, so the site
+# is reachable over http://<robot> too; the frontend redirects http -> https for
+# the secure-origin features (WebSerial). Native clients (the mobile app) that
+# can't accept the self-signed cert also reach /episode* here. 0 disables it.
+# NOTE: 80/443 are privileged — bind needs root or cap_net_bind_service.
+HTTP_PORT = int(os.environ.get("INNATE_HTTP_PORT", "80"))
 ROOT = Path(__file__).resolve().parent.parent
 CERT_DIR = Path.home() / ".innate-webapp-tls"
 ROSBRIDGE_URL = "ws://127.0.0.1:9090"
+
+# Sticky https upgrade (trust-on-first-use). We can't hard-redirect every http
+# hit to https: the cert is self-signed, so a first-visit redirect drops the user
+# on a bare cert warning. Instead, once a browser has loaded over https (and thus
+# accepted the cert) we set this cookie there, and from then on bounce its
+# cleartext hits to https. Not Secure (must be sent over http to be seen there);
+# HttpOnly + Lax since only the server reads it.
+HTTPS_COOKIE = "https_seen"
+_COOKIE_SET = f"{HTTPS_COOKIE}=1; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly"
 
 
 def _quiet_benign_disconnects() -> None:
@@ -163,7 +174,7 @@ def static_response(path: str) -> Response:
     return Response(200, "OK", headers, body)
 
 
-async def process_request(connection, request):
+async def _dispatch_request(connection, request):
     if request.path == "/ws":
         return None  # proceed with the WebSocket handshake
     split = urlsplit(request.path)
@@ -190,25 +201,38 @@ async def process_request(connection, request):
     return await asyncio.to_thread(static_response, request.path)
 
 
-async def process_media_request(connection, request):
-    """Plain-HTTP listener: ONLY the read-only episode media routes, for native
-    clients that won't accept the self-signed TLS cert. No /ws, no app shell, no
-    run logs — those stay TLS-only on the front door."""
-    split = urlsplit(request.path)
-    qs = parse_qs(split.query)
-    if split.path == "/episode":
-        return await asyncio.to_thread(episode_response, request, qs)
-    if split.path == "/episode/joints":
-        return await asyncio.to_thread(joints_response, qs)
-    if split.path == "/episode/thumb":
-        return await thumb_response(qs)
-    return _plain(404, "Not Found", "not found")
+def _is_secure(connection) -> bool:
+    """True if this connection arrived over TLS (the https listener)."""
+    transport = getattr(connection, "transport", None)
+    return bool(transport and transport.get_extra_info("ssl_object"))
 
 
-async def _reject_ws(connection):
-    """The media listener never upgrades to WebSocket (process_media_request
-    always returns a Response), but serve() needs a handler — close politely."""
-    await connection.close()
+def _has_https_cookie(request) -> bool:
+    """The browser has previously loaded over https (cookie set there), so it has
+    accepted the self-signed cert and we can safely send it back to https."""
+    return any(part.strip() == f"{HTTPS_COOKIE}=1" for part in request.headers.get("Cookie", "").split(";"))
+
+
+def _redirect_to_https(request):
+    host = request.headers.get("Host", "").rsplit(":", 1)[0] or "0.0.0.0"
+    netloc = host if HTTPS_PORT == 443 else f"{host}:{HTTPS_PORT}"
+    location = f"https://{netloc}{request.path}"
+    return Response(307, "Temporary Redirect", Headers({"Location": location, "Content-Length": "0"}), b"")
+
+
+async def process_request(connection, request):
+    secure = _is_secure(connection)
+    is_ws = request.headers.get("Upgrade", "").lower() == "websocket"
+    # Sticky upgrade: bounce a cleartext hit to https once the browser is known to
+    # have accepted the cert. Never redirect a WebSocket upgrade (clients don't
+    # follow 3xx) — but if the cookie is set the page is already https anyway.
+    if not secure and not is_ws and _has_https_cookie(request):
+        return _redirect_to_https(request)
+    response = await _dispatch_request(connection, request)
+    # Remember https-capable browsers so the redirect above can fire next time.
+    if secure and response is not None:
+        response.headers["Set-Cookie"] = _COOKIE_SET
+    return response
 
 
 async def relay(source, sink):
@@ -252,27 +276,15 @@ async def main():
     ctx.load_cert_chain(cert, key)
     async with contextlib.AsyncExitStack() as stack:
         await stack.enter_async_context(
-            serve(
-                ws_handler,
-                "0.0.0.0",
-                PORT,
-                ssl=ctx,
-                process_request=process_request,
-                max_size=None,
-            )
+            serve(ws_handler, "0.0.0.0", HTTPS_PORT, ssl=ctx, process_request=process_request, max_size=None)
         )
-        print(f"https front door on https://0.0.0.0:{PORT} (app + /ws -> {ROSBRIDGE_URL})")
+        print(f"https front door on https://0.0.0.0:{HTTPS_PORT} (app + /ws -> {ROSBRIDGE_URL})")
         if HTTP_PORT:
+            # Same app over cleartext; the frontend redirects browsers to https.
             await stack.enter_async_context(
-                serve(
-                    _reject_ws,
-                    "0.0.0.0",
-                    HTTP_PORT,
-                    process_request=process_media_request,
-                    max_size=None,
-                )
+                serve(ws_handler, "0.0.0.0", HTTP_PORT, process_request=process_request, max_size=None)
             )
-            print(f"http media listener on http://0.0.0.0:{HTTP_PORT} (/episode* only)")
+            print(f"http listener on http://0.0.0.0:{HTTP_PORT} (full app; frontend redirects to https)")
         await asyncio.get_running_loop().create_future()
 
 
