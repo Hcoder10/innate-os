@@ -59,7 +59,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 
 With the Innate web app, you can control the robot in real time. Use the gamepad or keyboard interface to drive the base, move the arm, and trigger skills manually.
 
-![Innate web app](docs/assets/readme/screenshot-webapp.png)
+![Innate web app](docs/assets/readme/screenshot-webapp-card.png)
 
 It is available at https://<robot-address> which can either be its IP or hostname.
 
@@ -67,7 +67,7 @@ It is available at https://<robot-address> which can either be its IP or hostnam
 
 The Innate mobile app is available on both iOS and Android. It allows you to control the robot in real time, just like the web app, but with a more convenient interface.
 
-![Innate mobile app](docs/assets/readme/screenshot-mobile.png)
+![Innate mobile app](docs/assets/readme/screenshot-mobile-card.png)
 
 ## Skills
 
