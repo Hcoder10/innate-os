@@ -62,6 +62,7 @@ from runtime import (
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
+    sim_venv_python,
     start_cloud_agent,
     start_simulator,
     stop_simulator,
@@ -108,6 +109,7 @@ def cmd_up(
     *,
     watch: bool = SHOW_LIVE_DASHBOARD_DEFAULT,
     sim_visualization_override: bool | None = None,
+    offline: bool = False,
 ) -> None:
     started = False
     try:
@@ -122,16 +124,42 @@ def cmd_up(
 
         os_env_file = build_os_env(config)
         cloud_env_file = build_cloud_env(config)
-        sim_python = ensure_sim_setup(config)
+        if offline:
+            sim_python = sim_venv_python(config)
+            if not sim_python.exists():
+                raise StackError(
+                    f"--offline was given but the sim Python environment is missing at {sim_python}.\n"
+                    f"Re-run `{CLI_SIM} up` once with internet access to set it up first."
+                )
+            log("Offline: skipping sim setup and skill asset downloads.")
+        else:
+            try:
+                sim_python = ensure_sim_setup(config)
+                ensure_skill_assets(config)
+            except StackError as exc:
+                raise StackError(
+                    f"{exc}\n\n"
+                    "This step needs internet access. Re-run with a connection, or re-run "
+                    f"`{CLI_SIM} up --offline` to start with whatever is already installed."
+                ) from exc
         ensure_sim_data(config, allow_fetch=False)
-        ensure_skill_assets(config)
 
         started = True
-        start_cloud_agent(config, cloud_env_file)
-        ensure_os_container(config, os_env_file)
-        # Start the web frontend container; its build runs in the background while the
-        # simulator loads (we wait on it below).
-        ensure_frontend_container(config)
+        try:
+            start_cloud_agent(config, cloud_env_file)
+            ensure_os_container(config, os_env_file, offline=offline)
+            # Start the web frontend container; its build runs in the background while the
+            # simulator loads (we wait on it below).
+            ensure_frontend_container(config, offline=offline)
+        except StackError as exc:
+            if offline:
+                raise
+            raise StackError(
+                f"{exc}\n\n"
+                "This is a Docker pull/build that needs the network. If you have started the "
+                f"runtime successfully before and are now offline, re-run `{CLI_SIM} up --offline` "
+                "to reuse the existing images instead of pulling/building."
+            ) from exc
         start_simulator(config, sim_python)
 
         simulator_port = config_simulator_port(config)
@@ -310,6 +338,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Start the simulator with the native visualization window enabled for this run",
     )
+    up_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run without network: skip sim setup and asset downloads, and reuse already-built Docker images instead of pulling/building",
+    )
     sim_subparsers.add_parser(
         "down",
         prog=f"{CLI_SIM} down",
@@ -434,6 +467,7 @@ def main() -> int:
                 config,
                 watch=not args.once,
                 sim_visualization_override=True if args.vis else None,
+                offline=args.offline,
             )
         elif args.sim_command == "down":
             ensure_docker_available(command_hint=f"{CLI_SIM} down")

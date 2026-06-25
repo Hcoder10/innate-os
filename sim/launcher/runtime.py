@@ -217,11 +217,14 @@ def prebuild_frontend_image(config: dict[str, object]) -> None:
     )
 
 
-def ensure_frontend_container(config: dict[str, object]) -> None:
+def ensure_frontend_container(config: dict[str, object], *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     log("Starting simulator web frontend container...")
+    # Offline: reuse the already-built frontend image instead of rebuilding, which
+    # would re-resolve the node/caddy base images over the network.
+    build_flag = "--no-build" if offline else "--build"
     run_logged_with_heartbeat(
-        docker_compose_cmd("up", "-d", "--build", "frontend"),
+        docker_compose_cmd("up", "-d", build_flag, "frontend"),
         cwd=os_repo,
         env=frontend_compose_env(config),
         log_path=FRONTEND_LOG_PATH,
@@ -230,9 +233,14 @@ def ensure_frontend_container(config: dict[str, object]) -> None:
     )
 
 
+def sim_venv_python(config: dict[str, object]) -> Path:
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    return sim_repo / ".venv" / "bin" / "python"
+
+
 def ensure_sim_setup(config: dict[str, object]) -> Path:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    sim_python = sim_repo / ".venv" / "bin" / "python"
+    sim_python = sim_venv_python(config)
 
     ensure_dependency("python3")
 
@@ -309,7 +317,7 @@ def ensure_os_image_available(
     )
 
 
-def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
+def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
     os_image_auto = bool(config["os_image_auto"])
@@ -319,7 +327,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
         log("Innate OS dev container already running.")
     else:
         up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
-        if os_image:
+        if offline:
+            # Reuse the locally-built OS image; never pull or build, which would
+            # reach for the prebuilt tag and base images over the network.
+            os_image = ""
+            up_cmd.append("--no-build")
+        elif os_image:
             try:
                 ensure_os_image_available(
                     os_image,
