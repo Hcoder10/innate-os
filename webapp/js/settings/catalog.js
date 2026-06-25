@@ -16,7 +16,7 @@
 // code default AND from settings.yaml.template's comments (e.g. the launch sets
 // vertical_fov=80, send_depth=false, log_everything=true — overriding config.py;
 // both nodes' TTS voice default to the same env-backed id; temporal_ensemble_coeff
-// is 0.01 and consecutive_stops_to_complete is 30 per the loaded YAMLs). Add knobs
+// is 0.0 and consecutive_stops_to_complete is 30 per the loaded YAMLs). Add knobs
 // here to expose more; nothing else changes.
 // (Note: `inflation_layer` is intentionally omitted — its default differs per
 //  costmap (0.25/0.3/0.35), so there's no honest single default to show.)
@@ -103,7 +103,7 @@ export const CATALOG = [
       { path: ["manipulation_server", P, "replay_base_speed_scale"], label: "Replay base speed", default: 1.0, type: "float", unit: "×", doc: "Base-speed scale for replay (1.0 = recorded speed)" },
       { path: ["manipulation_server", P, "learned_base_speed_scale"], label: "Learned base speed", default: 1.0, type: "float", unit: "×", doc: "Base-speed scale for the learned policy (1.0 = full predicted speed)" },
       { path: ["manipulation_server", P, "n_action_steps"], label: "Replan horizon", default: 0, type: "int", doc: "Replan horizon; 0 = auto (min(40, chunk_size))" },
-      { path: ["manipulation_server", P, "temporal_ensemble_coeff"], label: "Action smoothing", default: 0.01, type: "float", doc: "ACT temporal-ensemble coefficient; 0 = disabled" },
+      { path: ["manipulation_server", P, "temporal_ensemble_coeff"], label: "Action smoothing", default: 0.0, type: "float", doc: "ACT temporal-ensemble coefficient; 0 = disabled (default). 0.01 is a good value to enable it" },
     ],
   },
   {
