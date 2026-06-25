@@ -20,6 +20,9 @@ export function maybeShowAppPromo(root) {
   const platform = detectMobilePlatform();
   if (!platform || storageGet(DISMISS_KEY)) return;
 
+  // Remember what had focus so we can hand it back when the dialog closes.
+  const prevFocus = document.activeElement;
+
   const backdrop = document.createElement("div");
   backdrop.className = "app-promo-backdrop";
   backdrop.addEventListener("click", dismiss); // tap outside the card to dismiss
@@ -29,6 +32,7 @@ export function maybeShowAppPromo(root) {
   card.setAttribute("role", "dialog");
   card.setAttribute("aria-modal", "true");
   card.setAttribute("aria-label", "Get the Innate app");
+  card.tabIndex = -1; // focusable target so the dialog can be announced on open
   card.addEventListener("click", (e) => e.stopPropagation());
 
   const close = document.createElement("button");
@@ -70,6 +74,8 @@ export function maybeShowAppPromo(root) {
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
   document.addEventListener("keydown", onKey);
+  // Move focus into the dialog so screen-reader / keyboard users land on it.
+  card.focus();
 
   /** @param {KeyboardEvent} e */
   function onKey(e) {
@@ -80,6 +86,8 @@ export function maybeShowAppPromo(root) {
     storageSet(DISMISS_KEY, "1");
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
+    // Hand focus back to wherever it was before the dialog opened.
+    if (prevFocus instanceof HTMLElement) prevFocus.focus();
   }
 }
 
@@ -90,11 +98,12 @@ export function maybeShowAppPromo(root) {
 export function detectMobilePlatform() {
   const ua = navigator.userAgent || "";
   if (/android/i.test(ua)) return "android";
-  // iPhone/iPod/iPad, plus iPadOS which reports itself as desktop Safari on a
-  // Mac — distinguished from an actual Mac by the touch screen.
+  // iPhone/iPod/iPad, plus iPadOS 13+ which reports itself as desktop Safari
+  // ("Macintosh" UA) — distinguished from an actual Mac by the touch screen.
+  // (navigator.platform would work too but is deprecated.)
   const isIOS =
     /iphone|ipad|ipod/i.test(ua) ||
-    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
   return isIOS ? "ios" : null;
 }
 

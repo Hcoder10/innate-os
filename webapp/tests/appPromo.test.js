@@ -15,9 +15,9 @@ function test(name, fn) {
 }
 
 /** Stub the bits of navigator the detector reads (the global is read-only in Node). */
-function setNavigator(ua, platform = "", maxTouchPoints = 0) {
+function setNavigator(ua, maxTouchPoints = 0) {
   Object.defineProperty(globalThis, "navigator", {
-    value: { userAgent: ua, platform, maxTouchPoints },
+    value: { userAgent: ua, maxTouchPoints },
     configurable: true,
   });
 }
@@ -40,13 +40,13 @@ test("Android phone → android", () => {
 });
 
 test("desktop Mac → null (no prompt)", () => {
-  setNavigator(MAC, "MacIntel", 0);
+  setNavigator(MAC, 0);
   assert.equal(detectMobilePlatform(), null);
 });
 
 test("iPadOS (Mac UA + touch) → ios", () => {
   // iPadOS Safari masquerades as a Mac; the touch screen is the tell.
-  setNavigator(MAC, "MacIntel", 5);
+  setNavigator(MAC, 5);
   assert.equal(detectMobilePlatform(), "ios");
 });
 
