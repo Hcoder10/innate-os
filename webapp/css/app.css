@@ -3659,11 +3659,33 @@ button {
   cursor: not-allowed;
 }
 
-/* In-flight: waiting for the brain's re-pulled active set to confirm. */
+/* In-flight: waiting for the brain's re-pulled active set to confirm. The thumb
+   sits centered as an amber spinner (indeterminate) until it settles to on/off. */
 .skill-active.pending {
-  opacity: 1;
   cursor: progress;
-  animation: chat-think-pulse 1s infinite ease-in-out;
+}
+
+.skill-active.pending .skill-active-rail {
+  background: var(--accent-faint);
+  border-color: var(--accent-dim);
+}
+
+.skill-active.pending .skill-active-thumb {
+  background: transparent;
+  border: 2px solid var(--accent-dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  transform: translateX(7px);
+  animation: skill-active-spin 0.7s linear infinite;
+}
+
+@keyframes skill-active-spin {
+  from {
+    transform: translateX(7px) rotate(0deg);
+  }
+  to {
+    transform: translateX(7px) rotate(360deg);
+  }
 }
 
 .skill-active-rail {
@@ -3895,6 +3917,23 @@ button {
 .chat-agent-select:focus {
   outline: none;
   border-color: rgb(64 31 251 / 60%);
+}
+
+/* Spins while a directive change is in flight (waiting on the brain). */
+.chat-agent-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-dim);
+  border-top-color: var(--accent);
+  animation: spin360 0.7s linear infinite;
+}
+
+@keyframes spin360 {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chat-reset-brain {

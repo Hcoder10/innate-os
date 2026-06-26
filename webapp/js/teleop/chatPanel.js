@@ -33,12 +33,16 @@ export function createChatPanel(dock, rosClient, agentState) {
   agentLabel.textContent = "agent";
   const agentSelect = document.createElement("select");
   agentSelect.className = "chat-agent-select mono";
+  const agentSpinner = document.createElement("span");
+  agentSpinner.className = "chat-agent-spinner";
+  agentSpinner.hidden = true;
+  agentSpinner.setAttribute("aria-label", "applying");
   const resetBrainBtn = document.createElement("button");
   resetBrainBtn.type = "button";
   resetBrainBtn.className = "chat-reset-brain";
   resetBrainBtn.title = "Reset the agent's brain / working memory";
   resetBrainBtn.textContent = "Reset";
-  agentBar.append(agentLabel, agentSelect, resetBrainBtn);
+  agentBar.append(agentLabel, agentSelect, agentSpinner, resetBrainBtn);
 
   const messages = document.createElement("div");
   messages.className = "chat-messages";
@@ -72,7 +76,18 @@ export function createChatPanel(dock, rosClient, agentState) {
   }
   const unsubAgents = agentState.subscribe(renderAgents);
 
-  agentSelect.addEventListener("change", () => agentState.setDirective(agentSelect.value));
+  agentSelect.addEventListener("change", async () => {
+    // Show the round-trip — setDirective waits for the brain's confirmation, so
+    // surface that wait rather than letting the native <select> fake instant.
+    agentSpinner.hidden = false;
+    agentSelect.disabled = true;
+    try {
+      await agentState.setDirective(agentSelect.value);
+    } finally {
+      agentSpinner.hidden = true;
+      agentSelect.disabled = false;
+    }
+  });
   resetBrainBtn.addEventListener("click", () => {
     if (!window.confirm("Reset the agent's brain? This clears its working memory.")) return;
     agentState.resetBrain().catch(() => {});
