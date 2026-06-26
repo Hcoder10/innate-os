@@ -132,7 +132,9 @@ tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp" "ros2 launch innate_con
 echo "Started console..."
 settle_after_launch
 tmux split-window -t "${TMUX_TARGET_PREFIX}:console-webapp" -h
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do python3 proxy/https_server.py; sleep 2; done" C-m
+# WEBAPP_SIM_CONTROLS surfaces the webapp's sim-only debug controls (Reset
+# Position + FPS/queue), which the robot deployment leaves off.
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do WEBAPP_SIM_CONTROLS=1 python3 proxy/https_server.py; sleep 2; done" C-m
 echo "Started webapp (https :443 + http :80)..."
 
 # Select the rosbridge-app window

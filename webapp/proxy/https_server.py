@@ -20,6 +20,7 @@ Persist:    launched on boot in the `console-webapp` tmux window
 
 import asyncio
 import contextlib
+import json
 import logging
 import mimetypes
 import os
@@ -53,6 +54,10 @@ HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
 # NOTE: 80/443 are privileged — bind needs root or cap_net_bind_service.
 HTTP_PORT = int(os.environ.get("INNATE_HTTP_PORT", "80"))
 ROOT = Path(__file__).resolve().parent.parent
+# The sim launch sets this so the webapp's sim-only debug controls (Reset
+# Position + FPS/queue) surface without editing the committed (robot-default)
+# config.json. Overlaid onto /config.json at request time.
+WEBAPP_SIM_CONTROLS = os.environ.get("WEBAPP_SIM_CONTROLS", "").strip().lower() in ("1", "true", "yes")
 CERT_DIR = Path.home() / ".innate-webapp-tls"
 ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 
@@ -174,9 +179,30 @@ def static_response(path: str) -> Response:
     return Response(200, "OK", headers, body)
 
 
+def config_response() -> Response:
+    """Serve config.json with env-driven feature flags overlaid, so a deployment
+    can flip flags without editing the committed file (the sim sets
+    WEBAPP_SIM_CONTROLS=1)."""
+    try:
+        cfg = json.loads((ROOT / "config.json").read_text())
+    except Exception:
+        cfg = {}
+    if WEBAPP_SIM_CONTROLS:
+        cfg["simControls"] = True
+    body = json.dumps(cfg).encode()
+    return Response(
+        200,
+        "OK",
+        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
+        body,
+    )
+
+
 async def _dispatch_request(connection, request):
     if request.path == "/ws":
         return None  # proceed with the WebSocket handshake
+    if request.path.split("?", 1)[0] == "/config.json":
+        return await asyncio.to_thread(config_response)
     split = urlsplit(request.path)
     qs = parse_qs(split.query)
     # These builders do blocking disk I/O — reading multi-MB MP4s, h5py decodes,
