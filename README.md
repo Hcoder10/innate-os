@@ -53,7 +53,6 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 - [Simulator](#simulator)
 - [Additional Inputs](#additional-inputs)
 - [ROS Reference](#ros-reference)
-- [Miscellaneous](#miscellaneous)
 - [More Docs](#more-docs)
 
 ---
@@ -97,6 +96,11 @@ The Innate mobile app is available on both iOS and Android. It allows you to con
 Skills are the core unit of action on Innate robots.
 
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
+
+<p align="center">
+  <img src="docs/assets/readme/skills-chess-navigation.gif" alt="Two standalone physical skills: moving a chess piece, then navigating to a goal" width="520"><br>
+  <sub>Two standalone skill examples, shown sequentially: moving a chess piece, then navigating to a goal.</sub>
+</p>
 
 - **Execute manually** — Run skills from the `innate` CLI.
 - **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
@@ -387,12 +391,6 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 - **[innate_uninavid](ros2_ws/src/cloud/innate_uninavid)** - UniNaVid vision-language navigation client.
 
 </details>
-
----
-
-## Miscellaneous
-
-- Planned Skills visuals: moving a single chess piece; navigating to a goal with a VLM.
 
 ---
 
