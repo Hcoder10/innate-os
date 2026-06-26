@@ -62,7 +62,7 @@ export function createChatPanel(dock, rosClient, agentState) {
   function renderAgents() {
     const { agents, currentDirective } = agentState.get();
     agentSelect.replaceChildren();
-    agentSelect.appendChild(new Option("None", ""));
+    agentSelect.appendChild(new Option("Agent Off", ""));
     for (const a of agents) {
       const opt = new Option(a.name, a.id);
       if (a.id === currentDirective) opt.selected = true;
