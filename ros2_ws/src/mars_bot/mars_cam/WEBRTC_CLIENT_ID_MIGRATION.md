@@ -35,10 +35,12 @@ All messages are `std_msgs/String` whose `data` is a JSON string.
    ```json
    {"source":"live","audio":false,"client_id":"<your-id>","video":["main"]}
    ```
-   - `video` is the **active** camera set to actually stream — `["main"]`, `["arm"]`, or
-     `["main","arm"]`. The node always *negotiates* both cameras for a `client_id` peer
-     (so you can switch instantly later) but only **encodes/sends** the ones you list.
-     Omit `video` to get both.
+   - `video` is the **active** camera set to actually stream, e.g. `["main"]`, `["arm"]`,
+     or `["main","arm"]`. The node supports **N cameras** (not just main/arm) — the live
+     list of configured camera names is published on `/webrtc/active_streams` as
+     `{"cameras":[...]}`; pass any of those names. The node always *negotiates every*
+     camera for a `client_id` peer (so you can switch instantly later) but only
+     **encodes/sends** the ones you list. Omit `video` to get all of them.
    - `audio: true` opts into the robot mic (per-peer; may fall back to video-only if the
      mic is already in use by another peer).
    - Re-send START to **(re)connect** or to **switch which cameras are active** — see
@@ -71,10 +73,12 @@ client_id filter on the two inbound topics. The offer/answer/ICE *flow* is uncha
 
 ## Tracks / m-lines
 
-For a `client_id` peer the offer always has the video m-lines in a fixed order:
-`video0 = main`, `video1 = arm` (audio after, if requested). Map incoming tracks by the
-transceiver `mid` (`video0`/`video1`), not by arrival order. A camera you didn't list in
-`video` still arrives as a (silent) track until you activate it.
+For a `client_id` peer the offer has one video m-line per configured camera, in the order
+of the `cameras` array from `/webrtc/active_streams` — i.e. `video<i>` = `cameras[i]`
+(audio after, if requested). With the default config that's `video0 = main`, `video1 =
+arm`, but read the list rather than hardcoding it. Map incoming tracks by the transceiver
+`mid` (`video0`/`video1`/…), not by arrival order. A camera you didn't list in `video`
+still arrives as a (silent) track until you activate it.
 
 ## Stream switching (no reconnect)
 

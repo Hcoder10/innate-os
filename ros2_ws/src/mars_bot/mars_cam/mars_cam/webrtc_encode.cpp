@@ -6,8 +6,10 @@
 #include <gst/rtp/rtp.h>
 
 #include <algorithm>
+#include <cctype>   // std::isalnum (audio element/device validation)
 #include <cmath>
 #include <cstdlib>
+#include <cstring>  // memcpy (push_frame)
 #include <memory>
 #include <sstream>
 

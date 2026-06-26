@@ -83,21 +83,12 @@
 
     <main>
       <div>
-        <div class="videos">
-          <div class="tile"><span class="tag">main · pt96</span>
-            <video id="vMain" autoplay muted playsinline></video>
-            <div class="ov" id="ovMain">—</div></div>
-          <div class="tile"><span class="tag">arm · pt97</span>
-            <video id="vArm" autoplay muted playsinline></video>
-            <div class="ov" id="ovArm">—</div></div>
-        </div>
+        <div class="videos" id="videos"></div>
         <audio id="aud" autoplay></audio>
 
         <div class="row" style="margin-top:8px">
           <span class="muted">streams:</span>
-          <button class="tog" data-l="main">main</button>
-          <button class="tog" data-l="arm">arm</button>
-          <button class="tog" data-l="audio">audio</button>
+          <span id="togs"></span>
           <span class="muted" style="font-size:11px">(live switch, no reconnect — robot pushes only the enabled cameras; audio toggle reconnects)</span>
         </div>
 
@@ -231,39 +222,60 @@
       // ---------------- WebRTC answerer (maps each video m-line to a requested stream) ----------------
       let pc = null, clientId = null, remoteSet = false, iceQueue = [], processingOffer = false;
       let videoArrival = 0; // fallback index when a track has no usable mid
-      const trackLabel = new Map(); // track.id -> "main"|"arm"|"audio"
+      const trackLabel = new Map(); // track.id -> camera name | "audio"
+      // The camera list, in m-line order. Defaults to main/arm until the real list arrives on
+      // /webrtc/active_streams (d.cameras); rebuildCameras() re-renders the UI when it changes.
+      let cameras = ["main", "arm"];
       // Which streams the client wants. Toggling a camera while connected is a live push-gate flip on the
       // robot (sendActive(), same client_id) — no renegotiation; it actually stops the robot encoding a
       // disabled camera, not just a client-side mute. (Audio toggle still rebuilds the pc.)
-      const requested = { main: true, arm: true, audio: false };
+      const requested = { audio: false };
+      cameras.forEach((c) => (requested[c] = true));
       // The video streams we asked for, in order — the i-th video m-line maps back to requestedVideo[i].
       let requestedVideo = [];
 
       function refreshTogVisuals() {
-        for (const l of ["main", "arm", "audio"]) {
+        for (const l of [...cameras, "audio"]) {
           const btn = document.querySelector(`.tog[data-l="${l}"]`);
           if (btn) btn.classList.toggle("off", !requested[l]);
         }
-        $("vMain").parentElement.classList.toggle("off", !requested.main);
-        $("vArm").parentElement.classList.toggle("off", !requested.arm);
+        for (const c of cameras) {
+          const v = $("v_" + c);
+          if (v) v.parentElement.classList.toggle("off", !requested[c]);
+        }
       }
-      // The active (pushed) camera set, in fixed m-line order. The robot always negotiates both cameras
+      // The active (pushed) camera set, in m-line order. The robot always negotiates every camera
       // for a client_id peer, so toggling a camera is a live push-toggle on the robot — no new pc/offer/ICE.
-      const activeList = () => ["main", "arm"].filter((x) => requested[x]);
+      const activeList = () => cameras.filter((x) => requested[x]);
 
-      document.querySelectorAll(".tog").forEach((b) =>
-        b.addEventListener("click", () => {
-          const l = b.dataset.l;
-          requested[l] = !requested[l];
-          refreshTogVisuals();
-          if (!ros.connected) return;
-          // Camera on/off while connected = instant live switch (no reconnect). Audio toggle needs
-          // renegotiation, and an all-off / cold state goes through a full (re)connect.
-          const live = l !== "audio" && activeList().length > 0 && pc &&
-                       (pc.connectionState === "connected" || pc.connectionState === "connecting");
-          if (live) sendActive();
-          else startStream();
-        }));
+      function onTogClick(l) {
+        requested[l] = !requested[l];
+        refreshTogVisuals();
+        if (!ros.connected) return;
+        // Camera on/off while connected = instant live switch (no reconnect). Audio toggle needs
+        // renegotiation, and an all-off / cold state goes through a full (re)connect.
+        const live = l !== "audio" && activeList().length > 0 && pc &&
+                     (pc.connectionState === "connected" || pc.connectionState === "connecting");
+        if (live) sendActive();
+        else startStream();
+      }
+
+      // (Re)build the video tiles and camera toggle buttons from `cameras`. Preserves existing toggle
+      // states for cameras that persist; new cameras default to enabled. The audio button is static.
+      function rebuildCameras() {
+        $("videos").innerHTML = cameras.map((c) =>
+          `<div class="tile"><span class="tag">${c}</span>` +
+          `<video id="v_${c}" autoplay muted playsinline></video>` +
+          `<div class="ov" id="ov_${c}">—</div></div>`).join("");
+        $("togs").innerHTML = cameras.map((c) =>
+          `<button class="tog" data-l="${c}">${c}</button>`).join("") +
+          `<button class="tog" data-l="audio">audio</button>`;
+        for (const c of cameras) if (!(c in requested)) requested[c] = true;
+        $("togs").querySelectorAll(".tog").forEach((b) =>
+          b.addEventListener("click", () => onTogClick(b.dataset.l)));
+        refreshTogVisuals();
+      }
+      rebuildCameras();
 
       function sendActive() {
         ros.publish(T.START, { data: JSON.stringify({
@@ -291,7 +303,8 @@
         if (activeList().length === 0 && !requested.audio) return;  // nothing requested -> stay disconnected
         clientId = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2);
         $("cid").textContent = clientId.slice(0, 8) + "…";
-        $("vMain").srcObject = $("vArm").srcObject = $("aud").srcObject = null;
+        for (const c of cameras) { const v = $("v_" + c); if (v) v.srcObject = null; }
+        $("aud").srcObject = null;
         // No STUN: the robot is on the LAN, so host candidates connect directly and instantly —
         // a STUN lookup only adds reflexive candidates + latency that aren't needed here.
         pc = new RTCPeerConnection({ iceServers: [] });
@@ -309,10 +322,10 @@
         pc.ontrack = onTrack;
         const source = $("source").value;
         const audio = requested.audio;
-        // The robot negotiates BOTH cameras for a client_id peer, so the video m-lines are always
-        // [main, arm] regardless of what's active — this fixed list maps m-line index -> label. The START's
-        // `video` field carries the ACTIVE set (which cameras to actually push).
-        requestedVideo = ["main", "arm"];
+        // The robot negotiates EVERY camera for a client_id peer, so the video m-lines are always the
+        // full camera list regardless of what's active — this fixed list maps m-line index -> label. The
+        // START's `video` field carries the ACTIVE set (which cameras to actually push).
+        requestedVideo = cameras.slice();
         ros.publish(T.START, { data: JSON.stringify({ source, audio, video: activeList(), client_id: clientId }) });
         mark(`START sent {active:[${activeList().join(",")}]}`);
         setConn();
@@ -335,11 +348,10 @@
         trackLabel.set(tr.id, label);
         const stream = new MediaStream([tr]);
         if (label === "audio") $("aud").srcObject = stream;
-        else if (label === "main") $("vMain").srcObject = stream;
-        else if (label === "arm") $("vArm").srcObject = stream;
+        else if ($("v_" + label)) $("v_" + label).srcObject = stream;
         logLine(`◀ track ${label} (mid=${mid}, ${tr.kind})`, "o");
         // First decoded+rendered frame for this stream = the moment video actually appears.
-        const vid = label === "main" ? $("vMain") : label === "arm" ? $("vArm") : null;
+        const vid = label === "audio" ? null : $("v_" + label);
         if (vid && vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(() => mark(`FIRST FRAME ${label}`));
       }
 
@@ -409,8 +421,10 @@
             lastAge: (now - lastWall) / 1000,
           });
         });
-        const order = { main: 0, arm: 1, audio: 2 };
-        rows.sort((a, b) => (order[a.label] ?? 9) - (order[b.label] ?? 9));
+        const order = {};
+        cameras.forEach((c, i) => (order[c] = i));
+        order.audio = cameras.length;
+        rows.sort((a, b) => (order[a.label] ?? 99) - (order[b.label] ?? 99));
         const tb = $("stats").tBodies[0];
         if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center">no media</td></tr>'; return; }
         tb.innerHTML = rows.map((x) => {
@@ -421,8 +435,8 @@
         }).join("");
         // tile overlays
         for (const x of rows) {
-          if (x.label === "main") $("ovMain").innerHTML = `<b>${x.fps}</b> fps · ${x.res} · <b>${x.kbps}</b> kbps · lost ${x.lost}`;
-          if (x.label === "arm") $("ovArm").innerHTML = `<b>${x.fps}</b> fps · ${x.res} · <b>${x.kbps}</b> kbps · lost ${x.lost}`;
+          const ov = $("ov_" + x.label);
+          if (ov) ov.innerHTML = `<b>${x.fps}</b> fps · ${x.res} · <b>${x.kbps}</b> kbps · lost ${x.lost}`;
         }
       }
 
@@ -431,6 +445,13 @@
         const el = $("active");
         if (raw == null) return;
         let j; try { j = JSON.parse(raw); } catch { el.innerHTML = '<div class="e">bad JSON</div>'; return; }
+        // The node publishes the real camera list (m-line order). Adopt it and rebuild the UI when it
+        // differs from what we have — this is what makes the page work for 1, 3, N cameras.
+        if (Array.isArray(j.cameras) && j.cameras.length &&
+            (j.cameras.length !== cameras.length || j.cameras.some((c, i) => c !== cameras[i]))) {
+          cameras = j.cameras.slice();
+          rebuildCameras();
+        }
         if (!j.count) { el.innerHTML = '<div class="muted">no clients connected</div>'; return; }
         el.innerHTML = (j.clients || []).map((c) => {
           const streams = (c.streams || []).map((s) => {
