@@ -86,32 +86,38 @@ export function createAgentState(rosClient) {
     }
   }
 
-  /** @param {string} id Directive id to run; "" deactivates the brain. */
-  function setDirective(id) {
-    if (id) {
-      rosClient.publish(SET_DIRECTIVE_TOPIC, { data: id });
-      rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: true }).catch(() => {});
-      state = { ...state, currentDirective: id, brainActive: true };
-    } else {
-      rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: false }).catch(() => {});
-      state = { ...state, currentDirective: "", brainActive: false };
+  /**
+   * @param {string} id Directive id to run; "" deactivates the brain.
+   * Not optimistic — we don't claim the new directive/active set locally; the
+   * brain is the source of truth, so we re-pull get_available_directives and let
+   * its response drive the UI.
+   */
+  async function setDirective(id) {
+    try {
+      if (id) {
+        rosClient.publish(SET_DIRECTIVE_TOPIC, { data: id });
+        await rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: true });
+      } else {
+        await rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: false });
+      }
+    } catch {
+      // The refresh below reflects the brain's real state regardless.
     }
-    emit();
-    // active_skills change with the directive — reconcile shortly.
-    setTimeout(() => void refresh(), 400);
+    await refresh();
   }
 
   /** @param {string} skillId */
   function toggleSkill(skillId) {
     if (!state.currentDirective) return; // the brain ignores this without a directive
-    const activeSkills = new Set(state.activeSkills);
-    if (activeSkills.has(skillId)) activeSkills.delete(skillId);
-    else activeSkills.add(skillId);
+    const next = new Set(state.activeSkills);
+    if (next.has(skillId)) next.delete(skillId);
+    else next.add(skillId);
     rosClient.publish(SET_ACTIVE_SKILLS_TOPIC, {
-      data: JSON.stringify({ agent_id: state.currentDirective, skills: [...activeSkills] }),
+      data: JSON.stringify({ agent_id: state.currentDirective, skills: [...next] }),
     });
-    state = { ...state, activeSkills };
-    emit();
+    // Don't flip the toggle locally — re-pull so the UI shows what the brain
+    // actually registered (set_active_skills drops unavailable skills).
+    setTimeout(() => void refresh(), 400);
   }
 
   /** @param {string} [memoryState] @returns {Promise<any>} */

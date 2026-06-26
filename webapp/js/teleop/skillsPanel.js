@@ -267,6 +267,11 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     activeToggle.innerHTML = '<span class="skill-active-rail"><span class="skill-active-thumb"></span></span>';
     activeToggle.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (activeToggle.disabled) return;
+      // Show "in flight" rather than optimistically flipping — the brain's
+      // re-pulled active set (via agentState) settles it.
+      activeToggle.classList.add("pending");
+      activeToggle.disabled = true;
       agentState.toggleSkill(skill.id);
     });
     top.append(name, type, activeToggle);

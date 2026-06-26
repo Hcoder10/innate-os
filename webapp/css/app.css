@@ -3659,6 +3659,13 @@ button {
   cursor: not-allowed;
 }
 
+/* In-flight: waiting for the brain's re-pulled active set to confirm. */
+.skill-active.pending {
+  opacity: 1;
+  cursor: progress;
+  animation: chat-think-pulse 1s infinite ease-in-out;
+}
+
 .skill-active-rail {
   display: inline-flex;
   width: 30px;
