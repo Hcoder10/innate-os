@@ -19,6 +19,8 @@
 
 </div>
 
+Innate OS is currently compatible only with MARS. If you make another robot work with it, open an issue or PR and we can reference it here.
+
 If you have an Innate-compatible robot, start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
 
 > [!TIP]
@@ -51,6 +53,7 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 - [Simulator](#simulator)
 - [Additional Inputs](#additional-inputs)
 - [ROS Reference](#ros-reference)
+- [Miscellaneous](#miscellaneous)
 - [More Docs](#more-docs)
 
 ---
@@ -94,9 +97,6 @@ The Innate mobile app is available on both iOS and Android. It allows you to con
 Skills are the core unit of action on Innate robots.
 
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
-
-> [!NOTE]
-> Skill visual TBD: moving a single chess piece, or navigating to a goal with a VLM.
 
 - **Execute manually** — Run skills from the `innate` CLI.
 - **Operate from apps** — Trigger skills through the web app or Innate mobile apps.
@@ -218,7 +218,7 @@ An agent consists of:
 
 - A **set of skills** the robot is allowed to use
 - A **system prompt** that defines the robot's behavior
-- A **harness** that connects the model to observations, memory, tools, and robot actions
+- An **agent loop** that connects the model to observations, memory, tools, and robot actions
 
 <p align="center">
   <img src="docs/assets/readme/agent-clean-room.gif" alt="Pick up and put away skills chained in an agent to clean a room" width="520"><br>
@@ -227,9 +227,7 @@ An agent consists of:
 
 ### Specificities of multimodal agents
 
-Multimodal agent harnesses have different constraints than purely digital agents: they need to **observe continuously**, run at a **high frequency** to react, and to be able to **interrupt** a running skill when the world has changed.
-
-You can use Innate's harness or bring your own.
+Multimodal agents have different constraints than purely digital agents: they need to **observe continuously**, run at a **high frequency** to react, and to be able to **interrupt** a running skill when the world has changed.
 
 ### Agent definitions
 
@@ -269,13 +267,13 @@ class NavigateAgent(Agent):
 
 ### Testing agents in sim
 
-Use the [simulator](#simulator) to test custom agents and custom harnesses before running them on a physical robot.
+Use the [simulator](#simulator) to test custom agents before running them on a physical robot.
 
 ---
 
 ## Simulator
 
-Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, input devices, and your own agent harness before you have a robot on your desk.
+Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, and input devices before you have a robot on your desk.
 
 ```bash
 ./innate sim setup
@@ -389,6 +387,12 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 - **[innate_uninavid](ros2_ws/src/cloud/innate_uninavid)** - UniNaVid vision-language navigation client.
 
 </details>
+
+---
+
+## Miscellaneous
+
+- Planned Skills visuals: moving a single chess piece; navigating to a goal with a VLM.
 
 ---
 
