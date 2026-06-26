@@ -34,6 +34,23 @@ std::string WebRTCStreamer::build_transport_description(const std::vector<std::s
     return desc;
 }
 
+// Apply RTP caps + live/leaky tuning to a transport appsrc, then request the next webrtcbin sink pad and
+// link it. Consumes `caps`. Returns true once linked (the caller keeps the appsrc ref in peer->rtp).
+// do-timestamp=TRUE re-stamps each forwarded buffer with this transport pipeline's running-time: the
+// encode pipeline is separate with its own base-time, so its PTS look future-dated here and webrtcbin
+// would hold them. The RTP header timestamps the receiver plays back by are the payloader's, untouched.
+bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, GstCaps* caps, guint64 max_bytes) {
+    g_object_set(appsrc, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "block",
+                 FALSE, "leaky-type", 2 /* downstream */, "max-bytes", max_bytes, nullptr);
+    gst_caps_unref(caps);
+    GstPad* srcpad = gst_element_get_static_pad(appsrc, "src");
+    GstPad* sinkpad = gst_element_request_pad_simple(webrtc, "sink_%u");
+    const bool linked = srcpad && sinkpad && gst_pad_link(srcpad, sinkpad) == GST_PAD_LINK_OK;
+    if (srcpad) gst_object_unref(srcpad);
+    if (sinkpad) gst_object_unref(sinkpad);
+    return linked;
+}
+
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
                                             const std::vector<std::string>& active, bool with_audio, bool audio_active) {
     destroy_peer(client_id);  // replace any existing peer with this id (re-START)
@@ -62,9 +79,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     peer->webrtc = gst_bin_get_by_name(GST_BIN(pipeline), "webrtc");
     if (!peer->webrtc) {
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing webrtcbin");
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        gst_object_unref(pipeline);
-        return nullptr;
+        return nullptr;  // ~Peer() tears down the pipeline
     }
 
     // Configure each RTP appsrc: caps (incl. the extmap so webrtcbin emits a=extmap), drop-old on
@@ -83,22 +98,9 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
                                             G_TYPE_STRING, "VP8", "clock-rate", G_TYPE_INT, 90000, "payload", G_TYPE_INT,
                                             c->pt, "ssrc", G_TYPE_UINT, c->ssrc, nullptr);
         gst_caps_set_simple(caps, extmap_field.c_str(), G_TYPE_STRING, MARS_PLAYOUT_DELAY_URI, nullptr);
-        // do-timestamp=TRUE: re-stamp each forwarded RTP buffer with this (transport) pipeline's
-        // running-time on arrival. The encode pipeline is a SEPARATE pipeline with its own base-time, so
-        // its PTS look like they're in the future here and webrtcbin would hold/never send them. The RTP
-        // header timestamps the receiver uses for playback are written by the payloader and untouched.
-        g_object_set(src, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "block",
-                     FALSE, "leaky-type", 2 /* downstream */, "max-bytes", 2 * 1024 * 1024, nullptr);
-        gst_caps_unref(caps);
-
-        // Caps are set; NOW request the next webrtcbin sink pad and link, so the transceiver is built
-        // from the real VP8 caps (in m-line order: sink_0, sink_1, ...).
-        GstPad* srcpad = gst_element_get_static_pad(src, "src");
-        GstPad* sinkpad = gst_element_request_pad_simple(peer->webrtc, "sink_%u");
-        const bool linked = srcpad && sinkpad && gst_pad_link(srcpad, sinkpad) == GST_PAD_LINK_OK;
-        if (srcpad) gst_object_unref(srcpad);
-        if (sinkpad) gst_object_unref(sinkpad);
-        if (!linked) {
+        // Set the (VP8) caps, then request the next webrtcbin sink pad and link — so the transceiver is
+        // built from the real caps, in m-line order (sink_0, sink_1, …).
+        if (!link_rtp_appsrc(peer->webrtc, src, caps, 2 * 1024 * 1024)) {
             RCLCPP_ERROR(this->get_logger(), "Failed to link rtp_%s to webrtcbin", v.c_str());
             gst_object_unref(src);
             ok = false;
@@ -115,12 +117,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
                 gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name",
                                     G_TYPE_STRING, "OPUS", "clock-rate", G_TYPE_INT, 48000, "encoding-params",
                                     G_TYPE_STRING, "2", "payload", G_TYPE_INT, 98, nullptr);
-            g_object_set(asrc, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE,
-                         "block", FALSE, "leaky-type", 2 /* downstream */, "max-bytes", 1 * 1024 * 1024, nullptr);
-            gst_caps_unref(caps);
-            GstPad* srcpad = gst_element_get_static_pad(asrc, "src");
-            GstPad* sinkpad = gst_element_request_pad_simple(peer->webrtc, "sink_%u");
-            if (srcpad && sinkpad && gst_pad_link(srcpad, sinkpad) == GST_PAD_LINK_OK) {
+            if (link_rtp_appsrc(peer->webrtc, asrc, caps, 1 * 1024 * 1024)) {
                 peer->rtp["audio"] = asrc;  // keep the ref
             } else {
                 RCLCPP_WARN(this->get_logger(), "Failed to link audio appsrc; continuing video-only");
@@ -128,8 +125,6 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
                 peer->with_audio = false;
                 peer->audio_active = false;
             }
-            if (srcpad) gst_object_unref(srcpad);
-            if (sinkpad) gst_object_unref(sinkpad);
         } else {
             peer->with_audio = false;
             peer->audio_active = false;
@@ -137,11 +132,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     }
     if (!ok) {
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing/failed an rtp appsrc");
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        for (auto& kv : peer->rtp) gst_object_unref(kv.second);
-        gst_object_unref(peer->webrtc);
-        gst_object_unref(pipeline);
-        return nullptr;
+        return nullptr;  // ~Peer() tears down the pipeline + the rtp appsrcs stored so far
     }
 
     // Tag the webrtcbin with its client_id (ICE-candidate routing) and a copy of its generation token,
@@ -178,11 +169,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     if (ret == GST_STATE_CHANGE_FAILURE) {
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline failed to reach PLAYING (audio=%s)",
                      with_audio ? "on" : "off");
-        gst_element_set_state(pipeline, GST_STATE_NULL);
-        for (auto& kv : peer->rtp) gst_object_unref(kv.second);
-        gst_object_unref(peer->webrtc);
-        gst_object_unref(pipeline);
-        return nullptr;
+        return nullptr;  // ~Peer() tears down the pipeline
     }
 
     Peer* raw = peer.get();
@@ -294,16 +281,8 @@ void WebRTCStreamer::destroy_peer(const std::string& client_id) {
     }
     if (p->audio_active) want_audio_.fetch_sub(1, std::memory_order_relaxed);  // mic closed by the health poll
 
-    // NULL first: joins the transport's streaming threads, so no probe/callback runs after this point.
-    if (p->pipeline) {
-        gst_element_set_state(p->pipeline, GST_STATE_NULL);
-    }
-    for (auto& kv : p->rtp) gst_object_unref(kv.second);
-    if (p->webrtc) gst_object_unref(p->webrtc);
-    if (p->pipeline) gst_object_unref(p->pipeline);
-
     RCLCPP_INFO(this->get_logger(), "Released peer '%s'", client_id.empty() ? "(default)" : client_id.c_str());
-    peers_.erase(it);
+    peers_.erase(it);  // ~Peer() NULLs the transport (joining its streaming threads) and releases the refs
     reconcile_subscriptions();  // last peer wanting a camera may have just left — drop its sub if so
 }
 

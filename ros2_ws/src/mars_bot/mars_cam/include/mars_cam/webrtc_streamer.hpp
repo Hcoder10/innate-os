@@ -22,6 +22,7 @@
 #include <map>
 #include <mutex>
 #include <chrono>
+#include <functional>
 #include <atomic>
 
 namespace mars_cam {
@@ -79,6 +80,19 @@ struct Peer {
     std::atomic<int64_t> last_rtcp_ns{0};  // steady-clock ns of last RTCP; 0 = disarmed
     bool rtcp_probe_installed = false;
     int terminal_polls = 0;  // consecutive FAILED/DISCONNECTED health polls
+
+    Peer() = default;
+    Peer(const Peer&) = delete;             // owns raw GStreamer refs — never copy (would double-unref)
+    Peer& operator=(const Peer&) = delete;
+    // RAII teardown: NULL first (joins the transport's streaming threads, so no probe/callback runs after),
+    // then release the refs. Destroying a peer is now just letting its unique_ptr go — every former manual
+    // teardown (3 create-error paths + destroy_peer) collapses to this.
+    ~Peer() {
+        if (pipeline) gst_element_set_state(pipeline, GST_STATE_NULL);
+        for (auto& kv : rtp) gst_object_unref(kv.second);
+        if (webrtc) gst_object_unref(webrtc);
+        if (pipeline) gst_object_unref(pipeline);
+    }
 };
 
 class WebRTCStreamer : public rclcpp::Node {
@@ -112,6 +126,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // appsink new-sample (user_data = the CameraEncoder*): pull the encoded RTP buffer and fan it out to
     // every peer with this camera active.
     static GstFlowReturn on_sample(GstElement* appsink, gpointer user_data);
+    // Shared fan-out core (video + audio): copy the just-pulled sample to each peer appsrc that `select`
+    // picks. `select` runs with peers_mutex_ held and returns the peer's transport appsrc, or nullptr to skip.
+    void fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select);
     void fan_out_sample(GstElement* appsink, const std::string& cam);
 
     // ---- Shared audio (mic) — encoded once like the cameras, fanned out, gated for privacy ----
@@ -147,6 +164,9 @@ class WebRTCStreamer : public rclcpp::Node {
     void update_peer_active(Peer* peer, const std::vector<std::string>& active, bool audio_active);
     void destroy_peer(const std::string& client_id);  // caller holds peers_mutex_
     std::string build_transport_description(const std::vector<std::string>& videos, bool& with_audio) const;
+    // Apply RTP caps + tuning to a transport appsrc and link it to the next webrtcbin sink pad (consumes
+    // caps). Shared by the video and audio m-line setup in create_peer_transport.
+    bool link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, GstCaps* caps, guint64 max_bytes);
     void publish_offer(const std::string& client_id, const std::string& sdp);
 
     // ---- Camera subscriptions (lazy: a camera is subscribed only while some connected peer negotiates

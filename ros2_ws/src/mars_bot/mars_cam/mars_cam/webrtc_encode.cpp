@@ -126,33 +126,30 @@ GstFlowReturn WebRTCStreamer::on_sample(GstElement* appsink, gpointer user_data)
     return GST_FLOW_OK;
 }
 
-void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam) {
+// Shared fan-out: pull the encoded sample once, then under a BRIEF lock collect (and ref) the per-peer
+// transport appsrcs that `select` returns, and copy+push to each OUTSIDE the lock. Holding peers_mutex_
+// only for the lookup keeps fan-out at 30 fps x N peers from delaying the answer/ICE/health callbacks that
+// contend on it; the refs keep an appsrc alive if its peer is torn down before the push (a push to a
+// now-NULL appsrc just returns FLUSHING — harmless). A WRITABLE copy with PTS/DTS cleared is required, not
+// a shared ref: the buffer carries the encode pipeline's (future-dated) PTS, and only a writable buffer
+// lets the transport appsrc's do-timestamp re-stamp it to this pipeline's running-time — else webrtcbin
+// holds every frame after the first burst.
+void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select) {
     GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
     if (!sample) {
         return;
     }
-    GstBuffer* buffer = gst_sample_get_buffer(sample);
-    if (buffer) {
-        // Collect (and ref) this camera's per-peer appsrcs under a BRIEF lock, then release it before the
-        // heap copy + push-buffer for each. Otherwise fan-out at 30 fps x N peers holds peers_mutex_ for
-        // tens of µs/frame and delays the answer/ICE/health callbacks that contend on it. The refs keep
-        // the appsrcs alive if a peer is torn down between the unlock and the push (a push to a now-NULL
-        // appsrc just returns FLUSHING — harmless).
+    if (GstBuffer* buffer = gst_sample_get_buffer(sample)) {
         std::vector<GstElement*> targets;
         {
             std::lock_guard<std::mutex> lock(peers_mutex_);
             for (auto& kv : peers_) {
-                auto it = kv.second->rtp.find(cam);
-                if (it != kv.second->rtp.end() && it->second && wants(kv.second->active, cam)) {
-                    targets.push_back(GST_ELEMENT(gst_object_ref(it->second)));
+                if (GstElement* src = select(kv.second.get())) {
+                    targets.push_back(GST_ELEMENT(gst_object_ref(src)));
                 }
             }
         }
         for (GstElement* src : targets) {
-            // Push a WRITABLE copy with its timestamps cleared, not a shared ref: the buffer carries the
-            // encode pipeline's PTS (a different, future-dated timebase), and a shared/non-writable buffer
-            // can't be re-stamped, so webrtcbin would hold every frame after the first burst. The copy lets
-            // the transport appsrc's do-timestamp assign this pipeline's running-time.
             GstBuffer* out = gst_buffer_copy(buffer);
             GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
             GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
@@ -162,6 +159,14 @@ void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam)
         }
     }
     gst_sample_unref(sample);
+}
+
+// Per-camera tap: fan this camera's encoded RTP to every peer actively pushing it.
+void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam) {
+    fan_out(appsink, [&cam](Peer* p) -> GstElement* {
+        auto it = p->rtp.find(cam);
+        return (it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
+    });
 }
 
 // =============================================================================
@@ -257,35 +262,13 @@ GstFlowReturn WebRTCStreamer::on_audio_sample(GstElement* appsink, gpointer user
     return GST_FLOW_OK;
 }
 
+// Audio tap: fan the shared mic's encoded RTP to every peer with audio active.
 void WebRTCStreamer::fan_out_audio(GstElement* appsink) {
-    GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
-    if (!sample) {
-        return;
-    }
-    GstBuffer* buffer = gst_sample_get_buffer(sample);
-    if (buffer) {
-        audio_frames_.fetch_add(1, std::memory_order_relaxed);
-        // Same brief-lock + ref pattern as the video fan-out (see fan_out_sample).
-        std::vector<GstElement*> targets;
-        {
-            std::lock_guard<std::mutex> lock(peers_mutex_);
-            for (auto& kv : peers_) {
-                auto it = kv.second->rtp.find("audio");
-                if (it != kv.second->rtp.end() && it->second && kv.second->audio_active) {
-                    targets.push_back(GST_ELEMENT(gst_object_ref(it->second)));
-                }
-            }
-        }
-        for (GstElement* src : targets) {
-            GstBuffer* out = gst_buffer_copy(buffer);
-            GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
-            GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
-            GstFlowReturn ret;
-            g_signal_emit_by_name(src, "push-buffer", out, &ret);
-            gst_object_unref(src);
-        }
-    }
-    gst_sample_unref(sample);
+    audio_frames_.fetch_add(1, std::memory_order_relaxed);
+    fan_out(appsink, [](Peer* p) -> GstElement* {
+        auto it = p->rtp.find("audio");
+        return (it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
+    });
 }
 
 // =============================================================================
