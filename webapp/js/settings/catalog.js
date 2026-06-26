@@ -41,10 +41,10 @@
 const P = "ros__parameters";
 
 // A few Cartesia stock voices for the TTS picker (ids from the Cartesia voice library).
-// "Katie" is the env-backed launch default; the rest are stock Sonic voices. Any other id
+// "Alfred" is the env-backed launch default; the rest are stock Sonic voices. Any other id
 // set over SSH still works and shows as a "Custom" option in the dropdown.
 const VOICE_OPTIONS = [
-  { value: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", label: "Katie" },
+  { value: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", label: "Alfred" },
   { value: "79a125e8-cd45-4c13-8a67-188112f4dd22", label: "British Lady" },
   { value: "00a77add-48d5-4ef6-8157-71e5437b282d", label: "Calm Lady" },
   { value: "b7d50908-b17c-442d-ad8d-810c63997ed9", label: "California Girl" },
