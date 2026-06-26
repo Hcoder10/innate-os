@@ -8,7 +8,8 @@ and verifies its behaviour from the node side (the ``/webrtc/active_streams`` st
   * fanout     — N independent peers stream the same cameras; the node reports all N but the encode
                  rate is shared (encode-once).
   * gating     — at idle no stream is encoding (flat memory / zero CPU); a peer turns its cameras on.
-  * selective  — a peer asks for a subset of cameras; the offer carries only those m-lines.
+  * selective  — a peer asks for a subset of cameras; only those are ACTIVE/encoded (a client_id peer
+                 negotiates ALL cameras up front so a later switch needs no renegotiation).
   * timeout    — a peer that never completes the handshake is auto-released (no transport leak).
   * legacy     — a peer with NO client_id uses the bare raw-SDP path (backward compat).
 
@@ -215,14 +216,19 @@ def test_gating(d):
 
 
 def test_selective(d):
-    print("\n[selective] offer carries only the requested camera m-lines")
+    # A client_id peer NEGOTIATES all cameras up front (so a later switch needs no renegotiation); the
+    # `video` list selects which are ACTIVE — i.e. actually encoded/pushed. So selectivity now shows up in
+    # active_streams, not in the offer's m-lines (the offer always carries every camera).
+    print("\n[selective] only the requested cameras are ACTIVE (offer negotiates all, for instant switch)")
     results = []
     for want in (["arm"], ["main"], ["main", "arm"]):
         cid = f"sel-{uuid.uuid4().hex[:6]}"
-        sdp = d.start_get_offer(cid, want)
-        mlines = offer_mlines(sdp)
-        ok = mlines == want
-        print(f"  video={want}: offer m-lines={mlines}  -> {'PASS' if ok else 'FAIL'}")
+        d.start(client_id=cid, video=want)
+        ok = wait_for(
+            lambda: (lambda c: c and sorted(s["name"] for s in c["streams"]) == sorted(want))(d.client(cid)), 5)
+        c = d.client(cid)
+        active = sorted(s["name"] for s in (c["streams"] if c else []))
+        print(f"  video={want}: active streams={active}  -> {'PASS' if ok else 'FAIL'}")
         results.append(ok)
         d.release(cid)
         time.sleep(0.3)

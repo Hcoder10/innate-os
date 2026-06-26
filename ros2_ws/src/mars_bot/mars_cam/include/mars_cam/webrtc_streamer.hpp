@@ -26,6 +26,31 @@
 
 namespace mars_cam {
 
+class WebRTCStreamer;  // CameraEncoder back-references the node for the static appsink callback
+
+// One persistently-encoded camera: `appsrc -> videoconvert -> vp8enc -> rtpvp8pay -> appsink`, built once
+// in the constructor and PLAYING for the node's life. The appsink is the fan-out tap — every connected
+// peer that has this camera active is fed from it, so each camera is encoded exactly once regardless of
+// peer count. Burns zero CPU at idle (the image callback early-returns until `want > 0`) and the image
+// topic is subscribed lazily (only while some peer negotiates it). The node supports N of these; `main`
+// and `arm` are just the default two.
+struct CameraEncoder {
+    std::string name;
+    std::string live_topic, replay_topic;
+    int pt = 96;       // RTP payload type, unique per camera (audio uses 98)
+    int fps = 30;      // encoder framerate (appsrc caps)
+    guint ssrc = 0;    // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+
+    GstElement* appsrc = nullptr;   // src_<name>, ref'd out of the encode pipeline
+    GstElement* sink = nullptr;     // sink_<name> appsink, ref'd; the fan-out tap
+    GstBufferPool* pool = nullptr;
+    std::atomic<int> want{0};       // # peers actively pushing this camera; 0 => the callback does no work
+    std::atomic<uint64_t> frames{0};
+    uint64_t prev_frames = 0;       // publish_status fps sampling
+    rclcpp::SubscriptionBase::SharedPtr sub;  // lazy raw|compressed image subscription
+    WebRTCStreamer* owner = nullptr;          // for the static appsink new-sample callback
+};
+
 // One connected WebRTC peer. The cameras are encoded ONCE in a persistent pipeline; each peer owns a
 // lightweight *transport* pipeline (appsrc(RTP) -> webrtcbin) that the shared encoders fan their RTP
 // out to. Creating/destroying a peer never touches the encoders, so memory stays flat and a dead peer
@@ -34,8 +59,7 @@ struct Peer {
     std::string client_id;            // "" = the legacy/default peer (bare signaling topics)
     GstElement* pipeline = nullptr;   // transport pipeline (owns webrtcbin + rtp appsrcs)
     GstElement* webrtc = nullptr;     // ref'd from pipeline
-    GstElement* rtp_main = nullptr;   // ref'd appsrc, null if main not negotiated
-    GstElement* rtp_arm = nullptr;    // ref'd appsrc, null if arm not negotiated
+    std::map<std::string, GstElement*> rtp;  // camera name -> ref'd transport appsrc (the negotiated set)
     std::vector<std::string> videos;  // NEGOTIATED video streams (transceivers), in m-line order
     std::vector<std::string> active;  // currently PUSHED streams (subset of videos); toggled live on a
                                       // stream switch without renegotiating, so switches are instant
@@ -77,20 +101,18 @@ class WebRTCStreamer : public rclcpp::Node {
     std::string prepare_ice_candidate(const std::string& candidate);
     void apply_ice(Peer* peer, const std::string& candidate, int mline);  // caller holds peers_mutex_
 
-    // ---- Camera frames -> persistent encoders ----
-    void on_image_main_raw(const sensor_msgs::msg::Image::SharedPtr msg);
-    void on_image_arm_raw(const sensor_msgs::msg::Image::SharedPtr msg);
-    void on_image_main_compressed(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
-    void on_image_arm_compressed(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
+    // ---- Camera frames -> persistent encoders (one generic handler per encoding, bound per camera) ----
+    void on_image_raw(CameraEncoder* cam, const sensor_msgs::msg::Image::SharedPtr& msg);
+    void on_image_compressed(CameraEncoder* cam, const sensor_msgs::msg::CompressedImage::SharedPtr& msg);
 
     // ---- GStreamer callbacks (static for the C callback interface) ----
     static void on_ice_candidate(GstElement* webrtc, guint mline, gchar* candidate, gpointer user_data);
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
-    // appsink new-sample: pull the encoded RTP buffer and fan it out to every peer wanting this camera.
-    static GstFlowReturn on_sample_main(GstElement* appsink, gpointer user_data);
-    static GstFlowReturn on_sample_arm(GstElement* appsink, gpointer user_data);
+    // appsink new-sample (user_data = the CameraEncoder*): pull the encoded RTP buffer and fan it out to
+    // every peer with this camera active.
+    static GstFlowReturn on_sample(GstElement* appsink, gpointer user_data);
     void fan_out_sample(GstElement* appsink, const std::string& cam);
 
     // Per-peer RTCP-liveness probe on the peer's rtpbin recv_rtcp_sink pad (ticks per RTCP packet).
@@ -99,14 +121,16 @@ class WebRTCStreamer : public rclcpp::Node {
     bool install_rtcp_probe_for(Peer* peer);  // attach once the peer's rtcp pad exists
 
     // ---- Persistent encode pipeline (built once in the constructor) ----
-    std::string video_encode_branch(const std::string& name, int pt, int fps) const;
+    void configure_cameras();  // read the camera list + per-camera params into cameras_
+    std::string video_encode_branch(const std::string& name, int pt, int fps, guint ssrc) const;
     bool build_encode_pipeline();
     void attach_playout_delay_extension(const std::string& cam);  // adds the ext to one payloader
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int w, int h);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int w, int h);
-    void push_frame(GstElement* appsrc, const cv::Mat& frame, GstBufferPool* pool, std::atomic<uint64_t>& counter);
+    void push_frame(CameraEncoder* cam, const cv::Mat& frame);
     GstBufferPool* create_frame_pool(int width, int height, int channels);
     void force_keyframe(const std::string& cam);  // request an IDR so a fresh/resumed peer can decode
+    CameraEncoder* find_camera(const std::string& name);  // configured camera by name, or nullptr
 
     // ---- Per-peer transport ----
     // create_peer_transport builds the transport pipeline, wires signals, and kicks off create-offer.
@@ -123,7 +147,7 @@ class WebRTCStreamer : public rclcpp::Node {
     // ---- Camera subscriptions (lazy: a camera is subscribed only while some connected peer negotiates
     // it, and dropped when no peer does — so an idle node with no peers receives no camera frames at all).
     void reconcile_subscriptions();  // subscribe/unsubscribe each camera to match what peers negotiate
-    void set_camera_subscribed(const std::string& cam, bool subscribed);
+    void set_camera_subscribed(CameraEncoder* cam, bool subscribed);
     void destroy_subscriptions();
 
     // ---- Health / status (executor thread) ----
@@ -137,40 +161,24 @@ class WebRTCStreamer : public rclcpp::Node {
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ice_out_id_pub_;  // {client_id, ...}
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr active_streams_pub_;
 
-    // Subscribers
+    // Subscribers (signaling only; the per-camera image subscriptions live in cameras_)
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr start_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr answer_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr answer_id_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ice_in_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr ice_in_id_sub_;
-    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_main_raw_;
-    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_arm_raw_;
-    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr image_sub_main_compressed_;
-    rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr image_sub_arm_compressed_;
 
-    // ---- Persistent encode pipeline elements (built once, never torn down until shutdown) ----
+    // ---- Persistent encode pipeline (built once, never torn down until shutdown) ----
     GstElement* encode_pipeline_ = nullptr;
-    GstElement* appsrc_main_ = nullptr;
-    GstElement* appsrc_arm_ = nullptr;
-    GstElement* sink_main_ = nullptr;  // appsink endpoints fanned out to peers
-    GstElement* sink_arm_ = nullptr;
-    GstBufferPool* pool_main_ = nullptr;
-    GstBufferPool* pool_arm_ = nullptr;
-
-    // Push-gating: number of connected peers requesting each camera. The image callback skips all
-    // convert/encode/push work when the count is 0, so the encoders stay allocated but burn no CPU at
-    // idle. Updated under peers_mutex_ on peer add/remove; read lock-free in the camera callbacks.
-    std::atomic<int> want_main_{0};
-    std::atomic<int> want_arm_{0};
+    std::vector<std::unique_ptr<CameraEncoder>> cameras_;  // configured cameras, in m-line order
 
     // ---- Peers ----
     std::map<std::string, std::unique_ptr<Peer>> peers_;
     std::mutex peers_mutex_;
 
-    // Source mode + topics (global across peers; last START wins, re-points the shared subscriptions).
+    // Source mode (global across peers; last START wins, re-points the shared subscriptions).
     std::string current_source_ = "live";
     rclcpp::QoS camera_qos_;
-    std::string live_main_topic_, live_arm_topic_, replay_main_topic_, replay_arm_topic_;
 
     // Timers
     rclcpp::TimerBase::SharedPtr health_timer_;
@@ -180,10 +188,6 @@ class WebRTCStreamer : public rclcpp::Node {
     double rtcp_inactivity_timeout_s_ = 5.0;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr rtcp_timeout_cb_;
 
-    // Per-stream encode frame counters (sampled by publish_status for per-stream fps).
-    std::atomic<uint64_t> main_frames_{0};
-    std::atomic<uint64_t> arm_frames_{0};
-    uint64_t prev_main_frames_ = 0, prev_arm_frames_ = 0;
     std::chrono::steady_clock::time_point prev_status_time_;
 
     // Config
