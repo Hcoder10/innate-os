@@ -805,6 +805,12 @@ button {
   gap: 1px;
 }
 
+/* Brighter than the shared --muted so ROBOT/BATT/LINK read against the
+   translucent strip, while staying dimmer than the value for hierarchy. */
+.telemetry .microlabel {
+  color: #b9b9c2;
+}
+
 .telemetry-value {
   font-size: 12px;
   color: var(--text);
