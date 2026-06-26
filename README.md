@@ -2,25 +2,13 @@
 <div align="center">
 
 <p>
-  <img src="docs/assets/readme/innate-lockup-black.svg" alt="Innate" width="180">
+  <img src="docs/assets/readme/innate-os-repo-intro.png" alt="Innate OS" width="100%">
 </p>
-
-# Innate OS
-
-**A lightweight, AI-native operating system for general-purpose robots.**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
 [![Documentation](https://img.shields.io/badge/Docs-Read%20the%20docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.innate.bot)
 [![Website](https://img.shields.io/badge/Website-Visit%20us-orange?style=for-the-badge&logo=safari&logoColor=white)](https://innate.bot)
 [![ROS 2](https://img.shields.io/badge/ROS%202-Humble-22314E?style=for-the-badge&logo=ros&logoColor=white)](https://docs.ros.org/en/humble/)
-
-</div>
-
-<div align="center">
-
-Innate robots are **agentic robots**: they are programmable with **skills**, and automatable with **multimodal agents**.
-
-Teach your robots today with Innate OS.
 
 </div>
 
