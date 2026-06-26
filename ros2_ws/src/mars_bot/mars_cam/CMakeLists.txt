@@ -92,7 +92,11 @@ ament_target_dependencies(arm_camera_driver_component
 rclcpp_components_register_nodes(arm_camera_driver_component "mars_cam::ArmCameraDriver")
 
 # WebRTC streamer component library
-add_library(webrtc_streamer_component SHARED mars_cam/webrtc_streamer.cpp)
+add_library(webrtc_streamer_component SHARED
+  mars_cam/webrtc_streamer.cpp
+  mars_cam/webrtc_encode.cpp
+  mars_cam/webrtc_transport.cpp
+  mars_cam/webrtc_signaling.cpp)
 target_compile_definitions(webrtc_streamer_component PRIVATE BUILDING_COMPONENT_LIBRARY)
 target_include_directories(webrtc_streamer_component PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -182,7 +186,11 @@ ament_target_dependencies(arm_camera_driver
 )
 
 # Create WebRTC streamer executable
-add_executable(webrtc_streamer_node mars_cam/webrtc_streamer.cpp)
+add_executable(webrtc_streamer_node
+  mars_cam/webrtc_streamer.cpp
+  mars_cam/webrtc_encode.cpp
+  mars_cam/webrtc_transport.cpp
+  mars_cam/webrtc_signaling.cpp)
 target_include_directories(webrtc_streamer_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
