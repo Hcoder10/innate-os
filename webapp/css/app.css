@@ -451,6 +451,42 @@ button {
   border-color: var(--accent-dim);
 }
 
+/* Camera view switcher — a row of glass pills sitting just left of the profiling toggle. */
+.cam-switch {
+  position: absolute;
+  top: 14px;
+  right: 56px; /* left of the 32px-wide toggle at right:14px, + an 10px gap */
+  display: flex;
+  gap: 6px;
+}
+
+.cam-switch-btn {
+  height: 32px;
+  padding: 0 12px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.cam-switch-btn:hover {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.cam-switch-btn.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
 /* Panel sits just below the toggle; denser glass since it's over the feed. */
 .profiling {
   position: absolute;

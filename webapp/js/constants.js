@@ -35,6 +35,7 @@ export const WEBRTC_OFFER_TOPIC = "/webrtc/offer_id";    // robot -> us: {client
 export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id";  // us -> robot: {client_id, sdp}
 export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id";  // us -> robot: {client_id, candidate, sdpMLineIndex, sdpMid}
 export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out_id"; // robot -> us: {client_id, candidate, sdpMLineIndex, sdpMid}
+export const WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"; // robot -> us: {count, clients[], cameras[]}
 
 // Leader-arm teleop: raw Dynamixel ticks (Int32MultiArray, 6 servos) — the
 // robot's mars_app converts (tick - 2048) * 2π/4096 into /mars/arm/commands.

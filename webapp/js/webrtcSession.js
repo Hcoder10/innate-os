@@ -59,6 +59,12 @@ export class WebRtcSession {
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
   #videoTrackCount = 0;
   #handshakeAttempts = 0;
+  // Multi-camera: the robot negotiates every camera's m-line (video0, video1, …); we keep each track's
+  // stream by m-line index and display the selected one. Switching is a no-reneg START (the robot pushes
+  // only the selected camera), so it's instant.
+  /** @type {(MediaStream | null)[]} */ #videoStreams = [];
+  #selectedIndex = 0;
+  #selectedCamera = "main";
   // Unique per page-load; the robot routes our offer/answer/ICE on the *_id topics by this id, so we
   // negotiate as an independent peer (and stream concurrently with any other device).
   #clientId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
@@ -145,10 +151,37 @@ export class WebRtcSession {
     this.#patch({ audioRequested: on });
     if (this.#started && this.#ros.state === "connected") {
       this.#ros.publish(WEBRTC_START_TOPIC, {
-        data: JSON.stringify({ source: "live", audio: on, client_id: this.#clientId, video: ["main"] }),
+        data: JSON.stringify({ source: "live", audio: on, client_id: this.#clientId, video: [this.#selectedCamera] }),
       });
       console.log("[webrtc] audio toggle ->", on, "(no reconnect)");
     }
+  }
+
+  /**
+   * Switch which camera is displayed. The robot negotiated every camera up front, so this is a no-reneg
+   * START (it starts pushing `name`, stops the rest) — instant, no reconnect.
+   * @param {number} index m-line index of the camera (video0 -> 0, …)
+   * @param {string} name camera name the robot keys on
+   */
+  selectCamera(index, name) {
+    if (this.#selectedIndex === index) return;
+    this.#selectedIndex = index;
+    this.#selectedCamera = name;
+    // Show the selected track now; it renders as soon as the robot pushes its first frame (it
+    // force-keyframes on activate, so ~instant). Until then the previous frame/overlay holds.
+    const stream = this.#videoStreams[index] ?? null;
+    if (stream) this.#patch({ videoStream: stream, status: stream.getVideoTracks()[0]?.muted ? "connecting" : "streaming" });
+    if (this.#started && this.#ros.state === "connected") {
+      this.#ros.publish(WEBRTC_START_TOPIC, {
+        data: JSON.stringify({ source: "live", video: [name], audio: this.#state.audioRequested, client_id: this.#clientId }),
+      });
+      console.log("[webrtc] select camera " + name + " (index " + index + ", no reconnect)");
+    }
+  }
+
+  /** @returns {{ index: number, name: string }} the currently displayed camera */
+  get selectedCamera() {
+    return { index: this.#selectedIndex, name: this.#selectedCamera };
   }
 
   // ---- handshake ----------------------------------------------------------
@@ -205,15 +238,15 @@ export class WebRtcSession {
     // Re-armed to the longer MEDIA_TIMEOUT_MS in #onOffer once we've answered.
     this.#armWatchdog(OFFER_TIMEOUT_MS);
 
-    // Only the main camera is shown (the arm camera is ignored in v1), so ask the robot to push just
-    // main — the robot still negotiates both transceivers for a client_id peer, but won't encode/send
-    // arm unless we request it, so we don't waste its bandwidth.
+    // Ask the robot to push just the selected camera. It still negotiates every camera's transceiver for
+    // a client_id peer (so switching is reneg-free), but won't encode/send the others until we request
+    // them — so we don't waste its bandwidth/CPU on cameras we're not viewing.
     this.#ros.publish(WEBRTC_START_TOPIC, {
       data: JSON.stringify({
         source: "live",
         audio: this.#state.audioRequested,
         client_id: this.#clientId,
-        video: ["main"],
+        video: [this.#selectedCamera],
       }),
     });
     console.log("[webrtc] handshake: START sent", { client_id: this.#clientId, audio: this.#builtWithAudio });
@@ -254,39 +287,31 @@ export class WebRtcSession {
     }
 
     const stream = new MediaStream([track]);
-    const mid = event.transceiver?.mid;
-    const isMain = mid === "0" || mid === "video0";
-    const isArm = mid === "1" || mid === "video1";
-    let main = false;
-    if (isMain) {
-      main = true;
-    } else if (!isArm) {
-      // Unknown mids: fall back to arrival order (main camera offers first).
-      this.#videoTrackCount += 1;
-      main = this.#videoTrackCount === 1;
-    }
-    if (!main) return; // arm camera — ignored in v1
+    // m-line index: "video0"/"0" -> 0, "video1"/"1" -> 1, … We keep every camera's stream by index and
+    // display only the selected one; the rest stay warm (negotiated) but the robot isn't pushing them.
+    const mid = event.transceiver?.mid ?? "";
+    const m = /(\d+)$/.exec(mid);
+    const index = m ? Number(m[1]) : this.#videoTrackCount;
+    this.#videoTrackCount += 1;
+    this.#videoStreams[index] = stream;
 
-    // A remote track arrives muted and unmutes when RTP actually flows — only
-    // then is there a real frame. Exposing the stream before that swaps the
-    // <video> to a black source and hides the "establishing video link"
-    // overlay, so we hold off: the cold-start overlay (or the previous
-    // freeze-frame) stays until media is genuinely live. ontrack itself is not
-    // the signal, and we keep the watchdog armed until media arrives.
-    const goLive = () => {
-      if (this.#pc !== pc) return; // stale track from a superseded pc
+    // A remote track arrives muted and unmutes when RTP actually flows — only then is there a real frame.
+    // Exposing the stream before that swaps the <video> to a black source and hides the "establishing
+    // video link" overlay, so we hold off: the cold-start overlay (or the previous freeze-frame) stays
+    // until media is genuinely live. Only the SELECTED camera is shown; the watchdog stays armed for it.
+    const showLive = () => {
+      if (this.#pc !== pc || index !== this.#selectedIndex) return; // stale pc, or not the selected camera
       this.#handshakeAttempts = 0;
       this.#clearWatchdog();
-      console.log("[webrtc] video live");
+      console.log("[webrtc] video live (camera index " + index + ")");
       this.#patch({ videoStream: stream, status: "streaming" });
     };
 
-    if (!track.muted) goLive();
-    track.addEventListener("unmute", goLive);
+    if (!track.muted) showLive();
+    track.addEventListener("unmute", showLive);
     track.addEventListener("mute", () => {
-      // Media stalled mid-stream — keep the last good frame frozen and flag
-      // connecting so the stage degrades it; the degrade/handshake timers
-      // drive recovery.
+      // Media stalled mid-stream — keep the last good frame frozen and flag connecting so the stage
+      // degrades it; the degrade/handshake timers drive recovery. Only the displayed camera matters.
       if (this.#pc === pc && this.#state.videoStream === stream && this.#started) {
         this.#patch({ status: "connecting" });
       }
