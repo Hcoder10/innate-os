@@ -244,6 +244,23 @@ button {
   height: 100%;
 }
 
+.map-controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.map-goal-btn {
+  background: rgba(10, 10, 12, 0.7);
+}
+
+.map-goal-btn.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .connect-layer {
   display: grid;
   place-items: center;

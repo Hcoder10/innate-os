@@ -46,6 +46,11 @@ export const RESET_POSITION_SERVICE = "/sim/reset_position";
 // Navigation map + odometry for the 2D map page.
 export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
 export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
+export const PLAN_TOPIC = "/plan"; // nav_msgs/Path — the planner's route to the goal
+// Click-to-navigate goal. Publishing a geometry_msgs/PoseStamped here kicks off
+// planning; the resulting route streams back on PLAN_TOPIC. Same topic the sim
+// console's map view publishes to.
+export const GOAL_POSE_TOPIC = "/goal_pose";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
