@@ -2,7 +2,7 @@
 <div align="center">
 
 <p>
-  <img src="docs/assets/readme/innate-os-repo-intro.png" alt="Innate OS" width="100%">
+  <img src="docs/assets/readme/innate-os-repo-intro.png" alt="Innate OS" width="80%">
 </p>
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
@@ -96,8 +96,8 @@ Skills are the core unit of action on Innate robots.
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
 <p align="center">
-  <img src="docs/assets/readme/skill-pick-socks.gif" alt="MARS running a physical skill to pick up a sock" width="520"><br>
-  <sub>A physical skill running on MARS.</sub>
+  <img src="docs/assets/readme/skill-grasp-cube.gif" alt="A single physical grasp skill picking up a cube" width="520"><br>
+  <sub>A single physical skill running on MARS.</sub>
 </p>
 
 - **Execute manually** — Run skills from the `innate` CLI.
@@ -221,6 +221,11 @@ An agent consists of:
 - A **set of skills** the robot is allowed to use
 - A **system prompt** that defines the robot's behavior
 - A **harness** that connects the model to observations, memory, tools, and robot actions
+
+<p align="center">
+  <img src="docs/assets/readme/agent-clean-room.gif" alt="Pick up and put away skills chained in an agent to clean a room" width="520"><br>
+  <sub>Pick up and put away skills chained in an agent to clean a room.</sub>
+</p>
 
 ### Specificities of multimodal agents
 
