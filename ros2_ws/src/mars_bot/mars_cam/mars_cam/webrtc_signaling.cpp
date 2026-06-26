@@ -190,80 +190,58 @@ void WebRTCStreamer::apply_ice(Peer* peer, const std::string& candidate, int mli
     g_signal_emit_by_name(peer->webrtc, "add-ice-candidate", mline, candidate.c_str());
 }
 
-void WebRTCStreamer::on_answer(const std_msgs::msg::String::SharedPtr msg) {
-    std::lock_guard<std::mutex> lock(peers_mutex_);
-    auto it = peers_.find("");
-    if (it == peers_.end()) {
-        RCLCPP_WARN(this->get_logger(), "Received bare answer but no default peer active");
-        return;
-    }
-    apply_answer(it->second.get(), msg->data);
-}
-
-void WebRTCStreamer::on_answer_id(const std_msgs::msg::String::SharedPtr msg) {
-    std::string client_id, sdp;
-    try {
-        auto json = nlohmann::json::parse(msg->data);
-        client_id = json.at("client_id").get<std::string>();
-        sdp = json.at("sdp").get<std::string>();
-    } catch (const nlohmann::json::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Bad answer_id: %s", e.what());
-        return;
-    }
+// The bare topics target the default ("") peer; the *_id topics carry an explicit client_id. Both route
+// through these two helpers so the four handlers are thin parse-and-forward wrappers.
+void WebRTCStreamer::deliver_answer(const std::string& client_id, const std::string& sdp) {
     std::lock_guard<std::mutex> lock(peers_mutex_);
     auto it = peers_.find(client_id);
     if (it == peers_.end()) {
-        RCLCPP_WARN(this->get_logger(), "answer_id for unknown peer '%s'", client_id.c_str());
+        RCLCPP_WARN(this->get_logger(), "answer for unknown peer '%s'", client_id.empty() ? "(default)" : client_id.c_str());
         return;
     }
     apply_answer(it->second.get(), sdp);
 }
 
-void WebRTCStreamer::on_ice_in(const std_msgs::msg::String::SharedPtr msg) {
-    std::string candidate;
-    int mline = 0;
-    try {
-        auto json = nlohmann::json::parse(msg->data);
-        candidate = json["candidate"].get<std::string>();
-        mline = json["sdpMLineIndex"].get<int>();
-    } catch (const nlohmann::json::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to parse ICE candidate: %s", e.what());
-        return;
-    }
-    const std::string prepared = prepare_ice_candidate(candidate);  // resolve mDNS BEFORE taking the lock
-    if (prepared.empty()) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(peers_mutex_);
-    auto it = peers_.find("");
-    if (it == peers_.end()) {
-        return;
-    }
-    apply_ice(it->second.get(), prepared, mline);
-}
-
-void WebRTCStreamer::on_ice_in_id(const std_msgs::msg::String::SharedPtr msg) {
-    std::string client_id, candidate;
-    int mline = 0;
-    try {
-        auto json = nlohmann::json::parse(msg->data);
-        client_id = json.at("client_id").get<std::string>();
-        candidate = json.at("candidate").get<std::string>();
-        mline = json.at("sdpMLineIndex").get<int>();
-    } catch (const nlohmann::json::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Bad ice_in_id: %s", e.what());
-        return;
-    }
+void WebRTCStreamer::deliver_ice(const std::string& client_id, const std::string& candidate, int mline) {
     const std::string prepared = prepare_ice_candidate(candidate);  // resolve mDNS BEFORE taking the lock
     if (prepared.empty()) {
         return;
     }
     std::lock_guard<std::mutex> lock(peers_mutex_);
     auto it = peers_.find(client_id);
-    if (it == peers_.end()) {
-        return;
+    if (it != peers_.end()) {
+        apply_ice(it->second.get(), prepared, mline);
     }
-    apply_ice(it->second.get(), prepared, mline);
+}
+
+void WebRTCStreamer::on_answer(const std_msgs::msg::String::SharedPtr msg) { deliver_answer("", msg->data); }
+
+void WebRTCStreamer::on_answer_id(const std_msgs::msg::String::SharedPtr msg) {
+    try {
+        auto j = nlohmann::json::parse(msg->data);
+        deliver_answer(j.at("client_id").get<std::string>(), j.at("sdp").get<std::string>());
+    } catch (const nlohmann::json::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Bad answer_id: %s", e.what());
+    }
+}
+
+void WebRTCStreamer::on_ice_in(const std_msgs::msg::String::SharedPtr msg) {
+    try {
+        auto j = nlohmann::json::parse(msg->data);
+        deliver_ice("", j["candidate"].get<std::string>(), j["sdpMLineIndex"].get<int>());
+    } catch (const nlohmann::json::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to parse ICE candidate: %s", e.what());
+    }
+}
+
+void WebRTCStreamer::on_ice_in_id(const std_msgs::msg::String::SharedPtr msg) {
+    try {
+        auto j = nlohmann::json::parse(msg->data);
+        deliver_ice(j.at("client_id").get<std::string>(), j.at("candidate").get<std::string>(),
+                    j.at("sdpMLineIndex").get<int>());
+    } catch (const nlohmann::json::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Bad ice_in_id: %s", e.what());
+    }
 }
 
 void WebRTCStreamer::on_ice_candidate(GstElement* webrtc, guint mline, gchar* candidate, gpointer user_data) {

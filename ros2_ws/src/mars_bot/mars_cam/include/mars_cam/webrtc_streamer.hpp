@@ -107,6 +107,9 @@ class WebRTCStreamer : public rclcpp::Node {
     void on_answer_id(const std_msgs::msg::String::SharedPtr msg);   // {client_id, sdp}
     void on_ice_in(const std_msgs::msg::String::SharedPtr msg);      // bare, default peer
     void on_ice_in_id(const std_msgs::msg::String::SharedPtr msg);   // {client_id, candidate, ...}
+    // Shared routing for the bare ("" peer) and *_id handler pairs (find the peer under lock, apply).
+    void deliver_answer(const std::string& client_id, const std::string& sdp);
+    void deliver_ice(const std::string& client_id, const std::string& candidate, int mline);
     void apply_answer(Peer* peer, const std::string& sdp);          // caller holds peers_mutex_
     // Resolve an incoming candidate's mDNS <uuid>.local to its IP (short deadline) so libnice never stalls
     // ~5 s on the browser's unreachable names; returns the IP-rewritten candidate, or "" to drop it. Call
