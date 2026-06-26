@@ -98,7 +98,7 @@
           <button class="tog" data-l="main">main</button>
           <button class="tog" data-l="arm">arm</button>
           <button class="tog" data-l="audio">audio</button>
-          <span class="muted" style="font-size:11px">(re-negotiates — robot only encodes the enabled ones)</span>
+          <span class="muted" style="font-size:11px">(live switch, no reconnect — robot pushes only the enabled cameras; audio toggle reconnects)</span>
         </div>
 
         <div class="panel" style="margin-top:12px">
@@ -232,8 +232,9 @@
       let pc = null, clientId = null, remoteSet = false, iceQueue = [], processingOffer = false;
       let videoArrival = 0; // fallback index when a track has no usable mid
       const trackLabel = new Map(); // track.id -> "main"|"arm"|"audio"
-      // Which streams the client asks the robot to encode. Toggling re-negotiates so the robot
-      // actually stops encoding a disabled stream (not just a client-side mute).
+      // Which streams the client wants. Toggling a camera while connected is a live push-gate flip on the
+      // robot (sendActive(), same client_id) — no renegotiation; it actually stops the robot encoding a
+      // disabled camera, not just a client-side mute. (Audio toggle still rebuilds the pc.)
       const requested = { main: true, arm: true, audio: false };
       // The video streams we asked for, in order — the i-th video m-line maps back to requestedVideo[i].
       let requestedVideo = [];

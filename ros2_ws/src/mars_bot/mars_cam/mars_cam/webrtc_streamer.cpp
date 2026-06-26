@@ -435,21 +435,32 @@ void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam)
     }
     GstBuffer* buffer = gst_sample_get_buffer(sample);
     if (buffer) {
-        std::lock_guard<std::mutex> lock(peers_mutex_);
-        for (auto& kv : peers_) {
-            GstElement* src = (cam == "main") ? kv.second->rtp_main : kv.second->rtp_arm;
-            if (!src || !wants(kv.second->active, cam)) {
-                continue;  // not negotiated, or this peer has the camera toggled off (no reneg to stop it)
+        // Collect (and ref) this camera's per-peer appsrcs under a BRIEF lock, then release it before the
+        // heap copy + push-buffer for each. Otherwise fan-out at 30 fps x N peers holds peers_mutex_ for
+        // tens of µs/frame and delays the answer/ICE/health callbacks that contend on it. The refs keep
+        // the appsrcs alive if a peer is torn down between the unlock and the push (a push to a now-NULL
+        // appsrc just returns FLUSHING — harmless).
+        std::vector<GstElement*> targets;
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            for (auto& kv : peers_) {
+                GstElement* src = (cam == "main") ? kv.second->rtp_main : kv.second->rtp_arm;
+                if (src && wants(kv.second->active, cam)) {
+                    targets.push_back(GST_ELEMENT(gst_object_ref(src)));
+                }
             }
+        }
+        for (GstElement* src : targets) {
             // Push a WRITABLE copy with its timestamps cleared, not a shared ref: the buffer carries the
-            // encode pipeline's PTS (a different, future-dated timebase), and a shared/non-writable
-            // buffer can't be re-stamped, so webrtcbin would hold every frame after the first burst.
-            // The copy lets the transport appsrc's do-timestamp assign this pipeline's running-time.
+            // encode pipeline's PTS (a different, future-dated timebase), and a shared/non-writable buffer
+            // can't be re-stamped, so webrtcbin would hold every frame after the first burst. The copy lets
+            // the transport appsrc's do-timestamp assign this pipeline's running-time.
             GstBuffer* out = gst_buffer_copy(buffer);
             GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
             GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
             GstFlowReturn ret;
             g_signal_emit_by_name(src, "push-buffer", out, &ret);  // takes ownership of the copy
+            gst_object_unref(src);
         }
     }
     gst_sample_unref(sample);
@@ -1111,8 +1122,9 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
         return;
     }
     GstWebRTCSessionDescription* answer = gst_webrtc_session_description_new(GST_WEBRTC_SDP_TYPE_ANSWER, sdp_msg);
-    GstPromise* promise = gst_promise_new();
-    g_signal_emit_by_name(peer->webrtc, "set-remote-description", answer, promise);
+    // Fire-and-forget: pass a NULL promise (we don't observe the result), same as set-local-description in
+    // on_offer_created. Passing a gst_promise_new() here would leak it — it's never waited on or unref'd.
+    g_signal_emit_by_name(peer->webrtc, "set-remote-description", answer, nullptr);
     gst_webrtc_session_description_free(answer);
     RCLCPP_INFO(this->get_logger(), "Answer set for '%s'", peer->client_id.empty() ? "(default)" : peer->client_id.c_str());
 }
