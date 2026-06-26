@@ -41,6 +41,7 @@ const sections = [];
 
 let saveBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
 let resetAllBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
+let restartBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
 let dirtyEl = /** @type {HTMLElement} */ (document.createElement("span"));
 let statusEl = /** @type {HTMLElement} */ (document.createElement("span"));
 
@@ -91,6 +92,10 @@ const STYLE = `
 .set-reset-all { margin-left: auto; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--hairline, #2a2f3a);
   background: none; color: var(--text, #e7e7ea); font: inherit; cursor: pointer; }
 .set-reset-all:disabled { opacity: .4; cursor: default; }
+.set-restart { padding: 8px 14px; border-radius: 9px; border: 1px solid var(--hairline, #2a2f3a);
+  background: none; color: var(--text, #e7e7ea); font: inherit; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
+.set-restart:not(:disabled):hover { border-color: var(--primary, #7569FD); color: var(--primary, #7569FD); }
+.set-restart:disabled { opacity: .4; cursor: default; }
 .set-dirty { font-size: 13px; color: var(--primary, #7569FD); }
 .set-status { font-size: 13px; }
 .set-status.ok { color: #3ecf8e; }
@@ -272,10 +277,15 @@ function build() {
   resetAllBtn.textContent = "Reset all to defaults";
   resetAllBtn.disabled = true;
   resetAllBtn.addEventListener("click", resetAll);
+  restartBtn.className = "set-restart";
+  restartBtn.textContent = "Restart robot";
+  restartBtn.title = "Restart the robot to apply saved settings (same as `innate restart`)";
+  restartBtn.addEventListener("click", onRestart);
   bar.appendChild(saveBtn);
   bar.appendChild(dirtyEl);
   bar.appendChild(statusEl);
   bar.appendChild(resetAllBtn);
+  bar.appendChild(restartBtn);
   page.appendChild(bar);
 
   stage.appendChild(page);
@@ -581,6 +591,28 @@ async function onSave() {
   } catch (err) {
     setStatus("Save failed: " + (err instanceof Error ? err.message : String(err)), "err");
     recompute();
+  }
+}
+
+async function onRestart() {
+  if (!window.confirm("Restart the robot now? Any running task will stop, and the robot will come back in ~30s with the latest saved settings.")) {
+    return;
+  }
+  restartBtn.disabled = true;
+  setStatus("Restarting the robot…");
+  try {
+    const res = await fetch("/restart", { method: "POST" });
+    if (res.ok) {
+      // The proxy is torn down by the restart, so leave the button disabled —
+      // the page reconnects on its own once the robot is back.
+      setStatus("Restarting — the robot will be back in ~30s.", "ok");
+    } else {
+      setStatus("Restart failed: " + (await res.text().catch(() => "") || res.status), "err");
+      restartBtn.disabled = false;
+    }
+  } catch (err) {
+    setStatus("Couldn't reach the robot to restart: " + (err instanceof Error ? err.message : String(err)), "err");
+    restartBtn.disabled = false;
   }
 }
 

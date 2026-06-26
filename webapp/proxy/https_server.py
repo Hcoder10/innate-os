@@ -466,6 +466,30 @@ def settings_get_response() -> Response:
     )
 
 
+def restart_response() -> Response:
+    """POST /restart -> kick off `innate restart` (same as the CLI) so the robot
+    comes back with the latest config/settings.yaml. The restart tears down the
+    tmux session this proxy runs in, so we spawn it detached with a brief delay —
+    that lets this 200 flush to the browser before the proxy is killed, and the
+    systemd restart job completes regardless of the client dying."""
+    try:
+        subprocess.Popen(
+            ["bash", "-c", "sleep 1; exec innate restart"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as err:
+        return _plain(500, "Internal Server Error", f"restart failed: {err}")
+    body = json.dumps({"ok": True}).encode()
+    return Response(
+        200,
+        "OK",
+        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
+        body,
+    )
+
+
 async def process_request(connection, request):
     if request.path == "/ws":
         return None  # proceed with the WebSocket handshake
@@ -490,6 +514,8 @@ async def process_request(connection, request):
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None
         return await asyncio.to_thread(settings_get_response)
+    if split.path == "/restart":
+        return await asyncio.to_thread(restart_response)
     return await asyncio.to_thread(static_response, request.path)
 
 
