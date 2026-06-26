@@ -308,6 +308,17 @@ install(DIRECTORY calib/
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  # Unit tests for the pure (GStreamer/ROS-free) streamer helpers in webrtc_internal.hpp.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_webrtc_internal test/test_webrtc_internal.cpp)
+  if(TARGET test_webrtc_internal)
+    target_include_directories(test_webrtc_internal PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${GSTREAMER_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_webrtc_internal ${GSTREAMER_LIBRARIES})
+  endif()
 endif()
 
 ament_package()
