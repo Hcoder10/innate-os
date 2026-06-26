@@ -174,14 +174,18 @@ std::string WebRTCStreamer::prepare_ice_candidate(const std::string& candidate) 
     if (!is_mdns_address(addr)) {
         return candidate;  // already an IP (LAN / tailscale / IPv6) — forward unchanged
     }
-    // Resolve the browser's mDNS name ourselves, off the peers_ lock, with a short deadline: the reachable
-    // LAN .local resolves in ~30 ms; the unreachable ones never resolve and would otherwise stall libnice
-    // ~5 s. Forward the resolved IP (so libnice doesn't resolve again); drop the ones that time out.
+    // Resolve the browser's mDNS name ourselves, off the peers_ lock, with a short deadline: a reachable
+    // LAN .local resolves in ~30 ms, and forwarding the IP means libnice never does its own (slow)
+    // resolution — that's the fast path. If it DOESN'T resolve (browser on a different L2 / no mDNS path
+    // to it), forward it UNCHANGED anyway: libnice needs >=1 remote candidate to enter checking and form a
+    // peer-reflexive candidate from the browser's connectivity checks to OUR advertised IPs (LAN/tailscale/
+    // IPv6/srflx). Dropping it means that when every browser candidate is an unresolvable .local we keep
+    // zero remote candidates and the peer never connects.
     const std::string ip = resolve_ipv4_timeout(addr, 200);
     if (ip.empty()) {
-        RCLCPP_INFO(this->get_logger(), "Dropping unresolvable mDNS ICE candidate %s (would stall ICE ~5 s)",
+        RCLCPP_INFO(this->get_logger(), "Forwarding unresolvable mDNS ICE candidate %s as-is (peer-reflexive bootstrap)",
                     addr.c_str());
-        return "";
+        return candidate;
     }
     return replace_first(candidate, addr, ip);
 }

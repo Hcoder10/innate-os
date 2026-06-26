@@ -204,6 +204,13 @@ export class WebRtcSession {
 
     pc.onicecandidate = (event) => {
       if (this.#pc !== pc || !event.candidate) return;
+      const c = event.candidate;
+      // Log every candidate we send the robot: type (host/srflx/relay) + address — `.local` means Chrome
+      // obfuscated a host IP behind an mDNS name (the robot must peer-reflexive past it).
+      console.log(
+        "[webrtc] ice ->",
+        c.address ? `${c.type} ${c.address}:${c.port} ${c.protocol}` : c.candidate,
+      );
       this.#ros.publish(WEBRTC_ICE_IN_TOPIC, {
         data: JSON.stringify({
           client_id: this.#clientId, // envelope: the robot routes our ICE by client_id (independent peer)
