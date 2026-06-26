@@ -25,8 +25,16 @@ import { createSkillsPanel } from "./skillsPanel.js";
 import { createChatPanel } from "./chatPanel.js";
 import { createRightDock } from "./rightDock.js";
 import { createAgentState } from "./agentState.js";
+import { createSimControls } from "./simControls.js";
 
 initShell("teleop", "");
+
+// Runtime feature flags (config.json, served static). Sim-only debug controls are
+// off unless a deployment opts in. Loaded before the cockpit builds.
+/** @type {any} */
+const config = await fetch("/config.json", { cache: "no-store" })
+  .then((r) => (r.ok ? r.json() : {}))
+  .catch(() => ({}));
 
 // Console debugging hook (also handy until the Debugging page exists).
 /** @type {{ ros: typeof ros, drive: typeof drive, session: WebRtcSession | null }} */
@@ -88,6 +96,11 @@ function buildCockpit(root) {
     dock,
     { destroy: () => agentState.destroy() },
   );
+
+  // Sim-only debug controls (Reset Position + FPS/queue) — opt-in via config.json.
+  if (config.simControls) {
+    parts.push(createSimControls(root, ros, config.simApiUrl || "http://localhost:8000"));
+  }
 
   session.start();
 
