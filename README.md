@@ -81,7 +81,23 @@ It is available at `https://<robot-address>` which can either be its IP or hostn
 
 The Innate mobile app is available on both iOS and Android. It allows you to control the robot in real time, just like the web app, but with a more convenient interface.
 
-<img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app" height="300">
+<table>
+  <tr>
+    <td width="45%" align="center" valign="top">
+      <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app" height="340"><br>
+      <sub>Innate Controller app</sub>
+    </td>
+    <td width="55%" valign="middle">
+      <strong>Download the Innate Controller app</strong><br>
+      Connect to MARS, drive the robot, run agents and skills, record training data, and manage maps from your phone.<br><br>
+      <a href="https://cdn.innate.bot/innate-app-latest-1.3.0.apk"><strong>Android APK (1.3.0)</strong></a><br>
+      <sub>Direct APK download.</sub><br><br>
+      <a href="https://testflight.apple.com/join/YeChe4A7"><strong>iOS TestFlight</strong></a><br>
+      <sub>Join the iOS beta.</sub><br><br>
+      <a href="https://docs.innate.bot/robots/innate-controller-app">Controller app docs</a>
+    </td>
+  </tr>
+</table>
 
 ---
 
