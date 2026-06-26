@@ -213,8 +213,18 @@ def _has_https_cookie(request) -> bool:
     return any(part.strip() == f"{HTTPS_COOKIE}=1" for part in request.headers.get("Cookie", "").split(";"))
 
 
+def _strip_host_port(raw: str) -> str:
+    """Host header → bare host, leaving an IPv6 literal (`[::1]`) intact — a plain
+    rsplit on ':' would drop everything after its last colon and mangle it."""
+    raw = raw.strip()
+    if raw.startswith("["):  # [ipv6] or [ipv6]:port
+        end = raw.find("]")
+        return raw[: end + 1] if end != -1 else raw
+    return raw.rsplit(":", 1)[0] if raw.count(":") == 1 else raw
+
+
 def _redirect_to_https(request):
-    host = request.headers.get("Host", "").rsplit(":", 1)[0] or "0.0.0.0"
+    host = _strip_host_port(request.headers.get("Host", "")) or "0.0.0.0"
     netloc = host if HTTPS_PORT == 443 else f"{host}:{HTTPS_PORT}"
     location = f"https://{netloc}{request.path}"
     return Response(307, "Temporary Redirect", Headers({"Location": location, "Content-Length": "0"}), b"")
