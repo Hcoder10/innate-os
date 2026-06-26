@@ -98,8 +98,8 @@ Skills are the core unit of action on Innate robots.
 A skill can be digital, like calling a tool, a service or another agent; or physical, like navigating, waving, grasping, recording a demonstration, or executing a learned manipulation policy.
 
 <p align="center">
-  <img src="docs/assets/readme/skills-chess-navigation.gif" alt="Two standalone physical skills: moving a chess piece, then navigating to a goal" width="520"><br>
-  <sub>Two standalone skill examples, shown sequentially: moving a chess piece, then navigating to a goal.</sub>
+  <img src="docs/assets/readme/skills-chess-door-opening.gif" alt="Two standalone physical skills: moving a chess piece, then opening a door" width="520"><br>
+  <sub>Two standalone skill examples, shown sequentially: moving a chess piece, then opening a door.</sub>
 </p>
 
 - **Execute manually** — Run skills from the `innate` CLI.
