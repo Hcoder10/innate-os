@@ -13,6 +13,7 @@ import * as esbuild from "esbuild";
 
 const PAGES = [
   "teleop",
+  "map",
   "collect",
   "datasets",
   "training",
