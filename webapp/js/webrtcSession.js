@@ -138,17 +138,17 @@ export class WebRtcSession {
    */
   setAudio(on) {
     if (this.#state.audioRequested === on) return;
+    // The robot always negotiates the audio m-line for us, so toggling is a no-reneg START (it starts/
+    // stops SENDING audio + opens/closes the mic) — no reconnect. Flip the local <audio> instantly too.
     const track = this.#state.audioStream?.getAudioTracks()[0];
     if (track) track.enabled = on;
     this.#patch({ audioRequested: on });
-
-    this.#clearAudioDebounce();
-    this.#audioDebounce = setTimeout(() => {
-      this.#audioDebounce = null;
-      if (this.#started && this.#builtWithAudio !== this.#state.audioRequested) {
-        this.#handshake();
-      }
-    }, AUDIO_REBUILD_DEBOUNCE_MS);
+    if (this.#started && this.#ros.state === "connected") {
+      this.#ros.publish(WEBRTC_START_TOPIC, {
+        data: JSON.stringify({ source: "live", audio: on, client_id: this.#clientId, video: ["main"] }),
+      });
+      console.log("[webrtc] audio toggle ->", on, "(no reconnect)");
+    }
   }
 
   // ---- handshake ----------------------------------------------------------

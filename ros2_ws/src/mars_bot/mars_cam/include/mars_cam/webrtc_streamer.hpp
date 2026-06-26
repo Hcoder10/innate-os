@@ -63,7 +63,8 @@ struct Peer {
     std::vector<std::string> videos;  // NEGOTIATED video streams (transceivers), in m-line order
     std::vector<std::string> active;  // currently PUSHED streams (subset of videos); toggled live on a
                                       // stream switch without renegotiating, so switches are instant
-    bool with_audio = false;
+    bool with_audio = false;          // audio m-line NEGOTIATED (an opus transceiver exists)
+    bool audio_active = false;        // audio currently being SENT — toggled live like the cameras (no reneg)
 
     // Stale-offer guard: shared with the async create-offer callback so it can tell its peer was torn
     // down / replaced underneath it (lock-free, and survives the Peer being freed). Bumped on destroy.
@@ -78,8 +79,6 @@ struct Peer {
     std::atomic<int64_t> last_rtcp_ns{0};  // steady-clock ns of last RTCP; 0 = disarmed
     bool rtcp_probe_installed = false;
     int terminal_polls = 0;  // consecutive FAILED/DISCONNECTED health polls
-    bool audio_probe_installed = false;
-    std::atomic<uint64_t> audio_pkts{0};
 };
 
 class WebRTCStreamer : public rclcpp::Node {
@@ -115,9 +114,14 @@ class WebRTCStreamer : public rclcpp::Node {
     static GstFlowReturn on_sample(GstElement* appsink, gpointer user_data);
     void fan_out_sample(GstElement* appsink, const std::string& cam);
 
+    // ---- Shared audio (mic) — encoded once like the cameras, fanned out, gated for privacy ----
+    bool build_audio_pipeline();   // alsasrc -> opusenc -> rtpopuspay -> appsink (built once, kept NULL)
+    void reconcile_audio();        // PLAYING when some peer has audio active, NULL otherwise (mic off)
+    static GstFlowReturn on_audio_sample(GstElement* appsink, gpointer user_data);
+    void fan_out_audio(GstElement* appsink);
+
     // Per-peer RTCP-liveness probe on the peer's rtpbin recv_rtcp_sink pad (ticks per RTCP packet).
     static GstPadProbeReturn on_rtcp_buffer(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static GstPadProbeReturn on_audio_buffer(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     bool install_rtcp_probe_for(Peer* peer);  // attach once the peer's rtcp pad exists
 
     // ---- Persistent encode pipeline (built once in the constructor) ----
@@ -136,10 +140,11 @@ class WebRTCStreamer : public rclcpp::Node {
     // create_peer_transport builds the transport pipeline, wires signals, and kicks off create-offer.
     // Caller holds peers_mutex_. Returns the inserted Peer* (or nullptr on failure).
     Peer* create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
-                                const std::vector<std::string>& active, bool with_audio);
-    // Toggle which negotiated cameras a connected peer is being sent, with NO renegotiation: adjusts the
-    // per-camera want-count + push gate and forces a keyframe on newly-enabled cameras. Caller holds mutex.
-    void update_peer_active(Peer* peer, const std::vector<std::string>& active);
+                                const std::vector<std::string>& active, bool with_audio, bool audio_active);
+    // Toggle which negotiated cameras (and audio) a connected peer is being sent, with NO renegotiation:
+    // adjusts the per-camera/audio want-count + push gate and forces a keyframe on newly-enabled cameras.
+    // Caller holds peers_mutex_.
+    void update_peer_active(Peer* peer, const std::vector<std::string>& active, bool audio_active);
     void destroy_peer(const std::string& client_id);  // caller holds peers_mutex_
     std::string build_transport_description(const std::vector<std::string>& videos, bool& with_audio) const;
     void publish_offer(const std::string& client_id, const std::string& sdp);
@@ -171,6 +176,13 @@ class WebRTCStreamer : public rclcpp::Node {
     // ---- Persistent encode pipeline (built once, never torn down until shutdown) ----
     GstElement* encode_pipeline_ = nullptr;
     std::vector<std::unique_ptr<CameraEncoder>> cameras_;  // configured cameras, in m-line order
+
+    // ---- Shared audio (mic) pipeline: encoded once, fanned out to peers, gated for mic privacy ----
+    GstElement* audio_pipeline_ = nullptr;       // built once if enable_audio_; alsasrc..rtpopuspay..appsink
+    GstElement* audio_sink_ = nullptr;           // ref'd appsink (the fan-out tap)
+    std::atomic<int> want_audio_{0};             // # peers with audio active; >0 => mic open (pipeline PLAYING)
+    std::atomic<uint64_t> audio_frames_{0};      // for status: is audio actually flowing
+    bool audio_playing_ = false;                 // current audio pipeline state (gated by want_audio_)
 
     // ---- Peers ----
     std::map<std::string, std::unique_ptr<Peer>> peers_;

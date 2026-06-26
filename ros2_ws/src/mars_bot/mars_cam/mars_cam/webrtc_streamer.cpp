@@ -260,6 +260,12 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
         RCLCPP_FATAL(this->get_logger(), "Failed to build the persistent encode pipeline");
         throw std::runtime_error("encode pipeline build failed");
     }
+    // Shared mic pipeline (encoded once, fanned out, gated NULL/PLAYING for privacy). Optional: if it
+    // can't be built (no mic), carry on video-only.
+    if (enable_audio_ && !build_audio_pipeline()) {
+        RCLCPP_WARN(this->get_logger(), "Audio pipeline build failed; continuing video-only");
+        enable_audio_ = false;
+    }
 
     health_timer_ =
         this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
@@ -346,6 +352,11 @@ WebRTCStreamer::~WebRTCStreamer() {
     if (encode_pipeline_) {
         gst_element_set_state(encode_pipeline_, GST_STATE_NULL);
         gst_object_unref(encode_pipeline_);
+    }
+    if (audio_sink_) gst_object_unref(audio_sink_);
+    if (audio_pipeline_) {
+        gst_element_set_state(audio_pipeline_, GST_STATE_NULL);
+        gst_object_unref(audio_pipeline_);
     }
 }
 
@@ -495,6 +506,130 @@ void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam)
             GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
             GstFlowReturn ret;
             g_signal_emit_by_name(src, "push-buffer", out, &ret);  // takes ownership of the copy
+            gst_object_unref(src);
+        }
+    }
+    gst_sample_unref(sample);
+}
+
+// =============================================================================
+// Shared audio (mic): encoded once, fanned out, gated NULL/PLAYING for mic privacy
+// =============================================================================
+
+bool WebRTCStreamer::build_audio_pipeline() {
+    // Validate the mic element + device (a plain element name / device string — these go into a parsed
+    // pipeline description, so reject anything that could inject extra elements).
+    const bool valid_element = !audio_source_element_.empty() &&
+                               std::all_of(audio_source_element_.begin(), audio_source_element_.end(),
+                                           [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
+    if (!valid_element) {
+        RCLCPP_ERROR(this->get_logger(), "audio_source_element '%s' is not a plain element name",
+                     audio_source_element_.c_str());
+        return false;
+    }
+    std::string src = audio_source_element_;
+    if (!audio_capture_device_.empty()) {
+        const bool valid_device =
+            std::all_of(audio_capture_device_.begin(), audio_capture_device_.end(), [](unsigned char c) {
+                return std::isalnum(c) || c == ':' || c == ',' || c == '.' || c == '=' || c == '-' || c == '_' ||
+                       c == '/';
+            });
+        if (!valid_device) {
+            RCLCPP_ERROR(this->get_logger(), "audio_capture_device '%s' has unexpected chars", audio_capture_device_.c_str());
+            return false;
+        }
+        src += " device=\"" + audio_capture_device_ + "\"";
+    }
+    // mic -> opus -> rtp -> appsink (the fan-out tap). Encoded once for all peers; matches the RTP caps
+    // each peer's transport audio appsrc declares (OPUS/48000/pt98).
+    std::string desc = src +
+                       " do-timestamp=true ! "
+                       "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
+                       "audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=1 ! "
+                       "opusenc bitrate=24000 audio-type=voice ! "
+                       "rtpopuspay name=pay_audio pt=98 ! "
+                       "appsink name=sink_audio emit-signals=true sync=false max-buffers=4 drop=true ";
+    GError* error = nullptr;
+    audio_pipeline_ = gst_parse_launch(desc.c_str(), &error);
+    if (error) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to create audio pipeline: %s", error->message);
+        g_error_free(error);
+        if (audio_pipeline_) {
+            gst_object_unref(audio_pipeline_);
+            audio_pipeline_ = nullptr;
+        }
+        return false;
+    }
+    audio_sink_ = gst_bin_get_by_name(GST_BIN(audio_pipeline_), "sink_audio");
+    if (!audio_sink_) {
+        RCLCPP_ERROR(this->get_logger(), "Audio pipeline missing appsink");
+        return false;
+    }
+    g_signal_connect(audio_sink_, "new-sample", G_CALLBACK(on_audio_sample), this);
+    // Stays NULL (mic closed) until a peer activates audio — reconcile_audio() opens it.
+    RCLCPP_INFO(this->get_logger(), "Shared audio pipeline built (mic '%s', closed until a peer wants audio)",
+                src.c_str());
+    return true;
+}
+
+void WebRTCStreamer::reconcile_audio() {
+    // Mic-privacy gate: the mic pipeline is PLAYING only while some peer has audio ACTIVE, NULL otherwise
+    // (the device is genuinely closed). Opening (NULL->PLAYING) starts threads and never blocks, so it is
+    // safe to call under peers_mutex_; CLOSING (->NULL) JOINS the fan-out streaming thread, which also
+    // takes peers_mutex_ — so the close path must only run with the lock NOT held (it's driven by the
+    // health poll). reconcile_audio() is therefore: callable under the lock when want_audio_>0 (opens),
+    // and from poll_pipeline_health (outside the lock) for the general case (also closes).
+    if (!audio_pipeline_) {
+        return;
+    }
+    const bool want = want_audio_.load(std::memory_order_relaxed) > 0;
+    if (want == audio_playing_) {
+        return;
+    }
+    if (want) {
+        if (gst_element_set_state(audio_pipeline_, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE) {
+            audio_playing_ = true;
+            RCLCPP_INFO(this->get_logger(), "Mic opened (a peer activated audio)");
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Mic failed to open");
+        }
+    } else {
+        gst_element_set_state(audio_pipeline_, GST_STATE_NULL);  // closes the device; joins the fan-out thread
+        audio_playing_ = false;
+        RCLCPP_INFO(this->get_logger(), "Mic closed (no peer wants audio)");
+    }
+}
+
+GstFlowReturn WebRTCStreamer::on_audio_sample(GstElement* appsink, gpointer user_data) {
+    static_cast<WebRTCStreamer*>(user_data)->fan_out_audio(appsink);
+    return GST_FLOW_OK;
+}
+
+void WebRTCStreamer::fan_out_audio(GstElement* appsink) {
+    GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
+    if (!sample) {
+        return;
+    }
+    GstBuffer* buffer = gst_sample_get_buffer(sample);
+    if (buffer) {
+        audio_frames_.fetch_add(1, std::memory_order_relaxed);
+        // Same brief-lock + ref pattern as the video fan-out (see fan_out_sample).
+        std::vector<GstElement*> targets;
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            for (auto& kv : peers_) {
+                auto it = kv.second->rtp.find("audio");
+                if (it != kv.second->rtp.end() && it->second && kv.second->audio_active) {
+                    targets.push_back(GST_ELEMENT(gst_object_ref(it->second)));
+                }
+            }
+        }
+        for (GstElement* src : targets) {
+            GstBuffer* out = gst_buffer_copy(buffer);
+            GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
+            GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
+            GstFlowReturn ret;
+            g_signal_emit_by_name(src, "push-buffer", out, &ret);
             gst_object_unref(src);
         }
     }
@@ -684,48 +819,16 @@ std::string WebRTCStreamer::build_transport_description(const std::vector<std::s
     for (const auto& v : videos) {
         desc += "appsrc name=rtp_" + v + " is-live=true format=time do-timestamp=false ";
     }
-
+    // Audio is encoded ONCE in the shared mic pipeline and fanned out, so the transport just needs an
+    // appsrc m-line; its opus RTP caps are set programmatically in create_peer_transport (before linking).
     if (with_audio) {
-        const bool valid_element = !audio_source_element_.empty() &&
-                                   std::all_of(audio_source_element_.begin(), audio_source_element_.end(),
-                                               [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
-        if (!valid_element) {
-            RCLCPP_ERROR(this->get_logger(), "audio_source_element '%s' is not a plain element name; video only",
-                         audio_source_element_.c_str());
-            with_audio = false;
-            return desc;
-        }
-        std::string src = audio_source_element_;
-        if (!audio_capture_device_.empty()) {
-            const bool valid_device =
-                std::all_of(audio_capture_device_.begin(), audio_capture_device_.end(), [](unsigned char c) {
-                    return std::isalnum(c) || c == ':' || c == ',' || c == '.' || c == '=' || c == '-' || c == '_' ||
-                           c == '/';
-                });
-            if (!valid_device) {
-                RCLCPP_ERROR(this->get_logger(), "audio_capture_device '%s' has unexpected chars; video only",
-                             audio_capture_device_.c_str());
-                with_audio = false;
-                return desc;
-            }
-            src += " device=\"" + audio_capture_device_ + "\"";
-        }
-        desc += " " + src +
-                " do-timestamp=true ! "
-                "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
-                "audioconvert ! audioresample ! "
-                "audio/x-raw,rate=48000,channels=1 ! "
-                "opusenc bitrate=24000 audio-type=voice ! "
-                "rtpopuspay name=pay_audio pt=98 ! "
-                "capsfilter name=caps_audio "
-                "caps=application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,encoding-params=(string)2,"
-                "payload=98 ";
+        desc += "appsrc name=rtp_audio is-live=true format=time do-timestamp=false ";
     }
     return desc;
 }
 
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
-                                            const std::vector<std::string>& active, bool with_audio) {
+                                            const std::vector<std::string>& active, bool with_audio, bool audio_active) {
     destroy_peer(client_id);  // replace any existing peer with this id (re-START)
 
     std::string desc = build_transport_description(negotiated, with_audio);
@@ -747,6 +850,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     peer->videos = negotiated;
     peer->active = active;
     peer->with_audio = with_audio;
+    peer->audio_active = with_audio && audio_active;  // can only be active if the m-line was negotiated
     peer->created_ns = std::chrono::steady_clock::now().time_since_epoch().count();
     peer->webrtc = gst_bin_get_by_name(GST_BIN(pipeline), "webrtc");
     if (!peer->webrtc) {
@@ -795,17 +899,33 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         }
         peer->rtp[v] = src;  // keep the ref (camera name -> transport appsrc)
     }
-    // Link the audio branch (caps already fixed by its capsfilter) onto the next sink in order.
-    if (ok && with_audio) {
-        if (GstElement* acaps = gst_bin_get_by_name(GST_BIN(pipeline), "caps_audio")) {
-            GstPad* srcpad = gst_element_get_static_pad(acaps, "src");
+    // Audio (if negotiated): set the opus RTP caps on the audio appsrc (caps-before-link, same as video)
+    // and link it as the LAST m-line. The shared mic pipeline fans its RTP into this appsrc.
+    if (ok && peer->with_audio) {
+        GstElement* asrc = gst_bin_get_by_name(GST_BIN(pipeline), "rtp_audio");
+        if (asrc) {
+            GstCaps* caps =
+                gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name",
+                                    G_TYPE_STRING, "OPUS", "clock-rate", G_TYPE_INT, 48000, "encoding-params",
+                                    G_TYPE_STRING, "2", "payload", G_TYPE_INT, 98, nullptr);
+            g_object_set(asrc, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE,
+                         "block", FALSE, "leaky-type", 2 /* downstream */, "max-bytes", 1 * 1024 * 1024, nullptr);
+            gst_caps_unref(caps);
+            GstPad* srcpad = gst_element_get_static_pad(asrc, "src");
             GstPad* sinkpad = gst_element_request_pad_simple(peer->webrtc, "sink_%u");
-            if (!srcpad || !sinkpad || gst_pad_link(srcpad, sinkpad) != GST_PAD_LINK_OK) {
-                RCLCPP_WARN(this->get_logger(), "Failed to link audio to webrtcbin; continuing video-only");
+            if (srcpad && sinkpad && gst_pad_link(srcpad, sinkpad) == GST_PAD_LINK_OK) {
+                peer->rtp["audio"] = asrc;  // keep the ref
+            } else {
+                RCLCPP_WARN(this->get_logger(), "Failed to link audio appsrc; continuing video-only");
+                gst_object_unref(asrc);
+                peer->with_audio = false;
+                peer->audio_active = false;
             }
             if (srcpad) gst_object_unref(srcpad);
             if (sinkpad) gst_object_unref(sinkpad);
-            gst_object_unref(acaps);
+        } else {
+            peer->with_audio = false;
+            peer->audio_active = false;
         }
     }
     if (!ok) {
@@ -844,19 +964,6 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     // PLAYING (that race produced empty/partial offers -> the _connect_input_stream crash on the answer).
     g_signal_connect(peer->webrtc, "on-negotiation-needed", G_CALLBACK(on_negotiation_needed), this);
 
-    if (with_audio) {
-        if (GstElement* pay = gst_bin_get_by_name(GST_BIN(pipeline), "pay_audio")) {
-            if (GstPad* pad = gst_element_get_static_pad(pay, "src")) {
-                gst_pad_add_probe(pad,
-                                  static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST),
-                                  on_audio_buffer, peer.get(), nullptr);
-                gst_object_unref(pad);
-                peer->audio_probe_installed = true;
-            }
-            gst_object_unref(pay);
-        }
-    }
-
     GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_ASYNC) {
         ret = gst_element_get_state(pipeline, nullptr, nullptr, 3 * GST_SECOND);
@@ -878,16 +985,20 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     for (const auto& v : active) {
         if (CameraEncoder* c = find_camera(v)) c->want.fetch_add(1, std::memory_order_relaxed);
     }
+    if (raw->audio_active) {
+        want_audio_.fetch_add(1, std::memory_order_relaxed);
+        reconcile_audio();  // opens the mic — safe under the lock (opening never joins the fan-out thread)
+    }
     reconcile_subscriptions();  // this peer just negotiated its cameras — make sure they're subscribed
 
     // The offer is created from on-negotiation-needed (fires once the transceivers are set up).
     RCLCPP_INFO(this->get_logger(), "Peer '%s' transport PLAYING (negotiated=%zu, active=%zu, audio=%s)",
                 client_id.empty() ? "(default)" : client_id.c_str(), negotiated.size(), active.size(),
-                with_audio ? "on" : "off");
+                raw->audio_active ? "on" : (raw->with_audio ? "negotiated/off" : "off"));
     return raw;
 }
 
-void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::string>& active) {
+void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::string>& active, bool audio_active) {
     // Toggle the pushed cameras on a peer whose transceivers are already negotiated — no offer/answer, no
     // ICE, so a stream switch is instant instead of a full reconnect. Only cameras the peer negotiated can
     // be enabled; anything else would need renegotiation and is ignored here.
@@ -912,6 +1023,22 @@ void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::strin
         if (now) summary += (summary.empty() ? "" : "+") + c->name;
     }
     peer->active = next;
+
+    // Audio toggles the same way (only if the m-line was negotiated). Opening the mic here is safe under
+    // the lock; closing it (want_audio_ -> 0) is deferred to the health poll, which runs without the lock,
+    // because NULL-ing the audio pipeline joins the fan-out thread that also takes peers_mutex_.
+    const bool audio_now = peer->with_audio && audio_active;
+    if (audio_now != peer->audio_active) {
+        if (audio_now) {
+            want_audio_.fetch_add(1, std::memory_order_relaxed);
+            peer->audio_active = true;
+            reconcile_audio();  // open the mic now
+        } else {
+            want_audio_.fetch_sub(1, std::memory_order_relaxed);
+            peer->audio_active = false;  // reconcile_audio() (poll_pipeline_health) closes the mic if 0
+        }
+    }
+    if (peer->audio_active) summary += (summary.empty() ? "" : "+") + std::string("audio");
 
     // Force an IDR on each newly-enabled camera so the browser's existing (idle) transceiver decodes the
     // resumed stream within a frame instead of waiting for the next periodic keyframe.
@@ -954,10 +1081,11 @@ void WebRTCStreamer::destroy_peer(const std::string& client_id) {
     }
     Peer* p = it->second.get();
     p->generation->fetch_add(1, std::memory_order_relaxed);  // invalidate any in-flight offer
-    // Mirror create/update: the want-count tracks ACTIVE cameras, so release exactly what this peer held.
+    // Mirror create/update: the want-count tracks ACTIVE streams, so release exactly what this peer held.
     for (const auto& v : p->active) {
         if (CameraEncoder* c = find_camera(v)) c->want.fetch_sub(1, std::memory_order_relaxed);
     }
+    if (p->audio_active) want_audio_.fetch_sub(1, std::memory_order_relaxed);  // mic closed by the health poll
 
     // NULL first: joins the transport's streaming threads, so no probe/callback runs after this point.
     if (p->pipeline) {
@@ -1023,38 +1151,34 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
         RCLCPP_INFO(this->get_logger(), "Global source switched to %s", source.c_str());
     }
 
-    const bool with_audio = enable_audio_ && request_audio;
+    const bool audio_active = enable_audio_ && request_audio;
+    // Independent (client_id) peers negotiate the audio m-line up front (if a mic exists) so toggling it is
+    // reneg-free, like the cameras; the legacy peer negotiates audio only when asked (it rebuilds anyway).
+    const bool negotiate_audio = client_id.empty() ? audio_active : enable_audio_;
 
-    if (videos.empty() && !with_audio) {
+    if (videos.empty() && !audio_active) {
         RCLCPP_INFO(this->get_logger(), "START requested no streams; releasing peer");
         destroy_peer(client_id);
         return;
     }
 
-    // Stream switch on an already-set-up independent peer (audio unchanged): flip which cameras are pushed
-    // live, with no renegotiation/ICE — so switching is instant instead of a ~connect-latency reconnect.
+    // Stream/audio switch on an already-set-up independent peer (its negotiated m-lines unchanged): flip
+    // which cameras + audio are pushed live, with no renegotiation/ICE — instant, not a reconnect.
     if (!client_id.empty()) {
         auto it = peers_.find(client_id);
-        if (it != peers_.end() && it->second->with_audio == with_audio) {
-            update_peer_active(it->second.get(), videos);
+        if (it != peers_.end() && it->second->with_audio == negotiate_audio) {
+            update_peer_active(it->second.get(), videos, audio_active);
             return;
         }
     }
 
-    // Connect (or audio change, or the legacy default peer). Independent peers negotiate ALL cameras up
-    // front so future switches stay reneg-free; the legacy peer negotiates exactly what it asked for.
+    // Connect (or audio-negotiation change, or the legacy default peer). Independent peers negotiate ALL
+    // cameras up front so future switches stay reneg-free; the legacy peer negotiates exactly what it asked.
     std::vector<std::string> all_cams;
     for (auto& cam : cameras_) all_cams.push_back(cam->name);
     const std::vector<std::string> negotiated = client_id.empty() ? videos : all_cams;
-    if (!create_peer_transport(client_id, negotiated, videos, with_audio)) {
-        if (with_audio) {
-            RCLCPP_WARN(this->get_logger(), "Transport failed with audio; retrying video-only");
-            if (!create_peer_transport(client_id, negotiated, videos, false)) {
-                RCLCPP_ERROR(this->get_logger(), "Failed to start transport for peer");
-            }
-        } else {
-            RCLCPP_ERROR(this->get_logger(), "Failed to start transport for peer");
-        }
+    if (!create_peer_transport(client_id, negotiated, videos, negotiate_audio, audio_active)) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to start transport for peer");
     }
 }
 
@@ -1278,11 +1402,6 @@ GstPadProbeReturn WebRTCStreamer::on_rtcp_buffer(GstPad*, GstPadProbeInfo*, gpoi
     return GST_PAD_PROBE_OK;
 }
 
-GstPadProbeReturn WebRTCStreamer::on_audio_buffer(GstPad*, GstPadProbeInfo*, gpointer user_data) {
-    static_cast<Peer*>(user_data)->audio_pkts.fetch_add(1, std::memory_order_relaxed);
-    return GST_PAD_PROBE_OK;
-}
-
 bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
     GstElement* rtpbin = gst_bin_get_by_name(GST_BIN(peer->webrtc), "rtpbin");
     if (!rtpbin) {
@@ -1324,8 +1443,10 @@ bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
 }
 
 void WebRTCStreamer::poll_pipeline_health() {
-    std::lock_guard<std::mutex> lock(peers_mutex_);
+    std::unique_lock<std::mutex> lock(peers_mutex_);
     if (peers_.empty()) {
+        lock.unlock();
+        reconcile_audio();  // no peers -> close the mic (safe: done without peers_mutex_ held)
         return;
     }
     const int64_t now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -1393,6 +1514,8 @@ void WebRTCStreamer::poll_pipeline_health() {
     for (const auto& id : dead) {
         destroy_peer(id);
     }
+    lock.unlock();
+    reconcile_audio();  // open/close the mic to match want_audio_ — OUTSIDE the lock (close joins a thread)
 }
 
 // =============================================================================
@@ -1438,16 +1561,16 @@ void WebRTCStreamer::publish_status() {
                 s["encoding"] = info->second.first > 0.5;  // frames entering the encoder => being rendered
                 streams.push_back(s);
             }
-            if (p->with_audio) {
+            if (p->audio_active) {  // report audio only while it's actually being sent
                 nlohmann::json s;
                 s["name"] = "audio";
-                s["encoding"] = p->audio_pkts.load(std::memory_order_relaxed) > 0;
+                s["encoding"] = audio_playing_;  // mic open + flowing
                 streams.push_back(s);
             }
             nlohmann::json c;
             c["client_id"] = p->client_id;
             c["source"] = current_source_;
-            c["audio"] = p->with_audio;
+            c["audio"] = p->audio_active;
             c["connection_state"] = conn;
             if (rtcp_age >= 0.0) {
                 c["rtcp_age_s"] = std::round(rtcp_age * 100.0) / 100.0;
@@ -1460,6 +1583,11 @@ void WebRTCStreamer::publish_status() {
     nlohmann::json root;
     root["count"] = clients.size();
     root["clients"] = clients;
+    // The full set of configured cameras (m-line order), so clients can render a per-camera UI
+    // dynamically instead of hardcoding main/arm.
+    nlohmann::json cams = nlohmann::json::array();
+    for (auto& cam : cameras_) cams.push_back(cam->name);
+    root["cameras"] = cams;
 
     std_msgs::msg::String msg;
     msg.data = root.dump();
