@@ -130,7 +130,7 @@ const STYLE = `
 .set-status.ok { color: #3ecf8e; }
 .set-status.err { color: #ff6b6b; }
 .set-status.muted { color: var(--muted, #8a90a0); }
-.set-ctl input.set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
+.set-ctl :is(input, select).set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
   background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl > input.set-text { width: 200px; }
 .set-ctl > select.set-text { width: 216px; cursor: pointer; }
@@ -591,6 +591,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
     select.addEventListener("change", () => {
       entry.value = select.value;
       entry.overridden = true;
+      entry.render();
       recompute();
     });
   } else if (knob.type === "string") {
