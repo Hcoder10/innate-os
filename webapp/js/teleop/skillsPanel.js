@@ -13,14 +13,16 @@ import {
   AVAILABLE_SKILLS_TOPIC,
   EXECUTE_SKILL_ACTION,
   EXECUTE_SKILL_ACTION_TYPE,
+  PINNED_SKILLS,
 } from "../constants.js";
 
 /**
  * @param {ReturnType<import("./rightDock.js").createRightDock>} dock The shared right dock controller.
  * @param {import("../rosClient.js").RosClient} rosClient
+ * @param {ReturnType<import("./agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
-export function createSkillsPanel(dock, rosClient) {
+export function createSkillsPanel(dock, rosClient, agentState) {
   // Top pane of the dock; toggle sits a quarter down the camera's right edge.
   const { body } = dock.addPanel({ key: "skills", label: "Skills", togglePos: 0.25 });
 
@@ -248,7 +250,26 @@ export function createSkillsPanel(dock, rosClient) {
     const type = document.createElement("span");
     type.className = "skill-type mono";
     type.textContent = skill.type || "";
-    top.append(name, type);
+
+    // Active toggle — whether this skill is enabled for the current agent
+    // (set_active_skills). Disabled until an agent is selected.
+    const { currentDirective, activeSkills } = agentState.get();
+    const activeToggle = document.createElement("button");
+    activeToggle.type = "button";
+    activeToggle.className = "skill-active" + (activeSkills.has(skill.id) ? " on" : "");
+    activeToggle.disabled = !currentDirective;
+    activeToggle.setAttribute("aria-label", "Toggle skill for agent");
+    activeToggle.title = !currentDirective
+      ? "Select an agent to choose its skills"
+      : activeSkills.has(skill.id)
+        ? "Enabled for the agent — click to disable"
+        : "Disabled — click to enable for the agent";
+    activeToggle.innerHTML = '<span class="skill-active-rail"><span class="skill-active-thumb"></span></span>';
+    activeToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      agentState.toggleSkill(skill.id);
+    });
+    top.append(name, type, activeToggle);
 
     const runBtn = document.createElement("button");
     runBtn.type = "button";
@@ -387,7 +408,13 @@ export function createSkillsPanel(dock, rosClient) {
   const unsubSkills = rosClient.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
     /** @type {any[]} */
     const all = Array.isArray(msg?.skills) ? msg.skills : [];
-    const next = all.filter((s) => s && s.id).sort((a, b) => formatName(a).localeCompare(formatName(b)));
+    // Pinned skills float to the top in PINNED_SKILLS order; the rest keep their
+    // roster order (mirrors the sim console's sortSkills).
+    const next = all
+      .filter((s) => s && s.id)
+      .map((s, index) => ({ s, index }))
+      .sort((a, b) => pinnedRank(a.s) - pinnedRank(b.s) || a.index - b.index)
+      .map((entry) => entry.s);
     // The roster is latched and republishes on any change; avoid a re-render
     // (which would steal focus mid-typing) unless the set actually changed.
     const sig = next.map((s) => `${s.id}:${s.in_training ? 1 : 0}`).join("|");
@@ -406,15 +433,30 @@ export function createSkillsPanel(dock, rosClient) {
   });
 
   const unsubState = rosClient.onStateChange(() => render());
+  // Re-render the active toggles when the agent / its active-skill set changes.
+  const unsubAgents = agentState.subscribe(() => render());
   render();
 
   return {
     destroy() {
       unsubSkills();
       unsubState();
+      unsubAgents();
       if (run && !run.done) run.cancel();
     },
   };
+}
+
+/**
+ * Position in PINNED_SKILLS (or the end if unpinned), matched on the last path
+ * segment with "_"→" ", lowercased — the same basis the sim console uses.
+ * @param {any} skill
+ */
+function pinnedRank(skill) {
+  const segments = String(skill?.name || skill?.id || "").split("/");
+  const name = (segments[segments.length - 1] || "").replace(/_/g, " ").trim().toLowerCase();
+  const i = PINNED_SKILLS.findIndex((entry) => entry.trim().toLowerCase() === name);
+  return i === -1 ? PINNED_SKILLS.length : i;
 }
 
 /** "pick_and_place/cup" → "Pick And Place / Cup". @param {any} skill */

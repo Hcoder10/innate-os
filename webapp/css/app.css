@@ -3601,6 +3601,47 @@ button {
   color: var(--muted);
 }
 
+/* Per-skill active toggle — is this skill enabled for the selected agent. */
+.skill-active {
+  flex: 0 0 auto;
+  padding: 2px;
+}
+
+.skill-active:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.skill-active-rail {
+  display: inline-flex;
+  width: 30px;
+  height: 16px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  border: 1px solid var(--hairline-strong);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.skill-active-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateX(0);
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.skill-active.on .skill-active-rail {
+  background: rgb(64 31 251 / 30%);
+  border-color: rgb(64 31 251 / 60%);
+}
+
+.skill-active.on .skill-active-thumb {
+  background: #c0b8ff;
+  transform: translateX(14px);
+}
+
 .skill-run-toggle {
   width: 100%;
   border: 1px solid var(--hairline-strong);
@@ -3800,6 +3841,26 @@ button {
 .chat-agent-select:focus {
   outline: none;
   border-color: rgb(64 31 251 / 60%);
+}
+
+.chat-reset-brain {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.chat-reset-brain:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgb(217 106 90 / 12%);
 }
 
 .chat-messages {

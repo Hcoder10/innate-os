@@ -24,6 +24,7 @@ import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsPanel } from "./skillsPanel.js";
 import { createChatPanel } from "./chatPanel.js";
 import { createRightDock } from "./rightDock.js";
+import { createAgentState } from "./agentState.js";
 
 initShell("teleop", "");
 
@@ -79,7 +80,14 @@ function buildCockpit(root) {
   // toggle on the camera's right edge. Built after the parts so it tears down
   // last; the panels register into it.
   const dock = createRightDock(root);
-  parts.push(createSkillsPanel(dock, ros), createChatPanel(dock, ros), dock);
+  // Shared directive/active-skill state, used by both panels.
+  const agentState = createAgentState(ros);
+  parts.push(
+    createSkillsPanel(dock, ros, agentState),
+    createChatPanel(dock, ros, agentState),
+    dock,
+    { destroy: () => agentState.destroy() },
+  );
 
   session.start();
 

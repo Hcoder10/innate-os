@@ -5,21 +5,15 @@
 // brain does not echo the operator's own messages, so those are rendered locally
 // on send.
 
-import {
-  CHAT_IN_TOPIC,
-  CHAT_OUT_TOPIC,
-  GET_AVAILABLE_DIRECTIVES_SERVICE,
-  SET_DIRECTIVE_TOPIC,
-  SET_BRAIN_ACTIVE_SERVICE,
-  SKILL_STATUS_UPDATE_TOPIC,
-} from "../constants.js";
+import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
 
 /**
  * @param {ReturnType<import("./rightDock.js").createRightDock>} dock
  * @param {import("../rosClient.js").RosClient} rosClient
+ * @param {ReturnType<import("./agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
-export function createChatPanel(dock, rosClient) {
+export function createChatPanel(dock, rosClient, agentState) {
   // Bottom pane of the dock; toggle sits three-quarters down the right edge.
   const { body } = dock.addPanel({ key: "chat", label: "Chat", togglePos: 0.75 });
 
@@ -39,7 +33,12 @@ export function createChatPanel(dock, rosClient) {
   agentLabel.textContent = "agent";
   const agentSelect = document.createElement("select");
   agentSelect.className = "chat-agent-select mono";
-  agentBar.append(agentLabel, agentSelect);
+  const resetBrainBtn = document.createElement("button");
+  resetBrainBtn.type = "button";
+  resetBrainBtn.className = "chat-reset-brain";
+  resetBrainBtn.title = "Reset the agent's brain / working memory";
+  resetBrainBtn.textContent = "Reset";
+  agentBar.append(agentLabel, agentSelect, resetBrainBtn);
 
   const messages = document.createElement("div");
   messages.className = "chat-messages";
@@ -58,62 +57,25 @@ export function createChatPanel(dock, rosClient) {
 
   body.append(head, agentBar, messages, form);
 
-  // ---- agent roster + selection ------------------------------------------
+  // ---- agent roster + selection (shared agentState) ----------------------
 
-  /** @type {Array<{ id: string, name: string }>} */
-  let agents = [];
-
-  /** @param {string} currentId */
-  function renderAgents(currentId) {
+  function renderAgents() {
+    const { agents, currentDirective } = agentState.get();
     agentSelect.replaceChildren();
     agentSelect.appendChild(new Option("None", ""));
     for (const a of agents) {
       const opt = new Option(a.name, a.id);
-      if (a.id === currentId) opt.selected = true;
+      if (a.id === currentDirective) opt.selected = true;
       agentSelect.appendChild(opt);
     }
-    agentSelect.value = currentId || "";
+    agentSelect.value = currentDirective || "";
   }
-  renderAgents("");
+  const unsubAgents = agentState.subscribe(renderAgents);
 
-  async function fetchAgents() {
-    if (rosClient.state !== "connected") return;
-    try {
-      const v = await rosClient.callService(GET_AVAILABLE_DIRECTIVES_SERVICE, {});
-      const entries = Array.isArray(v?.directives)
-        ? v.directives
-        : typeof v?.directives === "string"
-          ? [v.directives]
-          : [];
-      let parsed;
-      try {
-        parsed = JSON.parse(entries[0] ?? "[]");
-      } catch {
-        parsed = [];
-      }
-      /** @type {any[]} */
-      const list = Array.isArray(parsed) ? parsed : (parsed && parsed.agents) || [];
-      agents = list
-        .filter((a) => a && a.id)
-        .map((a) => ({ id: String(a.id), name: String(a.display_name || a.id) }));
-      // Brain idle → show None even if a directive is still remembered.
-      const active = typeof v?.brain_active === "boolean" ? v.brain_active : true;
-      renderAgents(active ? String(v?.current_directive ?? "") : "");
-    } catch {
-      // Brain not ready / service unavailable — leave just "None".
-      agents = [];
-      renderAgents("");
-    }
-  }
-
-  agentSelect.addEventListener("change", () => {
-    const id = agentSelect.value;
-    if (id) {
-      rosClient.publish(SET_DIRECTIVE_TOPIC, { data: id });
-      rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: true }).catch(() => {});
-    } else {
-      rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: false }).catch(() => {});
-    }
+  agentSelect.addEventListener("change", () => agentState.setDirective(agentSelect.value));
+  resetBrainBtn.addEventListener("click", () => {
+    if (!window.confirm("Reset the agent's brain? This clears its working memory.")) return;
+    agentState.resetBrain().catch(() => {});
   });
 
   function scrollToLatest() {
@@ -307,16 +269,11 @@ export function createChatPanel(dock, rosClient) {
     addSkillRun(key, name, status, ts);
   });
 
-  // Re-fetch the agent roster whenever the socket (re)connects.
-  const unsubState = rosClient.onStateChange((state) => {
-    if (state === "connected") void fetchAgents();
-  });
-
   return {
     destroy() {
       unsub();
       unsubSkill();
-      unsubState();
+      unsubAgents();
     },
   };
 }

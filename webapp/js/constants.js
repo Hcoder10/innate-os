@@ -30,6 +30,22 @@ export const CHAT_OUT_TOPIC = "/brain/chat_out";
 export const GET_AVAILABLE_DIRECTIVES_SERVICE = "/brain/get_available_directives";
 export const SET_DIRECTIVE_TOPIC = "/brain/set_directive";
 export const SET_BRAIN_ACTIVE_SERVICE = "/brain/set_brain_active";
+// Set which skills the current directive may use (std_msgs/String JSON:
+// {agent_id, skills:[id,...]} — the full active set, not a delta).
+export const SET_ACTIVE_SKILLS_TOPIC = "/brain/set_active_skills";
+// Reset the agent's brain/memory (brain_messages/srv/ResetBrain → {success}).
+export const RESET_BRAIN_SERVICE = "/brain/reset_brain";
+// Cloud/local agent backend connection (std_msgs/String JSON: {state, connected,
+// message, uri, hosted, timestamp}) — distinct from the rosbridge link.
+export const WEBSOCKET_STATUS_TOPIC = "/brain/websocket_status";
+
+// Sim-only: reset the robot to its start pose (std_srvs/Trigger). Gated behind
+// config.json's simControls (the real robot has no such service).
+export const RESET_POSITION_SERVICE = "/sim/reset_position";
+
+// Navigation map + odometry for the 2D map page.
+export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
+export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
@@ -74,6 +90,12 @@ export const ARM_TORQUE_OFF_SERVICE = "/mars/arm/torque_off";
 // Arm health/torque state (mars_msgs/ArmStatus → {is_ok, error,
 // is_torque_enabled}), published ~0.2 Hz. Drives the live torque toggle.
 export const ARM_STATUS_TOPIC = "/mars/arm/status";
+
+// Skills pinned to the top of the Skills panel, in this order; matched against
+// the skill's display name (case-insensitive, last path segment, "_"→" ").
+// Skills not currently available are skipped, everything else keeps roster order.
+// Ported from the sim console's config.json `pinnedSkills`.
+export const PINNED_SKILLS = ["navigate with vision", "navigate with position", "wave"];
 
 // Run one skill directly (brain_messages/action/ExecuteSkill). Goal is
 // {skill_type, inputs} where inputs is a JSON object string; feedback streams
