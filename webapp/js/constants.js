@@ -23,14 +23,18 @@ export const BATTERY_STATE_TOPIC = "/battery_state";
 // std_msgs/String carrying JSON (RobotInfo).
 export const ROBOT_INFO_TOPIC = "/robot/info";
 
-// WebRTC signaling over rosbridge. START payload is a std_msgs/String whose
-// data is JSON: {"source":"live","audio":bool}. The robot rebuilds its whole
-// pipeline on every START, so any config change means a full re-handshake.
+// WebRTC signaling over rosbridge. START is a std_msgs/String JSON payload that
+// carries our client_id: {"source":"live","audio":bool,"client_id":"...","video":[...]}.
+// Because we send a client_id, the robot treats us as an INDEPENDENT peer and routes
+// our offer/answer/ICE on the *_id topics (each enveloped as {client_id, ...} so several
+// devices can negotiate concurrently on the same topics). Clients with NO client_id stay
+// on the legacy bare /webrtc/{offer,answer,ice_in,ice_out} switch-on-one path. START stays
+// a shared topic (the client_id lives in its payload, not the topic name).
 export const WEBRTC_START_TOPIC = "/webrtc/start";
-export const WEBRTC_OFFER_TOPIC = "/webrtc/offer";
-export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer";
-export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in";
-export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out";
+export const WEBRTC_OFFER_TOPIC = "/webrtc/offer_id";    // robot -> us: {client_id, sdp}
+export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id";  // us -> robot: {client_id, sdp}
+export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id";  // us -> robot: {client_id, candidate, sdpMLineIndex, sdpMid}
+export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out_id"; // robot -> us: {client_id, candidate, sdpMLineIndex, sdpMid}
 
 // Leader-arm teleop: raw Dynamixel ticks (Int32MultiArray, 6 servos) — the
 // robot's mars_app converts (tick - 2048) * 2π/4096 into /mars/arm/commands.

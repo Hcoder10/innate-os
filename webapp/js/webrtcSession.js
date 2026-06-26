@@ -59,12 +59,9 @@ export class WebRtcSession {
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
   #videoTrackCount = 0;
   #handshakeAttempts = 0;
-  // Unique per page-load; tags our own /webrtc/start so the start listener can
-  // tell it apart from another device's (e.g. the phone app).
+  // Unique per page-load; the robot routes our offer/answer/ICE on the *_id topics by this id, so we
+  // negotiate as an independent peer (and stream concurrently with any other device).
   #clientId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
-  // Another device actively took the camera; we've yielded and won't
-  // auto-reconnect until the operator explicitly retries (start()).
-  #preempted = false;
 
   /** @type {number | null} */ #watchdog = null;
   /** @type {number | null} */ #degradeTimer = null;
@@ -76,14 +73,11 @@ export class WebRtcSession {
     this.#unsubs = [
       rosClient.subscribe(WEBRTC_OFFER_TOPIC, (p) => void this.#onOffer(p)),
       rosClient.subscribe(WEBRTC_ICE_OUT_TOPIC, (p) => void this.#onIceOut(p)),
-      // Last-active-wins: a /webrtc/start we didn't send means another device
-      // (the phone app) is actively opening the camera. Yield to it and stop
-      // reconnecting rather than fighting back (which would ping-pong). The
-      // operator reclaims it with Retry (start()).
-      rosClient.subscribe(WEBRTC_START_TOPIC, (p) => this.#onStart(p)),
+      // We're an independent peer (client_id), so we do NOT yield when another device opens the
+      // camera — the robot fans out to all viewers concurrently. (No /webrtc/start watch / preemption.)
       rosClient.onStateChange((state) => {
         // The robot may have restarted while we were away; renegotiate.
-        if (state === "connected" && this.#started && !this.#preempted) {
+        if (state === "connected" && this.#started) {
           this.#handshakeAttempts = 0;
           this.#handshake();
         }
@@ -117,7 +111,6 @@ export class WebRtcSession {
   /** Begin (or manually retry) the video link. */
   start() {
     this.#started = true;
-    this.#preempted = false; // explicit (re)take, even if we'd yielded the camera
     this.#handshakeAttempts = 0;
     this.#handshake();
   }
@@ -152,7 +145,7 @@ export class WebRtcSession {
     this.#clearAudioDebounce();
     this.#audioDebounce = setTimeout(() => {
       this.#audioDebounce = null;
-      if (this.#started && !this.#preempted && this.#builtWithAudio !== this.#state.audioRequested) {
+      if (this.#started && this.#builtWithAudio !== this.#state.audioRequested) {
         this.#handshake();
       }
     }, AUDIO_REBUILD_DEBOUNCE_MS);
@@ -180,6 +173,7 @@ export class WebRtcSession {
       if (this.#pc !== pc || !event.candidate) return;
       this.#ros.publish(WEBRTC_ICE_IN_TOPIC, {
         data: JSON.stringify({
+          client_id: this.#clientId, // envelope: the robot routes our ICE by client_id (independent peer)
           candidate: event.candidate.candidate,
           sdpMLineIndex: event.candidate.sdpMLineIndex,
           sdpMid: event.candidate.sdpMid,
@@ -207,8 +201,16 @@ export class WebRtcSession {
     // Re-armed to the longer MEDIA_TIMEOUT_MS in #onOffer once we've answered.
     this.#armWatchdog(OFFER_TIMEOUT_MS);
 
+    // Only the main camera is shown (the arm camera is ignored in v1), so ask the robot to push just
+    // main — the robot still negotiates both transceivers for a client_id peer, but won't encode/send
+    // arm unless we request it, so we don't waste its bandwidth.
     this.#ros.publish(WEBRTC_START_TOPIC, {
-      data: JSON.stringify({ source: "live", audio: this.#state.audioRequested, client_id: this.#clientId }),
+      data: JSON.stringify({
+        source: "live",
+        audio: this.#state.audioRequested,
+        client_id: this.#clientId,
+        video: ["main"],
+      }),
     });
   }
 
@@ -284,9 +286,14 @@ export class WebRtcSession {
     });
   }
 
-  /** @param {any} payload /webrtc/offer message (StringMsg, dual-path) */
+  /** @param {any} payload /webrtc/offer_id message: std_msgs/String whose data is {client_id, sdp} */
   async #onOffer(payload) {
-    const sdp = payload?.data ?? payload?.msg?.data;
+    const raw = payload?.data ?? payload?.msg?.data;
+    if (typeof raw !== "string" || !raw) return;
+    let env;
+    try { env = JSON.parse(raw); } catch { return; }
+    if (env.client_id !== this.#clientId) return; // an offer for some other device's peer
+    const sdp = env.sdp;
     const pc = this.#pc;
     if (typeof sdp !== "string" || !sdp || !pc) return;
     if (this.#processingOffer || pc.signalingState !== "stable") return;
@@ -315,7 +322,9 @@ export class WebRtcSession {
       await pc.setLocalDescription(answer);
       if (this.#pc !== pc) return;
 
-      this.#ros.publish(WEBRTC_ANSWER_TOPIC, { data: answer.sdp ?? "" });
+      this.#ros.publish(WEBRTC_ANSWER_TOPIC, {
+        data: JSON.stringify({ client_id: this.#clientId, sdp: answer.sdp ?? "" }),
+      });
     } catch (err) {
       if (this.#pc === pc) console.error("[webrtc] offer processing failed:", err);
     } finally {
@@ -326,13 +335,14 @@ export class WebRtcSession {
     }
   }
 
-  /** @param {any} payload /webrtc/ice_out message (StringMsg, dual-path) */
+  /** @param {any} payload /webrtc/ice_out_id message: std_msgs/String whose data is {client_id, candidate, ...} */
   async #onIceOut(payload) {
     const raw = payload?.data ?? payload?.msg?.data;
     const pc = this.#pc;
     if (typeof raw !== "string" || !raw || !pc) return;
     try {
       const parsed = JSON.parse(raw);
+      if (parsed.client_id !== this.#clientId) return; // a candidate for some other device's peer
       if (!parsed.candidate) return;
       /** @type {RTCIceCandidateInit} */
       const candidate = {
@@ -350,36 +360,13 @@ export class WebRtcSession {
     }
   }
 
-  /**
-   * A /webrtc/start appeared on the topic. If it's ours (matching client_id),
-   * ignore it. Otherwise another device (the phone app) is actively opening the
-   * camera — yield: tear down and stop auto-reconnecting so we don't ping-pong
-   * the stream. The operator reclaims it via Retry (start()), which clears it.
-   * @param {any} payload /webrtc/start message (StringMsg, dual-path)
-   */
-  #onStart(payload) {
-    if (!this.#started || this.#preempted) return;
-    const raw = payload?.data ?? payload?.msg?.data;
-    if (typeof raw !== "string") return;
-    let id;
-    try {
-      id = JSON.parse(raw)?.client_id;
-    } catch {
-      id = undefined; // untagged / unparseable → treat as another device
-    }
-    if (id === this.#clientId) return; // our own start, echoed back to us
-    this.#preempted = true;
-    this.#closePc();
-    this.#patch({ status: "preempted", videoStream: null, audioStream: null });
-  }
-
   // ---- timers & teardown --------------------------------------------------
 
   #startDegradeTimer() {
     if (this.#degradeTimer !== null) return;
     this.#degradeTimer = setTimeout(() => {
       this.#degradeTimer = null;
-      if (this.#started && !this.#preempted) {
+      if (this.#started) {
         console.warn("[webrtc] ICE degraded for 10s, rebuilding");
         this.#handshake();
       }
