@@ -141,15 +141,17 @@
 
     <script>
       // ---------------- minimal rosbridge (rws) client ----------------
+      // The node routes per-peer signalling on the *_id topics (client_id envelopes), so any number of
+      // independent peers can negotiate concurrently. The bare topics are the legacy single-peer path.
       const T = {
-        START: "/webrtc/start", OFFER: "/webrtc/offer", ANSWER: "/webrtc/answer",
-        ICE_IN: "/webrtc/ice_in", ICE_OUT: "/webrtc/ice_out",
+        START: "/webrtc/start",
+        OFFER: "/webrtc/offer_id", ANSWER: "/webrtc/answer_id",
+        ICE_IN: "/webrtc/ice_in_id", ICE_OUT: "/webrtc/ice_out_id",
         ACTIVE: "/webrtc/active_streams",
       };
       const NODE = "/webrtc_streamer";
       const MAIN_CAM = "/mars/main_camera/left/image_raw";
       const ARM_CAM = "/mars/arm/image_raw";
-      const STUN = "stun:stun.l.google.com:19302";
       const RTCP_PARAM = "rtcp_inactivity_timeout_s";
 
       const $ = (id) => document.getElementById(id);
@@ -162,6 +164,18 @@
         box.appendChild(d);
         while (box.childElementCount > 400) box.removeChild(box.firstChild);
         if (at) box.scrollTop = box.scrollHeight;
+      }
+
+      // ---- connect timing: shows where the time goes (page load -> first frame), per stage ----
+      const T0 = performance.now();   // ms since page navigation start
+      let _lastMark = T0;
+      function mark(label) {
+        const now = performance.now();
+        const since = (now - _lastMark) / 1000, total = (now - T0) / 1000;
+        _lastMark = now;
+        const msg = `[timing] ${label}: +${since.toFixed(2)}s  (total ${total.toFixed(2)}s since page load)`;
+        console.log(msg);
+        logLine(msg, "o");
       }
 
       class Rws {
@@ -232,12 +246,29 @@
         $("vMain").parentElement.classList.toggle("off", !requested.main);
         $("vArm").parentElement.classList.toggle("off", !requested.arm);
       }
+      // The active (pushed) camera set, in fixed m-line order. The robot always negotiates both cameras
+      // for a client_id peer, so toggling a camera is a live push-toggle on the robot — no new pc/offer/ICE.
+      const activeList = () => ["main", "arm"].filter((x) => requested[x]);
+
       document.querySelectorAll(".tog").forEach((b) =>
         b.addEventListener("click", () => {
-          requested[b.dataset.l] = !requested[b.dataset.l];
+          const l = b.dataset.l;
+          requested[l] = !requested[l];
           refreshTogVisuals();
-          if (ros.connected) startStream(); // re-negotiate with the new stream set
+          if (!ros.connected) return;
+          // Camera on/off while connected = instant live switch (no reconnect). Audio toggle needs
+          // renegotiation, and an all-off / cold state goes through a full (re)connect.
+          const live = l !== "audio" && activeList().length > 0 && pc &&
+                       (pc.connectionState === "connected" || pc.connectionState === "connecting");
+          if (live) sendActive();
+          else startStream();
         }));
+
+      function sendActive() {
+        ros.publish(T.START, { data: JSON.stringify({
+          source: $("source").value, audio: requested.audio, video: activeList(), client_id: clientId }) });
+        mark(`switch -> [${activeList().join(",")}] (no reconnect)`);
+      }
 
       function setConn() {
         if (!pc) return;
@@ -256,23 +287,33 @@
 
       function startStream() {
         teardownPc();
+        if (activeList().length === 0 && !requested.audio) return;  // nothing requested -> stay disconnected
         clientId = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2);
         $("cid").textContent = clientId.slice(0, 8) + "…";
         $("vMain").srcObject = $("vArm").srcObject = $("aud").srcObject = null;
-        pc = new RTCPeerConnection({ iceServers: [{ urls: STUN }] });
+        // No STUN: the robot is on the LAN, so host candidates connect directly and instantly —
+        // a STUN lookup only adds reflexive candidates + latency that aren't needed here.
+        pc = new RTCPeerConnection({ iceServers: [] });
         pc.onicecandidate = (e) => {
           if (!e.candidate) return;
           ros.publish(T.ICE_IN, { data: JSON.stringify({
+            client_id: clientId,
             candidate: e.candidate.candidate, sdpMLineIndex: e.candidate.sdpMLineIndex, sdpMid: e.candidate.sdpMid }) });
         };
-        pc.onconnectionstatechange = () => { setConn(); logLine("pc: " + pc.connectionState, "o"); };
+        pc.onconnectionstatechange = () => {
+          setConn(); logLine("pc: " + pc.connectionState, "o");
+          if (pc.connectionState === "connected") mark("pc connected (ICE+DTLS)");
+        };
         pc.oniceconnectionstatechange = setConn;
         pc.ontrack = onTrack;
         const source = $("source").value;
         const audio = requested.audio;
-        requestedVideo = ["main", "arm"].filter((x) => requested[x]); // order = m-line order
-        ros.publish(T.START, { data: JSON.stringify({ source, audio, video: requestedVideo, client_id: clientId }) });
-        logLine(`→ START {source:${source}, video:[${requestedVideo.join(",")}], audio:${audio}}`, "o");
+        // The robot negotiates BOTH cameras for a client_id peer, so the video m-lines are always
+        // [main, arm] regardless of what's active — this fixed list maps m-line index -> label. The START's
+        // `video` field carries the ACTIVE set (which cameras to actually push).
+        requestedVideo = ["main", "arm"];
+        ros.publish(T.START, { data: JSON.stringify({ source, audio, video: activeList(), client_id: clientId }) });
+        mark(`START sent {active:[${activeList().join(",")}]}`);
         setConn();
       }
 
@@ -296,23 +337,30 @@
         else if (label === "main") $("vMain").srcObject = stream;
         else if (label === "arm") $("vArm").srcObject = stream;
         logLine(`◀ track ${label} (mid=${mid}, ${tr.kind})`, "o");
+        // First decoded+rendered frame for this stream = the moment video actually appears.
+        const vid = label === "main" ? $("vMain") : label === "arm" ? $("vArm") : null;
+        if (vid && vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(() => mark(`FIRST FRAME ${label}`));
       }
 
       async function onOffer(payload) {
-        const sdp = payload && (payload.data ?? (payload.msg && payload.msg.data));
+        const raw = payload && (payload.data ?? (payload.msg && payload.msg.data));
+        if (typeof raw !== "string" || !raw) return;
+        let env; try { env = JSON.parse(raw); } catch { return; }
+        if (env.client_id !== clientId) return;  // an offer for some other peer
+        const sdp = env.sdp;
         if (!pc || typeof sdp !== "string" || !sdp) return;
         if (processingOffer || remoteSet || pc.signalingState !== "stable") return;
         processingOffer = true;
         try {
+          mark(`offer received (${sdp.length}B)`);
           await pc.setRemoteDescription({ type: "offer", sdp });
           remoteSet = true;
-          logLine("◀ offer (" + sdp.length + " B)", "o");
           for (const c of iceQueue) { try { await pc.addIceCandidate(c); } catch {} }
           iceQueue = [];
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          ros.publish(T.ANSWER, { data: answer.sdp || "" });
-          logLine("→ answer", "o");
+          ros.publish(T.ANSWER, { data: JSON.stringify({ client_id: clientId, sdp: answer.sdp || "" }) });
+          mark("answer sent");
         } catch (err) { logLine("offer failed: " + err, "e"); }
         finally { processingOffer = false; }
       }
@@ -321,6 +369,7 @@
         const raw = payload && (payload.data ?? (payload.msg && payload.msg.data));
         if (typeof raw !== "string" || !pc) return;
         let p; try { p = JSON.parse(raw); } catch { return; }
+        if (p.client_id !== clientId) return;  // a candidate for some other peer
         if (!p.candidate) return;
         const cand = { candidate: String(p.candidate), sdpMLineIndex: p.sdpMLineIndex ?? 0, sdpMid: p.sdpMid ?? undefined };
         if (!remoteSet) iceQueue.push(cand); else pc.addIceCandidate(cand).catch(() => {});
@@ -459,7 +508,7 @@
         $("wsDot").className = "dot " + (s === "connected" ? "ok" : s === "connecting" ? "warn" : "bad");
         $("wsBtn").textContent = s === "connected" ? "Disconnect" : "Connect";
         if (s === "connected") {
-          logLine("rosbridge connected", "o");
+          mark("rosbridge ws connected");
           ros.subscribe(T.OFFER, onOffer);
           ros.subscribe(T.ICE_OUT, onIceOut);
           ros.subscribe(T.ACTIVE, (m) => renderActive(m.data ?? (m.msg && m.msg.data)), "std_msgs/msg/String");
