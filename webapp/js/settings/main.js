@@ -133,6 +133,7 @@ const STYLE = `
 .set-ctl input.set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
   background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl > input.set-text { width: 200px; }
+.set-ctl > select.set-text { width: 216px; cursor: pointer; }
 .set-default { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-row-list { flex-direction: column; align-items: stretch; }
 .set-row-list .set-ctl { flex-direction: column; align-items: stretch; gap: 8px; margin-top: 10px; }
@@ -185,6 +186,10 @@ function defaultLabel(/** @type {import("./catalog.js").Knob} */ knob) {
   if (knob.type === "list") {
     const arr = /** @type {string[]} */ (knob.default);
     return arr.length ? "default " + arr.join(", ") : "default (none)";
+  }
+  if (knob.options) {
+    const opt = knob.options.find((o) => o.value === knob.default);
+    if (opt) return "default " + opt.label;
   }
   return "default " + String(knob.default);
 }
@@ -559,6 +564,33 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       entry.value = Number(slider.value);
       entry.overridden = true;
       cur.textContent = String(entry.value);
+      recompute();
+    });
+  } else if (knob.options) {
+    const select = document.createElement("select");
+    select.className = "set-text set-select";
+    for (const opt of knob.options) {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      select.appendChild(o);
+    }
+    // Holds an off-list value (e.g. a voice set over SSH) so it still shows + round-trips.
+    const customOpt = document.createElement("option");
+    ctl.appendChild(select);
+    entry.render = () => {
+      if (knob.options.some((o) => o.value === entry.value)) {
+        customOpt.remove();
+      } else {
+        customOpt.value = String(entry.value);
+        customOpt.textContent = `Custom: ${entry.value}`;
+        select.appendChild(customOpt);
+      }
+      select.value = String(entry.value);
+    };
+    select.addEventListener("change", () => {
+      entry.value = select.value;
+      entry.overridden = true;
       recompute();
     });
   } else if (knob.type === "string") {

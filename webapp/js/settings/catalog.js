@@ -32,11 +32,25 @@
  * @property {number} [min]  Lower bound for numeric knobs (defaults to 0 on sliders).
  * @property {number} [max]  Known hard maximum. When set on a numeric knob the UI renders a slider.
  * @property {number} [step] Slider step (defaults to 1).
+ * @property {{value: string, label: string}[]} [options]  For a string knob: render a
+ *   <select> of these choices instead of a free-text field.
  */
 
 /** @typedef {{ section: string, note?: string, knobs: Knob[] }} Group */
 
 const P = "ros__parameters";
+
+// A few Cartesia stock voices for the TTS picker (ids from the Cartesia voice library).
+// "Katie" is the env-backed launch default; the rest are stock Sonic voices. Any other id
+// set over SSH still works and shows as a "Custom" option in the dropdown.
+const VOICE_OPTIONS = [
+  { value: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", label: "Katie" },
+  { value: "79a125e8-cd45-4c13-8a67-188112f4dd22", label: "British Lady" },
+  { value: "00a77add-48d5-4ef6-8157-71e5437b282d", label: "Calm Lady" },
+  { value: "b7d50908-b17c-442d-ad8d-810c63997ed9", label: "California Girl" },
+  { value: "d46abd1d-2d02-43e8-819f-51fb652c1c61", label: "Newsman" },
+  { value: "79f8b5fb-2cc8-479a-80df-29f7a7cf1a3e", label: "Nonfiction Man" },
+];
 
 /** @type {Group[]} */
 export const CATALOG = [
@@ -117,7 +131,7 @@ export const CATALOG = [
   },
   {
     section: "Brain runtime (vision agent)",
-    note: "The voice + model fields are also set on the realtime voice loop below — change both so the chat-TTS and realtime-voice paths stay in sync.",
+    note: "The model fields are also set on the realtime voice loop below — change both so the chat-TTS and realtime-voice paths stay in sync. The TTS voice is one global setting that drives both.",
     knobs: [
       { path: ["brain_client_node", P, "vertical_fov"], label: "Camera vertical FOV", default: 80.0, type: "float", unit: "°", doc: "Camera vertical field of view" },
       { path: ["brain_client_node", P, "pose_image_interval"], label: "Pose-image interval", default: 0.5, type: "float", unit: "s", doc: "Seconds between pose-image sends" },
@@ -125,16 +139,15 @@ export const CATALOG = [
       { path: ["brain_client_node", P, "send_depth"], label: "Send depth images", default: false, type: "bool", doc: "Also send depth images to the agent" },
       { path: ["brain_client_node", P, "send_arm_camera_image"], label: "Send arm-camera image", default: true, type: "bool", doc: "Also send the arm camera image" },
       { path: ["brain_client_node", P, "log_everything"], label: "Verbose logging", default: true, type: "bool", doc: "Verbose vision-agent output logging" },
-      { path: ["brain_client_node", P, "cartesia_voice_id"], label: "TTS voice ID", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", doc: "Cartesia TTS voice" },
+      { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", options: VOICE_OPTIONS, doc: "Cartesia TTS voice — one setting for both the chat-TTS and realtime-voice paths" },
       { path: ["brain_client_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model" },
       { path: ["brain_client_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model" },
     ],
   },
   {
     section: "Voice & speech (realtime loop)",
-    note: "The realtime voice / transcription loop. Mirror the brain TTS voice + models above so both speech paths match.",
+    note: "The realtime voice / transcription loop. The TTS voice is global — set it once under Brain runtime above (it covers this node too); mirror the model fields here so both speech paths match.",
     knobs: [
-      { path: ["input_manager_node", P, "cartesia_voice_id"], label: "TTS voice ID", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", doc: "Cartesia TTS voice" },
       { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model" },
       { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model" },
     ],
