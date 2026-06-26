@@ -1,6 +1,7 @@
 #include "mars_cam/webrtc_streamer.hpp"
 #include "mars_cam/webrtc_internal.hpp"
 
+#include <cv_bridge/cv_bridge.h>
 #include <gst/app/app.h>
 #include <gst/rtp/rtp.h>
 
@@ -325,45 +326,21 @@ cv::Mat WebRTCStreamer::process_raw_image(const sensor_msgs::msg::Image::SharedP
     if (!msg || msg->data.empty() || msg->height == 0 || msg->width == 0) {
         return cv::Mat();
     }
-    int cv_type = CV_8UC3;
-    int conversion_code = -1;
-    if (msg->encoding == "rgb8") {
-        conversion_code = cv::COLOR_RGB2BGR;
-    } else if (msg->encoding == "bgr8") {
-        conversion_code = -1;
-    } else if (msg->encoding == "mono8") {
-        cv_type = CV_8UC1;
-        conversion_code = cv::COLOR_GRAY2BGR;
-    } else if (msg->encoding == "rgba8") {
-        cv_type = CV_8UC4;
-        conversion_code = cv::COLOR_RGBA2BGR;
-    } else if (msg->encoding == "bgra8") {
-        cv_type = CV_8UC4;
-        conversion_code = cv::COLOR_BGRA2BGR;
-    } else {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "Unsupported image encoding: %s, assuming bgr8", msg->encoding.c_str());
-        conversion_code = -1;
-    }
-
-    cv::Mat img(msg->height, msg->width, cv_type, const_cast<uint8_t*>(msg->data.data()), msg->step);
-    if (img.empty()) {
+    // cv_bridge handles every supported encoding (rgb8/bgr8/mono8/rgba8/bgra8/…) -> BGR, sharing the
+    // message buffer when it's already bgr8 and copying only when a conversion is genuinely needed.
+    cv::Mat img;
+    try {
+        img = cv_bridge::toCvShare(msg, "bgr8")->image;
+    } catch (const cv_bridge::Exception& e) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "cv_bridge (raw): %s", e.what());
         return cv::Mat();
     }
-    bool needs_resize = (img.rows != target_height || img.cols != target_width);
-    if (conversion_code < 0 && !needs_resize) {
-        return img;  // non-owning view; msg stays alive until memcpy into the GstBuffer
+    if (img.rows == target_height && img.cols == target_width) {
+        return img;  // shared with msg; stays valid until push_frame copies it into the GstBuffer
     }
-    cv::Mat result;
-    if (conversion_code >= 0) {
-        cv::cvtColor(img, result, conversion_code);
-        if (needs_resize) {
-            cv::resize(result, result, cv::Size(target_width, target_height));
-        }
-    } else {
-        cv::resize(img, result, cv::Size(target_width, target_height));
-    }
-    return result;
+    cv::Mat resized;
+    cv::resize(img, resized, cv::Size(target_width, target_height));
+    return resized;
 }
 
 cv::Mat WebRTCStreamer::process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg,
@@ -371,16 +348,19 @@ cv::Mat WebRTCStreamer::process_compressed_image(const sensor_msgs::msg::Compres
     if (!msg || msg->data.empty()) {
         return cv::Mat();
     }
-    cv::Mat img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
-    if (img.empty()) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "Failed to decode compressed image (format: %s)", msg->format.c_str());
+    cv::Mat img;
+    try {
+        img = cv_bridge::toCvCopy(msg, "bgr8")->image;  // decodes (jpeg/png) + converts to BGR
+    } catch (const cv_bridge::Exception& e) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "cv_bridge (compressed): %s", e.what());
         return cv::Mat();
     }
-    if (img.rows != target_height || img.cols != target_width) {
-        cv::resize(img, img, cv::Size(target_width, target_height));
+    if (img.rows == target_height && img.cols == target_width) {
+        return img;
     }
-    return img;
+    cv::Mat resized;
+    cv::resize(img, resized, cv::Size(target_width, target_height));
+    return resized;
 }
 
 GstBufferPool* WebRTCStreamer::create_frame_pool(int width, int height, int channels) {

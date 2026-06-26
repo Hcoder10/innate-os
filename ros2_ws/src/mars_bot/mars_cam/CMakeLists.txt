@@ -118,6 +118,7 @@ ament_target_dependencies(webrtc_streamer_component
   rclcpp_components
   std_msgs
   sensor_msgs
+  cv_bridge
 )
 rclcpp_components_register_nodes(webrtc_streamer_component "mars_cam::WebRTCStreamer")
 
@@ -211,6 +212,7 @@ ament_target_dependencies(webrtc_streamer_node
   rclcpp_components
   std_msgs
   sensor_msgs
+  cv_bridge
 )
 
 # Create stereo depth estimator executable (requires VPI)
