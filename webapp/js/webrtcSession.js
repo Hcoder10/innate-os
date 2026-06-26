@@ -189,11 +189,15 @@ export class WebRtcSession {
     pc.oniceconnectionstatechange = () => {
       if (this.#pc !== pc) return;
       const s = pc.iceConnectionState;
+      console.log("[webrtc] ice:", s);
       if (s === "connected" || s === "completed") {
         this.#clearDegradeTimer();
       } else if (s === "disconnected" || s === "failed") {
         this.#startDegradeTimer();
       }
+    };
+    pc.onconnectionstatechange = () => {
+      if (this.#pc === pc) console.log("[webrtc] connection:", pc.connectionState);
     };
 
     // Phase 1: expect an SDP offer back within OFFER_TIMEOUT_MS. If none
@@ -212,6 +216,7 @@ export class WebRtcSession {
         video: ["main"],
       }),
     });
+    console.log("[webrtc] handshake: START sent", { client_id: this.#clientId, audio: this.#builtWithAudio });
   }
 
   /**
@@ -221,6 +226,7 @@ export class WebRtcSession {
    */
   #onTrack(event, pc) {
     const track = event.track;
+    console.log("[webrtc] track:", track.kind, "mid=" + (event.transceiver?.mid ?? "?"));
     if (track.kind === "audio") {
       // Start in the operator's chosen state; never audible by default.
       // NB: deliberately not tuned below — zeroing the audio receiver's NetEq
@@ -271,6 +277,7 @@ export class WebRtcSession {
       if (this.#pc !== pc) return; // stale track from a superseded pc
       this.#handshakeAttempts = 0;
       this.#clearWatchdog();
+      console.log("[webrtc] video live");
       this.#patch({ videoStream: stream, status: "streaming" });
     };
 
@@ -300,6 +307,7 @@ export class WebRtcSession {
 
     this.#processingOffer = true;
     try {
+      console.log("[webrtc] offer received (" + sdp.length + "B), answering");
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.#pc !== pc) return;
       this.#remoteDescriptionSet = true;
@@ -325,6 +333,7 @@ export class WebRtcSession {
       this.#ros.publish(WEBRTC_ANSWER_TOPIC, {
         data: JSON.stringify({ client_id: this.#clientId, sdp: answer.sdp ?? "" }),
       });
+      console.log("[webrtc] answer sent");
     } catch (err) {
       if (this.#pc === pc) console.error("[webrtc] offer processing failed:", err);
     } finally {
