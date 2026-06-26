@@ -3403,39 +3403,33 @@ button {
   }
 }
 
-/* ---- skills drawer (Teleop) --------------------------------------------- */
-/* Right-docked, collapsible, resizable panel mirroring the sim console's
-   skill interface: roster + per-skill param form + /execute_skill run. The
-   open panel insets the cockpit (below) so the feed + overlays shift left
-   rather than being covered. */
+/* ---- right dock (Teleop): Skills + Chat panes --------------------------- */
+/* A shared right-edge column hosting stacked panes, each with its own popup
+   toggle at the camera view's right edge. Opening any pane insets the cockpit so
+   the feed + overlays shift left; one open pane fills the dock, two split it. */
 
-/* The cockpit shifts left when the drawer is open (inline `right` is set on it
-   to the drawer width). Skip the slide while actively dragging the resizer. */
+/* The cockpit shifts left when any pane is open (inline `right` = dock width).
+   Skip the slide while actively dragging the resizer. */
 .cockpit {
   transition: right 220ms ease;
 }
 
-.cockpit.skills-resizing {
+.cockpit.dock-resizing {
   transition: none;
 }
 
-/* The little popup toggle — always visible (brand blue), a quarter down from the
-   top, riding the drawer's left edge. `right` is set inline (0 when hidden,
-   = drawer width when open). */
-.skills-toggle {
+/* The little popup toggles — always visible (brand blue), pinned at the camera
+   view's right edge. `top` is set inline per pane; `right` inline (0 when hidden,
+   = dock width when any pane is open). */
+.dock-toggle {
   position: absolute;
-  top: 13%;
   transform: translateY(-50%);
   z-index: 8;
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 5px;
-  padding: 9px 9px;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  gap: 4px;
+  padding: 12px 7px;
   color: #c0b8ff;
   background: rgb(64 31 251 / 22%);
   border: 1px solid rgb(64 31 251 / 60%);
@@ -3444,18 +3438,28 @@ button {
   transition: right 220ms ease, color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
-.skills-toggle:hover {
+.dock-toggle:hover {
   background: var(--blue);
   color: #fff;
   border-color: var(--blue);
 }
 
-.skills-toggle-chevron {
-  font-size: 13px;
+/* Big upright chevron on the left, vertical label on the right. */
+.dock-toggle-chevron {
+  font-size: 20px;
+  font-weight: 700;
   line-height: 1;
 }
 
-.skills-drawer {
+.dock-toggle-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.dock {
   position: absolute;
   top: 0;
   right: 0;
@@ -3468,35 +3472,50 @@ button {
   transition: transform 220ms ease;
 }
 
-.skills-drawer.open {
+.dock.open {
   transform: translateX(0);
 }
 
-.skills-drawer.resizing {
+.dock.resizing {
   transition: none;
 }
 
-/* Left-edge grab strip. */
-.skills-resize {
+/* Left-edge grab strip (shared width). */
+.dock-resize {
   flex: 0 0 6px;
   cursor: ew-resize;
   background: var(--hairline);
   transition: background 150ms ease;
 }
 
-.skills-resize:hover,
-.skills-drawer.resizing .skills-resize {
+.dock-resize:hover,
+.dock.resizing .dock-resize {
   background: var(--accent-dim);
 }
 
-.skills-body {
+/* Panes stack vertically; each open pane flexes equally — one open fills the
+   dock, two open split it 50/50 (the closed one is display:none). */
+.dock-panes {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-.skills-head {
+.dock-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dock-pane + .dock-pane {
+  border-top: 1px solid var(--hairline-strong);
+}
+
+/* Blue section header shared by the panes. */
+.dock-head {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -3505,7 +3524,7 @@ button {
   border-bottom: 1px solid var(--hairline-strong);
 }
 
-.skills-head .microlabel {
+.dock-head .microlabel {
   color: #fff;
   flex: 1;
 }
@@ -3749,4 +3768,229 @@ button {
 
 .skill-confirm.stop:hover:not(:disabled) {
   background: rgb(217 106 90 / 14%);
+}
+
+/* ---- chat pane (Teleop dock) -------------------------------------------- */
+
+.chat-agentbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.chat-agent-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.chat-agent-select {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+}
+
+.chat-agent-select:focus {
+  outline: none;
+  border-color: rgb(64 31 251 / 60%);
+}
+
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-msg.robot,
+.chat-msg.system {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.chat-bubble {
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg.user .chat-bubble {
+  color: #fff;
+  background: rgb(64 31 251 / 38%);
+  border: 1px solid rgb(64 31 251 / 60%);
+}
+
+.chat-msg.robot .chat-bubble {
+  color: var(--text);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--hairline-strong);
+}
+
+.chat-msg.system .chat-bubble {
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--hairline-strong);
+  font-size: 11px;
+}
+
+.chat-sender {
+  margin-bottom: 3px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Collapsed "Thoughts" block — grouped agent reasoning, expandable. */
+.chat-thoughts {
+  align-self: flex-start;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-thoughts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  text-align: left;
+  color: var(--muted);
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.chat-thoughts-toggle:hover {
+  color: var(--text);
+  background: rgb(255 255 255 / 7%);
+}
+
+.chat-thoughts-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.chat-thoughts-status {
+  flex: 1;
+  font-size: 11px;
+}
+
+.chat-thoughts.active .chat-thoughts-status::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: chat-think-pulse 1.4s infinite ease-in-out;
+}
+
+@keyframes chat-think-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.chat-thoughts-arrow {
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+.chat-thoughts-list {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease, margin-top 0.25s ease;
+}
+
+.chat-thoughts.open .chat-thoughts-list {
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.chat-thought-item {
+  position: relative;
+  padding: 4px 0 4px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.chat-thought-item::before {
+  content: "•";
+  position: absolute;
+  left: 2px;
+  opacity: 0.5;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.chat-input {
+  flex: 1;
+  min-height: 34px;
+  max-height: 120px;
+  padding: 8px 10px;
+  resize: none;
+  font-size: 12px;
+  color: var(--text);
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: rgb(64 31 251 / 60%);
+}
+
+.chat-send {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #d7d2ff;
+  background: rgb(64 31 251 / 30%);
+  border: 1px solid rgb(64 31 251 / 60%);
+  border-radius: 8px;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.chat-send:hover {
+  background: rgb(64 31 251 / 48%);
+  border-color: var(--blue);
 }

@@ -1,10 +1,9 @@
 // @ts-check
-// Skills drawer — a right-docked, collapsible, resizable panel that mirrors the
-// sim console's skill interface: the live roster from /brain/available_skills,
+// Skills panel — a pane in the shared right dock (see rightDock.js) that mirrors
+// the sim console's skill interface: the live roster from /brain/available_skills,
 // a per-skill parameter form generated from each skill's input schema, and
 // direct execution through the /execute_skill action (cancelable, with streamed
-// feedback). Drag the left edge to resize; a little popup toggle on the right
-// edge hides/shows the whole panel.
+// feedback).
 //
 // The roster topic carries more than datasets/skillList.js consumes — every
 // skill also ships `inputs`/`inputs_json` (schema {type, required, enum?,
@@ -16,43 +15,17 @@ import {
   EXECUTE_SKILL_ACTION_TYPE,
 } from "../constants.js";
 
-const WIDTH_KEY = "innate.skillsWidth";
-const OPEN_KEY = "innate.skillsOpen";
-const MIN_WIDTH = 240;
-const MAX_WIDTH = 560;
-const DEFAULT_WIDTH = 320;
-
 /**
- * @param {HTMLElement} parent
+ * @param {ReturnType<import("./rightDock.js").createRightDock>} dock The shared right dock controller.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @returns {{ destroy: () => void }}
  */
-export function createSkillsPanel(parent, rosClient) {
-  // A single little popup toggle pinned to the right edge — always visible, it
-  // rides the drawer's left edge so the same control both hides and unhides.
-  const toggle = document.createElement("button");
-  toggle.className = "skills-toggle";
-  toggle.type = "button";
-  const toggleChevron = document.createElement("span");
-  toggleChevron.className = "skills-toggle-chevron";
-  const toggleLabel = document.createElement("span");
-  toggleLabel.className = "skills-toggle-label";
-  toggleLabel.textContent = "Skills";
-  toggle.append(toggleChevron, toggleLabel);
-
-  // The drawer slides in from the right edge.
-  const drawer = document.createElement("div");
-  drawer.className = "skills-drawer";
-
-  // Left-edge resize strip (drag to set width).
-  const resize = document.createElement("div");
-  resize.className = "skills-resize";
-
-  const body = document.createElement("div");
-  body.className = "skills-body";
+export function createSkillsPanel(dock, rosClient) {
+  // Top pane of the dock; toggle sits a quarter down the camera's right edge.
+  const { body } = dock.addPanel({ key: "skills", label: "Skills", togglePos: 0.25 });
 
   const head = document.createElement("div");
-  head.className = "skills-head";
+  head.className = "dock-head";
   const title = document.createElement("p");
   title.className = "microlabel";
   title.textContent = "skills";
@@ -69,13 +42,6 @@ export function createSkillsPanel(parent, rosClient) {
   listEl.className = "skills-list";
 
   body.append(head, listEl);
-  drawer.append(resize, body);
-  // Mount the drawer + toggle in the stage (the cockpit's parent) so the cockpit
-  // can be inset to the left of them — the panel shifts the video + overlays
-  // rather than overlapping them.
-  const cockpit = parent;
-  const stage = parent.parentElement || parent;
-  stage.append(drawer, toggle);
 
   // ---- state --------------------------------------------------------------
 
@@ -88,22 +54,6 @@ export function createSkillsPanel(parent, rosClient) {
   const inputValues = new Map();
   /** Last/in-flight run. `done` marks the terminal state. @type {{ skillId: string, cancel: () => void, text: string, error: boolean, canceling: boolean, done: boolean } | null} */
   let run = null;
-
-  let width = clampWidth(Number(localStorage.getItem(WIDTH_KEY)) || DEFAULT_WIDTH);
-  let open = localStorage.getItem(OPEN_KEY) === "1";
-
-  function applyChrome() {
-    drawer.style.width = `${width}px`;
-    drawer.classList.toggle("open", open);
-    // The toggle hugs the drawer's visible left edge when open, else the wall.
-    toggle.style.right = open ? `${width}px` : "0px";
-    toggle.classList.toggle("open", open);
-    toggle.title = open ? "Hide skills" : "Show skills";
-    toggleChevron.textContent = open ? "›" : "‹";
-    // Inset the cockpit so its content shifts left instead of being covered.
-    cockpit.style.right = open ? `${width}px` : "";
-  }
-  applyChrome();
 
   // ---- skill input schema (mirrors the sim console) -----------------------
 
@@ -432,44 +382,6 @@ export function createSkillsPanel(parent, rosClient) {
     return rowEl;
   }
 
-  // ---- collapse + resize --------------------------------------------------
-
-  /** @param {boolean} next */
-  function setOpen(next) {
-    open = next;
-    localStorage.setItem(OPEN_KEY, open ? "1" : "0");
-    applyChrome();
-  }
-  toggle.addEventListener("click", () => setOpen(!open));
-
-  /** @type {{ startX: number, startW: number } | null} */
-  let drag = null;
-  resize.addEventListener("pointerdown", (e) => {
-    resize.setPointerCapture(e.pointerId);
-    drag = { startX: e.clientX, startW: width };
-    drawer.classList.add("resizing");
-    cockpit.classList.add("skills-resizing"); // drop the inset transition while dragging
-  });
-  resize.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    width = clampWidth(drag.startW + (drag.startX - e.clientX)); // drag left widens
-    drawer.style.width = `${width}px`;
-    toggle.style.right = `${width}px`;
-    cockpit.style.right = `${width}px`;
-  });
-  resize.addEventListener("pointerup", (e) => {
-    if (!drag) return;
-    try {
-      resize.releasePointerCapture(e.pointerId);
-    } catch {
-      // stale pointer — fine
-    }
-    drag = null;
-    drawer.classList.remove("resizing");
-    cockpit.classList.remove("skills-resizing");
-    localStorage.setItem(WIDTH_KEY, String(width));
-  });
-
   // ---- live data ----------------------------------------------------------
 
   const unsubSkills = rosClient.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
@@ -501,10 +413,6 @@ export function createSkillsPanel(parent, rosClient) {
       unsubSkills();
       unsubState();
       if (run && !run.done) run.cancel();
-      cockpit.style.right = "";
-      cockpit.classList.remove("skills-resizing");
-      toggle.remove();
-      drawer.remove();
     },
   };
 }
@@ -516,9 +424,4 @@ function formatName(skill) {
     .split("/")
     .map((part) => part.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
     .join(" / ");
-}
-
-/** @param {number} w */
-function clampWidth(w) {
-  return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(w)));
 }
