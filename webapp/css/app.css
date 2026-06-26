@@ -3950,6 +3950,76 @@ button {
   opacity: 0.5;
 }
 
+/* Skill-execution line — which primitive the agent is running, live. */
+.chat-skill {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.chat-skill-tag {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chat-skill-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-skill-status {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chat-skill.running {
+  border-color: rgb(64 31 251 / 55%);
+  background: rgb(64 31 251 / 12%);
+}
+
+.chat-skill.running .chat-skill-status {
+  color: #c0b8ff;
+}
+
+.chat-skill.running .chat-skill-status::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: chat-think-pulse 1.4s infinite ease-in-out;
+}
+
+.chat-skill.completed .chat-skill-status {
+  color: var(--ok);
+}
+
+.chat-skill.failed {
+  border-color: var(--danger);
+}
+
+.chat-skill.failed .chat-skill-status {
+  color: var(--danger);
+}
+
 .chat-input-row {
   display: flex;
   gap: 8px;

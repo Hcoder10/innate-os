@@ -22,6 +22,7 @@ import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsPanel } from "./skillsPanel.js";
+import { createChatPanel } from "./chatPanel.js";
 import { createRightDock } from "./rightDock.js";
 
 initShell("teleop", "");
@@ -74,11 +75,11 @@ function buildCockpit(root) {
     keyboard,
   ];
 
-  // Shared right dock hosting collapsible panes, each with its own popup toggle
-  // on the camera's right edge. Built after the parts so it tears down last; the
-  // panels register into it.
+  // Shared right dock hosting the Skills + Chat panes, each with its own popup
+  // toggle on the camera's right edge. Built after the parts so it tears down
+  // last; the panels register into it.
   const dock = createRightDock(root);
-  parts.push(createSkillsPanel(dock, ros), dock);
+  parts.push(createSkillsPanel(dock, ros), createChatPanel(dock, ros), dock);
 
   session.start();
 

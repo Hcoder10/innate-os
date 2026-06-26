@@ -15,6 +15,28 @@ export const HEAD_CURRENT_POSITION_TOPIC = "/mars/head/current_position";
 
 export const TTS_TOPIC = "/brain/tts";
 
+// Operator <-> brain chat. Send: std_msgs/String whose data is JSON
+// {text, sender:"user", timestamp}. Receive: std_msgs/String whose data is JSON
+// {sender, text, timestamp, ...} — sender "user" echoes the operator, "robot" is
+// the agent's reply. Same topics the sim console + mobile app use.
+export const CHAT_IN_TOPIC = "/brain/chat_in";
+export const CHAT_OUT_TOPIC = "/brain/chat_out";
+
+// Agent/directive selection. The roster comes from a service (response carries a
+// JSON-in-String `directives` array — directives[0] is {agents:[{id,
+// display_name,...}]} or a bare agent array — plus `current_directive`).
+// Selecting an agent publishes its id on /brain/set_directive and activates the
+// brain; "None" deactivates it (std_srvs/SetBool).
+export const GET_AVAILABLE_DIRECTIVES_SERVICE = "/brain/get_available_directives";
+export const SET_DIRECTIVE_TOPIC = "/brain/set_directive";
+export const SET_BRAIN_ACTIVE_SERVICE = "/brain/set_brain_active";
+
+// Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
+// status: running|completed|failed|interrupted, primitive_id, ...}), published
+// as the agent runs primitives. Separate from chat_out — the chat surfaces it so
+// operators can see which skills the agent is executing.
+export const SKILL_STATUS_UPDATE_TOPIC = "/brain/skill_status_update";
+
 // Per-step ACT inference timing breakdown (std_msgs/String carrying JSON), published
 // by the manipulation server while a learned behavior runs. Drives the Profiling page.
 export const INFERENCE_PROFILE_TOPIC = "/brain/manipulation/inference_profile";
