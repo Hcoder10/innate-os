@@ -26,15 +26,15 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
 
 <table>
   <tr>
-    <td width="33%" align="center" valign="top">
+    <td width="37%" align="center" valign="top">
       <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" height="300"><br>
       <sub>Web app</sub>
     </td>
-    <td width="33%" align="center" valign="top">
+    <td width="26%" align="center" valign="top">
       <img src="docs/assets/readme/screenshot-mobile-card.png" alt="Innate mobile app running an agent" height="300"><br>
       <sub>Mobile app</sub>
     </td>
-    <td width="33%" align="center" valign="top">
+    <td width="37%" align="center" valign="top">
       <img src="docs/assets/readme/screenshot-simulator-card.png" alt="Innate simulator interface" height="300"><br>
       <sub>Simulator</sub>
     </td>
