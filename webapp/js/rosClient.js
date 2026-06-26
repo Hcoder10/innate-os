@@ -30,6 +30,7 @@ export class RosClient {
   /** @type {Set<(state: ConnState, ip: string | null) => void>} */ #stateListeners = new Set();
   /** @type {Map<string, Subscription>} */ #subs = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, timer: number }>} */ #pendingCalls = new Map();
+  /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, onFeedback?: (v: any) => void, action: string, goalId: string, cancelRequested: boolean }>} */ #pendingActions = new Map();
   #callCounter = 0;
   #reconnectDelay = RECONNECT_BASE_MS;
   /** @type {number | null} */ #reconnectTimer = null;
@@ -133,6 +134,63 @@ export class RosClient {
       this.#pendingCalls.set(id, { resolve, reject, timer });
       this.#send({ op: "call_service", id, service, args });
     });
+  }
+
+  /**
+   * Send a goal to a ROS action (rws action protocol over the shared socket).
+   * Long-running and cancelable, with streamed feedback — the right primitive
+   * for skill execution. The result `values` (e.g. {success, message, ...}) is
+   * resolved when the action terminates; onFeedback fires for each interim
+   * `action_feedback`.
+   * @param {string} action e.g. "/execute_skill"
+   * @param {string} actionType e.g. "brain_messages/action/ExecuteSkill"
+   * @param {object} [args] Goal fields.
+   * @param {{ onFeedback?: (values: any) => void }} [opts]
+   * @returns {{ promise: Promise<any>, cancel: () => void }}
+   */
+  sendActionGoal(action, actionType, args = {}, opts = {}) {
+    const id = `act_${this.#callCounter++}_${action.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const goalId = `${id}_${Date.now()}`;
+    let settled = false;
+    const promise = new Promise((resolve, reject) => {
+      if (this.#state !== "connected" || !this.#ws) {
+        reject(new Error(`Not connected; cannot run ${action}`));
+        return;
+      }
+      this.#pendingActions.set(id, {
+        resolve: (v) => {
+          settled = true;
+          resolve(v);
+        },
+        reject: (e) => {
+          settled = true;
+          reject(e);
+        },
+        onFeedback: opts.onFeedback,
+        action,
+        // rws assigns the authoritative goal_id and echoes it on feedback/result;
+        // cancel must reference THAT, not our client-side one. Seed with ours and
+        // upgrade when the server's arrives.
+        goalId,
+        cancelRequested: false,
+      });
+      this.#send({
+        op: "send_action_goal",
+        id,
+        action,
+        action_type: actionType,
+        args,
+        feedback: true,
+        goal_id: goalId,
+      });
+    });
+    const cancel = () => {
+      const pending = this.#pendingActions.get(id);
+      if (settled || !pending) return;
+      pending.cancelRequested = true;
+      this.#send({ op: "cancel_action_goal", id, action, goal_id: pending.goalId });
+    };
+    return { promise, cancel };
   }
 
   /**
@@ -297,6 +355,36 @@ export class RosClient {
       return;
     }
 
+    if (data.op === "action_feedback") {
+      const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
+      if (pending && typeof data.goal_id === "string" && data.goal_id && data.goal_id !== pending.goalId) {
+        pending.goalId = data.goal_id;
+        // A cancel pressed before the server's goal_id arrived couldn't bind;
+        // re-issue it now against the authoritative id.
+        if (pending.cancelRequested) {
+          this.#send({ op: "cancel_action_goal", id: data.id, action: pending.action, goal_id: pending.goalId });
+        }
+      }
+      pending?.onFeedback?.(data.values);
+      return;
+    }
+
+    if (data.op === "action_result") {
+      const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
+      if (!pending) return;
+      this.#pendingActions.delete(data.id);
+      // rws reports a failed/aborted goal via result_code or a string status;
+      // the action's own `values.success` carries the skill-level outcome, so
+      // resolve with the payload and let the caller interpret it. Reject only
+      // when the goal was rejected outright (no values came back).
+      if (data.result === false && data.values == null) {
+        pending.reject(new Error(typeof data.values === "string" ? data.values : `Action ${pending.action} rejected`));
+      } else {
+        pending.resolve(data.values);
+      }
+      return;
+    }
+
     if (typeof data.topic === "string") {
       const sub = this.#subs.get(data.topic);
       if (!sub) return;
@@ -370,6 +458,10 @@ export class RosClient {
       pending.reject(err);
     }
     this.#pendingCalls.clear();
+    for (const pending of this.#pendingActions.values()) {
+      pending.reject(err);
+    }
+    this.#pendingActions.clear();
   }
 
   #teardownSocket() {
