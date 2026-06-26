@@ -16,6 +16,7 @@ from src.agent.types import (
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
+    HeadCmd,
     ClearTrajectoryCmd,
     DrawTrajectoryCmd,
     OccupancyGridMsg,
@@ -42,6 +43,12 @@ ROBOT_ARM_HOME_POSITIONS = [
     0.0015339807878856412,
 ]
 SIM_ROBOT_ORANGE_LINKS = {"link1", "link3", "link5", "ee_link"}
+# Head pitch joint, driven by /mars/head/set_position (degrees). Range is ±20°;
+# the URDF joint_head limits are set to match. Positive commands tilt the head
+# up (axis 0 -1 0), matching the webapp slider's +max-at-top.
+HEAD_JOINT_NAME = "joint_head"
+HEAD_MIN_DEG = -20.0
+HEAD_MAX_DEG = 20.0
 # Max valid depth (meters) before a pixel is treated as no-reading; matches the
 # real robot's mars_cam MAX_DEPTH_M so 16UC1 mm values stay in uint16 range.
 DEPTH_MAX_M = 10.0
@@ -193,6 +200,9 @@ class SimulationNode:
         self.last_arm_state_time = 0
         self.arm_state_interval = 0.02  # Publish at ~50Hz
 
+        self.head_dof_index = None
+        self.head_current_deg = 0.0
+
         self.render_camera_vfov = 40
         self.render_camera_hfov = degrees(2 * atan(tan(radians(self.render_camera_vfov) / 2) * 1280 / 720))
         self.render_camera_res = (1280, 720)
@@ -244,6 +254,7 @@ class SimulationNode:
         self._startup_mark("scene.build")
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_head_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
@@ -1102,6 +1113,29 @@ class SimulationNode:
             except Exception as e:
                 print(f"[SimulationNode] Error applying arm positions: {e}")
 
+    def _init_head_control(self):
+        """Cache the head pitch DOF so /mars/head/set_position can drive it."""
+        try:
+            self.head_dof_index = self.robot.get_joint(HEAD_JOINT_NAME).dofs_idx_local[0]
+        except Exception:
+            self.head_dof_index = None
+            print(f"[SimulationNode] Robot URDF has no {HEAD_JOINT_NAME}; head control disabled.")
+
+    def _apply_head_position(self, angle_deg):
+        """Drive the head pitch joint to angle_deg (degrees), clamped to limits."""
+        if self.head_dof_index is None:
+            return
+        angle_deg = max(HEAD_MIN_DEG, min(HEAD_MAX_DEG, angle_deg))
+        try:
+            self.robot.set_dofs_position(
+                position=torch.tensor([radians(angle_deg)], dtype=torch.float32),
+                dofs_idx_local=[self.head_dof_index],
+                zero_velocity=True,
+            )
+            self.head_current_deg = angle_deg
+        except Exception as e:
+            print(f"[SimulationNode] Error applying head position: {e}")
+
     def _init_camera(self):
         """Initialize robot camera, arm wrist camera, and chase camera"""
         if not self.cameras_enabled:
@@ -1619,6 +1653,7 @@ class SimulationNode:
         self.scene.build()
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_head_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
@@ -1874,6 +1909,7 @@ class SimulationNode:
                 latest_set_env_cmd = None  # Variable to hold the latest env command
                 latest_arm_cmd = None
                 latest_arm_goto_cmd = None
+                latest_head_cmd = None
 
                 while True:
                     try:
@@ -1884,6 +1920,8 @@ class SimulationNode:
                             latest_arm_cmd = cmd
                         elif isinstance(cmd, ArmGotoCmd):
                             latest_arm_goto_cmd = cmd
+                        elif isinstance(cmd, HeadCmd):
+                            latest_head_cmd = cmd
                         elif isinstance(cmd, PositionCmd):
                             latest_position_cmd = cmd
                         elif isinstance(cmd, ResetRobotCmd):
@@ -1953,6 +1991,10 @@ class SimulationNode:
                     self._apply_arm_positions(joint_positions)
                     # Cancel any ongoing interpolation
                     self.arm_target_positions = None
+
+                # Apply head pitch if we have a head command (immediate)
+                if latest_head_cmd is not None:
+                    self._apply_head_position(latest_head_cmd.angle_deg)
 
                 # Start arm interpolation if we have a goto command
                 if latest_arm_goto_cmd is not None:
@@ -2163,6 +2205,14 @@ class SimulationNode:
                     joint_names=self.arm_joint_names,
                 )
                 self.shared_queues.set_latest_arm_state_msg(arm_state_msg)
+                self.shared_queues.set_head_position_state(
+                    {
+                        "current_position": self.head_current_deg,
+                        "min_angle": HEAD_MIN_DEG,
+                        "max_angle": HEAD_MAX_DEG,
+                        "default_angle": 0.0,
+                    }
+                )
                 self.last_arm_state_time = sim_time
 
             # --- (F) Build and publish RobotStateMsg with latest state

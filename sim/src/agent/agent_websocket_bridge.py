@@ -18,6 +18,7 @@ from src.agent.types import (
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
+    HeadCmd,
     BrainActiveCmd,
     BrainBackendConfigCmd,
     DirectiveCmd,
@@ -47,6 +48,7 @@ SENSOR_PUBLISH_INTERVAL_SEC = 0.10
 CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
 ARM_STATUS_PUBLISH_INTERVAL_SEC = 0.5
+HEAD_POSITION_PUBLISH_INTERVAL_SEC = 0.5
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 ARM_JOINT_COUNT = 6
 ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
@@ -647,6 +649,18 @@ async def inbound_data_loop(ws, shared_queues):
                     except queue.Full:
                         pass
 
+            # 1b2) /mars/head/set_position — head pitch in degrees. Not gated by
+            # arm torque (the real head stays torqued even when the arm is limp).
+            elif topic == "/mars/head/set_position":
+                try:
+                    angle_deg = float(msg_data.get("data"))
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    shared_queues.agent_to_sim.put_nowait(HeadCmd(angle_deg=angle_deg))
+                except queue.Full:
+                    pass
+
             # 1c) WebRTC signaling (browser -> sim aiortc server), relayed via
             # shared_queues so the aiortc thread stays decoupled from this loop.
             elif topic in WEBRTC_INBOUND_TOPICS:
@@ -994,6 +1008,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     last_clock_publish_time = 0.0
     last_arm_state_publish_time = 0.0
     last_arm_status_publish_time = 0.0
+    last_head_position_publish_time = 0.0
     last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
@@ -1019,6 +1034,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
     adv_arm_status = rosbridge_advertise("/mars/arm/status", "mars_msgs/msg/ArmStatus")
+    adv_head_position = rosbridge_advertise("/mars/head/current_position", "std_msgs/msg/String")
 
     # WebRTC signaling (server->browser): offer + ICE candidates.
     adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
@@ -1040,6 +1056,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
     await ws.send(json.dumps(adv_arm_status))
+    await ws.send(json.dumps(adv_head_position))
     await ws.send(json.dumps(adv_arm_camera))
     await ws.send(json.dumps(adv_webrtc_offer))
     await ws.send(json.dumps(adv_webrtc_ice_out))
@@ -1068,6 +1085,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     sub_nav_path = rosbridge_subscribe("/sim_navigation/global_plan", "nav_msgs/msg/Path")
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
     sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
+    sub_head_set = rosbridge_subscribe("/mars/head/set_position", "std_msgs/msg/Int32")
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
     await ws.send(json.dumps(sub_skill_status))
@@ -1076,6 +1094,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_nav_path))
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
+    await ws.send(json.dumps(sub_head_set))
     # WebRTC signaling (browser->server): start / answer / ice_in / active_streams.
     for webrtc_topic in WEBRTC_INBOUND_TOPICS:
         await ws.send(json.dumps(rosbridge_subscribe(webrtc_topic, "std_msgs/msg/String")))
@@ -1296,6 +1315,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
         if updates_now - last_arm_status_publish_time >= ARM_STATUS_PUBLISH_INTERVAL_SEC:
             await publish_arm_status(ws, shared_queues)
             last_arm_status_publish_time = updates_now
+
+        if updates_now - last_head_position_publish_time >= HEAD_POSITION_PUBLISH_INTERVAL_SEC:
+            await publish_head_position(ws, shared_queues)
+            last_head_position_publish_time = updates_now
 
         await asyncio.sleep(0.0001)
 
@@ -1651,6 +1674,18 @@ async def publish_arm_status(ws, shared_queues):
         "is_torque_enabled": is_arm_torque_enabled(shared_queues),
     }
     outbound = rosbridge_publish("/mars/arm/status", status_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_head_position(ws, shared_queues):
+    """Publish the sim head pitch to /mars/head/current_position.
+
+    std_msgs/String carrying JSON (current_position + min/max/default angle), the
+    shape the webapp's head-tilt slider parses. It adopts the reported min/max as
+    its range; without this feed the slider sits disabled at "-".
+    """
+    state = shared_queues.get_head_position_state()
+    outbound = rosbridge_publish("/mars/head/current_position", {"data": json.dumps(state)})
     await ws.send(json.dumps(outbound))
 
 
