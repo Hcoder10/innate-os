@@ -467,7 +467,7 @@ def settings_get_response() -> Response:
 
 
 def restart_response() -> Response:
-    """POST /restart -> kick off `innate restart` (same as the CLI) so the robot
+    """GET /restart -> kick off `innate restart` (same as the CLI) so the robot
     comes back with the latest config/settings.yaml. The restart tears down the
     tmux session this proxy runs in, so we spawn it detached with a brief delay —
     that lets this 200 flush to the browser before the proxy is killed, and the
@@ -515,6 +515,16 @@ async def process_request(connection, request):
             return None
         return await asyncio.to_thread(settings_get_response)
     if split.path == "/restart":
+        # Only GET ever reaches here: the websockets server rejects every
+        # non-GET method at parse time (400, before process_request runs), so
+        # POST/OPTIONS/etc. never arrive. A bare GET to this path is easy to
+        # fire by accident (browser prefetch, address-bar visit, LAN scanner,
+        # <img src>, a cross-origin page the operator has open), so gate it on a
+        # custom header that only same-origin fetch() can set — cross-origin JS
+        # can't add it without a CORS preflight, and that preflight (an OPTIONS)
+        # is itself rejected by this server.
+        if request.headers.get("X-Requested-By", "") != "innate-webapp":
+            return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
     return await asyncio.to_thread(static_response, request.path)
 
