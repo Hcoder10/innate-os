@@ -146,16 +146,14 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
 
     if (GstObject* ice = nullptr; (g_object_get(peer->webrtc, "ice-agent", &ice, nullptr), ice)) {
         g_object_set(ice, "ice-tcp", FALSE, nullptr);  // UDP-only media: fewer candidate pairs to check
-        // Cap the STUN retransmit budget on the underlying NiceAgent so a dead pair (e.g. the tailscale
-        // candidate when the client is on the LAN) gives up in ~0.7 s instead of ~5 s, rather than holding
-        // up nomination of the working pair. A real LAN/tailscale pair answers on the first check, well
-        // inside this budget, so connectivity is unaffected. (The big connect-latency win is the mDNS
-        // candidate handling in prepare_ice_candidate, not this.)
-        if (GObject* nice = nullptr; (g_object_get(ice, "agent", &nice, nullptr), nice)) {
-            g_object_set(nice, "stun-initial-timeout", static_cast<guint>(100), "stun-max-retransmissions",
-                         static_cast<guint>(2), nullptr);
-            g_object_unref(nice);
-        }
+        // NOTE: we deliberately leave the NiceAgent's STUN retransmit budget at libnice defaults. A short
+        // budget (stun-initial-timeout=100, stun-max-retransmissions=2 → ~0.7 s give-up) abandons dead pairs
+        // faster, but it also makes libnice declare the component FAILED before a peer-reflexive pair can be
+        // nominated — which is exactly what happens when the browser's host candidates are unresolvable mDNS
+        // names (e.g. a Linux client not publishing them) and the ONLY way in is the prflx that libnice
+        // discovers from the browser's incoming connectivity checks. Default (patient) checking keeps the
+        // agent alive long enough for that prflx pair to win. Dead pairs cost a few extra seconds; a dead
+        // *connection* costs everything.
         gst_object_unref(ice);
     }
     // Let webrtcbin tell us when the transceivers are ready instead of racing create-offer right after

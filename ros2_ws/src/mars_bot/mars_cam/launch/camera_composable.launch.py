@@ -97,9 +97,12 @@ def generate_launch_description():
                 # Seconds without any RTCP from the peer before the node tears the pipeline down and
                 # releases the camera subscriptions / encoders / mic. webrtcbin never reports a
                 # vanished (closed-tab/killed) peer, so this inactivity watchdog is what makes the
-                # subscriptions lazy. Must exceed the peer's RTCP interval (browsers send RR ~1/s +
-                # transport-cc ~10-20/s). Runtime-tunable via `ros2 param set`.
-                "rtcp_inactivity_timeout_s": 5.0,
+                # subscriptions lazy. Must exceed the peer's RTCP interval with margin: a browser's RR
+                # cadence for low-bitrate video can stretch to ~5 s, so a 5 s timeout false-positives and
+                # tears down a perfectly healthy connection. 15 s gives ~3 missed reports of slack; a
+                # genuinely-dead peer is still caught here and by the ICE DISCONNECTED/FAILED path.
+                # Runtime-tunable via `ros2 param set`.
+                "rtcp_inactivity_timeout_s": 15.0,
             }
         ],
         extra_arguments=[{"use_intra_process_comms": True}],

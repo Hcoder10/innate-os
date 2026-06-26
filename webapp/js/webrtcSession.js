@@ -232,7 +232,17 @@ export class WebRtcSession {
       console.log("[webrtc] ice:", s);
       if (s === "connected" || s === "completed") {
         this.#clearDegradeTimer();
-      } else if (s === "disconnected" || s === "failed") {
+      } else if (s === "failed") {
+        // ICE exhausted every candidate pair without finding a working one = NO NETWORK PATH between this
+        // browser and the robot (e.g. the robot can't reach our host candidates — mDNS-obfuscated on a
+        // network where they don't resolve — and srflx/NAT-hairpin didn't work either).
+        console.error(
+          "[webrtc] NO USABLE NETWORK PATH to the robot — ICE failed (no candidate pair connected). " +
+            "If you're on the same LAN, your browser may be hiding its local IP via mDNS; the robot " +
+            "couldn't open a return path. Workaround: set media.peerconnection.ice.obfuscate_host_addresses=false.",
+        );
+        this.#startDegradeTimer();
+      } else if (s === "disconnected") {
         this.#startDegradeTimer();
       }
     };
@@ -408,7 +418,9 @@ export class WebRtcSession {
     this.#degradeTimer = setTimeout(() => {
       this.#degradeTimer = null;
       if (this.#started) {
-        console.warn("[webrtc] ICE degraded for 10s, rebuilding");
+        // Connected briefly then lost the path (or never got media). Repeated rebuilds here usually mean
+        // the robot can't keep a return path to this browser — see the NO USABLE NETWORK PATH note above.
+        console.warn("[webrtc] no stable media path for 10s (robot may have no route back to us), rebuilding");
         this.#handshake();
       }
     }, ICE_DEGRADE_MS);

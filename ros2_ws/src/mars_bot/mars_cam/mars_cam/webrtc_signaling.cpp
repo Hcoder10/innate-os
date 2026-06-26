@@ -170,24 +170,18 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
 }
 
 std::string WebRTCStreamer::prepare_ice_candidate(const std::string& candidate) {
-    const std::string addr = candidate_address(candidate);
-    if (!is_mdns_address(addr)) {
-        return candidate;  // already an IP (LAN / tailscale / IPv6) — forward unchanged
-    }
-    // Resolve the browser's mDNS name ourselves, off the peers_ lock, with a short deadline: a reachable
-    // LAN .local resolves in ~30 ms, and forwarding the IP means libnice never does its own (slow)
-    // resolution — that's the fast path. If it DOESN'T resolve (browser on a different L2 / no mDNS path
-    // to it), forward it UNCHANGED anyway: libnice needs >=1 remote candidate to enter checking and form a
-    // peer-reflexive candidate from the browser's connectivity checks to OUR advertised IPs (LAN/tailscale/
-    // IPv6/srflx). Dropping it means that when every browser candidate is an unresolvable .local we keep
-    // zero remote candidates and the peer never connects.
-    const std::string ip = resolve_ipv4_timeout(addr, 200);
-    if (ip.empty()) {
-        RCLCPP_INFO(this->get_logger(), "Forwarding unresolvable mDNS ICE candidate %s as-is (peer-reflexive bootstrap)",
-                    addr.c_str());
-        return candidate;
-    }
-    return replace_first(candidate, addr, ip);
+    // Forward EVERY remote ICE candidate to webrtcbin unchanged — including the browser's "<uuid>.local"
+    // mDNS host candidates. We deliberately do NOT self-resolve or filter here: libnice does its own mDNS
+    // resolution and peer-reflexive discovery, and handing it the full raw set is the behavior that
+    // connects across the awkward networks (multi-homed IPv6, mDNS host candidates, hairpin srflx). It can
+    // be slower to first frame when an mDNS name has to time out inside libnice, but it connects.
+    //
+    // The previous fast-path (resolve .local ourselves in 200 ms, rewrite to the IP) BROKE connectivity
+    // whenever the client's mDNS names don't resolve from the robot (e.g. a Linux browser that doesn't
+    // publish them), because it left the robot with no usable host candidate. Re-add a *non-destructive*
+    // fast path later (resolve in the background and ADD the IP candidate, never replace/drop) as an
+    // optimization. The resolve/match helpers in webrtc_internal.hpp are kept for that.
+    return candidate;
 }
 
 void WebRTCStreamer::apply_ice(Peer* peer, const std::string& candidate, int mline) {

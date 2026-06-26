@@ -88,7 +88,11 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("audio_capture_device", "");
     this->declare_parameter("playout_min_delay_ms", 0);
     this->declare_parameter("playout_max_delay_ms", 40);
-    this->declare_parameter("rtcp_inactivity_timeout_s", 5.0);
+    // RTCP-inactivity release only fires on a peer webrtcbin still reports CONNECTED — it's a backstop for
+    // a peer that silently went away. Keep it well above the RTCP receiver-report interval (which can be
+    // ~5 s for low-bitrate video) so a single late report doesn't tear down a live connection; genuinely
+    // failed peers are caught faster by the connection-state (DISCONNECTED/FAILED) path.
+    this->declare_parameter("rtcp_inactivity_timeout_s", 15.0);
 
     use_compressed_images_ = this->get_parameter("use_compressed_images").as_bool();
     enable_audio_ = this->get_parameter("enable_audio").as_bool();
@@ -336,7 +340,10 @@ void WebRTCStreamer::poll_pipeline_health() {
         // leak its transport and keep the encoder pinned on.
         if (!p->ever_connected && state != GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
             if ((now_ns - p->created_ns) / 1e9 > kConnectTimeoutS) {
-                RCLCPP_INFO(this->get_logger(), "Peer '%s' never connected within %.0f s; releasing",
+                RCLCPP_WARN(this->get_logger(),
+                            "Peer '%s' NO USABLE NETWORK PATH: ICE found no working candidate pair within "
+                            "%.0f s. The robot could not reach this client on any route — its host candidates "
+                            "are likely mDNS-obfuscated/unreachable and srflx (NAT hairpin) failed. Releasing.",
                             kv.first.empty() ? "(default)" : kv.first.c_str(), kConnectTimeoutS);
                 dead.push_back(kv.first);
                 continue;
