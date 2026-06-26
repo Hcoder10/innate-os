@@ -115,6 +115,16 @@ innate skill run innate-os/arm_zero_position @duration=3
 
 Custom skills use the same `@name=value` input syntax.
 
+### Trained skills
+
+Some physical skills can be learned from demonstrations.
+
+- Record episodes from the phone app or web app.
+- Train a policy with one of the models available on Innate Cloud or locally.
+- Deploy the trained model as a skill.
+
+Start here: [Training overview](https://docs.innate.bot/training/overview). To ship a trained model back to the robot, see [Deploy a trained skill](https://docs.innate.bot/training/deploy-trained-skill).
+
 You will find skills in two different directories:
 
 - **Built-in skills** — Located in `workspace/innate_skills/`.
