@@ -3402,3 +3402,351 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- skills drawer (Teleop) --------------------------------------------- */
+/* Right-docked, collapsible, resizable panel mirroring the sim console's
+   skill interface: roster + per-skill param form + /execute_skill run. The
+   open panel insets the cockpit (below) so the feed + overlays shift left
+   rather than being covered. */
+
+/* The cockpit shifts left when the drawer is open (inline `right` is set on it
+   to the drawer width). Skip the slide while actively dragging the resizer. */
+.cockpit {
+  transition: right 220ms ease;
+}
+
+.cockpit.skills-resizing {
+  transition: none;
+}
+
+/* The little popup toggle — always visible (brand blue), a quarter down from the
+   top, riding the drawer's left edge. `right` is set inline (0 when hidden,
+   = drawer width when open). */
+.skills-toggle {
+  position: absolute;
+  top: 13%;
+  transform: translateY(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 9px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #c0b8ff;
+  background: rgb(64 31 251 / 22%);
+  border: 1px solid rgb(64 31 251 / 60%);
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  transition: right 220ms ease, color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.skills-toggle:hover {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+
+.skills-toggle-chevron {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.skills-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  display: flex;
+  background: #060607;
+  border-left: 1px solid var(--hairline-strong);
+  transform: translateX(100%);
+  transition: transform 220ms ease;
+}
+
+.skills-drawer.open {
+  transform: translateX(0);
+}
+
+.skills-drawer.resizing {
+  transition: none;
+}
+
+/* Left-edge grab strip. */
+.skills-resize {
+  flex: 0 0 6px;
+  cursor: ew-resize;
+  background: var(--hairline);
+  transition: background 150ms ease;
+}
+
+.skills-resize:hover,
+.skills-drawer.resizing .skills-resize {
+  background: var(--accent-dim);
+}
+
+.skills-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skills-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  background: var(--blue);
+  border-bottom: 1px solid var(--hairline-strong);
+}
+
+.skills-head .microlabel {
+  color: #fff;
+  flex: 1;
+}
+
+.skills-count {
+  font-size: 11px;
+  color: rgb(255 255 255 / 75%);
+  font-variant-numeric: tabular-nums;
+}
+
+.skills-reload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: rgb(255 255 255 / 80%);
+  font-size: 15px;
+  line-height: 1;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.skills-reload:hover {
+  color: #fff;
+  background: rgb(255 255 255 / 14%);
+}
+
+.skills-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.skills-empty {
+  margin: 0;
+  padding: 18px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- one skill card ----------------------------------------------------- */
+
+.skill-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.skill-card.expanded {
+  background: rgb(255 255 255 / 3%);
+}
+
+.skill-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+/* Scoped override of the datasets .skill-name (no ellipsis truncation here). */
+.skill-card .skill-name {
+  font-size: 13px;
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
+}
+
+.skill-type {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.skill-run-toggle {
+  width: 100%;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 6px 0;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.skill-run-toggle:hover:not(:disabled) {
+  border-color: rgb(64 31 251 / 55%);
+  background: rgb(64 31 251 / 14%);
+  color: #c0b8ff;
+}
+
+.skill-run-toggle.active {
+  border-color: rgb(64 31 251 / 55%);
+  background: rgb(64 31 251 / 18%);
+  color: #c0b8ff;
+}
+
+.skill-run-toggle:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ---- params form -------------------------------------------------------- */
+
+.skill-form {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.skill-param-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.skill-param {
+  display: grid;
+  gap: 5px;
+}
+
+.skill-param-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.skill-param-type {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.skill-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  transition: border-color 150ms ease;
+}
+
+.skill-input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.skill-textarea {
+  min-height: 64px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.skill-bool {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.skill-bool-opt {
+  min-height: 32px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.skill-bool-opt:hover {
+  color: var(--text);
+}
+
+.skill-bool-opt.on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+.skill-form-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.skill-status {
+  margin: 0;
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.skill-status.error {
+  color: var(--danger);
+}
+
+.skill-confirm {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 16px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #d7d2ff;
+  background: rgb(64 31 251 / 30%);
+  border: 1px solid rgb(64 31 251 / 60%);
+  border-radius: 8px;
+  transition: opacity 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+.skill-confirm:hover:not(:disabled) {
+  background: rgb(64 31 251 / 48%);
+  border-color: var(--blue);
+}
+
+.skill-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.skill-confirm.stop {
+  color: var(--danger);
+  background: transparent;
+  border-color: var(--danger);
+}
+
+.skill-confirm.stop:hover:not(:disabled) {
+  background: rgb(217 106 90 / 14%);
+}

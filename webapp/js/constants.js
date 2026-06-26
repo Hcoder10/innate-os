@@ -53,6 +53,14 @@ export const ARM_TORQUE_OFF_SERVICE = "/mars/arm/torque_off";
 // is_torque_enabled}), published ~0.2 Hz. Drives the live torque toggle.
 export const ARM_STATUS_TOPIC = "/mars/arm/status";
 
+// Run one skill directly (brain_messages/action/ExecuteSkill). Goal is
+// {skill_type, inputs} where inputs is a JSON object string; feedback streams
+// {skill_type, feedback, image_b64}; result is {success, message, skill_type,
+// success_type ∈ "success"|"cancelled"|"failure"}. Same action the sim console
+// drives. Skill roster + per-skill input schema come from AVAILABLE_SKILLS_TOPIC.
+export const EXECUTE_SKILL_ACTION = "/execute_skill";
+export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
+
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;
 
