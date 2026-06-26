@@ -46,6 +46,7 @@ BACKEND_STATUS_LOG_INTERVAL_SEC = 30.0
 SENSOR_PUBLISH_INTERVAL_SEC = 0.10
 CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
+ARM_STATUS_PUBLISH_INTERVAL_SEC = 0.5
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 ARM_JOINT_COUNT = 6
 ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
@@ -992,6 +993,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     last_sensor_publish_time = 0.0
     last_clock_publish_time = 0.0
     last_arm_state_publish_time = 0.0
+    last_arm_status_publish_time = 0.0
     last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
@@ -1016,6 +1018,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
+    adv_arm_status = rosbridge_advertise("/mars/arm/status", "mars_msgs/msg/ArmStatus")
 
     # WebRTC signaling (server->browser): offer + ICE candidates.
     adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
@@ -1036,6 +1039,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_feedback))
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
+    await ws.send(json.dumps(adv_arm_status))
     await ws.send(json.dumps(adv_arm_camera))
     await ws.send(json.dumps(adv_webrtc_offer))
     await ws.send(json.dumps(adv_webrtc_ice_out))
@@ -1288,6 +1292,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             outbound = rosbridge_publish("/sim_navigation/feedback", feedback_msg)
             await ws.send(json.dumps(outbound))
             last_nav_feedback_publish_time = updates_now
+
+        if updates_now - last_arm_status_publish_time >= ARM_STATUS_PUBLISH_INTERVAL_SEC:
+            await publish_arm_status(ws, shared_queues)
+            last_arm_status_publish_time = updates_now
 
         await asyncio.sleep(0.0001)
 
@@ -1627,6 +1635,22 @@ async def publish_arm_state(ws, arm_state: ArmStateMsg):
     }
 
     outbound = rosbridge_publish("/mars/arm/state", joint_state_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_arm_status(ws, shared_queues):
+    """Publish the sim arm torque state to /mars/arm/status (mars_msgs/ArmStatus).
+
+    The webapp's torque toggle reads is_torque_enabled from this topic; without
+    it the control sits disabled at "—". The sim arm is never in a fault state,
+    so is_ok is always True and error is empty.
+    """
+    status_msg = {
+        "is_ok": True,
+        "error": "",
+        "is_torque_enabled": is_arm_torque_enabled(shared_queues),
+    }
+    outbound = rosbridge_publish("/mars/arm/status", status_msg)
     await ws.send(json.dumps(outbound))
 
 
