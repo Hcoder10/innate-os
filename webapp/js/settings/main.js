@@ -790,6 +790,14 @@ async function onSave() {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
   }
+  // The TTS voice used to be two per-node params (brain_client_node /
+  // input_manager_node cartesia_voice_id) before it became the global `/**` knob.
+  // A node-specific param beats a `/**` wildcard in ROS, so any leftover per-node
+  // entries silently shadow the picker. The catalog no longer has those paths, so
+  // its clears can't reach them — always clear them here so saving heals the orphans.
+  for (const node of ["brain_client_node", "input_manager_node"]) {
+    clears.push([node, "ros__parameters", "cartesia_voice_id"]);
+  }
   saveBtn.disabled = true;
   setStatus("Saving…");
   try {
