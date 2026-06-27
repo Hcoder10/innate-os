@@ -10,7 +10,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/home/jetson1/innate-os/config/network/setup-port-redirect.sh
-ExecStop=/bin/sh -c '/usr/sbin/iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443 2>/dev/null || true'
+ExecStop=/bin/sh -c '/usr/sbin/iptables -w -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443 2>/dev/null || true'
 
 [Install]
 WantedBy=multi-user.target
