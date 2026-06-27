@@ -3,6 +3,8 @@
 // the .cpp was split; they live here, inline, so every split TU sees one definition without duplication.
 #pragma once
 
+#include "mars_cam/webrtc_config.hpp"
+
 #include <gst/gst.h>
 #include <gst/rtp/rtp.h>
 #include <gst/webrtc/webrtc.h>
@@ -60,13 +62,11 @@ inline int cam_pt_for_index(size_t index) {
     return pt >= 98 ? pt + 1 : pt;
 }
 
-// Chrome/Firefox obfuscate their host ICE candidates as "<uuid>.local" mDNS names (one per local
-// interface). On this robot only the reachable (LAN) one resolves quickly (~30 ms); the others never
-// resolve and time out after ~5 s. Handing the raw names to libnice makes it block on that 5 s mDNS
-// timeout before it finishes nominating, which is what delayed the first video frame. So we resolve each
-// .local ourselves with a short deadline, forward only the ones that resolve (rewritten to their IP so
-// libnice never resolves again), and drop the slow/unresolvable ones. The fast LAN candidate is enough to
-// connect. None of this touches the candidates we *send* (IPv4/tailscale/IPv6 are all still advertised).
+// Chrome/Firefox often obfuscate their host ICE candidates as "<uuid>.local" mDNS names (one per local
+// interface). These parsing helpers are kept for diagnostics and for a future non-destructive fast path:
+// if we ever resolve a .local name ourselves, we must ADD the resolved-IP candidate, not replace/drop the
+// original. Some Linux browsers do not publish their ephemeral mDNS names, so destructive filtering leaves
+// the robot with no host candidate at all and prevents peer-reflexive discovery from rescuing the link.
 inline std::string candidate_address(const std::string& cand) {
     std::istringstream iss(cand);
     std::string tok;
@@ -109,14 +109,6 @@ inline std::string replace_first(const std::string& s, const std::string& from, 
     return pos == std::string::npos ? s : s.substr(0, pos) + to + s.substr(pos + from.size());
 }
 
-// A FAILED/DISCONNECTED peer is torn down only after this many consecutive 200 ms polls (~15 s) — long
-// enough for webrtcbin to recover a transient blip via ICE restart, short enough to free a dead peer.
-constexpr int kTeardownGracePolls = 75;
-
-// A peer that never reaches CONNECTED within this window (failed ICE / abandoned handshake) is
-// released, so a START that never completes can't leak its transport (and pin the encoder on).
-constexpr double kConnectTimeoutS = 15.0;
-
 // ---- WebRTC "playout-delay" RTP header extension -----------------------------------------------
 // Caps the receiver's de-jitter buffer. GStreamer < 1.24 ships no built-in element for this URI, so we
 // implement it as a minimal GstRTPHeaderExtension subclass (defined in webrtc_streamer.cpp) and add it to
@@ -137,6 +129,9 @@ struct OfferContext {
     std::shared_ptr<std::atomic<uint64_t>> gen;
     uint64_t gen_value;
     std::string client_id;
+    guint expected_videos = 0;
+    bool expected_audio = false;
+    bool expected_data = false;
 };
 
 inline void offer_context_free(gpointer data) {

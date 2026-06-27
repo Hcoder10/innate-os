@@ -96,7 +96,8 @@ add_library(webrtc_streamer_component SHARED
   mars_cam/webrtc_streamer.cpp
   mars_cam/webrtc_encode.cpp
   mars_cam/webrtc_transport.cpp
-  mars_cam/webrtc_signaling.cpp)
+  mars_cam/webrtc_signaling.cpp
+  mars_cam/webrtc_stun.cpp)
 target_compile_definitions(webrtc_streamer_component PRIVATE BUILDING_COMPONENT_LIBRARY)
 target_include_directories(webrtc_streamer_component PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -191,7 +192,8 @@ add_executable(webrtc_streamer_node
   mars_cam/webrtc_streamer.cpp
   mars_cam/webrtc_encode.cpp
   mars_cam/webrtc_transport.cpp
-  mars_cam/webrtc_signaling.cpp)
+  mars_cam/webrtc_signaling.cpp
+  mars_cam/webrtc_stun.cpp)
 target_include_directories(webrtc_streamer_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>

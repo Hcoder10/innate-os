@@ -3,6 +3,8 @@
 
 #define GST_USE_UNSTABLE_API
 
+#include "mars_cam/webrtc_config.hpp"
+
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -24,6 +26,8 @@
 #include <chrono>
 #include <functional>
 #include <atomic>
+#include <cstdint>
+#include <thread>
 
 namespace mars_cam {
 
@@ -46,8 +50,12 @@ struct CameraEncoder {
     GstElement* sink = nullptr;     // sink_<name> appsink, ref'd; the fan-out tap
     GstBufferPool* pool = nullptr;
     std::atomic<int> want{0};       // # peers actively pushing this camera; 0 => the callback does no work
-    std::atomic<uint64_t> frames{0};
-    uint64_t prev_frames = 0;       // publish_status fps sampling
+    std::atomic<uint64_t> input_frames{0};
+    std::atomic<uint64_t> input_push_errors{0};
+    std::atomic<uint64_t> encoded_frames{0};
+    uint64_t prev_input_frames = 0;    // publish_status fps sampling
+    uint64_t prev_encoded_frames = 0;  // publish_status fps sampling
+    std::atomic<int> input_flow_code{GST_FLOW_OK};
     rclcpp::SubscriptionBase::SharedPtr sub;  // lazy raw|compressed image subscription
     WebRTCStreamer* owner = nullptr;          // for the static appsink new-sample callback
 };
@@ -60,12 +68,17 @@ struct Peer {
     std::string client_id;            // "" = the legacy/default peer (bare signaling topics)
     GstElement* pipeline = nullptr;   // transport pipeline (owns webrtcbin + rtp appsrcs)
     GstElement* webrtc = nullptr;     // ref'd from pipeline
+    GstWebRTCDataChannel* diag_channel = nullptr;  // robot-created SCTP probe channel
     std::map<std::string, GstElement*> rtp;  // camera name -> ref'd transport appsrc (the negotiated set)
     std::vector<std::string> videos;  // NEGOTIATED video streams (transceivers), in m-line order
     std::vector<std::string> active;  // currently PUSHED streams (subset of videos); toggled live on a
                                       // stream switch without renegotiating, so switches are instant
     bool with_audio = false;          // audio m-line NEGOTIATED (an opus transceiver exists)
     bool audio_active = false;        // audio currently being SENT — toggled live like the cameras (no reneg)
+    bool media_ready = false;         // true only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin
+    bool have_real_remote_ice = false;  // true after a non-mDNS candidate (local-STUN srflx fast path)
+    int64_t first_mdns_ice_ns = 0;      // steady-clock ns when the first deferred .local candidate arrived
+    std::vector<std::pair<int, std::string>> pending_mdns_ice;  // mline + raw candidate fallback
 
     // Stale-offer guard: shared with the async create-offer callback so it can tell its peer was torn
     // down / replaced underneath it (lock-free, and survives the Peer being freed). Bumped on destroy.
@@ -80,6 +93,9 @@ struct Peer {
     std::atomic<int64_t> last_rtcp_ns{0};  // steady-clock ns of last RTCP; 0 = disarmed
     bool rtcp_probe_installed = false;
     int terminal_polls = 0;  // consecutive FAILED/DISCONNECTED health polls
+    std::map<std::string, uint64_t> rtp_pushes;       // stream name -> buffers pushed into this transport
+    std::map<std::string, uint64_t> rtp_push_errors;  // stream name -> non-OK appsrc push returns
+    std::map<std::string, std::string> rtp_flow;      // stream name -> last GstFlowReturn name
 
     Peer() = default;
     Peer(const Peer&) = delete;             // owns raw GStreamer refs — never copy (would double-unref)
@@ -89,7 +105,9 @@ struct Peer {
     // teardown (3 create-error paths + destroy_peer) collapses to this.
     ~Peer() {
         if (pipeline) gst_element_set_state(pipeline, GST_STATE_NULL);
+        if (diag_channel) gst_webrtc_data_channel_close(diag_channel);
         for (auto& kv : rtp) gst_object_unref(kv.second);
+        if (diag_channel) gst_object_unref(diag_channel);
         if (webrtc) gst_object_unref(webrtc);
         if (pipeline) gst_object_unref(pipeline);
     }
@@ -111,9 +129,9 @@ class WebRTCStreamer : public rclcpp::Node {
     void deliver_answer(const std::string& client_id, const std::string& sdp);
     void deliver_ice(const std::string& client_id, const std::string& candidate, int mline);
     void apply_answer(Peer* peer, const std::string& sdp);          // caller holds peers_mutex_
-    // Resolve an incoming candidate's mDNS <uuid>.local to its IP (short deadline) so libnice never stalls
-    // ~5 s on the browser's unreachable names; returns the IP-rewritten candidate, or "" to drop it. Call
-    // WITHOUT peers_mutex_ (it can block briefly). apply_ice adds the prepared candidate (caller holds mutex).
+    // Candidate pre-processing hook. Today this is intentionally raw passthrough: never destructively
+    // resolve/filter browser mDNS candidates, because some clients do not publish their .local names and
+    // libnice may still recover via peer-reflexive discovery.
     std::string prepare_ice_candidate(const std::string& candidate);
     void apply_ice(Peer* peer, const std::string& candidate, int mline);  // caller holds peers_mutex_
 
@@ -126,12 +144,15 @@ class WebRTCStreamer : public rclcpp::Node {
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
+    static void on_diag_channel_open(GstWebRTCDataChannel* channel, gpointer user_data);
+    static void on_diag_channel_message(GstWebRTCDataChannel* channel, gchar* data, gpointer user_data);
+    static void on_diag_channel_close(GstWebRTCDataChannel* channel, gpointer user_data);
     // appsink new-sample (user_data = the CameraEncoder*): pull the encoded RTP buffer and fan it out to
     // every peer with this camera active.
     static GstFlowReturn on_sample(GstElement* appsink, gpointer user_data);
     // Shared fan-out core (video + audio): copy the just-pulled sample to each peer appsrc that `select`
     // picks. `select` runs with peers_mutex_ held and returns the peer's transport appsrc, or nullptr to skip.
-    void fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select);
+    void fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select, const std::string& stream);
     void fan_out_sample(GstElement* appsink, const std::string& cam);
 
     // ---- Shared audio (mic) — encoded once like the cameras, fanned out, gated for privacy ----
@@ -182,6 +203,13 @@ class WebRTCStreamer : public rclcpp::Node {
     void poll_pipeline_health();  // per-peer teardown of dead transports
     void publish_status();        // /webrtc/active_streams snapshot at 0.5 Hz
 
+    // ---- Local STUN helper ----
+    // Minimal RFC 8489 Binding responder. This gives browsers a robot-local STUN server so their srflx
+    // candidate is the LAN IP:port seen by the robot, avoiding public NAT hairpin and mDNS host lookup.
+    void start_local_stun_server();
+    void stop_local_stun_server();
+    void stun_server_loop(uint16_t port);
+
     // Publishers
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr offer_pub_;       // bare, raw SDP
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr offer_id_pub_;    // {client_id, sdp}
@@ -220,7 +248,7 @@ class WebRTCStreamer : public rclcpp::Node {
     rclcpp::TimerBase::SharedPtr status_timer_;
 
     // RTCP-inactivity watchdog timeout (seconds without RTCP before a peer's transport is released).
-    double rtcp_inactivity_timeout_s_ = 5.0;
+    double rtcp_inactivity_timeout_s_ = kDefaultRtcpInactivityTimeoutS;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr rtcp_timeout_cb_;
 
     std::chrono::steady_clock::time_point prev_status_time_;
@@ -232,6 +260,11 @@ class WebRTCStreamer : public rclcpp::Node {
     std::string audio_capture_device_;
     guint playout_min_delay_ms_ = 0;
     guint playout_max_delay_ms_ = 40;
+    bool enable_local_stun_ = true;
+    int local_stun_port_ = 3478;
+    std::atomic<bool> stun_running_{false};
+    int stun_fd_ = -1;
+    std::thread stun_thread_;
 };
 
 }  // namespace mars_cam

@@ -94,6 +94,11 @@ def generate_launch_description():
                 # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
                 "playout_min_delay_ms": 0,
                 "playout_max_delay_ms": 40,
+                # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
+                # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
+                # IP:port observed by the robot, not a public NAT hairpin route.
+                "enable_local_stun": True,
+                "local_stun_port": 3478,
                 # Seconds without any RTCP from the peer before the node tears the pipeline down and
                 # releases the camera subscriptions / encoders / mic. webrtcbin never reports a
                 # vanished (closed-tab/killed) peer, so this inactivity watchdog is what makes the

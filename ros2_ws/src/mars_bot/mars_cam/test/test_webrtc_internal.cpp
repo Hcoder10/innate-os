@@ -1,5 +1,5 @@
 // Unit tests for the GStreamer/ROS-free helpers in webrtc_internal.hpp. These are the pieces of the
-// streamer that are pure logic (PT/SSRC assignment, ICE/mDNS candidate parsing + rewriting, status
+// streamer that are pure logic (PT/SSRC assignment, ICE/mDNS candidate parsing, status
 // rounding) and so are testable without a live pipeline or node. The pipeline/webrtcbin paths stay
 // integration-tested by test/webrtc_consumer.py.
 #include <gtest/gtest.h>
@@ -42,7 +42,7 @@ TEST(CandidateAddress, ExtractsConnectionAddress) {
     EXPECT_EQ(candidate_address("too short"), "");  // no 5th token
 }
 
-// ---- replace_first: used to swap a resolved .local for its IP, once ----
+// ---- replace_first: utility for non-destructive candidate diagnostics/augmentation ----
 TEST(ReplaceFirst, ReplacesOnlyTheFirstOccurrence) {
     EXPECT_EQ(replace_first("a.local then b.local", ".local", ".ip"), "a.ip then b.local");
     EXPECT_EQ(replace_first("no match here", "xyz", "Q"), "no match here");

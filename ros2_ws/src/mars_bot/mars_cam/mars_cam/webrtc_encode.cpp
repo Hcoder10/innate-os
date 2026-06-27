@@ -15,6 +15,14 @@
 
 namespace mars_cam {
 
+namespace {
+struct FanOutTarget {
+    std::string client_id;
+    std::string stream;
+    GstElement* src = nullptr;
+};
+}  // namespace
+
 // =============================================================================
 // Persistent encode pipeline
 // =============================================================================
@@ -28,13 +36,13 @@ std::string WebRTCStreamer::video_encode_branch(const std::string& name, int pt,
            "/1 ! "
            "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
            "videoconvert ! "
-           "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=30 "
+           "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=15 "
            "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
            "rtpvp8pay name=pay_" +
            name + " pt=" + std::to_string(pt) + " ssrc=" + std::to_string(ssrc) +
            " ! "
            "appsink name=sink_" +
-           name + " emit-signals=true sync=false max-buffers=2 drop=true ";
+           name + " emit-signals=true sync=false async=false max-buffers=2 drop=true ";
 }
 
 void WebRTCStreamer::attach_playout_delay_extension(const std::string& cam) {
@@ -84,7 +92,17 @@ bool WebRTCStreamer::build_encode_pipeline() {
         g_signal_connect(cam->sink, "new-sample", G_CALLBACK(on_sample), cam.get());
     }
 
-    if (gst_element_set_state(encode_pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    GstStateChangeReturn ret = gst_element_set_state(encode_pipeline_, GST_STATE_PLAYING);
+    if (ret == GST_STATE_CHANGE_ASYNC) {
+        GstState state = GST_STATE_VOID_PENDING;
+        GstState pending = GST_STATE_VOID_PENDING;
+        ret = gst_element_get_state(encode_pipeline_, &state, &pending, 3 * GST_SECOND);
+        if (ret == GST_STATE_CHANGE_ASYNC) {
+            RCLCPP_WARN(this->get_logger(), "Encode pipeline still changing state (state=%s, pending=%s)",
+                        gst_element_state_get_name(state), gst_element_state_get_name(pending));
+        }
+    }
+    if (ret == GST_STATE_CHANGE_FAILURE) {
         RCLCPP_ERROR(this->get_logger(), "Encode pipeline failed to reach PLAYING");
         return false;
     }
@@ -125,6 +143,7 @@ void WebRTCStreamer::force_keyframe(const std::string& cam) {
 
 GstFlowReturn WebRTCStreamer::on_sample(GstElement* appsink, gpointer user_data) {
     auto* cam = static_cast<CameraEncoder*>(user_data);  // wired in build_encode_pipeline
+    cam->encoded_frames.fetch_add(1, std::memory_order_relaxed);
     cam->owner->fan_out_sample(appsink, cam->name);
     return GST_FLOW_OK;
 }
@@ -137,28 +156,41 @@ GstFlowReturn WebRTCStreamer::on_sample(GstElement* appsink, gpointer user_data)
 // a shared ref: the buffer carries the encode pipeline's (future-dated) PTS, and only a writable buffer
 // lets the transport appsrc's do-timestamp re-stamp it to this pipeline's running-time — else webrtcbin
 // holds every frame after the first burst.
-void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select) {
+void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement*(Peer*)>& select,
+                             const std::string& stream) {
     GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
     if (!sample) {
         return;
     }
     if (GstBuffer* buffer = gst_sample_get_buffer(sample)) {
-        std::vector<GstElement*> targets;
+        std::vector<FanOutTarget> targets;
         {
             std::lock_guard<std::mutex> lock(peers_mutex_);
             for (auto& kv : peers_) {
                 if (GstElement* src = select(kv.second.get())) {
-                    targets.push_back(GST_ELEMENT(gst_object_ref(src)));
+                    targets.push_back({kv.first, stream, GST_ELEMENT(gst_object_ref(src))});
                 }
             }
         }
-        for (GstElement* src : targets) {
+        for (auto& target : targets) {
             GstBuffer* out = gst_buffer_copy(buffer);
             GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
             GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
             GstFlowReturn ret;
-            g_signal_emit_by_name(src, "push-buffer", out, &ret);  // takes ownership of the copy
-            gst_object_unref(src);
+            g_signal_emit_by_name(target.src, "push-buffer", out, &ret);  // takes ownership of the copy
+            {
+                std::lock_guard<std::mutex> lock(peers_mutex_);
+                auto it = peers_.find(target.client_id);
+                if (it != peers_.end()) {
+                    Peer* p = it->second.get();
+                    p->rtp_pushes[target.stream] += 1;
+                    p->rtp_flow[target.stream] = gst_flow_get_name(ret);
+                    if (ret != GST_FLOW_OK) {
+                        p->rtp_push_errors[target.stream] += 1;
+                    }
+                }
+            }
+            gst_object_unref(target.src);
         }
     }
     gst_sample_unref(sample);
@@ -168,8 +200,8 @@ void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement
 void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam) {
     fan_out(appsink, [&cam](Peer* p) -> GstElement* {
         auto it = p->rtp.find(cam);
-        return (it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
-    });
+        return (p->media_ready && it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
+    }, cam);
 }
 
 // =============================================================================
@@ -208,7 +240,7 @@ bool WebRTCStreamer::build_audio_pipeline() {
                        "audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=1 ! "
                        "opusenc bitrate=24000 audio-type=voice ! "
                        "rtpopuspay name=pay_audio pt=98 ! "
-                       "appsink name=sink_audio emit-signals=true sync=false max-buffers=4 drop=true ";
+                       "appsink name=sink_audio emit-signals=true sync=false async=false max-buffers=4 drop=true ";
     GError* error = nullptr;
     audio_pipeline_ = gst_parse_launch(desc.c_str(), &error);
     if (error) {
@@ -270,8 +302,8 @@ void WebRTCStreamer::fan_out_audio(GstElement* appsink) {
     audio_frames_.fetch_add(1, std::memory_order_relaxed);
     fan_out(appsink, [](Peer* p) -> GstElement* {
         auto it = p->rtp.find("audio");
-        return (it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
-    });
+        return (p->media_ready && it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
+    }, "audio");
 }
 
 // =============================================================================
@@ -399,7 +431,14 @@ void WebRTCStreamer::push_frame(CameraEncoder* cam, const cv::Mat& frame) {
     GstFlowReturn ret;
     g_signal_emit_by_name(cam->appsrc, "push-buffer", buffer, &ret);
     gst_buffer_unref(buffer);  // returns to pool
-    cam->frames.fetch_add(1, std::memory_order_relaxed);
+    cam->input_flow_code.store(static_cast<int>(ret), std::memory_order_relaxed);
+    if (ret == GST_FLOW_OK) {
+        cam->input_frames.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        cam->input_push_errors.fetch_add(1, std::memory_order_relaxed);
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "Encode appsrc push for '%s' returned %s", cam->name.c_str(), gst_flow_get_name(ret));
+    }
 }
 
 void WebRTCStreamer::on_image_raw(CameraEncoder* cam, const sensor_msgs::msg::Image::SharedPtr& msg) {

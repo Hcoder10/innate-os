@@ -12,6 +12,37 @@
 
 namespace mars_cam {
 
+namespace {
+struct SdpMediaCounts {
+    guint video = 0;
+    guint audio = 0;
+    guint application = 0;
+};
+
+SdpMediaCounts count_sdp_media(const GstSDPMessage* sdp) {
+    SdpMediaCounts counts;
+    if (!sdp) {
+        return counts;
+    }
+    const guint media_count = gst_sdp_message_medias_len(sdp);
+    for (guint i = 0; i < media_count; ++i) {
+        const GstSDPMedia* media = gst_sdp_message_get_media(sdp, i);
+        const char* kind = media ? gst_sdp_media_get_media(media) : nullptr;
+        if (!kind) {
+            continue;
+        }
+        if (g_strcmp0(kind, "video") == 0) {
+            counts.video += 1;
+        } else if (g_strcmp0(kind, "audio") == 0) {
+            counts.audio += 1;
+        } else if (g_strcmp0(kind, "application") == 0) {
+            counts.application += 1;
+        }
+    }
+    return counts;
+}
+}  // namespace
+
 // =============================================================================
 // Signaling
 // =============================================================================
@@ -22,12 +53,14 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     std::string client_id;
     std::vector<std::string> videos;
     bool video_specified = false;
+    bool renegotiate = false;
     if (!msg->data.empty()) {
         try {
             auto json = nlohmann::json::parse(msg->data);
             if (json.contains("source")) source = json["source"].get<std::string>();
             if (json.contains("audio")) request_audio = json["audio"].get<bool>();
             if (json.contains("client_id")) client_id = json["client_id"].get<std::string>();
+            if (json.contains("renegotiate")) renegotiate = json["renegotiate"].get<bool>();
             if (json.contains("video") && json["video"].is_array()) {
                 video_specified = true;
                 for (const auto& e : json["video"]) {
@@ -49,9 +82,9 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     for (const auto& v : videos) {
         video_list += (video_list.empty() ? "" : "+") + v;
     }
-    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s)",
+    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s, renegotiate=%s)",
                 client_id.empty() ? "(default)" : client_id.c_str(), source.c_str(), video_list.c_str(),
-                request_audio ? "requested" : "off");
+                request_audio ? "requested" : "off", renegotiate ? "true" : "false");
 
     std::lock_guard<std::mutex> lock(peers_mutex_);
 
@@ -76,7 +109,7 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
 
     // Stream/audio switch on an already-set-up independent peer (its negotiated m-lines unchanged): flip
     // which cameras + audio are pushed live, with no renegotiation/ICE — instant, not a reconnect.
-    if (!client_id.empty()) {
+    if (!client_id.empty() && !renegotiate) {
         auto it = peers_.find(client_id);
         if (it != peers_.end() && it->second->with_audio == negotiate_audio) {
             update_peer_active(it->second.get(), videos, audio_active);
@@ -134,15 +167,30 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
     // Safety net: never publish/apply an offer with no media. Applying the matching (empty) answer to a
     // webrtcbin that still holds transceivers is the _connect_input_stream abort. on-negotiation-needed
     // should prevent this, but a dropped offer just trips the connect timeout — an abort kills the robot.
-    if (gst_sdp_message_medias_len(offer->sdp) == 0) {
-        RCLCPP_WARN(self->get_logger(), "Dropping empty offer for '%s' (no media sections)",
-                    ctx->client_id.empty() ? "(default)" : ctx->client_id.c_str());
+    const SdpMediaCounts counts = count_sdp_media(offer->sdp);
+    const bool missing_video = counts.video < ctx->expected_videos;
+    const bool missing_audio = ctx->expected_audio && counts.audio == 0;
+    const bool missing_data = ctx->expected_data && counts.application == 0;
+    if (missing_video || missing_audio || missing_data) {
+        RCLCPP_WARN(self->get_logger(),
+                    "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s data=%u%s)",
+                    ctx->client_id.empty() ? "(default)" : ctx->client_id.c_str(), counts.video, ctx->expected_videos,
+                    counts.audio, ctx->expected_audio ? " required" : "", counts.application,
+                    ctx->expected_data ? " required" : "");
+        // Do not retry create-offer on this same webrtcbin. GStreamer 1.20 can assert in
+        // _add_data_channel_offer() if an incomplete offer is followed by an immediate second offer on the
+        // same element. The client offer watchdog will send a renegotiate START, which creates a fresh
+        // transport; until then the connect timeout releases this peer.
+        g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offering", nullptr);
+        g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offered", GINT_TO_POINTER(1));
         gst_webrtc_session_description_free(offer);
         gst_promise_unref(promise);
         return;
     }
 
     g_signal_emit_by_name(ctx->webrtc, "set-local-description", offer, nullptr);  // fire-and-forget
+    g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offering", nullptr);
+    g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offered", GINT_TO_POINTER(1));
 
     gchar* sdp_text = gst_sdp_message_as_text(offer->sdp);
     std::string sdp_str(sdp_text);
@@ -170,17 +218,8 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
 }
 
 std::string WebRTCStreamer::prepare_ice_candidate(const std::string& candidate) {
-    // Forward EVERY remote ICE candidate to webrtcbin unchanged — including the browser's "<uuid>.local"
-    // mDNS host candidates. We deliberately do NOT self-resolve or filter here: libnice does its own mDNS
-    // resolution and peer-reflexive discovery, and handing it the full raw set is the behavior that
-    // connects across the awkward networks (multi-homed IPv6, mDNS host candidates, hairpin srflx). It can
-    // be slower to first frame when an mDNS name has to time out inside libnice, but it connects.
-    //
-    // The previous fast-path (resolve .local ourselves in 200 ms, rewrite to the IP) BROKE connectivity
-    // whenever the client's mDNS names don't resolve from the robot (e.g. a Linux browser that doesn't
-    // publish them), because it left the robot with no usable host candidate. Re-add a *non-destructive*
-    // fast path later (resolve in the background and ADD the IP candidate, never replace/drop) as an
-    // optimization. The resolve/match helpers in webrtc_internal.hpp are kept for that.
+    // Never fake/rewrite candidates. mDNS deferral is handled in deliver_ice(), where we know the peer and
+    // can fall back if robot-local STUN does not yield a real LAN srflx candidate.
     return candidate;
 }
 
@@ -201,14 +240,38 @@ void WebRTCStreamer::deliver_answer(const std::string& client_id, const std::str
 }
 
 void WebRTCStreamer::deliver_ice(const std::string& client_id, const std::string& candidate, int mline) {
-    const std::string prepared = prepare_ice_candidate(candidate);  // resolve mDNS BEFORE taking the lock
+    const std::string prepared = prepare_ice_candidate(candidate);  // keep candidate prep outside the lock
     if (prepared.empty()) {
         return;
     }
     std::lock_guard<std::mutex> lock(peers_mutex_);
     auto it = peers_.find(client_id);
     if (it != peers_.end()) {
-        apply_ice(it->second.get(), prepared, mline);
+        Peer* peer = it->second.get();
+        const std::string addr = candidate_address(prepared);
+        if (is_mdns_address(addr)) {
+            if (peer->have_real_remote_ice) {
+                RCLCPP_INFO(this->get_logger(), "Dropping late remote mDNS ICE candidate '%s'; real ICE exists",
+                            addr.c_str());
+                return;
+            }
+            peer->pending_mdns_ice.emplace_back(mline, prepared);
+            if (peer->first_mdns_ice_ns == 0) {
+                peer->first_mdns_ice_ns = std::chrono::steady_clock::now().time_since_epoch().count();
+            }
+            RCLCPP_INFO(this->get_logger(), "Deferring remote mDNS ICE candidate '%s' for local-STUN srflx",
+                        addr.c_str());
+            return;
+        }
+        if (!is_mdns_address(addr)) {
+            peer->have_real_remote_ice = true;
+            if (!peer->pending_mdns_ice.empty()) {
+                RCLCPP_INFO(this->get_logger(), "Using real remote ICE candidate '%s'; dropping %zu deferred mDNS candidate(s)",
+                            addr.empty() ? "(unknown)" : addr.c_str(), peer->pending_mdns_ice.size());
+                peer->pending_mdns_ice.clear();
+            }
+        }
+        apply_ice(peer, prepared, mline);
     }
 }
 
@@ -272,12 +335,52 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
     // On connect, force a keyframe on both encoders so this peer (which may be joining a stream that's
     // already running for others) gets a decodable IDR immediately. Teardown is handled by the health
     // poll on the executor thread (set-state from here would deadlock the pipeline).
+    if (cid) {
+        std::lock_guard<std::mutex> lock(self->peers_mutex_);
+        auto it = self->peers_.find(cid);
+        if (it != self->peers_.end()) {
+            it->second->media_ready = state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED;
+        }
+    }
     if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
         self->force_keyframe("main");
         self->force_keyframe("arm");
     }
     RCLCPP_INFO(self->get_logger(), "Peer '%s' connection state: %s", (cid && *cid) ? cid : "(default)",
                 conn_state_name(state));
+}
+
+void WebRTCStreamer::on_diag_channel_open(GstWebRTCDataChannel* channel, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
+    const char* label = nullptr;
+    g_object_get(channel, "label", &label, nullptr);
+    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel '%s' open", (cid && *cid) ? cid : "(default)",
+                label ? label : "?");
+
+    nlohmann::json hello;
+    hello["type"] = "robot-hello";
+    hello["client_id"] = cid ? cid : "";
+    hello["steady_ns"] = std::chrono::steady_clock::now().time_since_epoch().count();
+    gst_webrtc_data_channel_send_string(channel, hello.dump().c_str());
+    if (label) g_free(const_cast<char*>(label));
+}
+
+void WebRTCStreamer::on_diag_channel_message(GstWebRTCDataChannel* channel, gchar* data, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
+    if (data && std::string(data).find("\"type\":\"browser-ping\"") != std::string::npos) {
+        RCLCPP_DEBUG(self->get_logger(), "Peer '%s' data channel browser-ping", (cid && *cid) ? cid : "(default)");
+        return;
+    }
+    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel <- %s", (cid && *cid) ? cid : "(default)",
+                data ? data : "(null)");
+}
+
+void WebRTCStreamer::on_diag_channel_close(GstWebRTCDataChannel* channel, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
+    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel closed", (cid && *cid) ? cid : "(default)");
 }
 
 
