@@ -91,8 +91,10 @@ no ICE, no reconnect. Keep your `RTCPeerConnection` open; don't tear it down to 
 - The node releases your peer if it stops receiving RTCP for a few seconds (you went away)
   or if you never finish connecting. To disconnect cleanly, send START with `video: []`
   (and `audio:false`) — the node drops your peer immediately.
-- No STUN/TURN is needed on the LAN; the node handles the browser's mDNS `.local` ICE
-  candidates itself.
+- Configure the peer with the robot-local STUN server: `stun:<robot-host>:3478`. This lets
+  browsers emit a LAN-reachable srflx candidate even when host candidates are hidden behind
+  mDNS `.local` names. Still send every browser ICE candidate unchanged; the node briefly
+  waits for a real srflx candidate and falls back to the raw mDNS candidates if needed.
 
 ## Reference implementations
 

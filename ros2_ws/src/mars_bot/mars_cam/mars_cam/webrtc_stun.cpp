@@ -104,11 +104,6 @@ void WebRTCStreamer::start_local_stun_server() {
 
 void WebRTCStreamer::stop_local_stun_server() {
     stun_running_.store(false);
-    if (stun_fd_ >= 0) {
-        shutdown(stun_fd_, SHUT_RDWR);
-        close(stun_fd_);
-        stun_fd_ = -1;
-    }
     if (stun_thread_.joinable()) {
         stun_thread_.join();
     }
@@ -136,7 +131,6 @@ void WebRTCStreamer::stun_server_loop(uint16_t port) {
         return;
     }
 
-    stun_fd_ = fd;
     RCLCPP_INFO(this->get_logger(), "Local STUN Binding responder listening on UDP :%u", port);
 
     std::array<uint8_t, 1500> request{};
@@ -176,10 +170,7 @@ void WebRTCStreamer::stun_server_loop(uint16_t port) {
         sendto(fd, response.data(), response_len, 0, reinterpret_cast<const sockaddr*>(&from), from_len);
     }
 
-    if (stun_fd_ == fd) {
-        stun_fd_ = -1;
-        close(fd);
-    }
+    close(fd);
     RCLCPP_INFO(this->get_logger(), "Local STUN Binding responder stopped");
 }
 

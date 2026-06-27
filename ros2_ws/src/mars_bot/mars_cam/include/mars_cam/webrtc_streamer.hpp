@@ -263,7 +263,6 @@ class WebRTCStreamer : public rclcpp::Node {
     bool enable_local_stun_ = true;
     int local_stun_port_ = 3478;
     std::atomic<bool> stun_running_{false};
-    int stun_fd_ = -1;
     std::thread stun_thread_;
 };
 
