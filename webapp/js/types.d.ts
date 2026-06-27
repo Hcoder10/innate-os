@@ -234,9 +234,8 @@ interface Navigator {
   readonly serial?: Serial;
 }
 
-/** Video link lifecycle. "streaming" means a live main-camera track is up.
- * "preempted" means another device (the phone app) took the single camera. */
-type WebRtcStatus = "idle" | "connecting" | "streaming" | "error" | "preempted";
+/** Video link lifecycle. "streaming" means a live main-camera track is up. */
+type WebRtcStatus = "idle" | "connecting" | "streaming" | "error";
 
 /** Snapshot emitted by WebRtcSession on every change. */
 interface WebRtcState {

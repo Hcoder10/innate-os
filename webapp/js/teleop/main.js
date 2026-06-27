@@ -21,6 +21,7 @@ import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
+import { createCameraSwitch } from "./cameraSwitch.js";
 
 initShell("teleop", "");
 
@@ -69,6 +70,7 @@ function buildCockpit(root) {
     createTtsBar(ttsOverlay, ros),
     createArmPanel(armOverlay, ros),
     createProfilingPanel(root, session),
+    createCameraSwitch(root, session, ros),
     keyboard,
   ];
 
