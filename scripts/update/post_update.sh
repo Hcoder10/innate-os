@@ -158,7 +158,8 @@ log "Git fsync settings configured"
 
 # Migrate git remote from old release repo to main repo
 CURRENT_REMOTE=$(sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
-if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ]; then
+if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ] || \
+   [[ "$CURRENT_REMOTE" == https://github_pat_11AHZIPSQ0Z9*Bv3cH6uaC@github.com/innate-inc/innate-os.git ]]; then
     log "Migrating git remote from innate-os-release to innate-os..."
     sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote set-url origin https://github.com/innate-inc/innate-os.git
     log "Git remote updated to https://github.com/innate-inc/innate-os.git"
@@ -987,5 +988,4 @@ fi
 ensure_log_ownership
 
 exit 0
-
 
