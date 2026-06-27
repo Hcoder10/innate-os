@@ -25,20 +25,21 @@ import {
   WEBRTC_ICE_IN_TOPIC,
   WEBRTC_ICE_OUT_TOPIC,
 } from "./constants.js";
+import { createLocalPeerConnection, describeIceCandidate, wireDiagnosticDataChannels } from "./webrtcConfig.js";
 
 // No SDP offer back this soon after START → the START or its broadcast offer
 // was dropped (rws /webrtc/* are fire-and-forget); cheap to just republish.
 const OFFER_TIMEOUT_MS = 5_000;
 // Offer applied but no media flowing this long → ICE/pipeline is stuck, and
 // rebuilding is worth throwing away the in-flight negotiation.
-const MEDIA_TIMEOUT_MS = 20_000;
+const MEDIA_TIMEOUT_MS = 7_000;
 const ICE_DEGRADE_MS = 10_000;
 const AUDIO_REBUILD_DEBOUNCE_MS = 700;
 const OFFER_GUARD_RESET_MS = 1_000;
 // Escalating rebuilds before we surface an error and wait for a manual retry.
 // At ~5s/attempt for dropped offers that's ~30s of fast retries instead of a
 // single 30s stare-at-black, which is what made refreshing feel faster.
-const MAX_HANDSHAKE_ATTEMPTS = 6;
+const MAX_HANDSHAKE_ATTEMPTS = 3;
 
 export class WebRtcSession {
   /** @type {import("./rosClient.js").RosClient} */ #ros;
@@ -196,11 +197,10 @@ export class WebRtcSession {
 
     if (this.#ros.state !== "connected") return; // resumes on reconnect
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const pc = createLocalPeerConnection(this.#ros.ip);
     this.#pc = pc;
     this.#builtWithAudio = this.#state.audioRequested;
+    wireDiagnosticDataChannels(pc);
 
     pc.onicecandidate = (event) => {
       if (this.#pc !== pc || !event.candidate) return;
@@ -209,7 +209,7 @@ export class WebRtcSession {
       // obfuscated a host IP behind an mDNS name (the robot must peer-reflexive past it).
       console.log(
         "[webrtc] ice ->",
-        c.address ? `${c.type} ${c.address}:${c.port} ${c.protocol}` : c.candidate,
+        describeIceCandidate(c),
       );
       this.#ros.publish(WEBRTC_ICE_IN_TOPIC, {
         data: JSON.stringify({
@@ -263,6 +263,7 @@ export class WebRtcSession {
         source: "live",
         audio: this.#state.audioRequested,
         client_id: this.#clientId,
+        renegotiate: true,
         video: [this.#selectedCamera],
       }),
     });

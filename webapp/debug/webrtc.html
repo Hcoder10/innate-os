@@ -130,7 +130,9 @@
       </div>
     </main>
 
-    <script>
+    <script type="module">
+      import { createLocalPeerConnection, wireDiagnosticDataChannels } from "../js/webrtcConfig.js";
+
       // ---------------- minimal rosbridge (rws) client ----------------
       // The node routes per-peer signalling on the *_id topics (client_id envelopes), so any number of
       // independent peers can negotiate concurrently. The bare topics are the legacy single-peer path.
@@ -305,9 +307,8 @@
         $("cid").textContent = clientId.slice(0, 8) + "…";
         for (const c of cameras) { const v = $("v_" + c); if (v) v.srcObject = null; }
         $("aud").srcObject = null;
-        // No STUN: the robot is on the LAN, so host candidates connect directly and instantly —
-        // a STUN lookup only adds reflexive candidates + latency that aren't needed here.
-        pc = new RTCPeerConnection({ iceServers: [] });
+        pc = createLocalPeerConnection(robotHostFromWsUrl($("wsUrl").value));
+        wireDiagnosticDataChannels(pc, (msg) => logLine(msg, "o"));
         pc.onicecandidate = (e) => {
           if (!e.candidate) return;
           ros.publish(T.ICE_IN, { data: JSON.stringify({
@@ -326,7 +327,7 @@
         // full camera list regardless of what's active — this fixed list maps m-line index -> label. The
         // START's `video` field carries the ACTIVE set (which cameras to actually push).
         requestedVideo = cameras.slice();
-        ros.publish(T.START, { data: JSON.stringify({ source, audio, video: activeList(), client_id: clientId }) });
+        ros.publish(T.START, { data: JSON.stringify({ source, audio, video: activeList(), client_id: clientId, renegotiate: true }) });
         mark(`START sent {active:[${activeList().join(",")}]}`);
         setConn();
       }
@@ -522,6 +523,9 @@
         if (location.protocol === "https:" && h) return `wss://${location.host}/ws`;
         if (h && h !== "localhost" && h !== "127.0.0.1") return `ws://${h}:9090`;
         return "ws://localhost:9090";
+      }
+      function robotHostFromWsUrl(value) {
+        try { return new URL(value).hostname; } catch { return location.hostname; }
       }
       $("wsUrl").value = defaultUrl();
 
