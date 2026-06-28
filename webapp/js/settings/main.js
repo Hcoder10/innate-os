@@ -601,10 +601,6 @@ async function onRestart() {
   restartBtn.disabled = true;
   setStatus("Restarting the robot…");
   try {
-    // GET (not POST): the robot's websockets-based proxy only serves GET — it
-    // rejects every other method at the handshake. The custom header is what
-    // keeps a stray cross-origin/prefetch GET from restarting the robot; the
-    // proxy requires it.
     const res = await fetch("/restart", { headers: { "X-Requested-By": "innate-webapp" } });
     if (res.ok) {
       // The proxy is torn down by the restart, so leave the button disabled —
