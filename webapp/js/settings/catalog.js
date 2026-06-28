@@ -133,7 +133,7 @@ export const CATALOG = [
   },
   {
     section: "Brain runtime (vision agent)",
-    note: "The model fields are also set on the realtime voice loop below — change both so the chat-TTS and realtime-voice paths stay in sync. The TTS voice is one global setting that drives both.",
+    note: "The model fields are also set on the realtime voice loop below — change both so the chat-TTS and realtime-voice paths stay in sync.",
     knobs: [
       { path: ["brain_client_node", P, "vertical_fov"], label: "Camera vertical FOV", default: 80.0, type: "float", unit: "°", doc: "Camera vertical field of view" },
       { path: ["brain_client_node", P, "pose_image_interval"], label: "Pose-image interval", default: 0.5, type: "float", unit: "s", doc: "Seconds between pose-image sends" },
@@ -141,15 +141,15 @@ export const CATALOG = [
       { path: ["brain_client_node", P, "send_depth"], label: "Send depth images", default: false, type: "bool", doc: "Also send depth images to the agent" },
       { path: ["brain_client_node", P, "send_arm_camera_image"], label: "Send arm-camera image", default: true, type: "bool", doc: "Also send the arm camera image" },
       { path: ["brain_client_node", P, "log_everything"], label: "Verbose logging", default: true, type: "bool", doc: "Verbose vision-agent output logging" },
-      { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", options: VOICE_OPTIONS, doc: "Cartesia TTS voice (drives both chat-TTS and realtime-voice). Pick a stock voice, or paste any voice ID from Cartesia's library of hundreds.", docHref: "https://play.cartesia.ai/voices", docLinkText: "Browse Cartesia voices ↗" },
       { path: ["brain_client_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model" },
       { path: ["brain_client_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model" },
     ],
   },
   {
-    section: "Voice & speech (realtime loop)",
-    note: "The realtime voice / transcription loop. The TTS voice is global — set it once under Brain runtime above (it covers this node too); mirror the model fields here so both speech paths match.",
+    section: "Voice & speech",
+    note: "The robot's voice and the realtime voice / transcription loop. The TTS voice is one global setting that drives both the chat-TTS and realtime-voice paths; the model fields mirror Brain runtime above — keep both in sync.",
     knobs: [
+      { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", options: VOICE_OPTIONS, doc: "Cartesia TTS voice (drives both chat-TTS and realtime-voice). Pick a stock voice, or paste any voice ID from Cartesia's library of hundreds.", docHref: "https://play.cartesia.ai/voices", docLinkText: "Browse Cartesia voices ↗" },
       { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model" },
       { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model" },
     ],
