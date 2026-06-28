@@ -621,15 +621,21 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
     };
     select.addEventListener("change", () => {
       const custable = select.value === CUSTOM;
-      entry.value = custable ? custom.value : select.value;
       custom.style.display = custable ? "" : "none";
+      if (custable) {
+        // Just reveal the field — don't commit an empty id. The input handler
+        // commits once the user actually types one.
+        custom.focus();
+        return;
+      }
+      entry.value = select.value;
       entry.overridden = true;
-      if (custable) custom.focus();
       recompute();
     });
     custom.addEventListener("input", () => {
       entry.value = custom.value;
-      entry.overridden = true;
+      // An empty id is never valid (it breaks TTS), so it isn't a real override.
+      entry.overridden = custom.value !== "";
       recompute();
     });
   } else if (knob.type === "string") {
