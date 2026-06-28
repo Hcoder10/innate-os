@@ -18,7 +18,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="ROS 2 node for Innate training job management.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "training_node = innate_training_node.node:main",

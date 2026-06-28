@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>Camera driver and arm control for Mars robot</description>
   <maintainer email="your-email@example.com">Your Name</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>

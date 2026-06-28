@@ -7,7 +7,7 @@
   (reusing the training client's converter), gated so it never hiccups recording,
   policy execution, or live WebRTC streaming. Triggerable on demand from the apps.</description>
   <maintainer email="eng@innate.bot">Innate Engineering</maintainer>
-  <license>Proprietary</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

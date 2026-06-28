@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>ROS 2 node that bridges compressed camera images to a cloud websocket and publishes cmd_vel in response.</description>
   <maintainer email="eng@innate.bot">Innate Engineering</maintainer>
-  <license>Proprietary</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>

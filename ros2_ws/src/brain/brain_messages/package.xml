@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>Message, service, and action definitions for the brain system</description>
   <maintainer email="vignesh.anand.1503@gmail.com">vignesh</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

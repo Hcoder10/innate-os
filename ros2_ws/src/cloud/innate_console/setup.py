@@ -19,7 +19,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="Lightweight bridge that streams tmux pane stdout and /rosout to the webapp over rosbridge, with on-request backfill.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "console_node = innate_console.console_node:main",

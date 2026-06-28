@@ -31,7 +31,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="Innate cloud client libraries: auth, proxy, and training.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "innate-auth-token = auth_client.__main__:main",
