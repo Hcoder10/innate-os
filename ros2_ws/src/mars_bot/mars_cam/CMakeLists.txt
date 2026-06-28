@@ -25,7 +25,7 @@ find_package(OpenCV REQUIRED)
 # Find GStreamer (for webrtc_streamer)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TURBOJPEG REQUIRED libturbojpeg)
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-sdp-1.0 gstreamer-rtp-1.0)
+pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-sdp-1.0 gstreamer-rtp-1.0 gstreamer-app-1.0)
 
 # Find nlohmann_json (for webrtc_streamer and stereo_depth_estimator)
 find_package(nlohmann_json QUIET)
@@ -92,7 +92,12 @@ ament_target_dependencies(arm_camera_driver_component
 rclcpp_components_register_nodes(arm_camera_driver_component "mars_cam::ArmCameraDriver")
 
 # WebRTC streamer component library
-add_library(webrtc_streamer_component SHARED mars_cam/webrtc_streamer.cpp)
+add_library(webrtc_streamer_component SHARED
+  mars_cam/webrtc_streamer.cpp
+  mars_cam/webrtc_encode.cpp
+  mars_cam/webrtc_transport.cpp
+  mars_cam/webrtc_signaling.cpp
+  mars_cam/webrtc_stun.cpp)
 target_compile_definitions(webrtc_streamer_component PRIVATE BUILDING_COMPONENT_LIBRARY)
 target_include_directories(webrtc_streamer_component PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -114,6 +119,7 @@ ament_target_dependencies(webrtc_streamer_component
   rclcpp_components
   std_msgs
   sensor_msgs
+  cv_bridge
 )
 rclcpp_components_register_nodes(webrtc_streamer_component "mars_cam::WebRTCStreamer")
 
@@ -182,7 +188,12 @@ ament_target_dependencies(arm_camera_driver
 )
 
 # Create WebRTC streamer executable
-add_executable(webrtc_streamer_node mars_cam/webrtc_streamer.cpp)
+add_executable(webrtc_streamer_node
+  mars_cam/webrtc_streamer.cpp
+  mars_cam/webrtc_encode.cpp
+  mars_cam/webrtc_transport.cpp
+  mars_cam/webrtc_signaling.cpp
+  mars_cam/webrtc_stun.cpp)
 target_include_directories(webrtc_streamer_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -203,6 +214,7 @@ ament_target_dependencies(webrtc_streamer_node
   rclcpp_components
   std_msgs
   sensor_msgs
+  cv_bridge
 )
 
 # Create stereo depth estimator executable (requires VPI)
@@ -300,6 +312,17 @@ install(DIRECTORY calib/
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  # Unit tests for the pure (GStreamer/ROS-free) streamer helpers in webrtc_internal.hpp.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_webrtc_internal test/test_webrtc_internal.cpp)
+  if(TARGET test_webrtc_internal)
+    target_include_directories(test_webrtc_internal PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${GSTREAMER_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_webrtc_internal ${GSTREAMER_LIBRARIES})
+  endif()
 endif()
 
 ament_package()

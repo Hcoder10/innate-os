@@ -25,20 +25,21 @@ import {
   WEBRTC_ICE_IN_TOPIC,
   WEBRTC_ICE_OUT_TOPIC,
 } from "./constants.js";
+import { createLocalPeerConnection, describeIceCandidate, wireDiagnosticDataChannels } from "./webrtcConfig.js";
 
 // No SDP offer back this soon after START → the START or its broadcast offer
 // was dropped (rws /webrtc/* are fire-and-forget); cheap to just republish.
 const OFFER_TIMEOUT_MS = 5_000;
 // Offer applied but no media flowing this long → ICE/pipeline is stuck, and
 // rebuilding is worth throwing away the in-flight negotiation.
-const MEDIA_TIMEOUT_MS = 20_000;
+const MEDIA_TIMEOUT_MS = 7_000;
 const ICE_DEGRADE_MS = 10_000;
 const AUDIO_REBUILD_DEBOUNCE_MS = 700;
 const OFFER_GUARD_RESET_MS = 1_000;
 // Escalating rebuilds before we surface an error and wait for a manual retry.
 // At ~5s/attempt for dropped offers that's ~30s of fast retries instead of a
 // single 30s stare-at-black, which is what made refreshing feel faster.
-const MAX_HANDSHAKE_ATTEMPTS = 6;
+const MAX_HANDSHAKE_ATTEMPTS = 3;
 
 export class WebRtcSession {
   /** @type {import("./rosClient.js").RosClient} */ #ros;
@@ -59,12 +60,15 @@ export class WebRtcSession {
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
   #videoTrackCount = 0;
   #handshakeAttempts = 0;
-  // Unique per page-load; tags our own /webrtc/start so the start listener can
-  // tell it apart from another device's (e.g. the phone app).
+  // Multi-camera: the robot negotiates every camera's m-line (video0, video1, …); we keep each track's
+  // stream by m-line index and display the selected one. Switching is a no-reneg START (the robot pushes
+  // only the selected camera), so it's instant.
+  /** @type {(MediaStream | null)[]} */ #videoStreams = [];
+  #selectedIndex = 0;
+  #selectedCamera = "main";
+  // Unique per page-load; the robot routes our offer/answer/ICE on the *_id topics by this id, so we
+  // negotiate as an independent peer (and stream concurrently with any other device).
   #clientId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
-  // Another device actively took the camera; we've yielded and won't
-  // auto-reconnect until the operator explicitly retries (start()).
-  #preempted = false;
 
   /** @type {number | null} */ #watchdog = null;
   /** @type {number | null} */ #degradeTimer = null;
@@ -76,14 +80,11 @@ export class WebRtcSession {
     this.#unsubs = [
       rosClient.subscribe(WEBRTC_OFFER_TOPIC, (p) => void this.#onOffer(p)),
       rosClient.subscribe(WEBRTC_ICE_OUT_TOPIC, (p) => void this.#onIceOut(p)),
-      // Last-active-wins: a /webrtc/start we didn't send means another device
-      // (the phone app) is actively opening the camera. Yield to it and stop
-      // reconnecting rather than fighting back (which would ping-pong). The
-      // operator reclaims it with Retry (start()).
-      rosClient.subscribe(WEBRTC_START_TOPIC, (p) => this.#onStart(p)),
+      // We're an independent peer (client_id), so we do NOT yield when another device opens the
+      // camera — the robot fans out to all viewers concurrently. (No /webrtc/start watch / preemption.)
       rosClient.onStateChange((state) => {
         // The robot may have restarted while we were away; renegotiate.
-        if (state === "connected" && this.#started && !this.#preempted) {
+        if (state === "connected" && this.#started) {
           this.#handshakeAttempts = 0;
           this.#handshake();
         }
@@ -117,7 +118,6 @@ export class WebRtcSession {
   /** Begin (or manually retry) the video link. */
   start() {
     this.#started = true;
-    this.#preempted = false; // explicit (re)take, even if we'd yielded the camera
     this.#handshakeAttempts = 0;
     this.#handshake();
   }
@@ -145,17 +145,44 @@ export class WebRtcSession {
    */
   setAudio(on) {
     if (this.#state.audioRequested === on) return;
+    // The robot always negotiates the audio m-line for us, so toggling is a no-reneg START (it starts/
+    // stops SENDING audio + opens/closes the mic) — no reconnect. Flip the local <audio> instantly too.
     const track = this.#state.audioStream?.getAudioTracks()[0];
     if (track) track.enabled = on;
     this.#patch({ audioRequested: on });
+    if (this.#started && this.#ros.state === "connected") {
+      this.#ros.publish(WEBRTC_START_TOPIC, {
+        data: JSON.stringify({ source: "live", audio: on, client_id: this.#clientId, video: [this.#selectedCamera] }),
+      });
+      console.log("[webrtc] audio toggle ->", on, "(no reconnect)");
+    }
+  }
 
-    this.#clearAudioDebounce();
-    this.#audioDebounce = setTimeout(() => {
-      this.#audioDebounce = null;
-      if (this.#started && !this.#preempted && this.#builtWithAudio !== this.#state.audioRequested) {
-        this.#handshake();
-      }
-    }, AUDIO_REBUILD_DEBOUNCE_MS);
+  /**
+   * Switch which camera is displayed. The robot negotiated every camera up front, so this is a no-reneg
+   * START (it starts pushing `name`, stops the rest) — instant, no reconnect.
+   * @param {number} index m-line index of the camera (video0 -> 0, …)
+   * @param {string} name camera name the robot keys on
+   */
+  selectCamera(index, name) {
+    if (this.#selectedIndex === index) return;
+    this.#selectedIndex = index;
+    this.#selectedCamera = name;
+    // Show the selected track now; it renders as soon as the robot pushes its first frame (it
+    // force-keyframes on activate, so ~instant). Until then the previous frame/overlay holds.
+    const stream = this.#videoStreams[index] ?? null;
+    if (stream) this.#patch({ videoStream: stream, status: stream.getVideoTracks()[0]?.muted ? "connecting" : "streaming" });
+    if (this.#started && this.#ros.state === "connected") {
+      this.#ros.publish(WEBRTC_START_TOPIC, {
+        data: JSON.stringify({ source: "live", video: [name], audio: this.#state.audioRequested, client_id: this.#clientId }),
+      });
+      console.log("[webrtc] select camera " + name + " (index " + index + ", no reconnect)");
+    }
+  }
+
+  /** @returns {{ index: number, name: string }} the currently displayed camera */
+  get selectedCamera() {
+    return { index: this.#selectedIndex, name: this.#selectedCamera };
   }
 
   // ---- handshake ----------------------------------------------------------
@@ -170,16 +197,23 @@ export class WebRtcSession {
 
     if (this.#ros.state !== "connected") return; // resumes on reconnect
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const pc = createLocalPeerConnection(this.#ros.ip);
     this.#pc = pc;
     this.#builtWithAudio = this.#state.audioRequested;
+    wireDiagnosticDataChannels(pc);
 
     pc.onicecandidate = (event) => {
       if (this.#pc !== pc || !event.candidate) return;
+      const c = event.candidate;
+      // Log every candidate we send the robot: type (host/srflx/relay) + address — `.local` means Chrome
+      // obfuscated a host IP behind an mDNS name (the robot must peer-reflexive past it).
+      console.log(
+        "[webrtc] ice ->",
+        describeIceCandidate(c),
+      );
       this.#ros.publish(WEBRTC_ICE_IN_TOPIC, {
         data: JSON.stringify({
+          client_id: this.#clientId, // envelope: the robot routes our ICE by client_id (independent peer)
           candidate: event.candidate.candidate,
           sdpMLineIndex: event.candidate.sdpMLineIndex,
           sdpMid: event.candidate.sdpMid,
@@ -195,11 +229,25 @@ export class WebRtcSession {
     pc.oniceconnectionstatechange = () => {
       if (this.#pc !== pc) return;
       const s = pc.iceConnectionState;
+      console.log("[webrtc] ice:", s);
       if (s === "connected" || s === "completed") {
         this.#clearDegradeTimer();
-      } else if (s === "disconnected" || s === "failed") {
+      } else if (s === "failed") {
+        // ICE exhausted every candidate pair without finding a working one = NO NETWORK PATH between this
+        // browser and the robot (e.g. the robot can't reach our host candidates — mDNS-obfuscated on a
+        // network where they don't resolve — and srflx/NAT-hairpin didn't work either).
+        console.error(
+          "[webrtc] NO USABLE NETWORK PATH to the robot — ICE failed (no candidate pair connected). " +
+            "If you're on the same LAN, your browser may be hiding its local IP via mDNS; the robot " +
+            "couldn't open a return path. Workaround: set media.peerconnection.ice.obfuscate_host_addresses=false.",
+        );
+        this.#startDegradeTimer();
+      } else if (s === "disconnected") {
         this.#startDegradeTimer();
       }
+    };
+    pc.onconnectionstatechange = () => {
+      if (this.#pc === pc) console.log("[webrtc] connection:", pc.connectionState);
     };
 
     // Phase 1: expect an SDP offer back within OFFER_TIMEOUT_MS. If none
@@ -207,9 +255,19 @@ export class WebRtcSession {
     // Re-armed to the longer MEDIA_TIMEOUT_MS in #onOffer once we've answered.
     this.#armWatchdog(OFFER_TIMEOUT_MS);
 
+    // Ask the robot to push just the selected camera. It still negotiates every camera's transceiver for
+    // a client_id peer (so switching is reneg-free), but won't encode/send the others until we request
+    // them — so we don't waste its bandwidth/CPU on cameras we're not viewing.
     this.#ros.publish(WEBRTC_START_TOPIC, {
-      data: JSON.stringify({ source: "live", audio: this.#state.audioRequested, client_id: this.#clientId }),
+      data: JSON.stringify({
+        source: "live",
+        audio: this.#state.audioRequested,
+        client_id: this.#clientId,
+        renegotiate: true,
+        video: [this.#selectedCamera],
+      }),
     });
+    console.log("[webrtc] handshake: START sent", { client_id: this.#clientId, audio: this.#builtWithAudio });
   }
 
   /**
@@ -219,6 +277,7 @@ export class WebRtcSession {
    */
   #onTrack(event, pc) {
     const track = event.track;
+    console.log("[webrtc] track:", track.kind, "mid=" + (event.transceiver?.mid ?? "?"));
     if (track.kind === "audio") {
       // Start in the operator's chosen state; never audible by default.
       // NB: deliberately not tuned below — zeroing the audio receiver's NetEq
@@ -246,53 +305,52 @@ export class WebRtcSession {
     }
 
     const stream = new MediaStream([track]);
-    const mid = event.transceiver?.mid;
-    const isMain = mid === "0" || mid === "video0";
-    const isArm = mid === "1" || mid === "video1";
-    let main = false;
-    if (isMain) {
-      main = true;
-    } else if (!isArm) {
-      // Unknown mids: fall back to arrival order (main camera offers first).
-      this.#videoTrackCount += 1;
-      main = this.#videoTrackCount === 1;
-    }
-    if (!main) return; // arm camera — ignored in v1
+    // m-line index: "video0"/"0" -> 0, "video1"/"1" -> 1, … We keep every camera's stream by index and
+    // display only the selected one; the rest stay warm (negotiated) but the robot isn't pushing them.
+    const mid = event.transceiver?.mid ?? "";
+    const m = /(\d+)$/.exec(mid);
+    const index = m ? Number(m[1]) : this.#videoTrackCount;
+    this.#videoTrackCount += 1;
+    this.#videoStreams[index] = stream;
 
-    // A remote track arrives muted and unmutes when RTP actually flows — only
-    // then is there a real frame. Exposing the stream before that swaps the
-    // <video> to a black source and hides the "establishing video link"
-    // overlay, so we hold off: the cold-start overlay (or the previous
-    // freeze-frame) stays until media is genuinely live. ontrack itself is not
-    // the signal, and we keep the watchdog armed until media arrives.
-    const goLive = () => {
-      if (this.#pc !== pc) return; // stale track from a superseded pc
+    // A remote track arrives muted and unmutes when RTP actually flows — only then is there a real frame.
+    // Exposing the stream before that swaps the <video> to a black source and hides the "establishing
+    // video link" overlay, so we hold off: the cold-start overlay (or the previous freeze-frame) stays
+    // until media is genuinely live. Only the SELECTED camera is shown; the watchdog stays armed for it.
+    const showLive = () => {
+      if (this.#pc !== pc || index !== this.#selectedIndex) return; // stale pc, or not the selected camera
       this.#handshakeAttempts = 0;
       this.#clearWatchdog();
+      console.log("[webrtc] video live (camera index " + index + ")");
       this.#patch({ videoStream: stream, status: "streaming" });
     };
 
-    if (!track.muted) goLive();
-    track.addEventListener("unmute", goLive);
+    if (!track.muted) showLive();
+    track.addEventListener("unmute", showLive);
     track.addEventListener("mute", () => {
-      // Media stalled mid-stream — keep the last good frame frozen and flag
-      // connecting so the stage degrades it; the degrade/handshake timers
-      // drive recovery.
+      // Media stalled mid-stream — keep the last good frame frozen and flag connecting so the stage
+      // degrades it; the degrade/handshake timers drive recovery. Only the displayed camera matters.
       if (this.#pc === pc && this.#state.videoStream === stream && this.#started) {
         this.#patch({ status: "connecting" });
       }
     });
   }
 
-  /** @param {any} payload /webrtc/offer message (StringMsg, dual-path) */
+  /** @param {any} payload /webrtc/offer_id message: std_msgs/String whose data is {client_id, sdp} */
   async #onOffer(payload) {
-    const sdp = payload?.data ?? payload?.msg?.data;
+    const raw = payload?.data ?? payload?.msg?.data;
+    if (typeof raw !== "string" || !raw) return;
+    let env;
+    try { env = JSON.parse(raw); } catch { return; }
+    if (env.client_id !== this.#clientId) return; // an offer for some other device's peer
+    const sdp = env.sdp;
     const pc = this.#pc;
     if (typeof sdp !== "string" || !sdp || !pc) return;
     if (this.#processingOffer || pc.signalingState !== "stable") return;
 
     this.#processingOffer = true;
     try {
+      console.log("[webrtc] offer received (" + sdp.length + "B), answering");
       await pc.setRemoteDescription({ type: "offer", sdp });
       if (this.#pc !== pc) return;
       this.#remoteDescriptionSet = true;
@@ -315,7 +373,10 @@ export class WebRtcSession {
       await pc.setLocalDescription(answer);
       if (this.#pc !== pc) return;
 
-      this.#ros.publish(WEBRTC_ANSWER_TOPIC, { data: answer.sdp ?? "" });
+      this.#ros.publish(WEBRTC_ANSWER_TOPIC, {
+        data: JSON.stringify({ client_id: this.#clientId, sdp: answer.sdp ?? "" }),
+      });
+      console.log("[webrtc] answer sent");
     } catch (err) {
       if (this.#pc === pc) console.error("[webrtc] offer processing failed:", err);
     } finally {
@@ -326,13 +387,14 @@ export class WebRtcSession {
     }
   }
 
-  /** @param {any} payload /webrtc/ice_out message (StringMsg, dual-path) */
+  /** @param {any} payload /webrtc/ice_out_id message: std_msgs/String whose data is {client_id, candidate, ...} */
   async #onIceOut(payload) {
     const raw = payload?.data ?? payload?.msg?.data;
     const pc = this.#pc;
     if (typeof raw !== "string" || !raw || !pc) return;
     try {
       const parsed = JSON.parse(raw);
+      if (parsed.client_id !== this.#clientId) return; // a candidate for some other device's peer
       if (!parsed.candidate) return;
       /** @type {RTCIceCandidateInit} */
       const candidate = {
@@ -350,37 +412,16 @@ export class WebRtcSession {
     }
   }
 
-  /**
-   * A /webrtc/start appeared on the topic. If it's ours (matching client_id),
-   * ignore it. Otherwise another device (the phone app) is actively opening the
-   * camera — yield: tear down and stop auto-reconnecting so we don't ping-pong
-   * the stream. The operator reclaims it via Retry (start()), which clears it.
-   * @param {any} payload /webrtc/start message (StringMsg, dual-path)
-   */
-  #onStart(payload) {
-    if (!this.#started || this.#preempted) return;
-    const raw = payload?.data ?? payload?.msg?.data;
-    if (typeof raw !== "string") return;
-    let id;
-    try {
-      id = JSON.parse(raw)?.client_id;
-    } catch {
-      id = undefined; // untagged / unparseable → treat as another device
-    }
-    if (id === this.#clientId) return; // our own start, echoed back to us
-    this.#preempted = true;
-    this.#closePc();
-    this.#patch({ status: "preempted", videoStream: null, audioStream: null });
-  }
-
   // ---- timers & teardown --------------------------------------------------
 
   #startDegradeTimer() {
     if (this.#degradeTimer !== null) return;
     this.#degradeTimer = setTimeout(() => {
       this.#degradeTimer = null;
-      if (this.#started && !this.#preempted) {
-        console.warn("[webrtc] ICE degraded for 10s, rebuilding");
+      if (this.#started) {
+        // Connected briefly then lost the path (or never got media). Repeated rebuilds here usually mean
+        // the robot can't keep a return path to this browser — see the NO USABLE NETWORK PATH note above.
+        console.warn("[webrtc] no stable media path for 10s (robot may have no route back to us), rebuilding");
         this.#handshake();
       }
     }, ICE_DEGRADE_MS);

@@ -16,7 +16,9 @@
 # IPv4 only, matching the proxy (it binds 0.0.0.0:4443).
 set -e
 
-IPT=/usr/sbin/iptables
+# -w makes iptables wait for the xtables lock instead of failing when another
+# netfilter caller holds it (races at boot / with concurrent invocations).
+IPT="/usr/sbin/iptables -w"
 RULE="PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443"
 
 # Drop any existing copies first (idempotent), then add exactly one.
