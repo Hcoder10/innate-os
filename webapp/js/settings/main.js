@@ -100,12 +100,12 @@ const STYLE = `
 .set-group.open .set-group-body { display: block; }
 .set-group-body-inner { padding: 0 4px 14px; }
 .set-group-note { color: var(--muted, #8a90a0); font-size: 12px; margin: 0 0 10px; }
-.set-row { display: flex; align-items: center; gap: 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
+.set-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
   transition: background .15s ease, border-color .15s ease; }
 .set-row:hover { background: rgba(255,255,255,.025); }
 .set-row.saved { border-color: rgba(224,145,58,.45); background: rgba(224,145,58,.07); }
 .set-row.dirty { border-color: rgba(117,105,253,.6); background: rgba(64,31,251,.10); }
-.set-info { flex: 1; min-width: 0; }
+.set-info { flex: 1 1 240px; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
 .set-doc-link { color: var(--primary, #7569FD); text-decoration: none; }
@@ -155,6 +155,16 @@ const STYLE = `
 .set-live .set-row:hover { background: none; }
 .set-live-status { font-size: 12px; margin-left: 6px; }
 .set-live .set-slider { width: 200px; }
+
+/* On narrow screens stack each row and give the controls the full width so the
+   voice picker's dropdown + paste field wrap and flex to fit instead of
+   overflowing. */
+@media (max-width: 520px) {
+  .set-row { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+  .set-info { flex: 0 0 auto; }
+  .set-ctl { width: 100%; flex-wrap: wrap; }
+  .set-ctl > select.set-text, .set-ctl > input.set-text { flex: 1 1 160px; width: auto; min-width: 0; }
+}
 `;
 
 /** Walk a path into the nested overrides dict; undefined if absent. */
