@@ -579,6 +579,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       recompute();
     });
   } else if (knob.options) {
+    const CUSTOM = "__custom__";
     const select = document.createElement("select");
     select.className = "set-text set-select";
     for (const opt of knob.options) {
@@ -587,23 +588,38 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       o.textContent = opt.label;
       select.appendChild(o);
     }
-    // Holds an off-list value (e.g. a voice set over SSH) so it still shows + round-trips.
+    // A permanent "Custom…" choice that reveals a free-text field for any off-list value
+    // (e.g. a voice id pasted from Cartesia's library, or one set over SSH).
     const customOpt = document.createElement("option");
+    customOpt.value = CUSTOM;
+    customOpt.textContent = "Custom…";
+    select.appendChild(customOpt);
     ctl.appendChild(select);
+
+    const custom = document.createElement("input");
+    custom.type = "text";
+    custom.className = "set-text set-custom";
+    custom.placeholder = "Paste a voice ID";
+    ctl.appendChild(custom);
+
+    const isStock = () => knob.options.some((o) => o.value === entry.value);
     entry.render = () => {
-      if (knob.options.some((o) => o.value === entry.value)) {
-        customOpt.remove();
-      } else {
-        customOpt.value = String(entry.value);
-        customOpt.textContent = `Custom: ${entry.value}`;
-        select.appendChild(customOpt);
-      }
-      select.value = String(entry.value);
+      const stock = isStock();
+      select.value = stock ? String(entry.value) : CUSTOM;
+      custom.value = stock ? "" : String(entry.value);
+      custom.style.display = stock ? "none" : "";
     };
     select.addEventListener("change", () => {
-      entry.value = select.value;
+      const custable = select.value === CUSTOM;
+      entry.value = custable ? custom.value : select.value;
+      custom.style.display = custable ? "" : "none";
       entry.overridden = true;
-      entry.render();
+      if (custable) custom.focus();
+      recompute();
+    });
+    custom.addEventListener("input", () => {
+      entry.value = custom.value;
+      entry.overridden = true;
       recompute();
     });
   } else if (knob.type === "string") {
