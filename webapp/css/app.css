@@ -805,8 +805,6 @@ button {
   gap: 1px;
 }
 
-/* Brighter than the shared --muted so ROBOT/BATT/LINK read against the
-   translucent strip, while staying dimmer than the value for hierarchy. */
 .telemetry .microlabel {
   color: #b9b9c2;
 }
@@ -1115,8 +1113,6 @@ button {
   transform: rotate(90deg);
 }
 
-/* Brighter section labels (LEADER ARM / ROBOT ARM) than the global muted —
-   they were the hardest to read over the feed. */
 .arm-panel .microlabel {
   color: rgb(255 255 255 / 62%);
 }
