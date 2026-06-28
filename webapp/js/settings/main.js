@@ -108,6 +108,8 @@ const STYLE = `
 .set-info { flex: 1; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
+.set-doc-link { color: var(--primary, #7569FD); text-decoration: none; }
+.set-doc-link:hover { text-decoration: underline; }
 .set-ctl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .set-ctl input[type=number] { width: 84px; padding: 6px 8px; text-align: right; border-radius: 8px;
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
@@ -494,6 +496,16 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
   const doc = document.createElement("span");
   doc.className = "set-doc";
   doc.textContent = knob.doc;
+  if (knob.docHref) {
+    doc.append(" ");
+    const link = document.createElement("a");
+    link.className = "set-doc-link";
+    link.href = knob.docHref;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = knob.docLinkText || "Learn more";
+    doc.append(link);
+  }
   info.append(label, doc);
   row.appendChild(info);
 

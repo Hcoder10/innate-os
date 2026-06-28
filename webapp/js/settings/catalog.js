@@ -29,6 +29,8 @@
  * @property {"float"|"int"|"bool"|"string"|"list"} type
  * @property {string} [unit]
  * @property {string} doc
+ * @property {string} [docHref]      Optional URL rendered as a link after the doc text.
+ * @property {string} [docLinkText]  Label for the docHref link (defaults to "Learn more").
  * @property {number} [min]  Lower bound for numeric knobs (defaults to 0 on sliders).
  * @property {number} [max]  Known hard maximum. When set on a numeric knob the UI renders a slider.
  * @property {number} [step] Slider step (defaults to 1).
@@ -139,7 +141,7 @@ export const CATALOG = [
       { path: ["brain_client_node", P, "send_depth"], label: "Send depth images", default: false, type: "bool", doc: "Also send depth images to the agent" },
       { path: ["brain_client_node", P, "send_arm_camera_image"], label: "Send arm-camera image", default: true, type: "bool", doc: "Also send the arm camera image" },
       { path: ["brain_client_node", P, "log_everything"], label: "Verbose logging", default: true, type: "bool", doc: "Verbose vision-agent output logging" },
-      { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", options: VOICE_OPTIONS, doc: "Cartesia TTS voice — one setting for both the chat-TTS and realtime-voice paths" },
+      { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", options: VOICE_OPTIONS, doc: "Cartesia TTS voice (drives both chat-TTS and realtime-voice). Pick a stock voice, or paste any voice ID from Cartesia's library of hundreds.", docHref: "https://play.cartesia.ai/voices", docLinkText: "Browse Cartesia voices ↗" },
       { path: ["brain_client_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model" },
       { path: ["brain_client_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model" },
     ],
