@@ -24,7 +24,7 @@ class TTSHandler:
     Voice ID is read from proxy.config["cartesia_voice_id"].
     """
 
-    # Default voice ID (Katie - Friendly Fixer)
+    # Default voice ID (Alfred)
     DEFAULT_VOICE_ID = "9fdaae0b-f885-4813-b589-3c07cf9d5fea"
 
     def __init__(

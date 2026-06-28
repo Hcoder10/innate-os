@@ -805,6 +805,10 @@ button {
   gap: 1px;
 }
 
+.telemetry .microlabel {
+  color: #b9b9c2;
+}
+
 .telemetry-value {
   font-size: 12px;
   color: var(--text);
@@ -1109,8 +1113,6 @@ button {
   transform: rotate(90deg);
 }
 
-/* Brighter section labels (LEADER ARM / ROBOT ARM) than the global muted —
-   they were the hardest to read over the feed. */
 .arm-panel .microlabel {
   color: rgb(255 255 255 / 62%);
 }

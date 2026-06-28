@@ -100,14 +100,16 @@ const STYLE = `
 .set-group.open .set-group-body { display: block; }
 .set-group-body-inner { padding: 0 4px 14px; }
 .set-group-note { color: var(--muted, #8a90a0); font-size: 12px; margin: 0 0 10px; }
-.set-row { display: flex; align-items: center; gap: 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
+.set-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
   transition: background .15s ease, border-color .15s ease; }
 .set-row:hover { background: rgba(255,255,255,.025); }
 .set-row.saved { border-color: rgba(224,145,58,.45); background: rgba(224,145,58,.07); }
 .set-row.dirty { border-color: rgba(117,105,253,.6); background: rgba(64,31,251,.10); }
-.set-info { flex: 1; min-width: 0; }
+.set-info { flex: 1 1 240px; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
+.set-doc-link { color: var(--primary, #7569FD); text-decoration: none; }
+.set-doc-link:hover { text-decoration: underline; }
 .set-ctl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .set-ctl input[type=number] { width: 84px; padding: 6px 8px; text-align: right; border-radius: 8px;
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
@@ -130,9 +132,10 @@ const STYLE = `
 .set-status.ok { color: #3ecf8e; }
 .set-status.err { color: #ff6b6b; }
 .set-status.muted { color: var(--muted, #8a90a0); }
-.set-ctl input.set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
+.set-ctl :is(input, select).set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
   background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl > input.set-text { width: 200px; }
+.set-ctl > select.set-text { width: 216px; cursor: pointer; }
 .set-default { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-row-list { flex-direction: column; align-items: stretch; }
 .set-row-list .set-ctl { flex-direction: column; align-items: stretch; gap: 8px; margin-top: 10px; }
@@ -152,6 +155,16 @@ const STYLE = `
 .set-live .set-row:hover { background: none; }
 .set-live-status { font-size: 12px; margin-left: 6px; }
 .set-live .set-slider { width: 200px; }
+
+/* On narrow screens stack each row and give the controls the full width so the
+   voice picker's dropdown + paste field wrap and flex to fit instead of
+   overflowing. */
+@media (max-width: 520px) {
+  .set-row { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+  .set-info { flex: 0 0 auto; }
+  .set-ctl { width: 100%; flex-wrap: wrap; }
+  .set-ctl > select.set-text, .set-ctl > input.set-text { flex: 1 1 160px; width: auto; min-width: 0; }
+}
 `;
 
 /** Walk a path into the nested overrides dict; undefined if absent. */
@@ -185,6 +198,10 @@ function defaultLabel(/** @type {import("./catalog.js").Knob} */ knob) {
   if (knob.type === "list") {
     const arr = /** @type {string[]} */ (knob.default);
     return arr.length ? "default " + arr.join(", ") : "default (none)";
+  }
+  if (knob.options) {
+    const opt = knob.options.find((o) => o.value === knob.default);
+    if (opt) return "default " + opt.label;
   }
   return "default " + String(knob.default);
 }
@@ -489,6 +506,16 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
   const doc = document.createElement("span");
   doc.className = "set-doc";
   doc.textContent = knob.doc;
+  if (knob.docHref) {
+    doc.append(" ");
+    const link = document.createElement("a");
+    link.className = "set-doc-link";
+    link.href = knob.docHref;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = knob.docLinkText || "Learn more";
+    doc.append(link);
+  }
   info.append(label, doc);
   row.appendChild(info);
 
@@ -559,6 +586,56 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       entry.value = Number(slider.value);
       entry.overridden = true;
       cur.textContent = String(entry.value);
+      recompute();
+    });
+  } else if (knob.options) {
+    const CUSTOM = "__custom__";
+    const select = document.createElement("select");
+    select.className = "set-text set-select";
+    for (const opt of knob.options) {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      select.appendChild(o);
+    }
+    // A permanent "Custom…" choice that reveals a free-text field for any off-list value
+    // (e.g. a voice id pasted from Cartesia's library, or one set over SSH).
+    const customOpt = document.createElement("option");
+    customOpt.value = CUSTOM;
+    customOpt.textContent = "Custom…";
+    select.appendChild(customOpt);
+    ctl.appendChild(select);
+
+    const custom = document.createElement("input");
+    custom.type = "text";
+    custom.className = "set-text set-custom";
+    custom.placeholder = "Paste a voice ID";
+    ctl.appendChild(custom);
+
+    const isStock = () => knob.options.some((o) => o.value === entry.value);
+    entry.render = () => {
+      const stock = isStock();
+      select.value = stock ? String(entry.value) : CUSTOM;
+      custom.value = stock ? "" : String(entry.value);
+      custom.style.display = stock ? "none" : "";
+    };
+    select.addEventListener("change", () => {
+      const custable = select.value === CUSTOM;
+      custom.style.display = custable ? "" : "none";
+      if (custable) {
+        // Just reveal the field — don't commit an empty id. The input handler
+        // commits once the user actually types one.
+        custom.focus();
+        return;
+      }
+      entry.value = select.value;
+      entry.overridden = true;
+      recompute();
+    });
+    custom.addEventListener("input", () => {
+      entry.value = custom.value;
+      // An empty id is never valid (it breaks TTS), so it isn't a real override.
+      entry.overridden = custom.value !== "";
       recompute();
     });
   } else if (knob.type === "string") {
@@ -756,6 +833,14 @@ async function onSave() {
   for (const e of entries) {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
+  }
+  // The TTS voice used to be two per-node params (brain_client_node /
+  // input_manager_node cartesia_voice_id) before it became the global `/**` knob.
+  // A node-specific param beats a `/**` wildcard in ROS, so any leftover per-node
+  // entries silently shadow the picker. The catalog no longer has those paths, so
+  // its clears can't reach them — always clear them here so saving heals the orphans.
+  for (const node of ["brain_client_node", "input_manager_node"]) {
+    clears.push([node, "ros__parameters", "cartesia_voice_id"]);
   }
   saveBtn.disabled = true;
   setStatus("Saving…");
