@@ -54,6 +54,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install --system \
         websockets \
         pydantic \
+        click \
         'packaging>=24' \
         'setuptools==59.6.0' \
         'numpy<2' \
@@ -108,6 +109,7 @@ RUN cat >> /root/.zshrc <<'EOF'
 [ -f /root/innate-os/config/dds/setup_dds.zsh ] && source /root/innate-os/config/dds/setup_dds.zsh
 export INNATE_OS_ROOT=/root/innate-os
 export CCACHE_DIR=/root/.cache/ccache
+export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on PATH
 EOF
 
 WORKDIR /root/innate-os
