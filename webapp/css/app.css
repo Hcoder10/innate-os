@@ -247,7 +247,7 @@ button {
 .map-controls {
   position: absolute;
   top: 16px;
-  right: 16px;
+  right: 56px;
   display: flex;
   gap: 8px;
 }
@@ -663,6 +663,7 @@ button {
   position: absolute;
   top: 54px;
   right: 14px;
+  z-index: 2; /* paint above the camera PiP strip */
   width: 232px;
   padding: 11px 14px;
   background: rgb(0 0 0 / 66%);
