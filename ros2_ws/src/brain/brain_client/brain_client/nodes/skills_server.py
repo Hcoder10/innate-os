@@ -11,10 +11,12 @@ the action server.
 
 from __future__ import annotations
 
+import inspect
 import json
 import queue
 import threading
 import time
+from typing import get_args
 
 import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
@@ -32,6 +34,39 @@ from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skills.robot_state import RobotStateProvider
 from brain_client.skills.types import RobotStateType, SkillResult
+
+
+def _annotation_is_float(annotation) -> bool:
+    """True if a param annotation is ``float`` (or a union including it).
+
+    Handles both real type objects and string annotations (skills using
+    ``from __future__ import annotations`` expose ``"float"`` instead).
+    """
+    if annotation is float or annotation == "float":
+        return True
+    return any(arg is float or arg == "float" for arg in get_args(annotation))
+
+
+def _coerce_numeric_inputs(skill, inputs: dict) -> dict:
+    """Widen whole-number ints to floats for ``float``-annotated params.
+
+    JSON has a single number type, so a UI/agent serializing a float param
+    whose value happens to be whole (e.g. ``x=3``) sends an int. ROS
+    ``float64`` setters reject ints (``must be of type 'float'``), so we match
+    each value to its declared ``execute()`` annotation before dispatch. bools
+    are left alone (``bool`` subclasses ``int``)."""
+    try:
+        signature = inspect.signature(skill.execute)
+    except (TypeError, ValueError):
+        return inputs
+    coerced = dict(inputs)
+    for name, value in inputs.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        param = signature.parameters.get(name)
+        if param is not None and _annotation_is_float(param.annotation):
+            coerced[name] = float(value)
+    return coerced
 
 
 class SkillsActionServer(Node):
@@ -270,7 +305,7 @@ class SkillsActionServer(Node):
                 self.robot_state.begin_continuous_updates(skill)
                 self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
 
-            result_message, result_status = skill.execute(**inputs)
+            result_message, result_status = skill.execute(**_coerce_numeric_inputs(skill, inputs))
 
             if result_status == SkillResult.SUCCESS:
                 self.get_logger().info(f"Skill '{skill_type}' succeeded: {result_message}")
