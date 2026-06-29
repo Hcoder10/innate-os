@@ -626,6 +626,38 @@ button {
   color: var(--accent);
 }
 
+/* Map view — same ladder as a camera. As a thumbnail it's a tile-sized canvas host. */
+.cam-tile-map {
+  height: var(--pip-h);
+  background: #000;
+}
+
+.cam-map-host {
+  width: 100%;
+  height: 100%;
+}
+
+.cam-map-host .map-canvas {
+  display: block;
+}
+
+/* The map's Set Goal control only makes sense at full size. */
+.cam-map-host:not(.big) .map-controls {
+  display: none;
+}
+
+/* Map promoted to the big stage: full-bleed under the control overlays. Inserted as the stage's first
+   child, so DOM order keeps the overlays (and the strip) painting on top; the video stage hides. */
+.cam-map-host.big {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.cam-map-primary .video-stage {
+  display: none;
+}
+
 /* Panel sits just below the toggle; denser glass since it's over the feed. */
 .profiling {
   position: absolute;
