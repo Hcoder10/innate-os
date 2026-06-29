@@ -12,7 +12,6 @@
 #include <chrono>
 #include <memory>
 
-
 namespace mars_cam {
 
 namespace {
@@ -33,10 +32,12 @@ GstRTPHeaderExtensionFlags mars_playout_delay_supported_flags(GstRTPHeaderExtens
                                                    GST_RTP_HEADER_EXTENSION_TWO_BYTE);
 }
 
-gsize mars_playout_delay_max_size(GstRTPHeaderExtension*, const GstBuffer*) { return 3; }
+gsize mars_playout_delay_max_size(GstRTPHeaderExtension*, const GstBuffer*) {
+    return 3;
+}
 
-gssize mars_playout_delay_write(GstRTPHeaderExtension* ext, const GstBuffer*, GstRTPHeaderExtensionFlags,
-                                GstBuffer*, guint8* data, gsize size) {
+gssize mars_playout_delay_write(GstRTPHeaderExtension* ext, const GstBuffer*, GstRTPHeaderExtensionFlags, GstBuffer*,
+                                guint8* data, gsize size) {
     if (size < 3) {
         return -1;
     }
@@ -100,25 +101,24 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     enable_local_stun_ = this->get_parameter("enable_local_stun").as_bool();
     local_stun_port_ = static_cast<int>(this->get_parameter("local_stun_port").as_int());
     rtcp_inactivity_timeout_s_ = this->get_parameter("rtcp_inactivity_timeout_s").as_double();
-    rtcp_timeout_cb_ = this->add_on_set_parameters_callback(
-        [this](const std::vector<rclcpp::Parameter>& params) {
-            rcl_interfaces::msg::SetParametersResult result;
-            result.successful = true;
-            for (const auto& p : params) {
-                if (p.get_name() != "rtcp_inactivity_timeout_s") {
-                    continue;
-                }
-                const double v = p.as_double();
-                if (v <= 0.0) {
-                    result.successful = false;
-                    result.reason = "rtcp_inactivity_timeout_s must be > 0";
-                } else {
-                    rtcp_inactivity_timeout_s_ = v;
-                    RCLCPP_INFO(this->get_logger(), "rtcp_inactivity_timeout_s set to %.1f s", v);
-                }
+    rtcp_timeout_cb_ = this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        for (const auto& p : params) {
+            if (p.get_name() != "rtcp_inactivity_timeout_s") {
+                continue;
             }
-            return result;
-        });
+            const double v = p.as_double();
+            if (v <= 0.0) {
+                result.successful = false;
+                result.reason = "rtcp_inactivity_timeout_s must be > 0";
+            } else {
+                rtcp_inactivity_timeout_s_ = v;
+                RCLCPP_INFO(this->get_logger(), "rtcp_inactivity_timeout_s set to %.1f s", v);
+            }
+        }
+        return result;
+    });
 
     // Publishers/subscribers use client_id envelopes so multiple peers can negotiate independently on
     // shared topics. The old bare raw-SDP topics are intentionally not exposed.
@@ -152,11 +152,10 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     health_timer_ =
         this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
     prev_status_time_ = std::chrono::steady_clock::now();
-    status_timer_ =
-        this->create_wall_timer(std::chrono::seconds(2), std::bind(&WebRTCStreamer::publish_status, this));
+    status_timer_ = this->create_wall_timer(std::chrono::seconds(2), std::bind(&WebRTCStreamer::publish_status, this));
 
-    RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (%zu cameras, source: %s, compressed: %s)",
-                cameras_.size(), current_source_.c_str(), use_compressed_images_ ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (%zu cameras, source: %s, compressed: %s)", cameras_.size(),
+                current_source_.c_str(), use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Mic audio: %s", enable_audio_ ? "enabled (opt-in per peer)" : "disabled");
     RCLCPP_INFO(this->get_logger(), "  Local STUN: %s", enable_local_stun_ ? "enabled" : "disabled");
     RCLCPP_INFO(this->get_logger(), "  RTCP-inactivity teardown: %.1f s", rtcp_inactivity_timeout_s_);
@@ -230,14 +229,17 @@ WebRTCStreamer::~WebRTCStreamer() {
             gst_buffer_pool_set_active(cam->pool, FALSE);
             gst_object_unref(cam->pool);
         }
-        if (cam->appsrc) gst_object_unref(cam->appsrc);
-        if (cam->sink) gst_object_unref(cam->sink);
+        if (cam->appsrc)
+            gst_object_unref(cam->appsrc);
+        if (cam->sink)
+            gst_object_unref(cam->sink);
     }
     if (encode_pipeline_) {
         gst_element_set_state(encode_pipeline_, GST_STATE_NULL);
         gst_object_unref(encode_pipeline_);
     }
-    if (audio_sink_) gst_object_unref(audio_sink_);
+    if (audio_sink_)
+        gst_object_unref(audio_sink_);
     if (audio_pipeline_) {
         gst_element_set_state(audio_pipeline_, GST_STATE_NULL);
         gst_object_unref(audio_pipeline_);
@@ -269,10 +271,9 @@ bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
                 GstPad* pad = GST_PAD(g_value_get_object(&item));
                 gchar* name = gst_pad_get_name(pad);
                 if (name && g_str_has_prefix(name, "recv_rtcp_sink")) {
-                    gst_pad_add_probe(pad,
-                                      static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER |
-                                                                   GST_PAD_PROBE_TYPE_BUFFER_LIST),
-                                      on_rtcp_buffer, peer, nullptr);
+                    gst_pad_add_probe(
+                        pad, static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST),
+                        on_rtcp_buffer, peer, nullptr);
                     installed = true;
                 }
                 g_free(name);
@@ -309,8 +310,8 @@ void WebRTCStreamer::poll_pipeline_health() {
                     gchar* debug = nullptr;
                     gst_message_parse_error(m, &err, &debug);
                     RCLCPP_ERROR(this->get_logger(), "GStreamer %s error from %s: %s%s%s", label,
-                                 GST_OBJECT_NAME(m->src), err ? err->message : "unknown",
-                                 debug ? " debug=" : "", debug ? debug : "");
+                                 GST_OBJECT_NAME(m->src), err ? err->message : "unknown", debug ? " debug=" : "",
+                                 debug ? debug : "");
                     g_clear_error(&err);
                     g_free(debug);
                     break;
@@ -320,8 +321,8 @@ void WebRTCStreamer::poll_pipeline_health() {
                     gchar* debug = nullptr;
                     gst_message_parse_warning(m, &err, &debug);
                     RCLCPP_WARN(this->get_logger(), "GStreamer %s warning from %s: %s%s%s", label,
-                                GST_OBJECT_NAME(m->src), err ? err->message : "unknown",
-                                debug ? " debug=" : "", debug ? debug : "");
+                                GST_OBJECT_NAME(m->src), err ? err->message : "unknown", debug ? " debug=" : "",
+                                debug ? debug : "");
                     g_clear_error(&err);
                     g_free(debug);
                     break;
@@ -360,10 +361,10 @@ void WebRTCStreamer::poll_pipeline_health() {
         const GstWebRTCPeerConnectionState state = peer_connection_state(p->webrtc);
         if (!p->have_real_remote_ice && !p->pending_mdns_ice.empty() && p->first_mdns_ice_ns != 0 &&
             (now_ns - p->first_mdns_ice_ns) / 1e9 > kMdnsIceFallbackDelayS) {
-            RCLCPP_WARN(this->get_logger(),
-                        "Peer '%s' got no real remote ICE candidate after %.1f s; flushing %zu mDNS fallback candidate(s)",
-                        kv.first.empty() ? "(default)" : kv.first.c_str(), kMdnsIceFallbackDelayS,
-                        p->pending_mdns_ice.size());
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Peer '%s' got no real remote ICE candidate after %.1f s; flushing %zu mDNS fallback candidate(s)",
+                kv.first.empty() ? "(default)" : kv.first.c_str(), kMdnsIceFallbackDelayS, p->pending_mdns_ice.size());
             const auto pending = std::move(p->pending_mdns_ice);
             p->pending_mdns_ice.clear();
             for (const auto& ice : pending) {
@@ -371,11 +372,12 @@ void WebRTCStreamer::poll_pipeline_health() {
             }
         }
         const bool closed = state == GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED;
-        const bool down = state == GST_WEBRTC_PEER_CONNECTION_STATE_FAILED ||
-                          state == GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED;
+        const bool down =
+            state == GST_WEBRTC_PEER_CONNECTION_STATE_FAILED || state == GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED;
         p->terminal_polls = down ? p->terminal_polls + 1 : 0;
         if (closed || p->terminal_polls >= kTeardownGracePolls) {
-            RCLCPP_INFO(this->get_logger(), "Peer '%s' %s; releasing", kv.first.empty() ? "(default)" : kv.first.c_str(),
+            RCLCPP_INFO(this->get_logger(), "Peer '%s' %s; releasing",
+                        kv.first.empty() ? "(default)" : kv.first.c_str(),
                         closed ? "closed" : "down past grace window");
             dead.push_back(kv.first);
             continue;
@@ -429,7 +431,8 @@ void WebRTCStreamer::poll_pipeline_health() {
 void WebRTCStreamer::publish_status() {
     const auto now = std::chrono::steady_clock::now();
     double dt = std::chrono::duration<double>(now - prev_status_time_).count();
-    if (dt <= 1e-3) dt = 1e-3;
+    if (dt <= 1e-3)
+        dt = 1e-3;
     prev_status_time_ = now;
 
     const bool replay = current_source_ == "replay";
@@ -450,8 +453,8 @@ void WebRTCStreamer::publish_status() {
         status.rtp_packet_fps = (encoded - cam->prev_encoded_frames) / dt;
         status.topic = replay ? cam->replay_topic : cam->live_topic;
         status.input_push_errors = cam->input_push_errors.load(std::memory_order_relaxed);
-        status.input_flow = gst_flow_get_name(static_cast<GstFlowReturn>(
-            cam->input_flow_code.load(std::memory_order_relaxed)));
+        status.input_flow =
+            gst_flow_get_name(static_cast<GstFlowReturn>(cam->input_flow_code.load(std::memory_order_relaxed)));
         cam_info[cam->name] = status;
         cam->prev_input_frames = in;
         cam->prev_encoded_frames = encoded;
@@ -473,7 +476,8 @@ void WebRTCStreamer::publish_status() {
             nlohmann::json streams = nlohmann::json::array();
             for (const auto& v : p->active) {  // report streams actually being sent, not merely negotiated
                 auto info = cam_info.find(v);
-                if (info == cam_info.end()) continue;
+                if (info == cam_info.end())
+                    continue;
                 nlohmann::json s;
                 s["name"] = v;
                 s["topic"] = info->second.topic;
@@ -521,7 +525,8 @@ void WebRTCStreamer::publish_status() {
     // The full set of configured cameras (m-line order), so clients can render a per-camera UI
     // dynamically instead of hardcoding main/arm.
     nlohmann::json cams = nlohmann::json::array();
-    for (auto& cam : cameras_) cams.push_back(cam->name);
+    for (auto& cam : cameras_)
+        cams.push_back(cam->name);
     root["cameras"] = cams;
 
     std_msgs::msg::String msg;

@@ -153,15 +153,16 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
         }
     }
     if (!video_specified) {
-        for (auto& cam : cameras_) videos.push_back(cam->name);  // default: all configured cameras
+        for (auto& cam : cameras_)
+            videos.push_back(cam->name);  // default: all configured cameras
     }
 
     std::string video_list;
     for (const auto& v : videos) {
         video_list += (video_list.empty() ? "" : "+") + v;
     }
-    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s, renegotiate=%s)",
-                client_id.c_str(), source.c_str(), video_list.c_str(), request_audio ? "requested" : "off",
+    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s, renegotiate=%s)", client_id.c_str(),
+                source.c_str(), video_list.c_str(), request_audio ? "requested" : "off",
                 renegotiate ? "true" : "false");
 
     std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -197,7 +198,8 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     // Connect (or audio-negotiation change). Peers negotiate ALL cameras up front so future switches stay
     // reneg-free.
     std::vector<std::string> all_cams;
-    for (auto& cam : cameras_) all_cams.push_back(cam->name);
+    for (auto& cam : cameras_)
+        all_cams.push_back(cam->name);
     if (!create_peer_transport(client_id, all_cams, videos, negotiate_audio, audio_active)) {
         RCLCPP_ERROR(this->get_logger(), "Failed to start transport for peer");
     }
@@ -228,8 +230,7 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
 
     // Drop the offer if the peer was torn down / replaced while it was being built (lock-free check).
     if (ctx->gen->load(std::memory_order_relaxed) != ctx->gen_value) {
-        RCLCPP_INFO(self->get_logger(), "Discarding stale offer for '%s'",
-                    peer_label(ctx->client_id));
+        RCLCPP_INFO(self->get_logger(), "Discarding stale offer for '%s'", peer_label(ctx->client_id));
         gst_webrtc_session_description_free(offer);
         gst_promise_unref(promise);
         return;
@@ -243,11 +244,9 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
     const bool missing_audio = ctx->expected_audio && counts.audio == 0;
     const bool missing_data = ctx->expected_data && counts.application == 0;
     if (missing_video || missing_audio || missing_data) {
-        RCLCPP_WARN(self->get_logger(),
-                    "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s data=%u%s)",
-                    peer_label(ctx->client_id), counts.video, ctx->expected_videos,
-                    counts.audio, ctx->expected_audio ? " required" : "", counts.application,
-                    ctx->expected_data ? " required" : "");
+        RCLCPP_WARN(self->get_logger(), "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s data=%u%s)",
+                    peer_label(ctx->client_id), counts.video, ctx->expected_videos, counts.audio,
+                    ctx->expected_audio ? " required" : "", counts.application, ctx->expected_data ? " required" : "");
         // Do not retry create-offer on this same webrtcbin. GStreamer 1.20 can assert in
         // _add_data_channel_offer() if an incomplete offer is followed by an immediate second offer on the
         // same element. The client offer watchdog will send a renegotiate START, which creates a fresh
@@ -264,8 +263,7 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
     std::string sdp_str(sdp_text);
     g_free(sdp_text);
     self->publish_offer(ctx->client_id, sdp_str);
-    RCLCPP_INFO(self->get_logger(), "Sent offer for '%s' (%zu bytes)",
-                peer_label(ctx->client_id), sdp_str.size());
+    RCLCPP_INFO(self->get_logger(), "Sent offer for '%s' (%zu bytes)", peer_label(ctx->client_id), sdp_str.size());
 
     gst_webrtc_session_description_free(offer);
     gst_promise_unref(promise);
@@ -273,8 +271,8 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
 
 void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
     if (sdp.empty() || sdp.size() > kMaxSdpBytes) {
-        RCLCPP_WARN(this->get_logger(), "Ignoring SDP answer for '%s': invalid size %zu",
-                    peer_label(peer->client_id), sdp.size());
+        RCLCPP_WARN(this->get_logger(), "Ignoring SDP answer for '%s': invalid size %zu", peer_label(peer->client_id),
+                    sdp.size());
         return;
     }
     GstSDPMessage* sdp_msg = nullptr;
@@ -287,8 +285,7 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
     const bool missing_audio = peer->with_audio && counts.audio == 0;
     const bool missing_data = counts.application == 0;
     if (missing_video || missing_audio || missing_data) {
-        RCLCPP_WARN(this->get_logger(),
-                    "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u%s data=%u)",
+        RCLCPP_WARN(this->get_logger(), "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u%s data=%u)",
                     peer_label(peer->client_id), counts.video, peer->videos.size(), counts.audio,
                     peer->with_audio ? " required" : "", counts.application);
         gst_sdp_message_free(sdp_msg);
@@ -375,7 +372,8 @@ void WebRTCStreamer::deliver_ice(const std::string& client_id, const std::string
         if (!is_mdns_address(addr)) {
             peer->have_real_remote_ice = true;
             if (!peer->pending_mdns_ice.empty()) {
-                RCLCPP_INFO(this->get_logger(), "Using real remote ICE candidate '%s'; dropping %zu deferred mDNS candidate(s)",
+                RCLCPP_INFO(this->get_logger(),
+                            "Using real remote ICE candidate '%s'; dropping %zu deferred mDNS candidate(s)",
                             addr.empty() ? "(unknown)" : addr.c_str(), peer->pending_mdns_ice.size());
                 peer->pending_mdns_ice.clear();
             }
@@ -482,7 +480,8 @@ void WebRTCStreamer::on_diag_channel_open(GstWebRTCDataChannel* channel, gpointe
     hello["client_id"] = cid ? cid : "";
     hello["steady_ns"] = std::chrono::steady_clock::now().time_since_epoch().count();
     gst_webrtc_data_channel_send_string(channel, hello.dump().c_str());
-    if (label) g_free(const_cast<char*>(label));
+    if (label)
+        g_free(const_cast<char*>(label));
 }
 
 void WebRTCStreamer::on_diag_channel_message(GstWebRTCDataChannel* channel, gchar* data, gpointer user_data) {
@@ -501,6 +500,5 @@ void WebRTCStreamer::on_diag_channel_close(GstWebRTCDataChannel* channel, gpoint
     const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
     RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel closed", (cid && *cid) ? cid : "(default)");
 }
-
 
 }  // namespace mars_cam
