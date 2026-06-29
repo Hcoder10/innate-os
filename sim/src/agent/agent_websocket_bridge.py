@@ -35,6 +35,7 @@ from src.agent.types import (
     VelocityCmd,
 )
 from src.shared_queues import AgentInfo, ChatMessage, ChatSignal, SkillInfo
+from src.webrtc.webrtc_server import CAMERAS as WEBRTC_CAMERAS  # camera roster for /webrtc/active_streams
 
 BACKEND_WARMUP_STATES = {
     "unknown",
@@ -145,35 +146,36 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
 
 
 #
-# WebRTC signaling topics (emulates the robot's mars_cam streamer protocol).
+# WebRTC signaling topics — the per-client `_id` protocol the webapp speaks (same
+# as the robot's mars_cam streamer). Every message carries a `client_id` envelope.
 # Signaling only — media flows peer-to-peer between the browser and the sim's
-# aiortc server, not over rosbridge.
+# aiortc server, not over rosbridge. We OFFER (server->browser): /webrtc/offer_id;
+# the browser answers + trickles its ICE; we publish the camera roster on
+# /webrtc/active_streams so the webapp's camera switcher can build its buttons.
 #
-WEBRTC_OFFER_TOPIC = "/webrtc/offer"
-WEBRTC_ANSWER_TOPIC = "/webrtc/answer"
-WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in"
-WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out"
-WEBRTC_START_TOPIC = "/webrtc/start"
-WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # additive: which cameras to encode
+WEBRTC_OFFER_TOPIC = "/webrtc/offer_id"  # server->browser: {client_id, sdp}
+WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id"  # browser->server: {client_id, sdp}
+WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id"  # browser->server: {client_id, candidate, sdpMLineIndex, sdpMid}
+WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out_id"  # server->browser (unused: aiortc is non-trickle, candidates ride the offer)
+WEBRTC_START_TOPIC = "/webrtc/start"  # browser->server: {client_id, video, audio, source, renegotiate}
+WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # server->browser: {count, clients, cameras}
 WEBRTC_INBOUND_TOPICS = {
     WEBRTC_START_TOPIC,
     WEBRTC_ANSWER_TOPIC,
     WEBRTC_ICE_IN_TOPIC,
-    WEBRTC_ACTIVE_STREAMS_TOPIC,
 }
 
 
 def relay_webrtc_inbound(shared_queues, topic: str, msg_data: dict) -> None:
-    """Parse a /webrtc/* std_msgs/String message and hand it to the aiortc thread."""
-    data = (msg_data or {}).get("data", "")
+    """Parse a per-client /webrtc/* message ({client_id, ...} JSON) and hand it to the aiortc thread."""
+    payload = _loads_or_empty((msg_data or {}).get("data", ""))
+    client_id = payload.get("client_id", "")
     if topic == WEBRTC_START_TOPIC:
-        item = {"kind": "start", "payload": _loads_or_empty(data)}
+        item = {"kind": "start", "payload": payload, "client_id": client_id}
     elif topic == WEBRTC_ANSWER_TOPIC:
-        item = {"kind": "answer", "sdp": data}  # raw SDP, not JSON
+        item = {"kind": "answer", "sdp": payload.get("sdp", ""), "client_id": client_id}
     elif topic == WEBRTC_ICE_IN_TOPIC:
-        item = {"kind": "ice", "payload": _loads_or_empty(data)}
-    elif topic == WEBRTC_ACTIVE_STREAMS_TOPIC:
-        item = {"kind": "active_streams", "cameras": _loads_or_empty(data).get("cameras", [])}
+        item = {"kind": "ice", "payload": payload, "client_id": client_id}
     else:
         return
     try:
@@ -1006,6 +1008,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
     last_sensor_publish_time = 0.0
     last_clock_publish_time = 0.0
+    last_active_streams_publish_time = 0.0
     last_arm_state_publish_time = 0.0
     last_arm_status_publish_time = 0.0
     last_head_position_publish_time = 0.0
@@ -1036,9 +1039,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     adv_arm_status = rosbridge_advertise("/mars/arm/status", "mars_msgs/msg/ArmStatus")
     adv_head_position = rosbridge_advertise("/mars/head/current_position", "std_msgs/msg/String")
 
-    # WebRTC signaling (server->browser): offer + ICE candidates.
+    # WebRTC signaling (server->browser): per-client offer + ICE + the camera roster.
     adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
     adv_webrtc_ice_out = rosbridge_advertise(WEBRTC_ICE_OUT_TOPIC, "std_msgs/msg/String")
+    adv_webrtc_active_streams = rosbridge_advertise(WEBRTC_ACTIVE_STREAMS_TOPIC, "std_msgs/msg/String")
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -1060,6 +1064,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_arm_camera))
     await ws.send(json.dumps(adv_webrtc_offer))
     await ws.send(json.dumps(adv_webrtc_ice_out))
+    await ws.send(json.dumps(adv_webrtc_active_streams))
     for service_advert in arm_service_advertisements():
         await ws.send(json.dumps(service_advert))
     for service_advert in sim_control_service_advertisements():
@@ -1177,15 +1182,26 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             except queue.Empty:
                 break
             kind = signal.get("kind")
+            client_id = signal.get("client_id", "")
             if kind == "offer":
-                topic, payload = WEBRTC_OFFER_TOPIC, signal.get("sdp", "")
+                topic = WEBRTC_OFFER_TOPIC
+                payload = json.dumps({"client_id": client_id, "sdp": signal.get("sdp", "")})
             elif kind == "ice":
-                topic, payload = WEBRTC_ICE_OUT_TOPIC, json.dumps(signal.get("payload", {}))
+                topic = WEBRTC_ICE_OUT_TOPIC
+                payload = json.dumps({"client_id": client_id, **signal.get("payload", {})})
             else:
                 webrtc_processed += 1
                 continue
             await ws.send(json.dumps(rosbridge_publish(topic, {"data": payload})))
             webrtc_processed += 1
+
+        # PRIORITY 1c: Publish the WebRTC camera roster (~2 Hz). The webapp's camera
+        # switcher builds its buttons from this; without it, it never learns the
+        # sim's camera names (first_person / arm_wrist / chase).
+        if now - last_active_streams_publish_time >= 2.0:
+            roster = json.dumps({"count": 1, "clients": [], "cameras": list(WEBRTC_CAMERAS)})
+            await ws.send(json.dumps(rosbridge_publish(WEBRTC_ACTIVE_STREAMS_TOPIC, {"data": roster})))
+            last_active_streams_publish_time = now
 
         # PRIORITY 2: Process sensor data from the latest-only queue.
         # The web UI can render faster locally; ROSBridge cannot cheaply carry

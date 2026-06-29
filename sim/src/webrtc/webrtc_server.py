@@ -47,8 +47,21 @@ class WebRTCManager:
         self._pc: RTCPeerConnection | None = None
         self._tracks: dict[str, CameraTrack] = {}
 
-    async def on_start(self, payload: dict) -> str:
-        """Build the peer connection + offer. Returns the offer SDP."""
+    async def on_start(self, payload: dict) -> str | None:
+        """(Re)build the peer connection + offer, or — for a no-reneg START — just
+        retarget which cameras we encode. Returns the offer SDP, or None when no new
+        offer is needed (a no-reneg active-set change)."""
+        # `video` is the active (encoded) set the browser wants; fall back to the
+        # first camera so something shows before the UI learns the real roster.
+        requested = payload.get("video") or []
+        active = [c for c in requested if c in CAMERAS] or CAMERAS[:1]
+
+        # No-reneg START: the browser is just switching which cameras we push on the
+        # already-negotiated transceivers — flip the active set, emit no new offer.
+        if self._pc is not None and not payload.get("renegotiate"):
+            self._apply_active(active)
+            return None
+
         await self.close()
 
         pc = RTCPeerConnection()
@@ -66,8 +79,7 @@ class WebRTCManager:
             if vp8:
                 transceiver.setCodecPreferences(vp8)
 
-        # First camera shows immediately; the rest stay gated off.
-        self._apply_active(CAMERAS[:1])
+        self._apply_active(active)
 
         @pc.on("connectionstatechange")
         async def _on_state():
@@ -87,6 +99,10 @@ class WebRTCManager:
     async def on_answer(self, sdp: str) -> None:
         if not self._pc or not sdp:
             return
+        # Only an offer we just sent expects an answer; a stale/duplicate answer
+        # (from handshake churn) would raise "cannot handle answer in state stable".
+        if self._pc.signalingState != "have-local-offer":
+            return
         from aiortc import RTCSessionDescription
 
         await self._pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
@@ -97,9 +113,6 @@ class WebRTCManager:
         candidate = _parse_ice(payload)
         if candidate is not None:
             await self._pc.addIceCandidate(candidate)
-
-    def on_active_streams(self, cameras: list[str]) -> None:
-        self._apply_active(cameras)
 
     def _apply_active(self, cameras: list[str]) -> None:
         wanted = set(cameras or [])
@@ -165,10 +178,9 @@ async def _dispatch(manager: WebRTCManager, item: dict, sig_out: queue.Queue) ->
     kind = item.get("kind")
     if kind == "start":
         offer_sdp = await manager.on_start(item.get("payload", {}))
-        sig_out.put_nowait({"kind": "offer", "sdp": offer_sdp})
+        if offer_sdp is not None:  # None = no-reneg active-set change, no offer to send
+            sig_out.put_nowait({"kind": "offer", "sdp": offer_sdp, "client_id": item.get("client_id", "")})
     elif kind == "answer":
         await manager.on_answer(item.get("sdp", ""))
     elif kind == "ice":
         await manager.on_ice(item.get("payload", {}))
-    elif kind == "active_streams":
-        manager.on_active_streams(item.get("cameras", []))
