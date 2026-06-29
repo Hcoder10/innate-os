@@ -86,6 +86,22 @@ To inspect the current state:
 ./innate sim logs simulator
 ```
 
+`./innate sim logs` accepts `-n/--lines N` to override how much history a stream
+shows (defaults: 120 for regular streams, 80 for startup, 60 for brain).
+
+To drop into an interactive shell inside the running ROS container (ROS is
+sourced, the workspace is on the path — useful for `ros2` commands, inspecting
+the tmux session, or rebuilding a package):
+
+```bash
+./innate sim sh
+```
+
+Inside that shell the in-container `innate` developer CLI is on the path (run
+`innate --help`) for building the workspace, restarting nodes, and triggering
+skills. Note this is the container-side CLI (`scripts/innate`), distinct from
+the host `./innate sim` launcher.
+
 ## Config Files
 
 [`config/settings.yaml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/settings.yaml.template) is for optional non-secret tunable ROS parameters such as:
