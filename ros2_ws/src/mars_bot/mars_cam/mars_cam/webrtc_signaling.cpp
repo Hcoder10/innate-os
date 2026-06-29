@@ -251,17 +251,14 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
         // Do not retry create-offer on this same webrtcbin. GStreamer 1.20 can assert in
         // _add_data_channel_offer() if an incomplete offer is followed by an immediate second offer on the
         // same element. The client offer watchdog will send a renegotiate START, which creates a fresh
-        // transport; until then the connect timeout releases this peer.
-        g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offering", nullptr);
-        g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offered", GINT_TO_POINTER(1));
+        // transport; until then the connect timeout releases this peer. The offer-once latch (set when this
+        // offer was kicked off) stays latched, so this webrtcbin never re-offers.
         gst_webrtc_session_description_free(offer);
         gst_promise_unref(promise);
         return;
     }
 
     g_signal_emit_by_name(ctx->webrtc, "set-local-description", offer, nullptr);  // fire-and-forget
-    g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offering", nullptr);
-    g_object_set_data(G_OBJECT(ctx->webrtc), "mars_offered", GINT_TO_POINTER(1));
 
     gchar* sdp_text = gst_sdp_message_as_text(offer->sdp);
     std::string sdp_str(sdp_text);

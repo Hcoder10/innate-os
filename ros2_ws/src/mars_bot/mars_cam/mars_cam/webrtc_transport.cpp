@@ -149,6 +149,11 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
                       GUINT_TO_POINTER(static_cast<guint>(negotiated.size())));
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_audio", GINT_TO_POINTER(peer->with_audio ? 1 : 0));
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_data", GINT_TO_POINTER(1));
+    // Offer-once latch: CAS'd 0->1 by whichever of the racing negotiation-needed callers wins (the explicit
+    // one below on the executor thread vs. webrtcbin's queued signal on the GLib thread). A second create-offer
+    // on a webrtcbin that holds a data channel asserts in _add_data_channel_offer; the atomic prevents it.
+    g_object_set_data_full(G_OBJECT(peer->webrtc), "mars_offer_latch", new std::atomic<int>(0),
+                           [](gpointer p) { delete static_cast<std::atomic<int>*>(p); });
     g_signal_connect(peer->webrtc, "on-ice-candidate", G_CALLBACK(on_ice_candidate), this);
     g_signal_connect(peer->webrtc, "notify::connection-state", G_CALLBACK(on_connection_state_changed), this);
 
@@ -271,12 +276,12 @@ void WebRTCStreamer::on_negotiation_needed(GstElement* webrtc, gpointer user_dat
         return;
     }
     // Offer exactly once per peer: a later renegotiation (e.g. when media starts) must not re-offer and
-    // disrupt a live connection. While create-offer is in flight, suppress duplicate negotiation-needed
-    // emissions; the callback only marks mars_offered after it validates the SDP has every expected m-line.
-    if (g_object_get_data(G_OBJECT(webrtc), "mars_offered") || g_object_get_data(G_OBJECT(webrtc), "mars_offering")) {
+    // disrupt a live connection. The explicit call (executor thread) and webrtcbin's queued signal (GLib
+    // thread) race here, so the latch is an atomic CAS — exactly one caller wins and emits create-offer.
+    auto* latch = static_cast<std::atomic<int>*>(g_object_get_data(G_OBJECT(webrtc), "mars_offer_latch"));
+    if (int expected = 0; !latch || !latch->compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
         return;
     }
-    g_object_set_data(G_OBJECT(webrtc), "mars_offering", GINT_TO_POINTER(1));
 
     const std::string client_id = cid ? cid : "";
     auto* ctx = new OfferContext{self,
