@@ -31,7 +31,7 @@ from src.simulation.special_object_treatments import SpecialObjectHandler
 from src.simulation.stl_slicing import slice_stl
 from src.simulation.utils import rotate_vector
 
-ROBOT_INIT_POS = (2, -5, 0.05)
+ROBOT_INIT_POS = (3, -5, 0.05)
 ROBOT_INIT_QUAT = (0, 0, 0, 1)
 ROBOT_ROOT_POS = (0.0, 0.0, ROBOT_INIT_POS[2])
 ROBOT_ARM_HOME_POSITIONS = [
