@@ -515,40 +515,115 @@ button {
   border-color: var(--accent-dim);
 }
 
-/* Camera view switcher — a row of glass pills sitting just left of the profiling toggle. */
-.cam-switch {
+/* Camera PiP strip — Zoom-style view switcher pinned bottom-right. The big stage is the primary camera;
+   these tiles are the other cameras (off pills or live thumbnails). Tunable knobs live here as custom
+   properties: tile size, gap, and the corner inset. */
+.cam-strip {
+  --pip-w: 168px;
+  --pip-h: 96px;
+  --pip-gap: 8px;
+  --pip-inset: 14px;
+  --pip-top: 54px; /* clear the profiling toggle pinned at top:14px */
   position: absolute;
-  top: 14px;
-  right: 56px; /* left of the 32px-wide toggle at right:14px, + an 10px gap */
+  right: var(--pip-inset);
+  top: var(--pip-top);
   display: flex;
-  gap: 6px;
+  flex-direction: column; /* grow downward from the corner */
+  align-items: flex-end;
+  gap: var(--pip-gap);
 }
 
-.cam-switch-btn {
-  height: 32px;
-  padding: 0 12px;
+.cam-tile {
+  --pip-hover-scale: 1.12;
+  position: relative;
+  width: var(--pip-w);
   background: var(--glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--hairline);
-  border-radius: 9px;
+  border-radius: 10px;
+  cursor: pointer;
+  overflow: hidden;
+  transform-origin: top right; /* grow inward from the corner, never off-screen */
+  transition: border-color 150ms ease, transform 150ms ease, color 150ms ease;
+}
+
+/* Grow on hover so the feed you're about to pick previews bigger. */
+.cam-tile:hover {
+  border-color: var(--hairline-strong);
+  transform: scale(var(--pip-hover-scale));
+  z-index: 1;
+}
+
+/* Off: a compact dim pill showing just the camera name. */
+.cam-tile.off {
+  padding: 7px 12px;
   color: var(--muted);
-  font: inherit;
   font-size: 12px;
   letter-spacing: 0.02em;
   text-transform: lowercase;
-  cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease;
 }
 
-.cam-switch-btn:hover {
+.cam-tile.off:hover {
   color: var(--text);
-  border-color: var(--hairline-strong);
 }
 
-.cam-switch-btn.active {
+/* Live: a thumbnail of the feed. */
+.cam-tile.live {
+  height: var(--pip-h);
+  background: #000;
+}
+
+.cam-tile.live video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Feed requested but not flowing yet — dim the tile so it reads as warming up. */
+.cam-tile.connecting video {
+  opacity: 0.25;
+}
+
+.cam-tile-label {
+  position: absolute;
+  left: 7px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.cam-tile-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+.cam-tile.live:hover .cam-tile-close {
+  opacity: 1;
+}
+
+.cam-tile-close:hover {
   color: var(--accent);
-  border-color: var(--accent-dim);
 }
 
 /* Panel sits just below the toggle; denser glass since it's over the feed. */

@@ -240,7 +240,12 @@ type WebRtcStatus = "idle" | "connecting" | "streaming" | "error";
 /** Snapshot emitted by WebRtcSession on every change. */
 interface WebRtcState {
   status: WebRtcStatus;
+  /** The primary (big) camera's stream — what the full-bleed stage shows. */
   videoStream: MediaStream | null;
+  /** Every negotiated camera's stream, indexed by m-line (null until a track arrives). */
+  videoStreams: (MediaStream | null)[];
+  /** Per m-line liveness: true once that camera's track is unmuted (real frames flowing). */
+  videoLive: boolean[];
   audioStream: MediaStream | null;
   audioRequested: boolean;
 }
