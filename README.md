@@ -29,7 +29,7 @@ Start with [skills](#skills), [agents](#agents), [additional inputs](#additional
 <table>
   <tr>
     <td width="37%" align="center" valign="top">
-      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app running an agent" height="300"><br>
+      <img src="docs/assets/readme/screenshot-webapp-card.png" alt="Innate web app control interface" height="300"><br>
       <sub>Web app</sub>
     </td>
     <td width="26%" align="center" valign="top">
