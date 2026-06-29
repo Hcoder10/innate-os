@@ -84,6 +84,20 @@ echo "Started app control..."
 # by sim/main.py), which pulls frames directly and streams sim->browser without
 # the ROS hop. Both speak the same /webrtc/* rosbridge signaling, so running both
 # would conflict — leave the C++ streamer disabled here for the sim.
+#
+# DO NOT try to run mars_cam in the sim container instead of the host aiortc
+# server. It was attempted and reverted after burning hours on docker NAT: the
+# container is on the docker BRIDGE, so mars_cam's ICE host candidates carry the
+# unreachable container IP, and the browser's mDNS candidates can't be reached
+# back (the peer-reflexive/local-STUN srflx path collapses to the docker gateway
+# and the userland-proxy hairpin fails). Workarounds all have dealbreakers:
+# announce-IP + published ports only fixes browser->robot (robot still can't
+# reach the browser); host networking breaks the novnc DISPLAY and is unsupported
+# on Docker Desktop/Mac; requiring a getUserMedia mic grant to de-obfuscate the
+# browser is the only thing that worked, but it's an unacceptable prompt. The
+# ROS image path is also throttled (~10 Hz, frame-dropping) vs the host server's
+# render-rate frames. The host aiortc server sits in the browser's own network
+# namespace, so none of this applies. Keep WebRTC on the host.
 # tmux new-window -t "$SESSION_NAME" -n webrtc
 # tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
 echo "WebRTC: using sim/ aiortc server (C++ mars_cam streamer disabled for sim)..."
