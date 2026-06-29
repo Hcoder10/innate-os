@@ -969,7 +969,7 @@ def render_status(
     print()
     used_lines += 1
     print_dashboard_line(
-        f"{BOLD}Web UI:{NC} http://localhost:{config.get('frontend_port', '3000')}",
+        f"{BOLD}Web UI:{NC} https://localhost",
         term_width,
     )
     used_lines += 1

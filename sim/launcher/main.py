@@ -47,18 +47,15 @@ from runtime import (
     capture_simulator_logs,
     clean_runtime,
     collect_status_snapshot,
-    config_frontend_port,
     config_simulator_port,
     down_cloud_agent,
     down_os,
     ensure_docker_available,
-    ensure_frontend_container,
     ensure_os_container,
     ensure_sim_data,
     ensure_sim_setup,
     ensure_skill_assets,
     open_os_container_shell,
-    prebuild_frontend_image,
     print_startup_checks,
     runtime_already_running,
     set_simulator_log_mode,
@@ -68,7 +65,6 @@ from runtime import (
     stop_simulator,
     tail_file,
     wait_for_brain_directives,
-    wait_for_frontend_ready,
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
@@ -148,9 +144,6 @@ def cmd_up(
         try:
             start_cloud_agent(config, cloud_env_file)
             ensure_os_container(config, os_env_file, offline=offline)
-            # Start the web frontend container; its build runs in the background while the
-            # simulator loads (we wait on it below).
-            ensure_frontend_container(config, offline=offline)
         except StackError as exc:
             if offline:
                 raise
@@ -181,8 +174,6 @@ def cmd_up(
             )
         log("Waiting for brain directives...")
         brain_directive_count = wait_for_brain_directives(simulator_port)
-        log("Waiting for the web frontend to build...")
-        wait_for_frontend_ready(config_frontend_port(config))
         print_startup_checks(
             config,
             simulator_http_ready=True,
@@ -254,7 +245,7 @@ def cmd_clean(config: dict[str, object], *, delete_data: bool = False, assume_ye
 def cmd_logs(target: str) -> None:
     if target == "startup":
         found_logs = False
-        for name in ("bootstrap", "frontend", "compose", "cloud-agent", "os-build", "os-session", "simulator"):
+        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "os-session", "simulator"):
             path = LOG_TARGETS[name]
             if path.exists():
                 found_logs = True
@@ -280,7 +271,6 @@ def cmd_setup(config: dict[str, object]) -> None:
     configure_hosted_service_key(config)
     sim_python = ensure_sim_setup(config)
     ensure_sim_data(config, allow_fetch=True)
-    prebuild_frontend_image(config)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
     print(f"Sim config: {SIM_CONFIG_PATH}")
@@ -320,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
     sim_subparsers.add_parser(
         "setup",
         prog=f"{CLI_SIM} setup",
-        help="Prepare the simulator environment, frontend build, scene data, and credentials",
+        help="Prepare the simulator environment, scene data, and credentials",
     )
     up_parser = sim_subparsers.add_parser(
         "up",
@@ -392,7 +382,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "startup",
             "bootstrap",
-            "frontend",
             "compose",
             "cloud-agent",
             "os-build",

@@ -84,20 +84,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  frontend:
-    build:
-      context: ./frontend
-    ports:
-      - "${FRONTEND_PORT:-3000}:80"
-    environment:
-      # Browser-facing URLs (the SPA makes these calls, not Caddy), so localhost
-      # resolves to the host where the sim backend / rosbridge run.
-      - SIM_BASE_URL=${SIM_BASE_URL:-http://localhost:8000}
-      - WS_BASE_URL=${WS_BASE_URL:-ws://localhost:8000}
-      - ROBOT_WS_URL=${ROBOT_WS_URL:-ws://localhost:9090}
-      - DIRECT_ROBOT=${DIRECT_ROBOT:-false}
-      - CARTESIA_API_KEY=${CARTESIA_API_KEY:-}
-
 volumes:
   ros2_ws_build:
   ros2_ws_install:

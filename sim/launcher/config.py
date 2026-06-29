@@ -33,7 +33,6 @@ STATE_DIR = LAUNCHER_DIR / ".state"
 LOG_DIR = STATE_DIR / "logs"
 SIM_LOG_PATH = LOG_DIR / "simulator.log"
 BOOTSTRAP_LOG_PATH = LOG_DIR / "bootstrap.log"
-FRONTEND_LOG_PATH = LOG_DIR / "frontend-build.log"
 CLOUD_AGENT_LOG_PATH = LOG_DIR / "cloud-agent.log"
 COMPOSE_LOG_PATH = LOG_DIR / "compose.log"
 OS_BUILD_LOG_PATH = LOG_DIR / "os-build.log"
@@ -72,7 +71,6 @@ OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
 SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY",)
 LOG_TARGETS = {
     "bootstrap": BOOTSTRAP_LOG_PATH,
-    "frontend": FRONTEND_LOG_PATH,
     "cloud-agent": CLOUD_AGENT_LOG_PATH,
     "compose": COMPOSE_LOG_PATH,
     "os-build": OS_BUILD_LOG_PATH,
@@ -432,12 +430,6 @@ def get_config() -> dict[str, object]:
     merged_env = dict(raw_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
     merged_env.setdefault("SIMULATOR_PORT", "8000")
-    # Web frontend container: host port + browser-facing URLs (overridable via .env).
-    merged_env.setdefault("FRONTEND_PORT", "3000")
-    merged_env.setdefault("SIM_BASE_URL", f"http://localhost:{merged_env['SIMULATOR_PORT']}")
-    merged_env.setdefault("WS_BASE_URL", f"ws://localhost:{merged_env['SIMULATOR_PORT']}")
-    merged_env.setdefault("ROBOT_WS_URL", merged_env["ROSBRIDGE_URI"])
-    merged_env.setdefault("DIRECT_ROBOT", "false")
 
     mode = get_nested_str(sim_config, "cloud_agent", "mode") or HOSTED_MODE
     if mode not in {HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}:
@@ -494,7 +486,6 @@ def get_config() -> dict[str, object]:
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,
         "os_always_build": os_always_build if os_always_build is not None else False,
-        "frontend_port": merged_env["FRONTEND_PORT"],
     }
 
 

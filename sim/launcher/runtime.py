@@ -20,7 +20,6 @@ from config import (
     CLOUD_AGENT_LOG_PATH,
     COMPOSE_LOG_PATH,
     DOWN_LOG_PATH,
-    FRONTEND_LOG_PATH,
     GENERATED_OS_ENV_PATH,
     HOSTED_MODE,
     LAUNCHER_DIR,
@@ -52,14 +51,6 @@ from config import (
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
-FRONTEND_COMPOSE_ENV_KEYS = (
-    "FRONTEND_PORT",
-    "SIM_BASE_URL",
-    "WS_BASE_URL",
-    "ROBOT_WS_URL",
-    "DIRECT_ROBOT",
-    "CARTESIA_API_KEY",
-)
 
 
 def run_logged(
@@ -190,47 +181,6 @@ def python_import_succeeds(python_path: Path, module: str) -> bool:
         check=False,
     )
     return result.returncode == 0
-
-
-def frontend_compose_env(config: dict[str, object]) -> dict[str, str]:
-    """Subprocess env for `docker compose` so it interpolates the frontend service's
-    host port and browser-facing URLs from the resolved config."""
-    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-    env = os.environ.copy()
-    for key in FRONTEND_COMPOSE_ENV_KEYS:
-        value = raw_env.get(key)
-        if value is not None:
-            env[key] = value
-    return env
-
-
-def prebuild_frontend_image(config: dict[str, object]) -> None:
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    log("Building simulator web frontend image...")
-    run_logged_with_heartbeat(
-        docker_compose_cmd("build", "frontend"),
-        cwd=os_repo,
-        env=frontend_compose_env(config),
-        log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator web frontend image build failed.",
-        progress_message="Docker is still building the web frontend image.",
-    )
-
-
-def ensure_frontend_container(config: dict[str, object], *, offline: bool = False) -> None:
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    log("Starting simulator web frontend container...")
-    # Offline: reuse the already-built frontend image instead of rebuilding, which
-    # would re-resolve the node/caddy base images over the network.
-    build_flag = "--no-build" if offline else "--build"
-    run_logged_with_heartbeat(
-        docker_compose_cmd("up", "-d", build_flag, "frontend"),
-        cwd=os_repo,
-        env=frontend_compose_env(config),
-        log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator web frontend container startup failed.",
-        progress_message="Docker is still building/starting the web frontend container.",
-    )
 
 
 def sim_venv_python(config: dict[str, object]) -> Path:
@@ -892,8 +842,6 @@ def runtime_already_running(config: dict[str, object]) -> bool:
         return False
     if config["mode"] in LOCAL_MODES and not container_running("stack-cloud-agent"):
         return False
-    if not frontend_ready(config_frontend_port(config)):
-        return False
     return available_agent_count(simulator_port) > 0
 
 
@@ -912,8 +860,6 @@ def print_startup_checks(
     probe = collect_runtime_probe(config, simulator_http_ready=simulator_http_ready)
     simulator_port = str(probe["simulator_port"])
     os_status: dict[str, bool] = probe["os_status"]  # type: ignore[assignment]
-    frontend_port = config_frontend_port(config)
-    frontend_state = frontend_build_state(frontend_port)
     checks = [
         (
             bool(probe["agent_running"]),
@@ -956,13 +902,6 @@ def print_startup_checks(
             probe["backend_level"] == "healthy",
             "Brain backend",
             str(probe["backend_label"]),
-        ),
-        (
-            frontend_state == "ready",
-            "Web UI",
-            f"http://localhost:{frontend_port} ready"
-            if frontend_state == "ready"
-            else f"http://localhost:{frontend_port} {frontend_state or 'not ready'}",
         ),
     ]
 
@@ -1312,55 +1251,6 @@ def wait_for_simulator_http(
 
 def simulator_ready(port: str) -> bool:
     return bool(sim_get_json(port, "video_feeds_ready").get("ready"))
-
-
-def config_frontend_port(config: dict[str, object]) -> str:
-    return str(config.get("frontend_port", "3000"))
-
-
-def fetch_text(url: str, *, timeout: float = 2.0) -> str:
-    try:
-        with urlopen(url, timeout=timeout) as response:
-            if response.status != 200:
-                return ""
-            return response.read().decode("utf-8", errors="replace")
-    except (URLError, TimeoutError):
-        return ""
-
-
-def frontend_build_state(port: str) -> str:
-    """Returns 'building' | 'ready' | 'error' | '' (unreachable/unknown)."""
-    return str(request_json(f"http://localhost:{port}/build-status.json").get("state", ""))
-
-
-def frontend_ready(port: str) -> bool:
-    return frontend_build_state(port) == "ready"
-
-
-def wait_for_frontend_ready(
-    port: str,
-    *,
-    timeout_seconds: float = 300.0,
-) -> None:
-    deadline = time.time() + timeout_seconds
-    next_heartbeat = time.monotonic() + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-    while time.time() < deadline:
-        state = frontend_build_state(port)
-        if state == "ready":
-            return
-        if state == "error":
-            build_log = fetch_text(f"http://localhost:{port}/build.log")
-            tail = "\n".join(build_log.splitlines()[-60:]) if build_log else "<no build log captured>"
-            raise StackError(f"Simulator web frontend build failed.\nRecent build log:\n{tail}")
-
-        now = time.monotonic()
-        if now >= next_heartbeat:
-            remaining = max(0, int(deadline - time.time()))
-            log(f"Waiting for the web frontend to build ({remaining}s remaining)...")
-            next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-        time.sleep(SIM_HTTP_POLL_SECONDS)
-
-    raise StackError(f"Timed out waiting for the simulator web frontend to build.\nCheck: {CLI_SIM} logs frontend")
 
 
 def fetch_simulator_metrics(port: str) -> dict[str, object]:
