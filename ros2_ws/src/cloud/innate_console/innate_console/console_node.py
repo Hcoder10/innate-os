@@ -38,7 +38,26 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-TMUX_SESSION = "ros_nodes"
+def _current_tmux_session() -> str:
+    """Tap whichever tmux session launched us — 'ros_nodes' on the robot, 'innate'
+    in the sim — so the session name never has to be configured. Falls back to the
+    robot default when not running under tmux."""
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#S"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        name = result.stdout.strip()
+        if result.returncode == 0 and name:
+            return name
+    except Exception:
+        pass
+    return "ros_nodes"
+
+
+TMUX_SESSION = _current_tmux_session()
 CAPTURE_DIR = os.path.expanduser("~/.ros/innate_console")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
