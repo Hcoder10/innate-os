@@ -71,6 +71,12 @@ export function createProfilingPanel(parent, session) {
   const all = [jitterBuffer, rtt, jitter, fps, resolution, bitrate, loss, dropped, freezes];
   for (const m of all) grid.append(m.el);
 
+  // Connection state — driven by session changes (not the getStats poll), so it stays meaningful even
+  // when no media is flowing (the very case a failed link needs to surface). Kept out of `all` so the
+  // poll's clearValues() never wipes it.
+  const conn = metric("conn", "");
+  grid.append(conn.el);
+
   wrap.append(head, grid);
   parent.append(toggleBtn, wrap);
 
@@ -217,6 +223,16 @@ export function createProfilingPanel(parent, session) {
 
   toggleBtn.addEventListener("click", toggle);
 
+  // Surface link health on the toggle even while the panel is closed: a failed/error link reddens the
+  // button so it's obvious the video died, and the conn row spells out the ICE state (+ stun fallback).
+  const unsubSession = session.onChange((state) => {
+    const failed = state.status === "error" || state.iceState === "failed";
+    toggleBtn.classList.toggle("failed", failed);
+    toggleBtn.title = failed ? "Connection failed (p)" : "Profiling (p)";
+    conn.value.textContent = state.iceState + (state.stunFallback ? " ·stun" : "");
+    conn.value.classList.toggle("bad", failed);
+  });
+
   /** @param {KeyboardEvent} e */
   function onKeyDown(e) {
     if (e.code !== TOGGLE_KEY || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -232,6 +248,7 @@ export function createProfilingPanel(parent, session) {
   return {
     destroy() {
       stop();
+      unsubSession();
       window.removeEventListener("keydown", onKeyDown);
       toggleBtn.remove();
       wrap.remove();

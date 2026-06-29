@@ -515,6 +515,16 @@ button {
   border-color: var(--accent-dim);
 }
 
+/* Link failed/erroring — make the toggle unmistakably red even while closed. */
+.profiling-toggle.failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.profiling-value.bad {
+  color: var(--danger);
+}
+
 /* Camera PiP strip — Zoom-style view switcher pinned bottom-right. The big stage is the primary camera;
    these tiles are the other cameras (off pills or live thumbnails). Tunable knobs live here as custom
    properties: tile size, gap, and the corner inset. */

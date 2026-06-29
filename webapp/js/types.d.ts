@@ -248,4 +248,8 @@ interface WebRtcState {
   videoLive: boolean[];
   audioStream: MediaStream | null;
   audioRequested: boolean;
+  /** Live RTCPeerConnection.iceConnectionState ("new" before a peer exists). */
+  iceState: string;
+  /** True once we've fallen back to a public STUN server after the local-only config failed. */
+  stunFallback: boolean;
 }

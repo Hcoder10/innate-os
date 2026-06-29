@@ -51,6 +51,8 @@ export class WebRtcSession {
     videoLive: [],
     audioStream: null,
     audioRequested: false,
+    iceState: "new",
+    stunFallback: false,
   };
   /** @type {Set<(state: WebRtcState) => void>} */ #listeners = new Set();
   /** @type {(() => void)[]} */ #unsubs = [];
@@ -62,6 +64,10 @@ export class WebRtcSession {
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
   #videoTrackCount = 0;
   #handshakeAttempts = 0;
+  // Sticky for the session once a connect attempt fails: the next pc is rebuilt with a public STUN server
+  // added (see webrtcConfig). Off on the happy path so we never hit a third-party server when the robot's
+  // own STUN responder is reachable. Reset only on a full stop().
+  #useFallbackStun = false;
   // Multi-camera: the robot negotiates every camera's m-line (video0, video1, …); we keep each track's
   // stream by m-line index. The robot encodes/pushes the ACTIVE set (and only those); of those, one is
   // PRIMARY (the big stage), the rest are live PiP thumbnails. Changing the active set or the primary is a
@@ -132,9 +138,10 @@ export class WebRtcSession {
   /** Tear down entirely (drops the freeze-frame too). */
   stop() {
     this.#started = false;
+    this.#useFallbackStun = false;
     this.#closePc();
     this.#clearAudioDebounce();
-    this.#patch({ status: "idle", videoStream: null, audioStream: null });
+    this.#patch({ status: "idle", videoStream: null, audioStream: null, iceState: "new", stunFallback: false });
   }
 
   destroy() {
@@ -245,7 +252,7 @@ export class WebRtcSession {
 
     if (this.#ros.state !== "connected") return; // resumes on reconnect
 
-    const pc = createLocalPeerConnection(this.#ros.ip);
+    const pc = createLocalPeerConnection(this.#ros.ip, { fallback: this.#useFallbackStun });
     this.#pc = pc;
     this.#builtWithAudio = this.#state.audioRequested;
     wireDiagnosticDataChannels(pc);
@@ -278,9 +285,13 @@ export class WebRtcSession {
       if (this.#pc !== pc) return;
       const s = pc.iceConnectionState;
       console.log("[webrtc] ice:", s);
+      this.#patch({ iceState: s });
       if (s === "connected" || s === "completed") {
         this.#clearDegradeTimer();
       } else if (s === "failed") {
+        // No working candidate pair — turn on the public-STUN fallback so the degrade-timer rebuild below
+        // can learn an srflx candidate even when the robot's own STUN responder isn't reachable.
+        this.#enableStunFallback();
         // ICE exhausted every candidate pair without finding a working one = NO NETWORK PATH between this
         // browser and the robot (e.g. the robot can't reach our host candidates — mDNS-obfuscated on a
         // network where they don't resolve — and srflx/NAT-hairpin didn't work either).
@@ -495,6 +506,14 @@ export class WebRtcSession {
     }, ICE_DEGRADE_MS);
   }
 
+  /** Latch the public-STUN fallback on (sticky until stop()); the next #handshake() rebuilds with it. */
+  #enableStunFallback() {
+    if (this.#useFallbackStun) return;
+    this.#useFallbackStun = true;
+    console.warn("[webrtc] enabling public STUN fallback for subsequent rebuilds");
+    this.#patch({ stunFallback: true });
+  }
+
   #clearDegradeTimer() {
     if (this.#degradeTimer !== null) {
       clearTimeout(this.#degradeTimer);
@@ -515,6 +534,9 @@ export class WebRtcSession {
       this.#watchdog = null;
       this.#handshakeAttempts += 1;
       if (this.#handshakeAttempts < MAX_HANDSHAKE_ATTEMPTS) {
+        // The first attempt used the local-only config; escalate the rebuilds onto the public-STUN
+        // fallback in case the missing media is an unreachable robot STUN responder (no srflx candidate).
+        this.#enableStunFallback();
         console.warn(`[webrtc] no media yet (attempt ${this.#handshakeAttempts}), rebuilding`);
         this.#handshake();
       } else {

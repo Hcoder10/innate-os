@@ -2,6 +2,12 @@
 
 const LOCAL_STUN_PORT = 3478;
 
+// Public STUN, only added as a fallback once the local-only config has failed to
+// connect (see WebRtcSession). It lets the browser learn a server-reflexive
+// candidate when the robot's own STUN responder isn't reachable — at the cost of
+// a hit to a third-party server, which is why it's off on the happy path.
+const PUBLIC_STUN_FALLBACK = "stun:stun.l.google.com:19302";
+
 export const LOCAL_WEBRTC_CONFIG = Object.freeze({
   iceServers: [],
 });
@@ -19,21 +25,24 @@ function stunHost(host) {
 
 /**
  * @param {string | null | undefined} robotHost
+ * @param {{ fallback?: boolean }} [opts] add a public STUN server (used after the local-only config fails).
  * @returns {RTCConfiguration}
  */
-export function createLocalWebRtcConfig(robotHost = null) {
+export function createLocalWebRtcConfig(robotHost = null, { fallback = false } = {}) {
   const host = stunHost(robotHost);
-  return host
-    ? { iceServers: [{ urls: `stun:${host}:${LOCAL_STUN_PORT}` }] }
-    : LOCAL_WEBRTC_CONFIG;
+  const iceServers = [];
+  if (host) iceServers.push({ urls: `stun:${host}:${LOCAL_STUN_PORT}` });
+  if (fallback) iceServers.push({ urls: PUBLIC_STUN_FALLBACK });
+  return iceServers.length ? { iceServers } : LOCAL_WEBRTC_CONFIG;
 }
 
 /**
  * @param {string | null | undefined} robotHost
+ * @param {{ fallback?: boolean }} [opts]
  * @returns {RTCPeerConnection}
  */
-export function createLocalPeerConnection(robotHost = null) {
-  return new RTCPeerConnection(createLocalWebRtcConfig(robotHost));
+export function createLocalPeerConnection(robotHost = null, opts = {}) {
+  return new RTCPeerConnection(createLocalWebRtcConfig(robotHost, opts));
 }
 
 /**
