@@ -242,7 +242,7 @@ def cmd_clean(config: dict[str, object], *, delete_data: bool = False, assume_ye
     log(f"Run `{CLI_SIM} setup` to rebuild the simulator environment.")
 
 
-def cmd_logs(target: str) -> None:
+def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "startup":
         found_logs = False
         for name in ("bootstrap", "compose", "cloud-agent", "os-build", "os-session", "simulator"):
@@ -250,7 +250,7 @@ def cmd_logs(target: str) -> None:
             if path.exists():
                 found_logs = True
                 print(f"{BOLD}{path}{NC}")
-                print(tail_file(path, limit=80))
+                print(tail_file(path, limit=lines or 80))
                 print()
         if not found_logs:
             warn("No startup logs have been written yet.")
@@ -258,11 +258,11 @@ def cmd_logs(target: str) -> None:
 
     if target == "brain":
         config = get_config()
-        print("\n".join(capture_os_brain_logs(config, lines=60)))
+        print("\n".join(capture_os_brain_logs(config, lines=lines or 60)))
         return
 
     path = LOG_TARGETS[target]
-    print(tail_file(path, limit=120))
+    print(tail_file(path, limit=lines or 120))
 
 
 def cmd_setup(config: dict[str, object]) -> None:
@@ -392,6 +392,13 @@ def build_parser() -> argparse.ArgumentParser:
         ],
         help="Which log stream to show",
     )
+    logs_parser.add_argument(
+        "-n",
+        "--lines",
+        type=int,
+        default=None,
+        help="Number of lines to show (overrides the per-stream default)",
+    )
     assets_parser = sim_subparsers.add_parser(
         "assets",
         prog=f"{CLI_SIM} assets",
@@ -475,7 +482,7 @@ def main() -> int:
                 verbose=args.mode == "verbose",
             )
         elif args.sim_command == "logs":
-            cmd_logs(args.target)
+            cmd_logs(args.target, args.lines)
         elif args.sim_command == "assets":
             cmd_assets(args, config)
         else:
