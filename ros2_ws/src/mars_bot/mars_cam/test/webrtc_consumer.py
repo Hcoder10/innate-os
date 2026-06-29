@@ -63,7 +63,7 @@ class Driver:
         self.node = rclpy.create_node("webrtc_tester")
         self.start_pub = self.node.create_publisher(String, START, 10)
         self.status = {}
-        self.offers = {}        # client_id -> latest offer SDP
+        self.offers = {}  # client_id -> latest offer SDP
         self._lock = threading.Lock()
         self.node.create_subscription(String, ACTIVE, self._on_status, 10)
         self.node.create_subscription(String, OFFER_ID, self._on_offer_id, 10)
@@ -161,7 +161,7 @@ def test_fanout(d, peers=3):
     for cid in ids:
         d.start(client_id=cid, video=["main", "arm"])
         time.sleep(0.3)
-    ok_count = wait_for(lambda: (d.snapshot()[0].get("count", 0) >= peers), 5)
+    ok_count = wait_for(lambda: d.snapshot()[0].get("count", 0) >= peers, 5)
     s, _ = d.snapshot()
     rates = []
     for c in s.get("clients", []):
@@ -191,8 +191,10 @@ def test_gating(d):
     if n0 == 0:
         print("  idle: count=0 -> no peers (good)")
     else:
-        print(f"  idle: count={n0} -> OTHER PEERS PRESENT; skipping strict idle check "
-              f"(re-run on an idle node to verify zero-encoding-at-idle)")
+        print(
+            f"  idle: count={n0} -> OTHER PEERS PRESENT; skipping strict idle check "
+            f"(re-run on an idle node to verify zero-encoding-at-idle)"
+        )
     cid = f"gate-{uuid.uuid4().hex[:6]}"
     d.start(client_id=cid, video=["main", "arm"])
     on = wait_for(lambda: (lambda c: c and all(st.get("encoding") for st in c["streams"]))(d.client(cid)), 5)
@@ -216,7 +218,11 @@ def test_selective(d):
         cid = f"sel-{uuid.uuid4().hex[:6]}"
         d.start(client_id=cid, video=want)
         ok = wait_for(
-            lambda: (lambda c: c and sorted(s["name"] for s in c["streams"]) == sorted(want))(d.client(cid)), 5)
+            lambda cid=cid, want=want: (lambda cl: cl and sorted(s["name"] for s in cl["streams"]) == sorted(want))(
+                d.client(cid)
+            ),
+            5,
+        )
         c = d.client(cid)
         active = sorted(s["name"] for s in (c["streams"] if c else []))
         print(f"  video={want}: active streams={active}  -> {'PASS' if ok else 'FAIL'}")
@@ -260,11 +266,11 @@ def run_full(d, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", nargs="?", default="full",
-                    choices=["full", "fanout", "gating", "selective", "timeout"])
+    ap.add_argument("mode", nargs="?", default="full", choices=["full", "fanout", "gating", "selective", "timeout"])
     ap.add_argument("--peers", type=int, default=3)
-    ap.add_argument("--connect-timeout", type=float, default=15.0,
-                    help="node's connect timeout, for sizing the timeout test's wait")
+    ap.add_argument(
+        "--connect-timeout", type=float, default=15.0, help="node's connect timeout, for sizing the timeout test's wait"
+    )
     args = ap.parse_args()
 
     d = Driver()
@@ -272,9 +278,13 @@ def main():
         if not wait_for(d.node_up, 5.0):
             print("ERROR: webrtc_streamer not found on the ROS graph.")
             return 2
-        fns = {"fanout": lambda: test_fanout(d, args.peers), "gating": lambda: test_gating(d),
-               "selective": lambda: test_selective(d), "timeout": lambda: test_timeout(d, args.connect_timeout),
-               "full": lambda: run_full(d, args)}
+        fns = {
+            "fanout": lambda: test_fanout(d, args.peers),
+            "gating": lambda: test_gating(d),
+            "selective": lambda: test_selective(d),
+            "timeout": lambda: test_timeout(d, args.connect_timeout),
+            "full": lambda: run_full(d, args),
+        }
         return 0 if fns[args.mode]() else 1
     finally:
         d.shutdown()
