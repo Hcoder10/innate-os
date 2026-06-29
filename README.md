@@ -56,6 +56,7 @@ _Innate OS is developed for MARS; if you want to port it to your robot, we are h
 - [Additional Inputs](#additional-inputs)
 - [ROS Reference](#ros-reference)
 - [More Docs](#more-docs)
+- [Contribute](#contribute)
 
 ---
 
@@ -399,3 +400,13 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 ## More Docs
 
 - [Innate documentation](https://docs.innate.bot) - canonical docs for setup, simulator, skills, agents, training, and robot operation.
+
+---
+
+## Contribute
+
+We welcome contributions to Innate OS and will be happy to feature applications written on top of it here–and robots using it.
+
+A huge thanks to all people in the community who helped by contributing, providing feedback, and building on Innate OS.
+
+If you want to help, feel free to reach out on [Discord](https://discord.gg/innate).
