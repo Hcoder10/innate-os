@@ -53,6 +53,23 @@ HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
 # can't accept the self-signed cert also reach /episode* here. 0 disables it.
 # NOTE: 80/443 are privileged — bind needs root or cap_net_bind_service.
 HTTP_PORT = int(os.environ.get("INNATE_HTTP_PORT", "80"))
+
+# Outside-facing (published) ports. They equal the in-container bind ports above
+# on a robot, but `innate sim up` can remap them (e.g. publish 8443:443) so the
+# webapp is reachable on a non-privileged port. The container only ever learns
+# the OUTSIDE port through these env vars — the docker mapping is invisible to it.
+SIM_HTTPS_PORT = int(os.environ.get("SIM_HTTPS_PORT", str(HTTPS_PORT)))
+SIM_HTTP_PORT = int(os.environ.get("SIM_HTTP_PORT", str(HTTP_PORT)))
+
+# Disable the http->https bounce. A remapped outside port forces this on: the
+# redirect (built from the in-container HTTPS_PORT) would target a port the host
+# doesn't publish, so "ports are set" and "don't redirect" are the same knob.
+# WEBAPP_NO_HTTPS_REDIRECT=1 also forces it off directly.
+NO_HTTPS_REDIRECT = (
+    os.environ.get("WEBAPP_NO_HTTPS_REDIRECT", "").strip().lower() in ("1", "true", "yes")
+    or SIM_HTTPS_PORT != HTTPS_PORT
+    or SIM_HTTP_PORT != HTTP_PORT
+)
 ROOT = Path(__file__).resolve().parent.parent
 # The sim launch sets this so the webapp's sim-only debug controls (Reset
 # Position + FPS/queue) surface without editing the committed (robot-default)
@@ -262,7 +279,7 @@ async def process_request(connection, request):
     # Sticky upgrade: bounce a cleartext hit to https once the browser is known to
     # have accepted the cert. Never redirect a WebSocket upgrade (clients don't
     # follow 3xx) — but if the cookie is set the page is already https anyway.
-    if not secure and not is_ws and _has_https_cookie(request):
+    if not NO_HTTPS_REDIRECT and not secure and not is_ws and _has_https_cookie(request):
         return _redirect_to_https(request)
     response = await _dispatch_request(connection, request)
     # Remember https-capable browsers so the redirect above can fire next time.
@@ -320,7 +337,8 @@ async def main():
             await stack.enter_async_context(
                 serve(ws_handler, "0.0.0.0", HTTP_PORT, process_request=process_request, max_size=None)
             )
-            print(f"http listener on http://0.0.0.0:{HTTP_PORT} (full app; frontend redirects to https)")
+            redirect_note = "redirect disabled" if NO_HTTPS_REDIRECT else "frontend redirects to https"
+            print(f"http listener on http://0.0.0.0:{HTTP_PORT} (full app; {redirect_note})")
         await asyncio.get_running_loop().create_future()
 
 

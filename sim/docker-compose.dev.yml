@@ -34,12 +34,18 @@ services:
       - INNATE_OS_ROOT=/root/innate-os
       - SKIP_UPDATE_CHECK=1 # Skip git update checks in simulation mode
       - CCACHE_DIR=/root/.cache/ccache
+      # Outside-facing webapp ports. Default to the privileged 443/80; override
+      # (e.g. SIM_HTTPS_PORT=8443 ./innate sim up) to publish on a non-privileged
+      # port. Passed into the container too so the front door knows it's remapped
+      # and skips the http->https redirect (it can't target a port docker hides).
+      - SIM_HTTPS_PORT=${SIM_HTTPS_PORT:-443}
+      - SIM_HTTP_PORT=${SIM_HTTP_PORT:-80}
     ports:
       - "9090:9090"
       # webapp front door (replaces the deprecated sim/frontend UI): the in-container
       # python server binds 443 (https) + 80 (http); the frontend redirects http->https.
-      - "443:443"
-      - "80:80"
+      - "${SIM_HTTPS_PORT:-443}:443"
+      - "${SIM_HTTP_PORT:-80}:80"
 
     volumes:
       # 1) Mount your local code (paths are relative to this file's directory)
