@@ -522,13 +522,13 @@ button {
   --pip-w: 168px;
   --pip-h: 96px;
   --pip-gap: 8px;
-  --pip-inset: 14px;
+  --pip-inset: 20px;
   --pip-top: 54px; /* clear the profiling toggle pinned at top:14px */
   position: absolute;
   right: var(--pip-inset);
   top: var(--pip-top);
   display: flex;
-  flex-direction: column; /* grow downward from the corner */
+  flex-direction: row; /* grow leftward along the top edge */
   align-items: flex-end;
   gap: var(--pip-gap);
 }
