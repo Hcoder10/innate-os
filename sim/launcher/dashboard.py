@@ -969,7 +969,12 @@ def render_status(
     print()
     used_lines += 1
     print_dashboard_line(
-        f"{BOLD}Simulator UI:{NC} http://localhost:{snapshot['simulator_port']}",
+        f"{BOLD}Web UI:{NC} http://localhost:{config.get('frontend_port', '3000')}",
+        term_width,
+    )
+    used_lines += 1
+    print_dashboard_line(
+        f"{BOLD}Simulator API:{NC} http://localhost:{snapshot['simulator_port']}",
         term_width,
     )
     used_lines += 1

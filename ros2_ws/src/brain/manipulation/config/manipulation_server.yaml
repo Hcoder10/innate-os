@@ -16,4 +16,5 @@ manipulation_server:
     #   > 0 : weight OLDER predictions more (smoother; can over-commit to stale far-horizon steps)
     #   < 0 : weight the LATEST chunk more (reactive/closed-loop; noisier)
     #   = 0 : disabled -- fall back to the chunked-queue path (replan every n_action_steps)
-    temporal_ensemble_coeff: 0.01
+    # Disabled by default; 0.01 is a good starting value to enable smoothing (pins n_action_steps=1).
+    temporal_ensemble_coeff: 0.0

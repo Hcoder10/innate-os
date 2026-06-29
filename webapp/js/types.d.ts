@@ -189,6 +189,7 @@ interface RobotInfo {
   /** Newer robot software with the recorder/replay services — gates the
    * Collect page's "Recorded movement" (replay skill) option. */
   supports_digital_skills?: boolean;
+  volume_percent?: number; // 0–100 robot speaker volume
 }
 
 /** JSON payload carried inside /mars/head/current_position's std_msgs/String. */

@@ -6,6 +6,14 @@
 
 !ros2_ws/
 !ros2_ws/**
+
+# ...but never local colcon outputs. Their CMakeCache.txt embeds absolute host
+# paths, so copying them in breaks the in-container build ("CMakeCache directory
+# is different"). CI checkouts have no build/; local dev does.
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
 !config/
 !config/**
 !workspace/

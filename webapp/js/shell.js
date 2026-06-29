@@ -3,6 +3,7 @@
 // and the placeholder renderer for not-yet-built sections.
 
 import { ros } from "./rosClient.js";
+import { maybeShowAppPromo } from "./appPromo.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -86,6 +87,9 @@ export function initShell(activeKey, root) {
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);
+
+  // On a phone/tablet, nudge toward the native app (shown once, then remembered).
+  maybeShowAppPromo(root);
 }
 
 /**
