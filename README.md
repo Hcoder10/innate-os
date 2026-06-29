@@ -5,6 +5,8 @@
   <img src="docs/assets/readme/innate-os-repo-intro.png" alt="Innate OS" width="80%">
 </p>
 
+**A lightweight, agentic, ROS2-based operating system for Innate robots**
+
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
 [![Documentation](https://img.shields.io/badge/Docs-Read%20the%20docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.innate.bot)
 [![Website](https://img.shields.io/badge/Website-Visit%20us-orange?style=for-the-badge&logo=safari&logoColor=white)](https://innate.bot)
@@ -19,9 +21,7 @@
 
 </div>
 
-Innate OS is currently compatible only with MARS. If you make another robot work with it, open an issue or PR and we can reference it here.
-
-If you have an Innate-compatible robot, start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
+Start with [skills](#skills), [agents](#agents), [additional inputs](#additional-inputs), the [simulator](#simulator), or the [ROS reference](#ros-reference).
 
 > [!TIP]
 > Don't have a robot? You can still experiment with the simulator!
@@ -42,6 +42,8 @@ If you have an Innate-compatible robot, start with [skills](#skills), [agents](#
     </td>
   </tr>
 </table>
+
+_Innate OS is developed for MARS; if you want to port it to your robot, we are happy to feature it._
 
 ---
 
@@ -152,8 +154,8 @@ You will find skills in two different directories:
         "model_type": "replay",
         "replay_file": "episode_0.h5",
         "replay_frequency": 50.0,
-        "start_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        "end_pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        "start_pose": [1.57693225, -0.6, 1.4772235, -0.73784476, 0.0, 0.0],
+        "end_pose": [1.57693225, -0.6, 1.4772235, -0.73784476, 0.0, 0.0]
     }
 }</pre>
     </td>
@@ -396,8 +398,4 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 
 ## More Docs
 
-- [`workspace/README.md`](workspace/README.md) - where agents and skills live.
-- [`ros2_ws/src/brain/brain_client/docs/agent-skills-design.md`](ros2_ws/src/brain/brain_client/docs/agent-skills-design.md) - agent and skill loading model.
-- [`sim/launcher/README.md`](sim/launcher/README.md) - full `./innate sim` workflow.
-- [`docs/INPUT_DEVICES.md`](docs/INPUT_DEVICES.md) - how to add input devices.
-- [`scripts/update/README.md`](scripts/update/README.md) - updates, services, and skill CLI commands.
+- [Innate documentation](https://docs.innate.bot) - canonical docs for setup, simulator, skills, agents, training, and robot operation.
