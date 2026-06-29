@@ -47,6 +47,27 @@ const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 mountPage(stage, "cockpit", buildCockpit);
 
 /**
+ * Sim API base for /stack_metrics. The committed config.json points at
+ * localhost — fine when the webapp is opened on the same machine, but when the
+ * page is served from another host that loopback names the viewer's box, not
+ * the sim. Swap in the serving host, keeping the configured port/scheme.
+ * @param {string | undefined} configured
+ * @returns {string}
+ */
+function resolveSimApiUrl(configured) {
+  const base = configured || "http://localhost:8000";
+  const host = location.hostname;
+  if (!host || host === "localhost" || host === "127.0.0.1") return base;
+  try {
+    const url = new URL(base);
+    url.hostname = host;
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return base;
+  }
+}
+
+/**
  * @param {HTMLElement} root
  * @returns {{ destroy: () => void }}
  */
@@ -101,7 +122,7 @@ function buildCockpit(root) {
 
   // Sim-only debug controls (Reset Position + FPS/queue) — opt-in via config.json.
   if (config.simControls) {
-    parts.push(createSimControls(root, ros, config.simApiUrl || "http://localhost:8000"));
+    parts.push(createSimControls(root, ros, resolveSimApiUrl(config.simApiUrl)));
   }
 
   session.start();
