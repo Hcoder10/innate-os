@@ -452,7 +452,7 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
     g_object_get(webrtc, "connection-state", &state, nullptr);
     const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(webrtc), "client_id"));
 
-    // On connect, force a keyframe on both encoders so this peer (which may be joining a stream that's
+    // On connect, force a keyframe on every encoder so this peer (which may be joining a stream that's
     // already running for others) gets a decodable IDR immediately. Teardown is handled by the health
     // poll on the executor thread (set-state from here would deadlock the pipeline).
     if (cid) {
@@ -463,8 +463,7 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
         }
     }
     if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
-        self->force_keyframe("main");
-        self->force_keyframe("arm");
+        for (auto& cam : self->cameras_) self->force_keyframe(cam->name);
     }
     RCLCPP_INFO(self->get_logger(), "Peer '%s' connection state: %s", (cid && *cid) ? cid : "(default)",
                 conn_state_name(state));
