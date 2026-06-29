@@ -42,14 +42,14 @@ class WebRTCStreamer;  // CameraEncoder back-references the node for the static 
 struct CameraEncoder {
     std::string name;
     std::string live_topic, replay_topic;
-    int pt = 96;       // RTP payload type, unique per camera (audio uses 98)
-    int fps = 30;      // encoder framerate (appsrc caps)
-    guint ssrc = 0;    // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+    int pt = 96;     // RTP payload type, unique per camera (audio uses 98)
+    int fps = 30;    // encoder framerate (appsrc caps)
+    guint ssrc = 0;  // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
 
-    GstElement* appsrc = nullptr;   // src_<name>, ref'd out of the encode pipeline
-    GstElement* sink = nullptr;     // sink_<name> appsink, ref'd; the fan-out tap
+    GstElement* appsrc = nullptr;  // src_<name>, ref'd out of the encode pipeline
+    GstElement* sink = nullptr;    // sink_<name> appsink, ref'd; the fan-out tap
     GstBufferPool* pool = nullptr;
-    std::atomic<int> want{0};       // # peers actively pushing this camera; 0 => the callback does no work
+    std::atomic<int> want{0};  // # peers actively pushing this camera; 0 => the callback does no work
     std::atomic<uint64_t> input_frames{0};
     std::atomic<uint64_t> input_push_errors{0};
     std::atomic<uint64_t> encoded_frames{0};
@@ -66,16 +66,16 @@ struct CameraEncoder {
 // can't take the cameras down with it.
 struct Peer {
     std::string client_id;
-    GstElement* pipeline = nullptr;   // transport pipeline (owns webrtcbin + rtp appsrcs)
-    GstElement* webrtc = nullptr;     // ref'd from pipeline
+    GstElement* pipeline = nullptr;                // transport pipeline (owns webrtcbin + rtp appsrcs)
+    GstElement* webrtc = nullptr;                  // ref'd from pipeline
     GstWebRTCDataChannel* diag_channel = nullptr;  // robot-created SCTP probe channel
-    std::map<std::string, GstElement*> rtp;  // camera name -> ref'd transport appsrc (the negotiated set)
-    std::vector<std::string> videos;  // NEGOTIATED video streams (transceivers), in m-line order
-    std::vector<std::string> active;  // currently PUSHED streams (subset of videos); toggled live on a
-                                      // stream switch without renegotiating, so switches are instant
-    bool with_audio = false;          // audio m-line NEGOTIATED (an opus transceiver exists)
-    bool audio_active = false;        // audio currently being SENT — toggled live like the cameras (no reneg)
-    bool media_ready = false;         // true only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin
+    std::map<std::string, GstElement*> rtp;        // camera name -> ref'd transport appsrc (the negotiated set)
+    std::vector<std::string> videos;               // NEGOTIATED video streams (transceivers), in m-line order
+    std::vector<std::string> active;               // currently PUSHED streams (subset of videos); toggled live on a
+                                                   // stream switch without renegotiating, so switches are instant
+    bool with_audio = false;                       // audio m-line NEGOTIATED (an opus transceiver exists)
+    bool audio_active = false;          // audio currently being SENT — toggled live like the cameras (no reneg)
+    bool media_ready = false;           // true only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin
     bool have_real_remote_ice = false;  // true after a non-mDNS candidate (local-STUN srflx fast path)
     int64_t first_mdns_ice_ns = 0;      // steady-clock ns when the first deferred .local candidate arrived
     std::vector<std::pair<int, std::string>> pending_mdns_ice;  // mline + raw candidate fallback
@@ -92,24 +92,30 @@ struct Peer {
     // Per-peer RTCP-inactivity watchdog (a vanished peer leaves webrtcbin stuck in CONNECTED).
     std::atomic<int64_t> last_rtcp_ns{0};  // steady-clock ns of last RTCP; 0 = disarmed
     bool rtcp_probe_installed = false;
-    int terminal_polls = 0;  // consecutive FAILED/DISCONNECTED health polls
+    int terminal_polls = 0;                           // consecutive FAILED/DISCONNECTED health polls
     std::map<std::string, uint64_t> rtp_pushes;       // stream name -> buffers pushed into this transport
     std::map<std::string, uint64_t> rtp_push_errors;  // stream name -> non-OK appsrc push returns
     std::map<std::string, std::string> rtp_flow;      // stream name -> last GstFlowReturn name
 
     Peer() = default;
-    Peer(const Peer&) = delete;             // owns raw GStreamer refs — never copy (would double-unref)
+    Peer(const Peer&) = delete;  // owns raw GStreamer refs — never copy (would double-unref)
     Peer& operator=(const Peer&) = delete;
     // RAII teardown: NULL first (joins the transport's streaming threads, so no probe/callback runs after),
     // then release the refs. Destroying a peer is now just letting its unique_ptr go — every former manual
     // teardown (3 create-error paths + destroy_peer) collapses to this.
     ~Peer() {
-        if (pipeline) gst_element_set_state(pipeline, GST_STATE_NULL);
-        if (diag_channel) gst_webrtc_data_channel_close(diag_channel);
-        for (auto& kv : rtp) gst_object_unref(kv.second);
-        if (diag_channel) gst_object_unref(diag_channel);
-        if (webrtc) gst_object_unref(webrtc);
-        if (pipeline) gst_object_unref(pipeline);
+        if (pipeline)
+            gst_element_set_state(pipeline, GST_STATE_NULL);
+        if (diag_channel)
+            gst_webrtc_data_channel_close(diag_channel);
+        for (auto& kv : rtp)
+            gst_object_unref(kv.second);
+        if (diag_channel)
+            gst_object_unref(diag_channel);
+        if (webrtc)
+            gst_object_unref(webrtc);
+        if (pipeline)
+            gst_object_unref(pipeline);
     }
 };
 
@@ -121,11 +127,11 @@ class WebRTCStreamer : public rclcpp::Node {
    private:
     // ---- Signaling (ROS). START/answer/ICE all carry an explicit client_id. ----
     void on_start(const std_msgs::msg::String::SharedPtr msg);
-    void on_answer_id(const std_msgs::msg::String::SharedPtr msg);   // {client_id, sdp}
-    void on_ice_in_id(const std_msgs::msg::String::SharedPtr msg);   // {client_id, candidate, ...}
+    void on_answer_id(const std_msgs::msg::String::SharedPtr msg);  // {client_id, sdp}
+    void on_ice_in_id(const std_msgs::msg::String::SharedPtr msg);  // {client_id, candidate, ...}
     void deliver_answer(const std::string& client_id, const std::string& sdp);
     void deliver_ice(const std::string& client_id, const std::string& candidate, int mline);
-    void apply_answer(Peer* peer, const std::string& sdp);          // caller holds peers_mutex_
+    void apply_answer(Peer* peer, const std::string& sdp);                // caller holds peers_mutex_
     void apply_ice(Peer* peer, const std::string& candidate, int mline);  // caller holds peers_mutex_
 
     // ---- Camera frames -> persistent encoders (one generic handler per encoding, bound per camera) ----
@@ -149,8 +155,8 @@ class WebRTCStreamer : public rclcpp::Node {
     void fan_out_sample(GstElement* appsink, const std::string& cam);
 
     // ---- Shared audio (mic) — encoded once like the cameras, fanned out, gated for privacy ----
-    bool build_audio_pipeline();   // alsasrc -> opusenc -> rtpopuspay -> appsink (built once, kept NULL)
-    void reconcile_audio();        // PLAYING when some peer has audio active, NULL otherwise (mic off)
+    bool build_audio_pipeline();  // alsasrc -> opusenc -> rtpopuspay -> appsink (built once, kept NULL)
+    void reconcile_audio();       // PLAYING when some peer has audio active, NULL otherwise (mic off)
     static GstFlowReturn on_audio_sample(GstElement* appsink, gpointer user_data);
     void fan_out_audio(GstElement* appsink);
 
@@ -167,7 +173,7 @@ class WebRTCStreamer : public rclcpp::Node {
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int w, int h);
     void push_frame(CameraEncoder* cam, const cv::Mat& frame);
     GstBufferPool* create_frame_pool(int width, int height, int channels);
-    void force_keyframe(const std::string& cam);  // request an IDR so a fresh/resumed peer can decode
+    void force_keyframe(const std::string& cam);          // request an IDR so a fresh/resumed peer can decode
     CameraEncoder* find_camera(const std::string& name);  // configured camera by name, or nullptr
 
     // ---- Per-peer transport ----
@@ -218,11 +224,11 @@ class WebRTCStreamer : public rclcpp::Node {
     std::vector<std::unique_ptr<CameraEncoder>> cameras_;  // configured cameras, in m-line order
 
     // ---- Shared audio (mic) pipeline: encoded once, fanned out to peers, gated for mic privacy ----
-    GstElement* audio_pipeline_ = nullptr;       // built once if enable_audio_; alsasrc..rtpopuspay..appsink
-    GstElement* audio_sink_ = nullptr;           // ref'd appsink (the fan-out tap)
-    std::atomic<int> want_audio_{0};             // # peers with audio active; >0 => mic open (pipeline PLAYING)
-    std::atomic<uint64_t> audio_frames_{0};      // for status: is audio actually flowing
-    bool audio_playing_ = false;                 // current audio pipeline state (gated by want_audio_)
+    GstElement* audio_pipeline_ = nullptr;   // built once if enable_audio_; alsasrc..rtpopuspay..appsink
+    GstElement* audio_sink_ = nullptr;       // ref'd appsink (the fan-out tap)
+    std::atomic<int> want_audio_{0};         // # peers with audio active; >0 => mic open (pipeline PLAYING)
+    std::atomic<uint64_t> audio_frames_{0};  // for status: is audio actually flowing
+    bool audio_playing_ = false;             // current audio pipeline state (gated by want_audio_)
 
     // ---- Peers ----
     std::map<std::string, std::unique_ptr<Peer>> peers_;

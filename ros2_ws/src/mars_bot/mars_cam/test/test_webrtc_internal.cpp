@@ -12,7 +12,7 @@ using namespace mars_cam;
 TEST(CamPt, SkipsAudioPayloadType98) {
     EXPECT_EQ(cam_pt_for_index(0), 96);
     EXPECT_EQ(cam_pt_for_index(1), 97);
-    EXPECT_EQ(cam_pt_for_index(2), 99);   // 98 is opus
+    EXPECT_EQ(cam_pt_for_index(2), 99);  // 98 is opus
     EXPECT_EQ(cam_pt_for_index(3), 100);
     EXPECT_NE(cam_pt_for_index(2), 98);
 }

@@ -29,17 +29,25 @@ inline GstWebRTCPeerConnectionState peer_connection_state(GstElement* webrtc) {
 
 inline const char* conn_state_name(GstWebRTCPeerConnectionState s) {
     switch (s) {
-        case GST_WEBRTC_PEER_CONNECTION_STATE_NEW: return "new";
-        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTING: return "connecting";
-        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED: return "connected";
-        case GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED: return "disconnected";
-        case GST_WEBRTC_PEER_CONNECTION_STATE_FAILED: return "failed";
-        case GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED: return "closed";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_NEW:
+            return "new";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTING:
+            return "connecting";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED:
+            return "connected";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_DISCONNECTED:
+            return "disconnected";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_FAILED:
+            return "failed";
+        case GST_WEBRTC_PEER_CONNECTION_STATE_CLOSED:
+            return "closed";
     }
     return "unknown";
 }
 
-inline double round1(double v) { return std::round(v * 10.0) / 10.0; }
+inline double round1(double v) {
+    return std::round(v * 10.0) / 10.0;
+}
 
 inline bool wants(const std::vector<std::string>& videos, const std::string& cam) {
     return std::find(videos.begin(), videos.end(), cam) != videos.end();
@@ -48,7 +56,9 @@ inline bool wants(const std::vector<std::string>& videos, const std::string& cam
 // Each camera gets a fixed SSRC (base + 1-based index), declared in every peer's transport caps so the
 // SDP offer carries a=ssrc/msid (built before any RTP has flowed, so webrtcbin can't infer it). All peers
 // share a camera's SSRC — fine, since each peer is an independent SRTP transport.
-inline guint cam_ssrc_for_index(size_t index) { return 0x1A2B3C00u + static_cast<guint>(index) + 1u; }
+inline guint cam_ssrc_for_index(size_t index) {
+    return 0x1A2B3C00u + static_cast<guint>(index) + 1u;
+}
 
 // RTP payload type per camera (96, 97, 99, 100, …) — skips 98, which the audio (opus) payloader uses.
 inline int cam_pt_for_index(size_t index) {
@@ -65,7 +75,8 @@ inline std::string candidate_address(const std::string& cand) {
     std::istringstream iss(cand);
     std::string tok;
     for (int idx = 0; iss >> tok; ++idx) {
-        if (idx == 4) return tok;  // candidate:<foundation> <comp> <proto> <prio> <ADDRESS> <port> typ ...
+        if (idx == 4)
+            return tok;  // candidate:<foundation> <comp> <proto> <prio> <ADDRESS> <port> typ ...
     }
     return "";
 }

@@ -62,16 +62,14 @@ bool is_stun_binding_request(const uint8_t* data, ssize_t len) {
     return kStunHeaderSize + body_len <= static_cast<size_t>(len);
 }
 
-size_t build_ipv4_binding_response(
-    const uint8_t* request, const sockaddr_in& from, std::array<uint8_t, 64>* out) {
+size_t build_ipv4_binding_response(const uint8_t* request, const sockaddr_in& from, std::array<uint8_t, 64>* out) {
     auto& response = *out;
     response.fill(0);
 
     write_be16(response.data(), kStunBindingSuccess);
     write_be16(response.data() + 2, 12);  // one XOR-MAPPED-ADDRESS attr: 4-byte header + 8-byte value
     write_be32(response.data() + 4, kStunMagicCookie);
-    std::memcpy(response.data() + kStunTransactionIdOffset, request + kStunTransactionIdOffset,
-                kStunTransactionIdSize);
+    std::memcpy(response.data() + kStunTransactionIdOffset, request + kStunTransactionIdOffset, kStunTransactionIdSize);
 
     uint8_t* attr = response.data() + kStunHeaderSize;
     write_be16(attr, kStunAttrXorMappedAddress);
@@ -150,8 +148,8 @@ void WebRTCStreamer::stun_server_loop(uint16_t port) {
 
         sockaddr_in from{};
         socklen_t from_len = sizeof(from);
-        const ssize_t n = recvfrom(fd, request.data(), request.size(), 0, reinterpret_cast<sockaddr*>(&from),
-                                   &from_len);
+        const ssize_t n =
+            recvfrom(fd, request.data(), request.size(), 0, reinterpret_cast<sockaddr*>(&from), &from_len);
         if (n < 0) {
             if (errno == EINTR || errno == EAGAIN) {
                 continue;
@@ -165,8 +163,8 @@ void WebRTCStreamer::stun_server_loop(uint16_t port) {
         const size_t response_len = build_ipv4_binding_response(request.data(), from, &response);
         char ip[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
-        RCLCPP_INFO(this->get_logger(), "Local STUN binding: %s:%u -> srflx %s:%u",
-                    ip[0] ? ip : "?", ntohs(from.sin_port), ip[0] ? ip : "?", ntohs(from.sin_port));
+        RCLCPP_INFO(this->get_logger(), "Local STUN binding: %s:%u -> srflx %s:%u", ip[0] ? ip : "?",
+                    ntohs(from.sin_port), ip[0] ? ip : "?", ntohs(from.sin_port));
         sendto(fd, response.data(), response_len, 0, reinterpret_cast<const sockaddr*>(&from), from_len);
     }
 

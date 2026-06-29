@@ -40,19 +40,22 @@ std::string WebRTCStreamer::build_transport_description(const std::vector<std::s
 // encode pipeline is separate with its own base-time, so its PTS look future-dated here and webrtcbin
 // would hold them. The RTP header timestamps the receiver plays back by are the payloader's, untouched.
 bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, GstCaps* caps, guint64 max_bytes) {
-    g_object_set(appsrc, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "block",
-                 FALSE, "leaky-type", 2 /* downstream */, "max-bytes", max_bytes, nullptr);
+    g_object_set(appsrc, "caps", caps, "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "block", FALSE,
+                 "leaky-type", 2 /* downstream */, "max-bytes", max_bytes, nullptr);
     gst_caps_unref(caps);
     GstPad* srcpad = gst_element_get_static_pad(appsrc, "src");
     GstPad* sinkpad = gst_element_request_pad_simple(webrtc, "sink_%u");
     const bool linked = srcpad && sinkpad && gst_pad_link(srcpad, sinkpad) == GST_PAD_LINK_OK;
-    if (srcpad) gst_object_unref(srcpad);
-    if (sinkpad) gst_object_unref(sinkpad);
+    if (srcpad)
+        gst_object_unref(srcpad);
+    if (sinkpad)
+        gst_object_unref(sinkpad);
     return linked;
 }
 
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
-                                            const std::vector<std::string>& active, bool with_audio, bool audio_active) {
+                                            const std::vector<std::string>& active, bool with_audio,
+                                            bool audio_active) {
     if (client_id.empty()) {
         RCLCPP_WARN(this->get_logger(), "Refusing to create WebRTC peer without client_id");
         return nullptr;
@@ -94,13 +97,14 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         CameraEncoder* c = find_camera(v);
         GstElement* src = c ? gst_bin_get_by_name(GST_BIN(pipeline), ("rtp_" + v).c_str()) : nullptr;
         if (!c || !src) {
-            if (src) gst_object_unref(src);
+            if (src)
+                gst_object_unref(src);
             ok = false;
             break;
         }
         GstCaps* caps = gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "video", "encoding-name",
-                                            G_TYPE_STRING, "VP8", "clock-rate", G_TYPE_INT, 90000, "payload", G_TYPE_INT,
-                                            c->pt, "ssrc", G_TYPE_UINT, c->ssrc, nullptr);
+                                            G_TYPE_STRING, "VP8", "clock-rate", G_TYPE_INT, 90000, "payload",
+                                            G_TYPE_INT, c->pt, "ssrc", G_TYPE_UINT, c->ssrc, nullptr);
         gst_caps_set_simple(caps, extmap_field.c_str(), G_TYPE_STRING, MARS_PLAYOUT_DELAY_URI, nullptr);
         // Set the (VP8) caps, then request the next webrtcbin sink pad and link — so the transceiver is
         // built from the real caps, in m-line order (sink_0, sink_1, …).
@@ -183,8 +187,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         g_signal_connect(peer->diag_channel, "on-message-string", G_CALLBACK(on_diag_channel_message), this);
         g_signal_connect(peer->diag_channel, "on-close", G_CALLBACK(on_diag_channel_close), this);
     } else {
-        RCLCPP_WARN(this->get_logger(), "Failed to create diagnostics data channel for '%s'",
-                    client_id.c_str());
+        RCLCPP_WARN(this->get_logger(), "Failed to create diagnostics data channel for '%s'", client_id.c_str());
     }
     // Keep listening for future negotiation-needed signals, but create the first offer explicitly after all
     // media/data transceivers are in place so the SDP includes the diagnostics m=application section.
@@ -195,7 +198,8 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     // want-count gates the encoders; count only ACTIVE (pushed) cameras, not merely negotiated ones, so a
     // peer that negotiated several but is viewing one doesn't pin the others' encoders on.
     for (const auto& v : active) {
-        if (CameraEncoder* c = find_camera(v)) c->want.fetch_add(1, std::memory_order_relaxed);
+        if (CameraEncoder* c = find_camera(v))
+            c->want.fetch_add(1, std::memory_order_relaxed);
     }
     if (raw->audio_active) {
         want_audio_.fetch_add(1, std::memory_order_relaxed);
@@ -232,7 +236,8 @@ void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::strin
         } else if (!now && was) {
             c->want.fetch_sub(1, std::memory_order_relaxed);
         }
-        if (now) summary += (summary.empty() ? "" : "+") + c->name;
+        if (now)
+            summary += (summary.empty() ? "" : "+") + c->name;
     }
     peer->active = next;
 
@@ -250,7 +255,8 @@ void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::strin
             peer->audio_active = false;  // reconcile_audio() (poll_pipeline_health) closes the mic if 0
         }
     }
-    if (peer->audio_active) summary += (summary.empty() ? "" : "+") + std::string("audio");
+    if (peer->audio_active)
+        summary += (summary.empty() ? "" : "+") + std::string("audio");
 
     // Force an IDR on each newly-enabled camera so the browser's existing (idle) transceiver decodes the
     // resumed stream within a frame instead of waiting for the next periodic keyframe.
@@ -258,15 +264,14 @@ void WebRTCStreamer::update_peer_active(Peer* peer, const std::vector<std::strin
         force_keyframe(cam);
     }
 
-    RCLCPP_INFO(this->get_logger(), "Peer '%s' active streams -> [%s] (no reneg)",
-                peer->client_id.c_str(), summary.empty() ? "none" : summary.c_str());
+    RCLCPP_INFO(this->get_logger(), "Peer '%s' active streams -> [%s] (no reneg)", peer->client_id.c_str(),
+                summary.empty() ? "none" : summary.c_str());
 }
 
 void WebRTCStreamer::on_negotiation_needed(GstElement* webrtc, gpointer user_data) {
     auto* self = static_cast<WebRTCStreamer*>(user_data);
     const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(webrtc), "client_id"));
-    auto* genp =
-        static_cast<std::shared_ptr<std::atomic<uint64_t>>*>(g_object_get_data(G_OBJECT(webrtc), "mars_gen"));
+    auto* genp = static_cast<std::shared_ptr<std::atomic<uint64_t>>*>(g_object_get_data(G_OBJECT(webrtc), "mars_gen"));
     if (!genp) {
         return;
     }
@@ -279,21 +284,18 @@ void WebRTCStreamer::on_negotiation_needed(GstElement* webrtc, gpointer user_dat
     g_object_set_data(G_OBJECT(webrtc), "mars_offering", GINT_TO_POINTER(1));
 
     const std::string client_id = cid ? cid : "";
-    auto* ctx = new OfferContext{self,
-                                 GST_ELEMENT(gst_object_ref(webrtc)),
-                                 *genp,
-                                 (*genp)->load(),
-                                 client_id,
-                                 static_cast<guint>(GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(webrtc),
-                                                                                       "mars_expected_videos"))),
-                                 static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc),
-                                                                                    "mars_expected_audio"))),
-                                 static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc),
-                                                                                    "mars_expected_data")))};
+    auto* ctx = new OfferContext{
+        self,
+        GST_ELEMENT(gst_object_ref(webrtc)),
+        *genp,
+        (*genp)->load(),
+        client_id,
+        static_cast<guint>(GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_videos"))),
+        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_audio"))),
+        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_data")))};
     GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, ctx, offer_context_free);
     g_signal_emit_by_name(webrtc, "create-offer", nullptr, promise);
-    RCLCPP_INFO(self->get_logger(), "Negotiation needed for '%s'; offering...",
-                client_id.c_str());
+    RCLCPP_INFO(self->get_logger(), "Negotiation needed for '%s'; offering...", client_id.c_str());
 }
 
 void WebRTCStreamer::destroy_peer(const std::string& client_id) {
@@ -305,14 +307,15 @@ void WebRTCStreamer::destroy_peer(const std::string& client_id) {
     p->generation->fetch_add(1, std::memory_order_relaxed);  // invalidate any in-flight offer
     // Mirror create/update: the want-count tracks ACTIVE streams, so release exactly what this peer held.
     for (const auto& v : p->active) {
-        if (CameraEncoder* c = find_camera(v)) c->want.fetch_sub(1, std::memory_order_relaxed);
+        if (CameraEncoder* c = find_camera(v))
+            c->want.fetch_sub(1, std::memory_order_relaxed);
     }
-    if (p->audio_active) want_audio_.fetch_sub(1, std::memory_order_relaxed);  // mic closed by the health poll
+    if (p->audio_active)
+        want_audio_.fetch_sub(1, std::memory_order_relaxed);  // mic closed by the health poll
 
     RCLCPP_INFO(this->get_logger(), "Released peer '%s'", client_id.c_str());
-    peers_.erase(it);  // ~Peer() NULLs the transport (joining its streaming threads) and releases the refs
+    peers_.erase(it);           // ~Peer() NULLs the transport (joining its streaming threads) and releases the refs
     reconcile_subscriptions();  // last peer wanting a camera may have just left — drop its sub if so
 }
-
 
 }  // namespace mars_cam

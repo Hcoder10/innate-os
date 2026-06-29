@@ -6,7 +6,7 @@
 #include <gst/rtp/rtp.h>
 
 #include <algorithm>
-#include <cctype>   // std::isalnum (audio element/device validation)
+#include <cctype>  // std::isalnum (audio element/device validation)
 #include <cmath>
 #include <cstdlib>
 #include <cstring>  // memcpy (push_frame)
@@ -55,7 +55,8 @@ void WebRTCStreamer::attach_playout_delay_extension(const std::string& cam) {
         RCLCPP_WARN(this->get_logger(), "Missing %s; playout-delay extension not applied", payloader.c_str());
         return;
     }
-    GstRTPHeaderExtension* ext = make_playout_delay_ext(kPlayoutDelayExtId, playout_min_delay_ms_, playout_max_delay_ms_);
+    GstRTPHeaderExtension* ext =
+        make_playout_delay_ext(kPlayoutDelayExtId, playout_min_delay_ms_, playout_max_delay_ms_);
     g_signal_emit_by_name(pay, "add-extension", ext);  // transfer full: payloader owns ext now
     gst_object_unref(pay);
 }
@@ -107,7 +108,8 @@ bool WebRTCStreamer::build_encode_pipeline() {
         return false;
     }
     std::string names;
-    for (const auto& cam : cameras_) names += (names.empty() ? "" : "+") + cam->name;
+    for (const auto& cam : cameras_)
+        names += (names.empty() ? "" : "+") + cam->name;
     RCLCPP_INFO(this->get_logger(), "Persistent encode pipeline PLAYING (%s, idle until a peer connects)",
                 names.c_str());
     return true;
@@ -198,10 +200,13 @@ void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement
 
 // Per-camera tap: fan this camera's encoded RTP to every peer actively pushing it.
 void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam) {
-    fan_out(appsink, [&cam](Peer* p) -> GstElement* {
-        auto it = p->rtp.find(cam);
-        return (p->media_ready && it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
-    }, cam);
+    fan_out(
+        appsink,
+        [&cam](Peer* p) -> GstElement* {
+            auto it = p->rtp.find(cam);
+            return (p->media_ready && it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
+        },
+        cam);
 }
 
 // =============================================================================
@@ -227,7 +232,8 @@ bool WebRTCStreamer::build_audio_pipeline() {
                        c == '/';
             });
         if (!valid_device) {
-            RCLCPP_ERROR(this->get_logger(), "audio_capture_device '%s' has unexpected chars", audio_capture_device_.c_str());
+            RCLCPP_ERROR(this->get_logger(), "audio_capture_device '%s' has unexpected chars",
+                         audio_capture_device_.c_str());
             return false;
         }
         src += " device=\"" + audio_capture_device_ + "\"";
@@ -300,10 +306,13 @@ GstFlowReturn WebRTCStreamer::on_audio_sample(GstElement* appsink, gpointer user
 // Audio tap: fan the shared mic's encoded RTP to every peer with audio active.
 void WebRTCStreamer::fan_out_audio(GstElement* appsink) {
     audio_frames_.fetch_add(1, std::memory_order_relaxed);
-    fan_out(appsink, [](Peer* p) -> GstElement* {
-        auto it = p->rtp.find("audio");
-        return (p->media_ready && it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
-    }, "audio");
+    fan_out(
+        appsink,
+        [](Peer* p) -> GstElement* {
+            auto it = p->rtp.find("audio");
+            return (p->media_ready && it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
+        },
+        "audio");
 }
 
 // =============================================================================
@@ -436,8 +445,8 @@ void WebRTCStreamer::push_frame(CameraEncoder* cam, const cv::Mat& frame) {
         cam->input_frames.fetch_add(1, std::memory_order_relaxed);
     } else {
         cam->input_push_errors.fetch_add(1, std::memory_order_relaxed);
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "Encode appsrc push for '%s' returned %s", cam->name.c_str(), gst_flow_get_name(ret));
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, "Encode appsrc push for '%s' returned %s",
+                             cam->name.c_str(), gst_flow_get_name(ret));
     }
 }
 
@@ -460,6 +469,5 @@ void WebRTCStreamer::on_image_compressed(CameraEncoder* cam, const sensor_msgs::
         push_frame(cam, img);
     }
 }
-
 
 }  // namespace mars_cam
