@@ -732,9 +732,18 @@ def websocket_port_open(port: int) -> bool:
             sock.settimeout(1.0)
             sock.sendall(request)
             response = sock.recv(128)
+            upgraded = response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
+            if upgraded:
+                # Close the upgraded WebSocket politely (masked, empty close
+                # frame) so rws logs a clean close instead of an "End of File"
+                # read error from us abandoning the socket.
+                try:
+                    sock.sendall(b"\x88\x80\x00\x00\x00\x00")
+                except OSError:
+                    pass
+            return upgraded
     except OSError:
         return False
-    return response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
 
 
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
@@ -776,6 +785,28 @@ def config_simulator_port(config: dict[str, object]) -> str:
     return str(raw_env.get("SIMULATOR_PORT", "8000"))
 
 
+# Latch so the 0.5s dashboard refresh doesn't WS-probe rosbridge forever.
+_rosbridge_ws_confirmed = False
+
+
+def _rosbridge_live(os_status: dict[str, bool]) -> bool:
+    """rosbridge liveness for the steady dashboard refresh.
+
+    WS-probe the endpoint only until it first accepts a connection; afterwards
+    the rws process-liveness check (pgrep) is enough. This stops opening — and
+    immediately dropping — a WebSocket on every refresh, which rws logs as
+    connect/EOF/disconnect noise. Reset when the process dies so a restart is
+    re-probed.
+    """
+    global _rosbridge_ws_confirmed
+    process_live = bool(os_status["os_session_running"] and os_status["rosbridge_process_live"])
+    if not process_live:
+        _rosbridge_ws_confirmed = False
+    elif not _rosbridge_ws_confirmed:
+        _rosbridge_ws_confirmed = websocket_port_open(9090)
+    return process_live and _rosbridge_ws_confirmed
+
+
 def collect_runtime_probe(
     config: dict[str, object],
     *,
@@ -784,9 +815,7 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = (
-        os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
-    )
+    rosbridge_live = _rosbridge_live(os_status)
     agent_running = container_running("innate-cloud-agent") if config["mode"] in LOCAL_MODES else True
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
