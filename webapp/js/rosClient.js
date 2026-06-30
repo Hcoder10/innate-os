@@ -284,11 +284,15 @@ export class RosClient {
       } catch {
         // Storage can be unavailable (private mode); connection still works.
       }
-      this.#setState("connected");
+      // Re-subscribe BEFORE announcing "connected": #setState runs listeners
+      // synchronously, and some (e.g. WebRtcSession) publish a request whose
+      // reply rides a topic we must already be subscribed to. Flushing first
+      // closes the window where that first reply is dropped.
       for (const [topic, sub] of this.#subs) {
         sub.retryCount = 0;
         this.#sendSubscribe(topic, sub);
       }
+      this.#setState("connected");
     };
 
     ws.onmessage = (event) => {
