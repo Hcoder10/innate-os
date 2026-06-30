@@ -51,8 +51,19 @@ GENERATED_CLOUD_ENV_PATH = STATE_DIR / "cloud-agent.env"
 HOSTED_MODE = "hosted"
 LOCAL_IMAGE_MODE = "local-image"
 LOCAL_SOURCE_MODE = "local-source"
+AUTO_MODE = "auto"
+NONE_MODE = "none"
 LOCAL_MODES = {LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}
+VALID_CLOUD_AGENT_MODES = {AUTO_MODE, HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE, NONE_MODE}
 DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.innate.bot"
+# The local cloud-agent runs as the `local-brain` service inside the same compose
+# project as the OS container, reachable by service name on the shared network.
+DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI = "ws://cloud-agent:8765"
+LOCAL_BRAIN_COMPOSE_PROFILE = "local-brain"
+# Cloud-agent source lives OUTSIDE this repo (next to it), cloned on demand by setup.
+CLOUD_AGENT_GIT_URL = "git@github.com:innate-inc/innate-cloud-agent.git"
+CLOUD_AGENT_DIR_NAME = "innate-cloud-agent"
+GEMINI_API_KEY = "GEMINI_API_KEY"
 AUTO_OS_IMAGE = "auto"
 LOCAL_OS_IMAGE = "local"
 DEFAULT_SIM_OS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-ros"
@@ -68,7 +79,7 @@ SIM_IMAGE_INPUT_FILES = (
 ROS_INSTALL_VALIDATION_INPUT_FILES = ("scripts/validate_sim_ros_install.zsh",)
 OS_CONTAINER_SERVICE = "innate"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
-SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY",)
+SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY", "GEMINI_API_KEY")
 LOG_TARGETS = {
     "bootstrap": BOOTSTRAP_LOG_PATH,
     "cloud-agent": CLOUD_AGENT_LOG_PATH,
@@ -308,12 +319,35 @@ def get_nested_bool(data: dict[str, object], *keys: str) -> bool | None:
 
 def resolve_brain_websocket_uri(
     mode: str,
-    cloud_port: str,
     env: dict[str, str],
 ) -> str:
+    if mode == NONE_MODE:
+        return ""
     if mode in LOCAL_MODES:
-        return f"ws://host.docker.internal:{cloud_port}"
+        return DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI
     return (env.get("BRAIN_WEBSOCKET_URI") or "").strip() or DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
+
+
+def resolve_cloud_agent_mode(sim_config: dict[str, object], env: dict[str, str]) -> str:
+    """Decide which brain backend to run.
+
+    An explicit ``cloud_agent.mode`` in sim/config.toml always wins. Otherwise
+    (mode unset or ``auto``) derive it from available keys: a Gemini key selects
+    the local brain, else an Innate service key selects the hosted brain, else
+    there is no agent.
+    """
+    explicit = (get_nested_str(sim_config, "cloud_agent", "mode") or "").strip()
+    if explicit and explicit != AUTO_MODE:
+        if explicit not in VALID_CLOUD_AGENT_MODES:
+            raise StackError(
+                "sim/config.toml cloud_agent.mode must be one of: " + ", ".join(sorted(VALID_CLOUD_AGENT_MODES))
+            )
+        return explicit
+    if is_configured_secret_value(GEMINI_API_KEY, env.get(GEMINI_API_KEY, "")):
+        return LOCAL_SOURCE_MODE
+    if is_configured_secret_value("INNATE_SERVICE_KEY", env.get("INNATE_SERVICE_KEY", "")):
+        return HOSTED_MODE
+    return NONE_MODE
 
 
 def resolve_brain_client_version(repo_root: Path) -> str:
@@ -431,19 +465,19 @@ def get_config() -> dict[str, object]:
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
     merged_env.setdefault("SIMULATOR_PORT", "8000")
 
-    mode = get_nested_str(sim_config, "cloud_agent", "mode") or HOSTED_MODE
-    if mode not in {HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}:
-        raise StackError("sim/config.toml cloud_agent.mode must be one of: hosted, local-image, local-source")
+    mode = resolve_cloud_agent_mode(sim_config, merged_env)
 
     os_repo = require_path(REPO_ROOT, "innate-os repository")
     sim_repo = require_path(REPO_ROOT / "sim", "sim repository")
 
+    # Cloud-agent source lives next to the repo (WORKSPACE_ROOT/innate-cloud-agent),
+    # cloned by `sim setup`. An explicit source_dir override still wins.
     cloud_dir_value = get_nested_str(sim_config, "cloud_agent", "source_dir")
     cloud_repo = None
     if cloud_dir_value:
-        cloud_repo = resolve_repo_path(cloud_dir_value, "innate-cloud-agent")
-    elif (WORKSPACE_ROOT / "innate-cloud-agent").exists():
-        cloud_repo = (WORKSPACE_ROOT / "innate-cloud-agent").resolve()
+        cloud_repo = resolve_repo_path(cloud_dir_value, CLOUD_AGENT_DIR_NAME)
+    elif (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).exists():
+        cloud_repo = (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).resolve()
 
     os_always_build = get_nested_bool(sim_config, "os", "always_build")
     os_pull_image = get_nested_bool(sim_config, "os", "pull_image")
@@ -462,11 +496,7 @@ def get_config() -> dict[str, object]:
         "sim_repo": sim_repo,
         "cloud_repo": cloud_repo,
         "cloud_port": cloud_port,
-        "brain_websocket_uri": resolve_brain_websocket_uri(
-            mode,
-            cloud_port,
-            merged_env,
-        ),
+        "brain_websocket_uri": resolve_brain_websocket_uri(mode, merged_env),
         "brain_client_version": resolve_brain_client_version(os_repo),
         "cloud_image": get_nested_str(sim_config, "cloud_agent", "image") or "",
         "sim_visualization": get_nested_bool(sim_config, "display", "visualization")

@@ -18,6 +18,7 @@ from config import (
     HOSTED_MODE,
     LOCAL_MODES,
     LOG_TARGETS,
+    NONE_MODE,
     OS_SESSION_LOG_PATH,
     SETTINGS_PATH,
     SHOW_LIVE_DASHBOARD_DEFAULT,
@@ -68,7 +69,7 @@ from runtime import (
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
-from setup_wizard import _prompt_yes_no, configure_hosted_service_key, is_interactive_terminal
+from setup_wizard import _prompt_yes_no, configure_brain_backend, is_interactive_terminal
 
 DASHBOARD_OPTIONS = DashboardOptions(
     hosted_mode=HOSTED_MODE,
@@ -172,18 +173,26 @@ def cmd_up(
                 "Simulator backend is up, but the OS ROS bridge/brain client did not become ready.\n"
                 f"Recent OS log output:\n{tail_file(OS_SESSION_LOG_PATH, limit=80)}"
             )
-        log("Waiting for brain directives...")
-        brain_directive_count = wait_for_brain_directives(simulator_port)
-        print_startup_checks(
-            config,
-            simulator_http_ready=True,
-            brain_directive_count=brain_directive_count,
-        )
-        if brain_directive_count <= 0:
-            raise StackError(
-                "Simulator backend is up, but brain directives never became available.\n"
-                f"Recent brain log output:\n{os.linesep.join(capture_os_brain_logs(config, lines=40))}"
+        if config["mode"] == NONE_MODE:
+            print_startup_checks(config, simulator_http_ready=True, brain_directive_count=0)
+            warn("No brain backend configured — the sim is running WITHOUT an agent.")
+            warn(
+                "Add GEMINI_API_KEY (local brain) or INNATE_SERVICE_KEY (hosted) to "
+                f"{ENV_PATH}, or run `{CLI_SIM} setup`, then restart."
             )
+        else:
+            log("Waiting for brain directives...")
+            brain_directive_count = wait_for_brain_directives(simulator_port)
+            print_startup_checks(
+                config,
+                simulator_http_ready=True,
+                brain_directive_count=brain_directive_count,
+            )
+            if brain_directive_count <= 0:
+                raise StackError(
+                    "Simulator backend is up, but brain directives never became available.\n"
+                    f"Recent brain log output:\n{os.linesep.join(capture_os_brain_logs(config, lines=40))}"
+                )
         success("Innate sim runtime is up.")
         show_runtime_dashboard(config, watch=watch)
     except KeyboardInterrupt:
@@ -268,7 +277,7 @@ def cmd_logs(target: str, lines: int | None = None) -> None:
 def cmd_setup(config: dict[str, object]) -> None:
     ensure_docker_available(command_hint=f"{CLI_SIM} setup")
     print_banner()
-    configure_hosted_service_key(config)
+    configure_brain_backend(config)
     sim_python = ensure_sim_setup(config)
     ensure_sim_data(config, allow_fetch=True)
     success("Simulator setup is ready.")
