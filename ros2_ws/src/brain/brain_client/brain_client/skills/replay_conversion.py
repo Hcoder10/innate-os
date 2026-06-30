@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure (ROS-free) helpers for converting a recorded teleop episode into a
 replay-skill trajectory.
 

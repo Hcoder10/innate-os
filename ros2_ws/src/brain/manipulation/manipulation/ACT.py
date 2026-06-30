@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field

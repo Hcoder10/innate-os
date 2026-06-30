@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Self-tests for FakeCloud - validate it speaks the robot<->cloud protocol
 faithfully, with ZERO ROS and ZERO Docker. These guard the test double itself:

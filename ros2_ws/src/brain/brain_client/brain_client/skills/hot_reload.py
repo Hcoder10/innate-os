@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Reload coordination: full reload, selective reload, and the hot-reload queue.
 
 Drives PEAS (the skill action server) to reload skill code, reloads agents

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 ManipulationInterface - Provides IK and arm control capabilities to skills.
 

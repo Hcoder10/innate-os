@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Backwards-compatibility guards for agent / skill / input discovery.
 
 These pin the historical contract that the concept-folder refactor broke, so it

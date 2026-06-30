@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include "manipulation/recorder_node.hpp"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Composition root for the input manager node.
 
 Owns the proxy config, the pubs/subs/service surface, and an

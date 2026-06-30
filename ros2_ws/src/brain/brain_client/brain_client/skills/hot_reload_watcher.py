@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 File watcher for hot-reloading skills and agents.
 Uses watchdog to monitor file changes and triggers reload via ROS service.

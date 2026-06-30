@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Shared machinery for the dynamic skill/agent/input loaders.
 
 Each loader discovers subclasses of a base type in user/shipped script

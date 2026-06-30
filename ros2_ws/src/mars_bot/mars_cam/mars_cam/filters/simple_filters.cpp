@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Simple / OpenCV-delegating disparity filters:
 //   median, bilateral, hole-fill, depth-clamp, edge-invalidation, speckle.
 

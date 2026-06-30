@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Download run results (outputs/checkpoints) and skill input data.
 """

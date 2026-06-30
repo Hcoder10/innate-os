@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Skill registry — pure name<->id bookkeeping, no ROS.
 
 The cloud agent and the LLM refer to skills sometimes by deterministic *id*

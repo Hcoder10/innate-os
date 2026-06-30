@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Utility helpers for stereo calibration: head/arm control and file I/O.
 """

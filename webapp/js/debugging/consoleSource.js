@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Single owner of the structured console stream. Subscribes once to the live
 // topic + backfill reply, requests the backlog, and fans records out to both
 // consumers (the log view and the tree) so we don't double-subscribe.

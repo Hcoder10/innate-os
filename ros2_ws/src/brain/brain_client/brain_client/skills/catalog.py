@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Skill catalog: discovery, metadata, publishing, reload, and physical skills.
 
 Owns the loaded code/physical/in-training skill dicts (guarded by a lock against

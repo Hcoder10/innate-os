@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Recording HUD — the Collect page's net-new UI, overlaid on the reused Teleop
 // cockpit. It hosts skill selection + creation and two recording flows that
 // mirror the mobile app's "Add skill" chooser:

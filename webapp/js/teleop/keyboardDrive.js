@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Keyboard drive: WASD/arrows with ramping, so taps nudge and holds glide.
 //
 // W/↑ = forward, S/↓ = back, A/← = left, D/→ = right. Opposing keys cancel,

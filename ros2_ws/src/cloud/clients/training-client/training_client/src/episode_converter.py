@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Convert HDF5 episodes from raw-image format to H.264 MP4 + stripped HDF5.
 

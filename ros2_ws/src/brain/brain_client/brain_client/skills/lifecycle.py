@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared primitive lifecycle messages sent to the cloud agent."""
 
 from __future__ import annotations

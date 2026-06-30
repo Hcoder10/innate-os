@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // arm_services.cpp — Servo initialization, health monitoring, service callbacks, head control
 #include "mars_arm/arm_node.hpp"
 

@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Shared helpers for the Debugging page. Records come pre-parsed from the
 // innate_console bridge: { t, window, pane, proc, pidx, node, logger, level,
 // msg, text }. No text parsing here — the robot did it once.

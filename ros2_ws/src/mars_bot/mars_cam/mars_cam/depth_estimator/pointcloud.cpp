@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Point cloud generation from disparity maps (xyz-only and xyzrgb).
 
 #include "mars_cam/stereo_depth_estimator.hpp"

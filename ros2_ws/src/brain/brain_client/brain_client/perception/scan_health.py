@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """LiDAR scan health: detects when laser scans stop arriving (e.g. lidar unplugged).
 
 Keeps an always-on subscription to the scan topic and records when the last

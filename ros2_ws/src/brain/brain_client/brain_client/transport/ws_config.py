@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure WebSocket URI/token validation — no ROS, no websockets.
 
 Decides whether a websocket URI is usable and whether a service key is present

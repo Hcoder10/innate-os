@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Typed configuration for the brain client.
 
 PURE module: imports no ``rclpy``. ``BrainConfig.load(node)`` is handed a node so

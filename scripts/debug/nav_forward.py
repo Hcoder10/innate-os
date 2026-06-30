@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Debug the navigate to position action
 Navigate forward/backward from current position using /navigate_to_pose action.

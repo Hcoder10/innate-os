@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel

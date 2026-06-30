@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Input-device management: load, route data, activate/deactivate, TTS ducking.
 
 Bridges ROS topics to the pure-Python input devices. Input authors implement the

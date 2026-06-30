@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // "Running now" hero card — a compact, prominent banner for the currently
 // training run (step progress + ETA + actions), shown above the skill list.
 // Detailed run info lives in the right-side detail pane (runDetail.js).

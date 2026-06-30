@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Occupancy-grid map state.
 
 Owns the latched ``/map`` subscription and converts the latest ``OccupancyGrid``

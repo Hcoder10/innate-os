@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 import imaplib
 
 from brain_client.skills.types import Skill, SkillResult

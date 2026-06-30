@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Demo: Cartesia TTS via the service proxy — speak text and play it.
 
 Usage (from repo root)::

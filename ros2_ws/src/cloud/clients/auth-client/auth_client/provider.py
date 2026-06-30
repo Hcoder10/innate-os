@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """OIDC robot authentication client.
 
 Handles service-key → JWT exchange via OpenID Connect discovery,

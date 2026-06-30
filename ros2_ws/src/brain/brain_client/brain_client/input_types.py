@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Deprecated: moved to brain_client.inputs.types.
 
 Backward-compat shim for custom input devices that still import from the old

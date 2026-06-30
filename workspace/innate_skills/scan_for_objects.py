@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Skill that rotates the robot 360 degrees while scanning for objects using Gemini.
 """

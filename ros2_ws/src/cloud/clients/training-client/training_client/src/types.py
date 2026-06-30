@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Dataclasses for training client configuration, progress, and state."""
 
 from __future__ import annotations

@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Skill roster — live list of recordable skills from /brain/available_skills.
 // Only physical skills (those with a dataset `directory`) can have episodes, so
 // code-only skills are filtered out. Click a skill to load its episodes.

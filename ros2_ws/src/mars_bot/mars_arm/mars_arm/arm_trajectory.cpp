@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // arm_trajectory.cpp — Trajectory planning and execution
 #include "mars_arm/arm_node.hpp"
 

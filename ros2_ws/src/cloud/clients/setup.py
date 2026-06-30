@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 from setuptools import setup
 
 package_name = "cloud_clients"

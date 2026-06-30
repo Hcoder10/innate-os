@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Brain orchestration: the perception loop and cloud-message reactions.
 
 Pulls together the perception (camera, pose, map) and transport collaborators to build

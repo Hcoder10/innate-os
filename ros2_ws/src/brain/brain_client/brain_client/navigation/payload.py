@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure navigation-payload assembly — no ROS.
 
 Builds the ``depth`` / ``map`` / ``robot_coords`` blocks the cloud agent expects.

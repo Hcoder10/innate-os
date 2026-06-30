@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Connect panel — the one quiet card shown while disconnected. Mono IP input
 // prefilled from the last successful connection, inline error on failure.
 

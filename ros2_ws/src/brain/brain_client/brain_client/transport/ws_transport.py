@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The async WebSocket client transport.
 
 Owns the connect/auth/listen/reconnect loop and forwards incoming messages back to

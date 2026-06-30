@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 GPU-accelerated grid localization for initial pose estimation.
 Uses CuPy for parallel ray-casting to find robot pose in occupancy grid map.

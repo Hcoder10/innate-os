@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Head tilt — thin vertical slider on the right edge, hairline tick at 0°.
 // Drag publishes std_msgs/Int32 to /mars/head/set_position at ~10 Hz; a
 // marker fed from /mars/head/current_position (JSON-in-String) shows where

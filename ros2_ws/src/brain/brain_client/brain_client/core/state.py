@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared, cross-cutting brain state.
 
 A handful of flags and references are genuinely shared across the brain's

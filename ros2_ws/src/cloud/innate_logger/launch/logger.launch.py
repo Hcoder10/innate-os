@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Launch file for the innate_logger node."""
 
 from launch import LaunchDescription

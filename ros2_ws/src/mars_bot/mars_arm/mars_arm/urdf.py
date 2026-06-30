@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import PyKDL as kdl
 import urdf_parser_py.urdf as urdf
 

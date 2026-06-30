@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """In-process bridge between the brain and the WebSocket transport.
 
 Outgoing: hands message *objects* straight to the

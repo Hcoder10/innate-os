@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # message_types.py
 
 from enum import Enum

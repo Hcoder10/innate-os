@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """ROS-free factory for the ACT inference config.
 
 Kept separate from manipulation_server so the offline engine pre-build

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Logging configuration for the brain_client package.
 This module defines the environment variables for configuring ROS2 logging

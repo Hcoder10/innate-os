@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Episode player — MP4-backed replay with synced telemetry. One <video> per
 // camera (main + wrist), served same-origin from the front door with HTTP
 // Range, so scrubbing is native and instant (no WebRTC, no robot-side replay).

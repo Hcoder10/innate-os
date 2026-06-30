@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Episode list — the recorded episodes of the selected skill as a rich table
 // (thumbnail, recorded time, duration, status), from /brain/recorder/get_task_metadata.
 // Each episode is in one of three states:

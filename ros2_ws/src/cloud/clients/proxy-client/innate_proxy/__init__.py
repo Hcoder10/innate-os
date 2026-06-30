@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Innate proxy client library.
 
 Provides :class:`ProxyClient` for authenticated HTTP requests through the

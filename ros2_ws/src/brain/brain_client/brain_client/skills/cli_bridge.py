@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unix-socket bridge hosted inside SkillsActionServer for low-latency CLI calls."""
 
 from __future__ import annotations

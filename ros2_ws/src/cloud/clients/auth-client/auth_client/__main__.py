@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """CLI entry point: ``python -m auth_client`` prints a JWT to stdout.
 
 Usage::

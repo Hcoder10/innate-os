@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Dynamixel Protocol 2.0 over WebSerial — reads the leader arm's six servos.
 //
 // The leader arm is a chain of Dynamixel X-series servos (ids 1–6) behind a

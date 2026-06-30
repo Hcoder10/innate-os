@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """HTTP telemetry client for the robot-logger cloud service.
 
 Sends robot telemetry (vitals, directives, chat) to the logging

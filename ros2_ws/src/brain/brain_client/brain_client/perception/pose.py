@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure pose math — no ROS, no I/O.
 
 These functions implement the local-navigation motion compensation: when the robot

@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Recorded-movement wizard — the "mimic"/replay flow, a port of the mobile
 // app's RecordReplayScreen. The draft skill has already been created + activated
 // by the record panel; this drives the single take and the promote-to-replay:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Recalibrate Manual Skill - Human positions the arm above a top corner square
 (A8 or H8), records the position, and recomputes the full board calibration

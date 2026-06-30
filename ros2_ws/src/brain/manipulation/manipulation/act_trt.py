@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """TensorRT acceleration for ACT policy inference (the only inference path).
 
 On Jetson Orin the eager ACT forward is ~64 ms; a fused TensorRT engine runs the

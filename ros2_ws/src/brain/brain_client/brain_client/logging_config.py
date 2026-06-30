@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Deprecated: moved to brain_client.common.logging.
 
 Backward-compat shim for custom files that still import from the old path.

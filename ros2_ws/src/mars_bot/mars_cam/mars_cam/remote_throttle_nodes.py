@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Lazy throttle ComposableNode descriptions for remote RViz viewing.
 

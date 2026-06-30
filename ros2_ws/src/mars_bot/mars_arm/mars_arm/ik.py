@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 KDL-based IK node loading URDF directly from mars_sim and using the package-local URDF→KDL parser (urdf.py).
 """

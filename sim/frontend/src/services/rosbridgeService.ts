@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 export type AgentSource = "shipped" | "user";
 
 export interface RobotAgent {

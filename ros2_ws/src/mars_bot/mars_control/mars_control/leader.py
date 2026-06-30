@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import rclpy
 from rclpy.node import Node

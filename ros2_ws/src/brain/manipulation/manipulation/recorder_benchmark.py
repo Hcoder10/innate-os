@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Recorder benchmark harness.
 
 Drives the recorder through N back-to-back episodes while sampling the

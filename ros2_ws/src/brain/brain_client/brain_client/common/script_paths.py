@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Centralized paths for agent, skill, and input scripts.
 

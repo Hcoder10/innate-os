@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // The catalog of operator-tunable knobs the Settings page exposes — the single
 // place defaults + docs live for the UI. Each entry's `path` is the full ROS
 // param path in settings.yaml (node, then ros__parameters, then nested groups,

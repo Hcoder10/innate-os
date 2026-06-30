@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef MANIPULATION_RECORDER_NODE_HPP_
 #define MANIPULATION_RECORDER_NODE_HPP_
 

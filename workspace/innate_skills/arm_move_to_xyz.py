@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Arm Move To XYZ Skill - Move arm to a Cartesian position using IK.
 """

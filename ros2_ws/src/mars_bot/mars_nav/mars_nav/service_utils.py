@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Utilities for calling ROS2 services with timeout handling."""
 
 import time

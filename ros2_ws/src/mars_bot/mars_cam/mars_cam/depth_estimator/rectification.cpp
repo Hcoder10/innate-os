@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Image preprocessing: scale to calibration resolution, VPI GPU-accelerated rectification.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

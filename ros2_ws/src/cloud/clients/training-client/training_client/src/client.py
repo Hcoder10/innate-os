@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """HTTP client wrapper for the Training Orchestrator REST API."""
 
 from __future__ import annotations

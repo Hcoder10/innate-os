@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A single WebRTC video track sourced from one sim camera.
 
 The track is decoupled from the sim: it pulls the latest BGR frame through a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for manipulation.config_validation.
 
 These tests are ROS-free and can be run with ``pytest`` directly::

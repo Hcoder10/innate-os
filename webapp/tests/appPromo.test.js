@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Gating-logic tests for js/appPromo.js — zero dependencies, plain node:
 //   node tests/appPromo.test.js
 // Only detectMobilePlatform() is exercised here: it's pure (reads navigator)

@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Datasets page entry — browse recorded episodes per skill. Disconnected: the
 // same quiet connect card as teleop. Connected: the master/detail view — a
 // live skill roster on the left (from /brain/available_skills), the selected

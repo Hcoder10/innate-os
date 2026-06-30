@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Base proxy client for innate-os.
 
 Provides both sync and async HTTP helpers that route requests through

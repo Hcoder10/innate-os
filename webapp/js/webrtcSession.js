@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // WebRtcSession — one long-lived RTCPeerConnection signaled over the shared
 // RosClient (no second socket).
 //

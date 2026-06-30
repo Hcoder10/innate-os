@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """aiortc WebRTC server core for the sim.
 
 Transport-agnostic: `WebRTCManager` drives the peer connection and is fed

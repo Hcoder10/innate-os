@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Brain lifecycle: activate / deactivate / reset / reactivate + directive switching.
 
 Owns the agent timer and the on-demand sensor subscriptions (delegated to the

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef MANIPULATION_TASK_MANAGER_HPP_
 #define MANIPULATION_TASK_MANAGER_HPP_
 

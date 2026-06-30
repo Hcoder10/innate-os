@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Logs modal — two modes:
 //  • downloaded run: browse the downloaded result files (served by the front
 //    door from <skill_dir>/<run_id>/). process_output.jsonl renders as a

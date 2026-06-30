@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Stereo Depth Estimator — orchestrator.
 //
 // All heavy lifting lives in sibling files under depth_estimator/ and filters/:

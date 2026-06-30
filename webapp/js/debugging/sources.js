@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Log Sources panel. The same console stream pivoted three ways:
 //   • Launch file → process → node/logger   (the launch hierarchy)
 //   • Process     → node/logger             (flat list of processes)

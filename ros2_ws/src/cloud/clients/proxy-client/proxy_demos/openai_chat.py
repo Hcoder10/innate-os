@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Demo: OpenAI chat completions via the service proxy.
 
 Usage (from repo root)::

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Integration test: brain_client emits well-formed pose_image messages.
 

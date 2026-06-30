@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Validation for per-behavior execution configs stored in a skill's metadata.json.
 
 Parses and validates the ``behavior_config`` payload that

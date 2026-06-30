@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Reset Chess Game Skill - Resets the board state to the starting position.
 """

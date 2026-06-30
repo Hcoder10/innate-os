@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * AppControl node for MARS robot.
  * Handles joystick input, leader arm control, and robot info publishing.

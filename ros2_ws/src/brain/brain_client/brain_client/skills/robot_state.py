@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Robot-state provision for skill execution.
 
 Owns the on-demand state subscriptions (odom / map / head) and the camera + robot

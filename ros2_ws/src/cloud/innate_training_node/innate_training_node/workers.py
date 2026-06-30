@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Background workers: polling, upload, download.
 
 All functions in this module run on daemon threads and communicate with

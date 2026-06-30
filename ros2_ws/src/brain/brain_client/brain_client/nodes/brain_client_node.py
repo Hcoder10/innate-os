@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Composition root for the brain client node.
 
 This file does no behaviour of its own: it declares config, builds the perception /

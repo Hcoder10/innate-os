@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Gaze-tracker lifecycle wrapper.
 
 Starts/stops the (lazily imported) ``ROSPersonTracker`` based on brain-active state

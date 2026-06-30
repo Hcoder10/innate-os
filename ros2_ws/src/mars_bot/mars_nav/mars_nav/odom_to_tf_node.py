@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Converts /odom topic to TF transform (odom -> base_footprint).
 Used in simulation when the simulator publishes odom topic but not TF.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef MANIPULATION_EPISODE_DATA_HPP_
 #define MANIPULATION_EPISODE_DATA_HPP_
 

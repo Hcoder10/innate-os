@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ROS message publishing: rectified images, disparity, depth.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

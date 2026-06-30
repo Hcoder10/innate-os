@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Profiling page entry — record and visualize ACT policy inference timing.
 //
 // The manipulation server publishes a per-step timing breakdown on

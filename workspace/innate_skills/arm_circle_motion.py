@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Arm Circle Motion Skill - Move arm in a circular pattern.
 """

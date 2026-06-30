@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Camera-info based calibration: subscribe to left/right CameraInfo topics,
 // extract K, D, R, P matrices, compute rectification maps, derive baseline
 // and focal length, then kick off VPI initialisation.

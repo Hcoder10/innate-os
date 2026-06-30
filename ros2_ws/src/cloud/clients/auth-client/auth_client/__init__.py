@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Innate auth client: OIDC JWT acquisition and timed renewal for robots.
 
 Usage::

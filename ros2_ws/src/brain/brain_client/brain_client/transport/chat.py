@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Chat history, chat-out publishing, task-status publishing, and TTS.
 
 Consolidates the ``{"sender", "text", "timestamp"}`` chat-entry dict and the

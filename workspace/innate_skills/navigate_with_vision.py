@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Navigate With Vision Skill — sends a natural-language navigation instruction
 to the UniNavid cloud service and follows the returned action commands until

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The int-vs-double settings guard must fail fast at launch but never crash a reload.
 
 Locks in the split: launch-time ``settings_params`` raises on an int-typed double, while the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import numpy as np
 
 # LiPo cell voltages corresponding to battery percentage from 0% to 100% in 5% increments

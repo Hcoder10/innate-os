@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any

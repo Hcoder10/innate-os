@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Websocket client for UniNavid — runs entirely in its own daemon thread.
 

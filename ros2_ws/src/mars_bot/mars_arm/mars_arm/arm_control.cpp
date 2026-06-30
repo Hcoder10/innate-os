@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // arm_control.cpp — Control loop, gain scheduling, timing, limit/encoder conversion
 #include "mars_arm/arm_node.hpp"
 

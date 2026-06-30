@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Drift guard for ``config_loader._SETTINGS_DOUBLE_KEYS`` (a hardcoded set).
 
 Reconstructs settings.yaml.template into YAML and asserts every float-valued key is guarded,

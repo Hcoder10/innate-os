@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import styled from "styled-components";
 import { useState, useEffect, useRef } from "react";
 import { PreviewContainer, MainVideo } from "../styles/StyledImages";

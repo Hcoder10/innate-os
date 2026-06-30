@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef MARS_CAM__WEBRTC_STREAMER_HPP_
 #define MARS_CAM__WEBRTC_STREAMER_HPP_
 

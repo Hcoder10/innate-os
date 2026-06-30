@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # intypes.py
 
 from typing import Any, NamedTuple

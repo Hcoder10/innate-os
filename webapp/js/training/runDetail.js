@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Right-side run detail pane. Shows the run selected in the dashboard (defaults
 // to the running run): progress + ETA, status/timing/hardware, hyperparameters
 // (from training_params), artifacts, and the same actions as the run row.

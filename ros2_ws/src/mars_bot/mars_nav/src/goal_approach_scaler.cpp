@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Scales down cmd_vel as the robot approaches the navigation goal.
  *

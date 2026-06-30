@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Benchmark: Cartesia TTS called directly (no proxy) for comparison.
 
 Usage (from repo root)::

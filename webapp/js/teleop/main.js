@@ -1,4 +1,5 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
 // Teleoperation page entry — wires the shared singletons to the page modules
 // and owns the connected/disconnected lifecycle.
 //
