@@ -33,6 +33,10 @@ from manipulation.act_config import (  # noqa: E402
     validate_action_dim,
 )
 
+# Pure (ROS-free) auto-stop logic; kept in its own module so it can be unit-tested
+# without a ROS environment (see manipulation.auto_stop / test/test_auto_stop.py).
+from manipulation.auto_stop import LearnedStopDetector, StepSignals  # noqa: E402
+
 # NOTE: manipulation.act_trt is imported lazily inside _load_policy_for_behavior, not here.
 # It imports `tensorrt` at module load, which is only installed on hardware units. Importing
 # it at module top would crash the whole behavior server (respawn loop) on a sim/dev box and
@@ -379,6 +383,17 @@ class ManipulationServer(Node):
             inference_hz = self.inference_hz
             period = 1.0 / inference_hz
             early_termination = False
+            stop_reason = None
+
+            stop_detector = LearnedStopDetector(
+                min_duration=params.min_duration,
+                progress_threshold=progress_threshold,
+                progress_ema_alpha=params.progress_ema_alpha,
+                idle_seconds=params.idle_seconds,
+                idle_arm_eps=params.idle_arm_eps,
+                idle_base_eps=params.idle_base_eps,
+                progress_gate=params.progress_gate,
+            )
 
             iteration_count = 0
 
@@ -404,24 +419,22 @@ class ManipulationServer(Node):
                     self.get_logger().info(f"Behavior timeout reached after {elapsed_time:.2f} seconds")
                     break
 
-                progress = self._run_inference_once()
+                signals = self._run_inference_once()
 
-                # Check if inference failed due to missing sensor data
-                if progress is None:
-                    # Check if it's due to missing sensors
+                # None means inputs weren't ready or inference failed this step.
+                if signals is None:
+                    # Bail only if a required sensor actually dropped out; otherwise skip
+                    # this step and keep looping (timeout + feedback below still run).
                     if not self._check_sensor_availability():
                         self.get_logger().error("Required sensors became unavailable during execution")
                         self._stop_robot()
                         return "FAILURE", "Required sensors became unavailable during execution"
-                    # If sensors are available but inference still failed, continue
-                    # but still check timeout and send feedback
                 else:
-                    # Check for early termination based on progress metric
-                    if progress > progress_threshold:
+                    stop, reason = stop_detector.update(signals, elapsed_time, loop_start)
+                    if stop:
                         early_termination = True
-                        self.get_logger().info(
-                            f"Early termination triggered! Progress: {progress:.4f} > {progress_threshold}"
-                        )
+                        stop_reason = reason
+                        self.get_logger().info(f"Early termination triggered! {reason}")
                         break
 
                 # Send feedback
@@ -452,9 +465,9 @@ class ManipulationServer(Node):
 
             if early_termination:
                 self.get_logger().info(
-                    f"Learned behavior {behavior_name} completed early (progress threshold) — {run_summary}"
+                    f"Learned behavior {behavior_name} completed early ({stop_reason}) — {run_summary}"
                 )
-                return "SUCCESS", "Completed early due to progress threshold being reached"
+                return "SUCCESS", f"Completed early: {stop_reason}"
             else:
                 self.get_logger().info(f"Learned behavior {behavior_name} completed successfully — {run_summary}")
                 return "SUCCESS", "Completed full duration successfully"
@@ -879,8 +892,8 @@ class ManipulationServer(Node):
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
 
-        Returns the progress scalar (action[8]) for the early-termination check, or
-        None if inputs aren't ready yet or inference failed.
+        Returns a :class:`StepSignals` (progress, arm_delta, base_speed) for the
+        auto-stop detector, or None if inputs aren't ready yet or inference failed.
         """
         if (
             not self.current_policy
@@ -923,29 +936,41 @@ class ManipulationServer(Node):
                 )
                 return None
 
-            # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z, [8] progress.
+            # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z,
+            # [8] progress, [9] termination.
             self._publish_base(float(action_np[6]), float(action_np[7]), self.learned_base_speed_scale)
             self._publish_arm(action_np[:6])
             t3 = time.perf_counter()
 
+            # Motion signals for the auto-stop detector, reused below for the profiler's
+            # jerk metrics. arm_delta is the L2 change in the commanded joint targets vs.
+            # the previous step; base_speed is the commanded base velocity magnitude. Both
+            # collapse to ~0 once the policy holds still. Update prev first (and guard on
+            # matching shape: switching to a behavior with a different action_dim leaves a
+            # stale prev whose slices won't broadcast) so a failure below can't stall it.
+            prev = self._prev_action_np
+            self._prev_action_np = action_np
+            arm_delta = (
+                float(np.linalg.norm(action_np[:6] - prev[:6]))
+                if prev is not None and prev.shape == action_np.shape
+                else None
+            )
+            base_speed = abs(float(action_np[6])) + abs(float(action_np[7]))
+            progress = float(action_np[8]) if self.current_action_dim >= 10 else None
+
             if profiling:
                 quality = {}
-                if self.current_action_dim >= 10:
-                    quality["progress"] = float(action_np[8])
-                # Update prev first so a failure below can't stall it, and guard on matching
-                # shape: switching to a behavior with a different action_dim leaves a stale
-                # prev whose slices won't broadcast.
-                prev = self._prev_action_np
-                self._prev_action_np = action_np
-                if prev is not None and prev.shape == action_np.shape:
-                    quality["arm_jerk"] = float(np.linalg.norm(action_np[:6] - prev[:6]))
+                if progress is not None:
+                    quality["progress"] = progress
+                if arm_delta is not None:
+                    quality["arm_jerk"] = arm_delta
                     quality["base_jerk"] = float(np.linalg.norm(action_np[6:8] - prev[6:8]))
                 disagreement = getattr(self.current_policy, "last_disagreement", None)
                 if disagreement is not None:
                     quality["disagreement"] = float(disagreement)
                 self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
-            return float(action_np[8]) if self.current_action_dim >= 10 else None
+            return StepSignals(progress=progress, arm_delta=arm_delta, base_speed=base_speed)
 
         except Exception as e:
             self.get_logger().error(f"Error during inference: {e}")

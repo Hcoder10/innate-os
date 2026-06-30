@@ -379,6 +379,12 @@ class SkillRepository:
                     "start_pose": None,
                     "end_pose": None,
                     "n_action_steps": None,
+                    "min_duration": None,
+                    "progress_ema_alpha": None,
+                    "idle_seconds": None,
+                    "idle_arm_eps": None,
+                    "idle_base_eps": None,
+                    "progress_gate": None,
                 }
             )
             metadata = {
