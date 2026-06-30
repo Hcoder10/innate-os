@@ -58,6 +58,11 @@ class BrainClientNode(Node):
         self.chat_out_pub = self.create_publisher(String, "/brain/chat_out", 10)
         self.task_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
         self.tts_status_pub = self.create_publisher(String, "/tts/is_playing", 10)
+        # Synthesized speech (base64 WAV) for clients to play. The sim has no
+        # audio device so the webapp is the only speaker; on the real robot it
+        # also lets a remote operator hear speech (the webapp mutes it while the
+        # mic is open, to avoid doubling the speaker heard through the mic).
+        self.tts_audio_pub = self.create_publisher(String, "/tts/audio", 10)
         self.memory_positions_pub = self.create_publisher(String, "/brain/memory_positions", 10)
 
         self._proxy = self._init_proxy()
@@ -108,7 +113,13 @@ class BrainClientNode(Node):
         if self._proxy is None:
             self.get_logger().info("🔇 Text-to-speech disabled (proxy not available)")
             return None
-        handler = TTSHandler(logger=self.get_logger(), proxy=self._proxy, tts_status_pub=self.tts_status_pub)
+        handler = TTSHandler(
+            logger=self.get_logger(),
+            proxy=self._proxy,
+            tts_status_pub=self.tts_status_pub,
+            tts_audio_pub=self.tts_audio_pub,
+            simulator_mode=self.config.simulator_mode,
+        )
         if handler.is_available():
             self.get_logger().info(f"🗣️ Text-to-speech enabled (voice: {handler.voice_id})")
         else:

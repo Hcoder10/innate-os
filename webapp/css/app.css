@@ -247,7 +247,7 @@ button {
 .map-controls {
   position: absolute;
   top: 16px;
-  right: 16px;
+  right: 56px;
   display: flex;
   gap: 8px;
 }
@@ -515,11 +515,165 @@ button {
   border-color: var(--accent-dim);
 }
 
+/* Link failed/erroring — make the toggle unmistakably red even while closed. */
+.profiling-toggle.failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.profiling-value.bad {
+  color: var(--danger);
+}
+
+/* Camera PiP strip — Zoom-style view switcher pinned bottom-right. The big stage is the primary camera;
+   these tiles are the other cameras (off pills or live thumbnails). Tunable knobs live here as custom
+   properties: tile size, gap, and the corner inset. */
+.cam-strip {
+  --pip-w: 168px;
+  --pip-h: 96px;
+  --pip-gap: 8px;
+  --pip-inset: 20px;
+  --pip-top: 54px; /* clear the profiling toggle pinned at top:14px */
+  position: absolute;
+  right: var(--pip-inset);
+  top: var(--pip-top);
+  display: flex;
+  flex-direction: row; /* grow leftward along the top edge */
+  align-items: flex-end;
+  gap: var(--pip-gap);
+}
+
+.cam-tile {
+  --pip-hover-scale: 1.12;
+  position: relative;
+  width: var(--pip-w);
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  cursor: pointer;
+  overflow: hidden;
+  transform-origin: top right; /* grow inward from the corner, never off-screen */
+  transition: border-color 150ms ease, transform 150ms ease, color 150ms ease;
+}
+
+/* Grow on hover so the feed you're about to pick previews bigger. */
+.cam-tile:hover {
+  border-color: var(--hairline-strong);
+  transform: scale(var(--pip-hover-scale));
+  z-index: 1;
+}
+
+/* Off: a compact dim pill showing just the camera name. */
+.cam-tile.off {
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.cam-tile.off:hover {
+  color: var(--text);
+}
+
+/* Live: a thumbnail of the feed. */
+.cam-tile.live {
+  height: var(--pip-h);
+  background: #000;
+}
+
+.cam-tile.live video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Feed requested but not flowing yet — dim the tile so it reads as warming up. */
+.cam-tile.connecting video {
+  opacity: 0.25;
+}
+
+.cam-tile-label {
+  position: absolute;
+  left: 7px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.cam-tile-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+.cam-tile.live:hover .cam-tile-close {
+  opacity: 1;
+}
+
+.cam-tile-close:hover {
+  color: var(--accent);
+}
+
+/* Map view — same ladder as a camera. As a thumbnail it's a tile-sized canvas host. */
+.cam-tile-map {
+  height: var(--pip-h);
+  background: #000;
+}
+
+.cam-map-host {
+  width: 100%;
+  height: 100%;
+}
+
+.cam-map-host .map-canvas {
+  display: block;
+}
+
+/* The map's Set Goal control only makes sense at full size. */
+.cam-map-host:not(.big) .map-controls {
+  display: none;
+}
+
+/* Map promoted to the big stage: full-bleed under the control overlays. Inserted as the stage's first
+   child, so DOM order keeps the overlays (and the strip) painting on top; the video stage hides. */
+.cam-map-host.big {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.cam-map-primary .video-stage {
+  display: none;
+}
+
 /* Panel sits just below the toggle; denser glass since it's over the feed. */
 .profiling {
   position: absolute;
   top: 54px;
   right: 14px;
+  z-index: 2; /* paint above the camera PiP strip */
   width: 232px;
   padding: 11px 14px;
   background: rgb(0 0 0 / 66%);

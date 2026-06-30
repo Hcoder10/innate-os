@@ -17,15 +17,17 @@ from assets import ensure_sim_assets
 from config import (
     BOOTSTRAP_LOG_PATH,
     CLI_SIM,
+    CLOUD_AGENT_DIR_NAME,
     CLOUD_AGENT_LOG_PATH,
     COMPOSE_LOG_PATH,
     DOWN_LOG_PATH,
-    FRONTEND_LOG_PATH,
     GENERATED_OS_ENV_PATH,
     HOSTED_MODE,
     LAUNCHER_DIR,
+    LOCAL_BRAIN_COMPOSE_PROFILE,
     LOCAL_IMAGE_MODE,
     LOCAL_MODES,
+    NONE_MODE,
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
@@ -42,6 +44,7 @@ from config import (
     SIM_REQUIRED_DATA_PATHS,
     SIM_STARTUP_CHECK_DELAY_SECONDS,
     TMUX_SESSION_NAME,
+    WORKSPACE_ROOT,
     StackError,
     compute_ros_install_validation_hash,
     ensure_state_dir,
@@ -52,14 +55,6 @@ from config import (
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
-FRONTEND_COMPOSE_ENV_KEYS = (
-    "FRONTEND_PORT",
-    "SIM_BASE_URL",
-    "WS_BASE_URL",
-    "ROBOT_WS_URL",
-    "DIRECT_ROBOT",
-    "CARTESIA_API_KEY",
-)
 
 
 def run_logged(
@@ -190,47 +185,6 @@ def python_import_succeeds(python_path: Path, module: str) -> bool:
         check=False,
     )
     return result.returncode == 0
-
-
-def frontend_compose_env(config: dict[str, object]) -> dict[str, str]:
-    """Subprocess env for `docker compose` so it interpolates the frontend service's
-    host port and browser-facing URLs from the resolved config."""
-    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-    env = os.environ.copy()
-    for key in FRONTEND_COMPOSE_ENV_KEYS:
-        value = raw_env.get(key)
-        if value is not None:
-            env[key] = value
-    return env
-
-
-def prebuild_frontend_image(config: dict[str, object]) -> None:
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    log("Building simulator web frontend image...")
-    run_logged_with_heartbeat(
-        docker_compose_cmd("build", "frontend"),
-        cwd=os_repo,
-        env=frontend_compose_env(config),
-        log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator web frontend image build failed.",
-        progress_message="Docker is still building the web frontend image.",
-    )
-
-
-def ensure_frontend_container(config: dict[str, object], *, offline: bool = False) -> None:
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    log("Starting simulator web frontend container...")
-    # Offline: reuse the already-built frontend image instead of rebuilding, which
-    # would re-resolve the node/caddy base images over the network.
-    build_flag = "--no-build" if offline else "--build"
-    run_logged_with_heartbeat(
-        docker_compose_cmd("up", "-d", build_flag, "frontend"),
-        cwd=os_repo,
-        env=frontend_compose_env(config),
-        log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator web frontend container startup failed.",
-        progress_message="Docker is still building/starting the web frontend container.",
-    )
 
 
 def sim_venv_python(config: dict[str, object]) -> Path:
@@ -518,7 +472,7 @@ def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> No
     down_os(config, remove_volumes=True)
     # Belt-and-suspenders: force-remove named containers that may linger outside
     # the compose project (e.g. after a partial or failed startup).
-    for container in ("innate-dev", "stack-cloud-agent"):
+    for container in ("innate-dev", "innate-cloud-agent"):
         subprocess.run(
             ["docker", "rm", "-f", container],
             stdin=subprocess.DEVNULL,
@@ -532,36 +486,37 @@ def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> No
 
 
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
+    """Bring up the local brain as the `cloud-agent` service in the OS compose
+    project (gated by the local-brain profile). Hosted/none modes run no local
+    agent."""
     mode = config["mode"]
     if mode == HOSTED_MODE:
-        log("Cloud agent mode is hosted. Skipping local cloud-agent startup.")
+        log("Brain backend is hosted. Skipping local cloud-agent startup.")
+        return
+    if mode == NONE_MODE:
+        log("No brain backend configured (no GEMINI_API_KEY or INNATE_SERVICE_KEY). Skipping cloud-agent.")
         return
 
     ensure_docker_available(command_hint=f"{CLI_SIM} up")
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
 
+    # The cloud-agent reads GEMINI_API_KEY from the same env file as the OS
+    # container, and the local-brain profile must be active to start the service.
     base_env = {
-        "STACK_CLOUD_AGENT_PORT": str(config["cloud_port"]),
-        "STACK_CLOUD_AGENT_ENV_FILE": str(cloud_env_file),
+        "COMPOSE_PROFILES": LOCAL_BRAIN_COMPOSE_PROFILE,
+        "INNATE_OS_ENV_FILE": str(cloud_env_file),
     }
+    up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
 
     if mode == LOCAL_IMAGE_MODE:
         image = str(config["cloud_image"]).strip()
         if not image:
             raise StackError("sim/config.toml must set cloud_agent.image when cloud_agent.mode = 'local-image'.")
         log(f"Starting local cloud-agent image {image}...")
-        compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_IMAGE": image})
+        compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_IMAGE": image})
         run_logged(
-            [
-                "docker",
-                "compose",
-                "-p",
-                "stack-cloud",
-                "-f",
-                "compose.cloud-agent.image.yml",
-                "up",
-                "-d",
-            ],
-            cwd=LAUNCHER_DIR,
+            [*up_cmd, "--no-build", "cloud-agent"],
+            cwd=os_repo,
             env=compose_env,
             log_path=CLOUD_AGENT_LOG_PATH,
             failure_message="Local cloud-agent image startup failed.",
@@ -570,23 +525,17 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
 
     cloud_repo: Path | None = config["cloud_repo"]  # type: ignore[assignment]
     if cloud_repo is None:
-        raise StackError("sim/config.toml must set cloud_agent.source_dir when cloud_agent.mode = 'local-source'.")
+        raise StackError(
+            "The innate-cloud-agent repository was not found next to innate-os "
+            f"(expected at {WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME}).\n"
+            f"Run `{CLI_SIM} setup` to clone it, or set sim/config.toml cloud_agent.source_dir."
+        )
     require_path(cloud_repo, "innate-cloud-agent repository")
     log(f"Starting local cloud-agent from source at {cloud_repo}...")
-    compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_SOURCE_DIR": str(cloud_repo)})
+    compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_DIR": str(cloud_repo)})
     run_logged(
-        [
-            "docker",
-            "compose",
-            "-p",
-            "stack-cloud",
-            "-f",
-            "compose.cloud-agent.source.yml",
-            "up",
-            "-d",
-            "--build",
-        ],
-        cwd=LAUNCHER_DIR,
+        [*up_cmd, "--build", "cloud-agent"],
+        cwd=os_repo,
         env=compose_env,
         log_path=CLOUD_AGENT_LOG_PATH,
         failure_message="Local cloud-agent source startup failed.",
@@ -594,16 +543,10 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
 
 
 def down_cloud_agent() -> None:
+    # The cloud-agent now lives in the OS compose project, so `down_os` removes it.
+    # This is a defensive cleanup in case it was started on its own.
     subprocess.run(
-        ["docker", "rm", "-f", "stack-cloud-agent"],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        ["docker", "network", "rm", "stack-cloud_default"],
+        ["docker", "rm", "-f", "innate-cloud-agent"],
         text=True,
         stdin=subprocess.DEVNULL,
         check=False,
@@ -789,9 +732,18 @@ def websocket_port_open(port: int) -> bool:
             sock.settimeout(1.0)
             sock.sendall(request)
             response = sock.recv(128)
+            upgraded = response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
+            if upgraded:
+                # Close the upgraded WebSocket politely (masked, empty close
+                # frame) so rws logs a clean close instead of an "End of File"
+                # read error from us abandoning the socket.
+                try:
+                    sock.sendall(b"\x88\x80\x00\x00\x00\x00")
+                except OSError:
+                    pass
+            return upgraded
     except OSError:
         return False
-    return response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
 
 
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
@@ -833,6 +785,28 @@ def config_simulator_port(config: dict[str, object]) -> str:
     return str(raw_env.get("SIMULATOR_PORT", "8000"))
 
 
+# Latch so the 0.5s dashboard refresh doesn't WS-probe rosbridge forever.
+_rosbridge_ws_confirmed = False
+
+
+def _rosbridge_live(os_status: dict[str, bool]) -> bool:
+    """rosbridge liveness for the steady dashboard refresh.
+
+    WS-probe the endpoint only until it first accepts a connection; afterwards
+    the rws process-liveness check (pgrep) is enough. This stops opening — and
+    immediately dropping — a WebSocket on every refresh, which rws logs as
+    connect/EOF/disconnect noise. Reset when the process dies so a restart is
+    re-probed.
+    """
+    global _rosbridge_ws_confirmed
+    process_live = bool(os_status["os_session_running"] and os_status["rosbridge_process_live"])
+    if not process_live:
+        _rosbridge_ws_confirmed = False
+    elif not _rosbridge_ws_confirmed:
+        _rosbridge_ws_confirmed = websocket_port_open(9090)
+    return process_live and _rosbridge_ws_confirmed
+
+
 def collect_runtime_probe(
     config: dict[str, object],
     *,
@@ -841,10 +815,8 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = (
-        os_status["os_session_running"] and os_status["rosbridge_process_live"] and websocket_port_open(9090)
-    )
-    agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
+    rosbridge_live = _rosbridge_live(os_status)
+    agent_running = container_running("innate-cloud-agent") if config["mode"] in LOCAL_MODES else True
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
     if isinstance(metrics, dict):
@@ -890,9 +862,7 @@ def runtime_already_running(config: dict[str, object]) -> bool:
         return False
     if not os_runtime_ready(config):
         return False
-    if config["mode"] in LOCAL_MODES and not container_running("stack-cloud-agent"):
-        return False
-    if not frontend_ready(config_frontend_port(config)):
+    if config["mode"] in LOCAL_MODES and not container_running("innate-cloud-agent"):
         return False
     return available_agent_count(simulator_port) > 0
 
@@ -912,8 +882,6 @@ def print_startup_checks(
     probe = collect_runtime_probe(config, simulator_http_ready=simulator_http_ready)
     simulator_port = str(probe["simulator_port"])
     os_status: dict[str, bool] = probe["os_status"]  # type: ignore[assignment]
-    frontend_port = config_frontend_port(config)
-    frontend_state = frontend_build_state(frontend_port)
     checks = [
         (
             bool(probe["agent_running"]),
@@ -957,13 +925,6 @@ def print_startup_checks(
             "Brain backend",
             str(probe["backend_label"]),
         ),
-        (
-            frontend_state == "ready",
-            "Web UI",
-            f"http://localhost:{frontend_port} ready"
-            if frontend_state == "ready"
-            else f"http://localhost:{frontend_port} {frontend_state or 'not ready'}",
-        ),
     ]
 
     log("Startup checks:")
@@ -1004,9 +965,11 @@ def capture_os_brain_logs(config: dict[str, object], lines: int = 18) -> list[st
 def capture_agent_logs(config: dict[str, object], lines: int = 18) -> list[str]:
     if config["mode"] == HOSTED_MODE:
         return ["Hosted mode enabled.", "No local agent container is running."]
-    if not container_running("stack-cloud-agent"):
+    if config["mode"] == NONE_MODE:
+        return ["No brain backend configured.", "The sim is running without an agent."]
+    if not container_running("innate-cloud-agent"):
         return ["Local cloud-agent is not running."]
-    output = capture_command_output(["docker", "logs", "--tail", str(lines), "stack-cloud-agent"])
+    output = capture_command_output(["docker", "logs", "--tail", str(lines), "innate-cloud-agent"])
     if not output:
         return ["No local cloud-agent output yet."]
     return output.splitlines()[-lines:]
@@ -1314,55 +1277,6 @@ def simulator_ready(port: str) -> bool:
     return bool(sim_get_json(port, "video_feeds_ready").get("ready"))
 
 
-def config_frontend_port(config: dict[str, object]) -> str:
-    return str(config.get("frontend_port", "3000"))
-
-
-def fetch_text(url: str, *, timeout: float = 2.0) -> str:
-    try:
-        with urlopen(url, timeout=timeout) as response:
-            if response.status != 200:
-                return ""
-            return response.read().decode("utf-8", errors="replace")
-    except (URLError, TimeoutError):
-        return ""
-
-
-def frontend_build_state(port: str) -> str:
-    """Returns 'building' | 'ready' | 'error' | '' (unreachable/unknown)."""
-    return str(request_json(f"http://localhost:{port}/build-status.json").get("state", ""))
-
-
-def frontend_ready(port: str) -> bool:
-    return frontend_build_state(port) == "ready"
-
-
-def wait_for_frontend_ready(
-    port: str,
-    *,
-    timeout_seconds: float = 300.0,
-) -> None:
-    deadline = time.time() + timeout_seconds
-    next_heartbeat = time.monotonic() + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-    while time.time() < deadline:
-        state = frontend_build_state(port)
-        if state == "ready":
-            return
-        if state == "error":
-            build_log = fetch_text(f"http://localhost:{port}/build.log")
-            tail = "\n".join(build_log.splitlines()[-60:]) if build_log else "<no build log captured>"
-            raise StackError(f"Simulator web frontend build failed.\nRecent build log:\n{tail}")
-
-        now = time.monotonic()
-        if now >= next_heartbeat:
-            remaining = max(0, int(deadline - time.time()))
-            log(f"Waiting for the web frontend to build ({remaining}s remaining)...")
-            next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-        time.sleep(SIM_HTTP_POLL_SECONDS)
-
-    raise StackError(f"Timed out waiting for the simulator web frontend to build.\nCheck: {CLI_SIM} logs frontend")
-
-
 def fetch_simulator_metrics(port: str) -> dict[str, object]:
     return sim_get_json(port, "stack_metrics")
 
@@ -1384,6 +1298,8 @@ def wait_for_brain_directives(port: str, *, timeout_seconds: float = 30.0) -> in
 
 
 def health_from_brain_backend(status: dict[str, object], mode: str) -> tuple[str, str]:
+    if mode == NONE_MODE:
+        return "warn", "no agent"
     if not status:
         return ("warn", "unknown") if mode == HOSTED_MODE else ("warn", "not reported")
 
@@ -1463,8 +1379,13 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     else:
         brain_level = "warn"
         brain_label = "booting"
-    agent_level = "healthy" if config["mode"] == HOSTED_MODE or agent_running else "warn"
-    agent_label = "hosted" if config["mode"] == HOSTED_MODE else ("online" if agent_running else "offline")
+    if config["mode"] == NONE_MODE:
+        agent_level, agent_label = "warn", "none"
+    elif config["mode"] == HOSTED_MODE:
+        agent_level, agent_label = "healthy", "hosted"
+    else:
+        agent_level = "healthy" if agent_running else "warn"
+        agent_label = "online" if agent_running else "offline"
 
     if all(level == "healthy" for level in (video_level, transport_level, brain_level, backend_level, agent_level)):
         stack_mood = ("healthy", "LIVE")

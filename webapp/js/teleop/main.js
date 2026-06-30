@@ -26,6 +26,7 @@ import { createChatPanel } from "./chatPanel.js";
 import { createRightDock } from "./rightDock.js";
 import { createAgentState } from "./agentState.js";
 import { createSimControls } from "./simControls.js";
+import { createCameraSwitch } from "./cameraSwitch.js";
 
 initShell("teleop", "");
 
@@ -44,6 +45,27 @@ const dbg = { ros, drive, session: null };
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
 mountPage(stage, "cockpit", buildCockpit);
+
+/**
+ * Sim API base for /stack_metrics. The committed config.json points at
+ * localhost — fine when the webapp is opened on the same machine, but when the
+ * page is served from another host that loopback names the viewer's box, not
+ * the sim. Swap in the serving host, keeping the configured port/scheme.
+ * @param {string | undefined} configured
+ * @returns {string}
+ */
+function resolveSimApiUrl(configured) {
+  const base = configured || "http://localhost:8000";
+  const host = location.hostname;
+  if (!host || host === "localhost" || host === "127.0.0.1") return base;
+  try {
+    const url = new URL(base);
+    url.hostname = host;
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return base;
+  }
+}
 
 /**
  * @param {HTMLElement} root
@@ -71,18 +93,23 @@ function buildCockpit(root) {
   }
 
   const keyboard = createKeyboardDrive(drive);
-  const parts = [
-    videoStage,
-    createTelemetry(telemetryOverlay, ros),
-    createAudioToggle(rightRail, session, videoStage.audioEl),
+  const parts = [videoStage, createTelemetry(telemetryOverlay, ros)];
+  // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
+  // video only (no microphone), so the toggle would do nothing. config.simControls
+  // is the sim deployment's feature flag (env-driven; false on the real robot).
+  if (!config.simControls) {
+    parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
+  }
+  parts.push(
     createHeadTilt(rightRail, ros),
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),
     createTtsBar(ttsOverlay, ros),
     createArmPanel(armOverlay, ros),
     createProfilingPanel(root, session),
+    createCameraSwitch(root, session, ros),
     keyboard,
-  ];
+  );
 
   // Shared right dock hosting the Skills + Chat panes, each with its own popup
   // toggle on the camera's right edge. Built after the parts so it tears down
@@ -99,7 +126,7 @@ function buildCockpit(root) {
 
   // Sim-only debug controls (Reset Position + FPS/queue) — opt-in via config.json.
   if (config.simControls) {
-    parts.push(createSimControls(root, ros, config.simApiUrl || "http://localhost:8000"));
+    parts.push(createSimControls(root, ros, resolveSimApiUrl(config.simApiUrl)));
   }
 
   session.start();

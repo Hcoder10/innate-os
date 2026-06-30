@@ -1,25 +1,28 @@
 // @ts-check
-// Map page — a plain 2D <canvas> rendering the nav occupancy grid (/map) plus
-// the robot's pose (/odom), the planner's route (/plan), and click-to-navigate
-// (publishes /goal_pose). Standalone for now; the widget can be embedded into
-// teleop later. No three.js — the map is 2D, so a canvas + putImageData is all
-// it needs.
+// Reusable nav-map widget — a plain 2D <canvas> rendering the occupancy grid
+// (/map), robot pose (/odom), planner route (/plan), and click-to-navigate
+// (publishes /goal_pose). Sizes itself to its container via a ResizeObserver, so
+// it can be the standalone Map page OR a teleop PiP tile that reparents between
+// a small thumbnail and the full stage. No three.js — a canvas + putImageData
+// is all a 2D map needs.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
-import { mountPage } from "../pageMount.js";
 import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPIC, GOAL_POSE_TOPIC } from "../constants.js";
 
-initShell("map", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-mountPage(stage, "map-view", buildMap);
+// Wheel-zoom bounds (metres of real-world width shown).
+const MIN_ZOOM_M = 1;
+const MAX_ZOOM_M = 60;
+const ZOOM_STEP = 1.15; // per wheel notch
 
 /**
- * @param {HTMLElement} root
- * @returns {{ destroy: () => void }}
+ * @param {HTMLElement} root container the map fills (sized via ResizeObserver).
+ * @param {{ zoom?: number, onZoomChange?: (meters: number) => void }} [opts] zoom = metres of real-world
+ *   width to show, centred on the robot pose (keeps the map legible when small); enables scroll-to-zoom.
+ *   Omit to fit the whole grid (the standalone page). onZoomChange fires after each wheel-zoom.
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void }}
  */
-function buildMap(root) {
+export function createMap(root, opts = {}) {
+  let zoomMeters = opts.zoom;
   const canvas = document.createElement("canvas");
   canvas.className = "map-canvas";
   root.appendChild(canvas);
@@ -194,15 +197,27 @@ function buildMap(root) {
       return;
     }
 
-    const pad = 16 * dpr();
-    const scale = Math.min((canvas.width - 2 * pad) / grid.width, (canvas.height - 2 * pad) / grid.height);
-    const drawW = grid.width * scale;
-    const drawH = grid.height * scale;
-    const ox = (canvas.width - drawW) / 2;
-    const oy = (canvas.height - drawH) / 2;
+    let scale, ox, oy;
+    if (zoomMeters && pose) {
+      // Robot-centred zoom: show a fixed real-world window (zoomMeters across) centred on the pose, so the
+      // map stays legible at thumbnail size instead of fitting the whole world into a few pixels. Anything
+      // outside the window is simply clipped by the canvas bounds.
+      const cellsAcross = zoomMeters / grid.resolution;
+      scale = Math.min(canvas.width, canvas.height) / cellsAcross;
+      const poseCol = (pose.x - grid.originX) / grid.resolution;
+      const poseRowFromBottom = (pose.y - grid.originY) / grid.resolution;
+      ox = canvas.width / 2 - poseCol * scale;
+      oy = canvas.height / 2 - (grid.height - poseRowFromBottom) * scale;
+    } else {
+      // Fit the whole grid (standalone page, or before the first pose arrives).
+      const pad = 16 * dpr();
+      scale = Math.min((canvas.width - 2 * pad) / grid.width, (canvas.height - 2 * pad) / grid.height);
+      ox = (canvas.width - grid.width * scale) / 2;
+      oy = (canvas.height - grid.height * scale) / 2;
+    }
     view = { ox, oy, scale };
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(off, ox, oy, drawW, drawH);
+    ctx.drawImage(off, ox, oy, grid.width * scale, grid.height * scale);
 
     if (plan && plan.length >= 2) {
       ctx.strokeStyle = "#00b7ff";
@@ -309,26 +324,49 @@ function buildMap(root) {
     draw();
   }
 
+  // Scroll to zoom (only in robot-centred mode). Scroll up = zoom in = show fewer metres.
+  /** @param {WheelEvent} e */
+  function onWheel(e) {
+    if (!zoomMeters) return; // fit-whole mode (standalone page) doesn't zoom
+    e.preventDefault();
+    const next = zoomMeters * (e.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+    zoomMeters = Math.min(MAX_ZOOM_M, Math.max(MIN_ZOOM_M, next));
+    draw();
+    opts.onZoomChange?.(zoomMeters);
+  }
+
   goalBtn.addEventListener("click", () => setGoalMode(!goalMode));
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
 
+  // Resize with the container, not just the window — covers reparenting between
+  // the small PiP tile and the full stage in teleop.
+  const ro = new ResizeObserver(() => fit());
+  ro.observe(root);
   fit();
-  const onResize = () => fit();
-  window.addEventListener("resize", onResize);
+
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
   const unsubPlan = ros.subscribe(PLAN_TOPIC, onPlan, 250);
 
   return {
+    /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */
+    setZoom(meters) {
+      if (typeof meters === "number" && meters > 0 && meters !== zoomMeters) {
+        zoomMeters = meters;
+        draw();
+      }
+    },
     destroy() {
       clearTimeout(navStaleTimer);
-      window.removeEventListener("resize", onResize);
+      ro.disconnect();
       unsubMap();
       unsubOdom();
       unsubPlan();
-      root.innerHTML = "";
+      canvas.remove();
+      controls.remove();
     },
   };
 }

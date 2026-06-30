@@ -31,7 +31,7 @@ from src.simulation.special_object_treatments import SpecialObjectHandler
 from src.simulation.stl_slicing import slice_stl
 from src.simulation.utils import rotate_vector
 
-ROBOT_INIT_POS = (2, -5, 0.05)
+ROBOT_INIT_POS = (3, -5, 0.05)
 ROBOT_INIT_QUAT = (0, 0, 0, 1)
 ROBOT_ROOT_POS = (0.0, 0.0, ROBOT_INIT_POS[2])
 ROBOT_ARM_HOME_POSITIONS = [
@@ -161,6 +161,14 @@ class SimulationNode:
         # Store commanded velocities for odometry
         self.commanded_lin_vel = np.zeros(3)  # [vx, vy, vz]
         self.commanded_ang_vel = np.zeros(3)  # [wx, wy, wz]
+
+        # Hold the latest /cmd_vel and re-apply it every physics step until it
+        # expires, so motion stays smooth when commands arrive slower/jittier
+        # than the sim step rate (otherwise the pose only advances on frames
+        # that happen to dequeue a command, which looks like stutter).
+        self.velocity_cmd_timeout = _env_float("SIM_VELOCITY_CMD_TIMEOUT", 0.25)  # s
+        self.held_velocity_cmd = None
+        self.held_velocity_cmd_time = 0.0  # sim_time when last received
 
         # Navigation control parameters - differential drive kinematics
         # Physical constraints:
@@ -1891,6 +1899,36 @@ class SimulationNode:
             error=error,
         )
 
+    def _apply_velocity_cmd(self, cmd: VelocityCmd, dt: float) -> None:
+        """Integrate one physics step of a velocity command into the robot pose."""
+        linear_vel = cmd.linear_x
+        angular_vel = cmd.angular_z
+
+        current_pos, current_quat = self._get_robot_base_pose()
+
+        # Convert current quaternion to rotation matrix to get forward direction
+        current_rot = R.from_quat(
+            [current_quat[1], current_quat[2], current_quat[3], current_quat[0]]
+        )
+        forward_dir = current_rot.apply([1, 0, 0])  # Transform x-axis by current rotation
+
+        # Move in the forward direction
+        new_pos = current_pos + forward_dir * linear_vel * dt
+
+        # Update orientation based on angular velocity
+        angle = angular_vel * dt
+        delta_rot = R.from_euler("z", angle)
+        new_rot = delta_rot * current_rot
+        new_quat = new_rot.as_quat()  # Returns [x, y, z, w]
+        new_quat = np.array([new_quat[3], new_quat[0], new_quat[1], new_quat[2]])
+
+        self._set_robot_base_pose(new_pos, new_quat)
+
+        # Store commanded velocities in world frame for odometry
+        # MULTIPLY BY 0 TO DISABLE MESSING WITH THE ACTUAL ROBOT ON ROS
+        self.commanded_lin_vel = forward_dir * linear_vel * 0
+        self.commanded_ang_vel = np.array([0, 0, angular_vel])
+
     def run(self):
         step_count = 0
         sim_time = 0  # Track simulation time
@@ -2031,50 +2069,26 @@ class SimulationNode:
                         ]
                     )
                     self.nav_target_yaw = latest_position_cmd.target_yaw
+                    # A new nav target supersedes any held velocity command.
+                    self.held_velocity_cmd = None
 
                     # print(f"New nav target: pos=({self.nav_target_pos[0]:.3f}, {self.nav_target_pos[1]:.3f}), yaw={self.nav_target_yaw:.3f}")
                 elif latest_velocity_cmd is not None:
-                    linear_vel = latest_velocity_cmd.linear_x
-                    angular_vel = latest_velocity_cmd.angular_z
-
-                    # Convert desired velocities to robot position update
-                    current_pos, current_quat = self._get_robot_base_pose()
-
-                    # Update position based on linear velocity and current orientation
-                    dt = self.scene.sim_options.dt
-                    # Convert current quaternion to rotation matrix to get forward direction
-                    current_rot = R.from_quat(
-                        [
-                            current_quat[1],
-                            current_quat[2],
-                            current_quat[3],
-                            current_quat[0],
-                        ]
-                    )
-                    forward_dir = current_rot.apply([1, 0, 0])  # Transform x-axis by current rotation
-
-                    # Move in the forward direction
-                    new_pos = current_pos + forward_dir * linear_vel * dt
-
-                    # Update orientation based on angular velocity
-                    angle = angular_vel * dt
-                    delta_rot = R.from_euler("z", angle)
-                    new_rot = delta_rot * current_rot
-                    new_quat = new_rot.as_quat()  # Returns [x, y, z, w]
-                    new_quat = np.array([new_quat[3], new_quat[0], new_quat[1], new_quat[2]])
-
-                    # Set the new position and orientation
-                    self._set_robot_base_pose(new_pos, new_quat)
-
-                    # Store commanded velocities in world frame for odometry
-                    # MULTIPLY BY 0 TO DISABLE MESSING WITH TH EACTUAL ROBOT
-                    # ON ROS
-                    self.commanded_lin_vel = forward_dir * linear_vel * 0
-                    self.commanded_ang_vel = np.array([0, 0, angular_vel])
-
-                    print(f"Commanded vel: linear={linear_vel:.3f}, angular={angular_vel:.3f}")
+                    # Hold the command; it is integrated every step below until it
+                    # expires, so the pose advances smoothly between arrivals.
+                    self.held_velocity_cmd = latest_velocity_cmd
+                    self.held_velocity_cmd_time = sim_time
             except Exception as e:
                 print(f"Error processing commands: {e}")
+
+            # --- (A2) Apply the held velocity command every step until it expires
+            if self.held_velocity_cmd is not None:
+                if sim_time - self.held_velocity_cmd_time <= self.velocity_cmd_timeout:
+                    self._apply_velocity_cmd(self.held_velocity_cmd, dt)
+                else:
+                    self.held_velocity_cmd = None
+                    self.commanded_lin_vel = np.zeros(3)
+                    self.commanded_ang_vel = np.zeros(3)
 
             # --- (B) Handle smooth navigation movement ---
             if self.nav_target_pos is not None and self.nav_target_yaw is not None:

@@ -969,16 +969,19 @@ def render_status(
     print()
     used_lines += 1
     print_dashboard_line(
-        f"{BOLD}Web UI:{NC} http://localhost:{config.get('frontend_port', '3000')}",
+        f"{BOLD}Web UI:{NC} https://localhost",
         term_width,
     )
     used_lines += 1
     print_dashboard_line(
-        f"{BOLD}Simulator API:{NC} http://localhost:{snapshot['simulator_port']}",
+        "  ".join(
+            [
+                f"{BOLD}Simulator API:{NC} http://localhost:{snapshot['simulator_port']}",
+                f"{BOLD}ROSBridge:{NC} ws://localhost:9090",
+            ]
+        ),
         term_width,
     )
-    used_lines += 1
-    print_dashboard_line(f"{BOLD}ROSBridge:{NC} ws://localhost:9090", term_width)
     used_lines += 1
     if config["mode"] in options.local_modes:
         print_dashboard_line(
@@ -986,7 +989,15 @@ def render_status(
             term_width,
         )
         used_lines += 1
-    print_dashboard_line(f"{BOLD}Logs:{NC} {options.cli_sim} logs startup", term_width)
+    print_dashboard_line(
+        "  ".join(
+            [
+                f"{BOLD}Logs:{NC} {options.cli_sim} logs startup",
+                f"{BOLD}Shell:{NC} {options.cli_sim} sh",
+            ]
+        ),
+        term_width,
+    )
     used_lines += 1
     print_dashboard_line(
         f"{DIM}Keys: q detach  d toggle sim logs  v verbose  Ctrl+C stop runtime{NC}",

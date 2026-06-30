@@ -3,6 +3,7 @@
 // and the placeholder renderer for not-yet-built sections.
 
 import { ros } from "./rosClient.js";
+import { initTtsAudio } from "./ttsAudio.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -13,12 +14,6 @@ const SECTIONS = [
     label: "Teleop",
     // The joystick motif: rim, cardinal ticks, knob.
     icon: '<circle cx="12" cy="12" r="8.5"/><line x1="12" y1="3.5" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="20.5"/><line x1="3.5" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="20.5" y2="12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>',
-  },
-  {
-    key: "map",
-    label: "Map",
-    // Folded-map motif.
-    icon: '<polygon points="4,6 9.5,4 14.5,6 20,4 20,18 14.5,20 9.5,18 4,20"/><line x1="9.5" y1="4" x2="9.5" y2="18"/><line x1="14.5" y1="6" x2="14.5" y2="20"/>',
   },
   {
     key: "debugging",
@@ -92,6 +87,9 @@ export function initShell(activeKey, root) {
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);
+
+  // Play robot speech (/tts/audio) regardless of which page is open.
+  initTtsAudio();
 }
 
 /**

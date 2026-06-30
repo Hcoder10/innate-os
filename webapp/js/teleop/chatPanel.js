@@ -2,8 +2,11 @@
 // Chat panel — a pane in the shared right dock (see rightDock.js) for talking to
 // the brain/agent. Operator text goes out on /brain/chat_in; the agent's replies
 // plus system / thought / skill-output lines stream back on /brain/chat_out. The
-// brain does not echo the operator's own messages, so those are rendered locally
-// on send.
+// brain does not echo the operator's own messages, so our own typed text is
+// rendered locally on send. We also subscribe to /brain/chat_in to surface user
+// messages we did NOT originate — STT transcripts (published robot-side) and
+// other connected devices — skipping the loopback of our own sends via an
+// origin tag.
 
 import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
 
@@ -16,6 +19,10 @@ import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, SKILL_STATUS_UPDATE_TOPIC } from "../con
 export function createChatPanel(dock, rosClient, agentState) {
   // Bottom pane of the dock; toggle sits three-quarters down the right edge.
   const { body } = dock.addPanel({ key: "chat", label: "Chat", togglePos: 0.75 });
+
+  // Per-tab token stamped on our own /brain/chat_in publishes so we can ignore
+  // their loopback (rosbridge delivers a node's own publishes to its own subs).
+  const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
 
   const head = document.createElement("div");
   head.className = "dock-head";
@@ -219,7 +226,7 @@ export function createChatPanel(dock, rosClient, agentState) {
     if (!text) return;
     addMessage("user", text, Date.now() / 1000);
     rosClient.publish(CHAT_IN_TOPIC, {
-      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000 }),
+      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
     });
     input.value = "";
     input.style.height = "auto";
@@ -239,6 +246,25 @@ export function createChatPanel(dock, rosClient, agentState) {
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+  });
+
+  // Inbound user text (STT transcripts, other devices) so spoken/remote input
+  // shows up as "what I said". Our own typed sends loop back here too — skip
+  // those by their origin tag, since submit() already rendered them locally.
+  const unsubIn = rosClient.subscribe(CHAT_IN_TOPIC, (m) => {
+    if (typeof m?.data !== "string") return;
+    let payload;
+    try {
+      payload = JSON.parse(m.data);
+    } catch {
+      return;
+    }
+    if (payload?.origin === selfOrigin) return;
+    if (String(payload?.sender ?? "") !== "user") return;
+    const text = String(payload?.text ?? "");
+    if (!text) return;
+    const ts = Number(payload?.timestamp) || Date.now() / 1000;
+    addMessage("user", text, ts);
   });
 
   const unsub = rosClient.subscribe(CHAT_OUT_TOPIC, (m) => {
@@ -286,6 +312,7 @@ export function createChatPanel(dock, rosClient, agentState) {
 
   return {
     destroy() {
+      unsubIn();
       unsub();
       unsubSkill();
       unsubAgents();

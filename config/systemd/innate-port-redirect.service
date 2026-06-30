@@ -1,5 +1,5 @@
 [Unit]
-Description=Redirect 443 -> 4443 so the webapp is reachable without a port
+Description=Redirect 443 -> 4443 and 80 -> 4080 so the webapp is reachable without a port
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/home/jetson1/innate-os/config/network/setup-port-redirect.sh
-ExecStop=/bin/sh -c '/usr/sbin/iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443 2>/dev/null || true'
+ExecStop=/bin/sh -c '/usr/sbin/iptables -w -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 4443 2>/dev/null || true; /usr/sbin/iptables -w -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 4080 2>/dev/null || true'
 
 [Install]
 WantedBy=multi-user.target
