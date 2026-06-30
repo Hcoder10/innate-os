@@ -16,9 +16,9 @@ from src.agent.types import (
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
-    HeadCmd,
     ClearTrajectoryCmd,
     DrawTrajectoryCmd,
+    HeadCmd,
     OccupancyGridMsg,
     PositionCmd,
     ResetRobotCmd,
@@ -1907,9 +1907,7 @@ class SimulationNode:
         current_pos, current_quat = self._get_robot_base_pose()
 
         # Convert current quaternion to rotation matrix to get forward direction
-        current_rot = R.from_quat(
-            [current_quat[1], current_quat[2], current_quat[3], current_quat[0]]
-        )
+        current_rot = R.from_quat([current_quat[1], current_quat[2], current_quat[3], current_quat[0]])
         forward_dir = current_rot.apply([1, 0, 0])  # Transform x-axis by current rotation
 
         # Move in the forward direction

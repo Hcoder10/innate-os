@@ -38,6 +38,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+
 def _current_tmux_session() -> str:
     """Tap whichever tmux session launched us — 'ros_nodes' on the robot, 'innate'
     in the sim — so the session name never has to be configured. Falls back to the

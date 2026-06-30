@@ -32,12 +32,6 @@ import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from websockets.asyncio.client import connect as ws_connect
-from websockets.asyncio.server import serve
-from websockets.datastructures import Headers
-from websockets.exceptions import ConnectionClosed
-from websockets.http11 import Response
-
 from media_routes import (
     _plain,
     episode_response,
@@ -47,6 +41,11 @@ from media_routes import (
     thumb_response,
 )
 from settings_routes import settings_get_response, settings_ws
+from websockets.asyncio.client import connect as ws_connect
+from websockets.asyncio.server import serve
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosed
+from websockets.http11 import Response
 
 HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
 # Cleartext HTTP listener serving the SAME app as the TLS front door, so the site

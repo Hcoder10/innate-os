@@ -218,9 +218,7 @@ async def _start_stun_server(loop: asyncio.AbstractEventLoop):
         print(f"[STUN] disabled: invalid SIM_STUN_PORT {port}")
         return None
     try:
-        transport, _ = await loop.create_datagram_endpoint(
-            _StunResponder, local_addr=("0.0.0.0", port)
-        )
+        transport, _ = await loop.create_datagram_endpoint(_StunResponder, local_addr=("0.0.0.0", port))
     except OSError as exc:
         print(f"[STUN] failed to bind UDP :{port}: {exc}")
         return None

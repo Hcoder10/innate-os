@@ -461,7 +461,8 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
         }
     }
     if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
-        for (auto& cam : self->cameras_) self->force_keyframe(cam->name);
+        for (auto& cam : self->cameras_)
+            self->force_keyframe(cam->name);
     }
     RCLCPP_INFO(self->get_logger(), "Peer '%s' connection state: %s", (cid && *cid) ? cid : "(default)",
                 conn_state_name(state));

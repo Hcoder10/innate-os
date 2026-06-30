@@ -18,10 +18,10 @@ from src.agent.types import (
     ArmCmd,
     ArmGotoCmd,
     ArmStateMsg,
-    HeadCmd,
     BrainActiveCmd,
     BrainBackendConfigCmd,
     DirectiveCmd,
+    HeadCmd,
     NavigationCancelMsg,
     NavigationFeedbackMsg,
     NavigationPathMsg,
@@ -156,7 +156,9 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
 WEBRTC_OFFER_TOPIC = "/webrtc/offer_id"  # server->browser: {client_id, sdp}
 WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id"  # browser->server: {client_id, sdp}
 WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id"  # browser->server: {client_id, candidate, sdpMLineIndex, sdpMid}
-WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out_id"  # server->browser (unused: aiortc is non-trickle, candidates ride the offer)
+WEBRTC_ICE_OUT_TOPIC = (
+    "/webrtc/ice_out_id"  # server->browser (unused: aiortc is non-trickle, candidates ride the offer)
+)
 WEBRTC_START_TOPIC = "/webrtc/start"  # browser->server: {client_id, video, audio, source, renegotiate}
 WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # server->browser: {count, clients, cameras}
 WEBRTC_INBOUND_TOPICS = {
