@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 A ROS2 Humble node that indexes a data directory for task subdirectories
 (with valid metadata) and displays a numbered list. The user selects a task,

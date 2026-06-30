@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 import ReactDOM from "react-dom/client";
 import { ThemeProvider } from "styled-components";
 import theme, { GlobalStyle } from "./styles/theme";

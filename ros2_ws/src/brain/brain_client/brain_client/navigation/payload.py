@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Pure navigation-payload assembly — no ROS.
 
 Builds the ``depth`` / ``map`` / ``robot_coords`` blocks the cloud agent expects.

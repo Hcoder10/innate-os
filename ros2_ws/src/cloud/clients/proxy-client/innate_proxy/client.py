@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Base proxy client for innate-os.
 
 Provides both sync and async HTTP helpers that route requests through

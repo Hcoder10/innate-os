@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Robot-facing topic names and protocol constants. Ported subset of the
 // mobile app's rosConstants.ts — keep names identical to the robot's.
 

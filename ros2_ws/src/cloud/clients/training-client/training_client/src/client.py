@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """HTTP client wrapper for the Training Orchestrator REST API."""
 
 from __future__ import annotations

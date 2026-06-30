@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Loop through arm poses with configurable delays. Edit poses/delays below.
 Hot-reloads itself when the file changes on disk."""
 

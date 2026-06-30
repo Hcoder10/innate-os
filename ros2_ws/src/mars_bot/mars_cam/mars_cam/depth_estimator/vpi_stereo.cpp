@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // VPI stereo disparity: resource management, async submit, sync, extract.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

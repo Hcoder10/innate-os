@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Advanced disparity filters: domain-transform smoothing and temporal filtering.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

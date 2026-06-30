@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Unix-socket bridge hosted inside SkillsActionServer for low-latency CLI calls."""
 
 from __future__ import annotations

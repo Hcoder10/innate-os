@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """In-process bridge between the brain and the WebSocket transport.
 
 Outgoing: hands message *objects* straight to the

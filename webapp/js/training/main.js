@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Training page entry — a global dashboard of cloud training runs, grouped by
 // skill, driven by the latched /innate_training/job_statuses topic. Disconnected:
 // the shared connect card. Connected: the dashboard, plus a Configure drawer for

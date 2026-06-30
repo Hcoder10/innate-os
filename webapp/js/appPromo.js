@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Mobile "get the app" prompt — shown once when the browser cockpit is opened
 // on a phone or tablet. The web app is tuned for a laptop; on the go the native
 // app is the better surface (leader-arm teleop in the field), so nudge mobile

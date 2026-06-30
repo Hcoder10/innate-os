@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Shared types for the Innate webapp.
 // Ambient declarations (no imports/exports), so every `// @ts-check`'d module
 // can reference them in JSDoc without import clutter.

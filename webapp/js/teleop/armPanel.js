@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Leader-arm panel — plug the leader arm into THIS computer's USB, click
 // connect once (Chromium remembers the grant; later sessions auto-attach),
 // watch the joint dots follow the physical arm, then ENGAGE to publish.

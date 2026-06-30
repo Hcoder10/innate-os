@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // arm_trajectory.cpp — Trajectory planning and execution
 #include "mars_arm/arm_node.hpp"
 

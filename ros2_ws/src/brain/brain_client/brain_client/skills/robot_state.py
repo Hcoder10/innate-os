@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Robot-state provision for skill execution.
 
 Owns the on-demand state subscriptions (odom / map / head) and the camera + robot

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Brain orchestration: the perception loop and cloud-message reactions.
 
 Pulls together the perception (camera, pose, map) and transport collaborators to build

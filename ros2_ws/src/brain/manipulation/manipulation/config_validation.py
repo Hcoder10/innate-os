@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Validation for per-behavior execution configs stored in a skill's metadata.json.
 
 Parses and validates the ``behavior_config`` payload that

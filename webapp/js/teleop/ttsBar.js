@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // TTS bar — type, Enter, the robot says it. While focused, keyboard drive is
 // suppressed (the typing-context guard in keyboardDrive). Esc returns focus
 // to the page so WASD works again.

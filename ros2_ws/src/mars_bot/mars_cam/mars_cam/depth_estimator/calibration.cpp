@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Camera-info based calibration: subscribe to left/right CameraInfo topics,
 // extract K, D, R, P matrices, compute rectification maps, derive baseline
 // and focal length, then kick off VPI initialisation.

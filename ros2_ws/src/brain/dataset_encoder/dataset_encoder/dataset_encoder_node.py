@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """dataset_encoder — background episode → H.264 MP4 encoder.
 
 Freshly recorded episodes are stored as raw frames in HDF5. This node converts

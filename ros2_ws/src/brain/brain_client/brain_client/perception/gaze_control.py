@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Gaze-tracker lifecycle wrapper.
 
 Starts/stops the (lazily imported) ``ROSPersonTracker`` based on brain-active state

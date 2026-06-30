@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any

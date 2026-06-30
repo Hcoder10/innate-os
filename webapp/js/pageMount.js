@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Optimistic page mount, shared by every page entry.
 //
 // The robot always serves the webapp, so the connection target is known

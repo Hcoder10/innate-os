@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // arm_config.cpp — Joint configuration loading and PID hot-reload
 #include "mars_arm/arm_node.hpp"
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #ifndef MANIPULATION_TASK_MANAGER_HPP_
 #define MANIPULATION_TASK_MANAGER_HPP_
 

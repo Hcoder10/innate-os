@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Backwards-compatibility guards for agent / skill / input discovery.
 
 These pin the historical contract that the concept-folder refactor broke, so it

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Utility helpers for stereo calibration: head/arm control and file I/O.
 """

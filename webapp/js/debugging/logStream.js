@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Chronological log view. Renders the structured console records, scoped by the
 // tree selection (launch / process / node / all), with a severity threshold,
 // text search, a raw/clean toggle, and tail-style autoscroll. Records are

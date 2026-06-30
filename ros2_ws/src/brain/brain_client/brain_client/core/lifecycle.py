@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Brain lifecycle: activate / deactivate / reset / reactivate + directive switching.
 
 Owns the agent timer and the on-demand sensor subscriptions (delegated to the

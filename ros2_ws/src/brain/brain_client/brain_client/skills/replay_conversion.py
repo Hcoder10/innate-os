@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Pure (ROS-free) helpers for converting a recorded teleop episode into a
 replay-skill trajectory.
 

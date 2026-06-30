@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Simple / OpenCV-delegating disparity filters:
 //   median, bilateral, hole-fill, depth-clamp, edge-invalidation, speckle.
 

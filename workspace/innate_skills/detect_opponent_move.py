@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Skill that detects the opponent's last chess move by comparing the known
 board state (FEN) against what the cameras currently see.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Protocol-layer tests for js/dynamixel.js — zero dependencies, plain node:
 //   node tests/dynamixel.test.js
 // The CRC is anchored against the Read-instruction example published in the

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Point cloud generation from disparity maps (xyz-only and xyzrgb).
 
 #include "mars_cam/stereo_depth_estimator.hpp"

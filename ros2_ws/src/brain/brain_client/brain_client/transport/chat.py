@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Chat history, chat-out publishing, task-status publishing, and TTS.
 
 Consolidates the ``{"sender", "text", "timestamp"}`` chat-entry dict and the

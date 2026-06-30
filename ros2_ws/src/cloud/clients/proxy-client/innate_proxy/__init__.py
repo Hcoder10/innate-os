@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Innate proxy client library.
 
 Provides :class:`ProxyClient` for authenticated HTTP requests through the

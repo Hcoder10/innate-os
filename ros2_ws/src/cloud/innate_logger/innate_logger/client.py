@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """HTTP telemetry client for the robot-logger cloud service.
 
 Sends robot telemetry (vitals, directives, chat) to the logging

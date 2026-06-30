@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Demo: OpenAI chat completions via the service proxy.
 
 Usage (from repo root)::

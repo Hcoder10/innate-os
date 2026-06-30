@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 import numpy as np
 from PIL import Image, ImageDraw
 from stl import mesh

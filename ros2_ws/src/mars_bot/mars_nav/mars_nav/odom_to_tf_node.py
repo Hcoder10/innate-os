@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Converts /odom topic to TF transform (odom -> base_footprint).
 Used in simulation when the simulator publishes odom topic but not TF.

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """httpx ``Auth`` flow with automatic 401 JWT renewal.
 
 Drop-in replacement for manual token management.  Attach to any

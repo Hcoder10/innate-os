@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from setuptools import setup
 
 package_name = "innate_uninavid"

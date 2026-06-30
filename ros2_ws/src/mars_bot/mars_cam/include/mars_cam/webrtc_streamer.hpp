@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #ifndef MARS_CAM__WEBRTC_STREAMER_HPP_
 #define MARS_CAM__WEBRTC_STREAMER_HPP_
 

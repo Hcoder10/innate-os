@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include "manipulation/recorder_node.hpp"

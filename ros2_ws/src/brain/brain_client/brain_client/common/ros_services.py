@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Helpers for calling ROS services synchronously from brain_client nodes.
 
 Each helper spins the given node while waiting and logs the outcome, so callers

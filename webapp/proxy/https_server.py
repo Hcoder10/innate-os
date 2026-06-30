@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """HTTPS front door for the Innate webapp.
 
 Serves the static app AND proxies /ws to the local rosbridge (rws) over one

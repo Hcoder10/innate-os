@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Training dashboard — all cloud runs grouped by skill, from the latest
 // /innate_training/job_statuses snapshot. Header (train / filter / search) is
 // built once; the body re-renders on each topic tick. Handles Download and

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """CLI entry point: ``python -m auth_client`` prints a JWT to stdout.
 
 Usage::

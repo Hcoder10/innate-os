@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Shared primitive lifecycle messages sent to the cloud agent."""
 
 from __future__ import annotations

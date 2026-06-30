@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """ROS-free factory for the ACT inference config.
 
 Kept separate from manipulation_server so the offline engine pre-build

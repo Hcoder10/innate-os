@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // DriveController — owns the /joystick wire contract and input arbitration.
 //
 // Wire contract (deadman, matched to the robot's mars_app consumer):

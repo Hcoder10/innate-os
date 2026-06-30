@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Unit tests for manipulation.config_validation.
 
 These tests are ROS-free and can be run with ``pytest`` directly::

@@ -1,5 +1,6 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Profiling page entry — record and visualize ACT policy inference timing.
 //
 // The manipulation server publishes a per-step timing breakdown on
