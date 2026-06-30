@@ -112,6 +112,13 @@ class Skill(ABC):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
+        # Lets this skill run other skills, in order, from inside execute():
+        #   self.skills.run("innate-os/navigate_to_position", x=1.0, y=0.0, theta=0.0)
+        #   self.skills.run("local/my_grasp_policy")   # learned/replay too
+        # Each child runs to completion before the next and shows up as its own
+        # step in the app. A chaining skill's cancel() should call
+        # self.skills.cancel(). The skills server injects this before execute().
+        self.skills = None
 
     @property
     @abstractmethod
