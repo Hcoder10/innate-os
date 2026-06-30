@@ -156,6 +156,12 @@ class SkillsActionServer(Node):
         self.catalog.publish_skills_list()
         self.catalog.start_watcher()
 
+        # Heartbeat: the roster is published once (latched), but the webapp
+        # reaches /brain/available_skills through rws, which subscribes after
+        # boot and never receives the latched sample. Re-emit the cached roster
+        # at a low rate so late-joining clients get it within one interval.
+        self._skills_heartbeat_timer = self.create_timer(3.0, self.catalog.republish_cached)
+
     # ================= service handlers (delegate to catalog) =================
     def _handle_reload_skills(self, request, response):
         try:

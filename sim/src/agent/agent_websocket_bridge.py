@@ -717,8 +717,14 @@ async def inbound_data_loop(ws, shared_queues):
 
             elif topic == "/brain/available_skills":
                 skills = parse_available_skills_message(msg_data)
-                shared_queues.update_available_skills(skills)
-                print(f"[ROSBridge] Received {len(skills)} available skills")
+                # The roster is latched and re-published on a heartbeat so late
+                # subscribers can catch it; skip unchanged repeats so we don't
+                # re-store identical state (and spam the log) every beat.
+                signature = tuple(skills)
+                if signature != getattr(shared_queues, "_last_available_skills_signature", None):
+                    shared_queues._last_available_skills_signature = signature
+                    shared_queues.update_available_skills(skills)
+                    print(f"[ROSBridge] Received {len(skills)} available skills")
 
             # 3) /sim_navigation/global_plan
             elif topic == "/sim_navigation/global_plan":
