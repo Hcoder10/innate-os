@@ -61,7 +61,8 @@ DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.innate.bot"
 DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI = "ws://cloud-agent:8765"
 LOCAL_BRAIN_COMPOSE_PROFILE = "local-brain"
 # Cloud-agent source lives OUTSIDE this repo (next to it), cloned on demand by setup.
-CLOUD_AGENT_GIT_URL = "git@github.com:innate-inc/innate-cloud-agent.git"
+# HTTPS so a public clone needs no SSH key / org access.
+CLOUD_AGENT_GIT_URL = "https://github.com/innate-inc/innate-cloud-agent.git"
 CLOUD_AGENT_DIR_NAME = "innate-cloud-agent"
 GEMINI_API_KEY = "GEMINI_API_KEY"
 AUTO_OS_IMAGE = "auto"

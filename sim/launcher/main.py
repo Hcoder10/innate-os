@@ -276,6 +276,13 @@ def cmd_logs(target: str, lines: int | None = None) -> None:
         print("\n".join(capture_os_brain_logs(config, lines=lines or 60)))
         return
 
+    if target == "cloud-agent":
+        # Live container logs, matching the dashboard's agent pane. The build/startup
+        # output is still available via `logs startup`.
+        config = get_config()
+        print("\n".join(capture_agent_logs(config, lines=lines or 60)))
+        return
+
     path = LOG_TARGETS[target]
     print(tail_file(path, limit=lines or 120))
 
@@ -392,8 +399,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     logs_parser.add_argument(
         "target",
-        nargs="?",
-        default="simulator",
         choices=[
             "startup",
             "bootstrap",
