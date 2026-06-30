@@ -11,6 +11,7 @@ from config import (
     CLOUD_AGENT_GIT_URL,
     ENV_PATH,
     GEMINI_API_KEY,
+    SECRET_ENV_KEYS,
     WORKSPACE_ROOT,
     is_configured_secret_value,
     log,
@@ -72,6 +73,23 @@ def _quote_env_value(value: str) -> str:
     return f"'{value}'"
 
 
+def _unquote_env_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _is_commented_env_assignment(line: str, key: str) -> bool:
+    """True only for a commented-out assignment of ``key`` (``# KEY=value``).
+
+    A descriptive comment like ``# Filled by ./innate setup ...`` is not an
+    assignment, so it is never matched (and never toggled)."""
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return False
+    return _is_active_env_assignment(stripped.lstrip("#").strip(), key)
+
+
 def write_env_value(path: Path, key: str, value: str) -> None:
     if "\n" in value or "\r" in value:
         raise ValueError(f"{key} cannot contain newlines")
@@ -117,6 +135,28 @@ def comment_out_env_key(path: Path, key: str) -> bool:
     if changed:
         path.write_text("\n".join(output) + "\n")
     return changed
+
+
+def uncomment_env_key(path: Path, key: str) -> str | None:
+    """Re-enable a previously commented-out ``# KEY=value`` assignment so the user
+    can switch a backend back on without re-pasting the key. Returns the restored
+    value, or None if there is no commented assignment to restore."""
+    if not path.exists():
+        return None
+    lines = path.read_text().splitlines()
+    value: str | None = None
+    output: list[str] = []
+    for line in lines:
+        if value is None and _is_commented_env_assignment(line, key):
+            body = line.strip().lstrip("#").strip()
+            output.append(body)
+            _, raw_value = body.split("=", 1)
+            value = _unquote_env_value(raw_value.strip())
+        else:
+            output.append(line)
+    if value is not None:
+        path.write_text("\n".join(output) + "\n")
+    return value
 
 
 def _save_service_key(config: dict[str, object], service_key: str) -> None:
@@ -165,6 +205,14 @@ def _configure_gemini_key(config: dict[str, object]) -> None:
         success(f"{GEMINI_API_KEY} already configured.")
         return
 
+    restored = uncomment_env_key(ENV_PATH, GEMINI_API_KEY)
+    if restored is not None:
+        raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
+        raw_env[GEMINI_API_KEY] = restored
+        user_env[GEMINI_API_KEY] = restored
+        success(f"Re-enabled {GEMINI_API_KEY} in {ENV_PATH.name}.")
+        return
+
     shell_value = os.environ.get(GEMINI_API_KEY, "").strip()
     if is_configured_secret_value(GEMINI_API_KEY, shell_value) and _prompt_yes_no(
         f"Found {GEMINI_API_KEY} in your shell. Save it to {ENV_PATH.name}?", default=True
@@ -184,6 +232,12 @@ def _configure_service_key(config: dict[str, object]) -> None:
     user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
     if is_configured_secret(user_env.get(INNATE_SERVICE_KEY)):
         success(f"{INNATE_SERVICE_KEY} already configured.")
+        return
+
+    restored = uncomment_env_key(ENV_PATH, INNATE_SERVICE_KEY)
+    if restored is not None:
+        _use_service_key_for_run(config, restored)
+        success(f"Re-enabled {INNATE_SERVICE_KEY} in {ENV_PATH.name}.")
         return
 
     shell_value = os.environ.get(INNATE_SERVICE_KEY, "").strip()
@@ -240,12 +294,24 @@ def _disable_keys(config: dict[str, object], keys: list[str]) -> None:
         user_env.pop(key, None)
 
 
+def report_configured_keys(config: dict[str, object]) -> None:
+    """Print which brain keys are currently active in .env."""
+    user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
+    active = [key for key in SECRET_ENV_KEYS if is_configured_secret_value(key, user_env.get(key))]
+    if active:
+        success(f"Keys set in {ENV_PATH.name}: {', '.join(active)}")
+    else:
+        warn(f"No brain keys set in {ENV_PATH.name}.")
+
+
 def configure_brain_backend(config: dict[str, object]) -> None:
     """Pick the brain backend and collect the matching key.
 
     Local needs a Gemini key (and the cloud-agent source); hosted needs an Innate
-    service key; none runs the sim without an agent. Non-interactively, just
-    report what auto-detection will pick.
+    service key; none runs the sim without an agent. Switching backends just
+    uncomments the relevant key and comments out the others, so you can toggle
+    back and forth without re-pasting. Non-interactively, just report what
+    auto-detection will pick.
     """
     user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
     has_gemini = is_configured_secret_value(GEMINI_API_KEY, user_env.get(GEMINI_API_KEY))
@@ -262,6 +328,7 @@ def configure_brain_backend(config: dict[str, object]) -> None:
                 "No brain backend configured. Add GEMINI_API_KEY (local brain) or "
                 f"INNATE_SERVICE_KEY (hosted) to {ENV_PATH}."
             )
+        report_configured_keys(config)
         return
 
     print()
@@ -291,3 +358,5 @@ def configure_brain_backend(config: dict[str, object]) -> None:
     else:
         _disable_keys(config, [GEMINI_API_KEY, INNATE_SERVICE_KEY])
         warn("No brain backend selected. The sim will run without an agent.")
+
+    report_configured_keys(config)

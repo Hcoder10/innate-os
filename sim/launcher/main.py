@@ -69,7 +69,12 @@ from runtime import (
     wait_for_os_runtime_ready,
     wait_for_simulator_http,
 )
-from setup_wizard import _prompt_yes_no, configure_brain_backend, is_interactive_terminal
+from setup_wizard import (
+    _prompt_yes_no,
+    configure_brain_backend,
+    is_interactive_terminal,
+    report_configured_keys,
+)
 
 DASHBOARD_OPTIONS = DashboardOptions(
     hosted_mode=HOSTED_MODE,
@@ -114,6 +119,7 @@ def cmd_up(
             config = {**config, "sim_visualization": sim_visualization_override}
         ensure_docker_available(command_hint=f"{CLI_SIM} up")
         print_banner()
+        report_configured_keys(config)
         if runtime_already_running(config):
             log("Innate sim runtime is already running. Opening dashboard...")
             show_runtime_dashboard(config, watch=watch)
