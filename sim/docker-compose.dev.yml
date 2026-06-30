@@ -78,6 +78,11 @@ services:
       # stdout/stderr survives `docker compose down` on a failed startup.
       - ./launcher/.state/ros-log:/root/.ros/log
 
+      # Persist the webapp's self-signed TLS cert across `down`/`up` so the
+      # browser only has to accept the HTTPS warning once (otherwise the cert
+      # lives in the container's ephemeral layer and is regenerated each up).
+      - ./launcher/.state/webapp-tls:/root/.innate-webapp-tls
+
       # 3) Mount git credentials from host (read-only for security)
       - ~/.ssh:/root/.ssh:ro
       - ~/.gitconfig:/root/.gitconfig:ro
