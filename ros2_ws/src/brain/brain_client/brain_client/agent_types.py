@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Deprecated: moved to brain_client.agents.types.
 
 Backward-compat shim for custom agents that still import from the old path.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #ifndef MANIPULATION_EPISODE_DATA_HPP_
 #define MANIPULATION_EPISODE_DATA_HPP_
 

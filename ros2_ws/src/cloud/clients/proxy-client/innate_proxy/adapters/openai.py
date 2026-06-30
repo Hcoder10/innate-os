@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """OpenAI adapter for the Innate proxy client.
 
 Provides :class:`ProxyOpenAIClient` with a ``realtime`` WebSocket sub-API.

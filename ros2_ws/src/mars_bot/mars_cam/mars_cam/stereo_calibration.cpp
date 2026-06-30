@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #include "mars_cam/stereo_calibration.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>

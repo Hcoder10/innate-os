@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Telemetry strip — robot name, battery, link state. Battery comes from
 // sensor_msgs/BatteryState at 0.2 Hz; name/version ride /robot/info's
 // JSON-in-String payload.

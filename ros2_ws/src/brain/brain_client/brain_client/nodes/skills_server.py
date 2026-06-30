@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Skills action server: executes skills dispatched as ExecuteSkill goals.
 
 Focused on the action/execution flow — code-skill execution, physical-skill

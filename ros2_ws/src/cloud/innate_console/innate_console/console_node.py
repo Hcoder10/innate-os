@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """innate_console — tmux-stdout → rosbridge bridge with structured records.
 
 The robot's nodes run in tmux panes (see scripts/launch_ros_in_tmux.sh), and

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Primitive execution lifecycle over the ``execute_skill`` action.
 
 Owns the action client and the execution state — the current goal handle, the

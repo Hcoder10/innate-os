@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // RosClient — the single rosbridge (rws) WebSocket shared by the whole page.
 // Ported from the mobile app's useWebSocketManager: pending service-call map
 // with timeouts, per-topic handler registry, subscribe retry with backoff on

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Convert HDF5 episodes from raw-image format to H.264 MP4 + stripped HDF5.
 

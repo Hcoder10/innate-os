@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Configure modal — pick a skill, set hyperparameters, and start a run. Start
 // just validates and hands the request to the page (opts.onStart) which owns
 // the sync→create_run orchestration, then closes. So the run still gets created

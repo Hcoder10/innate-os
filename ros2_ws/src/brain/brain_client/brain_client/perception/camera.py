@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Camera capture: RGB / arm / depth frames, the frame buffer, and head pitch.
 
 Owns the on-demand sensor subscriptions created while the brain is active. RGB and

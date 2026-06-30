@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // WebRtcSession — one long-lived RTCPeerConnection signaled over the shared
 // RosClient (no second socket).
 //

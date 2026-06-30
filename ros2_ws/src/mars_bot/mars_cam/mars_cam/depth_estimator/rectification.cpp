@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Image preprocessing: scale to calibration resolution, VPI GPU-accelerated rectification.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

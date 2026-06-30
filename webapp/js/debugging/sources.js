@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Log Sources panel. The same console stream pivoted three ways:
 //   • Launch file → process → node/logger   (the launch hierarchy)
 //   • Process     → node/logger             (flat list of processes)

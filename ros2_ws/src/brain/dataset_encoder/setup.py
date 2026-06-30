@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from setuptools import setup
 
 package_name = "dataset_encoder"
@@ -19,7 +21,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="Background episode → H.264 MP4 encoder, gated on robot activity.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "dataset_encoder_node = dataset_encoder.dataset_encoder_node:main",

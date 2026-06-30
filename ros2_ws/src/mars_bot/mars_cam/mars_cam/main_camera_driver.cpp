@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 #include "mars_cam/main_camera_driver.hpp"
 #include <filesystem>
 

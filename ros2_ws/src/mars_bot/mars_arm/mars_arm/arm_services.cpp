@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // arm_services.cpp — Servo initialization, health monitoring, service callbacks, head control
 #include "mars_arm/arm_node.hpp"
 

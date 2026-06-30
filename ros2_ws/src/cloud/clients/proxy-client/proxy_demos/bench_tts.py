@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Benchmark: proxy vs direct Cartesia TTS — short & long text, 20 runs each.
 
 Usage (from repo root)::

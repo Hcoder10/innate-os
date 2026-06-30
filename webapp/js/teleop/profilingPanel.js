@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Profiling panel — a live read-out of the WebRTC receive side, for tuning
 // glass-to-glass latency. A discrete pulse button (top-right) toggles it; "p"
 // does too. Hidden by default so the cockpit stays clean for operators.

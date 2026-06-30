@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Runtime configuration loaded from /config.json (written by the container at
 // startup, or served from public/config.json during `yarn dev`). Fetched once
 // before the app renders (see main.tsx) so components can read appConfig

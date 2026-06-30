@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """WebSocket orchestration, decoupled from any single node.
 
 Owns the connection lifecycle around the :class:`~brain_client.transport.ws_transport.WSClient`
