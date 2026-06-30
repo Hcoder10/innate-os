@@ -43,7 +43,12 @@ services:
       # which wins — so this default only affects raw `docker compose` runs.
       - BRAIN_WEBSOCKET_URI=${BRAIN_WEBSOCKET_URI:-${COMPOSE_PROFILES:+ws://cloud-agent:8765}}
     ports:
-      - "9090:9090"
+      # rosbridge (rws). Bound to loopback only: the browser reaches it through
+      # the webapp's /ws proxy on 443, and the host-side native sim backend
+      # connects to ws://localhost:9090 — nothing off-host needs it. Publishing
+      # on 0.0.0.0 just invites internet probes that open, send nothing, and
+      # disconnect (End of File), spamming the rws log.
+      - "127.0.0.1:9090:9090"
       # webapp front door (replaces the deprecated sim/frontend UI): the in-container
       # python server binds 443 (https) + 80 (http), both serving the full app.
       # Override the published side (e.g. SIM_HTTPS_PORT=8443 ./innate sim up) to
