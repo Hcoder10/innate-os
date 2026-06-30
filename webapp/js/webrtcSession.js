@@ -26,6 +26,7 @@ import {
   WEBRTC_ICE_OUT_TOPIC,
 } from "./constants.js";
 import { createLocalPeerConnection, describeIceCandidate, wireDiagnosticDataChannels } from "./webrtcConfig.js";
+import { setMicAudioActive } from "./micAudioState.js";
 
 // No SDP offer back this soon after START → the START or its broadcast offer
 // was dropped (rws /webrtc/* are fire-and-forget); cheap to just republish.
@@ -141,6 +142,8 @@ export class WebRtcSession {
     this.#useFallbackStun = false;
     this.#closePc();
     this.#clearAudioDebounce();
+    // No mic stream once stopped (e.g. leaving the teleop page) — let TTS play.
+    setMicAudioActive(false);
     this.#patch({ status: "idle", videoStream: null, audioStream: null, iceState: "new", stunFallback: false });
   }
 
@@ -164,6 +167,8 @@ export class WebRtcSession {
     const track = this.#state.audioStream?.getAudioTracks()[0];
     if (track) track.enabled = on;
     this.#patch({ audioRequested: on });
+    // Tell TTS playback to stand down while we're audible via the mic.
+    setMicAudioActive(on);
     if (!this.#started || this.#ros.state !== "connected") return;
     if (this.#pc) {
       this.#ros.publish(WEBRTC_START_TOPIC, {

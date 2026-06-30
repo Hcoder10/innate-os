@@ -3,6 +3,7 @@
 // and the placeholder renderer for not-yet-built sections.
 
 import { ros } from "./rosClient.js";
+import { initTtsAudio } from "./ttsAudio.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -86,6 +87,9 @@ export function initShell(activeKey, root) {
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);
+
+  // Play robot speech (/tts/audio) regardless of which page is open.
+  initTtsAudio();
 }
 
 /**

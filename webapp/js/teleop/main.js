@@ -93,10 +93,14 @@ function buildCockpit(root) {
   }
 
   const keyboard = createKeyboardDrive(drive);
-  const parts = [
-    videoStage,
-    createTelemetry(telemetryOverlay, ros),
-    createAudioToggle(rightRail, session, videoStage.audioEl),
+  const parts = [videoStage, createTelemetry(telemetryOverlay, ros)];
+  // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
+  // video only (no microphone), so the toggle would do nothing. config.simControls
+  // is the sim deployment's feature flag (env-driven; false on the real robot).
+  if (!config.simControls) {
+    parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
+  }
+  parts.push(
     createHeadTilt(rightRail, ros),
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),
@@ -105,7 +109,7 @@ function buildCockpit(root) {
     createProfilingPanel(root, session),
     createCameraSwitch(root, session, ros),
     keyboard,
-  ];
+  );
 
   // Shared right dock hosting the Skills + Chat panes, each with its own popup
   // toggle on the camera's right edge. Built after the parts so it tears down
