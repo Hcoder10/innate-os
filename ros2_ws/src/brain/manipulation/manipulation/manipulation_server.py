@@ -354,6 +354,15 @@ class ManipulationServer(Node):
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
 
+            # Don't run inference on empty/stale buffers: wait for every required
+            # sensor to come online first, and bail out if they don't.
+            if not self._wait_for_sensors():
+                return (
+                    "FAILURE",
+                    "Required sensors not available (cameras or joint state). "
+                    "If the arm joint state is missing, please check that the arm's USB-C cable is plugged in.",
+                )
+
             # Set head to AI position for optimal camera angle
             self.get_logger().info("Setting head to AI position for optimal camera angle")
             self._set_head_ai_position()
@@ -1010,6 +1019,25 @@ class ManipulationServer(Node):
             time.sleep(3.0)  # Wait for head to move to AI position
         except Exception as e:
             self.get_logger().error(f"Error setting AI position: {e}")
+
+    def _wait_for_sensors(self, timeout=2.0, poll_interval=0.1):
+        """Poll until every required sensor is publishing, or give up after ``timeout``.
+
+        Returns True once all sensors are available, False if the timeout elapses
+        first. Returns immediately when sensors are already ready.
+        """
+        # Monotonic deadline: wall-clock time can jump (NTP, manual set) and
+        # either fire early or hang the wait, so don't gate the timeout on it.
+        deadline = time.monotonic() + timeout
+        while not self._check_sensor_availability():
+            if time.monotonic() > deadline:
+                self.get_logger().error(
+                    f"Required sensors not available after {timeout:.0f}s. Cannot execute learned behavior."
+                )
+                return False
+            time.sleep(poll_interval)
+        self.get_logger().info("All sensors available")
+        return True
 
     def _check_sensor_availability(self):
         """Check if all required sensors are providing data."""
