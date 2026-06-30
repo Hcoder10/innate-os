@@ -6,6 +6,7 @@ import { ros } from "./rosClient.js";
 import { initTtsAudio } from "./ttsAudio.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
+import { maybeShowAppPromo } from "./appPromo.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -118,6 +119,9 @@ export function initShell(activeKey, root) {
 
   // Play robot speech (/tts/audio) regardless of which page is open.
   initTtsAudio();
+
+  // On a phone/tablet, nudge toward the native app (shown once, then remembered).
+  maybeShowAppPromo(root);
 }
 
 /** Connect to the host that served the page (the robot in prod), preferring a

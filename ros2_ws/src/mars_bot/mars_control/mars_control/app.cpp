@@ -946,7 +946,18 @@ class AppControl : public rclcpp::Node {
      * audible rather than ~-70dB (INN-467).
      */
     void apply_alsa_volume(int percent) {
-        std::string cmd = "amixer -M sset Master " + std::to_string(percent) + "% 2>/dev/null";
+        // Remap 0-100 onto the audible [AUDIBLE_FLOOR, 100] band; the speaker is
+        // silent across the lower range even with -M. 0 still mutes.
+        constexpr int AUDIBLE_FLOOR = 55;
+        int mixer_percent;
+        if (percent <= 0) {
+            mixer_percent = 0;
+        } else if (percent >= 100) {
+            mixer_percent = 100;
+        } else {
+            mixer_percent = AUDIBLE_FLOOR + (100 - AUDIBLE_FLOOR) * percent / 100;
+        }
+        std::string cmd = "amixer -M sset Master " + std::to_string(mixer_percent) + "% 2>/dev/null";
         int ret = std::system(cmd.c_str());
         if (ret != 0) {
             RCLCPP_WARN(this->get_logger(), "amixer sset Master failed (rc=%d)", ret);
