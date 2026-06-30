@@ -17,7 +17,12 @@ def generate_launch_description():
     # Declare new launch arguments
     websocket_uri_arg = DeclareLaunchArgument(
         "websocket_uri",
-        default_value=get_env("BRAIN_WEBSOCKET_URI", "wss://agent-v1.innate.bot"),
+        # docker-compose sets BRAIN_WEBSOCKET_URI to an empty string when no brain
+        # profile is active, so an unguarded get_env default never kicks in and a
+        # bare `innate restart` (no --brain-websocket-uri arg) lands an empty URI.
+        # Treat empty as unset and fall back to the hosted default, matching the
+        # launcher's own resolve_brain_websocket_uri.
+        default_value=get_env("BRAIN_WEBSOCKET_URI", "").strip() or "wss://agent-v1.innate.bot",
         description="Websocket URI",
     )
     token_arg = DeclareLaunchArgument(

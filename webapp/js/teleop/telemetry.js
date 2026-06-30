@@ -8,19 +8,22 @@ import { BATTERY_STATE_TOPIC, ROBOT_INFO_TOPIC, WEBSOCKET_STATUS_TOPIC } from ".
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
+ * @param {{ showBattery?: boolean }} [opts] The sim has no battery, so it opts out.
  * @returns {{ destroy: () => void }}
  */
-export function createTelemetry(parent, rosClient) {
+export function createTelemetry(parent, rosClient, opts = {}) {
+  const showBattery = opts.showBattery !== false;
+
   const wrap = document.createElement("div");
   wrap.className = "telemetry";
 
   const name = item("robot", "—");
-  const battery = item("batt", "—");
+  const battery = showBattery ? item("batt", "—") : null;
   const link = item("link", "—");
   // Cloud/local agent backend connection (the brain's websocket to its agent
   // backend) — distinct from the rosbridge LINK above.
   const agent = item("agent", "—");
-  wrap.append(name.el, battery.el, link.el, agent.el);
+  wrap.append(name.el, ...(battery ? [battery.el] : []), link.el, agent.el);
   parent.appendChild(wrap);
 
   /**
@@ -41,18 +44,6 @@ export function createTelemetry(parent, rosClient) {
   }
 
   const unsubs = [
-    rosClient.subscribe(
-      BATTERY_STATE_TOPIC,
-      (/** @type {BatteryStateMsg} */ msg) => {
-        const p = msg?.percentage;
-        if (typeof p !== "number" || Number.isNaN(p)) return;
-        // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
-        const pct = p <= 1 ? p * 100 : p;
-        battery.value.textContent = `${Math.round(pct)}%`;
-        battery.el.classList.toggle("warn", pct <= 15);
-      },
-      1000,
-    ),
     rosClient.subscribe(ROBOT_INFO_TOPIC, (payload) => {
       if (typeof payload?.data !== "string") return;
       /** @type {RobotInfo} */
@@ -105,6 +96,23 @@ export function createTelemetry(parent, rosClient) {
       500,
     ),
   ];
+
+  if (battery) {
+    unsubs.push(
+      rosClient.subscribe(
+        BATTERY_STATE_TOPIC,
+        (/** @type {BatteryStateMsg} */ msg) => {
+          const p = msg?.percentage;
+          if (typeof p !== "number" || Number.isNaN(p)) return;
+          // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
+          const pct = p <= 1 ? p * 100 : p;
+          battery.value.textContent = `${Math.round(pct)}%`;
+          battery.el.classList.toggle("warn", pct <= 15);
+        },
+        1000,
+      ),
+    );
+  }
 
   return {
     destroy() {

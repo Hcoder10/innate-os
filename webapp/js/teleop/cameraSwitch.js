@@ -24,9 +24,16 @@ const MAP_ZOOM_DEFAULT = { small: 6, big: 16 }; // tighter as a thumbnail, wider
  * @param {HTMLElement} parent cockpit root — owns the strip and (when big) the map layer.
  * @param {import("../webrtcSession.js").WebRtcSession} session
  * @param {import("../rosClient.js").RosClient} ros
+ * @param {{ alwaysOn?: boolean, storeKey?: string }} [opts]
+ *   alwaysOn: keep every camera live (no off pill, no turning off) — the Agent
+ *   page wants the feeds always showing. storeKey: isolate this strip's prefs so
+ *   forcing cameras on doesn't leak into teleop's shared default.
  * @returns {{ destroy: () => void }}
  */
-export function createCameraSwitch(parent, session, ros) {
+export function createCameraSwitch(parent, session, ros, opts = {}) {
+  const alwaysOn = opts.alwaysOn === true;
+  const storeKey = opts.storeKey || STORE_KEY;
+
   const strip = document.createElement("div");
   strip.className = "cam-strip";
   strip.hidden = true; // shown once we learn the camera roster
@@ -50,7 +57,7 @@ export function createCameraSwitch(parent, session, ros) {
 
   function loadPrefs() {
     try {
-      const p = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+      const p = JSON.parse(localStorage.getItem(storeKey) || "{}");
       enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
       mapOn = p.mapOn === true;
       primary = typeof p.primary === "string" ? p.primary : MAP_ID;
@@ -71,7 +78,7 @@ export function createCameraSwitch(parent, session, ros) {
   }
 
   function savePrefs() {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ enabled: [...enabledCams], mapOn, primary }));
+    localStorage.setItem(storeKey, JSON.stringify({ enabled: [...enabledCams], mapOn, primary }));
   }
 
   // Drop names the roster no longer has, then guarantee a valid enabled primary (the stage always needs a
@@ -79,6 +86,8 @@ export function createCameraSwitch(parent, session, ros) {
   // valid persists: the first camera.
   function reconcile() {
     enabledCams = new Set([...enabledCams].filter((n) => roster.includes(n)));
+    // Agent page: every camera stays live, so there's never an off pill.
+    if (alwaysOn) for (const n of roster) enabledCams.add(n);
     const validPrimary =
       primary === MAP_ID ? mapOn : roster.includes(primary) && enabledCams.has(primary);
     if (!validPrimary) primary = [...enabledCams][0] ?? (mapOn ? MAP_ID : roster[0]) ?? MAP_ID;
@@ -183,7 +192,8 @@ export function createCameraSwitch(parent, session, ros) {
   function buildCameraTile(name) {
     const index = roster.indexOf(name);
     if (!enabledCams.has(name)) return offTile(name, name, `Turn on ${name} camera`);
-    const tile = liveTile(name, name, `Make ${name} the main view`);
+    // alwaysOn cameras are never turned off, so they carry no close affordance.
+    const tile = liveTile(name, name, `Make ${name} the main view`, !alwaysOn);
     const video = document.createElement("video");
     video.autoplay = true;
     video.muted = true;
@@ -211,8 +221,8 @@ export function createCameraSwitch(parent, session, ros) {
     return tile;
   }
 
-  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title */
-  function liveTile(id, label, title) {
+  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title @param {boolean} [closable] */
+  function liveTile(id, label, title, closable = true) {
     const tile = document.createElement("div");
     tile.className = "cam-tile live";
     tile.title = title;
@@ -220,16 +230,19 @@ export function createCameraSwitch(parent, session, ros) {
     const tag = document.createElement("span");
     tag.className = "cam-tile-label";
     tag.textContent = label;
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "cam-tile-close";
-    close.title = `Turn off ${label}`;
-    close.textContent = "×";
-    close.addEventListener("click", (e) => {
-      e.stopPropagation();
-      disable(id);
-    });
-    tile.append(tag, close);
+    tile.append(tag);
+    if (closable) {
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "cam-tile-close";
+      close.title = `Turn off ${label}`;
+      close.textContent = "×";
+      close.addEventListener("click", (e) => {
+        e.stopPropagation();
+        disable(id);
+      });
+      tile.append(close);
+    }
     return tile;
   }
 

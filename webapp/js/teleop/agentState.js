@@ -40,6 +40,32 @@ export function createAgentState(rosClient) {
     }
   }
 
+  // The brain serves get_available_directives on a single-threaded executor, so
+  // while the agent loop is busy the query can be dropped (rmw_zenoh queue
+  // overflow) or lose the race at connect. Rather than blank the picker on a
+  // transient miss, we keep the last known roster and retry with backoff.
+  const RETRY_DELAYS = [1000, 2000, 4000];
+  let retryIndex = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let retryTimer = null;
+
+  function resetRetry() {
+    retryIndex = 0;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  }
+
+  function scheduleRetry() {
+    if (retryTimer || retryIndex >= RETRY_DELAYS.length) return;
+    const delay = RETRY_DELAYS[retryIndex++];
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void refresh();
+    }, delay);
+  }
+
   async function refresh() {
     if (rosClient.state !== "connected") return;
     try {
@@ -77,12 +103,19 @@ export function createAgentState(rosClient) {
           : typeof v?.brain_active === "boolean"
             ? v.brain_active
             : false;
+      if (agents.length === 0) {
+        // Empty roster: almost always a transient stall/lost race rather than a
+        // brain with no agents. Keep whatever we already have and retry.
+        scheduleRetry();
+        return;
+      }
+      resetRetry();
       // Idle brain → no current directive (toggles disabled, picker shows None).
       state = { agents, currentDirective: brainActive ? String(v?.current_directive ?? "") : "", activeSkills, brainActive };
       emit();
     } catch {
-      state = { agents: [], currentDirective: "", activeSkills: new Set(), brainActive: false };
-      emit();
+      // Dropped query / timeout — keep the last known roster, retry with backoff.
+      scheduleRetry();
     }
   }
 
@@ -103,6 +136,7 @@ export function createAgentState(rosClient) {
     } catch {
       // The refresh below reflects the brain's real state regardless.
     }
+    resetRetry(); // a deliberate change deserves a fresh round of retries
     await refresh();
   }
 
@@ -126,7 +160,10 @@ export function createAgentState(rosClient) {
   }
 
   const unsubConn = rosClient.onStateChange((s) => {
-    if (s === "connected") void refresh();
+    if (s === "connected") {
+      resetRetry();
+      void refresh();
+    }
   });
   void refresh();
 
@@ -146,6 +183,7 @@ export function createAgentState(rosClient) {
     resetBrain,
     destroy() {
       unsubConn();
+      resetRetry();
       listeners.clear();
     },
   };

@@ -21,6 +21,10 @@ export const TTS_TOPIC = "/brain/tts";
 // the agent's reply. Same topics the sim console + mobile app use.
 export const CHAT_IN_TOPIC = "/brain/chat_in";
 export const CHAT_OUT_TOPIC = "/brain/chat_out";
+// Full chat history snapshot (brain_messages/srv/GetChatHistory → {history}, a
+// JSON string of {sender, text, timestamp, ...} entries). Fetched on connect so
+// the panel shows the conversation from before this page load, not just live.
+export const GET_CHAT_HISTORY_SERVICE = "/brain/get_chat_history";
 
 // Agent/directive selection. The roster comes from a service (response carries a
 // JSON-in-String `directives` array — directives[0] is {agents:[{id,

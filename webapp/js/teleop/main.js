@@ -21,10 +21,7 @@ import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
-import { createSkillsPanel } from "./skillsPanel.js";
-import { createChatPanel } from "./chatPanel.js";
-import { createRightDock } from "./rightDock.js";
-import { createAgentState } from "./agentState.js";
+import { createSkillsMenu } from "./skillsMenu.js";
 import { createSimControls } from "./simControls.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
 
@@ -93,7 +90,8 @@ function buildCockpit(root) {
   }
 
   const keyboard = createKeyboardDrive(drive);
-  const parts = [videoStage, createTelemetry(telemetryOverlay, ros)];
+  // No battery in the sim (the simulator has no power sensor).
+  const parts = [videoStage, createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls })];
   // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
   // video only (no microphone), so the toggle would do nothing. config.simControls
   // is the sim deployment's feature flag (env-driven; false on the real robot).
@@ -105,23 +103,12 @@ function buildCockpit(root) {
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),
     createTtsBar(ttsOverlay, ros),
+    // Collapsible skill launcher pinned next to the speak bar.
+    createSkillsMenu(ttsOverlay, ros),
     createArmPanel(armOverlay, ros),
     createProfilingPanel(root, session),
     createCameraSwitch(root, session, ros),
     keyboard,
-  );
-
-  // Shared right dock hosting the Skills + Chat panes, each with its own popup
-  // toggle on the camera's right edge. Built after the parts so it tears down
-  // last; the panels register into it.
-  const dock = createRightDock(root);
-  // Shared directive/active-skill state, used by both panels.
-  const agentState = createAgentState(ros);
-  parts.push(
-    createSkillsPanel(dock, ros, agentState),
-    createChatPanel(dock, ros, agentState),
-    dock,
-    { destroy: () => agentState.destroy() },
   );
 
   // Sim-only debug controls (Reset Position + FPS/queue) — opt-in via config.json.

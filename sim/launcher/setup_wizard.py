@@ -342,7 +342,7 @@ def configure_brain_backend(config: dict[str, object]) -> None:
     choice = _prompt_choice(
         "Which brain backend?",
         {
-            "1": "Local cloud-agent (Gemini key)",
+            "1": "Local cloud-agent (Gemini key: get from https://aistudio.google.com/api-keys)",
             "2": "Hosted Innate brain (service key)",
             "3": "None (run the sim without an agent)",
         },

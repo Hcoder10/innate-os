@@ -1,52 +1,57 @@
 // @ts-check
-// Skills panel — a pane in the shared right dock (see rightDock.js) that mirrors
-// the sim console's skill interface: the live roster from /brain/available_skills,
-// a per-skill parameter form generated from each skill's input schema, and
-// direct execution through the /execute_skill action (cancelable, with streamed
-// feedback).
-//
-// The roster topic carries more than datasets/skillList.js consumes — every
-// skill also ships `inputs`/`inputs_json` (schema {type, required, enum?,
-// default?}), `guidelines`, and `in_training`. That schema drives the form.
+// Skills menu — a compact, collapsible skill launcher anchored to the bottom bar
+// next to the TTS input. Replaces the old right-dock Skills panel: it shows the
+// live roster from /brain/available_skills as a dropdown of rows. A skill with
+// no parameters runs on a single click; a parameterized skill expands inline to
+// a small form with a Run button. Execution goes through the /execute_skill
+// action (cancelable, with streamed feedback), same as the old panel.
 
 import {
   AVAILABLE_SKILLS_TOPIC,
   EXECUTE_SKILL_ACTION,
   EXECUTE_SKILL_ACTION_TYPE,
   PINNED_SKILLS,
+  SKILL_STATUS_UPDATE_TOPIC,
 } from "../constants.js";
 
 /**
- * @param {ReturnType<import("./rightDock.js").createRightDock>} dock The shared right dock controller.
+ * @param {HTMLElement} parent The bottom-bar overlay (shared with the TTS bar).
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {ReturnType<import("./agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
-export function createSkillsPanel(dock, rosClient, agentState) {
-  // Top pane of the dock; toggle sits a quarter down the camera's right edge.
-  const { body } = dock.addPanel({ key: "skills", label: "Skills", togglePos: 0.25 });
+export function createSkillsMenu(parent, rosClient) {
+  const menu = document.createElement("div");
+  menu.className = "skills-menu";
 
-  const head = document.createElement("div");
-  head.className = "dock-head";
-  const title = document.createElement("p");
-  title.className = "microlabel";
-  title.textContent = "skills";
-  const count = document.createElement("span");
-  count.className = "skills-count mono";
-  const reload = document.createElement("button");
-  reload.className = "skills-reload";
-  reload.type = "button";
-  reload.title = "Refresh roster";
-  reload.textContent = "↻";
-  head.append(title, count, reload);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "skills-menu-btn";
+  const btnDot = document.createElement("span");
+  btnDot.className = "skills-menu-dot";
+  const btnLabel = document.createElement("span");
+  btnLabel.className = "skills-menu-label";
+  btnLabel.textContent = "Skills";
+  // Currently-running skill (from /brain/skill_status_update), or "None active".
+  const btnActive = document.createElement("span");
+  btnActive.className = "skills-menu-active";
+  btnActive.textContent = "None active";
+  const btnChevron = document.createElement("span");
+  btnChevron.className = "skills-menu-chevron mono";
+  btnChevron.textContent = "▾";
+  btn.append(btnDot, btnLabel, btnActive, btnChevron);
 
+  const pop = document.createElement("div");
+  pop.className = "skills-pop";
   const listEl = document.createElement("div");
-  listEl.className = "skills-list";
+  listEl.className = "skills-pop-list";
+  pop.appendChild(listEl);
 
-  body.append(head, listEl);
+  menu.append(pop, btn);
+  parent.appendChild(menu);
 
   // ---- state --------------------------------------------------------------
 
+  let open = false;
   /** @type {any[]} */
   let skills = [];
   let signature = "";
@@ -56,6 +61,9 @@ export function createSkillsPanel(dock, rosClient, agentState) {
   const inputValues = new Map();
   /** Last/in-flight run. `done` marks the terminal state. @type {{ skillId: string, cancel: () => void, text: string, error: boolean, canceling: boolean, done: boolean } | null} */
   let run = null;
+  /** Skill the robot reports running via /brain/skill_status_update (covers
+   *  agent-driven runs too, not just ones launched from this menu). */
+  let topicActiveName = "";
 
   // ---- skill input schema (mirrors the sim console) -----------------------
 
@@ -96,6 +104,9 @@ export function createSkillsPanel(dock, rosClient, agentState) {
   const isBool = (t) => t === "bool" || t === "boolean";
   /** @param {string} t */
   const isJson = (t) => ["json", "object", "dict"].includes(t);
+
+  /** @param {any} skill */
+  const hasParams = (skill) => Object.keys(getSkillInputs(skill)).length > 0;
 
   /**
    * Current string value for a param, falling back to the schema default.
@@ -166,6 +177,8 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     const built = buildInputs(skill);
     if ("error" in built) {
       run = { skillId: skill.id, cancel: () => {}, text: `${built.param}: ${built.error}`, error: true, canceling: false, done: true };
+      // A param error means the skill needs the form open to fix it.
+      expandedId = skill.id;
       render();
       return;
     }
@@ -186,6 +199,10 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     );
     run = { skillId: skill.id, cancel, text: "Running…", error: false, canceling: false, done: false };
     render();
+    // Collapse the launcher once a run is underway — it otherwise covers the
+    // feed. The button's green dot + skill name keep showing what's active;
+    // reopen to Stop it.
+    setOpen(false);
 
     promise.then(
       (values) => {
@@ -217,15 +234,63 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     render();
   }
 
+  // ---- open / close -------------------------------------------------------
+
+  /** @param {boolean} next */
+  function setOpen(next) {
+    open = next;
+    menu.classList.toggle("open", open);
+    btn.classList.toggle("active", open);
+    if (open) render();
+  }
+
+  /** @param {MouseEvent} e */
+  function onDocClick(e) {
+    if (open && !menu.contains(/** @type {Node} */ (e.target))) setOpen(false);
+  }
+  /** @param {KeyboardEvent} e */
+  function onKeydown(e) {
+    if (e.key === "Escape" && open) setOpen(false);
+  }
+
+  btn.addEventListener("click", () => setOpen(!open));
+  // Keep clicks inside the menu from reaching onDocClick. Rendering a row swaps
+  // the clicked element out of the DOM mid-event, so a bubbled document handler
+  // would see the (now-detached) target as "outside" and wrongly close the popup.
+  menu.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", onDocClick);
+  document.addEventListener("keydown", onKeydown);
+
+  // ---- active-skill readout (button) --------------------------------------
+
+  /** Name of the skill running right now, from a local run or the brain topic. */
+  function currentActiveName() {
+    if (run && !run.done) {
+      const s = skills.find((x) => x.id === run.skillId);
+      return s ? formatName(s) : prettify(run.skillId);
+    }
+    return topicActiveName;
+  }
+
+  /** Paint the button's dot (grey/green) + active-skill label. */
+  function syncActive() {
+    const name = currentActiveName();
+    const on = name !== "";
+    btnDot.classList.toggle("on", on);
+    btnActive.classList.toggle("on", on);
+    btnActive.textContent = on ? name : "None active";
+    btnActive.title = on ? name : "";
+  }
+
   // ---- rendering ----------------------------------------------------------
 
   function render() {
-    count.textContent = String(skills.length);
+    syncActive();
     const frag = document.createDocumentFragment();
     for (const skill of skills) frag.appendChild(renderRow(skill));
     if (skills.length === 0) {
       const empty = document.createElement("p");
-      empty.className = "skills-empty";
+      empty.className = "skills-pop-empty";
       empty.textContent = rosClient.state === "connected" ? "No skills available." : "Not connected.";
       frag.appendChild(empty);
     }
@@ -234,60 +299,62 @@ export function createSkillsPanel(dock, rosClient, agentState) {
 
   /** @param {any} skill */
   function renderRow(skill) {
-    const isExpanded = expandedId === skill.id;
+    const expandable = hasParams(skill);
+    const isExpanded = expandable && expandedId === skill.id;
     const running = !!run && run.skillId === skill.id && !run.done;
+    const done = !!run && run.skillId === skill.id && run.done;
 
     const row = document.createElement("div");
-    row.className = "skill-card" + (isExpanded ? " expanded" : "");
+    row.className = "skills-pop-row" + (isExpanded ? " expanded" : "");
 
-    const top = document.createElement("div");
-    top.className = "skill-top";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "skills-pop-item";
+    head.disabled = !!skill.in_training || rosClient.state !== "connected";
+    if (skill.in_training) head.title = "Training in progress";
+
     const name = document.createElement("span");
-    name.className = "skill-name";
+    name.className = "skills-pop-name";
     name.textContent = formatName(skill);
     const guidelines = skill.guidelines || skill.guidelines_when_running;
-    if (guidelines) name.title = guidelines;
-    const type = document.createElement("span");
-    type.className = "skill-type mono";
-    type.textContent = skill.type || "";
+    if (guidelines) head.title = guidelines;
 
-    // Active toggle — whether this skill is enabled for the current agent
-    // (set_active_skills). Disabled until an agent is selected.
-    const { currentDirective, activeSkills } = agentState.get();
-    const activeToggle = document.createElement("button");
-    activeToggle.type = "button";
-    activeToggle.className = "skill-active" + (activeSkills.has(skill.id) ? " on" : "");
-    activeToggle.disabled = !currentDirective;
-    activeToggle.setAttribute("aria-label", "Toggle skill for agent");
-    activeToggle.title = !currentDirective
-      ? "Select an agent to choose its skills"
-      : activeSkills.has(skill.id)
-        ? "Enabled for the agent — click to disable"
-        : "Disabled — click to enable for the agent";
-    activeToggle.innerHTML = '<span class="skill-active-rail"><span class="skill-active-thumb"></span></span>';
-    activeToggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (activeToggle.disabled) return;
-      // Show "in flight" rather than optimistically flipping — the brain's
-      // re-pulled active set (via agentState) settles it.
-      activeToggle.classList.add("pending");
-      activeToggle.disabled = true;
-      agentState.toggleSkill(skill.id);
-    });
-    top.append(name, type, activeToggle);
+    const tail = document.createElement("span");
+    tail.className = "skills-pop-tail mono";
+    if (running) tail.textContent = "…";
+    else if (expandable) tail.textContent = isExpanded ? "▾" : "›";
+    head.append(name, tail);
 
-    const runBtn = document.createElement("button");
-    runBtn.type = "button";
-    runBtn.className = "skill-run-toggle" + (isExpanded ? " active" : "");
-    runBtn.textContent = isExpanded ? "Close" : "Run ▸";
-    runBtn.disabled = !!skill.in_training;
-    if (skill.in_training) runBtn.title = "Training in progress";
-    runBtn.addEventListener("click", () => {
-      expandedId = isExpanded ? null : skill.id;
-      render();
+    head.addEventListener("click", () => {
+      if (expandable) {
+        expandedId = isExpanded ? null : skill.id;
+        render();
+      } else if (!running) {
+        startRun(skill);
+      }
     });
 
-    row.append(top, runBtn);
+    row.appendChild(head);
+
+    // Inline status for a parameter-less skill (no form to host it).
+    if (!expandable && (running || done)) {
+      const status = document.createElement("div");
+      status.className = "skills-pop-status" + (run && run.error ? " error" : "");
+      const txt = document.createElement("span");
+      txt.textContent = run ? run.text : "";
+      status.appendChild(txt);
+      if (running) {
+        const stop = document.createElement("button");
+        stop.type = "button";
+        stop.className = "skill-confirm stop";
+        stop.textContent = run?.canceling ? "Stopping" : "Stop";
+        stop.disabled = !!run?.canceling;
+        stop.addEventListener("click", stopRun);
+        status.appendChild(stop);
+      }
+      row.appendChild(status);
+    }
+
     if (isExpanded) row.appendChild(renderForm(skill, running));
     return row;
   }
@@ -298,14 +365,7 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     form.className = "skill-form";
 
     const schema = getSkillInputs(skill);
-    const params = Object.entries(schema);
-    if (params.length === 0) {
-      const none = document.createElement("p");
-      none.className = "skill-param-note";
-      none.textContent = "No parameters.";
-      form.appendChild(none);
-    }
-    for (const [paramName, spec] of params) {
+    for (const [paramName, spec] of Object.entries(schema)) {
       form.appendChild(renderParam(skill, paramName, spec));
     }
 
@@ -314,7 +374,7 @@ export function createSkillsPanel(dock, rosClient, agentState) {
 
     const status = document.createElement("p");
     status.className = "skill-status" + (run && run.skillId === skill.id && run.error ? " error" : "");
-    status.textContent = run && run.skillId === skill.id ? run.text : "Runs via /execute_skill.";
+    status.textContent = run && run.skillId === skill.id ? run.text : "";
 
     const action = document.createElement("button");
     action.type = "button";
@@ -325,7 +385,7 @@ export function createSkillsPanel(dock, rosClient, agentState) {
       action.addEventListener("click", stopRun);
     } else {
       action.className = "skill-confirm";
-      action.textContent = "Confirm";
+      action.textContent = "Run";
       const otherRunning = run && !run.done && run.skillId !== skill.id;
       action.disabled = !!otherRunning || rosClient.state !== "connected";
       action.addEventListener("click", () => startRun(skill));
@@ -427,29 +487,53 @@ export function createSkillsPanel(dock, rosClient, agentState) {
     signature = sig;
     skills = next;
     if (expandedId && !skills.some((s) => s.id === expandedId)) expandedId = null;
-    render();
+    if (open) render();
   });
 
-  reload.addEventListener("click", () => {
-    // The roster is latched and always current on this live subscription, so a
-    // reload just redraws (and clears the dedupe so the next push re-renders).
-    signature = "";
-    render();
+  // The brain announces every skill run (manual or agent-driven) here. The robot
+  // runs one skill at a time, so any terminal status clears the readout.
+  const unsubStatus = rosClient.subscribe(SKILL_STATUS_UPDATE_TOPIC, (m) => {
+    if (typeof m?.data !== "string") return;
+    let payload;
+    try {
+      payload = JSON.parse(m.data);
+    } catch {
+      return;
+    }
+    const name = String(payload?.primitive_name ?? payload?.skill_name ?? payload?.skill_id ?? "");
+    const status = String(payload?.status ?? "");
+    if (!name || !status) return;
+    topicActiveName = status === "running" ? prettify(name) : "";
+    syncActive();
   });
 
-  const unsubState = rosClient.onStateChange(() => render());
-  // Re-render the active toggles when the agent / its active-skill set changes.
-  const unsubAgents = agentState.subscribe(() => render());
-  render();
+  const unsubState = rosClient.onStateChange(() => {
+    if (rosClient.state !== "connected") topicActiveName = "";
+    syncActive();
+    if (open) render();
+  });
+
+  syncActive();
 
   return {
     destroy() {
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onKeydown);
       unsubSkills();
+      unsubStatus();
       unsubState();
-      unsubAgents();
       if (run && !run.done) run.cancel();
+      menu.remove();
     },
   };
+}
+
+/** "navigate_to_position" → "Navigate To Position". @param {string} id */
+function prettify(id) {
+  return String(id)
+    .split("/")
+    .map((part) => part.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
+    .join(" / ");
 }
 
 /**

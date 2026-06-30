@@ -474,12 +474,19 @@ button {
   padding: 9px;
 }
 
+/* Bottom-center bar: holds the speak pill + the Skills menu as separate pills.
+   Transparent itself — each child carries its own glass (see .tts-bar). */
 .overlay-tts {
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  width: min(440px, 56vw);
-  border-radius: 999px;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
 }
 
 /* ---- profiling panel (Teleop) ------------------------------------------- */
@@ -529,11 +536,11 @@ button {
    these tiles are the other cameras (off pills or live thumbnails). Tunable knobs live here as custom
    properties: tile size, gap, and the corner inset. */
 .cam-strip {
-  --pip-w: 168px;
-  --pip-h: 96px;
-  --pip-gap: 8px;
+  --pip-w: 120px;
+  --pip-h: 120px; /* square tiles */
+  --pip-gap: 14px;
   --pip-inset: 20px;
-  --pip-top: 54px; /* clear the profiling toggle pinned at top:14px */
+  --pip-top: 14px; /* flush with the top edge, aligned with the overlays/panel */
   position: absolute;
   right: var(--pip-inset);
   top: var(--pip-top);
@@ -543,6 +550,13 @@ button {
   gap: var(--pip-gap);
 }
 
+/* Teleop keeps a profiling toggle in the top-right corner; on that page only,
+   start the strip left of it so the tiles can still sit flush with the top
+   without colliding. The Agent page has no toggle (and sets its own offset). */
+.cockpit:not(.agent-cockpit) .cam-strip {
+  right: 54px;
+}
+
 .cam-tile {
   --pip-hover-scale: 1.12;
   position: relative;
@@ -550,17 +564,15 @@ button {
   background: var(--glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--hairline);
   border-radius: 10px;
   cursor: pointer;
   overflow: hidden;
   transform-origin: top right; /* grow inward from the corner, never off-screen */
-  transition: border-color 150ms ease, transform 150ms ease, color 150ms ease;
+  transition: transform 150ms ease, color 150ms ease;
 }
 
 /* Grow on hover so the feed you're about to pick previews bigger. */
 .cam-tile:hover {
-  border-color: var(--hairline-strong);
   transform: scale(var(--pip-hover-scale));
   z-index: 1;
 }
@@ -1251,9 +1263,13 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: min(440px, 56vw);
   padding: 5px 16px 5px 18px;
-  border-radius: inherit;
-  border: 1px solid transparent;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
   transition: border-color 200ms ease;
 }
 
@@ -3621,305 +3637,204 @@ button {
   }
 }
 
-/* ---- right dock (Teleop): Skills + Chat panes --------------------------- */
-/* A shared right-edge column hosting stacked panes, each with its own popup
-   toggle at the camera view's right edge. Opening any pane insets the cockpit so
-   the feed + overlays shift left; one open pane fills the dock, two split it. */
+/* ---- skills menu (Teleop): collapsible launcher next to the speak bar --- */
+/* A "Skills ▾" pill in the bottom bar opens a popover of skill rows above it. A
+   parameter-less skill runs on click; a parameterized one expands inline to a
+   small form (reusing the .skill-* form styles below) with a Run button. */
 
-/* The cockpit shifts left when any pane is open (inline `right` = dock width).
-   Skip the slide while actively dragging the resizer. */
-.cockpit {
-  transition: right 220ms ease;
-}
-
-.cockpit.dock-resizing {
-  transition: none;
-}
-
-/* The little popup toggles — always visible (brand blue), pinned at the camera
-   view's right edge. `top` is set inline per pane; `right` inline (0 when hidden,
-   = dock width when any pane is open). */
-.dock-toggle {
-  position: absolute;
-  transform: translateY(-50%);
-  z-index: 8;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 7px;
-  color: #c0b8ff;
-  background: rgb(64 31 251 / 22%);
-  border: 1px solid rgb(64 31 251 / 60%);
-  border-right: 0;
-  border-radius: 10px 0 0 10px;
-  transition: right 220ms ease, color 150ms ease, border-color 150ms ease, background 150ms ease;
-}
-
-.dock-toggle:hover {
-  background: var(--blue);
-  color: #fff;
-  border-color: var(--blue);
-}
-
-/* Big upright chevron on the left, vertical label on the right. */
-.dock-toggle-chevron {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.dock-toggle-label {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.dock {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 7;
-  display: flex;
-  background: #060607;
-  border-left: 1px solid var(--hairline-strong);
-  transform: translateX(100%);
-  transition: transform 220ms ease;
-}
-
-.dock.open {
-  transform: translateX(0);
-}
-
-.dock.resizing {
-  transition: none;
-}
-
-/* Left-edge grab strip (shared width). */
-.dock-resize {
-  flex: 0 0 6px;
-  cursor: ew-resize;
-  background: var(--hairline);
-  transition: background 150ms ease;
-}
-
-.dock-resize:hover,
-.dock.resizing .dock-resize {
-  background: var(--accent-dim);
-}
-
-/* Panes stack vertically; each open pane flexes equally — one open fills the
-   dock, two open split it 50/50 (the closed one is display:none). */
-.dock-panes {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.dock-pane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.dock-pane + .dock-pane {
-  border-top: 1px solid var(--hairline-strong);
-}
-
-/* Blue section header shared by the panes. */
-.dock-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 13px 14px;
-  background: var(--blue);
-  border-bottom: 1px solid var(--hairline-strong);
-}
-
-.dock-head .microlabel {
-  color: #fff;
-  flex: 1;
-}
-
-.skills-count {
-  font-size: 11px;
-  color: rgb(255 255 255 / 75%);
-  font-variant-numeric: tabular-nums;
-}
-
-.skills-reload {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  color: rgb(255 255 255 / 80%);
-  font-size: 15px;
-  line-height: 1;
-  transition: color 150ms ease, background 150ms ease;
-}
-
-.skills-reload:hover {
-  color: #fff;
-  background: rgb(255 255 255 / 14%);
-}
-
-.skills-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.skills-empty {
-  margin: 0;
-  padding: 18px 14px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-/* ---- one skill card ----------------------------------------------------- */
-
-.skill-card {
-  display: grid;
-  gap: 8px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--hairline);
-}
-
-.skill-card.expanded {
-  background: rgb(255 255 255 / 3%);
-}
-
-.skill-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 9px;
-}
-
-/* Scoped override of the datasets .skill-name (no ellipsis truncation here). */
-.skill-card .skill-name {
-  font-size: 13px;
-  color: var(--text);
-  white-space: normal;
-  overflow: visible;
-}
-
-.skill-type {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-/* Per-skill active toggle — is this skill enabled for the selected agent. */
-.skill-active {
+.skills-menu {
+  position: relative;
   flex: 0 0 auto;
-  padding: 2px;
 }
 
-.skill-active:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
+.skills-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 100%;
+  min-height: 40px;
+  min-width: 230px;
+  padding: 0 16px;
+  font: inherit;
+  color: var(--text);
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-/* In-flight: waiting for the brain's re-pulled active set to confirm. The thumb
-   sits centered as an amber spinner (indeterminate) until it settles to on/off. */
-.skill-active.pending {
-  cursor: progress;
+.skills-menu-btn:hover {
+  background: rgb(0 0 0 / 52%);
 }
 
-.skill-active.pending .skill-active-rail {
-  background: var(--accent-faint);
+.skills-menu.open .skills-menu-btn {
   border-color: var(--accent-dim);
 }
 
-.skill-active.pending .skill-active-thumb {
-  background: transparent;
-  border: 2px solid var(--accent-dim);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  transform: translateX(7px);
-  animation: skill-active-spin 0.7s linear infinite;
-}
-
-@keyframes skill-active-spin {
-  from {
-    transform: translateX(7px) rotate(0deg);
-  }
-  to {
-    transform: translateX(7px) rotate(360deg);
-  }
-}
-
-.skill-active-rail {
-  display: inline-flex;
-  width: 30px;
-  height: 16px;
-  padding: 2px;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 8%);
-  border: 1px solid var(--hairline-strong);
-  transition: background 150ms ease, border-color 150ms ease;
-}
-
-.skill-active-thumb {
-  width: 10px;
-  height: 10px;
+/* Status dot: grey when idle, green (pulsing) while a skill runs. */
+.skills-menu-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--muted);
-  transform: translateX(0);
-  transition: transform 150ms ease, background 150ms ease;
+  opacity: 0.5;
+  transition: background 150ms ease, opacity 150ms ease;
 }
 
-.skill-active.on .skill-active-rail {
-  background: rgb(64 31 251 / 30%);
-  border-color: rgb(64 31 251 / 60%);
+.skills-menu-dot.on {
+  background: var(--ok);
+  opacity: 1;
+  box-shadow: 0 0 9px var(--ok);
+  animation: breathe 2.2s ease-in-out infinite;
 }
 
-.skill-active.on .skill-active-thumb {
-  background: #c0b8ff;
-  transform: translateX(14px);
+.skills-menu-label {
+  flex: 0 0 auto;
 }
 
-.skill-run-toggle {
-  width: 100%;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
-  padding: 6px 0;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+/* Active-skill name (or "None active"), filling the widened button and
+   truncating if long. The chevron is pushed to the far edge. */
+.skills-menu-active {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 9px;
+  border-left: 1px solid var(--hairline);
+  font-size: 12px;
+  /* Brighter than --muted: the pill floats over the live camera feed, where
+     plain grey washes out on light backgrounds. */
+  color: rgb(231 231 234 / 72%);
+  text-align: left;
+}
+
+.skills-menu-active.on {
   color: var(--text);
-  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
-.skill-run-toggle:hover:not(:disabled) {
-  border-color: rgb(64 31 251 / 55%);
-  background: rgb(64 31 251 / 14%);
-  color: #c0b8ff;
+.skills-menu-chevron {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 150ms ease;
 }
 
-.skill-run-toggle.active {
-  border-color: rgb(64 31 251 / 55%);
-  background: rgb(64 31 251 / 18%);
-  color: #c0b8ff;
+.skills-menu.open .skills-menu-chevron {
+  transform: rotate(180deg);
 }
 
-.skill-run-toggle:disabled {
+/* Popover above the button. Hidden until open. */
+.skills-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  width: 280px;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  display: none;
+  padding: 6px;
+  background: rgb(8 8 11 / 58%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.skills-menu.open .skills-pop {
+  display: block;
+}
+
+.skills-pop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skills-pop-empty {
+  margin: 0;
+  padding: 16px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.skills-pop-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.skills-pop-row.expanded {
+  background: rgb(255 255 255 / 4%);
+  border-radius: 10px;
+}
+
+.skills-pop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.skills-pop-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 7%);
+}
+
+.skills-pop-item:disabled {
   color: var(--muted);
   cursor: not-allowed;
-  opacity: 0.6;
 }
 
-/* ---- params form -------------------------------------------------------- */
+.skills-pop-name {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-pop-tail {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.skills-pop-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.skills-pop-status.error {
+  color: var(--danger);
+}
+
+/* The expanded form sits inside the row, indented to match the item padding. */
+.skills-pop-row .skill-form {
+  padding: 0 12px 12px;
+}
+
+/* ---- skill params form (shared: skills menu) --------------------------- */
 
 .skill-form {
   display: grid;
@@ -4279,12 +4194,50 @@ button {
 .chat-skill {
   align-self: stretch;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  flex-direction: column;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
   background: rgb(255 255 255 / 4%);
+}
+
+/* The status line (tag · name · status); becomes a click target when a failed
+   run has an expandable error detail below it. */
+.chat-skill-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.chat-skill.has-detail .chat-skill-head {
+  cursor: pointer;
+}
+
+.chat-skill-chevron {
+  flex: 0 0 auto;
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+/* Collapsible failure reason / error trace. */
+.chat-skill-detail {
+  max-height: 0;
+  overflow: hidden;
+  padding: 0 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgb(231 231 234 / 80%);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 0 solid var(--hairline);
+  transition: max-height 0.2s ease, padding 0.2s ease;
+}
+
+.chat-skill.open .chat-skill-detail {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--hairline);
 }
 
 .chat-skill-tag {
@@ -4388,4 +4341,409 @@ button {
 .chat-send:hover {
   background: rgb(64 31 251 / 48%);
   border-color: var(--blue);
+}
+
+/* ---- Agent page --------------------------------------------------------- */
+/* Full-bleed live feed (reused from teleop) with one liquid-glass control
+   column pinned to the right edge. The cam PiP strip is nudged left so it
+   never tucks behind the panel. */
+
+.agent-cockpit .cam-strip {
+  right: calc(360px + 34px);
+}
+
+/* Agent page keeps every camera live (no off pill), so any off tile here is the
+   optional map — give it the same square footprint as the live feeds. */
+.agent-cockpit .cam-tile.off {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--pip-h);
+  padding: 0;
+}
+
+.agent-panel {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  bottom: 14px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  /* Liquid glass: translucent and see-through, leaning on a strong blur to read
+     as frosted. Legibility comes from brighter text (below), not an opaque
+     backing — only a light dark tint keeps the feed from blowing out the panel. */
+  background: linear-gradient(180deg, rgb(255 255 255 / 6%), rgb(6 6 9 / 44%));
+  backdrop-filter: blur(30px) saturate(1.1);
+  -webkit-backdrop-filter: blur(30px) saturate(1.1);
+  border: none;
+  border-radius: 18px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 14%),
+    0 14px 44px rgb(0 0 0 / 48%);
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.agent-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.5;
+  transition: background 200ms ease, opacity 200ms ease;
+}
+
+.agent-state-dot.on {
+  background: var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 9px var(--accent);
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+.agent-controls {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.agent-directive {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgb(0 0 0 / 35%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+}
+
+.agent-directive:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.agent-directive:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.agent-toggle {
+  flex: 0 0 auto;
+  padding: 0 16px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-faint);
+  border: 1px solid var(--accent-dim);
+  border-radius: 9px;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.agent-toggle:hover:not(:disabled) {
+  background: rgb(232 163 61 / 22%);
+}
+
+.agent-toggle.stop {
+  color: #f0b6ab;
+  background: rgb(217 106 90 / 16%);
+  border-color: rgb(217 106 90 / 55%);
+}
+
+.agent-toggle.stop:hover:not(:disabled) {
+  background: rgb(217 106 90 / 28%);
+}
+
+.agent-toggle:disabled {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--hairline);
+  cursor: not-allowed;
+}
+
+.agent-reset {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.agent-reset:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.agent-activeskill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgb(0 0 0 / 25%);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+
+.agent-activeskill .microlabel {
+  flex: 0 0 auto;
+}
+
+.agent-activeskill-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-activeskill.on {
+  background: var(--accent-faint);
+  border-color: var(--accent-dim);
+}
+
+.agent-activeskill.on .agent-activeskill-name {
+  color: var(--accent);
+}
+
+.agent-stream-label {
+  margin: 2px 2px -4px;
+}
+
+/* Over translucent glass the app's --muted grey reads too dim, so the agent
+   panel brightens its secondary text (thoughts, previews, status, system lines)
+   to a near-white. Scoped to .agent-panel so teleop's chat is untouched. */
+.agent-panel .chat-thought-item,
+.agent-panel .chat-thoughts-status,
+.agent-panel .agent-thought-preview {
+  color: rgb(231 231 234 / 82%);
+}
+
+.agent-panel .chat-thoughts-label,
+.agent-panel .agent-stream-label,
+.agent-panel .agent-activeskill .microlabel {
+  color: rgb(231 231 234 / 65%);
+}
+
+.agent-panel .chat-msg.system .chat-bubble {
+  color: rgb(231 231 234 / 78%);
+}
+
+/* The robot's own reply is the headline of the chat — give it a readable dark
+   backing (the default 6% white is invisible over a bright feed) and bright
+   text so it never washes out through the translucent glass. */
+.agent-panel .chat-msg.robot .chat-bubble {
+  color: #fff;
+  background: rgb(12 12 16 / 68%);
+  border-color: var(--hairline-strong);
+}
+
+/* Latest thought, shown while the Thoughts block is collapsed (its default). */
+.agent-thought-preview {
+  margin-top: 6px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chat-thoughts.open .agent-thought-preview {
+  display: none;
+}
+
+.agent-stream {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.agent-compose {
+  display: flex;
+  gap: 8px;
+  align-items: stretch; /* input + button share one height, content centered in each */
+}
+
+.agent-compose-input {
+  flex: 1;
+  min-height: 42px;
+  max-height: 120px;
+  padding: 11px 12px;
+  resize: none;
+  font: inherit; /* same UI font as the teleop "Make the robot speak" bar */
+  color: var(--text);
+  background: rgb(0 0 0 / 35%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+}
+
+.agent-compose-input::placeholder {
+  color: rgb(255 255 255 / 25%);
+}
+
+.agent-compose-input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.agent-compose-send {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-faint);
+  border: 1px solid var(--accent-dim);
+  border-radius: 11px;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.agent-compose-send:hover {
+  background: rgb(232 163 61 / 22%);
+}
+
+/* Bottom-left "agent active" chip — only while the brain is running. */
+.agent-active-chip {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 14px;
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--accent-dim);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+.agent-active-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+.agent-active-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.agent-active-title {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.agent-active-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Top-center "<agent> is running" pill — shown on non-Agent pages while the
+   brain runs. Clickable: jumps to the Agent page. Glass + full pill match the
+   speak bar (same translucency, even rounder edges). */
+.agent-indicator {
+  position: fixed;
+  top: 14px;
+  /* Centered over the stage, not the viewport: the 64px rail shifts the content
+     area right, so half the rail (32px) keeps the pill aligned with the
+     stage-centered joystick / speak bar below it. */
+  left: calc(50% + 32px);
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 7px 6px 16px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+  text-decoration: none;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.agent-indicator:hover {
+  border-color: var(--hairline-strong);
+  background: rgb(0 0 0 / 52%);
+}
+
+.agent-indicator-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 9px var(--ok);
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+.agent-indicator-label {
+  white-space: nowrap;
+}
+
+.agent-indicator-stop {
+  flex: 0 0 auto;
+  padding: 4px 13px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.agent-indicator-stop:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.agent-indicator-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
