@@ -314,6 +314,87 @@ class TestLearnedExecCfg:
         )
         assert result.params.checkpoint == "ckpt.pth"
 
+    def test_auto_stop_defaults_are_noops(self, tmp_path):
+        result = _validate({"type": "learned", "execution": {"checkpoint": "ckpt.pth"}}, tmp_path)
+        params = result.params
+        assert params.min_duration == 0.0
+        assert params.progress_ema_alpha == 1.0
+        assert params.idle_seconds == 0.0
+        assert params.idle_arm_eps == 0.01
+        assert params.idle_base_eps == 0.01
+        assert params.progress_gate == 0.0
+
+    def test_auto_stop_null_placeholders_fall_back_to_defaults(self, tmp_path):
+        result = _validate(
+            {
+                "type": "learned",
+                "execution": {
+                    "checkpoint": "ckpt.pth",
+                    "min_duration": None,
+                    "progress_ema_alpha": None,
+                    "idle_seconds": None,
+                    "idle_arm_eps": None,
+                    "idle_base_eps": None,
+                    "progress_gate": None,
+                },
+            },
+            tmp_path,
+        )
+        assert result.params.idle_seconds == 0.0
+        assert result.params.progress_gate == 0.0
+
+    @pytest.mark.parametrize(
+        ("field", "bad"),
+        [
+            ("min_duration", -1.0),
+            ("progress_ema_alpha", 0.0),
+            ("progress_ema_alpha", 1.5),
+            ("idle_seconds", -0.1),
+            ("idle_arm_eps", 0.0),
+            ("idle_base_eps", 0.0),
+            ("progress_gate", -0.5),
+        ],
+    )
+    def test_auto_stop_out_of_bounds_rejected(self, tmp_path, field, bad):
+        with pytest.raises(BehaviorConfigError, match=field):
+            _validate(
+                {"type": "learned", "execution": {"checkpoint": "ckpt.pth", field: bad}},
+                tmp_path,
+            )
+
+    def test_progress_gate_without_progress_head_rejected(self, tmp_path):
+        """action_dim < 10 means no progress output: the gate could never pass
+        and the idle stop would silently never fire, so it must fail loudly."""
+        with pytest.raises(BehaviorConfigError, match="progress_gate"):
+            _validate(
+                {
+                    "type": "learned",
+                    "execution": {"checkpoint": "ckpt.pth", "action_dim": 8, "progress_gate": 0.5},
+                },
+                tmp_path,
+            )
+
+    def test_progress_gate_with_progress_head_accepted(self, tmp_path):
+        result = _validate(
+            {
+                "type": "learned",
+                "execution": {"checkpoint": "ckpt.pth", "action_dim": 10, "progress_gate": 0.5},
+            },
+            tmp_path,
+        )
+        assert result.params.progress_gate == 0.5
+
+    def test_zero_progress_gate_without_progress_head_accepted(self, tmp_path):
+        """gate=0 asks nothing of the progress head, so a narrow action head is fine."""
+        result = _validate(
+            {
+                "type": "learned",
+                "execution": {"checkpoint": "ckpt.pth", "action_dim": 8, "progress_gate": 0},
+            },
+            tmp_path,
+        )
+        assert result.params.progress_gate == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Poses config

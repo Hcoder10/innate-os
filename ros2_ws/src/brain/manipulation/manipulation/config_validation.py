@@ -200,6 +200,24 @@ class LearnedExecCfg(_BaseExecCfg):
             return value
         return _finite_number(value)
 
+    @model_validator(mode="after")
+    def _progress_gate_needs_progress_head(self) -> LearnedExecCfg:
+        """Reject a progress_gate on a skill without a progress head.
+
+        With ``action_dim < 10`` the policy has no progress output, so the gate
+        could never pass and the idle stop would silently never fire — the skill
+        would always run to the ``duration`` cap. Fail loudly at validation time
+        instead.
+        """
+        if self.progress_gate > 0 and self.action_dim < 10:
+            raise ValueError(
+                f"progress_gate={self.progress_gate} requires a progress head "
+                f"(action_dim >= 10, got {self.action_dim}): the gate could never pass, "
+                "so the idle stop would silently never fire. Set progress_gate to 0/null, "
+                "or use a checkpoint whose action head includes progress."
+            )
+        return self
+
 
 class PosesExecCfg(_BaseExecCfg):
     """``execution`` block for ``type: poses`` skills."""
