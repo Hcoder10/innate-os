@@ -150,6 +150,10 @@ class LearnedExecCfg(_BaseExecCfg):
     # chunk_size-aware clamping happens inside create_act_config once the
     # checkpoint is loaded; the schema only enforces ``>= 1``.
     n_action_steps: int | None = Field(None, ge=1)
+    # DP-only: number of DDIM denoising steps at inference. None = use the model
+    # default baked into DP.py (16). Lower (8/4) is faster but rougher; ignored
+    # for ACT.
+    num_inference_steps: int | None = Field(None, ge=1)
     # Which policy family the checkpoint belongs to. Set by `training-client
     # activate` from the training preset. "act" (default) keeps every existing
     # skill unchanged; "dp" selects the Diffusion Policy loader/inference path.
@@ -167,6 +171,7 @@ class LearnedExecCfg(_BaseExecCfg):
         "start_pose_time",
         "end_pose_time",
         "n_action_steps",
+        "num_inference_steps",
         mode="before",
     )
     @classmethod

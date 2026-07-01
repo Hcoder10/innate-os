@@ -347,6 +347,7 @@ class ManipulationServer(Node):
             n_action_steps_override = params.n_action_steps
             if n_action_steps_override is None and self.default_n_action_steps > 0:
                 n_action_steps_override = self.default_n_action_steps
+            num_inference_steps_override = params.num_inference_steps
             policy_type = params.policy_type
 
             # Load policy (ACT by default; Diffusion Policy when policy_type == "dp")
@@ -354,6 +355,7 @@ class ManipulationServer(Node):
                 checkpoint_path,
                 action_dim,
                 n_action_steps_override=n_action_steps_override,
+                num_inference_steps_override=num_inference_steps_override,
                 policy_type=policy_type,
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
@@ -630,7 +632,7 @@ class ManipulationServer(Node):
             return "FAILURE", f"Exception during replay execution: {str(e)}"
 
     def _load_policy_for_behavior(self, checkpoint_path, action_dim, n_action_steps_override=None,
-                                  policy_type="act"):
+                                  num_inference_steps_override=None, policy_type="act"):
         """Load a policy for a specific behavior.
 
         policy_type: "act" (default) builds an ACTPolicy; "dp" builds a Diffusion
@@ -660,6 +662,7 @@ class ManipulationServer(Node):
                 return self._load_dp_policy_for_behavior(
                     checkpoint_path, dataset_stats, action_dim,
                     n_action_steps_override, load_start,
+                    num_inference_steps_override=num_inference_steps_override,
                 )
 
             # Load checkpoint first so we can infer architecture params from it.
@@ -817,7 +820,8 @@ class ManipulationServer(Node):
             return False
 
     def _load_dp_policy_for_behavior(self, checkpoint_path, dataset_stats, action_dim,
-                                     n_action_steps_override, load_start):
+                                     n_action_steps_override, load_start,
+                                     num_inference_steps_override=None):
         """Load a Diffusion Policy checkpoint (self-contained, see DP.py).
 
         Shares the dataset_stats + select_action contract with ACT, so the
@@ -829,12 +833,16 @@ class ManipulationServer(Node):
             from manipulation.DP import load_dp_policy
 
             self.get_logger().info(f"Loading Diffusion Policy checkpoint: {checkpoint_path}")
+            dp_overrides = {}
+            if num_inference_steps_override:
+                dp_overrides["num_inference_steps"] = num_inference_steps_override
             policy, load_result = load_dp_policy(
                 checkpoint_path,
                 dataset_stats,
                 action_dim=action_dim,
                 device=self.device,
                 n_action_steps=n_action_steps_override,
+                **dp_overrides,
             )
             if load_result.missing_keys:
                 self.get_logger().warn(
