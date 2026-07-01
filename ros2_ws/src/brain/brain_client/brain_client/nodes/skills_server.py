@@ -14,6 +14,7 @@ the action server.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -23,6 +24,7 @@ from brain_messages.action import ExecuteBehavior, ExecuteSkill
 from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAgents, SaveAsReplaySkill
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -80,6 +82,12 @@ class SkillsActionServer(Node):
         self._behavior_goal_handles = {}
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
+
+        # The robot runs one skill at a time. Guards execute_callback so a goal
+        # that arrives while another skill is still executing is aborted promptly
+        # (see execute_callback) instead of contending for the arm/robot state.
+        self._skill_execution_lock = threading.Lock()
+        self._skill_running = False
 
         # ReentrantCallbackGroup so a cancel request can be serviced *while* a
         # skill's execute_callback is blocked waiting on the behavior result.
@@ -222,17 +230,42 @@ class SkillsActionServer(Node):
             )
 
         skill_type = goal_handle.request.skill_type
-        if self.catalog.get_code_skill(skill_type) is not None:
-            return self._execute_code_skill(goal_handle, skill_type, inputs)
-        if self.catalog.get_physical_skill(skill_type) is not None:
-            return self._execute_physical_skill(goal_handle, skill_type, inputs)
 
-        self.get_logger().error(f"Skill '{skill_type}' not available")
-        self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
-        goal_handle.abort()
-        return ExecuteSkill.Result(
-            success=False, message="Skill not available", skill_type=skill_type, success_type=SkillResult.FAILURE.value
-        )
+        # Serialize: the robot runs one skill at a time. If a goal arrives while
+        # another skill is still executing (e.g. rapid Run/Stop toggling, where
+        # the previous skill is mid-teardown), abort it here so the app gets a
+        # prompt result. Rejecting in goal_callback instead would surface nothing
+        # back through the rws bridge, leaving the app hung until its timeout.
+        with self._skill_execution_lock:
+            if self._skill_running:
+                self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
+                goal_handle.abort()
+                return ExecuteSkill.Result(
+                    success=False,
+                    message="Another skill is already running",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
+            self._skill_running = True
+
+        try:
+            if self.catalog.get_code_skill(skill_type) is not None:
+                return self._execute_code_skill(goal_handle, skill_type, inputs)
+            if self.catalog.get_physical_skill(skill_type) is not None:
+                return self._execute_physical_skill(goal_handle, skill_type, inputs)
+
+            self.get_logger().error(f"Skill '{skill_type}' not available")
+            self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message="Skill not available",
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
+        finally:
+            with self._skill_execution_lock:
+                self._skill_running = False
 
     # ================= execution =================
     def _execute_code_skill(self, goal_handle, skill_type, inputs):
@@ -264,6 +297,15 @@ class SkillsActionServer(Node):
         )
 
         try:
+            # Code skills otherwise publish no feedback until they call their own
+            # feedback callback. Emit one so the websocket bridge (rws) relays its
+            # assigned goal_id to the app — without it the app has no id to
+            # cancel/interrupt the running skill with.
+            initial_feedback = ExecuteSkill.Feedback()
+            initial_feedback.feedback = "running"
+            initial_feedback.image_b64 = ""
+            goal_handle.publish_feedback(initial_feedback)
+
             self.robot_state.start_subscriptions()
             if needs_camera:
                 self._camera_node.start()
@@ -340,14 +382,11 @@ class SkillsActionServer(Node):
             self.get_logger().info(f"Sending behavior goal to behavior_server: {skill_type}")
             send_goal_future = self._behavior_client.send_goal_async(behavior_goal)
 
-            # CLI requests run on a background worker so the main spin loop can
-            # service the behavior action response; recursive spinning from that
-            # worker races the main executor and can falsely time out.
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
-            else:
-                rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
-                goal_ready = send_goal_future.done()
+            # Wait on the behavior goal via the executor (event-based) instead of
+            # re-spinning this node. The dedicated MultiThreadedExecutor services the
+            # behavior response on another thread while we block here; re-spinning
+            # required rclpy's global executor and raced Nav2's own global spins.
+            goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
 
             if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
@@ -383,13 +422,7 @@ class SkillsActionServer(Node):
             goal_handle.publish_feedback(initial_feedback)
 
             result_future = behavior_goal_handle.get_result_async()
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                result_wait_state = self._wait_for_cli_future(
-                    result_future, server_ready_check=self._behavior_server_ready
-                )
-            else:
-                rclpy.spin_until_future_complete(self, result_future)
-                result_wait_state = "done" if result_future.done() else "pending"
+            result_wait_state = self._wait_for_cli_future(result_future, server_ready_check=self._behavior_server_ready)
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
@@ -587,9 +620,23 @@ class SkillsActionServer(Node):
 def main(args=None):
     rclpy.init(args=args)
     action_server = SkillsActionServer()
+    # Spin on a dedicated executor instead of rclpy's global one. Skills that drive
+    # Nav2 (mobility.rotate, navigate_to_position) call BasicNavigator, whose blocking
+    # helpers spin the *global* executor; sharing it with this node lets those Nav2
+    # action clients enter our wait set and corrupt it ("wait set index ... out of
+    # bounds" -> SIGABRT). A dedicated MultiThreadedExecutor isolates us and lets a
+    # blocked physical-skill execute() wait on behavior results serviced by another
+    # thread (see _wait_for_cli_future) without re-spinning this node.
+    #
+    # Floor the thread pool well above the max expected concurrent skill count.
+    # execute_callback runs on a pool thread and blocks in _wait_for_cli_future
+    # until another pool thread dispatches the behavior response it waits on; with
+    # only os.cpu_count() threads (4 on a Jetson), enough concurrent skills could
+    # occupy every thread and leave none to resolve their futures -> deadlock.
+    executor = MultiThreadedExecutor(num_threads=max(8, (os.cpu_count() or 4) + 4))
+    executor.add_node(action_server)
     try:
-        while rclpy.ok():
-            rclpy.spin_once(action_server, timeout_sec=1.0)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     action_server.destroy()

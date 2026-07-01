@@ -78,8 +78,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 
 # Install Python deps with uv. Test image is non-Jetson, so we drop Jetson-only
 # entries (cupy, jetson-ai-lab index) and runtime-only packages that don't
-# install on CI runners (pynput, bluezero). google-generativeai is required by
-# skills/scan_for_objects.py in integration tests.
+# install on CI runners (pynput, bluezero).
 COPY ros2_ws/pip-requirements.txt /tmp/pip-requirements.txt
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     grep -v 'pypi.jetson-ai-lab.io' /tmp/pip-requirements.txt | \
@@ -88,7 +87,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         grep -v -E '^bluezero' > /tmp/pip-requirements.filtered.txt && \
     uv pip install --system meson ninja && \
     uv pip install --system -r /tmp/pip-requirements.filtered.txt && \
-    uv pip install --system google-generativeai && \
     rm /tmp/pip-requirements.txt /tmp/pip-requirements.filtered.txt
 
 # Initialize rosdep
