@@ -381,9 +381,7 @@ class SkillsActionServer(Node):
             goal_handle.publish_feedback(initial_feedback)
 
             result_future = behavior_goal_handle.get_result_async()
-            result_wait_state = self._wait_for_cli_future(
-                result_future, server_ready_check=self._behavior_server_ready
-            )
+            result_wait_state = self._wait_for_cli_future(result_future, server_ready_check=self._behavior_server_ready)
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
