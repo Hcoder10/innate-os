@@ -404,12 +404,17 @@ class DiffusionPolicy(nn.Module):
         )
         self.sampler = DDIMSampler(config.num_train_timesteps, config.num_inference_steps)
         self._action_queue: deque = deque([], maxlen=config.n_action_steps)
+        # Optional TRT engines (see dp_trt.py); None = eager torch. Attached post-load.
+        self._trt_unet = None
+        self._trt_encoder = None
 
     def reset(self):
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def _unet_forward(self, sample, t, global_cond):
-        """Isolated denoising call — swap for a TensorRT engine here."""
+        """Isolated denoising call — a TRT engine (dp_trt.TRTUNet) when attached, else eager."""
+        if self._trt_unet is not None:
+            return self._trt_unet(sample, t, global_cond)
         return self.unet(sample, t, global_cond=global_cond)
 
     def _encode_obs(self, nb):
@@ -428,8 +433,10 @@ class DiffusionPolicy(nn.Module):
     @torch.no_grad()
     def predict_action(self, batch):
         cfg = self.config
-        nb = self.normalize_inputs(batch)
-        gcond = self._encode_obs(nb)
+        if self._trt_encoder is not None:
+            gcond = self._trt_encoder(batch)
+        else:
+            gcond = self._encode_obs(self.normalize_inputs(batch))
         B = gcond.shape[0]
         traj = torch.randn(B, cfg.horizon, cfg.action_dim, device=gcond.device)
         for t in self.sampler.timesteps:

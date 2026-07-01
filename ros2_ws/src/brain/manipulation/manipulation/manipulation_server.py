@@ -825,9 +825,9 @@ class ManipulationServer(Node):
         """Load a Diffusion Policy checkpoint (self-contained, see DP.py).
 
         Shares the dataset_stats + select_action contract with ACT, so the
-        inference loop in _run_inference_once is unchanged. The denoising U-Net
-        call is isolated inside DiffusionPolicy._unet_forward for a future
-        TensorRT swap.
+        inference loop in _run_inference_once is unchanged. When available, TRT
+        engines (dp_trt: encoder + U-Net) are attached for the accelerated path;
+        otherwise DP runs eager torch.
         """
         try:
             from manipulation.DP import load_dp_policy
@@ -863,6 +863,19 @@ class ManipulationServer(Node):
                 f"({param_count/1e6:.1f}M params), n_action_steps={policy.config.n_action_steps}, "
                 f"inference_steps={policy.config.num_inference_steps}"
             )
+
+            # Build/attach TRT engines (encoder once-per-replan + U-Net per denoise step),
+            # the accelerated DP inference path. First load builds+caches (1-2 min); later
+            # loads reuse the cache. Falls back to eager torch on any failure (missing
+            # tensorrt/onnx, build error) so DP still runs, just slower.
+            try:
+                from manipulation.dp_trt import attach_engines
+                trt_start = time.time()
+                attach_engines(policy, checkpoint_path, self.device, precision="fp16",
+                               log=self.get_logger().info)
+                self.get_logger().info(f"DP TensorRT engines attached in {time.time() - trt_start:.2f}s (fp16)")
+            except Exception as e:
+                self.get_logger().warn(f"DP TensorRT unavailable ({e}); using eager torch")
 
             # Warm-up (denoising is heavier than ACT — a couple of iterations).
             dummy_batch = {
