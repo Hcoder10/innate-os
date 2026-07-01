@@ -14,6 +14,7 @@ the action server.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -595,7 +596,13 @@ def main(args=None):
     # bounds" -> SIGABRT). A dedicated MultiThreadedExecutor isolates us and lets a
     # blocked physical-skill execute() wait on behavior results serviced by another
     # thread (see _wait_for_cli_future) without re-spinning this node.
-    executor = MultiThreadedExecutor()
+    #
+    # Floor the thread pool well above the max expected concurrent skill count.
+    # execute_callback runs on a pool thread and blocks in _wait_for_cli_future
+    # until another pool thread dispatches the behavior response it waits on; with
+    # only os.cpu_count() threads (4 on a Jetson), enough concurrent skills could
+    # occupy every thread and leave none to resolve their futures -> deadlock.
+    executor = MultiThreadedExecutor(num_threads=max(8, (os.cpu_count() or 4) + 4))
     executor.add_node(action_server)
     try:
         executor.spin()
