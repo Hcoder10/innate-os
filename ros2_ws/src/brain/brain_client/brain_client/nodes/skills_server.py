@@ -23,6 +23,7 @@ from brain_messages.action import ExecuteBehavior, ExecuteSkill
 from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAgents, SaveAsReplaySkill
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -340,14 +341,11 @@ class SkillsActionServer(Node):
             self.get_logger().info(f"Sending behavior goal to behavior_server: {skill_type}")
             send_goal_future = self._behavior_client.send_goal_async(behavior_goal)
 
-            # CLI requests run on a background worker so the main spin loop can
-            # service the behavior action response; recursive spinning from that
-            # worker races the main executor and can falsely time out.
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
-            else:
-                rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
-                goal_ready = send_goal_future.done()
+            # Wait on the behavior goal via the executor (event-based) instead of
+            # re-spinning this node. The dedicated MultiThreadedExecutor services the
+            # behavior response on another thread while we block here; re-spinning
+            # required rclpy's global executor and raced Nav2's own global spins.
+            goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
 
             if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
@@ -383,13 +381,9 @@ class SkillsActionServer(Node):
             goal_handle.publish_feedback(initial_feedback)
 
             result_future = behavior_goal_handle.get_result_async()
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                result_wait_state = self._wait_for_cli_future(
-                    result_future, server_ready_check=self._behavior_server_ready
-                )
-            else:
-                rclpy.spin_until_future_complete(self, result_future)
-                result_wait_state = "done" if result_future.done() else "pending"
+            result_wait_state = self._wait_for_cli_future(
+                result_future, server_ready_check=self._behavior_server_ready
+            )
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
@@ -587,9 +581,17 @@ class SkillsActionServer(Node):
 def main(args=None):
     rclpy.init(args=args)
     action_server = SkillsActionServer()
+    # Spin on a dedicated executor instead of rclpy's global one. Skills that drive
+    # Nav2 (mobility.rotate, navigate_to_position) call BasicNavigator, whose blocking
+    # helpers spin the *global* executor; sharing it with this node lets those Nav2
+    # action clients enter our wait set and corrupt it ("wait set index ... out of
+    # bounds" -> SIGABRT). A dedicated MultiThreadedExecutor isolates us and lets a
+    # blocked physical-skill execute() wait on behavior results serviced by another
+    # thread (see _wait_for_cli_future) without re-spinning this node.
+    executor = MultiThreadedExecutor()
+    executor.add_node(action_server)
     try:
-        while rclpy.ok():
-            rclpy.spin_once(action_server, timeout_sec=1.0)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     action_server.destroy()
