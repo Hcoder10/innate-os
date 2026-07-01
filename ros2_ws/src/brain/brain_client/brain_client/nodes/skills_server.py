@@ -83,6 +83,12 @@ class SkillsActionServer(Node):
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
 
+        # The robot runs one skill at a time. Guards execute_callback so a goal
+        # that arrives while another skill is still executing is aborted promptly
+        # (see execute_callback) instead of contending for the arm/robot state.
+        self._skill_execution_lock = threading.Lock()
+        self._skill_running = False
+
         # ReentrantCallbackGroup so a cancel request can be serviced *while* a
         # skill's execute_callback is blocked waiting on the behavior result.
         # With the default MutuallyExclusiveCallbackGroup the cancel callback is
@@ -224,17 +230,44 @@ class SkillsActionServer(Node):
             )
 
         skill_type = goal_handle.request.skill_type
-        if self.catalog.get_code_skill(skill_type) is not None:
-            return self._execute_code_skill(goal_handle, skill_type, inputs)
-        if self.catalog.get_physical_skill(skill_type) is not None:
-            return self._execute_physical_skill(goal_handle, skill_type, inputs)
 
-        self.get_logger().error(f"Skill '{skill_type}' not available")
-        self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
-        goal_handle.abort()
-        return ExecuteSkill.Result(
-            success=False, message="Skill not available", skill_type=skill_type, success_type=SkillResult.FAILURE.value
-        )
+        # Serialize: the robot runs one skill at a time. If a goal arrives while
+        # another skill is still executing (e.g. rapid Run/Stop toggling, where
+        # the previous skill is mid-teardown), abort it here so the app gets a
+        # prompt result. Rejecting in goal_callback instead would surface nothing
+        # back through the rws bridge, leaving the app hung until its timeout.
+        with self._skill_execution_lock:
+            if self._skill_running:
+                self.get_logger().warn(
+                    f"Skill '{skill_type}' requested but another skill is already running"
+                )
+                goal_handle.abort()
+                return ExecuteSkill.Result(
+                    success=False,
+                    message="Another skill is already running",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
+            self._skill_running = True
+
+        try:
+            if self.catalog.get_code_skill(skill_type) is not None:
+                return self._execute_code_skill(goal_handle, skill_type, inputs)
+            if self.catalog.get_physical_skill(skill_type) is not None:
+                return self._execute_physical_skill(goal_handle, skill_type, inputs)
+
+            self.get_logger().error(f"Skill '{skill_type}' not available")
+            self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message="Skill not available",
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
+        finally:
+            with self._skill_execution_lock:
+                self._skill_running = False
 
     # ================= execution =================
     def _execute_code_skill(self, goal_handle, skill_type, inputs):
