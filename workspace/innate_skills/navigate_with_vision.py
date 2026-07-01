@@ -12,7 +12,6 @@ Uses the ``navigate_instruction`` ROS 2 action server exposed by the
 
 import threading
 
-import rclpy
 from action_msgs.msg import GoalStatus
 from innate_cloud_msgs.action import NavigateInstruction
 from rclpy.action import ActionClient
@@ -95,15 +94,7 @@ class NavigateWithVision(Skill):
 
         goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
 
-        try:
-            rclpy.spin_until_future_complete(self.node, goal_future, timeout_sec=10.0)
-        except Exception as exc:
-            msg = f"Failed to send navigation goal: {exc}"
-            self.logger.error(msg)
-            self._send_feedback(msg)
-            return msg, SkillResult.FAILURE
-
-        if not goal_future.done():
+        if not self._wait_for_future(goal_future, timeout_sec=10.0):
             msg = "Navigation goal timed out waiting for acceptance."
             self.logger.error(msg)
             self._send_feedback(msg)
@@ -121,22 +112,20 @@ class NavigateWithVision(Skill):
 
         result_future = self._goal_handle.get_result_async()
 
-        # Spin until the result arrives (or cancellation).
-        # We use a short spin timeout so we can periodically check for cancel.
+        # Wait for the result WITHOUT re-spinning self.node — the skills_server's
+        # dedicated executor already services the result/feedback callbacks. Poll
+        # in short slices so we can react to a cancel request. Calling
+        # rclpy.spin_until_future_complete(self.node, …) here would add this node
+        # to the global executor and race the dedicated one, corrupting the shared
+        # wait set (RCLError "wait set index … out of bounds" → SIGABRT).
         while not result_future.done():
             if self._cancel_requested.is_set():
                 self.logger.info("Cancel requested — forwarding to action server")
                 self._goal_handle.cancel_goal_async()
-                # Keep spinning until the server acknowledges the cancel
-                try:
-                    rclpy.spin_until_future_complete(self.node, result_future, timeout_sec=10.0)
-                except Exception:
-                    pass
+                # Wait for the server to acknowledge the cancel.
+                self._wait_for_future(result_future, timeout_sec=10.0)
                 break
-            try:
-                rclpy.spin_until_future_complete(self.node, result_future, timeout_sec=0.25)
-            except Exception:
-                pass
+            self._wait_for_future(result_future, timeout_sec=0.25)
 
         if not result_future.done():
             msg = "Navigation timed out."
@@ -167,6 +156,22 @@ class NavigateWithVision(Skill):
         self.logger.warning(msg)
         self._send_feedback(msg)
         return msg, SkillResult.FAILURE
+
+    # ── Future waiting (no node re-spin) ──────────────────────────────────────
+
+    def _wait_for_future(self, future, timeout_sec=None):
+        """Block until *future* completes, without spinning self.node.
+
+        The skills_server node is already spun by its dedicated executor, which
+        services this future's done-callback on another thread. We just wait on
+        that callback via an Event. Returns True if the future completed, False
+        on timeout.
+        """
+        if future.done():
+            return True
+        done_event = threading.Event()
+        future.add_done_callback(lambda _future: done_event.set())
+        return done_event.wait(timeout=timeout_sec)
 
     # ── Feedback callback (called on the executor thread) ─────────────────────
 
