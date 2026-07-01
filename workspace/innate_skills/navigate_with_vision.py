@@ -113,19 +113,22 @@ class NavigateWithVision(Skill):
         result_future = self._goal_handle.get_result_async()
 
         # Wait for the result WITHOUT re-spinning self.node — the skills_server's
-        # dedicated executor already services the result/feedback callbacks. Poll
-        # in short slices so we can react to a cancel request. Calling
-        # rclpy.spin_until_future_complete(self.node, …) here would add this node
-        # to the global executor and race the dedicated one, corrupting the shared
-        # wait set (RCLError "wait set index … out of bounds" → SIGABRT).
-        while not result_future.done():
+        # dedicated executor already services the result/feedback callbacks. Register
+        # the done-callback once and poll the Event in short slices so we can react
+        # to a cancel request; registering per-iteration would pile up closures on a
+        # long-running goal. Calling rclpy.spin_until_future_complete(self.node, …)
+        # here would add this node to the global executor and race the dedicated one,
+        # corrupting the shared wait set (RCLError "wait set index … out of bounds"
+        # → SIGABRT).
+        result_ready = threading.Event()
+        result_future.add_done_callback(lambda _future: result_ready.set())
+        while not result_ready.wait(timeout=0.25):
             if self._cancel_requested.is_set():
                 self.logger.info("Cancel requested — forwarding to action server")
                 self._goal_handle.cancel_goal_async()
                 # Wait for the server to acknowledge the cancel.
-                self._wait_for_future(result_future, timeout_sec=10.0)
+                result_ready.wait(timeout=10.0)
                 break
-            self._wait_for_future(result_future, timeout_sec=0.25)
 
         if not result_future.done():
             msg = "Navigation timed out."
