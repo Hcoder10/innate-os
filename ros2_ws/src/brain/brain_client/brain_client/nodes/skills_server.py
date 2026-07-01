@@ -265,6 +265,15 @@ class SkillsActionServer(Node):
         )
 
         try:
+            # Code skills otherwise publish no feedback until they call their own
+            # feedback callback. Emit one so the websocket bridge (rws) relays its
+            # assigned goal_id to the app — without it the app has no id to
+            # cancel/interrupt the running skill with.
+            initial_feedback = ExecuteSkill.Feedback()
+            initial_feedback.feedback = "running"
+            initial_feedback.image_b64 = ""
+            goal_handle.publish_feedback(initial_feedback)
+
             self.robot_state.start_subscriptions()
             if needs_camera:
                 self._camera_node.start()
