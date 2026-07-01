@@ -127,6 +127,19 @@ def test_nan_progress_does_not_poison_ema():
     assert stop
 
 
+def test_note_gap_restarts_idle_dwell():
+    """An inference gap (steps the detector never saw) must not count as stillness."""
+    det = LearnedStopDetector(idle_seconds=2.0)
+    det.update(STILL, elapsed=10.0, now=100.0)  # idle starts at 100.0
+    det.note_gap()  # inference failed for a while
+    # 5s later (well past the dwell had the gap counted): timer restarted at 105.0.
+    assert det.update(STILL, elapsed=15.0, now=105.0) == (False, None)
+    assert det.update(STILL, elapsed=16.0, now=106.0) == (False, None)
+    # A full observed idle_seconds after the gap: fires.
+    stop, _ = det.update(STILL, elapsed=17.0, now=107.0)
+    assert stop
+
+
 def test_ema_smoothing_rejects_a_single_spike():
     det = LearnedStopDetector(progress_threshold=0.9, progress_ema_alpha=0.3)
     # Establish a low baseline.

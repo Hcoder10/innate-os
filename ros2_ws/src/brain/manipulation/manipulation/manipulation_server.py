@@ -429,6 +429,9 @@ class ManipulationServer(Node):
                         self.get_logger().error("Required sensors became unavailable during execution")
                         self._stop_robot()
                         return "FAILURE", "Required sensors became unavailable during execution"
+                    # The detector saw nothing this step; restart its idle dwell so a
+                    # failure window can't be counted as observed stillness.
+                    stop_detector.note_gap()
                 else:
                     stop, reason = stop_detector.update(signals, elapsed_time, loop_start)
                     if stop:

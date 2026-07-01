@@ -67,6 +67,16 @@ class LearnedStopDetector:
         self._progress_ema: float | None = None
         self._idle_since: float | None = None
 
+    def note_gap(self):
+        """Restart the idle dwell after steps the detector never saw.
+
+        The caller invokes this when an inference step produced no signals (inputs
+        not ready, or inference raised). The dwell must only count observed
+        stillness: letting it silently span a failure window would fire "idle" on
+        recovery with time nobody measured.
+        """
+        self._idle_since = None
+
     def _smooth(self, progress: float | None) -> float | None:
         """EMA-smooth progress; carry the last value forward when progress is missing.
 
