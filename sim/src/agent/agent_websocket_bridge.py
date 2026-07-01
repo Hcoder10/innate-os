@@ -449,7 +449,13 @@ def _resolve_environment_config(map_name: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    config_path = os.path.join(ENVIRONMENTS_DIR, f"{text}.json")
+    # Treat `text` as a config name and confine it to ENVIRONMENTS_DIR. The name
+    # arrives over unauthenticated rosbridge, so a traversal ("../…") or absolute
+    # path must not escape the directory and read arbitrary files off disk.
+    base = os.path.realpath(ENVIRONMENTS_DIR)
+    config_path = os.path.realpath(os.path.join(base, f"{text}.json"))
+    if os.path.commonpath([base, config_path]) != base:
+        raise FileNotFoundError(text)
     with open(config_path) as config_file:
         return json.load(config_file)
 

@@ -1,10 +1,12 @@
 """aiortc WebRTC server core for the sim.
 
-Transport-agnostic: `WebRTCManager` drives the peer connection and is fed
-signaling messages (start / answer / ice / active_streams) by whatever carries
-them — the rosbridge bridge in the live sim, or plain HTTP in the isolation
-harness. The server is the OFFERER (matching the robot protocol): on `start` it
-builds the offer and returns the SDP; the browser answers.
+Transport-agnostic: `WebRTCManager` drives one peer connection per browser
+(keyed by the webapp's `client_id`) and is fed signaling messages (start /
+answer / ice) by whatever carries them — the rosbridge bridge in the live sim,
+or plain HTTP in the isolation harness. The server is the OFFERER (matching the
+robot protocol): on `start` it builds that client's offer and returns the SDP;
+the browser answers. Multiple viewers stream concurrently — a client's START
+never disturbs another client's peer.
 
 Three video tracks are always present in the SDP (first_person -> mid 0,
 arm_wrist -> mid 1, chase -> mid 2, all sendonly). Encoding is lazy: only the
@@ -41,101 +43,134 @@ def _parse_ice(payload: dict) -> RTCIceCandidate | None:
     return candidate
 
 
+class _Peer:
+    """One browser's connection plus its own CameraTracks.
+
+    An aiortc track binds to a single RTCPeerConnection, so peers can't share
+    track objects — each peer gets its own set, all pulling from the shared frame
+    source (lazy-encoded only while that peer is watching the camera).
+    """
+
+    def __init__(self, pc: RTCPeerConnection, tracks: dict[str, CameraTrack]):
+        self.pc = pc
+        self.tracks = tracks
+
+    def apply_active(self, cameras: list[str]) -> None:
+        wanted = set(cameras or [])
+        for name, track in self.tracks.items():
+            track.set_active(name in wanted)
+
+
 class WebRTCManager:
-    """Single-peer manager. A new `start` tears down the previous connection."""
+    """Multi-peer manager: one RTCPeerConnection per browser, keyed by the
+    `client_id` the webapp stamps on every signaling message.
+
+    Several viewers (a teleop tab, the Agent page, a phone) stream concurrently;
+    a START only (re)builds or retargets that one client's peer, never the
+    others. Each peer offers all cameras up front and encodes lazily, so a camera
+    is fed to the encoder only while some peer is actually watching it.
+    """
 
     def __init__(self, get_frame_for: Callable[[str], np.ndarray | None]):
         self._get_frame_for = get_frame_for
-        self._pc: RTCPeerConnection | None = None
-        self._tracks: dict[str, CameraTrack] = {}
+        self._peers: dict[str, _Peer] = {}
 
-    async def on_start(self, payload: dict) -> str | None:
-        """(Re)build the peer connection + offer, or — for a no-reneg START — just
-        retarget which cameras we encode. Returns the offer SDP, or None when no new
-        offer is needed (a no-reneg active-set change)."""
+    async def on_start(self, client_id: str, payload: dict) -> str | None:
+        """(Re)build this client's connection + offer, or — for a no-reneg START —
+        just retarget which cameras it encodes. Returns the offer SDP, or None when
+        no new offer is needed (a no-reneg active-set change)."""
         # `video` is the active (encoded) set the browser wants; fall back to the
         # first camera so something shows before the UI learns the real roster.
         requested = payload.get("video") or []
         active = [c for c in requested if c in CAMERAS] or CAMERAS[:1]
 
-        # No-reneg START: the browser is just switching which cameras we push on the
-        # already-negotiated transceivers — flip the active set, emit no new offer.
-        if self._pc is not None and not payload.get("renegotiate"):
-            self._apply_active(active)
+        peer = self._peers.get(client_id)
+        # No-reneg START: this client is just switching which cameras we push on its
+        # already-negotiated transceivers — flip its active set, emit no new offer.
+        if peer is not None and not payload.get("renegotiate"):
+            peer.apply_active(active)
             return None
 
-        await self.close()
+        # (Re)build just this client's connection; other peers are untouched.
+        await self._close_peer(client_id)
+        peer = await self._build_peer(client_id, active)
+        return peer.pc.localDescription.sdp
 
+    async def _build_peer(self, client_id: str, active: list[str]) -> _Peer:
         # No ICE servers: the server is reached directly by host/LAN/public IP, so
         # host candidates suffice. The default config would point aiortc at Google's
         # public STUN, whose unreachable retries crash on teardown (see aioice
         # Transaction.__retry). The local _StunResponder still serves the browser.
         pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
-        self._pc = pc
-        self._tracks = {}
-
         vp8 = [c for c in RTCRtpSender.getCapabilities("video").codecs if c.mimeType == "video/VP8"]
 
         # Offer all cameras up front so one that renders its first frame after the
         # offer is still selectable; encoding stays lazy (tracks gated off below).
+        tracks: dict[str, CameraTrack] = {}
         for name in CAMERAS:
             track = CameraTrack(lambda n=name: self._get_frame_for(n), name)
-            self._tracks[name] = track
+            tracks[name] = track
             transceiver = pc.addTransceiver(track, direction="sendonly")
             if vp8:
                 transceiver.setCodecPreferences(vp8)
 
-        self._apply_active(active)
+        peer = _Peer(pc, tracks)
+        self._peers[client_id] = peer
+        peer.apply_active(active)
 
         @pc.on("connectionstatechange")
         async def _on_state():
-            # Only tear down on terminal states — "disconnected" is transient and
-            # usually self-heals. Guard against a stale handler: a new `start`
-            # replaces self._pc, and the old pc's late state change must not close
-            # the live connection.
-            if pc is self._pc and pc.connectionState in ("failed", "closed"):
-                await self.close()
+            # Tear down only THIS client's pc on a terminal state. Guard against a
+            # stale handler: a rebuild replaces the peer, and the old pc's late state
+            # change must not evict the new one. "disconnected" is transient.
+            if self._peers.get(client_id) is peer and pc.connectionState in ("failed", "closed"):
+                await self._close_peer(client_id)
 
         offer = await pc.createOffer()
         # aiortc gathers ICE within setLocalDescription, so localDescription.sdp
         # already carries the server candidates (non-trickle) — no ice_out needed.
         await pc.setLocalDescription(offer)
-        return pc.localDescription.sdp
+        return peer
 
-    async def on_answer(self, sdp: str) -> None:
-        if not self._pc or not sdp:
+    async def on_answer(self, client_id: str, sdp: str) -> None:
+        peer = self._peers.get(client_id)
+        if peer is None or not sdp:
             return
         # Only an offer we just sent expects an answer; a stale/duplicate answer
         # (from handshake churn) would raise "cannot handle answer in state stable".
-        if self._pc.signalingState != "have-local-offer":
+        if peer.pc.signalingState != "have-local-offer":
             return
         from aiortc import RTCSessionDescription
 
-        await self._pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+        await peer.pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
 
-    async def on_ice(self, payload: dict) -> None:
-        if not self._pc:
+    async def on_ice(self, client_id: str, payload: dict) -> None:
+        peer = self._peers.get(client_id)
+        if peer is None:
             return
         candidate = _parse_ice(payload)
         if candidate is not None:
-            await self._pc.addIceCandidate(candidate)
-
-    def _apply_active(self, cameras: list[str]) -> None:
-        wanted = set(cameras or [])
-        for name, track in self._tracks.items():
-            track.set_active(name in wanted)
+            await peer.pc.addIceCandidate(candidate)
 
     def encode_counts(self) -> dict[str, int]:
-        return {name: track.frames_encoded for name, track in self._tracks.items()}
+        # Per-camera frames encoded, summed across peers (diagnostics).
+        counts: dict[str, int] = {}
+        for peer in self._peers.values():
+            for name, track in peer.tracks.items():
+                counts[name] = counts.get(name, 0) + track.frames_encoded
+        return counts
 
-    async def close(self) -> None:
-        if self._pc is not None:
-            pc, self._pc = self._pc, None
+    async def _close_peer(self, client_id: str) -> None:
+        peer = self._peers.pop(client_id, None)
+        if peer is not None:
             try:
-                await pc.close()
+                await peer.pc.close()
             except Exception:
                 pass
-        self._tracks = {}
+
+    async def close(self) -> None:
+        for client_id in list(self._peers):
+            await self._close_peer(client_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -273,11 +308,12 @@ async def _main(shared_queues) -> None:
 
 async def _dispatch(manager: WebRTCManager, item: dict, sig_out: queue.Queue) -> None:
     kind = item.get("kind")
+    client_id = item.get("client_id", "")
     if kind == "start":
-        offer_sdp = await manager.on_start(item.get("payload", {}))
+        offer_sdp = await manager.on_start(client_id, item.get("payload", {}))
         if offer_sdp is not None:  # None = no-reneg active-set change, no offer to send
-            sig_out.put_nowait({"kind": "offer", "sdp": offer_sdp, "client_id": item.get("client_id", "")})
+            sig_out.put_nowait({"kind": "offer", "sdp": offer_sdp, "client_id": client_id})
     elif kind == "answer":
-        await manager.on_answer(item.get("sdp", ""))
+        await manager.on_answer(client_id, item.get("sdp", ""))
     elif kind == "ice":
-        await manager.on_ice(item.get("payload", {}))
+        await manager.on_ice(client_id, item.get("payload", {}))

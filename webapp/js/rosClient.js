@@ -377,14 +377,19 @@ export class RosClient {
       const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
       if (!pending) return;
       this.#pendingActions.delete(data.id);
-      // rws reports a failed/aborted goal via result_code or a string status;
-      // the action's own `values.success` carries the skill-level outcome, so
-      // resolve with the payload and let the caller interpret it. Reject only
-      // when the goal was rejected outright (no values came back).
-      if (data.result === false && data.values == null) {
-        pending.reject(new Error(typeof data.values === "string" ? data.values : `Action ${pending.action} rejected`));
+      // rws sets `result: false` for any non-SUCCEEDED goal (aborted/canceled/
+      // rejected). A goal that actually terminated still carries its result
+      // message (e.g. {success, message, success_type}), so resolve with the
+      // payload and let the caller read the skill-level outcome. Reject only when
+      // it didn't succeed AND no usable result came back (rejected outright):
+      // otherwise a non-null-but-empty {} would masquerade as success, unlike the
+      // service_response path which rejects any result === false.
+      const values = data.values;
+      const emptyResult = values == null || (typeof values === "object" && Object.keys(values).length === 0);
+      if (data.result === false && emptyResult) {
+        pending.reject(new Error(`Action ${pending.action} was rejected`));
       } else {
-        pending.resolve(data.values);
+        pending.resolve(values);
       }
       return;
     }
