@@ -42,9 +42,13 @@ export function createSkillsMenu(parent, rosClient) {
 
   const pop = document.createElement("div");
   pop.className = "skills-pop";
+  pop.appendChild(buildTypeLegend());
+  const scrollEl = document.createElement("div");
+  scrollEl.className = "skills-pop-scroll";
   const listEl = document.createElement("div");
   listEl.className = "skills-pop-list";
-  pop.appendChild(listEl);
+  scrollEl.appendChild(listEl);
+  pop.appendChild(scrollEl);
 
   menu.append(pop, btn);
   parent.appendChild(menu);
@@ -310,8 +314,12 @@ export function createSkillsMenu(parent, rosClient) {
     const head = document.createElement("button");
     head.type = "button";
     head.className = "skills-pop-item";
-    head.disabled = !!skill.in_training || rosClient.state !== "connected";
-    if (skill.in_training) head.title = "Training in progress";
+    head.disabled = rosClient.state !== "connected";
+
+    const typeMeta = skillTypeMeta(skill);
+    const dot = document.createElement("span");
+    dot.className = "skills-pop-type-dot" + (typeMeta ? ` ${typeMeta.cls}` : "");
+    if (typeMeta) dot.title = typeMeta.label;
 
     const name = document.createElement("span");
     name.className = "skills-pop-name";
@@ -323,7 +331,7 @@ export function createSkillsMenu(parent, rosClient) {
     tail.className = "skills-pop-tail mono";
     if (running) tail.textContent = "…";
     else if (expandable) tail.textContent = isExpanded ? "▾" : "›";
-    head.append(name, tail);
+    head.append(dot, name, tail);
 
     head.addEventListener("click", () => {
       if (expandable) {
@@ -474,15 +482,16 @@ export function createSkillsMenu(parent, rosClient) {
     /** @type {any[]} */
     const all = Array.isArray(msg?.skills) ? msg.skills : [];
     // Pinned skills float to the top in PINNED_SKILLS order; the rest keep their
-    // roster order (mirrors the sim console's sortSkills).
+    // roster order (mirrors the sim console's sortSkills). Still-training skills
+    // aren't runnable yet, so they're dropped rather than shown disabled.
     const next = all
-      .filter((s) => s && s.id)
+      .filter((s) => s && s.id && !s.in_training)
       .map((s, index) => ({ s, index }))
       .sort((a, b) => pinnedRank(a.s) - pinnedRank(b.s) || a.index - b.index)
       .map((entry) => entry.s);
     // The roster is latched and republishes on any change; avoid a re-render
     // (which would steal focus mid-typing) unless the set actually changed.
-    const sig = next.map((s) => `${s.id}:${s.in_training ? 1 : 0}`).join("|");
+    const sig = next.map((s) => s.id).join("|");
     if (sig === signature) return;
     signature = sig;
     skills = next;
@@ -555,4 +564,45 @@ function formatName(skill) {
     .split("/")
     .map((part) => part.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
     .join(" / ");
+}
+
+/**
+ * Maps a skill's roster `type` ("code" | "learned" | "replay" | "poses") to the
+ * dot color + tooltip shown before its name. Unknown/missing type renders no dot.
+ * @param {any} skill
+ * @returns {{ cls: string, label: string } | null}
+ */
+function skillTypeMeta(skill) {
+  switch (skill?.type) {
+    case "code":
+      return { cls: "digital", label: "Digital skill" };
+    case "replay":
+      return { cls: "replay", label: "Replay skill" };
+    case "learned":
+    case "poses":
+      return { cls: "learned", label: "Learned skill" };
+    default:
+      return null;
+  }
+}
+
+/** Static key for the type dots, pinned above the (scrollable) skill list. */
+function buildTypeLegend() {
+  const legend = document.createElement("div");
+  legend.className = "skills-pop-legend";
+  for (const { cls, label } of [
+    { cls: "learned", label: "Learned" },
+    { cls: "replay", label: "Replay" },
+    { cls: "digital", label: "Digital" },
+  ]) {
+    const item = document.createElement("span");
+    item.className = "skills-pop-legend-item";
+    const dot = document.createElement("span");
+    dot.className = `skills-pop-type-dot ${cls}`;
+    const text = document.createElement("span");
+    text.textContent = label;
+    item.append(dot, text);
+    legend.appendChild(item);
+  }
+  return legend;
 }

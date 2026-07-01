@@ -15,6 +15,9 @@
   --ok: #56c28c;                /* connected dot */
   --danger: #d96a5a;
   --blue: #401ffb;              /* Innate brand blue — logo backdrop */
+  --type-learned: #5fb8a3;      /* skill-type dot: trained ACT policy */
+  --type-replay: #6b93d6;       /* skill-type dot: recorded trajectory */
+  --type-digital: #a389d4;      /* skill-type dot: code/SDK skill */
   --glass: rgb(0 0 0 / 40%);
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -3749,16 +3752,19 @@ button {
   transform: rotate(180deg);
 }
 
-/* Popover above the button. Hidden until open. */
+/* Popover above the button. Hidden until open. A column: the legend is a fixed
+   (non-scrolling) header row, only the list body below it scrolls — using
+   position: sticky for the header instead let trackpad overscroll bounce drag
+   it along with the list on some browsers. */
 .skills-pop {
   position: absolute;
   bottom: calc(100% + 10px);
   right: 0;
   width: 280px;
   max-height: min(52vh, 460px);
-  overflow-y: auto;
   display: none;
-  padding: 6px;
+  flex-direction: column;
+  overflow: hidden;
   background: rgb(8 8 11 / 58%);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -3768,13 +3774,39 @@ button {
 }
 
 .skills-menu.open .skills-pop {
-  display: block;
+  display: flex;
+}
+
+.skills-pop-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
 }
 
 .skills-pop-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Key for the type dots — a fixed header above the scrollable list, slightly
+   less transparent than the popover body so it reads as a distinct bar. */
+.skills-pop-legend {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgb(8 8 11 / 54%);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.skills-pop-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .skills-pop-empty {
@@ -3826,6 +3858,28 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Skill-type indicator: learned (trained policy) / replay (recorded trajectory) /
+   digital (code skill). Color-only + a tooltip, no label text — keeps rows compact. */
+.skills-pop-type-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hairline-strong);
+}
+
+.skills-pop-type-dot.learned {
+  background: var(--type-learned);
+}
+
+.skills-pop-type-dot.replay {
+  background: var(--type-replay);
+}
+
+.skills-pop-type-dot.digital {
+  background: var(--type-digital);
 }
 
 .skills-pop-tail {

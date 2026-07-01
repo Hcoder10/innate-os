@@ -16,6 +16,7 @@ import json
 import queue
 import threading
 import time
+import uuid
 from typing import get_args
 
 import rclpy
@@ -24,6 +25,7 @@ from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAge
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from brain_client.perception.camera_provider import CameraProvider
@@ -106,6 +108,13 @@ class SkillsActionServer(Node):
             interface_injector=self.robot_state.inject_required_interfaces,
             simulator_mode=self.simulator_mode,
         )
+
+        # Broadcasts every run's lifecycle (running/completed/failed/interrupted) so any
+        # client — webapp, mobile app, another webapp tab — can see a skill someone else
+        # triggered, not just the one that sent the goal. Payload mirrors ChatManager's
+        # (webapp consumers read either), keyed by a fresh id per run so repeats of the
+        # same skill don't collapse into one chat entry.
+        self._skill_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
 
         # Behavior delegation for physical skills.
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
@@ -261,17 +270,58 @@ class SkillsActionServer(Node):
             )
 
         skill_type = goal_handle.request.skill_type
+        name = self._skill_display_name(skill_type)
+        run_id = uuid.uuid4().hex
+        self._publish_skill_status(run_id, skill_type, name, "running")
         if self.catalog.get_code_skill(skill_type) is not None:
-            return self._execute_code_skill(goal_handle, skill_type, inputs)
-        if self.catalog.get_physical_skill(skill_type) is not None:
-            return self._execute_physical_skill(goal_handle, skill_type, inputs)
+            result = self._execute_code_skill(goal_handle, skill_type, inputs)
+        elif self.catalog.get_physical_skill(skill_type) is not None:
+            result = self._execute_physical_skill(goal_handle, skill_type, inputs)
+        else:
+            self.get_logger().error(f"Skill '{skill_type}' not available")
+            self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
+            goal_handle.abort()
+            result = ExecuteSkill.Result(
+                success=False,
+                message="Skill not available",
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
+        status, reason = self._terminal_skill_status(result)
+        self._publish_skill_status(run_id, skill_type, name, status, reason)
+        return result
 
-        self.get_logger().error(f"Skill '{skill_type}' not available")
-        self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
-        goal_handle.abort()
-        return ExecuteSkill.Result(
-            success=False, message="Skill not available", skill_type=skill_type, success_type=SkillResult.FAILURE.value
-        )
+    def _skill_display_name(self, skill_type: str) -> str:
+        code_entry = self.catalog.get_code_skill(skill_type)
+        if code_entry is not None:
+            return code_entry[0]
+        physical = self.catalog.get_physical_skill(skill_type)
+        if physical is not None:
+            return physical.get("metadata", {}).get("name", skill_type)
+        return skill_type
+
+    @staticmethod
+    def _terminal_skill_status(result) -> tuple[str, str | None]:
+        if result.success and result.success_type == SkillResult.SUCCESS.value:
+            return "completed", None
+        if result.success_type == SkillResult.CANCELLED.value:
+            return "interrupted", None
+        return "failed", result.message or None
+
+    def _publish_skill_status(
+        self, run_id: str, skill_type: str, name: str, status: str, reason: str | None = None
+    ) -> None:
+        payload = {
+            "primitive_name": name,
+            "skill_name": name,
+            "skill_id": skill_type,
+            "primitive_id": run_id,
+            "status": status,
+            "timestamp": time.time(),
+        }
+        if reason:
+            payload["reason"] = reason
+        self._skill_status_pub.publish(String(data=json.dumps(payload)))
 
     # ================= execution =================
     def _execute_code_skill(self, goal_handle, skill_type, inputs):
