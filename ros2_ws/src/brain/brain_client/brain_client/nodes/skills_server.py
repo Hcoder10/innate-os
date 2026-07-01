@@ -238,9 +238,7 @@ class SkillsActionServer(Node):
         # back through the rws bridge, leaving the app hung until its timeout.
         with self._skill_execution_lock:
             if self._skill_running:
-                self.get_logger().warn(
-                    f"Skill '{skill_type}' requested but another skill is already running"
-                )
+                self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
                 goal_handle.abort()
                 return ExecuteSkill.Result(
                     success=False,
