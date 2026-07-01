@@ -55,9 +55,6 @@ services:
       # publish on a non-privileged port; the container always binds 443/80.
       - "${SIM_HTTPS_PORT:-443}:443"
       - "${SIM_HTTP_PORT:-80}:80"
-      # Local STUN responder (mars_cam) for WebRTC: a remote browser queries
-      # stun:<host>:3478 to learn its srflx (LAN) candidate. UDP, not TCP.
-      - "${SIM_STUN_PORT:-3478}:3478/udp"
 
     volumes:
       # 1) Mount your local code (paths are relative to this file's directory)
@@ -73,6 +70,9 @@ services:
       - ros2_ws_install:/root/innate-os/ros2_ws/install
       - ros2_ws_log:/root/innate-os/ros2_ws/log
       - ccache:/root/.cache/ccache
+      # Persist the webapp's self-signed HTTPS cert so it isn't regenerated on
+      # every container start (which re-triggers the browser's cert warning).
+      - webapp_tls:/root/.innate-webapp-tls
 
       # Persist ROS runtime node logs (~/.ros/log) to the host so per-node
       # stdout/stderr survives `docker compose down` on a failed startup.
@@ -146,6 +146,7 @@ volumes:
   ros2_ws_install:
   ros2_ws_log:
   ccache:
+  webapp_tls:
 
 networks:
   x11:

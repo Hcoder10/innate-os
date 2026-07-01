@@ -19,7 +19,7 @@ import threading
 from collections.abc import Callable
 
 import numpy as np
-from aiortc import RTCConfiguration, RTCIceCandidate, RTCPeerConnection, RTCRtpSender
+from aiortc import RTCIceCandidate, RTCPeerConnection, RTCRtpSender
 from aiortc.sdp import candidate_from_sdp
 
 from .camera_track import CameraTrack
@@ -66,11 +66,14 @@ class WebRTCManager:
 
         await self.close()
 
-        # No ICE servers: the server is reached directly by host/LAN/public IP, so
-        # host candidates suffice. The default config would point aiortc at Google's
-        # public STUN, whose unreachable retries crash on teardown (see aioice
-        # Transaction.__retry). The local _StunResponder still serves the browser.
-        pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+        # Use aiortc's default ICE config so the server gathers a server-reflexive
+        # (srflx) candidate via public STUN. Remote browsers behind NAT need the
+        # server's public IP, and host candidates alone don't advertise it — dropping
+        # STUN breaks remote WebRTC for anyone not on an address-restricted NAT.
+        # (Public STUN's unreachable retries can log an aioice teardown warning —
+        # Transaction.__retry; that's cosmetic and handled separately, not by removing
+        # STUN.) The local _StunResponder still serves the browser's own reflexive lookup.
+        pc = RTCPeerConnection()
         self._pc = pc
         self._tracks = {}
 
