@@ -4395,10 +4395,13 @@ button {
   padding: 16px;
   /* Liquid glass: translucent and see-through, leaning on a strong blur to read
      as frosted. Legibility comes from brighter text (below), not an opaque
-     backing — only a light dark tint keeps the feed from blowing out the panel. */
-  background: linear-gradient(180deg, rgb(255 255 255 / 6%), rgb(6 6 9 / 44%));
-  backdrop-filter: blur(30px) saturate(1.1);
-  -webkit-backdrop-filter: blur(30px) saturate(1.1);
+     backing — only a light dark tint keeps the feed from blowing out the panel.
+     Both gradient stops stay dark (never a white tint) and brightness() darkens
+     the sampled backdrop itself, so the panel (and its near-white text) stays
+     readable over a bright/white background, not just a dim camera feed. */
+  background: linear-gradient(180deg, rgb(10 10 12 / 14%), rgb(6 6 9 / 38%));
+  backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
+  -webkit-backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
   border: none;
   border-radius: 18px;
   box-shadow:
@@ -4504,15 +4507,27 @@ button {
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--hairline);
+  /* var(--muted) + a barely-there border reads fine on a dark backdrop but
+     disappears on a bright one — brighten both like the panel's other
+     unbacked text/chips. */
+  color: rgb(231 231 234 / 75%);
+  background: rgb(0 0 0 / 20%);
+  border: 1px solid var(--hairline-strong);
   border-radius: 9px;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .agent-reset:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--hairline-strong);
+  background: rgb(0 0 0 / 30%);
+  border-color: rgb(255 255 255 / 26%);
+}
+
+.agent-reset:disabled {
+  color: rgb(231 231 234 / 35%);
+  background: transparent;
+  border-color: var(--hairline);
+  cursor: not-allowed;
 }
 
 .agent-activeskill {
