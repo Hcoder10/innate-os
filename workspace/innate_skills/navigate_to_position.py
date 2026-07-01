@@ -34,7 +34,7 @@ class Nav2Controller:
     def go_to_position(self, x: float, y: float, theta: float, local_frame: bool):
         """
         Sends a navigation goal to the navigator and waits until navigation ends.
-        The method returns the TaskResult indicating whether the goal
+        The method returns the TaskResult indicating whether the goal   
         succeeded, was canceled, or failed/timed out.
 
         Args:

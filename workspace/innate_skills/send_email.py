@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
 from brain_client.skills.types import Skill, SkillResult
 
 
@@ -18,11 +14,6 @@ class SendEmail(Skill):
     def __init__(self, logger):
         self.logger = logger
         self.default_recipients = ["axel@innate.bot", "vignesh@innate.bot"]
-        # Email server configuration
-        self.smtp_server = "smtp.gmail.com"  # Example using Gmail
-        self.smtp_port = 587
-        self.sender_email = "axel@innate.bot"  # Replace with robot's email
-        self.password = ""  # Use app password for Gmail
 
     @property
     def name(self):
@@ -73,31 +64,6 @@ class SendEmail(Skill):
 
         self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
         return f"Email sent to {recipients_str}", SkillResult.SUCCESS
-
-        # Just pretending here it worked for sure.
-
-        try:
-            # Create message
-            msg = MIMEMultipart()
-            msg["From"] = self.sender_email
-            msg["To"] = recipients_str
-            msg["Subject"] = subject
-            msg.attach(MIMEText(message, "plain"))
-
-            # Connect to server and send
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.sender_email, self.password)
-            server.send_message(msg)
-            server.quit()
-
-            # Log success message
-            self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
-            return f"Email sent to {recipients_str}", SkillResult.SUCCESS
-
-        except Exception as e:
-            self.logger.error(f"Failed to send email: {str(e)}")
-            return f"Failed to send email: {str(e)}", SkillResult.FAILURE
 
     def cancel(self):
         """

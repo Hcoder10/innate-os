@@ -6,7 +6,7 @@
     "inputs": {},
     "execution": {
         "model_type": "act_policy",
-        "checkpoint": "act_policy_step_135000.pth",
+        "checkpoint": "act_policy_step_120000.pth",
         "stats_file": "dataset_stats.pt",
         "action_dim": 10,
         "duration": 45.0,
