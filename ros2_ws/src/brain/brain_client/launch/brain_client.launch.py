@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -193,6 +195,10 @@ def generate_launch_description():
                 executable="skills_server.py",
                 name="skills_action_server",
                 output="screen",
+                # Safety net: if the skills server ever dies, bring it back instead of
+                # leaving the whole skill system dead until a manual restart.
+                respawn=True,
+                respawn_delay=2.0,
                 parameters=[
                     {
                         "image_topic": LaunchConfiguration("image_topic"),

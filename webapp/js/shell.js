@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Shell — the 64px icon rail + connection badge rendered into every page,
 // and the placeholder renderer for not-yet-built sections.
 

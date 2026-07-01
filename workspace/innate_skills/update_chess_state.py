@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Update Chess State Skill - Validates and applies a UCI move to the persisted
 board state in ~/chess_game_state.json.

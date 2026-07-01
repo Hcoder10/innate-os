@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """self.skills.run(...) — let one skill run a few others, in order.
 
 A skill's execute() can call e.g. self.skills.run("innate-os/wave") to fire off

@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Video stage — the full-bleed <video> plus a hidden <audio> for the robot
 // mic, with quiet connecting/error states layered on top. Also exports the
 // audio toggle, which must flip the track and call audio.play() inside the

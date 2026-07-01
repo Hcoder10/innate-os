@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from setuptools import setup
 
 package_name = "innate_logger"
@@ -19,7 +21,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="ROS 2 node for logging robot vitals, directives, and chat to the cloud.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "logger_node = innate_logger.logger_node:main",

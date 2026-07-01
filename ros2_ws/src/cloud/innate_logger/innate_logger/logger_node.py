@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """ROS 2 node that collects robot vitals and forwards them to the cloud logger."""
 
 from __future__ import annotations

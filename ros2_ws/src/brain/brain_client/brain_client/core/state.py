@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Shared, cross-cutting brain state.
 
 A handful of flags and references are genuinely shared across the brain's

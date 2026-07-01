@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Unit tests for the skill invoker (``self.skills.run(...)``) and its app-facing
 substep lifecycle markers.
 

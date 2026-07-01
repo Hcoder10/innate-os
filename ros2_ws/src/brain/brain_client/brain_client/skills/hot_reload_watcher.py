@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 File watcher for hot-reloading skills and agents.
 Uses watchdog to monitor file changes and triggers reload via ROS service.

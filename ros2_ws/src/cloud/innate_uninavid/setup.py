@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from setuptools import setup
 
 package_name = "innate_uninavid"
@@ -20,7 +22,7 @@ setup(
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
     description="ROS 2 node bridging compressed camera images to a cloud websocket and publishing cmd_vel.",
-    license="Proprietary",
+    license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "uninavid_node = innate_uninavid.node:main",

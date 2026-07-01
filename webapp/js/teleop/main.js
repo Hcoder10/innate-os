@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Teleoperation page entry — wires the shared singletons to the page modules
 // and owns the connected/disconnected lifecycle.
 //

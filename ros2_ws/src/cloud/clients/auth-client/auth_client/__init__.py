@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Innate auth client: OIDC JWT acquisition and timed renewal for robots.
 
 Usage::

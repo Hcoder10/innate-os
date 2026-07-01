@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Collect page entry — the Teleop cockpit reused as a data-collection station.
 // Same connect/cockpit lifecycle as teleop/datasets (connect card while
 // disconnected; the cockpit kept across reconnecting, torn down on a real

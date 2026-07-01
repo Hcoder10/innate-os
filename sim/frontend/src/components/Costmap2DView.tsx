@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 import { useCallback, useEffect, useRef, useState } from "react";
 import styled from "styled-components";
 import * as THREE from "three";

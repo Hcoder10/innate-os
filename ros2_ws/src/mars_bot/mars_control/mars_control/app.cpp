@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 /**
  * AppControl node for MARS robot.
  * Handles joystick input, leader arm control, and robot info publishing.

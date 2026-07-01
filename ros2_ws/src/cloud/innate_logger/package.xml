@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>ROS 2 node for logging robot vitals, directives, and chat to the cloud.</description>
   <maintainer email="eng@innate.bot">Innate Engineering</maintainer>
-  <license>Proprietary</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

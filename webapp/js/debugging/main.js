@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Debugging page entry — wires the shared RosClient to the structured console
 // stream: a chronological log on the left, a launch → process → node tree on the
 // right (click a branch to scope the log). Disconnected: the same quiet connect

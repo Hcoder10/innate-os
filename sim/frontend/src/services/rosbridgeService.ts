@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 export type AgentSource = "shipped" | "user";
 
 export interface RobotAgent {

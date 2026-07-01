@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Skill catalog: track available skills and register them with the cloud agent.
 
 Subscribes to the latched ``/brain/available_skills`` topic, rebuilds the shared
