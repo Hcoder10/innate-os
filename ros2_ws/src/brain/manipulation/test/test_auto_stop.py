@@ -90,6 +90,43 @@ def test_first_step_missing_motion_is_not_idle():
     assert det.update(first, elapsed=11.0, now=101.0) == (False, None)
 
 
+def test_idle_dwell_starts_after_min_duration_floor():
+    """A skill that begins motionless must not fire "idle" the instant the floor expires."""
+    det = LearnedStopDetector(idle_seconds=2.0, min_duration=5.0)
+    # Still from t=0, all inside the floor: nothing accumulates.
+    for t in range(5):
+        assert det.update(STILL, elapsed=float(t), now=100.0 + t) == (False, None)
+    # Floor expires; the dwell only starts counting now.
+    assert det.update(STILL, elapsed=5.0, now=105.0) == (False, None)
+    assert det.update(STILL, elapsed=6.0, now=106.0) == (False, None)
+    # A full idle_seconds after the floor: fires.
+    stop, reason = det.update(STILL, elapsed=7.0, now=107.0)
+    assert stop and "idle" in reason
+
+
+def test_nonfinite_motion_counts_as_moving():
+    """NaN commands (diverging policy) compare False against the eps and would read
+    as 'still'; they must count as moving so divergence can't end a run as idle."""
+    det = LearnedStopDetector(idle_seconds=0.5)
+    nan_step = StepSignals(progress=None, arm_delta=float("nan"), base_speed=float("nan"))
+    for t in range(10):
+        assert det.update(nan_step, elapsed=float(t), now=100.0 + t) == (False, None)
+
+
+def test_nan_progress_does_not_poison_ema():
+    """A lone NaN progress sample is skipped, not blended in (NaN would survive the
+    EMA forever and permanently disable the progress-threshold stop)."""
+    det = LearnedStopDetector(progress_threshold=0.9, progress_ema_alpha=0.5)
+    det.update(StepSignals(0.8, 1.0, 1.0), elapsed=1.0, now=1.0)
+    det.update(StepSignals(float("nan"), 1.0, 1.0), elapsed=2.0, now=2.0)
+    stop = False
+    for i in range(20):
+        stop, _ = det.update(StepSignals(1.0, 1.0, 1.0), elapsed=3.0 + i, now=3.0 + i)
+        if stop:
+            break
+    assert stop
+
+
 def test_ema_smoothing_rejects_a_single_spike():
     det = LearnedStopDetector(progress_threshold=0.9, progress_ema_alpha=0.3)
     # Establish a low baseline.

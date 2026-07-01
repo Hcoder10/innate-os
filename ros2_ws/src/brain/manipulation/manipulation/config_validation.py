@@ -153,9 +153,10 @@ class LearnedExecCfg(_BaseExecCfg):
     # The learned loop ends early when one of these fires, otherwise at ``duration``
     # (the always-on hard cap). Every field below defaults to a no-op, so a skill
     # behaves exactly as before until it opts in. See
-    # ``manipulation_server._LearnedStopDetector`` for how they combine.
+    # ``manipulation.auto_stop.LearnedStopDetector`` for how they combine.
     #
-    # Floor (s) before any early stop may fire; 0 = no floor.
+    # Floor (s) before any early stop may fire (the idle dwell also only starts
+    # counting after it); 0 = no floor.
     min_duration: float = Field(0.0, ge=0)
     # EMA smoothing for the progress signal, in (0, 1]; 1.0 = raw (no smoothing),
     # smaller = smoother but slower to react. Applied to both the progress-threshold
@@ -164,8 +165,9 @@ class LearnedExecCfg(_BaseExecCfg):
     # Stop once the robot has held still this long (s); 0 = idle stop disabled.
     idle_seconds: float = Field(0.0, ge=0)
     # Per-step "not moving" thresholds: arm = L2 norm of the commanded joint-target
-    # change (rad), base = |linear.x| + |angular.z| (m/s + rad/s). Read them off the
-    # Profiling page's ``arm_jerk`` and base velocity while the skill holds its end pose.
+    # change (rad), base = |linear.x| + |angular.z| (m/s + rad/s). Both are published
+    # on the inference-profile topic (``arm_jerk`` / ``base_speed``) while a learned
+    # skill runs -- read them off while the skill holds its end pose.
     idle_arm_eps: float = Field(0.01, gt=0)
     idle_base_eps: float = Field(0.01, gt=0)
     # Idle only counts as "done" once smoothed progress reaches this (the "stopped

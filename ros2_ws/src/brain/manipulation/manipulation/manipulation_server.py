@@ -959,7 +959,9 @@ class ManipulationServer(Node):
             progress = float(action_np[8]) if self.current_action_dim >= 10 else None
 
             if profiling:
-                quality = {}
+                # base_speed is published so idle_base_eps can be tuned against the exact
+                # quantity the auto-stop detector checks (base_jerk is the command *delta*).
+                quality = {"base_speed": base_speed}
                 if progress is not None:
                     quality["progress"] = progress
                 if arm_delta is not None:
