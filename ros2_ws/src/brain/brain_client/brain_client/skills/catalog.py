@@ -688,8 +688,9 @@ class SkillRepository:
         order: list[str] = []
         for skill in skills:
             existing = by_name.get(skill.name)
-            is_user, existing_is_user = skill.id.startswith("local/"), (
-                existing is not None and existing.id.startswith("local/")
+            is_user, existing_is_user = (
+                skill.id.startswith("local/"),
+                (existing is not None and existing.id.startswith("local/")),
             )
             if existing is None:
                 by_name[skill.name] = skill

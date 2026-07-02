@@ -180,6 +180,8 @@ class Skill(ABC):
         if self._say_publisher is None:
             self._say_publisher = self.node.create_publisher(String, TTS_TOPIC, 10)
         self._say_publisher.publish(String(data=text))
+
+    def update_robot_state(self, **kwargs):
         """
         Update the skill with the latest robot state.
         Automatically populates RobotState descriptors defined on the class.

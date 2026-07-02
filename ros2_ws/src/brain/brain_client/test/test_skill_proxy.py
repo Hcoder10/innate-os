@@ -11,13 +11,13 @@ tests, no ROS runtime needed).
 
 import logging
 
+import innate.skills as skills
 import pytest
+from innate.skills import SkillCancelled, SkillFailed, use_invoker
 from test_skill_invoker import _Catalog, _CodeSkill, _Server
 
-import innate.skills as skills
 from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.types import Skill, SkillResult
-from innate.skills import SkillCancelled, SkillFailed, use_invoker
 
 
 class _FakeInvoker:
@@ -129,7 +129,9 @@ def test_proxy_resolves_physical_skill_from_any_scan_dir():
     """A learned/replay skill gets a local/<dirname> id no matter which scan
     directory it lives in (workspace/custom_skills, ~/skills, legacy, extras),
     so `from innate.skills import hello` reaches e.g. ~/skills/hello."""
-    server = _Server(_Catalog(physical={"local/hello": {"metadata": {"name": "Hello"}, "directory": "/home/x/skills/hello"}}))
+    server = _Server(
+        _Catalog(physical={"local/hello": {"metadata": {"name": "Hello"}, "directory": "/home/x/skills/hello"}})
+    )
     invoker = SkillInvoker(server, goal_handle=object(), publish_feedback=lambda *_: None)
 
     with use_invoker(invoker):

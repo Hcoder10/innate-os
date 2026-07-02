@@ -16,7 +16,6 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-
 from innate.skills import SkillCancelled, SkillFailed
 
 __all__ = [

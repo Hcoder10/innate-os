@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import Skill, SkillFailed, SkillResult
-from innate.skills import arm_zero_position, move_straight, head_emotion, navigate_with_vision, turn_in_place
 import time
+
+from innate import Skill, SkillResult
+from innate.skills import arm_zero_position, head_emotion, move_straight, turn_in_place
 
 
 class RunRoutineDemo(Skill):
@@ -46,7 +47,7 @@ class RunRoutineDemo(Skill):
         self.say("And back to the right!")
         time.sleep(1)
         turn_in_place(angle_degrees=-90)
-        
+
         head_emotion(emotion="proud")
         self.say("All done!")
         return "Routine complete", SkillResult.SUCCESS
