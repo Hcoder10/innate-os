@@ -36,7 +36,20 @@ def _provider():
     provider._logger = _Logger()
     provider.last_joint_states = None
     provider.last_battery = None
+    provider._warned_missing = set()
     return provider
+
+
+def test_missing_state_warns_once_not_per_tick():
+    provider = _provider()
+    warned = []
+    provider._logger.warn = warned.append
+    skill = Proprioceptive(logging.getLogger("test"))
+
+    for _ in range(50):  # one second of the 50 Hz update loop
+        provider.update_skill_robot_state(skill)
+
+    assert len(warned) == 2  # one per missing state, not 100
 
 
 def test_joint_states_and_battery_injected():
