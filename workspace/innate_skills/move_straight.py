@@ -3,6 +3,8 @@
 import math
 import time
 
+from pydantic import BaseModel
+
 from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
 # Raw base speeds we allow (m/s). Slow on purpose: there is no obstacle
@@ -13,6 +15,13 @@ DEFAULT_SPEED = 0.15
 # The odom subscription is (re)created per goal, so the first message can land
 # shortly after execute() starts; wait this long before giving up.
 ODOM_WAIT_SEC = 2.0
+
+
+class MoveResult(BaseModel):
+    """Structured payload on .data for chaining callers. Consume it duck-typed
+    (result.data.traveled_m) -- hot reload re-imports this class per save."""
+
+    traveled_m: float
 
 
 class MoveStraight(Skill):
@@ -55,7 +64,7 @@ class MoveStraight(Skill):
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
         if distance == 0.0:
-            return "Moved 0.0m", SkillResult.SUCCESS, {"traveled_m": 0.0}
+            return "Moved 0.0m", SkillResult.SUCCESS, MoveResult(traveled_m=0.0)
         start = self._wait_for_position()
         if self._cancelled:
             return "Move cancelled", SkillResult.CANCELLED
@@ -86,7 +95,7 @@ class MoveStraight(Skill):
         self._stop()
         direction = "forward" if distance > 0 else "backward"
         # third element = structured payload; chaining callers read it as .data
-        return f"Moved {traveled:.2f}m {direction}", SkillResult.SUCCESS, {"traveled_m": round(traveled, 3)}
+        return f"Moved {traveled:.2f}m {direction}", SkillResult.SUCCESS, MoveResult(traveled_m=round(traveled, 3))
 
     def cancel(self):
         self._cancelled = True
