@@ -121,6 +121,10 @@ class SkillRepository:
         if not skill_names:
             self.reload_all()
             return
+        # A rename/delete leaves catalog entries whose source is gone; drop
+        # them first so e.g. renaming foo.py -> bar.py doesn't ghost-publish
+        # both (the watcher may only report the new stem).
+        removed = self._prune_stale_skills()
         skill_ids = []
         for stem in skill_names:
             for d in self._skills_directories:
@@ -132,7 +136,12 @@ class SkillRepository:
                 elif subdir.is_dir():
                     skill_ids.append(self._compute_skill_id(subdir))
                     break
-        self.reload_selective(skill_ids)
+        if skill_ids:
+            self.reload_selective(skill_ids)  # publishes when done
+        elif removed:
+            self.publish_skills_list()
+        else:
+            self.reload_all()  # couldn't resolve the change; rebuild from disk
 
     # --- loading ---
     def _load_code_skills(self, skills_directories) -> dict[str, tuple[str, Skill]]:
@@ -294,6 +303,39 @@ class SkillRepository:
     def _is_code_skill_id(self, skill_id: str) -> bool:
         basename = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
         return any((Path(d) / f"{basename}.py").exists() for d in self._skills_directories)
+
+    def _prune_stale_skills(self) -> list[str]:
+        """Drop catalog entries whose source file/directory is gone (rename/delete).
+
+        Returns the removed skill ids. Does not publish; callers decide when.
+        """
+        removed = []
+        with self._skills_lock:
+            for skill_id in list(self._code_skills):
+                if not self._code_source_exists(skill_id):
+                    del self._code_skills[skill_id]
+                    removed.append(skill_id)
+            for skills in (self._physical_skills, self._in_training_skills):
+                for skill_id, data in list(skills.items()):
+                    if not os.path.exists(os.path.join(data.get("directory", ""), "metadata.json")):
+                        del skills[skill_id]
+                        removed.append(skill_id)
+        if removed:
+            self._logger.info(f"Pruned stale skills (source removed): {removed}")
+        return removed
+
+    def _code_source_exists(self, skill_id: str) -> bool:
+        """True if some scan dir still holds a .py that maps to this exact id.
+
+        Prefix-aware, unlike _is_code_skill_id: local/foo being deleted must not
+        be kept alive by a shipped innate-os/foo of the same stem (or vice versa).
+        """
+        stem = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
+        for d in self._skills_directories:
+            py_file = Path(d) / f"{stem}.py"
+            if py_file.exists() and self._compute_skill_id(py_file) == skill_id:
+                return True
+        return False
 
     def _reload_physical_skill(self, skill_id: str) -> bool:
         basename = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
@@ -622,18 +664,7 @@ class SkillRepository:
                 self._logger.error(f"Skipping in-training skill '{skill_id}' in available_skills: {e}")
                 continue
 
-        # Enforce unique display names (the LLM can't disambiguate duplicates).
-        filtered_skills = []
-        seen_names: dict[str, str] = {}
-        for s in skills:
-            if s.name in seen_names:
-                self._logger.error(
-                    f"DUPLICATE skill name '{s.name}' between {seen_names[s.name]} and {s.id}. "
-                    f"Skipping '{s.id}' — rename the skill to fix this."
-                )
-                continue
-            seen_names[s.name] = s.id
-            filtered_skills.append(s)
+        filtered_skills = self._dedupe_display_names(skills)
 
         msg.skills = filtered_skills
         try:
@@ -642,6 +673,38 @@ class SkillRepository:
             self._logger.info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
             self._logger.error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
+
+    def _dedupe_display_names(self, skills: list[SkillInfo]) -> list[SkillInfo]:
+        """Enforce unique display names (the LLM can't disambiguate duplicates).
+
+        A user skill (local/) overrides a shipped one (innate-os/) of the same
+        name — the same precedence bare-name chaining uses (see
+        SkillInvoker._resolve), so the cloud agent and innate.skills imports
+        agree on which skill a name means. The shipped skill stays runnable by
+        its full id. Duplicates within the same source are a mistake: the first
+        wins and the rest are skipped.
+        """
+        by_name: dict[str, SkillInfo] = {}
+        order: list[str] = []
+        for skill in skills:
+            existing = by_name.get(skill.name)
+            is_user, existing_is_user = skill.id.startswith("local/"), (
+                existing is not None and existing.id.startswith("local/")
+            )
+            if existing is None:
+                by_name[skill.name] = skill
+                order.append(skill.name)
+            elif is_user and not existing_is_user:
+                self._logger.warning(f"Skill '{skill.name}': user skill {skill.id} overrides shipped {existing.id}")
+                by_name[skill.name] = skill
+            elif existing_is_user and not is_user:
+                self._logger.warning(f"Skill '{skill.name}': user skill {existing.id} overrides shipped {skill.id}")
+            else:
+                self._logger.error(
+                    f"DUPLICATE skill name '{skill.name}' between {existing.id} and {skill.id}. "
+                    f"Skipping '{skill.id}' — rename the skill to fix this."
+                )
+        return [by_name[name] for name in order]
 
     def _build_skill_info(
         self,
