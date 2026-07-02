@@ -6,7 +6,9 @@ Text-to-Speech handler using Cartesia API.
 Generates speech audio and plays it through the robot's audio system.
 """
 
+import base64
 import queue
+import struct
 import subprocess
 import threading
 import time
@@ -34,6 +36,8 @@ class TTSHandler:
         logger,
         proxy: ProxyClient,
         tts_status_pub=None,
+        tts_audio_pub=None,
+        simulator_mode: bool = False,
     ):
         """
         Initialize the TTS handler.
@@ -42,6 +46,11 @@ class TTSHandler:
             logger: ROS logger instance or any logger
             proxy: ProxyClient instance (required)
             tts_status_pub: Optional ROS publisher for /tts/is_playing status
+            tts_audio_pub: Optional ROS publisher for /tts/audio (base64 WAV).
+                Used in simulator mode where there is no audio device — the
+                webapp plays the clip instead of the speaker.
+            simulator_mode: When True, synthesized speech is published on
+                ``tts_audio_pub`` rather than played locally via aplay.
         """
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self._proxy: ProxyClient = proxy
@@ -51,6 +60,8 @@ class TTSHandler:
         self.is_playing: bool = False
         self.play_lock = threading.Lock()
         self.tts_status_pub = tts_status_pub
+        self.tts_audio_pub = tts_audio_pub
+        self._simulator_mode = simulator_mode
 
         # Initialize Cartesia client
         self._init_client()
@@ -135,94 +146,10 @@ class TTSHandler:
                 "id": self.voice_id,
             }
 
-            # Volume is managed system-wide by app.cpp via
-            # amixer sset Master, so aplay just uses the default.
-            player = subprocess.Popen(
-                ["aplay", "-q"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-            # Queue + writer thread decouples the network download from
-            # blocking pipe writes, exactly like the demo.
-            q: queue.Queue[bytes | None] = queue.Queue()
-
-            def _writer() -> None:
-                assert player.stdin is not None
-                while True:
-                    chunk = q.get()
-                    if chunk is None:
-                        break
-                    try:
-                        player.stdin.write(chunk)
-                    except BrokenPipeError:
-                        break
-                try:
-                    player.stdin.close()
-                except Exception:
-                    pass
-
-            writer = threading.Thread(target=_writer, daemon=True)
-            writer.start()
-
-            try:
-                total_bytes = 0
-                chunk_count = 0
-                t_first_chunk = None
-
-                t_api = time.perf_counter()
-                for chunk in self._cartesia_client.tts.bytes_stream(
-                    model_id="sonic-3.5",
-                    transcript=text,
-                    voice=voice,
-                    output_format={
-                        "container": "wav",
-                        "encoding": "pcm_s16le",
-                        "sample_rate": 44100,
-                    },
-                ):
-                    if not chunk:
-                        continue
-                    chunk_count += 1
-                    total_bytes += len(chunk)
-                    if t_first_chunk is None:
-                        t_first_chunk = time.perf_counter()
-                        self.logger.info(f"⏱️ TTS first byte in {(t_first_chunk - t_api) * 1000:.0f}ms")
-                    q.put(chunk)
-
-                t_stream_done = time.perf_counter()
-
-                # Signal writer to close stdin and wait for aplay to finish
-                q.put(None)
-                writer.join()
-                player.wait()
-                t_play_done = time.perf_counter()
-
-                if player.returncode == 0:
-                    ttfb_ms = (t_first_chunk - t_api) * 1000 if t_first_chunk else 0
-                    self.logger.info(
-                        f"✅ TTS done ({text_len} chars): "
-                        f"TTFB={ttfb_ms:.0f}ms "
-                        f"stream={(t_stream_done - t_api) * 1000:.0f}ms "
-                        f"total={(t_play_done - t_start) * 1000:.0f}ms "
-                        f"({total_bytes / 1024:.0f}KB, {chunk_count} chunks)"
-                    )
-                    success = True
-                else:
-                    stderr = player.stderr.read().decode(errors="replace").strip() if player.stderr else ""
-                    self.logger.error(f"❌ aplay failed (rc={player.returncode}): {stderr}")
-                    success = False
-            except Exception as e:
-                self.logger.error(f"❌ Streaming TTS failed: {e}")
-                q.put(None)
-                writer.join(timeout=2)
-                try:
-                    player.kill()
-                except Exception:
-                    pass
-                success = False
-
+            if self._simulator_mode and self.tts_audio_pub is not None:
+                success = self._synthesize_to_topic(text, voice, t_start)
+            else:
+                success = self._synthesize_to_aplay(text, voice, t_start)
         except Exception as e:
             self.logger.error(f"❌ TTS generation failed: {e}")
             success = False
@@ -232,6 +159,143 @@ class TTSHandler:
             self._publish_tts_status("false")
 
         return success
+
+    def _stream_tts_bytes(self, text: str, voice: dict[str, Any]):
+        """Yield raw WAV bytes from Cartesia as they stream in."""
+        return self._cartesia_client.tts.bytes_stream(
+            model_id="sonic-3.5",
+            transcript=text,
+            voice=voice,
+            output_format={
+                "container": "wav",
+                "encoding": "pcm_s16le",
+                "sample_rate": 44100,
+            },
+        )
+
+    def _synthesize_to_aplay(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
+        """Stream speech straight into aplay (real robot's speaker)."""
+        text_len = len(text)
+        # Volume is managed system-wide by app.cpp via
+        # amixer sset Master, so aplay just uses the default.
+        player = subprocess.Popen(
+            ["aplay", "-q"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        # Queue + writer thread decouples the network download from
+        # blocking pipe writes, exactly like the demo.
+        q: queue.Queue[bytes | None] = queue.Queue()
+
+        def _writer() -> None:
+            assert player.stdin is not None
+            while True:
+                chunk = q.get()
+                if chunk is None:
+                    break
+                try:
+                    player.stdin.write(chunk)
+                except BrokenPipeError:
+                    break
+            try:
+                player.stdin.close()
+            except Exception:
+                pass
+
+        writer = threading.Thread(target=_writer, daemon=True)
+        writer.start()
+
+        try:
+            total_bytes = 0
+            chunk_count = 0
+            t_first_chunk = None
+
+            t_api = time.perf_counter()
+            for chunk in self._stream_tts_bytes(text, voice):
+                if not chunk:
+                    continue
+                chunk_count += 1
+                total_bytes += len(chunk)
+                if t_first_chunk is None:
+                    t_first_chunk = time.perf_counter()
+                    self.logger.info(f"⏱️ TTS first byte in {(t_first_chunk - t_api) * 1000:.0f}ms")
+                q.put(chunk)
+
+            t_stream_done = time.perf_counter()
+
+            # Deliberately NOT mirrored to /tts/audio: the robot's own speaker is
+            # the voice. A webapp playing the clip too doubles the speech for
+            # anyone near the robot (and echoes through the mic for a remote
+            # operator). /tts/audio is the sim-only path, where there is no
+            # speaker (_synthesize_to_topic).
+
+            # Signal writer to close stdin and wait for aplay to finish
+            q.put(None)
+            writer.join()
+            player.wait()
+            t_play_done = time.perf_counter()
+
+            if player.returncode == 0:
+                ttfb_ms = (t_first_chunk - t_api) * 1000 if t_first_chunk else 0
+                self.logger.info(
+                    f"✅ TTS done ({text_len} chars): "
+                    f"TTFB={ttfb_ms:.0f}ms "
+                    f"stream={(t_stream_done - t_api) * 1000:.0f}ms "
+                    f"total={(t_play_done - t_start) * 1000:.0f}ms "
+                    f"({total_bytes / 1024:.0f}KB, {chunk_count} chunks)"
+                )
+                return True
+            stderr = player.stderr.read().decode(errors="replace").strip() if player.stderr else ""
+            self.logger.error(f"❌ aplay failed (rc={player.returncode}): {stderr}")
+            return False
+        except Exception as e:
+            self.logger.error(f"❌ Streaming TTS failed: {e}")
+            q.put(None)
+            writer.join(timeout=2)
+            try:
+                player.kill()
+            except Exception:
+                pass
+            return False
+
+    def _synthesize_to_topic(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
+        """Synthesize the full clip and publish it (base64 WAV) on /tts/audio.
+
+        The sim container has no audio device, so the webapp is the speaker. We
+        collect the whole clip (utterances are short) and publish it once.
+        """
+        t_api = time.perf_counter()
+        buf = bytearray()
+        t_first_chunk = None
+        for chunk in self._stream_tts_bytes(text, voice):
+            if not chunk:
+                continue
+            if t_first_chunk is None:
+                t_first_chunk = time.perf_counter()
+                self.logger.info(f"⏱️ TTS first byte in {(t_first_chunk - t_api) * 1000:.0f}ms")
+            buf.extend(chunk)
+
+        if not buf:
+            self.logger.error("❌ TTS produced no audio")
+            return False
+
+        self._publish_audio(bytes(buf))
+        self.logger.info(
+            f"✅ TTS streamed to browser ({len(text)} chars, {len(buf) / 1024:.0f}KB, "
+            f"total={(time.perf_counter() - t_start) * 1000:.0f}ms)"
+        )
+        return True
+
+    def _publish_audio(self, wav: bytes) -> None:
+        """Publish a finished clip on /tts/audio as base64 WAV for clients to play."""
+        if self.tts_audio_pub is None or not wav:
+            return
+        from std_msgs.msg import String
+
+        payload = base64.b64encode(_finalize_wav(wav)).decode("ascii")
+        self.tts_audio_pub.publish(String(data=payload))
 
     def speak_text_async(self, text: str, voice_config: dict[str, Any] | None = None) -> None:
         """
@@ -261,3 +325,21 @@ class TTSHandler:
             self.logger.info("🔇 TTS handler closed")
             # Cartesia client doesn't need explicit cleanup in sync mode
             self._cartesia_client = None
+
+
+def _finalize_wav(data: bytes) -> bytes:
+    """Patch the RIFF/data chunk sizes of a fully-collected WAV.
+
+    Cartesia streams WAV with placeholder length fields (the size isn't known
+    until the stream ends). aplay tolerates that, but browser decoders are
+    stricter, so once we have the whole clip we write the real lengths in.
+    """
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data
+    out = bytearray(data)
+    data_idx = out.find(b"data", 12)
+    if data_idx == -1 or data_idx + 8 > len(out):
+        return bytes(out)
+    struct.pack_into("<I", out, 4, len(out) - 8)  # RIFF chunk size
+    struct.pack_into("<I", out, data_idx + 4, len(out) - (data_idx + 8))  # data size
+    return bytes(out)

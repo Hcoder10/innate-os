@@ -13,11 +13,14 @@ the action server.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import queue
 import threading
 import time
+import uuid
+from typing import get_args
 
 import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
@@ -26,6 +29,7 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from brain_client.perception.camera_provider import CameraProvider
@@ -36,6 +40,39 @@ from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skills.robot_state import RobotStateProvider
 from brain_client.skills.types import RobotStateType, SkillResult
+
+
+def _annotation_is_float(annotation) -> bool:
+    """True if a param annotation is ``float`` (or a union including it).
+
+    Handles both real type objects and string annotations (skills using
+    ``from __future__ import annotations`` expose ``"float"`` instead).
+    """
+    if annotation is float or annotation == "float":
+        return True
+    return any(arg is float or arg == "float" for arg in get_args(annotation))
+
+
+def _coerce_numeric_inputs(skill, inputs: dict) -> dict:
+    """Widen whole-number ints to floats for ``float``-annotated params.
+
+    JSON has a single number type, so a UI/agent serializing a float param
+    whose value happens to be whole (e.g. ``x=3``) sends an int. ROS
+    ``float64`` setters reject ints (``must be of type 'float'``), so we match
+    each value to its declared ``execute()`` annotation before dispatch. bools
+    are left alone (``bool`` subclasses ``int``)."""
+    try:
+        signature = inspect.signature(skill.execute)
+    except (TypeError, ValueError):
+        return inputs
+    coerced = dict(inputs)
+    for name, value in inputs.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        param = signature.parameters.get(name)
+        if param is not None and _annotation_is_float(param.annotation):
+            coerced[name] = float(value)
+    return coerced
 
 
 class SkillsActionServer(Node):
@@ -75,6 +112,13 @@ class SkillsActionServer(Node):
             interface_injector=self.robot_state.inject_required_interfaces,
             simulator_mode=self.simulator_mode,
         )
+
+        # Broadcasts every run's lifecycle (running/completed/failed/interrupted) so any
+        # client — webapp, mobile app, another webapp tab — can see a skill someone else
+        # triggered, not just the one that sent the goal. Payload mirrors ChatManager's
+        # (webapp consumers read either), keyed by a fresh id per run so repeats of the
+        # same skill don't collapse into one chat entry.
+        self._skill_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
 
         # Behavior delegation for physical skills.
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
@@ -130,6 +174,12 @@ class SkillsActionServer(Node):
         self.get_logger().info(f"Total skills available: {self.catalog.code_count + self.catalog.physical_count}")
         self.catalog.publish_skills_list()
         self.catalog.start_watcher()
+
+        # Heartbeat: the roster is published once (latched), but the webapp
+        # reaches /brain/available_skills through rws, which subscribes after
+        # boot and never receives the latched sample. Re-emit the cached roster
+        # at a low rate so late-joining clients get it within one interval.
+        self._skills_heartbeat_timer = self.create_timer(3.0, self.catalog.republish_cached)
 
     # ================= service handlers (delegate to catalog) =================
     def _handle_reload_skills(self, request, response):
@@ -236,6 +286,7 @@ class SkillsActionServer(Node):
         # the previous skill is mid-teardown), abort it here so the app gets a
         # prompt result. Rejecting in goal_callback instead would surface nothing
         # back through the rws bridge, leaving the app hung until its timeout.
+        # No skill-status broadcast for the rejected goal — it never ran.
         with self._skill_execution_lock:
             if self._skill_running:
                 self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
@@ -248,24 +299,62 @@ class SkillsActionServer(Node):
                 )
             self._skill_running = True
 
+        name = self._skill_display_name(skill_type)
+        run_id = uuid.uuid4().hex
+        self._publish_skill_status(run_id, skill_type, name, "running")
         try:
             if self.catalog.get_code_skill(skill_type) is not None:
-                return self._execute_code_skill(goal_handle, skill_type, inputs)
-            if self.catalog.get_physical_skill(skill_type) is not None:
-                return self._execute_physical_skill(goal_handle, skill_type, inputs)
-
-            self.get_logger().error(f"Skill '{skill_type}' not available")
-            self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
-            goal_handle.abort()
-            return ExecuteSkill.Result(
-                success=False,
-                message="Skill not available",
-                skill_type=skill_type,
-                success_type=SkillResult.FAILURE.value,
-            )
+                result = self._execute_code_skill(goal_handle, skill_type, inputs)
+            elif self.catalog.get_physical_skill(skill_type) is not None:
+                result = self._execute_physical_skill(goal_handle, skill_type, inputs)
+            else:
+                self.get_logger().error(f"Skill '{skill_type}' not available")
+                self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
+                goal_handle.abort()
+                result = ExecuteSkill.Result(
+                    success=False,
+                    message="Skill not available",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
         finally:
             with self._skill_execution_lock:
                 self._skill_running = False
+        status, reason = self._terminal_skill_status(result)
+        self._publish_skill_status(run_id, skill_type, name, status, reason)
+        return result
+
+    def _skill_display_name(self, skill_type: str) -> str:
+        code_entry = self.catalog.get_code_skill(skill_type)
+        if code_entry is not None:
+            return code_entry[0]
+        physical = self.catalog.get_physical_skill(skill_type)
+        if physical is not None:
+            return physical.get("metadata", {}).get("name", skill_type)
+        return skill_type
+
+    @staticmethod
+    def _terminal_skill_status(result) -> tuple[str, str | None]:
+        if result.success and result.success_type == SkillResult.SUCCESS.value:
+            return "completed", None
+        if result.success_type == SkillResult.CANCELLED.value:
+            return "interrupted", None
+        return "failed", result.message or None
+
+    def _publish_skill_status(
+        self, run_id: str, skill_type: str, name: str, status: str, reason: str | None = None
+    ) -> None:
+        payload = {
+            "primitive_name": name,
+            "skill_name": name,
+            "skill_id": skill_type,
+            "primitive_id": run_id,
+            "status": status,
+            "timestamp": time.time(),
+        }
+        if reason:
+            payload["reason"] = reason
+        self._skill_status_pub.publish(String(data=json.dumps(payload)))
 
     # ================= execution =================
     def _execute_code_skill(self, goal_handle, skill_type, inputs):
@@ -314,7 +403,7 @@ class SkillsActionServer(Node):
                 self.robot_state.begin_continuous_updates(skill)
                 self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
 
-            result_message, result_status = skill.execute(**inputs)
+            result_message, result_status = skill.execute(**_coerce_numeric_inputs(skill, inputs))
 
             if result_status == SkillResult.SUCCESS:
                 self.get_logger().info(f"Skill '{skill_type}' succeeded: {result_message}")
