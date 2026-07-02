@@ -92,7 +92,19 @@ Known v1 limits: deep nested-chain cancel is best-effort; a chaining skill's `ca
 
 Post-review hardening (Greptile P1): continuous-state tracking and the camera are now **nesting-safe** — a chained child that declares required robot states suspends its parent's 50 Hz slot and hands it back on exit (stack in `RobotStateProvider`), `end_continuous_updates` only fires for skills that began them, and camera start/stop is refcounted. Orchestrators may declare robot states; the earlier "don't" rule is obsolete.
 
-Still open from Phase 2: `.pyi` stub generation for IDE completion (needs a decision on where the stub lives so user editors pick it up) and converting a real shipped directive off its prose loop.
+## Implemented (Phase 3 — chaining ergonomics)
+
+Four accidental limitations of the authoring surface, fixed:
+
+- **Structured results.** `execute()` may return a third element — any payload — and chaining callers receive it as `.data` on the returned message: `pose = detect_board(); grasp(x=pose.data["x"])`. The message is a `SkillOutput` (a `str` subclass), so every string-shaped consumer — cloud, app, logs, old code — is untouched; the payload rides along only for callers that want it (`normalize_skill_result` in [`types.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/types.py)).
+- **Call-time input validation.** The invoker binds inputs against the child's `execute()` signature before running it; a typo'd or missing kwarg fails immediately with the expected parameter list, instead of a TypeError surfacing from inside the child.
+- **`timeout=` on every call** (reserved kwarg, never forwarded to the skill): the child is cancelled when it expires and the call reports failure ("timed out"), while the rest of the routine keeps running — `move_straight(distance=0.5, timeout=10)`. Replaces the hand-rolled `threading.Timer` watchdog for per-step caps.
+- **`say(text, wait=True)`** blocks (best effort, via `/tts/is_playing`) until the utterance finishes, for "say this, then move" pacing.
+- **IDE completion:** [`catalog.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/catalog.py) regenerates `innate/skills.pyi` on every publish — one typed def per importable skill (types from the same inputs schema the LLM sees, guidelines as docstrings), local/ winning stem collisions to match runtime resolution. Written next to the imported `innate` package; gitignored.
+
+Tests in `test/test_skill_ergonomics.py`.
+
+Still open: converting a real shipped directive off its prose loop.
 
 Known sharp edges (assessed post-implementation):
 

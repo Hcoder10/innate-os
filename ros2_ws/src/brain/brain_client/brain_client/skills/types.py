@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+import time
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
@@ -10,8 +11,10 @@ from std_msgs.msg import String
 from brain_client.common.logging import UniversalLogger
 
 # brain_client_node subscribes here and plays the text through the robot's
-# voice (Cartesia TTS); see transport/tts.py.
+# voice (Cartesia TTS); see transport/tts.py. It reports playback on the
+# status topic, which say(wait=True) watches.
 TTS_TOPIC = "/brain/tts"
+TTS_STATUS_TOPIC = "/tts/is_playing"
 
 
 class SkillResult(Enum):
@@ -22,6 +25,36 @@ class SkillResult(Enum):
     SUCCESS = "success"  # The skill completed successfully
     FAILURE = "failure"  # The skill failed to complete
     CANCELLED = "cancelled"  # The skill was cancelled before completion
+
+
+class SkillOutput(str):
+    """A skill's output message, with an optional structured payload on .data.
+
+    It IS the message string (prints, formats, compares like one), so existing
+    string-shaped code is unaffected. A skill that returns a third element from
+    execute() — ``(message, status, data)`` — makes that object available to
+    chaining callers: ``pose = detect_board(); pose.data["x"]``.
+    """
+
+    data: Any = None
+
+    def __new__(cls, message: str, data: Any = None):
+        output = super().__new__(cls, message)
+        output.data = data
+        return output
+
+
+def normalize_skill_result(result) -> tuple[SkillOutput, "SkillResult"]:
+    """Accept execute()'s ``(message, status)`` or ``(message, status, data)``.
+
+    Returns ``(SkillOutput, status)`` — the data (None if absent) rides on the
+    message string, so every consumer keeps its two-tuple shape.
+    """
+    if isinstance(result, (tuple, list)) and len(result) == 3:
+        message, status, data = result
+        return SkillOutput(message, data), status
+    message, status = result
+    return SkillOutput(message), status
 
 
 class RobotStateType(Enum):
@@ -129,6 +162,8 @@ class Skill(ABC):
         # step in the app. The skills server injects this before execute().
         self.skills = None
         self._say_publisher = None  # lazy, see say()
+        self._tts_status_sub = None  # lazy, see say(wait=True)
+        self._tts_playing = None  # last /tts/is_playing value ("true"/"false")
 
     @property
     @abstractmethod
@@ -146,7 +181,9 @@ class Skill(ABC):
 
         Subclasses must implement this method.
         Returns a tuple of (result_message, result_status) where result_status
-        is a SkillResult enum value.
+        is a SkillResult enum value. Optionally return a third element — any
+        structured payload — which chaining callers receive as ``.data`` on
+        the returned message (see SkillOutput).
         """
         pass
 
@@ -167,19 +204,43 @@ class Skill(ABC):
             return self.skills.cancel()
         return "Nothing to cancel"
 
-    def say(self, text: str) -> None:
+    def say(self, text: str, wait: bool = False) -> None:
         """
-        Speak text through the robot's voice (fire-and-forget).
+        Speak text through the robot's voice.
 
-        Playback happens on the robot's speaker via TTS; this returns
-        immediately and never blocks the skill. If speech isn't available
-        (no audio node running, or in tests without a ROS node), it's a no-op.
+        Fire-and-forget by default: returns immediately, speech overlaps
+        whatever the skill does next. With ``wait=True`` it blocks until the
+        utterance has finished playing (best effort: it watches the TTS
+        playback status, so if several say() calls are already queued it may
+        return when an earlier one ends — use wait consistently for precise
+        pacing). If speech isn't available (no audio node running, or in
+        tests without a ROS node), it's a no-op either way.
         """
         if not text or self.node is None:
             return
         if self._say_publisher is None:
             self._say_publisher = self.node.create_publisher(String, TTS_TOPIC, 10)
+        if wait and self._tts_status_sub is None:
+            self._tts_status_sub = self.node.create_subscription(String, TTS_STATUS_TOPIC, self._on_tts_status, 10)
         self._say_publisher.publish(String(data=text))
+        if wait:
+            self._wait_for_speech_end(text)
+
+    def _on_tts_status(self, msg: String) -> None:
+        self._tts_playing = msg.data
+
+    def _wait_for_speech_end(self, text: str) -> None:
+        # Phase 1: wait for playback to start (TTS latency + anything queued
+        # ahead of us). If it never does — TTS off, muted — don't hang the skill.
+        deadline = time.time() + 15.0
+        while self._tts_playing != "true":
+            if time.time() > deadline:
+                return
+            time.sleep(0.05)
+        # Phase 2: wait for it to finish; budget scales with utterance length.
+        deadline = time.time() + max(30.0, 0.1 * len(text))
+        while self._tts_playing == "true" and time.time() < deadline:
+            time.sleep(0.05)
 
     def update_robot_state(self, **kwargs):
         """

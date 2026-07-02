@@ -17,6 +17,8 @@ pulls it back apart into a real per-step status. See PrimitiveRunner._on_feedbac
 
 from __future__ import annotations
 
+import inspect
+import threading
 import uuid
 
 from brain_client.skills.lifecycle import encode_substep_feedback
@@ -48,12 +50,16 @@ class SkillInvoker:
         self._active_code_skill = None
         self._active_physical_skill = None
 
-    def run(self, skill_id, **inputs):
+    def run(self, skill_id, *, timeout=None, **inputs):
         """Run one child skill to completion. Returns (message, SkillResult).
 
         Accepts a full catalog id ("innate-os/wave") or a bare name ("wave");
         bare names try local/ before innate-os/, so a user's skill shadows a
         shipped one of the same name.
+
+        ``timeout`` (seconds, reserved — never passed to the skill): a child
+        still running when it expires is cancelled and reported as a FAILURE
+        ("timed out"), without cancelling the rest of the routine.
         """
         if self._cancelled:
             return "Routine cancelled", SkillResult.CANCELLED
@@ -63,11 +69,27 @@ class SkillInvoker:
             self._logger.error(f"[invoker] unknown skill '{skill_id}'")
             return f"Unknown skill '{skill_id}'", SkillResult.FAILURE
 
+        if code is not None:
+            problem = self._invalid_inputs(code[1], skill_id, inputs)
+            if problem:
+                self._logger.error(f"[invoker] {problem}")
+                return problem, SkillResult.FAILURE
+
         name = code[1].name if code else physical["metadata"].get("name", skill_id)
         step_id = uuid.uuid4().hex
-        self._logger.info(f"[invoker] running '{skill_id}' inputs={inputs}")
+        self._logger.info(f"[invoker] running '{skill_id}' inputs={inputs} timeout={timeout}")
         self._step(step_id, name, skill_id, "running")
 
+        timed_out = threading.Event()
+        watchdog = None
+        if timeout:
+
+            def _expire():
+                timed_out.set()
+                self.cancel()
+
+            watchdog = threading.Timer(timeout, _expire)
+            watchdog.start()
         try:
             if code is not None:
                 message, status = self._run_code(code[1], skill_id, inputs)
@@ -78,6 +100,17 @@ class SkillInvoker:
             self._logger.error(f"[invoker] '{skill_id}' raised: {e}")
             self._step(step_id, name, skill_id, "failed", reason=str(e))
             return str(e), SkillResult.FAILURE
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+
+        if timed_out.is_set() and status is SkillResult.CANCELLED:
+            # Only this child was cancelled, not the routine — undo the flag
+            # the watchdog's cancel() set so later steps still run. (A user
+            # Stop racing the watchdog by milliseconds is folded into the
+            # timeout; the routine continues and can be stopped again.)
+            self._cancelled = False
+            message, status = f"'{skill_id}' timed out after {timeout}s", SkillResult.FAILURE
 
         self._step(
             step_id,
@@ -107,6 +140,24 @@ class SkillInvoker:
             return "Routine cancelled"
         finally:
             self._cancelling = False
+
+    @staticmethod
+    def _invalid_inputs(skill, skill_id, inputs):
+        """A clear error message if inputs don't fit execute()'s signature, else None.
+
+        Catches typo'd or missing kwargs at the call site instead of letting a
+        TypeError surface from inside the child dressed up as a skill failure.
+        """
+        try:
+            signature = inspect.signature(skill.execute)
+        except (TypeError, ValueError):
+            return None  # can't introspect — let the call itself decide
+        try:
+            signature.bind(**inputs)
+            return None
+        except TypeError as e:
+            expected = ", ".join(p for p in signature.parameters if p != "self") or "no inputs"
+            return f"Invalid inputs for '{skill_id}': {e}. Expected: ({expected})"
 
     def _resolve(self, skill_id):
         """Look skill_id up in the catalog: code skill first, then learned/replay.

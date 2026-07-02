@@ -37,7 +37,7 @@ from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.robot_state import RobotStateProvider
-from brain_client.skills.types import RobotStateType, SkillResult
+from brain_client.skills.types import RobotStateType, SkillResult, normalize_skill_result
 
 
 class SkillsActionServer(Node):
@@ -371,7 +371,9 @@ class SkillsActionServer(Node):
             # the raise-style spelling of a (message, status) return.
             with use_invoker(skill.skills):
                 try:
-                    return skill.execute(**inputs)
+                    # 2-tuple or 3-tuple (message, status[, data]) -> the
+                    # data rides back to chaining callers on the message.
+                    return normalize_skill_result(skill.execute(**inputs))
                 except SkillCancelled as e:
                     return str(e) or "Skill cancelled", SkillResult.CANCELLED
                 except SkillFailed as e:

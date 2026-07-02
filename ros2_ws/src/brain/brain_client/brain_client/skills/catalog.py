@@ -673,6 +673,66 @@ class SkillRepository:
             self._logger.info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
             self._logger.error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
+        self._write_import_stub(filtered_skills)
+
+    def _write_import_stub(self, skills: list[SkillInfo]) -> None:
+        """Regenerate ``innate/skills.pyi`` so IDEs complete the proxy imports.
+
+        Best effort, next to wherever the ``innate`` package is imported from;
+        completion is sugar, never load-bearing, so failures only log.
+        """
+        try:
+            import innate
+
+            stub_path = Path(innate.__file__).with_name("skills.pyi")
+            stub_path.write_text(self._render_import_stub(skills))
+        except Exception as e:
+            self._logger.warn(f"Could not write innate/skills.pyi: {e}")
+
+    @staticmethod
+    def _render_import_stub(skills: list[SkillInfo]) -> str:
+        """One typed def per importable skill, from the published inputs schema."""
+        type_names = {"str": "str", "float": "float", "int": "int", "bool": "bool"}
+        lines = [
+            "# Auto-generated from the skill catalog on every (re)load. Do not edit.",
+            "# A .pyi replaces the module's visible API, so the real names live here too.",
+            "from contextlib import contextmanager",
+            "from typing import Any, Iterator",
+            "",
+            "from brain_client.skills.types import SkillOutput as SkillOutput",
+            "",
+            "class SkillFailed(Exception): ...",
+            "class SkillCancelled(Exception): ...",
+            "@contextmanager",
+            "def use_invoker(invoker: Any) -> Iterator[None]: ...",
+        ]
+        # bare import name = catalog id minus prefix; local/ wins a collision,
+        # matching SkillInvoker._resolve
+        by_stem: dict[str, SkillInfo] = {}
+        for skill in skills:
+            stem = skill.id.split("/", 1)[-1]
+            if not stem.isidentifier():  # dashed dirs etc. — self.skills.run() only
+                continue
+            if stem not in by_stem or skill.id.startswith("local/"):
+                by_stem[stem] = skill
+        for stem, skill in sorted(by_stem.items()):
+            try:
+                inputs = json.loads(skill.inputs_json or "{}")
+            except json.JSONDecodeError:
+                inputs = {}
+            params = []
+            for param_name, schema in inputs.items():
+                if not isinstance(schema, dict) or not param_name.isidentifier():
+                    continue
+                annotation = type_names.get(schema.get("type"), "Any")
+                default = "" if schema.get("required") else " = ..."
+                params.append(f"{param_name}: {annotation}{default}")
+            params.append("*, timeout: float | None = ...")
+            lines.append("")
+            lines.append(f"def {stem}({', '.join(params)}) -> SkillOutput:")
+            guidelines = (skill.guidelines or "").replace('"""', "'''").strip()
+            lines.append(f'    """{guidelines}"""' if guidelines else "    ...")
+        return "\n".join(lines) + "\n"
 
     def _dedupe_display_names(self, skills: list[SkillInfo]) -> list[SkillInfo]:
         """Enforce unique display names (the LLM can't disambiguate duplicates).

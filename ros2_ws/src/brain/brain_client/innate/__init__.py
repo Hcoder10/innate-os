@@ -14,6 +14,7 @@ from brain_client.skills.types import (
     RobotState,
     RobotStateType,
     Skill,
+    SkillOutput,
     SkillResult,
 )
 from innate.skills import SkillCancelled, SkillFailed
@@ -26,5 +27,6 @@ __all__ = [
     "Skill",
     "SkillCancelled",
     "SkillFailed",
+    "SkillOutput",
     "SkillResult",
 ]

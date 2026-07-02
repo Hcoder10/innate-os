@@ -23,6 +23,19 @@ message, failure raises SkillFailed, cancellation raises SkillCancelled. A
 routine is just consecutive calls, and "stop on first failure" is Python's own
 semantics. The explicit tuple-returning form, self.skills.run(id, **inputs),
 remains for dynamic skill ids.
+
+Three more things every call gets:
+
+- **Structured results.** The returned message is a SkillOutput (a str); if the
+  child returned (message, status, data), the payload is on ``.data``:
+  ``pose = detect_board(); grasp(x=pose.data["x"])``.
+- **Input validation.** Typo'd or missing kwargs fail immediately with a
+  message listing the skill's expected inputs, instead of a TypeError from
+  somewhere inside the child.
+- **timeout=seconds** (reserved kwarg, never passed to the skill): the child is
+  cancelled when it expires and the call raises SkillFailed("... timed out"),
+  while the rest of the routine keeps running —
+  ``move_straight(distance=0.5, timeout=10)``.
 """
 
 from __future__ import annotations
