@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# 1. Install base packages needed before apt-dependencies.txt.
+# 1. Install base packages needed before the apt dependency lists.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -28,20 +28,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         htop \
         btop
 
-# 2. Add Innate packages repository (for ros-humble-innate-rws, etc.).
-RUN curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
-        gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ $(lsb_release -cs) main" | \
-        tee /etc/apt/sources.list.d/innate.list > /dev/null
+# 2. Add the third-party apt repositories (Innate packages + NodeSource 22.x)
+# via the same script the on-device updater uses, keeping the two in sync.
+COPY scripts/update/setup_repos.sh /tmp/setup_repos.sh
+RUN bash /tmp/setup_repos.sh && rm /tmp/setup_repos.sh
 
-# 3. Copy and install simulation apt dependencies.
-COPY sim/apt-dependencies.txt /tmp/apt-dependencies.txt
+# 3. Copy and install simulation apt dependencies (shared common + sim overlay).
+COPY ros2_ws/apt-dependencies.common.txt ros2_ws/apt-dependencies.sim.txt /tmp/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && \
-    grep -v '^#' /tmp/apt-dependencies.txt | grep -v '^$' | \
+    cat /tmp/apt-dependencies.common.txt /tmp/apt-dependencies.sim.txt | \
+        grep -v '^#' | grep -v '^$' | \
         xargs apt-get install -y --no-install-recommends && \
-    rm /tmp/apt-dependencies.txt
+    rm /tmp/apt-dependencies.common.txt /tmp/apt-dependencies.sim.txt
 
 # 4. Install uv for fast, cached Python package installation.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
@@ -54,10 +54,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install --system \
         websockets \
         pydantic \
+        click \
         'packaging>=24' \
         'setuptools==59.6.0' \
         'numpy<2' \
         h5py \
+        opencv-python-headless \
+        pyyaml \
         cartesia \
         einops \
         python-dotenv \
@@ -106,6 +109,7 @@ RUN cat >> /root/.zshrc <<'EOF'
 [ -f /root/innate-os/config/dds/setup_dds.zsh ] && source /root/innate-os/config/dds/setup_dds.zsh
 export INNATE_OS_ROOT=/root/innate-os
 export CCACHE_DIR=/root/.cache/ccache
+export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on PATH
 EOF
 
 WORKDIR /root/innate-os

@@ -10,7 +10,6 @@ on:
       - sim/Dockerfile
       - sim/Dockerfile.ros-prebuilt
       - sim/Dockerfile.ros-prebuilt.dockerignore
-      - sim/apt-dependencies.txt
       - ros2_ws/apt-dependencies*.txt
       - ros2_ws/src/**
   workflow_dispatch:
@@ -56,9 +55,9 @@ jobs:
               "sim/Dockerfile",
               "sim/Dockerfile.ros-prebuilt",
               "sim/Dockerfile.ros-prebuilt.dockerignore",
-              "sim/apt-dependencies.txt",
               "ros2_ws/apt-dependencies.common.txt",
               "ros2_ws/apt-dependencies.hardware.txt",
+              "ros2_ws/apt-dependencies.sim.txt",
           )
           paths = [Path(path) for path in static_paths if (root / path).is_file()]
           src_root = root / "ros2_ws" / "src"
