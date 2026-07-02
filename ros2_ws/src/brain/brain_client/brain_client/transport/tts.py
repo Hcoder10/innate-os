@@ -55,6 +55,13 @@ class TTSHandler:
         # Initialize Cartesia client
         self._init_client()
 
+        # Async speech is queued and played in order by one worker, so
+        # back-to-back speak_text_async() calls (e.g. a skill calling say()
+        # twice in a row) don't get dropped by the is_playing check.
+        # Bounded so a runaway say() loop can't build minutes of backlog.
+        self._speech_queue: queue.Queue = queue.Queue(maxsize=16)
+        threading.Thread(target=self._speech_loop, daemon=True).start()
+
     def _init_client(self):
         """Initialize the Cartesia client via proxy."""
         try:
@@ -235,8 +242,8 @@ class TTSHandler:
 
     def speak_text_async(self, text: str, voice_config: dict[str, Any] | None = None) -> None:
         """
-        Convert text to speech and play it asynchronously in a separate thread.
-        Retries once with 1 second gap on failure.
+        Queue text to be spoken. Utterances play in order, one at a time;
+        nothing is dropped unless the queue is full. Returns immediately.
 
         Args:
             text: Text to speak
@@ -245,18 +252,26 @@ class TTSHandler:
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping async speech")
             return
+        try:
+            self._speech_queue.put_nowait((text, voice_config))
+        except queue.Full:
+            self.logger.warning(f"🔇 Speech queue full, dropping: '{text[:60]}'")
 
-        def speak_thread():
+    def _speech_loop(self):
+        """Single worker: plays queued utterances in order, retrying each once."""
+        while True:
+            item = self._speech_queue.get()
+            if item is None:
+                break
+            text, voice_config = item
             if not self.speak_text(text, voice_config):
                 self.logger.info("🔄 Retrying TTS after 1 second...")
                 time.sleep(1)
                 self.speak_text(text, voice_config)
 
-        speech_thread = threading.Thread(target=speak_thread, daemon=True)
-        speech_thread.start()
-
     def close(self):
         """Clean up resources."""
+        self._speech_queue.put(None)  # stop the speech worker
         if self._cartesia_client:
             self.logger.info("🔇 TTS handler closed")
             # Cartesia client doesn't need explicit cleanup in sync mode
