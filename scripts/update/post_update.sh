@@ -158,7 +158,8 @@ log "Git fsync settings configured"
 
 # Migrate git remote from old release repo to main repo
 CURRENT_REMOTE=$(sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
-if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ]; then
+if [ "$CURRENT_REMOTE" = "git@github.com:innate-inc/innate-os-release.git" ] || \
+   [[ "$CURRENT_REMOTE" == https://github_pat_11AHZIPSQ0Z9*Bv3cH6uaC@github.com/innate-inc/innate-os.git ]]; then
     log "Migrating git remote from innate-os-release to innate-os..."
     sudo -u "$ACTUAL_USER" git -C "$REPO_DIR" remote set-url origin https://github.com/innate-inc/innate-os.git
     log "Git remote updated to https://github.com/innate-inc/innate-os.git"
@@ -619,32 +620,11 @@ fi
         log "  ROS 2 Humble base already installed"
     fi
     
-    # Check if Innate packages repository is configured
-    if [ ! -f /usr/share/keyrings/innate-archive-keyring.gpg ] || [ ! -f /etc/apt/sources.list.d/innate.list ]; then
-        log "  Adding Innate packages repository..."
-        
-        # Add Innate GPG key
-        if [ ! -f /usr/share/keyrings/innate-archive-keyring.gpg ]; then
-            log "    Adding Innate GPG key..."
-            curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg | \
-                gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg || {
-                log "    ERROR: Failed to download Innate GPG key"
-                exit 1
-            }
-        fi
-        
-        # Add Innate repository
-        if [ ! -f /etc/apt/sources.list.d/innate.list ]; then
-            log "    Adding Innate repository..."
-            echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ $(lsb_release -cs) main" | \
-                tee /etc/apt/sources.list.d/innate.list > /dev/null
-        fi
-        
-        log "  Innate packages repository configured"
-    else
-        log "  Innate packages repository already configured"
-    fi
-    
+    # Configure third-party apt repositories (Innate packages).
+    # shellcheck source=scripts/update/setup_repos.sh
+    source "$SCRIPT_DIR/setup_repos.sh"
+    setup_package_repos
+
     APT_DEPS_COMMON="$REPO_DIR/ros2_ws/apt-dependencies.common.txt"
     APT_DEPS_HARDWARE="$REPO_DIR/ros2_ws/apt-dependencies.hardware.txt"
 
@@ -987,5 +967,4 @@ fi
 ensure_log_ownership
 
 exit 0
-
 

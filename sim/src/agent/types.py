@@ -92,6 +92,12 @@ class ArmGotoCmd(NamedTuple):
     service_id: str = None  # For service response callback
 
 
+class HeadCmd(NamedTuple):
+    """Agent -> Simulation: head pitch target in degrees (immediate)."""
+
+    angle_deg: float
+
+
 class ArmStateMsg(NamedTuple):
     """Simulation -> Agent: current arm joint state for publishing."""
 

@@ -35,12 +35,15 @@ export function mountPage(stage, viewClass, buildView) {
   // in once connected.
   const view = buildView(viewLayer);
 
-  // Robot-served → reach the serving host immediately. Localhost (laptop dev)
-  // has no robot to auto-connect to, so it keeps the manual connect flow (the
-  // card stays up until the operator enters an address).
+  // Auto-connect to the serving host: in production that IS the robot, so it
+  // always wins. On localhost (laptop dev) the serving host is the local stack,
+  // but a remembered address (e.g. a remote robot reached earlier) is the more
+  // likely target there, so prefer lastIp and fall back to localhost itself.
   const servedHost = location.hostname;
-  if (servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1") {
-    ros.connect(servedHost);
+  const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
+  const target = robotServed ? servedHost : (ros.lastIp ?? servedHost);
+  if (target) {
+    ros.connect(target);
   }
 
   // Keep the view up through connecting / connected / reconnecting — the header

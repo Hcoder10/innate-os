@@ -8,13 +8,17 @@ All dependencies are managed through config files in `ros2_ws/`:
 
 | File | Description | Usage |
 |------|-------------|-------|
-| `apt-dependencies.txt` | System & ROS2 apt packages | `xargs sudo apt-get install -y < apt-dependencies.txt` |
+| `apt-dependencies.common.txt` | System & ROS2 apt packages shared by sim + robot | `xargs sudo apt-get install -y < apt-dependencies.common.txt` |
+| `apt-dependencies.sim.txt` | Simulation-only overlay | install on top of common |
+| `apt-dependencies.hardware.txt` | Physical-robot / Jetson-only overlay | install on top of common |
 | `pip-requirements.txt` | Python packages | `pip3 install -r pip-requirements.txt` |
 | `src/dependencies.repos` | External ROS2 repositories | `vcs import src < src/dependencies.repos` |
 
+See [ros2_ws/DEPENDENCIES_GUIDE.md](../ros2_ws/DEPENDENCIES_GUIDE.md) for the mode-specific layering.
+
 ### Adding Dependencies
 
-- **APT packages**: Add to `ros2_ws/apt-dependencies.{common/hardware}.txt`
+- **APT packages**: Add to `ros2_ws/apt-dependencies.{common,sim,hardware}.txt` — `common` if both sim and robot need it, otherwise the mode-specific overlay
 - **Python packages**: Add to `ros2_ws/pip-requirements.txt`
 
 These files are used automatically by the local build and CI/CD pipeline.

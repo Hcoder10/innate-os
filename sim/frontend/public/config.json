@@ -1,8 +1,0 @@
-{
-  "simBaseUrl": "http://localhost:8000",
-  "wsBaseUrl": "ws://localhost:8000",
-  "robotWsUrl": "ws://localhost:9090",
-  "directRobot": false,
-  "cartesiaApiKey": "",
-  "pinnedSkills": ["navigate with vision", "navigate with position", "wave"]
-}
