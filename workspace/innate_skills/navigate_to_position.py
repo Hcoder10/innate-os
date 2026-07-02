@@ -158,41 +158,39 @@ class Nav2Controller:
                 navigator.cancelTask()
                 break
 
-            # Get feedback but don't block for too long
+            # Small sleep to prevent CPU hogging; also paces the 10 Hz cancel poll
+            time.sleep(0.1)
+
             feedback = navigator.getFeedback()
-            if feedback:
-                # Use Nav2's own distance_remaining: feedback.current_pose is
-                # in the navigator's global frame while our goal may be in
-                # another, so computing distances ourselves would be wrong.
-                distance_remaining = feedback.distance_remaining
+            if not feedback:
+                continue
 
-                if initial_distance_remaining < 0.0 and distance_remaining > 0.0:
-                    initial_distance_remaining = distance_remaining
+            # Use Nav2's own distance_remaining: feedback.current_pose is
+            # in the navigator's global frame while our goal may be in
+            # another, so computing distances ourselves would be wrong.
+            distance_remaining = feedback.distance_remaining
 
-                if initial_distance_remaining > 0.0:
-                    path_completion = max(
-                        0.0, min(100.0, (1.0 - distance_remaining / initial_distance_remaining) * 100.0)
-                    )
-                else:
-                    path_completion = 0.0
+            if initial_distance_remaining < 0.0 and distance_remaining > 0.0:
+                initial_distance_remaining = distance_remaining
 
-                now = time.monotonic()
-                if now - last_progress_log >= 1.0:
-                    last_progress_log = now
-                    self.logger.info(
-                        f"Navigation progress: {path_completion:.0f}% ({distance_remaining:.2f}m remaining, "
-                        f"{feedback.number_of_recoveries} recoveries)"
-                    )
+            path_completion = 0.0
+            if initial_distance_remaining > 0.0:
+                path_completion = max(0.0, min(100.0, (1.0 - distance_remaining / initial_distance_remaining) * 100.0))
 
-                if 0.0 < distance_remaining < 0.2 and not feedback_sent_close_to_goal:
-                    self._send_feedback(
-                        "I'm almost done with this movement, if I think I should navigate again to pursue this task"
-                        ", I should stop the current primitive and start a new navigation movement."
-                    )
-                    feedback_sent_close_to_goal = True
+            now = time.monotonic()
+            if now - last_progress_log >= 1.0:
+                last_progress_log = now
+                self.logger.info(
+                    f"Navigation progress: {path_completion:.0f}% ({distance_remaining:.2f}m remaining, "
+                    f"{feedback.number_of_recoveries} recoveries)"
+                )
 
-            # Small sleep to prevent CPU hogging
-            time.sleep(0.1)  # 100ms check interval
+            if 0.0 < distance_remaining < 0.2 and not feedback_sent_close_to_goal:
+                self._send_feedback(
+                    "I'm almost done with this movement, if I think I should navigate again to pursue this task"
+                    ", I should stop the current primitive and start a new navigation movement."
+                )
+                feedback_sent_close_to_goal = True
 
         result = navigator.getResult()
 

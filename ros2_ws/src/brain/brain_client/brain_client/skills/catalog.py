@@ -129,12 +129,11 @@ class SkillRepository:
             for d in self._skills_directories:
                 py_file = Path(d) / f"{stem}.py"
                 subdir = Path(d) / stem
-                if py_file.exists():
-                    skill_ids.append(self._compute_skill_id(py_file))
-                    break
-                elif subdir.is_dir():
-                    skill_ids.append(self._compute_skill_id(subdir))
-                    break
+                source = py_file if py_file.exists() else subdir if subdir.is_dir() else None
+                if source is None:
+                    continue
+                skill_ids.append(self._compute_skill_id(source))
+                break
         if skill_ids:
             self.reload_selective(skill_ids)  # publishes when done
         elif removed:

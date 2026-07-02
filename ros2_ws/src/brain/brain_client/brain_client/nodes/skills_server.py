@@ -363,12 +363,11 @@ class SkillsActionServer(Node):
             # innate.skills proxies route to this skill's invoker while
             # execute() runs
             with use_invoker(skill.skills):
-                try:
-                    return normalize_skill_result(skill.execute(**inputs))
-                except SkillCancelled as e:
-                    return str(e) or "Skill cancelled", SkillResult.CANCELLED
-                except SkillFailed as e:
-                    return str(e) or "Skill failed", SkillResult.FAILURE
+                return normalize_skill_result(skill.execute(**inputs))
+        except SkillCancelled as e:
+            return str(e) or "Skill cancelled", SkillResult.CANCELLED
+        except SkillFailed as e:
+            return str(e) or "Skill failed", SkillResult.FAILURE
         finally:
             if required_states:
                 self.robot_state.end_continuous_updates()
