@@ -4,10 +4,30 @@ import math
 import threading
 import time
 
+import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from rclpy.duration import Duration
+from rclpy.time import Time
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
+from brain_client.common.geometry import quaternion_to_yaw
 from brain_client.skills.types import Skill, SkillResult
+
+# Frame local (robot-relative) goals are resolved into before being sent to
+# Nav2. Must match the mapfree costmap's global_frame (mars_nav costmap.yaml):
+# a goal already in the costmap frame needs no TF lookup on replans.
+LOCAL_GOAL_FIXED_FRAME = "odom"
+
+
+def resolve_local_goal(base_x, base_y, base_yaw, x, y, theta):
+    """Compose a base_link-relative (x, y, theta) goal with the robot's pose in
+    the fixed frame, returning (gx, gy, gyaw) expressed in that fixed frame."""
+    gx = base_x + x * math.cos(base_yaw) - y * math.sin(base_yaw)
+    gy = base_y + x * math.sin(base_yaw) + y * math.cos(base_yaw)
+    return gx, gy, base_yaw + theta
 
 
 class Nav2Controller:
@@ -29,7 +49,35 @@ class Nav2Controller:
         # )
         self._send_feedback = primitive._send_feedback
 
+        # TF listener on the navigator node, used to resolve local goals into
+        # LOCAL_GOAL_FIXED_FRAME. The node is only spun during blocking Nav2
+        # calls, so _lookup_fresh_base_pose pumps it explicitly.
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.navigator)
+
         self.logger.info("Nav2 position primitive node created")
+
+    def _lookup_fresh_base_pose(self, timeout_sec: float = 2.0, max_age_sec: float = 1.0):
+        """Latest odom->base_link transform no older than max_age_sec, or None.
+
+        Spins the navigator node so the TF listener actually receives data:
+        outside Nav2's own blocking helpers nothing services its subscriptions,
+        and a stale buffer would resolve the goal relative to where the robot
+        was on a previous run.
+        """
+        navigator = self.navigator
+        clock = navigator.get_clock()
+        deadline = clock.now() + Duration(seconds=timeout_sec)
+        min_stamp = clock.now() - Duration(seconds=max_age_sec)
+        while clock.now() < deadline:
+            rclpy.spin_once(navigator, timeout_sec=0.05)
+            try:
+                transform = self.tf_buffer.lookup_transform(LOCAL_GOAL_FIXED_FRAME, "base_link", Time())
+            except TransformException:
+                continue
+            if Time.from_msg(transform.header.stamp) >= min_stamp:
+                return transform
+        return None
 
     def go_to_position(self, x: float, y: float, theta: float, local_frame: bool):
         """
@@ -52,18 +100,43 @@ class Nav2Controller:
         # Determine behavior tree based on navigation mode
         behavior_tree = "mapfree" if local_frame else "navigation"
 
+        # Local goals are resolved into the odom frame here instead of being
+        # sent as base_link poses: Nav2's BT replans the original goal at 1 Hz,
+        # and a base_link goal can only be transformed while its stamp is still
+        # inside the ~10 s TF buffer -- longer navigations permanently lost the
+        # ability to replan (planner "extrapolation into the past" errors).
+        if local_frame:
+            base_tf = self._lookup_fresh_base_pose()
+            if base_tf is None:
+                self.logger.error(
+                    f"No fresh base_link->{LOCAL_GOAL_FIXED_FRAME} transform available; cannot resolve local goal"
+                )
+                return TaskResult.FAILED
+            base = base_tf.transform
+            goal_x, goal_y, goal_yaw = resolve_local_goal(
+                base.translation.x, base.translation.y, quaternion_to_yaw(base.rotation), x, y, theta
+            )
+            goal_frame = LOCAL_GOAL_FIXED_FRAME
+            self.logger.info(
+                f"Resolved local goal ({x}, {y}, {theta}) to {goal_frame} frame: "
+                f"({goal_x:.3f}, {goal_y:.3f}, {goal_yaw:.3f})"
+            )
+        else:
+            goal_x, goal_y, goal_yaw = x, y, theta
+            goal_frame = "map"
+
         # Create a PoseStamped goal.
         goal_pose = PoseStamped()
-        goal_pose.header.frame_id = "base_link" if local_frame else "map"
+        goal_pose.header.frame_id = goal_frame
         goal_pose.header.stamp = navigator.get_clock().now().to_msg()
-        goal_pose.pose.position.x = x
-        goal_pose.pose.position.y = y
+        goal_pose.pose.position.x = goal_x
+        goal_pose.pose.position.y = goal_y
         goal_pose.pose.position.z = 0.0
 
         goal_pose.pose.orientation.x = 0.0
         goal_pose.pose.orientation.y = 0.0
-        goal_pose.pose.orientation.z = math.sin(theta / 2.0)
-        goal_pose.pose.orientation.w = math.cos(theta / 2.0)
+        goal_pose.pose.orientation.z = math.sin(goal_yaw / 2.0)
+        goal_pose.pose.orientation.w = math.cos(goal_yaw / 2.0)
 
         self.logger.debug(f"Sending goal pose ... behavior_tree: {behavior_tree}")
         path_navigator = self.navigator_mapfree if local_frame else self.navigator_navigation
@@ -79,8 +152,9 @@ class Nav2Controller:
         self.logger.debug("Waiting for navigation to complete ...")
 
         was_canceled = False
-        initial_distance_to_goal = -1.0  # Initialize with a value that indicates it's not set
+        initial_distance_remaining = -1.0  # Not set until the first valid feedback
         feedback_sent_close_to_goal = False  # Flag to track if feedback has been sent
+        last_progress_log = 0.0
 
         # Modified loop to check for cancellation
         while not navigator.isTaskComplete():
@@ -94,77 +168,36 @@ class Nav2Controller:
             # Get feedback but don't block for too long
             feedback = navigator.getFeedback()
             if feedback:
-                current_pose = feedback.current_pose.pose
-                current_position = current_pose.position
-                goal_position = goal_pose.pose.position
-                current_orientation = current_pose.orientation
+                # Progress comes from Nav2's own distance_remaining (path length
+                # left to travel). feedback.current_pose is in the navigator's
+                # global frame while our goal may be in another frame, so
+                # computing distances between them ourselves would be wrong.
+                distance_remaining = feedback.distance_remaining
 
-                # Compute the distance to the goal
-                current_distance_to_goal = math.sqrt(
-                    (current_position.x - goal_position.x) ** 2 + (current_position.y - goal_position.y) ** 2
-                )
-                # Compute the angle to the goal
-                goal_orientation = math.atan2(
-                    goal_position.y - current_position.y,
-                    goal_position.x - current_position.x,
-                )
+                if initial_distance_remaining < 0.0 and distance_remaining > 0.0:
+                    initial_distance_remaining = distance_remaining
 
-                # Calculate current robot yaw from quaternion
-                # Assuming current_orientation has x, y, z, w attributes
-                q_x = current_orientation.x
-                q_y = current_orientation.y
-                q_z = current_orientation.z
-                q_w = current_orientation.w
-                current_robot_yaw = math.atan2(2.0 * (q_w * q_z + q_x * q_y), 1.0 - 2.0 * (q_y * q_y + q_z * q_z))
-
-                angle_difference = math.atan2(
-                    math.sin(goal_orientation - current_robot_yaw),
-                    math.cos(goal_orientation - current_robot_yaw),
-                )
-
-                # Now we compute 2 percentages:
-                # 1. The percentage of the path that has been completed
-                # 2. The percentage of the angle that has been completed
-                if (
-                    initial_distance_to_goal < 0.0 and current_distance_to_goal > 0
-                ):  # Check if not set and current_distance is valid
-                    initial_distance_to_goal = current_distance_to_goal
-
-                if initial_distance_to_goal > 0:  # Avoid division by zero if goal is already reached or not set
-                    path_completion = (1.0 - (current_distance_to_goal / initial_distance_to_goal)) * 100
+                if initial_distance_remaining > 0.0:
+                    path_completion = max(
+                        0.0, min(100.0, (1.0 - distance_remaining / initial_distance_remaining) * 100.0)
+                    )
                 else:
-                    path_completion = (
-                        100.0 if current_distance_to_goal == 0 else 0.0
-                    )  # If initial distance is 0, and current is 0, it's 100%
+                    path_completion = 0.0
 
-                angle_completion = (1 - abs(angle_difference) / math.pi) * 100
-                average_completion = (path_completion + angle_completion) / 2
+                now = time.monotonic()
+                if now - last_progress_log >= 1.0:
+                    last_progress_log = now
+                    self.logger.info(
+                        f"Navigation progress: {path_completion:.0f}% ({distance_remaining:.2f}m remaining, "
+                        f"{feedback.number_of_recoveries} recoveries)"
+                    )
 
-                # Compute the
-                self.logger.info(
-                    f"Path completed: {path_completion}%. Angle completed: {angle_completion}%. Average completion: {(path_completion + angle_completion) / 2}%"
-                )
-
-                # Here we should basically decide that if we're close enough to the goal, we should send the feedback to the server
-                # It probably is relative to the distance to the goal that was computed by the navigator
-                # Also the angle matters. And it's badly computed right now.
-
-                # If we haven't moved a lot in the past 10 seconds, we should also send that feedback to the server
-                # saying that we're stuck and another primitive should be used to get us unstuck.
-                # Although it's usually the goal of the navigator to get us unstuck...
-                # Let's just say if we're stuck for a while, we need to change the goal.
-
-                # One thing to consider that could be good though is, if we're close enough to the goal,
-                # we can say "I'm close enough to the goal, if I need to navigate again, I should already start doing it now while stopping the current task"
-                # That should really be if we're 95% of the way there, because if what we wanted was a small movement, we don't want to cancel the task.
-
-                if (average_completion > 85 and current_distance_to_goal < 0.5) or current_distance_to_goal < 0.2:
-                    if angle_completion > 90 and not feedback_sent_close_to_goal:
-                        self._send_feedback(
-                            "I'm almost done with this movement, if I think I should navigate again to pursue this task"
-                            ", I should stop the current primitive and start a new navigation movement."
-                        )
-                        feedback_sent_close_to_goal = True  # Set flag to true after sending feedback
+                if 0.0 < distance_remaining < 0.2 and not feedback_sent_close_to_goal:
+                    self._send_feedback(
+                        "I'm almost done with this movement, if I think I should navigate again to pursue this task"
+                        ", I should stop the current primitive and start a new navigation movement."
+                    )
+                    feedback_sent_close_to_goal = True  # Set flag to true after sending feedback
 
             # Small sleep to prevent CPU hogging
             time.sleep(0.1)  # 100ms check interval
