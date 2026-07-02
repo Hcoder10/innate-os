@@ -6,6 +6,8 @@ A skill's execute() can call e.g. self.skills.run("innate-os/wave") to fire off
 another skill and block until it finishes. Any kind of skill works (python,
 learned, replay): under the hood we just call back into the same server paths
 that run a top-level skill, so a chained policy runs exactly as it would alone.
+Most skills don't call run() directly — they import proxies from innate.skills
+and call them like functions; those proxies land here (see innate/skills.py).
 
 The one wrinkle is the UI. Children run on the *parent's* goal, so they have no
 lifecycle of their own to announce. We smuggle each child's start/finish out
@@ -39,18 +41,24 @@ class SkillInvoker:
         # once any child is cancelled the whole routine is, so a plain
         # `for step in steps: self.skills.run(...)` stops cleanly.
         self._cancelled = False
+        # guards cancel() against re-entry: a child's default cancel() delegates
+        # right back to the invoker that is cancelling it.
+        self._cancelling = False
         # whoever is running right now, so cancel() knows who to poke.
         self._active_code_skill = None
         self._active_physical_skill = None
 
     def run(self, skill_id, **inputs):
-        """Run one child skill to completion. Returns (message, SkillResult)."""
+        """Run one child skill to completion. Returns (message, SkillResult).
+
+        Accepts a full catalog id ("innate-os/wave") or a bare name ("wave");
+        bare names try local/ before innate-os/, so a user's skill shadows a
+        shipped one of the same name.
+        """
         if self._cancelled:
             return "Routine cancelled", SkillResult.CANCELLED
 
-        # resolve the id: python skill first, then learned/replay
-        code = self._server.catalog.get_code_skill(skill_id)
-        physical = None if code else self._server.catalog.get_physical_skill(skill_id)
+        skill_id, code, physical = self._resolve(skill_id)
         if code is None and physical is None:
             self._logger.error(f"[invoker] unknown skill '{skill_id}'")
             return f"Unknown skill '{skill_id}'", SkillResult.FAILURE
@@ -85,14 +93,36 @@ class SkillInvoker:
     def cancel(self):
         """Stop the child running right now. Call from the parent skill's cancel()."""
         self._cancelled = True
-        if self._active_code_skill is not None:
-            try:
-                self._active_code_skill.cancel()
-            except Exception as e:
-                self._logger.error(f"[invoker] error cancelling child: {e}")
-        if self._active_physical_skill is not None:
-            self._server._request_behavior_goal_cancel(self._goal_handle, self._active_physical_skill)
-        return "Routine cancelled"
+        if self._cancelling:
+            return "Routine cancelled"  # re-entered from the child we're cancelling
+        self._cancelling = True
+        try:
+            if self._active_code_skill is not None:
+                try:
+                    self._active_code_skill.cancel()
+                except Exception as e:
+                    self._logger.error(f"[invoker] error cancelling child: {e}")
+            if self._active_physical_skill is not None:
+                self._server._request_behavior_goal_cancel(self._goal_handle, self._active_physical_skill)
+            return "Routine cancelled"
+        finally:
+            self._cancelling = False
+
+    def _resolve(self, skill_id):
+        """Look skill_id up in the catalog: code skill first, then learned/replay.
+
+        Returns (resolved_id, code_entry, physical_entry) with at most one entry
+        set, or (skill_id, None, None) if nothing matches.
+        """
+        candidates = [skill_id] if "/" in skill_id else [f"local/{skill_id}", f"innate-os/{skill_id}"]
+        for candidate in candidates:
+            code = self._server.catalog.get_code_skill(candidate)
+            if code is not None:
+                return candidate, code, None
+            physical = self._server.catalog.get_physical_skill(candidate)
+            if physical is not None:
+                return candidate, None, physical
+        return skill_id, None, None
 
     # The two run paths just delegate to the server (reusing the top-level
     # execution code) and remember who's live so cancel() can reach them.

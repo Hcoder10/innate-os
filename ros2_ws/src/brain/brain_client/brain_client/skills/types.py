@@ -5,8 +5,13 @@ from enum import Enum
 from typing import Any
 
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from brain_client.common.logging import UniversalLogger
+
+# brain_client_node subscribes here and plays the text through the robot's
+# voice (Cartesia TTS); see transport/tts.py.
+TTS_TOPIC = "/brain/tts"
 
 
 class SkillResult(Enum):
@@ -114,13 +119,16 @@ class Skill(ABC):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
-        # Lets this skill run other skills, in order, from inside execute():
-        #   self.skills.run("innate-os/navigate_to_position", x=1.0, y=0.0, theta=0.0)
+        # Lets this skill run other skills, in order, from inside execute().
+        # The friendly form is function proxies (see innate/skills.py):
+        #   from innate.skills import navigate_to_position
+        #   navigate_to_position(x=1.0, y=0.0, theta=0.0)
+        # The explicit form, for dynamic ids, is:
         #   self.skills.run("local/my_grasp_policy")   # learned/replay too
         # Each child runs to completion before the next and shows up as its own
-        # step in the app. A chaining skill's cancel() should call
-        # self.skills.cancel(). The skills server injects this before execute().
+        # step in the app. The skills server injects this before execute().
         self.skills = None
+        self._say_publisher = None  # lazy, see say()
 
     @property
     @abstractmethod
@@ -142,20 +150,36 @@ class Skill(ABC):
         """
         pass
 
-    @abstractmethod
     def cancel(self):
         """
         Cancel the execution of the skill.
 
-        Subclasses must implement this method to properly handle cancellation.
         This method should be safe to call at any time, even if the skill
-        is not currently executing.
+        is not currently executing. Returns a message describing the
+        cancellation result.
 
-        Returns a message describing the cancellation result.
+        The default stops whatever child skill is currently running via
+        self.skills, which is all a skill that only chains others needs.
+        Override it to stop work of your own (motion, loops, timers) — and if
+        you also chain children, call self.skills.cancel() too.
         """
-        pass
+        if self.skills is not None:
+            return self.skills.cancel()
+        return "Nothing to cancel"
 
-    def update_robot_state(self, **kwargs):
+    def say(self, text: str) -> None:
+        """
+        Speak text through the robot's voice (fire-and-forget).
+
+        Playback happens on the robot's speaker via TTS; this returns
+        immediately and never blocks the skill. If speech isn't available
+        (no audio node running, or in tests without a ROS node), it's a no-op.
+        """
+        if not text or self.node is None:
+            return
+        if self._say_publisher is None:
+            self._say_publisher = self.node.create_publisher(String, TTS_TOPIC, 10)
+        self._say_publisher.publish(String(data=text))
         """
         Update the skill with the latest robot state.
         Automatically populates RobotState descriptors defined on the class.

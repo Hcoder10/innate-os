@@ -155,6 +155,27 @@ def test_cancel_short_circuits_further_runs():
     assert feedbacks == []  # short-circuited before running anything
 
 
+def test_bare_name_resolves_local_before_shipped():
+    local = _CodeSkill("wave", ("local wave", SkillResult.SUCCESS))
+    shipped = _CodeSkill("wave", ("shipped wave", SkillResult.SUCCESS))
+    server = _Server(_Catalog(code={"local/wave": ("wave", local), "innate-os/wave": ("wave", shipped)}))
+    invoker = SkillInvoker(server, object(), lambda *_: None)
+
+    message, status = invoker.run("wave")
+
+    assert (message, status) == ("local wave", SkillResult.SUCCESS)
+
+
+def test_bare_name_falls_back_to_shipped():
+    shipped = _CodeSkill("wave", ("shipped wave", SkillResult.SUCCESS))
+    server = _Server(_Catalog(code={"innate-os/wave": ("wave", shipped)}))
+    invoker = SkillInvoker(server, object(), lambda *_: None)
+
+    message, _status = invoker.run("wave")
+
+    assert message == "shipped wave"
+
+
 def test_cancelled_child_marks_routine_cancelled():
     skill = _CodeSkill("nav", ("stopped", SkillResult.CANCELLED))
     server = _Server(_Catalog(code={"innate-os/nav": ("nav", skill)}))

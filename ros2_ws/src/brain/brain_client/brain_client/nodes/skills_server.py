@@ -37,6 +37,7 @@ from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.robot_state import RobotStateProvider
 from brain_client.skills.types import RobotStateType, SkillResult
+from innate.skills import SkillCancelled, SkillFailed, use_invoker
 
 
 class SkillsActionServer(Node):
@@ -361,7 +362,16 @@ class SkillsActionServer(Node):
             if required_states:
                 self.robot_state.begin_continuous_updates(skill)
                 self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
-            return skill.execute(**inputs)
+            # Proxies imported from innate.skills route to this skill's invoker
+            # while execute() runs; a SkillFailed/SkillCancelled escaping it is
+            # the raise-style spelling of a (message, status) return.
+            with use_invoker(skill.skills):
+                try:
+                    return skill.execute(**inputs)
+                except SkillCancelled as e:
+                    return str(e) or "Skill cancelled", SkillResult.CANCELLED
+                except SkillFailed as e:
+                    return str(e) or "Skill failed", SkillResult.FAILURE
         finally:
             self.robot_state.end_continuous_updates()
             if needs_camera:
