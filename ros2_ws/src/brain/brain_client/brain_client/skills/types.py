@@ -193,6 +193,17 @@ class Skill(ABC):
             if state_key in kwargs:
                 setattr(self, name, kwargs[state_key])
 
+    def clear_robot_state(self):
+        """
+        Reset all RobotState descriptors to None.
+
+        Skill instances are singletons, so values injected during a previous
+        run would otherwise linger and read as fresh sensor data on the next
+        one. The skills server calls this before each run.
+        """
+        for name in self._get_robot_state_descriptors():
+            setattr(self, name, None)
+
     def get_required_robot_states(self) -> list[RobotStateType]:
         """
         Declare the robot states required by this skill.

@@ -8,10 +8,11 @@ import importlib.util
 import logging
 import math
 import threading
+from pathlib import Path
 
 from brain_client.skills.types import InterfaceType, SkillResult
 
-_SKILL_FILE = "/home/jetson1/innate-os/workspace/innate_skills/move_straight.py"
+_SKILL_FILE = str(Path(__file__).resolve().parents[5] / "workspace" / "innate_skills" / "move_straight.py")
 
 
 def _load_skill():
@@ -75,6 +76,31 @@ def test_cancel_stops_the_base():
 
     assert status is SkillResult.CANCELLED
     assert mobility.cmds[-1][0] == 0.0
+
+
+def test_cancel_before_execute_is_honored():
+    # a Stop that lands while the server is still setting up the goal must
+    # not be erased by execute() resetting the flag
+    skill, mobility = _rig()
+    skill.cancel()
+
+    _message, status = skill.execute(distance=0.5)
+
+    assert status is SkillResult.CANCELLED
+    assert [c for c in mobility.cmds if c[0] != 0.0] == []  # never moved
+
+
+def test_waits_for_late_odometry():
+    # the odom subscription is per-goal, so the first message can land after
+    # execute() starts; a brief wait must replace the old instant failure
+    skill, mobility = _rig()
+    skill.odom = None
+    threading.Timer(0.2, lambda: setattr(skill, "odom", _odom(0.0))).start()
+    threading.Timer(0.5, lambda: setattr(skill, "odom", _odom(0.21))).start()
+
+    message, status = skill.execute(distance=0.2)
+
+    assert status is SkillResult.SUCCESS, message
 
 
 def test_no_odometry_fails_cleanly():

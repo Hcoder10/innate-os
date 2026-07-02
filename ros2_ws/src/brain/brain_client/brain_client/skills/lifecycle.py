@@ -19,7 +19,10 @@ PRIMITIVE_LIFECYCLE_MESSAGE_TYPES = {
 # lifecycle of their own. We smuggle each child's start/finish out through the
 # parent's feedback stream tagged with this sentinel; the runner pulls it back
 # apart into a real per-step status (see PrimitiveRunner._on_feedback).
-SUBSTEP_FEEDBACK_SENTINEL = "\x00substep\x00"
+# ASCII Record Separator: never appears in real feedback text. Must not
+# contain NUL (\x00) — rclpy's C typesupport copies strings with strlen, so a
+# NUL-prefixed feedback string arrives at subscribers truncated to "".
+SUBSTEP_FEEDBACK_SENTINEL = "\x1esubstep\x1e"
 
 
 def encode_substep_feedback(

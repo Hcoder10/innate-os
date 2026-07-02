@@ -130,20 +130,25 @@ class SkillInvoker:
     def _run_code(self, skill, skill_id, inputs):
         skill.set_feedback_callback(self._publish_feedback)
         skill.skills = self  # a child can chain too; _cancelled flows through
+        # Save/restore rather than clear: in a nested chain A→B→C the slot must
+        # hand back to B when C ends, or cancel() can no longer reach B while it
+        # finishes its own work.
+        prev = self._active_code_skill
         self._active_code_skill = skill
         try:
             return self._server._run_code_skill_body(skill, skill_id, inputs)
         finally:
-            self._active_code_skill = None
+            self._active_code_skill = prev
 
     def _run_physical(self, skill_id, physical):
+        prev = self._active_physical_skill
         self._active_physical_skill = skill_id
         try:
             success, message, success_type, _finalize = self._server._run_physical_skill(
                 self._goal_handle, skill_id, physical
             )
         finally:
-            self._active_physical_skill = None
+            self._active_physical_skill = prev
         return message, SkillResult(success_type)
 
     def _step(self, step_id, name, skill_id, event, reason=None, output=None):

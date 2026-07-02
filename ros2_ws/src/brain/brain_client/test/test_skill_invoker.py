@@ -10,7 +10,11 @@ the skills server, so no ROS runtime is needed beyond importing the modules.
 """
 
 from brain_client.skills.invoker import SkillInvoker
-from brain_client.skills.lifecycle import decode_substep_feedback, encode_substep_feedback
+from brain_client.skills.lifecycle import (
+    SUBSTEP_FEEDBACK_SENTINEL,
+    decode_substep_feedback,
+    encode_substep_feedback,
+)
 from brain_client.skills.types import SkillResult
 
 
@@ -75,6 +79,14 @@ class _CodeSkill:
 
 def _events(feedbacks):
     return [decode_substep_feedback(f)["event"] for f in feedbacks]
+
+
+def test_sentinel_survives_rclpy_string_conversion():
+    # rclpy's C typesupport copies strings with strlen: a NUL byte anywhere in
+    # the sentinel would truncate every substep marker to "" on the wire, and
+    # no per-step status would ever reach the app (pure-Python tests can't see
+    # this, so pin the constraint here).
+    assert "\x00" not in SUBSTEP_FEEDBACK_SENTINEL
 
 
 def test_lifecycle_marker_roundtrip():
@@ -174,6 +186,25 @@ def test_bare_name_falls_back_to_shipped():
     message, _status = invoker.run("wave")
 
     assert message == "shipped wave"
+
+
+def test_cancel_reaches_parent_after_nested_child_completes():
+    """A→B→C: once C finishes, the active slot must hand back to B (restored,
+    not cleared), or a Stop during B's remaining work cancels nothing."""
+    inner = _CodeSkill("inner", ("ok", SkillResult.SUCCESS))
+    outer = _CodeSkill("outer", ("ok", SkillResult.SUCCESS))
+    server = _Server(_Catalog(code={"local/inner": ("inner", inner), "local/outer": ("outer", outer)}))
+    invoker = SkillInvoker(server, object(), lambda *_: None)
+
+    def outer_execute(**inputs):
+        invoker.run("local/inner")  # nested chain through the same invoker
+        invoker.cancel()  # a Stop arriving while outer is still mid-execute
+        return "ok", SkillResult.SUCCESS
+
+    outer.execute = outer_execute
+    invoker.run("local/outer")
+
+    assert outer.cancelled  # cancel() reached the mid-execute parent
 
 
 def test_cancelled_child_marks_routine_cancelled():

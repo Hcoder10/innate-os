@@ -271,7 +271,19 @@ class TTSHandler:
 
     def close(self):
         """Clean up resources."""
-        self._speech_queue.put(None)  # stop the speech worker
+        # Stop the speech worker without blocking shutdown: drop any queued
+        # backlog (we're closing, nothing should keep talking), then hand the
+        # worker its sentinel. A blocking put() would hang forever if the
+        # bounded queue is full while the worker is stuck in a slow request.
+        try:
+            while True:
+                self._speech_queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self._speech_queue.put_nowait(None)
+        except queue.Full:
+            pass
         if self._cartesia_client:
             self.logger.info("🔇 TTS handler closed")
             # Cartesia client doesn't need explicit cleanup in sync mode

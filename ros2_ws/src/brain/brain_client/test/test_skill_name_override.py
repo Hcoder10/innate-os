@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """Unit tests for display-name dedup in the published skills list: a user
-(local/) skill overrides a shipped (innate-os/) one of the same name — matching
-the bare-name precedence in SkillInvoker._resolve — while same-source
+(local/) skill claims the plain name — matching the bare-name precedence in
+SkillInvoker._resolve — while the shipped (innate-os/) skill stays published
+under a qualified name (cloud registration filters directive skill ids against
+this list, so dropping it would unregister full-id references). Same-source
 duplicates keep the first and skip the rest."""
 
 from brain_messages.msg import SkillInfo
@@ -35,13 +37,20 @@ def _dedupe(entries):
     return [(s.id, s.name) for s in result]
 
 
-def test_user_skill_overrides_shipped_of_same_name():
-    # shipped loads first (scan order), user later -- user must win
-    assert _dedupe([("innate-os/wave", "wave"), ("local/wave", "wave")]) == [("local/wave", "wave")]
+def test_user_skill_takes_plain_name_shipped_gets_qualified():
+    # shipped loads first (scan order), user later -- user claims the plain
+    # name; the shipped skill stays published so full-id references register
+    assert _dedupe([("innate-os/wave", "wave"), ("local/wave", "wave")]) == [
+        ("innate-os/wave", "wave (innate-os)"),
+        ("local/wave", "wave"),
+    ]
 
 
 def test_override_holds_regardless_of_order():
-    assert _dedupe([("local/wave", "wave"), ("innate-os/wave", "wave")]) == [("local/wave", "wave")]
+    assert _dedupe([("local/wave", "wave"), ("innate-os/wave", "wave")]) == [
+        ("local/wave", "wave"),
+        ("innate-os/wave", "wave (innate-os)"),
+    ]
 
 
 def test_same_source_duplicates_keep_first():
@@ -53,9 +62,10 @@ def test_distinct_names_pass_through_in_order():
     assert _dedupe(entries) == entries
 
 
-def test_override_keeps_list_position():
-    # the overriding user skill takes the shipped skill's slot, not the end
+def test_override_keeps_list_positions():
+    # both skills keep their scan-order slots; only the names change
     assert _dedupe([("innate-os/wave", "wave"), ("innate-os/nav", "nav"), ("local/wave", "wave")]) == [
-        ("local/wave", "wave"),
+        ("innate-os/wave", "wave (innate-os)"),
         ("innate-os/nav", "nav"),
+        ("local/wave", "wave"),
     ]
