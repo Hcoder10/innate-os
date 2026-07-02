@@ -10,12 +10,15 @@ from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, 
 MIN_SPEED = 0.2
 MAX_SPEED = 1.0
 DEFAULT_SPEED = 0.5
+# The odom subscription is (re)created per goal, so the first message can land
+# shortly after execute() starts; wait this long before giving up.
+ODOM_WAIT_SEC = 2.0
 
 
 class TurnInPlace(Skill):
     """Turn in place by an angle, using odometry only -- no Nav2, no map.
 
-    The cmd_vel twin of drive_straight: publishes raw angular velocity and
+    The cmd_vel twin of move_straight: publishes raw angular velocity and
     closes the loop on odometry yaw, so it works even when navigation is down
     and never fails on planning. Positive angle turns left (counter-clockwise,
     ROS convention), negative turns right.
@@ -40,20 +43,32 @@ class TurnInPlace(Skill):
         )
 
     def execute(self, angle_degrees: float, speed: float = DEFAULT_SPEED):
+        try:
+            return self._execute(angle_degrees, speed)
+        finally:
+            # Reset on the way out, not on entry: an entry reset would erase a
+            # cancel delivered while the server was still setting up the goal.
+            self._cancelled = False
+
+    def _execute(self, angle_degrees: float, speed: float):
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
         if angle_degrees == 0.0:
             return "Turned 0 degrees", SkillResult.SUCCESS
-        yaw = self._yaw()
+        yaw = self._wait_for_yaw()
+        if self._cancelled:
+            return "Turn cancelled", SkillResult.CANCELLED
         if yaw is None:
             return "No odometry available", SkillResult.FAILURE
 
-        self._cancelled = False
         target = abs(angle_degrees)
+        sign = 1.0 if angle_degrees > 0 else -1.0
         velocity = math.copysign(min(max(abs(speed), MIN_SPEED), MAX_SPEED), angle_degrees)
         deadline = time.time() + math.radians(target) / abs(velocity) * 3.0 + 2.0
 
-        # accumulate wrapped yaw deltas so multi-turn and the ±180° seam work
+        # accumulate wrapped yaw deltas so multi-turn and the ±180° seam work;
+        # signed so motion against the commanded direction (a bump, overshoot
+        # swing-back) subtracts instead of counting as progress.
         turned = 0.0
         last_yaw = yaw
         while turned < target:
@@ -69,7 +84,7 @@ class TurnInPlace(Skill):
             yaw = self._yaw()
             if yaw is not None:
                 delta = (yaw - last_yaw + 180.0) % 360.0 - 180.0
-                turned += abs(delta)
+                turned += delta * sign
                 last_yaw = yaw
 
         self._stop()
@@ -87,6 +102,15 @@ class TurnInPlace(Skill):
             return float(self.odom["theta_degrees"])
         except (TypeError, KeyError):
             return None
+
+    def _wait_for_yaw(self):
+        """Heading once odometry arrives, or None after ODOM_WAIT_SEC."""
+        deadline = time.time() + ODOM_WAIT_SEC
+        while True:
+            yaw = self._yaw()
+            if yaw is not None or self._cancelled or time.time() > deadline:
+                return yaw
+            time.sleep(0.02)
 
     def _stop(self):
         if self.mobility is not None:

@@ -10,6 +10,9 @@ from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, 
 MIN_SPEED = 0.05
 MAX_SPEED = 0.3
 DEFAULT_SPEED = 0.15
+# The odom subscription is (re)created per goal, so the first message can land
+# shortly after execute() starts; wait this long before giving up.
+ODOM_WAIT_SEC = 2.0
 
 
 class MoveStraight(Skill):
@@ -41,15 +44,24 @@ class MoveStraight(Skill):
         )
 
     def execute(self, distance: float, speed: float = DEFAULT_SPEED):
+        try:
+            return self._execute(distance, speed)
+        finally:
+            # Reset on the way out, not on entry: an entry reset would erase a
+            # cancel delivered while the server was still setting up the goal.
+            self._cancelled = False
+
+    def _execute(self, distance: float, speed: float):
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
         if distance == 0.0:
             return "Moved 0.0m", SkillResult.SUCCESS
-        start = self._position()
+        start = self._wait_for_position()
+        if self._cancelled:
+            return "Move cancelled", SkillResult.CANCELLED
         if start is None:
             return "No odometry available", SkillResult.FAILURE
 
-        self._cancelled = False
         target = abs(distance)
         velocity = math.copysign(min(max(abs(speed), MIN_SPEED), MAX_SPEED), distance)
         # generous time budget; if we're stuck (blocked wheels, lifted robot)
@@ -87,6 +99,15 @@ class MoveStraight(Skill):
             return (p["x"], p["y"])
         except (TypeError, KeyError):
             return None
+
+    def _wait_for_position(self):
+        """(x, y) once odometry arrives, or None after ODOM_WAIT_SEC."""
+        deadline = time.time() + ODOM_WAIT_SEC
+        while True:
+            position = self._position()
+            if position is not None or self._cancelled or time.time() > deadline:
+                return position
+            time.sleep(0.02)
 
     def _stop(self):
         if self.mobility is not None:

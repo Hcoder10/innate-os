@@ -358,6 +358,10 @@ class SkillsActionServer(Node):
         try:
             if needs_camera:
                 self._camera_node.start()
+            # Singleton instances keep state injected during previous runs;
+            # drop it so a skill never mistakes a stale value for fresh data
+            # (e.g. an odometry baseline from before the robot was moved).
+            skill.clear_robot_state()
             self.robot_state.update_skill_robot_state(skill)
             if required_states:
                 self.robot_state.begin_continuous_updates(skill)

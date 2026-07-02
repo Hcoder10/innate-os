@@ -17,7 +17,7 @@ from innate.skills import SkillCancelled, SkillFailed, use_invoker
 from test_skill_invoker import _Catalog, _CodeSkill, _Server
 
 from brain_client.skills.invoker import SkillInvoker
-from brain_client.skills.types import Skill, SkillResult
+from brain_client.skills.types import RobotState, RobotStateType, Skill, SkillResult
 
 
 class _FakeInvoker:
@@ -94,6 +94,26 @@ def test_default_cancel_delegates_to_invoker():
     skill.skills = _FakeInvoker()
     assert skill.cancel() == "Routine cancelled"
     assert skill.skills.cancelled
+
+
+def test_clear_robot_state_resets_descriptors():
+    """Skill instances are singletons: the server clears injected state before
+    each run so a previous run's odom can't read as a fresh baseline."""
+
+    class OdomSkill(Skill):
+        odom = RobotState(RobotStateType.LAST_ODOM)
+
+        @property
+        def name(self):
+            return "odom_skill"
+
+        def execute(self):
+            return "ok", SkillResult.SUCCESS
+
+    skill = OdomSkill(logging.getLogger("test"))
+    skill.odom = {"theta_degrees": 42.0}
+    skill.clear_robot_state()
+    assert skill.odom is None
 
 
 def test_say_publishes_to_tts_topic_and_is_safe_without_node():

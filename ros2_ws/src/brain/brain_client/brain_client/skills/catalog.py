@@ -677,35 +677,48 @@ class SkillRepository:
     def _dedupe_display_names(self, skills: list[SkillInfo]) -> list[SkillInfo]:
         """Enforce unique display names (the LLM can't disambiguate duplicates).
 
-        A user skill (local/) overrides a shipped one (innate-os/) of the same
-        name — the same precedence bare-name chaining uses (see
-        SkillInvoker._resolve), so the cloud agent and innate.skills imports
-        agree on which skill a name means. The shipped skill stays runnable by
-        its full id. Duplicates within the same source are a mistake: the first
-        wins and the rest are skipped.
+        A user skill (local/) claims the plain name — the same precedence
+        bare-name chaining uses (see SkillInvoker._resolve), so the cloud agent
+        and innate.skills imports agree on which skill a name means. The
+        shipped (innate-os/) skill stays in the published list under a
+        qualified name: registration filters directive skill ids against this
+        list, so dropping it would silently unregister directives that
+        reference the shipped skill by full id. Duplicates within the same
+        source are a mistake: the first wins and the rest are skipped.
         """
+        deduped: list[SkillInfo] = []
         by_name: dict[str, SkillInfo] = {}
-        order: list[str] = []
         for skill in skills:
             existing = by_name.get(skill.name)
-            is_user, existing_is_user = (
-                skill.id.startswith("local/"),
-                (existing is not None and existing.id.startswith("local/")),
-            )
             if existing is None:
                 by_name[skill.name] = skill
-                order.append(skill.name)
-            elif is_user and not existing_is_user:
-                self._logger.warning(f"Skill '{skill.name}': user skill {skill.id} overrides shipped {existing.id}")
-                by_name[skill.name] = skill
-            elif existing_is_user and not is_user:
-                self._logger.warning(f"Skill '{skill.name}': user skill {existing.id} overrides shipped {skill.id}")
-            else:
+                deduped.append(skill)
+                continue
+            if skill.id.startswith("local/") == existing.id.startswith("local/"):
                 self._logger.error(
                     f"DUPLICATE skill name '{skill.name}' between {existing.id} and {skill.id}. "
                     f"Skipping '{skill.id}' — rename the skill to fix this."
                 )
-        return [by_name[name] for name in order]
+                continue
+            user, shipped = (skill, existing) if skill.id.startswith("local/") else (existing, skill)
+            qualified = f"{user.name} (innate-os)"
+            if qualified in by_name:  # a second shipped skill with the same name
+                self._logger.error(
+                    f"DUPLICATE skill name '{qualified}' between {by_name[qualified].id} and {shipped.id}. "
+                    f"Skipping '{shipped.id}' — rename the skill to fix this."
+                )
+                continue
+            self._logger.warning(
+                f"Skill '{user.name}': user skill {user.id} overrides shipped {shipped.id}; "
+                f"publishing the shipped skill as '{qualified}'"
+            )
+            shipped.name = qualified
+            by_name[user.name] = user
+            by_name[shipped.name] = shipped
+            # whichever of the two was seen first is already in deduped
+            # (the shipped one renamed in place); append the newcomer.
+            deduped.append(skill)
+        return deduped
 
     def _build_skill_info(
         self,

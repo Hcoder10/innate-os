@@ -6,10 +6,11 @@ Yaw updates are simulated from a background thread while execute() runs."""
 import importlib.util
 import logging
 import threading
+from pathlib import Path
 
 from brain_client.skills.types import InterfaceType, SkillResult
 
-_SKILL_FILE = "/home/jetson1/innate-os/workspace/innate_skills/turn_in_place.py"
+_SKILL_FILE = str(Path(__file__).resolve().parents[5] / "workspace" / "innate_skills" / "turn_in_place.py")
 
 
 def _load_skill():
@@ -83,6 +84,21 @@ def test_cancel_stops_the_base():
 
     assert status is SkillResult.CANCELLED
     assert mobility.cmds[-1][0] == 0.0
+
+
+def test_bump_against_turn_direction_does_not_count_as_progress():
+    # commanded +90 (left); a bump first swings the robot -45 (right). Net
+    # rotation must reach the target — opposite motion can't inflate the count
+    # (unsigned accumulation would report 45+91=136 degrees after the swing-back).
+    skill, mobility = _rig(start_yaw=0.0)
+    threading.Timer(0.15, lambda: setattr(skill, "odom", {"theta_degrees": -45.0})).start()
+    threading.Timer(0.30, lambda: setattr(skill, "odom", {"theta_degrees": 46.0})).start()
+    threading.Timer(0.45, lambda: setattr(skill, "odom", {"theta_degrees": 100.0})).start()
+
+    message, status = skill.execute(angle_degrees=90.0)
+
+    assert status is SkillResult.SUCCESS, message
+    assert "100 degrees" in message
 
 
 def test_no_odometry_fails_cleanly():
