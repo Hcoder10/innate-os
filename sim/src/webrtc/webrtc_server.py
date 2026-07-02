@@ -33,6 +33,14 @@ from .camera_track import CameraTrack
 # present in the SDP (sendonly); the frontend derives the camera set from it.
 CAMERAS = ["first_person", "arm_wrist", "chase"]
 
+# Reaper thresholds (see WebRTCManager.reap_stale). CONNECT_TIMEOUT_S must
+# comfortably exceed a worst-case handshake (peer build ~5s of ICE gathering +
+# the browser's 12s offer watchdog); DISCONNECT_GRACE_S mirrors "disconnected
+# is transient" — only a peer that never recovers gets released.
+CONNECT_TIMEOUT_S = 30.0
+DISCONNECT_GRACE_S = 30.0
+REAP_INTERVAL_S = 5.0
+
 
 def _parse_ice(payload: dict) -> RTCIceCandidate | None:
     candidate_str = (payload or {}).get("candidate") or ""
@@ -57,6 +65,12 @@ class _Peer:
     def __init__(self, pc: RTCPeerConnection, tracks: dict[str, CameraTrack]):
         self.pc = pc
         self.tracks = tracks
+        # Reaper bookkeeping (see WebRTCManager.reap_stale): abandoned handshakes
+        # and silently-vanished browsers never reach "failed"/"closed" on their
+        # own, so without a reaper they leak the pc + tracks forever.
+        self.created_at = time.monotonic()
+        self.connected_once = False
+        self.disconnected_since: float | None = None
 
     def apply_active(self, cameras: list[str]) -> None:
         wanted = set(cameras or [])
@@ -82,10 +96,21 @@ class WebRTCManager:
         """(Re)build this client's connection + offer, or — for a no-reneg START —
         just retarget which cameras it encodes. Returns the offer SDP, or None when
         no new offer is needed (a no-reneg active-set change)."""
-        # `video` is the active (encoded) set the browser wants; fall back to the
-        # first camera so something shows before the UI learns the real roster.
-        requested = payload.get("video") or []
-        active = [c for c in requested if c in CAMERAS] or CAMERAS[:1]
+        # An explicitly-empty `video` set (and the sim has no audio) is the
+        # client RELEASING its peer — e.g. the teleop stage switching to
+        # map-only. Mirror the robot's "no streams -> destroy peer" instead of
+        # falling through to a default camera, which would keep encoding VP8 to
+        # a pc the browser already closed.
+        requested = payload.get("video")
+        if isinstance(requested, list) and not requested and not payload.get("audio"):
+            await self._close_peer(client_id)
+            return None
+
+        # `video` is the active (encoded) set the browser wants. A START without
+        # a video list falls back to the first camera so something shows before
+        # the UI learns the real roster; unknown-only names do too, rather than
+        # killing a live feed over a typo.
+        active = [c for c in (requested or []) if c in CAMERAS] or CAMERAS[:1]
 
         peer = self._peers.get(client_id)
         # No-reneg START: this client is just switching which cameras we push on its
@@ -126,9 +151,13 @@ class WebRTCManager:
 
         @pc.on("connectionstatechange")
         async def _on_state():
+            if pc.connectionState == "connected":
+                peer.connected_once = True
+                peer.disconnected_since = None
             # Tear down only THIS client's pc on a terminal state. Guard against a
             # stale handler: a rebuild replaces the peer, and the old pc's late state
-            # change must not evict the new one. "disconnected" is transient.
+            # change must not evict the new one. "disconnected" is transient (the
+            # reaper handles one that never recovers).
             if self._peers.get(client_id) is peer and pc.connectionState in ("failed", "closed"):
                 await self._close_peer(client_id)
 
@@ -157,6 +186,33 @@ class WebRTCManager:
         candidate = _parse_ice(payload)
         if candidate is not None:
             await peer.pc.addIceCandidate(candidate)
+
+    async def reap_stale(self) -> None:
+        """Release peers that will never stream again but never reach a terminal
+        connectionState on their own (mirrors mars_cam's connect-timeout/health
+        polls): a handshake abandoned mid-build (tab closed, page reloaded — every
+        reload is a fresh client_id) sits in "new"/"connecting" forever, and a
+        vanished browser can idle in "disconnected" indefinitely. Each such peer
+        holds an RTCPeerConnection, ICE sockets, and CameraTracks eligible for
+        VP8 encoding — under reload churn that's unbounded CPU + memory.
+        """
+        now = time.monotonic()
+        for client_id, peer in list(self._peers.items()):
+            state = peer.pc.connectionState
+            if state == "connected":
+                peer.connected_once = True
+                peer.disconnected_since = None
+                continue
+            if not peer.connected_once:
+                if now - peer.created_at > CONNECT_TIMEOUT_S:
+                    print(f"[WebRTC] reaping peer {client_id[:8]}: never connected within {CONNECT_TIMEOUT_S:.0f}s")
+                    await self._close_peer(client_id)
+                continue
+            if peer.disconnected_since is None:
+                peer.disconnected_since = now
+            elif now - peer.disconnected_since > DISCONNECT_GRACE_S:
+                print(f"[WebRTC] reaping peer {client_id[:8]}: '{state}' for {DISCONNECT_GRACE_S:.0f}s")
+                await self._close_peer(client_id)
 
     def encode_counts(self) -> dict[str, int]:
         # Per-camera frames encoded, summed across peers (diagnostics).
@@ -294,7 +350,11 @@ async def _main(shared_queues) -> None:
     loop = asyncio.get_running_loop()
     stun_transport = await _start_stun_server(loop)
     print("[WebRTC] server started (3 cameras, lazy VP8 encoding)")
+    last_reap = time.monotonic()
     while not shared_queues.exit_event.is_set():
+        if time.monotonic() - last_reap >= REAP_INTERVAL_S:
+            last_reap = time.monotonic()
+            await manager.reap_stale()
         try:
             # Blocking get on a worker thread — no busy-poll. The timeout bounds
             # how long we wait before re-checking exit_event.
@@ -328,16 +388,20 @@ async def _main(shared_queues) -> None:
 
 
 def _coalesce(items: list[dict]) -> list[dict]:
-    """Drop signaling that a later START from the same client supersedes.
+    """Drop signaling that a later RENEGOTIATE START from the same client
+    supersedes.
 
-    A START (with renegotiate) replaces that client's peer, so any earlier
+    A renegotiate START replaces that client's peer, so any earlier
     start/answer/ice from the same client belongs to a session that is about to
     die — building it wastes seconds, and applying its answer poisons the new
-    peer. Other clients' items and relative order are preserved.
+    peer. A no-reneg START (camera toggle / release) KEEPS the peer, so it
+    supersedes nothing: an answer queued just before it is still needed by the
+    live handshake and must not be dropped. Other clients' items and relative
+    order are preserved.
     """
     latest_start: dict[str, int] = {}
     for index, item in enumerate(items):
-        if item.get("kind") == "start":
+        if item.get("kind") == "start" and (item.get("payload") or {}).get("renegotiate"):
             latest_start[item.get("client_id", "")] = index
     kept = []
     for index, item in enumerate(items):

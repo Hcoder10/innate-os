@@ -317,6 +317,11 @@ class SkillsActionServer(Node):
                     skill_type=skill_type,
                     success_type=SkillResult.FAILURE.value,
                 )
+        except Exception as e:
+            # A 'running' broadcast went out above — a terminal status MUST
+            # follow or every client shows this skill as active forever.
+            self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error")
+            raise
         finally:
             with self._skill_execution_lock:
                 self._skill_running = False

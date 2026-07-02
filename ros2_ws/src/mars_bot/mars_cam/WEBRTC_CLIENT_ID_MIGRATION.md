@@ -41,8 +41,12 @@ All messages are `std_msgs/String` whose `data` is a JSON string.
      **encodes/sends** the ones you list. Omit `video` to get all of them.
    - `audio: true` opts into the robot mic (per-peer; may fall back to video-only if the
      mic is already in use by another peer).
-   - Re-send START to **(re)connect** or to **switch which cameras are active** — see
-     "Stream switching" below.
+   - To **(re)connect** — including after a dropped connection — re-send START **with
+     `renegotiate: true`**: it forces a fresh peer + offer for your `client_id`. Without
+     it, an existing (possibly dead, not-yet-reaped) peer for your id just has its active
+     set flipped and **no offer is sent**, so a new `RTCPeerConnection` would wait forever.
+   - Re-send START *without* `renegotiate` only on a **live** peer, to **switch which
+     cameras are active** — see "Stream switching" below.
 
 3. **Subscribe `/webrtc/offer_id`**, parse `data` as JSON, **ignore it unless
    `client_id` matches yours**, then `setRemoteDescription(offer)`:

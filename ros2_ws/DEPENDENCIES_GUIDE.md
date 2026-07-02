@@ -9,7 +9,7 @@ installed on top of it.
 ### `apt-dependencies.common.txt`
 Packages required by **both simulation and hardware modes**, plus the build/test
 tooling CI relies on (colcon, vcstool, rosdep, pip). Includes core ROS2 packages,
-GStreamer, the shared message/transform/nav subset, and `nodejs`.
+GStreamer, and the shared message/transform/nav subset.
 
 ### `apt-dependencies.sim.txt`
 **Simulation-only** overlay. C++ libs and the trimmed navigation sub-packages the

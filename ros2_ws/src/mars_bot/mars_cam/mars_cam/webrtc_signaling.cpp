@@ -453,12 +453,14 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
     // On connect, force a keyframe on every encoder so this peer (which may be joining a stream that's
     // already running for others) gets a decodable IDR immediately. Teardown is handled by the health
     // poll on the executor thread (set-state from here would deadlock the pipeline).
-    if (cid) {
-        std::lock_guard<std::mutex> lock(self->peers_mutex_);
-        auto it = self->peers_.find(cid);
-        if (it != self->peers_.end()) {
-            it->second->media_ready = state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED;
-        }
+    //
+    // This callback runs on webrtcbin's PC thread and must stay LOCK-FREE: ~Peer holds peers_mutex_
+    // while set_state(NULL) joins this very thread, so taking the mutex here is an ABBA deadlock that
+    // wedges the whole node. media_ready is a shared atomic tagged on the element for exactly this
+    // reason; it outlives the Peer, so a late notify after teardown is harmless.
+    if (auto* ready =
+            static_cast<std::shared_ptr<std::atomic<bool>>*>(g_object_get_data(G_OBJECT(webrtc), "mars_media_ready"))) {
+        (*ready)->store(state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED, std::memory_order_relaxed);
     }
     if (state == GST_WEBRTC_PEER_CONNECTION_STATE_CONNECTED) {
         for (auto& cam : self->cameras_)

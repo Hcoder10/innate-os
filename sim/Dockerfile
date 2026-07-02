@@ -28,8 +28,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         htop \
         btop
 
-# 2. Add the third-party apt repositories (Innate packages + NodeSource 22.x)
-# via the same script the on-device updater uses, keeping the two in sync.
+# 2. Add the third-party apt repositories (Innate packages) via the same
+# script the on-device updater uses, keeping the two in sync.
 COPY scripts/update/setup_repos.sh /tmp/setup_repos.sh
 RUN bash /tmp/setup_repos.sh && rm /tmp/setup_repos.sh
 

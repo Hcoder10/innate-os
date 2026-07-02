@@ -337,9 +337,14 @@ export function createSkillsMenu(parent, rosClient) {
       if (expandable) {
         expandedId = isExpanded ? null : skill.id;
         render();
-      } else if (!running) {
-        startRun(skill);
+        return;
       }
+      // Same ANY-run guard as the form Run button/Enter key: launching while
+      // another skill runs would overwrite the single `run` slot and discard
+      // the running skill's cancel handle — leaving no UI path to stop it.
+      if (run && !run.done) return;
+      if (rosClient.state !== "connected") return;
+      startRun(skill);
     });
 
     row.appendChild(head);

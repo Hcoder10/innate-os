@@ -620,7 +620,7 @@ fi
         log "  ROS 2 Humble base already installed"
     fi
     
-    # Configure third-party apt repositories (Innate packages + NodeSource 22.x).
+    # Configure third-party apt repositories (Innate packages).
     # shellcheck source=scripts/update/setup_repos.sh
     source "$SCRIPT_DIR/setup_repos.sh"
     setup_package_repos

@@ -13,14 +13,6 @@ python3-vcstool
 git
 ccache
 
-# Node.js (webapp runtime), pinned to the 22.x line from the NodeSource repo.
-# That repo is configured in scripts/update/setup_repos.sh (robot, via
-# post_update.sh) and ci/Dockerfile.test-base (CI); the pin only resolves where
-# it is present.
-# Keep the version glob unquoted: xargs passes it to apt-get verbatim, and
-# quotes here would be consumed by xargs as quoting delimiters.
-nodejs=22.*
-
 # Shell and terminal tools
 zsh
 tmux

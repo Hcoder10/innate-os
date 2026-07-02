@@ -149,6 +149,12 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     g_object_set_data_full(G_OBJECT(peer->webrtc), "mars_gen",
                            new std::shared_ptr<std::atomic<uint64_t>>(peer->generation),
                            [](gpointer p) { delete static_cast<std::shared_ptr<std::atomic<uint64_t>>*>(p); });
+    // Same lock-free pattern for media_ready: the connection-state callback fires on webrtcbin's PC
+    // thread, where taking peers_mutex_ would deadlock against ~Peer (set_state(NULL) under the mutex
+    // joins that thread). The shared atomic outlives the Peer, so a late notify is harmless.
+    g_object_set_data_full(G_OBJECT(peer->webrtc), "mars_media_ready",
+                           new std::shared_ptr<std::atomic<bool>>(peer->media_ready),
+                           [](gpointer p) { delete static_cast<std::shared_ptr<std::atomic<bool>>*>(p); });
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_videos",
                       GUINT_TO_POINTER(static_cast<guint>(negotiated.size())));
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_audio", GINT_TO_POINTER(peer->with_audio ? 1 : 0));

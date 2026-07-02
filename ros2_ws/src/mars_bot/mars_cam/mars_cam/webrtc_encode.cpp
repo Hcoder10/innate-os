@@ -204,7 +204,10 @@ void WebRTCStreamer::fan_out_sample(GstElement* appsink, const std::string& cam)
         appsink,
         [&cam](Peer* p) -> GstElement* {
             auto it = p->rtp.find(cam);
-            return (p->media_ready && it != p->rtp.end() && it->second && wants(p->active, cam)) ? it->second : nullptr;
+            return (p->media_ready->load(std::memory_order_relaxed) && it != p->rtp.end() && it->second &&
+                    wants(p->active, cam))
+                       ? it->second
+                       : nullptr;
         },
         cam);
 }
@@ -310,7 +313,10 @@ void WebRTCStreamer::fan_out_audio(GstElement* appsink) {
         appsink,
         [](Peer* p) -> GstElement* {
             auto it = p->rtp.find("audio");
-            return (p->media_ready && it != p->rtp.end() && it->second && p->audio_active) ? it->second : nullptr;
+            return (p->media_ready->load(std::memory_order_relaxed) && it != p->rtp.end() && it->second &&
+                    p->audio_active)
+                       ? it->second
+                       : nullptr;
         },
         "audio");
 }

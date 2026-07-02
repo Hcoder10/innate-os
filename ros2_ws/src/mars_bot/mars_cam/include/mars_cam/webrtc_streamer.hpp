@@ -76,8 +76,12 @@ struct Peer {
     std::vector<std::string> active;               // currently PUSHED streams (subset of videos); toggled live on a
                                                    // stream switch without renegotiating, so switches are instant
     bool with_audio = false;                       // audio m-line NEGOTIATED (an opus transceiver exists)
-    bool audio_active = false;          // audio currently being SENT — toggled live like the cameras (no reneg)
-    bool media_ready = false;           // true only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin
+    bool audio_active = false;  // audio currently being SENT — toggled live like the cameras (no reneg)
+    // True only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin. Shared + atomic because it
+    // is written from webrtcbin's PC thread (the connection-state callback, via a copy tagged on the
+    // element) — that callback must NOT take peers_mutex_: ~Peer runs set_state(NULL) under the mutex,
+    // which joins the PC thread, so locking there is an ABBA deadlock that freezes every client.
+    std::shared_ptr<std::atomic<bool>> media_ready = std::make_shared<std::atomic<bool>>(false);
     bool have_real_remote_ice = false;  // true after a non-mDNS candidate (local-STUN srflx fast path)
     int64_t first_mdns_ice_ns = 0;      // steady-clock ns when the first deferred .local candidate arrived
     std::vector<std::pair<int, std::string>> pending_mdns_ice;  // mline + raw candidate fallback

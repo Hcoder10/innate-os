@@ -512,7 +512,7 @@ void WebRTCStreamer::publish_status() {
             c["source"] = current_source_;
             c["audio"] = p->audio_active;
             c["connection_state"] = conn;
-            c["media_ready"] = p->media_ready;
+            c["media_ready"] = p->media_ready->load(std::memory_order_relaxed);
             if (rtcp_age >= 0.0) {
                 c["rtcp_age_s"] = std::round(rtcp_age * 100.0) / 100.0;
             }

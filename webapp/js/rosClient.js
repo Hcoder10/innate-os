@@ -14,6 +14,9 @@ import { JOYSTICK_TOPIC, LAST_IP_KEY, ROSBRIDGE_PORT } from "./constants.js";
 const SERVICE_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 8_000;
 const RECONNECT_BASE_MS = 1_000;
+// Orphaned-goal backlog cap: enough for every plausibly-live goal across a
+// blip; anything older has long since terminated server-side.
+const MAX_ORPHANED_GOALS = 8;
 const RECONNECT_CAP_MS = 10_000;
 const SUB_RETRY_CAP_MS = 30_000;
 
@@ -33,6 +36,7 @@ export class RosClient {
   /** @type {Map<string, Subscription>} */ #subs = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, timer: number }>} */ #pendingCalls = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, onFeedback?: (v: any) => void, action: string, goalId: string, cancelRequested: boolean }>} */ #pendingActions = new Map();
+  /** Goals in flight when the socket died, cancelled on the next reconnect. @type {Array<{ id: string, action: string, goalId: string }>} */ #orphanedGoals = [];
   #callCounter = 0;
   #reconnectDelay = RECONNECT_BASE_MS;
   /** @type {number | null} */ #reconnectTimer = null;
@@ -294,6 +298,11 @@ export class RosClient {
         sub.retryCount = 0;
         this.#sendSubscribe(topic, sub);
       }
+      // Cancel goals orphaned by the previous socket's death (see
+      // #rejectAllPending) so a skill can't keep running with no owner.
+      for (const goal of this.#orphanedGoals.splice(0)) {
+        this.#send({ op: "cancel_action_goal", id: goal.id, action: goal.action, goal_id: goal.goalId });
+      }
       this.#setState("connected");
     };
 
@@ -469,9 +478,17 @@ export class RosClient {
       pending.reject(err);
     }
     this.#pendingCalls.clear();
-    for (const pending of this.#pendingActions.values()) {
+    for (const [id, pending] of this.#pendingActions) {
+      // The socket died but the server-side goal may keep running — with the
+      // promise rejected, the caller's cancel handle is dead, so nothing could
+      // ever stop it (and the one-skill-at-a-time server would reject every
+      // new goal with "another skill is already running"). Remember the goal
+      // and best-effort cancel it after the next reconnect: a no-op if the
+      // bridge already reaped it, a rescue if it didn't.
+      this.#orphanedGoals.push({ id, action: pending.action, goalId: pending.goalId });
       pending.reject(err);
     }
+    while (this.#orphanedGoals.length > MAX_ORPHANED_GOALS) this.#orphanedGoals.shift();
     this.#pendingActions.clear();
   }
 
