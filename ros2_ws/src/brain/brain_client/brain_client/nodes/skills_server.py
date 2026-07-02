@@ -291,8 +291,6 @@ class SkillsActionServer(Node):
             self.get_logger().debug(f"Published feedback for '{skill_type}': {update_message}")
 
         skill.set_feedback_callback(_publish_feedback)
-        # Let this skill run other skills in sequence via self.skills.run(...).
-        # Children piggyback on this goal's feedback channel (publish_feedback).
         skill.skills = SkillInvoker(self, goal_handle, _publish_feedback)
 
         try:
@@ -341,14 +339,11 @@ class SkillsActionServer(Node):
     def _run_code_skill_body(self, skill, skill_type, inputs):
         """Prepare robot state for a code skill and run its ``execute()``.
 
-        Holds the camera + continuous-state lifecycle around the call. Assumes
-        subscriptions are already started (the top-level goal owns them, so they
-        stay up while a chaining skill runs its children). Returns
-        ``(message, SkillResult)``; goal finalization stays with the caller.
-
-        Nesting-safe: a chained child that declares required states suspends
-        its parent's 50 Hz slot and hands it back on exit (see
-        RobotStateProvider); the camera is refcounted the same way.
+        Returns ``(message, SkillResult)``; goal finalization and subscriptions
+        stay with the caller (the top-level goal owns them, so they stay up
+        while a chaining skill runs its children). Nesting-safe: the 50 Hz
+        state slot suspends/resumes (see RobotStateProvider) and the camera is
+        refcounted.
         """
         required_states = skill.get_required_robot_states()
         needs_camera = required_states and (
@@ -358,21 +353,17 @@ class SkillsActionServer(Node):
         try:
             if needs_camera:
                 self._camera_node.start()
-            # Singleton instances keep state injected during previous runs;
-            # drop it so a skill never mistakes a stale value for fresh data
-            # (e.g. an odometry baseline from before the robot was moved).
+            # singleton instances keep state from previous runs; drop it so a
+            # skill never mistakes a stale value for fresh sensor data
             skill.clear_robot_state()
             self.robot_state.update_skill_robot_state(skill)
             if required_states:
                 self.robot_state.begin_continuous_updates(skill)
                 self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
-            # Proxies imported from innate.skills route to this skill's invoker
-            # while execute() runs; a SkillFailed/SkillCancelled escaping it is
-            # the raise-style spelling of a (message, status) return.
+            # innate.skills proxies route to this skill's invoker while
+            # execute() runs
             with use_invoker(skill.skills):
                 try:
-                    # 2-tuple or 3-tuple (message, status[, data]) -> the
-                    # data rides back to chaining callers on the message.
                     return normalize_skill_result(skill.execute(**inputs))
                 except SkillCancelled as e:
                     return str(e) or "Skill cancelled", SkillResult.CANCELLED
@@ -410,10 +401,9 @@ class SkillsActionServer(Node):
         """Send a physical skill to behavior_server and wait for its result.
 
         Returns ``(success, message, success_type, finalize)`` where ``finalize``
-        is the goal-handle method the caller should invoke ("succeed", "abort" or
-        "canceled"). Does not finalize the goal or manage subscriptions, so a
-        chaining skill can run a physical child on its own goal without ending the
-        parent. Behavior is otherwise identical to the top-level path.
+        is the goal-handle method the caller should invoke ("succeed", "abort"
+        or "canceled"). Does not finalize the goal, so a chaining skill can run
+        a physical child on its own goal without ending the parent.
         """
         metadata = physical_data["metadata"]
         try:

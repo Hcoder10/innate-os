@@ -2,40 +2,19 @@
 # Copyright (c) 2026 Innate Inc
 """Skills as plain functions: import them, call them.
 
-    from innate import Skill, SkillResult
     from innate.skills import head_emotion, navigate_to_position
 
-    class MorningRoutine(Skill):
-        def execute(self):
-            head_emotion(emotion="excited")
-            navigate_to_position(x=0.3, y=0.0, theta_degrees=0.0)
-            return "Routine complete", SkillResult.SUCCESS
+    head_emotion(emotion="excited")
+    navigate_to_position(x=0.3, y=0.0, theta_degrees=0.0)
 
-There is no head_emotion function in this file. Attribute access on this module
-(PEP 562 module __getattr__) returns a small proxy that, when called, hands the
-skill name to whichever SkillInvoker is currently executing a skill — kept in a
-contextvar the skills server sets around every execute() (see use_invoker).
-Names resolve against the live catalog, with a user's local/ skill shadowing a
-shipped innate-os/ one of the same name.
-
-Calls raise instead of returning a status: success returns the child's output
-message, failure raises SkillFailed, cancellation raises SkillCancelled. A
-routine is just consecutive calls, and "stop on first failure" is Python's own
-semantics. The explicit tuple-returning form, self.skills.run(id, **inputs),
-remains for dynamic skill ids.
-
-Three more things every call gets:
-
-- **Structured results.** The returned message is a SkillOutput (a str); if the
-  child returned (message, status, data), the payload is on ``.data``:
-  ``pose = detect_board(); grasp(x=pose.data["x"])``.
-- **Input validation.** Typo'd or missing kwargs fail immediately with a
-  message listing the skill's expected inputs, instead of a TypeError from
-  somewhere inside the child.
-- **timeout=seconds** (reserved kwarg, never passed to the skill): the child is
-  cancelled when it expires and the call raises SkillFailed("... timed out"),
-  while the rest of the routine keeps running —
-  ``move_straight(distance=0.5, timeout=10)``.
+Module __getattr__ (PEP 562) returns a proxy that hands the skill name to
+whichever SkillInvoker is currently executing a skill (a contextvar the skills
+server sets around every execute(); see use_invoker). Calls block until the
+child finishes and raise instead of returning a status: success returns the
+child's output message (a SkillOutput — ``.data`` carries any structured
+payload), failure raises SkillFailed, cancellation raises SkillCancelled.
+Every call accepts a reserved ``timeout=`` seconds kwarg. The tuple-returning
+form, self.skills.run(id, **inputs), remains for dynamic skill ids.
 """
 
 from __future__ import annotations
@@ -54,19 +33,16 @@ class SkillCancelled(Exception):
     """A skill called through innate.skills was cancelled; unwinds the routine."""
 
 
-# The invoker driving the currently-executing skill. The skills server sets this
-# around every execute(), in the thread that runs it — which is exactly what
-# makes the proxies below reach the right goal. None outside a skill run.
+# The invoker driving the currently-executing skill; None outside a skill run.
 _current_invoker: ContextVar = ContextVar("innate_skills_invoker", default=None)
 
 
 @contextmanager
 def use_invoker(invoker):
-    """Make ``invoker`` the ambient invoker for the duration of a ``with`` block.
+    """Make ``invoker`` the ambient invoker for a ``with`` block.
 
-    The skills server wraps every execute() in this. It doubles as the test
-    fixture: wrap the routine under test with any fake exposing
-    ``run(skill_id, **inputs) -> (message, SkillResult)``.
+    The skills server wraps every execute() in this. Doubles as the test
+    fixture: any fake exposing ``run(skill_id, **inputs)`` works.
     """
     token = _current_invoker.set(invoker)
     try:

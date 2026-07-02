@@ -155,7 +155,7 @@ class NavigateToPositionSim(Skill):
         )
 
     def execute(self, x: float, y: float, theta_degrees: float, local_frame: bool = False):
-        theta = math.radians(theta_degrees)  # user-facing angles are degrees; geometry stays radians
+        theta = math.radians(theta_degrees)
         self.logger.debug(
             f"[NavSim] execute() called with: x={x}, y={y}, theta={theta} ({math.degrees(theta):.1f}°), local_frame={local_frame}"
         )

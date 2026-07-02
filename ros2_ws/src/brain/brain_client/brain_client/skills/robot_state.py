@@ -45,15 +45,13 @@ class RobotStateProvider:
         self._head_position_sub = None
         self._joint_states_sub = None
         self._battery_sub = None
-        # states already warned about this run -- the 50 Hz update loop would
-        # otherwise repeat "requires X but none available" hundreds of times
-        # while a slow topic (battery publishes at 0.2 Hz) sends its first msg
+        # warn once per missing state, not at 50 Hz while a slow topic
+        # (battery publishes at 0.2 Hz) sends its first message
         self._warned_missing = set()
 
         self._current_skill = None
         self._current_skill_lock = threading.Lock()
-        # parents suspended while a chained child holds the 50 Hz slot; the
-        # child's end_continuous_updates() pops its parent back in.
+        # parents suspended while a chained child holds the 50 Hz slot
         self._skill_stack = []
         self._state_update_thread = None
         self._state_update_stop_event = threading.Event()

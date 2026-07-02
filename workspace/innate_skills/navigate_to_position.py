@@ -17,8 +17,7 @@ from brain_client.common.geometry import quaternion_to_yaw
 from brain_client.skills.types import Skill, SkillResult
 
 # Frame local (robot-relative) goals are resolved into before being sent to
-# Nav2. Must match the mapfree costmap's global_frame (mars_nav costmap.yaml):
-# a goal already in the costmap frame needs no TF lookup on replans.
+# Nav2. Must match the mapfree costmap's global_frame (mars_nav costmap.yaml).
 LOCAL_GOAL_FIXED_FRAME = "odom"
 
 
@@ -49,9 +48,7 @@ class Nav2Controller:
         # )
         self._send_feedback = primitive._send_feedback
 
-        # TF listener on the navigator node, used to resolve local goals into
-        # LOCAL_GOAL_FIXED_FRAME. The node is only spun during blocking Nav2
-        # calls, so _lookup_fresh_base_pose pumps it explicitly.
+        # TF listener used to resolve local goals into LOCAL_GOAL_FIXED_FRAME
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.navigator)
 
@@ -60,10 +57,8 @@ class Nav2Controller:
     def _lookup_fresh_base_pose(self, timeout_sec: float = 2.0, max_age_sec: float = 1.0):
         """Latest odom->base_link transform no older than max_age_sec, or None.
 
-        Spins the navigator node so the TF listener actually receives data:
-        outside Nav2's own blocking helpers nothing services its subscriptions,
-        and a stale buffer would resolve the goal relative to where the robot
-        was on a previous run.
+        Spins the navigator node so the TF listener actually receives data —
+        outside Nav2's own blocking helpers nothing services its subscriptions.
         """
         navigator = self.navigator
         clock = navigator.get_clock()
@@ -100,11 +95,9 @@ class Nav2Controller:
         # Determine behavior tree based on navigation mode
         behavior_tree = "mapfree" if local_frame else "navigation"
 
-        # Local goals are resolved into the odom frame here instead of being
-        # sent as base_link poses: Nav2's BT replans the original goal at 1 Hz,
-        # and a base_link goal can only be transformed while its stamp is still
-        # inside the ~10 s TF buffer -- longer navigations permanently lost the
-        # ability to replan (planner "extrapolation into the past" errors).
+        # Local goals are resolved into the odom frame up front: Nav2 replans
+        # the original goal at 1 Hz, and a base_link goal ages out of the
+        # ~10 s TF buffer, breaking replans on longer navigations.
         if local_frame:
             base_tf = self._lookup_fresh_base_pose()
             if base_tf is None:
@@ -168,10 +161,9 @@ class Nav2Controller:
             # Get feedback but don't block for too long
             feedback = navigator.getFeedback()
             if feedback:
-                # Progress comes from Nav2's own distance_remaining (path length
-                # left to travel). feedback.current_pose is in the navigator's
-                # global frame while our goal may be in another frame, so
-                # computing distances between them ourselves would be wrong.
+                # Use Nav2's own distance_remaining: feedback.current_pose is
+                # in the navigator's global frame while our goal may be in
+                # another, so computing distances ourselves would be wrong.
                 distance_remaining = feedback.distance_remaining
 
                 if initial_distance_remaining < 0.0 and distance_remaining > 0.0:
@@ -197,7 +189,7 @@ class Nav2Controller:
                         "I'm almost done with this movement, if I think I should navigate again to pursue this task"
                         ", I should stop the current primitive and start a new navigation movement."
                     )
-                    feedback_sent_close_to_goal = True  # Set flag to true after sending feedback
+                    feedback_sent_close_to_goal = True
 
             # Small sleep to prevent CPU hogging
             time.sleep(0.1)  # 100ms check interval
@@ -248,7 +240,7 @@ class NavigateToPosition(Skill):
         )
 
     def execute(self, x: float, y: float, theta_degrees: float, local_frame: bool = False):
-        theta = math.radians(theta_degrees)  # user-facing angles are degrees; geometry stays radians
+        theta = math.radians(theta_degrees)
         self.logger.info(
             f"Initiating navigation to position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
         )

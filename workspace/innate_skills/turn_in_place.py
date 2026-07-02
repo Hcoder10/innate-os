@@ -6,31 +6,24 @@ import time
 from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 from pydantic import BaseModel
 
-# Raw angular speeds we allow (rad/s). Slow on purpose: there is no
-# obstacle awareness on this path (in-place, but tails can clip things).
+# Allowed angular speeds (rad/s). Slow on purpose: no obstacle awareness here.
 MIN_SPEED = 0.2
 MAX_SPEED = 1.0
 DEFAULT_SPEED = 0.5
-# The odom subscription is (re)created per goal, so the first message can land
-# shortly after execute() starts; wait this long before giving up.
+# how long to wait for the first odom message after execute() starts
 ODOM_WAIT_SEC = 2.0
 
 
 class TurnResult(BaseModel):
-    """Structured payload on .data for chaining callers. Consume it duck-typed
-    (result.data.turned_degrees) -- hot reload re-imports this class per save."""
+    """Structured payload on .data for chaining callers."""
 
     turned_degrees: float
 
 
 class TurnInPlace(Skill):
-    """Turn in place by an angle, using odometry only -- no Nav2, no map.
-
-    The cmd_vel twin of move_straight: publishes raw angular velocity and
-    closes the loop on odometry yaw, so it works even when navigation is down
-    and never fails on planning. Positive angle turns left (counter-clockwise,
-    ROS convention), negative turns right.
-    """
+    """Turn in place by an angle using raw cmd_vel closed on odometry yaw --
+    no Nav2, no map. Positive angle turns left (counter-clockwise, ROS
+    convention), negative turns right."""
 
     mobility = Interface(InterfaceType.MOBILITY)
     odom = RobotState(RobotStateType.LAST_ODOM)
@@ -54,8 +47,8 @@ class TurnInPlace(Skill):
         try:
             return self._execute(angle_degrees, speed)
         finally:
-            # Reset on the way out, not on entry: an entry reset would erase a
-            # cancel delivered while the server was still setting up the goal.
+            # reset on exit, not entry: an entry reset would erase a cancel
+            # delivered while the server was still setting up the goal
             self._cancelled = False
 
     def _execute(self, angle_degrees: float, speed: float):
@@ -75,8 +68,7 @@ class TurnInPlace(Skill):
         deadline = time.time() + math.radians(target) / abs(velocity) * 3.0 + 2.0
 
         # accumulate wrapped yaw deltas so multi-turn and the ±180° seam work;
-        # signed so motion against the commanded direction (a bump, overshoot
-        # swing-back) subtracts instead of counting as progress.
+        # signed so motion against the commanded direction subtracts
         turned = 0.0
         last_yaw = yaw
         while turned < target:
@@ -86,7 +78,7 @@ class TurnInPlace(Skill):
             if time.time() > deadline:
                 self._stop()
                 return f"Stuck: turned only {turned:.0f} of {target:.0f} degrees", SkillResult.FAILURE
-            # duration acts as a deadman: if this loop dies, the base stops.
+            # duration acts as a deadman: if this loop dies, the base stops
             self.mobility.send_cmd_vel(angular_z=velocity, duration=0.5)
             time.sleep(0.05)
             yaw = self._yaw()
@@ -97,7 +89,6 @@ class TurnInPlace(Skill):
 
         self._stop()
         direction = "left" if angle_degrees > 0 else "right"
-        # third element = structured payload; chaining callers read it as .data
         return (
             f"Turned {turned:.0f} degrees {direction}",
             SkillResult.SUCCESS,

@@ -140,12 +140,9 @@ class PrimitiveRunner:
     def _handle_substep(self, substep: dict) -> None:
         """Turn a chained child's piggybacked event into its own step in the app.
 
-        The invoker tagged this onto the parent's feedback (children have no
-        lifecycle of their own). We forward it to the app only (the _chat
-        task-status topic the app renders steps from) -- deliberately NOT over
-        self._ws, which is the cloud agent's channel: the cloud runs one
-        primitive at a time and would read a child finishing as the parent
-        finishing, then maybe fire a competing task mid-routine.
+        Forwarded to the app only, deliberately NOT over self._ws: the cloud
+        agent runs one primitive at a time and would read a child finishing as
+        the parent finishing.
         """
         event = substep.get("event")
         if event not in PRIMITIVE_LIFECYCLE_MESSAGE_TYPES:

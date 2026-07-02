@@ -56,9 +56,8 @@ class MobilityInterface:
         self._stop_timer = self.node.create_timer(duration, _stop_callback)
 
     def _destroy_stop_timer(self):
-        # Destroy, don't just cancel: a cancelled timer stays in the node's
-        # timer list forever, which leaks at deadman rates (one timer per
-        # control-loop tick, 10-20/s during odometry-closed motion).
+        # destroy, don't just cancel: a cancelled timer stays in the node's
+        # timer list forever, which leaks at deadman rates (10-20 timers/s)
         timer, self._stop_timer = self._stop_timer, None
         if timer is not None:
             try:

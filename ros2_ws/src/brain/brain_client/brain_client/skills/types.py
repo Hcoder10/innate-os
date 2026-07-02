@@ -13,9 +13,8 @@ from std_msgs.msg import String
 
 from brain_client.common.logging import UniversalLogger
 
-# brain_client_node subscribes here and plays the text through the robot's
-# voice (Cartesia TTS); see transport/tts.py. It reports playback on the
-# status topic, which say(wait=True) watches.
+# brain_client_node plays text published here (see transport/tts.py) and
+# reports playback on the status topic, which say(wait=True) watches.
 TTS_TOPIC = "/brain/tts"
 TTS_STATUS_TOPIC = "/tts/is_playing"
 
@@ -31,13 +30,8 @@ class SkillResult(Enum):
 
 
 class SkillOutput(str):
-    """A skill's output message, with an optional structured payload on .data.
-
-    It IS the message string (prints, formats, compares like one), so existing
-    string-shaped code is unaffected. A skill that returns a third element from
-    execute() — ``(message, status, data)`` — makes that object available to
-    chaining callers: ``pose = detect_board(); pose.data["x"]``.
-    """
+    """A skill's output message (a plain str), with an optional structured
+    payload on .data — the third element of an execute() return, if any."""
 
     data: Any = None
 
@@ -48,11 +42,7 @@ class SkillOutput(str):
 
 
 def normalize_skill_result(result) -> tuple[SkillOutput, "SkillResult"]:
-    """Accept execute()'s ``(message, status)`` or ``(message, status, data)``.
-
-    Returns ``(SkillOutput, status)`` — the data (None if absent) rides on the
-    message string, so every consumer keeps its two-tuple shape.
-    """
+    """Turn execute()'s (message, status[, data]) into (SkillOutput, status)."""
     if isinstance(result, (tuple, list)) and len(result) == 3:
         message, status, data = result
         return SkillOutput(message, data), status
@@ -87,10 +77,8 @@ class InterfaceType(Enum):
 class SkillStorage:
     """Persistent per-skill key-value store: a JSON file with dict access.
 
-    ``self.storage["dock_pose"] = {...}`` survives restarts. Values must be
-    JSON-serializable. Loaded lazily on first access; every write lands on
-    disk atomically (tmp file + os.replace), so a crash mid-write can't
-    corrupt the store.
+    Values must be JSON-serializable. Loaded lazily; writes are atomic
+    (tmp file + os.replace).
     """
 
     def __init__(self, path: str | Path):
@@ -130,9 +118,7 @@ class SkillStorage:
 
 
 def _storage_dir() -> Path:
-    # workspace/skill_storage/, next to the skill directories (same
-    # INNATE_OS_ROOT resolution as common/script_paths.py, without coupling
-    # this base module to it)
+    # same INNATE_OS_ROOT resolution as common/script_paths.py
     root = Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
     return root / "workspace" / "skill_storage"
 
@@ -210,19 +196,13 @@ class Skill(ABC):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
-        # Lets this skill run other skills, in order, from inside execute().
-        # The friendly form is function proxies (see innate/skills.py):
-        #   from innate.skills import navigate_to_position
-        #   navigate_to_position(x=1.0, y=0.0, theta_degrees=0.0)
-        # The explicit form, for dynamic ids, is:
-        #   self.skills.run("local/my_grasp_policy")   # learned/replay too
-        # Each child runs to completion before the next and shows up as its own
-        # step in the app. The skills server injects this before execute().
+        # SkillInvoker for running other skills from execute(); injected by the
+        # skills server before each run (see invoker.py and innate/skills.py).
         self.skills = None
-        self._say_publisher = None  # lazy, see say()
-        self._tts_status_sub = None  # lazy, see say(wait=True)
+        self._say_publisher = None
+        self._tts_status_sub = None
         self._tts_playing = None  # last /tts/is_playing value ("true"/"false")
-        self._storage = None  # lazy, see storage
+        self._storage = None
 
     @property
     @abstractmethod
@@ -239,23 +219,18 @@ class Skill(ABC):
         Execute the skill.
 
         Subclasses must implement this method.
-        Returns a tuple of (result_message, result_status) where result_status
-        is a SkillResult enum value. Optionally return a third element — any
-        structured payload — which chaining callers receive as ``.data`` on
-        the returned message (see SkillOutput).
+        Returns (result_message, result_status) where result_status is a
+        SkillResult enum value; an optional third element is a structured
+        payload chaining callers receive as ``.data`` (see SkillOutput).
         """
         pass
 
     def cancel(self):
         """
-        Cancel the execution of the skill.
+        Cancel the execution of the skill. Safe to call at any time; returns
+        a message describing the result.
 
-        This method should be safe to call at any time, even if the skill
-        is not currently executing. Returns a message describing the
-        cancellation result.
-
-        The default stops whatever child skill is currently running via
-        self.skills, which is all a skill that only chains others needs.
+        The default stops the child skill currently running via self.skills.
         Override it to stop work of your own (motion, loops, timers) — and if
         you also chain children, call self.skills.cancel() too.
         """
@@ -265,27 +240,17 @@ class Skill(ABC):
 
     @property
     def storage(self) -> SkillStorage:
-        """Persistent per-skill key-value store (survives restarts).
-
-        Backed by workspace/skill_storage/<skill_name>.json with atomic
-        writes -- for calibration offsets, saved poses, counters:
-        ``self.storage["dock_pose"] = {"x": 1.2, "y": 0.4}``.
-        """
+        """Persistent per-skill key-value store (survives restarts), backed by
+        workspace/skill_storage/<skill_name>.json."""
         if self._storage is None:
             self._storage = SkillStorage(_storage_dir() / f"{self.name}.json")
         return self._storage
 
     def say(self, text: str, wait: bool = False) -> None:
         """
-        Speak text through the robot's voice.
-
-        Fire-and-forget by default: returns immediately, speech overlaps
-        whatever the skill does next. With ``wait=True`` it blocks until the
-        utterance has finished playing (best effort: it watches the TTS
-        playback status, so if several say() calls are already queued it may
-        return when an earlier one ends — use wait consistently for precise
-        pacing). If speech isn't available (no audio node running, or in
-        tests without a ROS node), it's a no-op either way.
+        Speak text through the robot's voice. Fire-and-forget by default;
+        with ``wait=True`` it blocks until playback ends (best effort — it
+        watches the TTS playback status). No-op if speech isn't available.
         """
         if not text or self.node is None:
             return
@@ -301,14 +266,14 @@ class Skill(ABC):
         self._tts_playing = msg.data
 
     def _wait_for_speech_end(self, text: str) -> None:
-        # Phase 1: wait for playback to start (TTS latency + anything queued
-        # ahead of us). If it never does — TTS off, muted — don't hang the skill.
+        # wait for playback to start; if it never does (TTS off, muted)
+        # don't hang the skill
         deadline = time.time() + 15.0
         while self._tts_playing != "true":
             if time.time() > deadline:
                 return
             time.sleep(0.05)
-        # Phase 2: wait for it to finish; budget scales with utterance length.
+        # then wait for it to finish; budget scales with utterance length
         deadline = time.time() + max(30.0, 0.1 * len(text))
         while self._tts_playing == "true" and time.time() < deadline:
             time.sleep(0.05)
@@ -329,9 +294,9 @@ class Skill(ABC):
         """
         Reset all RobotState descriptors to None.
 
-        Skill instances are singletons, so values injected during a previous
-        run would otherwise linger and read as fresh sensor data on the next
-        one. The skills server calls this before each run.
+        Skill instances are singletons, so values from a previous run would
+        otherwise read as fresh sensor data on the next one. The skills
+        server calls this before each run.
         """
         for name in self._get_robot_state_descriptors():
             setattr(self, name, None)

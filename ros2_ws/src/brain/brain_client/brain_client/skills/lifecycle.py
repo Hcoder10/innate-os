@@ -15,12 +15,11 @@ PRIMITIVE_LIFECYCLE_MESSAGE_TYPES = {
     "failed": MessageInType.PRIMITIVE_FAILED,
 }
 
-# Children of a chaining skill run on the parent's goal, so they have no
-# lifecycle of their own. We smuggle each child's start/finish out through the
-# parent's feedback stream tagged with this sentinel; the runner pulls it back
-# apart into a real per-step status (see PrimitiveRunner._on_feedback).
-# ASCII Record Separator: never appears in real feedback text. Must not
-# contain NUL (\x00) — rclpy's C typesupport copies strings with strlen, so a
+# Tags a chained child's start/finish smuggled through the parent's feedback
+# stream (children run on the parent's goal, so they have no lifecycle of
+# their own); PrimitiveRunner._on_feedback decodes it back into a step status.
+# ASCII Record Separator — never appears in real feedback text. Must not
+# contain NUL: rclpy's C typesupport copies strings with strlen, so a
 # NUL-prefixed feedback string arrives at subscribers truncated to "".
 SUBSTEP_FEEDBACK_SENTINEL = "\x1esubstep\x1e"
 

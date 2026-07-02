@@ -6,31 +6,24 @@ import time
 from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 from pydantic import BaseModel
 
-# Raw base speeds we allow (m/s). Slow on purpose: there is no obstacle
-# avoidance on this path.
+# Allowed base speeds (m/s). Slow on purpose: no obstacle avoidance here.
 MIN_SPEED = 0.05
 MAX_SPEED = 0.3
 DEFAULT_SPEED = 0.15
-# The odom subscription is (re)created per goal, so the first message can land
-# shortly after execute() starts; wait this long before giving up.
+# how long to wait for the first odom message after execute() starts
 ODOM_WAIT_SEC = 2.0
 
 
 class MoveResult(BaseModel):
-    """Structured payload on .data for chaining callers. Consume it duck-typed
-    (result.data.traveled_m) -- hot reload re-imports this class per save."""
+    """Structured payload on .data for chaining callers."""
 
     traveled_m: float
 
 
 class MoveStraight(Skill):
-    """Move straight for a distance, using odometry only -- no Nav2, no map.
-
-    Publishes raw cmd_vel and closes the loop on wheel odometry, so it works
-    even when navigation is down and never fails on planning. The tradeoff:
-    NO obstacle avoidance -- only use it for short moves in space you know is
-    clear. Negative distance moves backward.
-    """
+    """Move straight for a distance using raw cmd_vel closed on odometry --
+    no Nav2, no map, and NO obstacle avoidance. Negative distance moves
+    backward."""
 
     mobility = Interface(InterfaceType.MOBILITY)
     odom = RobotState(RobotStateType.LAST_ODOM)
@@ -55,8 +48,8 @@ class MoveStraight(Skill):
         try:
             return self._execute(distance, speed)
         finally:
-            # Reset on the way out, not on entry: an entry reset would erase a
-            # cancel delivered while the server was still setting up the goal.
+            # reset on exit, not entry: an entry reset would erase a cancel
+            # delivered while the server was still setting up the goal
             self._cancelled = False
 
     def _execute(self, distance: float, speed: float):
@@ -72,8 +65,7 @@ class MoveStraight(Skill):
 
         target = abs(distance)
         velocity = math.copysign(min(max(abs(speed), MIN_SPEED), MAX_SPEED), distance)
-        # generous time budget; if we're stuck (blocked wheels, lifted robot)
-        # we stop commanding motion instead of pushing forever.
+        # generous time budget; if stuck, stop commanding motion instead of pushing forever
         deadline = time.time() + target / abs(velocity) * 3.0 + 2.0
 
         traveled = 0.0
@@ -84,7 +76,7 @@ class MoveStraight(Skill):
             if time.time() > deadline:
                 self._stop()
                 return f"Stuck: moved only {traveled:.2f}m of {target:.2f}m", SkillResult.FAILURE
-            # duration acts as a deadman: if this loop dies, the base stops.
+            # duration acts as a deadman: if this loop dies, the base stops
             self.mobility.send_cmd_vel(linear_x=velocity, duration=0.5)
             time.sleep(0.1)
             current = self._position()
@@ -93,7 +85,6 @@ class MoveStraight(Skill):
 
         self._stop()
         direction = "forward" if distance > 0 else "backward"
-        # third element = structured payload; chaining callers read it as .data
         return f"Moved {traveled:.2f}m {direction}", SkillResult.SUCCESS, MoveResult(traveled_m=round(traveled, 3))
 
     def cancel(self):

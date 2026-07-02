@@ -57,7 +57,7 @@ class CameraProvider(Node):
         self._thread: threading.Thread | None = None
         self._running = False
         # start()/stop() are refcounted: a chained child that needs the camera
-        # while its parent does too must not tear it down on exit.
+        # must not tear it down on exit while its parent still does
         self._users = 0
 
     # ---- lifecycle ----

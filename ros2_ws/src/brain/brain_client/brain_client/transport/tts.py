@@ -55,10 +55,8 @@ class TTSHandler:
         # Initialize Cartesia client
         self._init_client()
 
-        # Async speech is queued and played in order by one worker, so
-        # back-to-back speak_text_async() calls (e.g. a skill calling say()
-        # twice in a row) don't get dropped by the is_playing check.
-        # Bounded so a runaway say() loop can't build minutes of backlog.
+        # Async speech is played in order by one worker so back-to-back calls
+        # aren't dropped; bounded so a runaway say() loop can't build a backlog.
         self._speech_queue: queue.Queue = queue.Queue(maxsize=16)
         threading.Thread(target=self._speech_loop, daemon=True).start()
 
@@ -271,10 +269,8 @@ class TTSHandler:
 
     def close(self):
         """Clean up resources."""
-        # Stop the speech worker without blocking shutdown: drop any queued
-        # backlog (we're closing, nothing should keep talking), then hand the
-        # worker its sentinel. A blocking put() would hang forever if the
-        # bounded queue is full while the worker is stuck in a slow request.
+        # drop any queued backlog, then hand the worker its stop sentinel;
+        # a blocking put() could hang shutdown if the queue is full
         try:
             while True:
                 self._speech_queue.get_nowait()

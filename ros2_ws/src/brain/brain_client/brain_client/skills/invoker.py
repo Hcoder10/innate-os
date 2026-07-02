@@ -1,18 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""self.skills.run(...) — let one skill run a few others, in order.
+"""self.skills.run(...) — lets one skill run others, in order.
 
-A skill's execute() can call e.g. self.skills.run("innate-os/wave") to fire off
-another skill and block until it finishes. Any kind of skill works (python,
-learned, replay): under the hood we just call back into the same server paths
-that run a top-level skill, so a chained policy runs exactly as it would alone.
-Most skills don't call run() directly — they import proxies from innate.skills
-and call them like functions; those proxies land here (see innate/skills.py).
-
-The one wrinkle is the UI. Children run on the *parent's* goal, so they have no
-lifecycle of their own to announce. We smuggle each child's start/finish out
-through the parent's feedback stream (encode_substep_feedback) and the runner
-pulls it back apart into a real per-step status. See PrimitiveRunner._on_feedback.
+Children reuse the same server execution paths as a top-level skill, so any
+kind of skill (python, learned, replay) works. They run on the parent's goal:
+each child's start/finish is tagged onto the parent's feedback stream and
+decoded back into a per-step status by PrimitiveRunner._on_feedback.
 """
 
 from __future__ import annotations
@@ -24,7 +17,6 @@ import uuid
 from brain_client.skills.lifecycle import encode_substep_feedback
 from brain_client.skills.types import SkillResult
 
-# how a child's final SkillResult shows up as a step in the app
 _STEP_EVENT = {
     SkillResult.SUCCESS: "completed",
     SkillResult.FAILURE: "failed",
@@ -40,13 +32,10 @@ class SkillInvoker:
         self._goal_handle = goal_handle
         self._publish_feedback = publish_feedback
         self._logger = server.get_logger()
-        # once any child is cancelled the whole routine is, so a plain
-        # `for step in steps: self.skills.run(...)` stops cleanly.
         self._cancelled = False
         # guards cancel() against re-entry: a child's default cancel() delegates
         # right back to the invoker that is cancelling it.
         self._cancelling = False
-        # whoever is running right now, so cancel() knows who to poke.
         self._active_code_skill = None
         self._active_physical_skill = None
 
@@ -54,12 +43,9 @@ class SkillInvoker:
         """Run one child skill to completion. Returns (message, SkillResult).
 
         Accepts a full catalog id ("innate-os/wave") or a bare name ("wave");
-        bare names try local/ before innate-os/, so a user's skill shadows a
-        shipped one of the same name.
-
-        ``timeout`` (seconds, reserved — never passed to the skill): a child
-        still running when it expires is cancelled and reported as a FAILURE
-        ("timed out"), without cancelling the rest of the routine.
+        bare names try local/ before innate-os/. A child still running when
+        ``timeout`` (seconds) expires is cancelled and reported as a FAILURE,
+        without cancelling the rest of the routine.
         """
         if self._cancelled:
             return "Routine cancelled", SkillResult.CANCELLED
@@ -96,7 +82,6 @@ class SkillInvoker:
             else:
                 message, status = self._run_physical(skill_id, physical)
         except Exception as e:
-            # a buggy child shouldn't take down the whole skills server
             self._logger.error(f"[invoker] '{skill_id}' raised: {e}")
             self._step(step_id, name, skill_id, "failed", reason=str(e))
             return str(e), SkillResult.FAILURE
@@ -105,10 +90,8 @@ class SkillInvoker:
                 watchdog.cancel()
 
         if timed_out.is_set() and status is SkillResult.CANCELLED:
-            # Only this child was cancelled, not the routine — undo the flag
-            # the watchdog's cancel() set so later steps still run. (A user
-            # Stop racing the watchdog by milliseconds is folded into the
-            # timeout; the routine continues and can be stopped again.)
+            # only this child timed out, not the routine — undo the flag the
+            # watchdog's cancel() set so later steps still run
             self._cancelled = False
             message, status = f"'{skill_id}' timed out after {timeout}s", SkillResult.FAILURE
 
@@ -143,11 +126,7 @@ class SkillInvoker:
 
     @staticmethod
     def _invalid_inputs(skill, skill_id, inputs):
-        """A clear error message if inputs don't fit execute()'s signature, else None.
-
-        Catches typo'd or missing kwargs at the call site instead of letting a
-        TypeError surface from inside the child dressed up as a skill failure.
-        """
+        """An error message if inputs don't fit execute()'s signature, else None."""
         try:
             signature = inspect.signature(skill.execute)
         except (TypeError, ValueError):
@@ -160,11 +139,7 @@ class SkillInvoker:
             return f"Invalid inputs for '{skill_id}': {e}. Expected: ({expected})"
 
     def _resolve(self, skill_id):
-        """Look skill_id up in the catalog: code skill first, then learned/replay.
-
-        Returns (resolved_id, code_entry, physical_entry) with at most one entry
-        set, or (skill_id, None, None) if nothing matches.
-        """
+        """Look skill_id up in the catalog. Returns (resolved_id, code_entry, physical_entry)."""
         candidates = [skill_id] if "/" in skill_id else [f"local/{skill_id}", f"innate-os/{skill_id}"]
         for candidate in candidates:
             code = self._server.catalog.get_code_skill(candidate)
@@ -175,15 +150,11 @@ class SkillInvoker:
                 return candidate, None, physical
         return skill_id, None, None
 
-    # The two run paths just delegate to the server (reusing the top-level
-    # execution code) and remember who's live so cancel() can reach them.
-
     def _run_code(self, skill, skill_id, inputs):
         skill.set_feedback_callback(self._publish_feedback)
-        skill.skills = self  # a child can chain too; _cancelled flows through
-        # Save/restore rather than clear: in a nested chain A→B→C the slot must
-        # hand back to B when C ends, or cancel() can no longer reach B while it
-        # finishes its own work.
+        skill.skills = self  # a child can chain too
+        # save/restore, not clear: in a nested chain A→B→C the slot must hand
+        # back to B when C ends, or cancel() can no longer reach B
         prev = self._active_code_skill
         self._active_code_skill = skill
         try:
@@ -203,8 +174,6 @@ class SkillInvoker:
         return message, SkillResult(success_type)
 
     def _step(self, step_id, name, skill_id, event, reason=None, output=None):
-        # children have no goal of their own, so announce each step by tagging the
-        # parent's feedback; the runner turns this back into a real per-step status.
         self._publish_feedback(
             encode_substep_feedback(
                 event=event, name=name, primitive_id=step_id, skill_id=skill_id, reason=reason, output=output

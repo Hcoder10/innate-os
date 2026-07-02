@@ -121,9 +121,8 @@ class SkillRepository:
         if not skill_names:
             self.reload_all()
             return
-        # A rename/delete leaves catalog entries whose source is gone; drop
-        # them first so e.g. renaming foo.py -> bar.py doesn't ghost-publish
-        # both (the watcher may only report the new stem).
+        # drop entries whose source is gone so a rename doesn't ghost-publish
+        # both the old and new id
         removed = self._prune_stale_skills()
         skill_ids = []
         for stem in skill_names:
@@ -305,10 +304,7 @@ class SkillRepository:
         return any((Path(d) / f"{basename}.py").exists() for d in self._skills_directories)
 
     def _prune_stale_skills(self) -> list[str]:
-        """Drop catalog entries whose source file/directory is gone (rename/delete).
-
-        Returns the removed skill ids. Does not publish; callers decide when.
-        """
+        """Drop catalog entries whose source file/directory is gone; returns removed ids."""
         removed = []
         with self._skills_lock:
             for skill_id in list(self._code_skills):
@@ -327,8 +323,8 @@ class SkillRepository:
     def _code_source_exists(self, skill_id: str) -> bool:
         """True if some scan dir still holds a .py that maps to this exact id.
 
-        Prefix-aware, unlike _is_code_skill_id: local/foo being deleted must not
-        be kept alive by a shipped innate-os/foo of the same stem (or vice versa).
+        Prefix-aware, unlike _is_code_skill_id: a deleted local/foo must not be
+        kept alive by a shipped innate-os/foo of the same stem.
         """
         stem = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
         for d in self._skills_directories:
@@ -677,10 +673,7 @@ class SkillRepository:
 
     def _write_import_stub(self, skills: list[SkillInfo]) -> None:
         """Regenerate ``innate/skills.pyi`` so IDEs complete the proxy imports.
-
-        Best effort, next to wherever the ``innate`` package is imported from;
-        completion is sugar, never load-bearing, so failures only log.
-        """
+        Best effort — never load-bearing, so failures only log."""
         try:
             import innate
 
@@ -706,8 +699,7 @@ class SkillRepository:
             "@contextmanager",
             "def use_invoker(invoker: Any) -> Iterator[None]: ...",
         ]
-        # bare import name = catalog id minus prefix; local/ wins a collision,
-        # matching SkillInvoker._resolve
+        # bare import name = id minus prefix; local/ wins, matching SkillInvoker._resolve
         by_stem: dict[str, SkillInfo] = {}
         for skill in skills:
             stem = skill.id.split("/", 1)[-1]
@@ -737,14 +729,11 @@ class SkillRepository:
     def _dedupe_display_names(self, skills: list[SkillInfo]) -> list[SkillInfo]:
         """Enforce unique display names (the LLM can't disambiguate duplicates).
 
-        A user skill (local/) claims the plain name — the same precedence
-        bare-name chaining uses (see SkillInvoker._resolve), so the cloud agent
-        and innate.skills imports agree on which skill a name means. The
-        shipped (innate-os/) skill stays in the published list under a
-        qualified name: registration filters directive skill ids against this
-        list, so dropping it would silently unregister directives that
-        reference the shipped skill by full id. Duplicates within the same
-        source are a mistake: the first wins and the rest are skipped.
+        A user skill (local/) claims the plain name — the same precedence as
+        SkillInvoker._resolve. The shipped skill stays published under a
+        qualified name: dropping it would silently unregister directives that
+        reference it by full id. Duplicates within the same source are a
+        mistake: the first wins and the rest are skipped.
         """
         deduped: list[SkillInfo] = []
         by_name: dict[str, SkillInfo] = {}
@@ -775,8 +764,7 @@ class SkillRepository:
             shipped.name = qualified
             by_name[user.name] = user
             by_name[shipped.name] = shipped
-            # whichever of the two was seen first is already in deduped
-            # (the shipped one renamed in place); append the newcomer.
+            # whichever was seen first is already in deduped; append the newcomer
             deduped.append(skill)
         return deduped
 
