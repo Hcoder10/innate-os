@@ -242,13 +242,16 @@ class NavigateToPosition(Skill):
     def guidelines(self):
         return (
             "Use when you need to navigate the robot to the specified position "
-            "using provided x, y coordinates, and theta (yaw) angle IN RADIANS. "
+            "using provided x, y coordinates (meters), and theta_degrees (yaw) IN DEGREES. "
             "If local_frame is set to false, it navigates to a specific point in the map."
             "If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"
         )
 
-    def execute(self, x: float, y: float, theta: float, local_frame: bool = False):
-        self.logger.info(f"Initiating navigation to position: x={x}, y={y}, theta={theta}, local_frame={local_frame}")
+    def execute(self, x: float, y: float, theta_degrees: float, local_frame: bool = False):
+        theta = math.radians(theta_degrees)  # user-facing angles are degrees; geometry stays radians
+        self.logger.info(
+            f"Initiating navigation to position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
+        )
 
         result = self.nav2_controller.go_to_position(x, y, theta, local_frame)
 
@@ -258,9 +261,9 @@ class NavigateToPosition(Skill):
             return "Navigation canceled", SkillResult.CANCELLED
         elif result == TaskResult.SUCCEEDED:
             self.logger.info(
-                f"Navigation complete. Arrived at position: x={x}, y={y}, theta={theta}, local_frame={local_frame}"
+                f"Navigation complete. Arrived at position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
             )
-            return f"Reached position ({x}, {y}, {theta})", SkillResult.SUCCESS
+            return f"Reached position ({x}, {y}, {theta_degrees} deg)", SkillResult.SUCCESS
         else:
             self.logger.info(f"Navigation failed with result: {result}")
             return f"Navigation failed with result: {result}", SkillResult.FAILURE

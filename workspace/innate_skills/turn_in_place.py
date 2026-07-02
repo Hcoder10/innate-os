@@ -3,9 +3,8 @@
 import math
 import time
 
-from pydantic import BaseModel
-
 from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from pydantic import BaseModel
 
 # Raw angular speeds we allow (rad/s). Slow on purpose: there is no
 # obstacle awareness on this path (in-place, but tails can clip things).
@@ -99,7 +98,11 @@ class TurnInPlace(Skill):
         self._stop()
         direction = "left" if angle_degrees > 0 else "right"
         # third element = structured payload; chaining callers read it as .data
-        return f"Turned {turned:.0f} degrees {direction}", SkillResult.SUCCESS, TurnResult(turned_degrees=round(turned, 1))
+        return (
+            f"Turned {turned:.0f} degrees {direction}",
+            SkillResult.SUCCESS,
+            TurnResult(turned_degrees=round(turned, 1)),
+        )
 
     def cancel(self):
         self._cancelled = True

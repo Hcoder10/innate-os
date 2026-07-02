@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+import json
+import os
 import time
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from rclpy.node import Node
@@ -67,6 +70,8 @@ class RobotStateType(Enum):
     LAST_ODOM = "last_odom"
     LAST_MAP = "last_map"
     LAST_HEAD_POSITION = "last_head_position"
+    LAST_JOINT_STATES = "last_joint_states"
+    LAST_BATTERY = "last_battery"
 
 
 class InterfaceType(Enum):
@@ -77,6 +82,59 @@ class InterfaceType(Enum):
     MANIPULATION = "manipulation"
     MOBILITY = "mobility"
     HEAD = "head"
+
+
+class SkillStorage:
+    """Persistent per-skill key-value store: a JSON file with dict access.
+
+    ``self.storage["dock_pose"] = {...}`` survives restarts. Values must be
+    JSON-serializable. Loaded lazily on first access; every write lands on
+    disk atomically (tmp file + os.replace), so a crash mid-write can't
+    corrupt the store.
+    """
+
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
+        self._data: dict | None = None
+
+    def _load(self) -> dict:
+        if self._data is None:
+            try:
+                self._data = json.loads(self._path.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):
+                self._data = {}
+        return self._data
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2))
+        os.replace(tmp, self._path)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._load().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._load()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._load()[key] = value
+        self._save()
+
+    def __delitem__(self, key: str) -> None:
+        del self._load()[key]
+        self._save()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._load()
+
+
+def _storage_dir() -> Path:
+    # workspace/skill_storage/, next to the skill directories (same
+    # INNATE_OS_ROOT resolution as common/script_paths.py, without coupling
+    # this base module to it)
+    root = Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
+    return root / "workspace" / "skill_storage"
 
 
 class RobotState:
@@ -155,7 +213,7 @@ class Skill(ABC):
         # Lets this skill run other skills, in order, from inside execute().
         # The friendly form is function proxies (see innate/skills.py):
         #   from innate.skills import navigate_to_position
-        #   navigate_to_position(x=1.0, y=0.0, theta=0.0)
+        #   navigate_to_position(x=1.0, y=0.0, theta_degrees=0.0)
         # The explicit form, for dynamic ids, is:
         #   self.skills.run("local/my_grasp_policy")   # learned/replay too
         # Each child runs to completion before the next and shows up as its own
@@ -164,6 +222,7 @@ class Skill(ABC):
         self._say_publisher = None  # lazy, see say()
         self._tts_status_sub = None  # lazy, see say(wait=True)
         self._tts_playing = None  # last /tts/is_playing value ("true"/"false")
+        self._storage = None  # lazy, see storage
 
     @property
     @abstractmethod
@@ -203,6 +262,18 @@ class Skill(ABC):
         if self.skills is not None:
             return self.skills.cancel()
         return "Nothing to cancel"
+
+    @property
+    def storage(self) -> SkillStorage:
+        """Persistent per-skill key-value store (survives restarts).
+
+        Backed by workspace/skill_storage/<skill_name>.json with atomic
+        writes -- for calibration offsets, saved poses, counters:
+        ``self.storage["dock_pose"] = {"x": 1.2, "y": 0.4}``.
+        """
+        if self._storage is None:
+            self._storage = SkillStorage(_storage_dir() / f"{self.name}.json")
+        return self._storage
 
     def say(self, text: str, wait: bool = False) -> None:
         """

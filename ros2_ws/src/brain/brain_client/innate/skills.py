@@ -8,7 +8,7 @@
     class MorningRoutine(Skill):
         def execute(self):
             head_emotion(emotion="excited")
-            navigate_to_position(x=0.3, y=0.0, theta=0.0)
+            navigate_to_position(x=0.3, y=0.0, theta_degrees=0.0)
             return "Routine complete", SkillResult.SUCCESS
 
 There is no head_emotion function in this file. Attribute access on this module

@@ -51,3 +51,13 @@ def test_backward_goal_matches_demo_second_waypoint():
     # run_routine_demo's second waypoint: 0.3 m behind the robot.
     gx, gy, gyaw = resolve_local_goal(4.0, -1.0, 0.0, -0.3, 0.0, 0.0)
     assert (gx, gy, gyaw) == pytest.approx((3.7, -1.0, 0.0))
+
+
+def test_execute_takes_degrees_not_radians():
+    """Units policy: user-facing angles are degrees with the unit in the name;
+    the radians conversion happens once, on entry."""
+    import inspect
+
+    module = _load_skill_module()
+    params = inspect.signature(module.NavigateToPosition.execute).parameters
+    assert "theta_degrees" in params and "theta" not in params

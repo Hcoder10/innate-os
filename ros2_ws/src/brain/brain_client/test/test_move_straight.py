@@ -47,10 +47,11 @@ def test_drives_until_odometry_covers_distance():
     # simulate the robot arriving after 0.25s of driving
     threading.Timer(0.25, lambda: setattr(skill, "odom", _odom(0.21))).start()
 
-    message, status = skill.execute(distance=0.2, speed=0.2)
+    message, status, *rest = skill.execute(distance=0.2, speed=0.2)
 
     assert status is SkillResult.SUCCESS, message
     assert "forward" in message
+    assert rest[0].traveled_m > 0.2  # typed pydantic payload for chaining callers
     moving = [c for c in mobility.cmds if c[0] != 0.0]
     assert moving and all(v > 0 for v, _ in moving)  # forward commands
     assert all(d == 0.5 for _, d in moving)  # deadman on every pulse
@@ -61,7 +62,7 @@ def test_negative_distance_drives_backward():
     skill, mobility = _rig()
     threading.Timer(0.25, lambda: setattr(skill, "odom", _odom(-0.21))).start()
 
-    message, status = skill.execute(distance=-0.2, speed=0.2)
+    message, status, *_ = skill.execute(distance=-0.2, speed=0.2)
 
     assert status is SkillResult.SUCCESS
     assert "backward" in message
@@ -72,7 +73,7 @@ def test_cancel_stops_the_base():
     skill, mobility = _rig()
     threading.Timer(0.2, skill.cancel).start()
 
-    message, status = skill.execute(distance=5.0, speed=0.2)
+    message, status, *_ = skill.execute(distance=5.0, speed=0.2)
 
     assert status is SkillResult.CANCELLED
     assert mobility.cmds[-1][0] == 0.0
@@ -84,7 +85,7 @@ def test_cancel_before_execute_is_honored():
     skill, mobility = _rig()
     skill.cancel()
 
-    _message, status = skill.execute(distance=0.5)
+    _message, status, *_ = skill.execute(distance=0.5)
 
     assert status is SkillResult.CANCELLED
     assert [c for c in mobility.cmds if c[0] != 0.0] == []  # never moved
@@ -98,7 +99,7 @@ def test_waits_for_late_odometry():
     threading.Timer(0.2, lambda: setattr(skill, "odom", _odom(0.0))).start()
     threading.Timer(0.5, lambda: setattr(skill, "odom", _odom(0.21))).start()
 
-    message, status = skill.execute(distance=0.2)
+    message, status, *_ = skill.execute(distance=0.2)
 
     assert status is SkillResult.SUCCESS, message
 
@@ -107,7 +108,7 @@ def test_no_odometry_fails_cleanly():
     skill, mobility = _rig()
     skill.odom = None
 
-    _message, status = skill.execute(distance=0.3)
+    _message, status, *_ = skill.execute(distance=0.3)
 
     assert status is SkillResult.FAILURE
     assert mobility.cmds == []  # never commanded motion blind
@@ -117,7 +118,7 @@ def test_speed_is_clamped():
     skill, mobility = _rig()
     threading.Timer(0.2, lambda: setattr(skill, "odom", _odom(0.11))).start()
 
-    _message, status = skill.execute(distance=0.1, speed=9.0)
+    _message, status, *_ = skill.execute(distance=0.1, speed=9.0)
 
     assert status is SkillResult.SUCCESS
     fastest = max(abs(v) for v, _ in mobility.cmds)

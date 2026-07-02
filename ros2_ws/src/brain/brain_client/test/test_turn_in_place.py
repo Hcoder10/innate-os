@@ -40,10 +40,11 @@ def test_turns_left_until_yaw_covers_angle():
     skill, mobility = _rig(start_yaw=10.0)
     threading.Timer(0.2, lambda: setattr(skill, "odom", {"theta_degrees": 101.0})).start()
 
-    message, status = skill.execute(angle_degrees=90.0, speed=0.5)
+    message, status, *rest = skill.execute(angle_degrees=90.0, speed=0.5)
 
     assert status is SkillResult.SUCCESS, message
     assert "left" in message
+    assert rest[0].turned_degrees >= 90.0  # typed pydantic payload for chaining callers
     moving = [c for c in mobility.cmds if c[0] != 0.0]
     assert moving and all(v > 0 for v, _ in moving)  # CCW commands
     assert all(d == 0.5 for _, d in moving)  # deadman on every pulse
@@ -54,7 +55,7 @@ def test_negative_angle_turns_right():
     skill, mobility = _rig(start_yaw=0.0)
     threading.Timer(0.2, lambda: setattr(skill, "odom", {"theta_degrees": -91.0})).start()
 
-    message, status = skill.execute(angle_degrees=-90.0)
+    message, status, *_ = skill.execute(angle_degrees=-90.0)
 
     assert status is SkillResult.SUCCESS
     assert "right" in message
@@ -70,7 +71,7 @@ def test_yaw_wraparound_at_180_seam():
 
     threading.Timer(0.2, _cross_seam).start()
 
-    message, status = skill.execute(angle_degrees=20.0)
+    message, status, *_ = skill.execute(angle_degrees=20.0)
 
     assert status is SkillResult.SUCCESS, message
     assert "21 degrees" in message or "20 degrees" in message
@@ -80,7 +81,7 @@ def test_cancel_stops_the_base():
     skill, mobility = _rig()
     threading.Timer(0.2, skill.cancel).start()
 
-    _message, status = skill.execute(angle_degrees=720.0)
+    _message, status, *_ = skill.execute(angle_degrees=720.0)
 
     assert status is SkillResult.CANCELLED
     assert mobility.cmds[-1][0] == 0.0
@@ -95,7 +96,7 @@ def test_bump_against_turn_direction_does_not_count_as_progress():
     threading.Timer(0.30, lambda: setattr(skill, "odom", {"theta_degrees": 46.0})).start()
     threading.Timer(0.45, lambda: setattr(skill, "odom", {"theta_degrees": 100.0})).start()
 
-    message, status = skill.execute(angle_degrees=90.0)
+    message, status, *_ = skill.execute(angle_degrees=90.0)
 
     assert status is SkillResult.SUCCESS, message
     assert "100 degrees" in message
@@ -105,7 +106,7 @@ def test_no_odometry_fails_cleanly():
     skill, mobility = _rig()
     skill.odom = None
 
-    _message, status = skill.execute(angle_degrees=90.0)
+    _message, status, *_ = skill.execute(angle_degrees=90.0)
 
     assert status is SkillResult.FAILURE
     assert mobility.cmds == []  # never commanded motion blind

@@ -19,7 +19,7 @@ from innate.skills import head_emotion, navigate_to_position, open_drawer_policy
 class MorningRoutine(Skill):
     def execute(self):
         head_emotion(emotion="excited")
-        navigate_to_position(x=0.3, y=0.0, theta=0.0, local_frame=True)
+        navigate_to_position(x=0.3, y=0.0, theta_degrees=0.0, local_frame=True)
         open_drawer_policy()          # learned policy — same call shape
         pour_mimic()                  # replay — same call shape
         return "Routine complete", SkillResult.SUCCESS
@@ -67,6 +67,16 @@ Everything here is additive; **no existing skill changes behavior or needs migra
 
 The cost of Level 2 is **implicitness**: `head_emotion(...)` works or doesn't depending on ambient execution context, and the call site doesn't show the machinery. Mitigations: fail loudly outside a skill run, keep the explicit `run()` form documented, ship the test fixture. We judge the readability of every user's routine worth one well-precedented piece of magic.
 
+### Units & conventions
+
+One policy, applied everywhere a user types a number:
+
+- **User-facing skill inputs:** meters, seconds, and **degrees** for angles — LLMs and beginners reason in degrees. Angle parameters carry the unit in their name: `angle_degrees` (turn_in_place), `theta_degrees` (navigate_to_position). Positive rotation is counter-clockwise (ROS convention).
+- **Internal geometry and ROS messages:** radians and SI, unconverted. The boundary is the `execute()` signature — convert once, on entry.
+- **Robot state:** explicit-named fields (`theta_degrees` alongside the raw quaternion in the odom state), so nothing is ambiguous at the point of use.
+
+`navigate_to_position`'s bare `theta` (radians) was renamed to `theta_degrees` while the API is young; the published inputs schema and stub regenerate automatically, and no shipped directive referenced the old name.
+
 ## The steps show up in the UI for free
 
 The app renders steps from **lifecycle events, not metadata**: it groups `task_activated` messages keyed by `primitiveName`/`primitiveId` + `taskStatus` (running/completed/failed) into step cards ([ros.ts:303](../innate-controller-app/src/types/ros.ts), [ChatContext.tsx:239](../innate-controller-app/src/context/ChatContext.tsx)). The invoker emits the same `primitive_lifecycle_message` per child that the runner emits today for top-level skills, so every sub-step appears as its own running→completed card — **with zero app changes**. (Optional polish: add a `parentPrimitiveId` field to visually group sub-steps under the Routine.) Proxy calls inherit this for free since they bottom out in the invoker.
@@ -96,13 +106,39 @@ Post-review hardening (Greptile P1): continuous-state tracking and the camera ar
 
 Four accidental limitations of the authoring surface, fixed:
 
-- **Structured results.** `execute()` may return a third element — any payload — and chaining callers receive it as `.data` on the returned message: `pose = detect_board(); grasp(x=pose.data["x"])`. The message is a `SkillOutput` (a `str` subclass), so every string-shaped consumer — cloud, app, logs, old code — is untouched; the payload rides along only for callers that want it (`normalize_skill_result` in [`types.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/types.py)).
+- **Structured results.** `execute()` may return a third element — any payload — and chaining callers receive it as `.data` on the returned message. The message is a `SkillOutput` (a `str` subclass), so every string-shaped consumer — cloud, app, logs, old code — is untouched; the payload rides along only for callers that want it (`normalize_skill_result` in [`types.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/types.py)).
+
+  Chaining is in-process (parent and child both run inside the skills server), so `.data` is passed by reference — no serialization, any Python object is legal. The **preferred shape is a pydantic model** (pydantic 2 ships on the robot; verified end-to-end): the producing skill validates its own output at construction time, and the consumer gets typed attribute access instead of dict keys.
+
+  ```python
+  class BoardPose(BaseModel):
+      x: float
+      y: float
+      confidence: float = 1.0
+
+  # in the detector skill:
+  return "board found", SkillResult.SUCCESS, BoardPose(x=1.5, y=0.2, confidence=0.93)
+
+  # in the routine:
+  pose = detect_board().data       # a real BoardPose
+  grasp(x=pose.x, y=pose.y)
+  ```
+
+  Live examples: `move_straight` returns `MoveResult(traveled_m=…)` and `turn_in_place` returns `TurnResult(turned_degrees=…)`; the demo routine consumes `turn.data.turned_degrees`.
+
+  Two caveats. (1) *Hot reload vs. class identity:* skill modules re-import on save, so `isinstance` checks across two skills' generations of the same model class can fail — define shared models in one stable module both skills import, or consume `.data` duck-typed (`pose.x` works regardless). (2) `.data` never leaves the process: the cloud agent and app only see the message string, by design; `model_dump()` is the one-liner if that ever changes. Future (deferred until real perception skills exist): a skill declaring `output = BoardPose` would let the stub generator annotate return types so IDEs complete `.data.x`.
 - **Call-time input validation.** The invoker binds inputs against the child's `execute()` signature before running it; a typo'd or missing kwarg fails immediately with the expected parameter list, instead of a TypeError surfacing from inside the child.
 - **`timeout=` on every call** (reserved kwarg, never forwarded to the skill): the child is cancelled when it expires and the call reports failure ("timed out"), while the rest of the routine keeps running — `move_straight(distance=0.5, timeout=10)`. Replaces the hand-rolled `threading.Timer` watchdog for per-step caps.
 - **`say(text, wait=True)`** blocks (best effort, via `/tts/is_playing`) until the utterance finishes, for "say this, then move" pacing.
 - **IDE completion:** [`catalog.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/catalog.py) regenerates `innate/skills.pyi` on every publish — one typed def per importable skill (types from the same inputs schema the LLM sees, guidelines as docstrings), local/ winning stem collisions to match runtime resolution. Written next to the imported `innate` package; gitignored.
 
 Tests in `test/test_skill_ergonomics.py`.
+
+## Implemented (Phase 4 — robotics gaps, tier 1)
+
+- **Persistent per-skill storage:** `self.storage` — a JSON-backed dict at `workspace/skill_storage/<skill_name>.json` (lazy load, atomic writes) for calibration offsets, saved poses, counters: `self.storage["dock_pose"] = {"x": 1.2, "y": 0.4}`.
+- **New robot states:** `LAST_JOINT_STATES` (`/joint_states`: name/position/velocity/effort) and `LAST_BATTERY` (`/battery_state`: percentage/voltage/current/charging) — declared with `RobotState(...)` descriptors like odom, live at 50 Hz during execution.
+- **Units policy** (see *Units & conventions* above) applied: `navigate_to_position` takes `theta_degrees`.
 
 Still open: converting a real shipped directive off its prose loop.
 

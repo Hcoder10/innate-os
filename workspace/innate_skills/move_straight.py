@@ -3,9 +3,8 @@
 import math
 import time
 
-from pydantic import BaseModel
-
 from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from pydantic import BaseModel
 
 # Raw base speeds we allow (m/s). Slow on purpose: there is no obstacle
 # avoidance on this path.

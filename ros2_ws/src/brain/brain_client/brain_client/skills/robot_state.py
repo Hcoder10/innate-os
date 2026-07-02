@@ -17,6 +17,7 @@ import threading
 
 import numpy as np
 from nav_msgs.msg import OccupancyGrid, Odometry
+from sensor_msgs.msg import BatteryState, JointState
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
@@ -36,10 +37,14 @@ class RobotStateProvider:
         self.last_odom = None
         self.last_map = None
         self.last_head_position = None
+        self.last_joint_states = None
+        self.last_battery = None
 
         self._odom_sub = None
         self._map_sub = None
         self._head_position_sub = None
+        self._joint_states_sub = None
+        self._battery_sub = None
 
         self._current_skill = None
         self._current_skill_lock = threading.Lock()
@@ -70,26 +75,38 @@ class RobotStateProvider:
         self._head_position_sub = self._node.create_subscription(
             String, self._head_current_position_topic, self._on_head_position, 10
         )
+        self._joint_states_sub = self._node.create_subscription(JointState, "/joint_states", self._on_joint_states, 10)
+        self._battery_sub = self._node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
         self._manipulation.start()
 
     def stop_subscriptions(self) -> None:
         """Destroy robot-state subscriptions when no skill is running."""
-        for sub in (self._odom_sub, self._map_sub, self._head_position_sub):
+        for sub in (self._odom_sub, self._map_sub, self._head_position_sub, self._joint_states_sub, self._battery_sub):
             if sub is not None:
                 self._node.destroy_subscription(sub)
         self._odom_sub = None
         self._map_sub = None
         self._head_position_sub = None
+        self._joint_states_sub = None
+        self._battery_sub = None
         self._manipulation.stop()
         self.last_odom = None
         self.last_map = None
         self.last_head_position = None
+        self.last_joint_states = None
+        self.last_battery = None
 
     def _on_odom(self, msg: Odometry) -> None:
         self.last_odom = msg
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self.last_map = msg
+
+    def _on_joint_states(self, msg: JointState) -> None:
+        self.last_joint_states = msg
+
+    def _on_battery(self, msg: BatteryState) -> None:
+        self.last_battery = msg
 
     def _on_head_position(self, msg: String) -> None:
         try:
@@ -220,6 +237,30 @@ class RobotStateProvider:
                 }
             else:
                 self._logger.warn("Skill requires LAST_MAP but none available.")
+
+        if RobotStateType.LAST_JOINT_STATES in required_states:
+            if self.last_joint_states is not None:
+                js = self.last_joint_states
+                robot_state_to_inject[RobotStateType.LAST_JOINT_STATES.value] = {
+                    "name": list(js.name),
+                    "position": list(js.position),
+                    "velocity": list(js.velocity),
+                    "effort": list(js.effort),
+                }
+            else:
+                self._logger.warn("Skill requires LAST_JOINT_STATES but none available.")
+
+        if RobotStateType.LAST_BATTERY in required_states:
+            if self.last_battery is not None:
+                b = self.last_battery
+                robot_state_to_inject[RobotStateType.LAST_BATTERY.value] = {
+                    "percentage": b.percentage,
+                    "voltage": b.voltage,
+                    "current": b.current,
+                    "charging": b.power_supply_status == BatteryState.POWER_SUPPLY_STATUS_CHARGING,
+                }
+            else:
+                self._logger.warn("Skill requires LAST_BATTERY but none available.")
 
         if RobotStateType.LAST_HEAD_POSITION in required_states:
             if self.last_head_position is not None:
