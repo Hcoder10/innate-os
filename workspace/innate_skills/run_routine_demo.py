@@ -3,7 +3,7 @@
 import time
 
 from innate import Skill, SkillResult
-from innate.skills import arm_zero_position, head_emotion, move_straight, turn_in_place
+from innate.skills import arm_zero_position, head_emotion, move_straight, pick_up_sock, turn_in_place
 
 
 class RunRoutineDemo(Skill):
@@ -30,6 +30,8 @@ class RunRoutineDemo(Skill):
 
     def execute(self):
         arm_zero_position()
+        pick_up_sock()
+
         self.say("Starting the demo routine!")
         head_emotion(emotion="excited")
         self.say("I will now move forward!")
