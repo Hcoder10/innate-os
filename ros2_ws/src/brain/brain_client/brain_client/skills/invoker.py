@@ -72,7 +72,7 @@ class SkillInvoker:
 
             def _expire():
                 timed_out.set()
-                self.cancel()
+                self._cancel_active_child()
 
             watchdog = threading.Timer(timeout, _expire)
             watchdog.start()
@@ -90,9 +90,8 @@ class SkillInvoker:
                 watchdog.cancel()
 
         if timed_out.is_set() and status is SkillResult.CANCELLED:
-            # only this child timed out, not the routine — undo the flag the
-            # watchdog's cancel() set so later steps still run
-            self._cancelled = False
+            # only this child timed out, not the routine — report a step
+            # failure so later steps still run
             message, status = f"'{skill_id}' timed out after {timeout}s", SkillResult.FAILURE
 
         self._step(
@@ -107,10 +106,19 @@ class SkillInvoker:
         return message, status
 
     def cancel(self):
-        """Stop the child running right now. Call from the parent skill's cancel()."""
-        self._cancelled = True
+        """Stop the routine: the child running right now, and every step after it.
+
+        Call from the parent skill's cancel(). The timeout watchdog instead uses
+        _cancel_active_child directly so it never marks the whole routine cancelled.
+        """
         if self._cancelling:
             return "Routine cancelled"  # re-entered from the child we're cancelling
+        self._cancelled = True
+        return self._cancel_active_child()
+
+    def _cancel_active_child(self):
+        if self._cancelling:
+            return "Routine cancelled"
         self._cancelling = True
         try:
             if self._active_code_skill is not None:
