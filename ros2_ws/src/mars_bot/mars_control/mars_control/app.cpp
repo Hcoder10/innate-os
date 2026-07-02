@@ -183,9 +183,7 @@ std::string get_tag_body(const std::string& mars_root) {
  * Get the current robot version.
  * - If HEAD is exactly on a tag (branch or detached), returns that tag
  * - Otherwise (development or detached HEAD), returns latest tag + "-dev"
- * - If no tags exist / not a git checkout (e.g. the sim container mounts the
- *   source without .git), returns "0.0.0-dev". A real robot is always checked
- *   out on a tag, so this fallback only applies in development.
+ * - Throws runtime_error if no tags exist (this should not happen)
  */
 std::string get_robot_version(const std::string& mars_root) {
     // Check if we're exactly on a tag (works for both branch and detached HEAD)
@@ -205,12 +203,8 @@ std::string get_robot_version(const std::string& mars_root) {
     std::string tags_cmd = "cd \"" + mars_root + "\" && git tag --list --sort=-version:refname 2>/dev/null";
     std::string tags_output = exec_command(tags_cmd);
 
-    // No tags, or not a git checkout at all (the sim container mounts the source
-    // without .git, so git errors and 2>/dev/null leaves this empty). Report a
-    // development version instead of failing every publish cycle. A real robot
-    // is always on a tag, so this only happens in dev/sim.
     if (tags_output.empty()) {
-        return "0.0.0-dev";
+        throw std::runtime_error("No git tags found - repository must have at least one tag");
     }
 
     // Get first tag (latest)
@@ -219,7 +213,7 @@ std::string get_robot_version(const std::string& mars_root) {
     std::getline(iss, latest_tag);
 
     if (latest_tag.empty()) {
-        return "0.0.0-dev";
+        throw std::runtime_error("No git tags found - repository must have at least one tag");
     }
 
     // Validate tag format (x.y.z, optionally with -rc<N> suffix)

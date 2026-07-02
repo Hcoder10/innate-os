@@ -224,21 +224,7 @@ def main():
                 reload=False,
             )
             server = uvicorn.Server(config)
-            # A web-server failure must kill the whole sim: this runs on a
-            # daemon thread, so without the exits below a bind error (port
-            # already in use) would leave the simulation loop running with no
-            # HTTP endpoint — and the launcher polling video_feeds_ready until
-            # its 10-minute timeout instead of failing immediately.
-            try:
-                server.run()
-            except BaseException as e:  # uvicorn raises SystemExit on startup failure
-                print(f"[Main] FATAL: web server failed on port {SIMULATOR_PORT}: {e!r}. Exiting.")
-                os._exit(1)
-            if not SHARED_QUEUES.exit_event.is_set():
-                # Bind errors can also surface as a clean return (uvicorn logs
-                # the ERROR and shuts the app down without raising).
-                print(f"[Main] FATAL: web server on port {SIMULATOR_PORT} stopped unexpectedly. Exiting.")
-                os._exit(1)
+            server.run()
 
         uvicorn_thread = threading.Thread(target=run_uvicorn, daemon=True)
         uvicorn_thread.start()

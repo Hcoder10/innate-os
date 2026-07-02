@@ -84,20 +84,6 @@ echo "Started app control..."
 # by sim/main.py), which pulls frames directly and streams sim->browser without
 # the ROS hop. Both speak the same /webrtc/* rosbridge signaling, so running both
 # would conflict — leave the C++ streamer disabled here for the sim.
-#
-# DO NOT try to run mars_cam in the sim container instead of the host aiortc
-# server. It was attempted and reverted after burning hours on docker NAT: the
-# container is on the docker BRIDGE, so mars_cam's ICE host candidates carry the
-# unreachable container IP, and the browser's mDNS candidates can't be reached
-# back (the peer-reflexive/local-STUN srflx path collapses to the docker gateway
-# and the userland-proxy hairpin fails). Workarounds all have dealbreakers:
-# announce-IP + published ports only fixes browser->robot (robot still can't
-# reach the browser); host networking breaks the novnc DISPLAY and is unsupported
-# on Docker Desktop/Mac; requiring a getUserMedia mic grant to de-obfuscate the
-# browser is the only thing that worked, but it's an unacceptable prompt. The
-# ROS image path is also throttled (~10 Hz, frame-dropping) vs the host server's
-# render-rate frames. The host aiortc server sits in the browser's own network
-# namespace, so none of this applies. Keep WebRTC on the host.
 # tmux new-window -t "$SESSION_NAME" -n webrtc
 # tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
 echo "WebRTC: using sim/ aiortc server (C++ mars_cam streamer disabled for sim)..."
@@ -135,21 +121,6 @@ echo "Started arm IK..."
 tmux new-window -t "$SESSION_NAME" -n vision-nav
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:vision-nav" "ros2 launch innate_uninavid uninavid.launch.py cmd_vel_topic:=/cmd_vel" C-m
 echo "Started vision navigation inference client..."
-settle_after_launch
-
-# === Window 7: Console + Webapp UI ===
-# The robot webapp serves the sim UI too (replacing sim/frontend). Its python
-# front door binds 443 (https) + 80 (http) inside the container — both exposed by
-# docker-compose.dev.yml — and proxies /ws to the sim rosbridge on 9090.
-tmux new-window -t "$SESSION_NAME" -n console-webapp
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp" "ros2 launch innate_console console.launch.py" C-m
-echo "Started console..."
-settle_after_launch
-tmux split-window -t "${TMUX_TARGET_PREFIX}:console-webapp" -h
-# WEBAPP_SIM_CONTROLS surfaces the webapp's sim-only debug controls (Reset
-# Position + FPS/queue), which the robot deployment leaves off.
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do WEBAPP_SIM_CONTROLS=1 python3 proxy/https_server.py; sleep 2; done" C-m
-echo "Started webapp (https :443 + http :80)..."
 
 # Select the rosbridge-app window
 tmux select-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app"

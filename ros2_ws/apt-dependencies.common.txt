@@ -1,8 +1,5 @@
-# Common system dependencies for the innate-os ROS2 workspace.
-# Required by BOTH simulation and hardware modes. Layered with the
-# mode-specific overlays (see DEPENDENCIES_GUIDE.md):
-#   apt-dependencies.sim.txt       - simulation-only extras
-#   apt-dependencies.hardware.txt  - physical-robot / Jetson-only extras
+# Common system dependencies for innate-os ROS2 workspace
+# These are required for both simulation and hardware modes
 # Install with: xargs -a apt-dependencies.common.txt sudo apt-get install -y
 
 # Build tools
@@ -16,12 +13,19 @@ ccache
 # Shell and terminal tools
 zsh
 tmux
+htop
+btop
+nano
+vim
 
 # System libraries
 jq
 zstd
+libudev-dev
+libusb-1.0-0-dev
 libturbojpeg0-dev
 nlohmann-json3-dev
+portaudio19-dev
 
 # GStreamer (for WebRTC streaming)
 gstreamer1.0-tools
@@ -41,6 +45,8 @@ python3-gi
 python3-gst-1.0
 
 # Python system packages
+python3-pygame
+python3-serial
 python3-numpy
 python3-opencv
 python3-pydantic
@@ -50,6 +56,7 @@ python3-pytest
 ros-humble-rclcpp
 ros-humble-rclpy
 ros-humble-rclcpp-components
+ros-humble-fastrtps
 ros-humble-rmw-zenoh-cpp
 ros-humble-launch-xml
 ros-humble-ament-cmake
@@ -75,22 +82,39 @@ ros-humble-tf2-ros
 ros-humble-tf2-geometry-msgs
 ros-humble-tf-transformations
 
-# ROS2 Humble packages - Navigation (shared subset; robot-only metas live in
-# apt-dependencies.hardware.txt, sim-only nav pieces in apt-dependencies.sim.txt)
+# ROS2 Humble packages - Navigation
+ros-humble-navigation2
+ros-humble-nav2-bringup
 ros-humble-nav2-simple-commander
+ros-humble-nav2-map-server
+ros-humble-nav2-amcl
 ros-humble-nav2-controller
+ros-humble-nav2-velocity-smoother
 ros-humble-nav2-bt-navigator
 ros-humble-nav2-behaviors
 ros-humble-nav2-lifecycle-manager
+ros-humble-spatio-temporal-voxel-layer
+
+# ROS2 Humble packages - SLAM
+ros-humble-slam-toolbox-humble-lifecycle
 
 # ROS2 Humble packages - Vision/Perception
 ros-humble-cv-bridge
 ros-humble-camera-info-manager
 ros-humble-image-transport
+ros-humble-image-transport-plugins
+ros-humble-image-pipeline
+ros-humble-depth-image-proc
+ros-humble-camera-calibration
 ros-humble-compressed-image-transport
+ros-humble-vision-msgs
+ros-humble-rplidar-ros
+ros-humble-pcl-ros
 
-# ROS2 Humble packages - Manipulation
+# ROS2 Humble packages - Hardware/Manipulation
 ros-humble-dynamixel-sdk
+ros-humble-moveit
+ros-humble-moveit-ros-move-group
 
 # ROS2 Humble packages - Middleware/Bridge
 ros-humble-rosbridge-suite
@@ -103,8 +127,15 @@ ros-humble-rosidl-default-runtime
 
 # ROS2 Humble packages - State Publishers
 ros-humble-robot-state-publisher
+ros-humble-joint-state-publisher
+ros-humble-joint-state-publisher-gui
 
 # ROS2 Humble packages - Utilities
 ros-humble-topic-tools
 ros-humble-xacro
+ros-humble-bondpy
 libhdf5-dev
+
+# ROS2 Humble packages - Simulation (optional)
+# ros-humble-stage-ros
+

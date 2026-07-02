@@ -52,35 +52,11 @@ class SkillCatalog:
         self._ws = ws_bridge
         self._state = state
 
-        self._last_skills_signature: tuple | None = None
         self._sub = node.create_subscription(
             AvailableSkills, "/brain/available_skills", self._on_available_skills, AVAILABLE_SKILLS_QOS
         )
 
     def _on_available_skills(self, msg: AvailableSkills) -> None:
-        # The roster is latched and re-published on a heartbeat so late
-        # subscribers (the webapp, via rws) can catch it. Ignore unchanged
-        # repeats here so each beat doesn't rebuild the registry and re-hit the
-        # cloud agent.
-        signature = tuple(
-            (
-                s.id,
-                s.name,
-                s.type,
-                s.guidelines,
-                s.guidelines_when_running,
-                s.inputs_json,
-                s.in_training,
-                s.episode_count,
-                s.directory,
-                s.wheeled,
-            )
-            for s in msg.skills
-        )
-        if signature == self._last_skills_signature:
-            return
-        self._last_skills_signature = signature
-
         def _warn_dup(name, existing_id, new_id):
             self._logger.warn(f"Duplicate skill name '{name}': ID '{existing_id}' overwritten by '{new_id}'")
 

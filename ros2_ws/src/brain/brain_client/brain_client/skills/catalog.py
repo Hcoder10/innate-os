@@ -67,11 +67,6 @@ class SkillRepository:
             reliability=QoSReliabilityPolicy.RELIABLE,
         )
         self._skills_publisher = node.create_publisher(AvailableSkills, "/brain/available_skills", qos)
-        # Last roster we published, kept so the heartbeat can re-emit it cheaply
-        # without re-inspecting every skill. The topic is latched, but bridges
-        # (rws) that subscribe after boot don't get the latched sample, so a
-        # periodic re-publish is what actually reaches late-joining webapp clients.
-        self._last_published_msg: AvailableSkills | None = None
 
         self._hot_reload_watcher = None
 
@@ -643,23 +638,10 @@ class SkillRepository:
         msg.skills = filtered_skills
         try:
             self._skills_publisher.publish(msg)
-            self._last_published_msg = msg
             self._write_skill_cache(filtered_skills)
             self._logger.info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
             self._logger.error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
-
-    def republish_cached(self) -> None:
-        """Re-emit the last published roster (no rebuild).
-
-        Latched delivery only reaches subscribers present at publish time; the
-        webapp connects through rws after boot and never receives the latched
-        sample. A low-rate heartbeat calling this lets late subscribers pick up
-        the roster within one interval. Downstream consumers dedupe by content,
-        so re-emitting the same message is a no-op for the UI.
-        """
-        if self._last_published_msg is not None:
-            self._skills_publisher.publish(self._last_published_msg)
 
     def _build_skill_info(
         self,

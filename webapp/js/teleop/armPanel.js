@@ -77,29 +77,8 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   if (!serial) {
     const hint = document.createElement("p");
     hint.className = "arm-hint";
-    /** @type {HTMLElement[]} */
-    const extras = [];
-    if (!window.isSecureContext) {
-      // WebSerial needs a secure origin. The robot serves the same app over
-      // HTTPS (self-signed), so point the operator there — the cert warning is
-      // a one-time click-through. (Localhost is already secure, so plain http
-      // only happens off-box, which is exactly where this redirect helps.)
-      hint.textContent = "Leader arm needs HTTPS — switch over and continue past the certificate warning.";
-      const switchBtn = document.createElement("button");
-      switchBtn.className = "arm-button";
-      switchBtn.type = "button";
-      switchBtn.textContent = "Switch to HTTPS";
-      switchBtn.addEventListener("click", () => {
-        const url = new URL(location.href);
-        url.protocol = "https:";
-        url.port = ""; // 80 -> default 443; the TLS front door listens there
-        location.href = url.href;
-      });
-      extras.push(switchBtn);
-    } else {
-      hint.textContent = "Needs Chrome or Edge (WebSerial).";
-    }
-    wrap.append(hint, ...extras, divider(), armSvc.el);
+    hint.textContent = "Needs Chrome or Edge (WebSerial).";
+    wrap.append(hint, divider(), armSvc.el);
     // No leader-arm link possible here — tell the gate it will never be ready.
     opts.onState?.({ engaged: false, reading: false, rate: 0 });
     return {
@@ -224,11 +203,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
 
   connectBtn.addEventListener("click", async () => {
     try {
-      // QinHeng CH9102 USB-serial bridge on the leader arm ("USB Single
-      // Serial") — filtering narrows the chooser to just it.
-      const port = await serial.requestPort({
-        filters: [{ usbVendorId: 0x1a86, usbProductId: 0x55d3 }],
-      });
+      const port = await serial.requestPort();
       await openPort(port);
     } catch {
       render(leader.state); // chooser dismissed — not an error

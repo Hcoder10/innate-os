@@ -106,6 +106,9 @@ export function createVideoStage(parent, session) {
     if (state.status === "error") {
       statusText.textContent = "video link failed";
       retry.hidden = false;
+    } else if (state.status === "preempted") {
+      statusText.textContent = "camera in use by another device";
+      retry.hidden = false;
     } else if (loading) {
       statusText.textContent = "loading video stream";
       retry.hidden = true;
@@ -139,7 +142,7 @@ export function createVideoStage(parent, session) {
       video.play().catch(() => {});
       watchFirstFrames();
     }
-    if (!state.videoStream && state.status === "idle") {
+    if (!state.videoStream && (state.status === "idle" || state.status === "preempted")) {
       video.srcObject = null;
       buffering = false;
       stopFrameWatch();
