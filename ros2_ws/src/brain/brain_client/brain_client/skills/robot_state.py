@@ -43,6 +43,9 @@ class RobotStateProvider:
 
         self._current_skill = None
         self._current_skill_lock = threading.Lock()
+        # parents suspended while a chained child holds the 50 Hz slot; the
+        # child's end_continuous_updates() pops its parent back in.
+        self._skill_stack = []
         self._state_update_thread = None
         self._state_update_stop_event = threading.Event()
 
@@ -96,19 +99,32 @@ class RobotStateProvider:
 
     # --- continuous updates ---
     def begin_continuous_updates(self, skill) -> None:
+        """Start (or hand over) the 50 Hz state feed for ``skill``.
+
+        Nesting-safe: if a skill already holds the slot (a parent running a
+        chained child), it is suspended and resumes when the child ends.
+        """
         with self._current_skill_lock:
+            if self._current_skill is not None:
+                self._skill_stack.append(self._current_skill)
+                self._current_skill = skill
+                return  # update thread already running
             self._current_skill = skill
         self._state_update_stop_event.clear()
         self._state_update_thread = threading.Thread(target=self._state_update_thread_func, daemon=True)
         self._state_update_thread.start()
 
     def end_continuous_updates(self) -> None:
+        """End the current skill's state feed, resuming a suspended parent if any."""
+        with self._current_skill_lock:
+            if self._skill_stack:
+                self._current_skill = self._skill_stack.pop()
+                return  # parent takes the slot back; thread keeps running
+            self._current_skill = None
         if self._state_update_thread is not None:
             self._state_update_stop_event.set()
             self._state_update_thread.join(timeout=1.0)
             self._state_update_thread = None
-        with self._current_skill_lock:
-            self._current_skill = None
 
     def _state_update_thread_func(self) -> None:
         """Continuously refresh robot state for the running skill (~50 Hz)."""

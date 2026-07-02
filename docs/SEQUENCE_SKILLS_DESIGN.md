@@ -78,7 +78,7 @@ The app renders steps from **lifecycle events, not metadata**: it groups `task_a
 - [`runner.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/runner.py) + [`lifecycle.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/lifecycle.py) — children piggyback a tagged lifecycle marker on the parent's feedback; the runner re-emits it as a per-step `task_activated` status **to the app only** (not the cloud agent, which runs one primitive at a time and must keep seeing just the parent).
 - Example: [`run_routine_demo.py`](../workspace/innate_skills/run_routine_demo.py) + [`routine_demo_agent.py`](../workspace/innate_agents/routine_demo_agent.py). Unit tests in `test/test_skill_invoker.py`.
 
-Known v1 limits: an orchestrator should not itself declare required robot states (single-slot continuous-state tracking); deep nested-chain cancel is best-effort; a chaining skill's `cancel()` must call `self.skills.cancel()` (Phase 2 removes this: the base class's cancel delegates to the active invoker by default, making the demo's `cancel()` deletable).
+Known v1 limits: deep nested-chain cancel is best-effort; a chaining skill's `cancel()` must call `self.skills.cancel()` (Phase 2 removes this: the base class's cancel delegates to the active invoker by default, making the demo's `cancel()` deletable).
 
 ## Implemented (Phase 2 — authoring surface)
 
@@ -89,6 +89,8 @@ Known v1 limits: an orchestrator should not itself declare required robot states
 - [`run_routine_demo.py`](../workspace/innate_skills/run_routine_demo.py) rewritten in the new style. Tests in `test/test_skill_proxy.py` + bare-name cases in `test/test_skill_invoker.py`.
 - **Skills can speak: `self.say(text)`** ([`types.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/types.py)) — fire-and-forget TTS through the robot's voice. Publishes to `/brain/tts`, which `brain_client_node` already routes to Cartesia + the speaker; returns immediately (speech overlaps motion), no-ops safely without a node (tests) or without audio. Verified end-to-end on the robot (~1.3s to first audio).
 - **User skills override shipped ones by name, everywhere.** Bare-name chaining already resolved `local/` before `innate-os/`; [`catalog.py`](../ros2_ws/src/brain/brain_client/brain_client/skills/catalog.py)'s display-name dedup now applies the same precedence to the published skills list, so the cloud agent and `innate.skills` imports agree on which skill a name means (`_dedupe_display_names`, logged as a shadow warning; the shipped skill stays runnable via its full id). Tests in `test/test_skill_name_override.py`.
+
+Post-review hardening (Greptile P1): continuous-state tracking and the camera are now **nesting-safe** — a chained child that declares required robot states suspends its parent's 50 Hz slot and hands it back on exit (stack in `RobotStateProvider`), `end_continuous_updates` only fires for skills that began them, and camera start/stop is refcounted. Orchestrators may declare robot states; the earlier "don't" rule is obsolete.
 
 Still open from Phase 2: `.pyi` stub generation for IDE completion (needs a decision on where the stub lives so user editors pick it up) and converting a real shipped directive off its prose loop.
 

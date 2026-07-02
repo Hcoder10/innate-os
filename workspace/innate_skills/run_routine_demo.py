@@ -16,9 +16,6 @@ class RunRoutineDemo(Skill):
     sequence -- or a loop -- stops at the first problem with no status
     checking. Catch SkillFailed where you'd rather recover than stop.
     Cancellation is handled by the Skill base class.
-
-    Note: an orchestrator like this shouldn't declare required robot states of
-    its own -- let each child ask for what it needs.
     """
 
     @property

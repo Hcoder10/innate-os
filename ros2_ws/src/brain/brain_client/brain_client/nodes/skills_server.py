@@ -346,9 +346,9 @@ class SkillsActionServer(Node):
         stay up while a chaining skill runs its children). Returns
         ``(message, SkillResult)``; goal finalization stays with the caller.
 
-        Note: an orchestrator that chains children should not itself declare
-        required robot states — continuous-update tracking is single-slot, so a
-        parent and child both requesting it would clobber each other.
+        Nesting-safe: a chained child that declares required states suspends
+        its parent's 50 Hz slot and hands it back on exit (see
+        RobotStateProvider); the camera is refcounted the same way.
         """
         required_states = skill.get_required_robot_states()
         needs_camera = required_states and (
@@ -373,7 +373,8 @@ class SkillsActionServer(Node):
                 except SkillFailed as e:
                     return str(e) or "Skill failed", SkillResult.FAILURE
         finally:
-            self.robot_state.end_continuous_updates()
+            if required_states:
+                self.robot_state.end_continuous_updates()
             if needs_camera:
                 self._camera_node.stop()
 
