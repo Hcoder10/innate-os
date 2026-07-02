@@ -54,7 +54,7 @@ class TurnInPlace(Skill):
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
         if angle_degrees == 0.0:
-            return "Turned 0 degrees", SkillResult.SUCCESS
+            return "Turned 0 degrees", SkillResult.SUCCESS, {"turned_degrees": 0.0}
         yaw = self._wait_for_yaw()
         if self._cancelled:
             return "Turn cancelled", SkillResult.CANCELLED
@@ -89,7 +89,8 @@ class TurnInPlace(Skill):
 
         self._stop()
         direction = "left" if angle_degrees > 0 else "right"
-        return f"Turned {turned:.0f} degrees {direction}", SkillResult.SUCCESS
+        # third element = structured payload; chaining callers read it as .data
+        return f"Turned {turned:.0f} degrees {direction}", SkillResult.SUCCESS, {"turned_degrees": round(turned, 1)}
 
     def cancel(self):
         self._cancelled = True

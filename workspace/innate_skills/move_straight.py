@@ -55,7 +55,7 @@ class MoveStraight(Skill):
         if self.mobility is None:
             return "Mobility interface not available", SkillResult.FAILURE
         if distance == 0.0:
-            return "Moved 0.0m", SkillResult.SUCCESS
+            return "Moved 0.0m", SkillResult.SUCCESS, {"traveled_m": 0.0}
         start = self._wait_for_position()
         if self._cancelled:
             return "Move cancelled", SkillResult.CANCELLED
@@ -85,7 +85,8 @@ class MoveStraight(Skill):
 
         self._stop()
         direction = "forward" if distance > 0 else "backward"
-        return f"Moved {traveled:.2f}m {direction}", SkillResult.SUCCESS
+        # third element = structured payload; chaining callers read it as .data
+        return f"Moved {traveled:.2f}m {direction}", SkillResult.SUCCESS, {"traveled_m": round(traveled, 3)}
 
     def cancel(self):
         self._cancelled = True
