@@ -98,6 +98,35 @@ class HeadCmd(NamedTuple):
     angle_deg: float
 
 
+class ChaseCameraCmd(NamedTuple):
+    """Frontend -> Simulation: orbit pose for the chase camera.
+
+    Spherical coordinates around a target that tracks the robot base:
+    - azimuth/elevation in the robot-yaw frame (radians); azimuth=0 sits behind
+      the robot, so the view keeps following as the robot turns.
+    - radius: distance from the target (meters).
+    - pan_x/pan_y: offset of the look-at target from the robot base, in the
+      robot-yaw ground plane (meters); 0,0 looks at the base.
+    """
+
+    azimuth: float
+    elevation: float
+    radius: float
+    pan_x: float
+    pan_y: float
+
+
+# The default chase pose reproduces the legacy fixed shot (1 m behind, 1 m up):
+# offset (-1, 0, 1) == radius sqrt(2), elevation atan2(1, 1)=45deg, azimuth 0.
+DEFAULT_CHASE_ORBIT = ChaseCameraCmd(
+    azimuth=0.0,
+    elevation=0.7853981633974483,
+    radius=1.4142135623730951,
+    pan_x=0.0,
+    pan_y=0.0,
+)
+
+
 class ArmStateMsg(NamedTuple):
     """Simulation -> Agent: current arm joint state for publishing."""
 

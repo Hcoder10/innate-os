@@ -8,6 +8,7 @@ import time
 from collections import deque
 from typing import Any, NamedTuple
 
+from src.agent.types import DEFAULT_CHASE_ORBIT
 from src.runtime_logging import normalize_sim_log_mode
 
 
@@ -78,6 +79,10 @@ class SharedQueues:
         self.agent_to_sim = queue.Queue(maxsize=100)
         self.sim_to_web = queue.Queue(maxsize=100)  # Will now contain dicts of named images
         self.latest_frames = {}
+        # Latest chase-camera orbit pose (frontend -> sim). Latest-value-wins single
+        # slot, not a queue: the render loop reads it every frame, the rosbridge
+        # thread overwrites it. Reference swap of an immutable NamedTuple is atomic.
+        self.chase_cam_state = DEFAULT_CHASE_ORBIT
         self.exit_event = threading.Event()
 
         # Separate size-1 queue for camera/sensor data - always keeps only latest frame

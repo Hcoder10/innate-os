@@ -10,3 +10,6 @@ data/Replica*
 /*_exported.stl
 /pr_screenshots/
 .env
+
+# Custom local scene assets (large GLBs + preview renders) — distributed out-of-band
+data/custom/

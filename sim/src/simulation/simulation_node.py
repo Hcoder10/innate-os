@@ -54,7 +54,7 @@ HEAD_MAX_DEG = 20.0
 # Max valid depth (meters) before a pixel is treated as no-reading; matches the
 # real robot's mars_cam MAX_DEPTH_M so 16UC1 mm values stay in uint16 range.
 DEPTH_MAX_M = 10.0
-DEFAULT_SCENE_CONFIG = {
+REPLICACAD_SCENE_CONFIG = {
     "name": "Baked_sc0_staging_00",
     "mesh_path": "data/ReplicaCAD_baked_lighting/stages_uncompressed/Baked_sc0_staging_00.glb",
     "mesh_euler": [0, 0, 0],
@@ -63,8 +63,26 @@ DEFAULT_SCENE_CONFIG = {
     "slice_output_prefix": "replica_scene_sliced",
 }
 
+# Custom furnished apartment (Sketchfab, Y-up GLB). Visual-only for now: collision
+# and occupancy are intentionally skipped (no stage config / STL yet), so an empty
+# free-space map sized to `occupancy_bounds` is used until those are built.
+APARTMENT_SCENE_CONFIG = {
+    "name": "appartement",
+    "mesh_path": "data/custom/appartement.glb",
+    "mesh_euler": [0, 0, 0],
+    "mesh_pos": (0, 0, 0.003),  # lift 3mm so the floor doesn't z-fight the ground plane
+    "robot_init_pos": (-3.2, 0.9, 0.05),  # spawn inside the apartment (footprint centroid)
+    "collision_stage_config": None,
+    "occupancy_stl_path": None,
+    "occupancy_bounds": {"min_x": -6.76, "min_y": -4.39, "max_x": 0.29, "max_y": 6.27},
+    "slice_output_prefix": "appartement_sliced",
+}
+
+DEFAULT_SCENE_CONFIG = APARTMENT_SCENE_CONFIG
+
 SCENE_PRESETS = {
-    "Baked_sc0_staging_00": DEFAULT_SCENE_CONFIG,
+    "Baked_sc0_staging_00": REPLICACAD_SCENE_CONFIG,
+    "appartement": APARTMENT_SCENE_CONFIG,
 }
 
 
@@ -265,7 +283,7 @@ class SimulationNode:
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
         self._init_head_control()
-        self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
+        self._set_robot_base_pose(self.current_scene_config.get("robot_init_pos", ROBOT_INIT_POS), xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
 
@@ -308,6 +326,27 @@ class SimulationNode:
         print(f"[SimulationNode] Genesis backend: {backend_name}")
         gs.init(**init_kwargs)
 
+    def _scene_vis_options(self):
+        """Visual/lighting options for the scene.
+
+        The furnished apartment preset gets 'pretty' lighting (low ambient + a
+        directional sun and interior fill lights, with shadows). Every other scene
+        keeps the flat full-ambient default so perception cameras stay unchanged.
+        """
+        # Apartment preset: directional sun (shadows on). Interior point lights stay
+        # off for perf — uncomment them to restore the full look.
+        if self.current_scene_config.get("name") == "appartement":
+            return gs.options.VisOptions(
+                shadow=True,
+                ambient_light=(0.35, 0.35, 0.38),
+                lights=[
+                    {"type": "directional", "dir": (0.4, 0.3, -1.0), "color": (1.0, 0.96, 0.88), "intensity": 5.0},
+                    # {"type": "point", "pos": (-3.2, 0.9, 2.2), "color": (1.0, 1.0, 1.0), "intensity": 30.0},
+                    # {"type": "point", "pos": (-1.0, -2.0, 2.2), "color": (1.0, 1.0, 1.0), "intensity": 20.0},
+                ],
+            )
+        return gs.options.VisOptions(ambient_light=(1.0, 1.0, 1.0))
+
     def _init_scene(self):
         """Initialize the main simulation scene"""
         scene_dt = self.scene_dt
@@ -339,9 +378,7 @@ class SimulationNode:
                 camera_fov=self.render_camera_vfov,  # VERTICAL FOV
                 res=self.render_camera_res,
             ),
-            vis_options=gs.options.VisOptions(
-                ambient_light=(0.5, 0.5, 0.5),
-            ),
+            vis_options=self._scene_vis_options(),
             profiling_options=gs.options.ProfilingOptions(show_FPS=False),
             show_viewer=self.enable_vis,
             **scene_kwargs,
@@ -505,6 +542,7 @@ class SimulationNode:
         scene_config = self.current_scene_config
         base_scene_path = self._resolve_project_path(scene_config["mesh_path"])
         base_scene_euler = tuple(scene_config.get("mesh_euler", [0, 0, 0]))
+        base_scene_pos = tuple(scene_config.get("mesh_pos", [0, 0, 0]))
 
         print(f"[SimulationNode] Loading static scene '{scene_config['name']}' from {base_scene_path}")
 
@@ -513,7 +551,7 @@ class SimulationNode:
                 file=base_scene_path,
                 fixed=True,
                 euler=base_scene_euler,
-                pos=(0, 0, 0),
+                pos=base_scene_pos,
                 convexify=False,
                 collision=False,
                 file_meshes_are_zup=False,  # Preserve explicit Y-up GLB handling.
@@ -546,10 +584,17 @@ class SimulationNode:
             details = "; ".join(f"{name}: {error}" for name, error in startup_entity_errors.items())
             raise RuntimeError(f"Failed to load startup environment entities before scene build: {details}")
 
-        self._process_occupancy_grid(
-            self._resolve_project_path(scene_config["occupancy_stl_path"]),
-            output_prefix=scene_config.get("slice_output_prefix", "scene_sliced"),
-        )
+        occupancy_stl_path = scene_config.get("occupancy_stl_path")
+        if occupancy_stl_path:
+            self._process_occupancy_grid(
+                self._resolve_project_path(occupancy_stl_path),
+                output_prefix=scene_config.get("slice_output_prefix", "scene_sliced"),
+            )
+        else:
+            # Occupancy intentionally skipped (no STL): use an empty free-space map
+            # sized to the scene's declared bounds so mapping/nav still initialize.
+            print("[SimulationNode] No occupancy_stl_path configured; using empty occupancy grid.")
+            self._init_empty_occupancy_grid(scene_config.get("occupancy_bounds"))
 
     def _add_collision_from_stage_config(self, config_path: str, scene_euler: tuple = (90, 0, 0)):
         """Add collision geometry based on receptacles defined in the stage config"""
@@ -671,6 +716,33 @@ class SimulationNode:
 
         # Initialize the grid with entities (what gets sent to agent)
         self.occupancy_grid_with_entities = self.base_occupancy_grid.copy()
+
+    def _init_empty_occupancy_grid(self, bounds: dict | None):
+        """Build an all-free occupancy grid when no STL is configured.
+
+        Sized to `bounds` (world-frame min/max x/y in meters); falls back to a
+        20x20 m box centered on the origin. Lets mapping/nav initialize without a
+        real occupancy mesh — every cell reads as free space.
+        """
+        pixel_size = 0.05
+        if not bounds:
+            bounds = {"min_x": -10.0, "min_y": -10.0, "max_x": 10.0, "max_y": 10.0}
+        min_x, min_y = bounds["min_x"], bounds["min_y"]
+        max_x, max_y = bounds["max_x"], bounds["max_y"]
+        width = max(1, int((max_x - min_x) / pixel_size))
+        height = max(1, int((max_y - min_y) / pixel_size))
+        self.base_occupancy_grid = np.zeros((height, width), dtype=np.uint8)
+        self.occupancy_grid_with_entities = self.base_occupancy_grid.copy()
+        self.grid_bounds = {
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_x": max_x,
+            "max_y": max_y,
+            "scale": 1.0 / pixel_size,
+            "offset_x": -min_x / pixel_size,
+            "offset_y": -min_y / pixel_size,
+            "pixel_size": pixel_size,
+        }
 
     def _add_objects_to_occupancy_grid(self):
         """Add objects to the base occupancy grid based on their AABBs"""
@@ -1664,7 +1736,7 @@ class SimulationNode:
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
         self._init_head_control()
-        self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
+        self._set_robot_base_pose(self.current_scene_config.get("robot_init_pos", ROBOT_INIT_POS), xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
         print("[SimulationNode] Scene rebuilt")
@@ -2017,7 +2089,7 @@ class SimulationNode:
                     else:
                         # Use default position and orientation
                         print("[SimulationNode] Resetting robot pose to default origin.")
-                        self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
+                        self._set_robot_base_pose(self.current_scene_config.get("robot_init_pos", ROBOT_INIT_POS), xyzw_to_wxyz(ROBOT_INIT_QUAT))
 
                     # Reset commanded velocities
                     self.commanded_lin_vel = np.zeros(3)
@@ -2135,15 +2207,25 @@ class SimulationNode:
                     arm_up_dir = rotate_vector(self.arm_camera_up, arm_quat)
                     self.arm_wrist_camera.set_pose(pos=arm_pos, lookat=arm_lookat, up=arm_up_dir)
 
-                # Update chase camera to follow robot
+                # Update chase camera: orbit the robot per the frontend-driven pose.
+                # Spherical offset in the robot's frame so the view follows as it
+                # turns; target = robot base + pan. Default reproduces the legacy
+                # 1m-behind / 1m-up shot (see DEFAULT_CHASE_ORBIT).
                 if self.chase_camera is not None:
                     robot_pos, robot_quat = self._get_robot_base_pose()
-                    offset = np.array([-2.0, 0.0, 2.0])  # 2m behind, 2m up
-                    rotated_offset = rotate_vector(offset, robot_quat)
-                    chase_pos = robot_pos + rotated_offset
-                    self.chase_camera.set_pose(pos=chase_pos, lookat=robot_pos, up=(0, 0, 1))
+                    o = self.shared_queues.chase_cam_state
+                    ce, se = np.cos(o.elevation), np.sin(o.elevation)
+                    ca, sa = np.cos(o.azimuth), np.sin(o.azimuth)
+                    local_offset = np.array([-o.radius * ce * ca, -o.radius * ce * sa, o.radius * se])
+                    target = robot_pos + rotate_vector(np.array([o.pan_x, o.pan_y, 0.0]), robot_quat)
+                    chase_pos = target + rotate_vector(local_offset, robot_quat)
+                    self.chase_camera.set_pose(pos=chase_pos, lookat=target, up=(0, 0, 1))
 
-                # Render all cameras
+                # Render ALL cameras every tick. Genesis shares one offscreen render
+                # pass across cameras and rebuilds it (~1s, GPU idle) whenever the
+                # rendered SET changes between ticks — so per-tick subscription gating
+                # of the set is catastrophically slower than always rendering all.
+                # Keep this unconditional; gate elsewhere if at all.
                 render_t0 = time.perf_counter()
                 if self.robot_camera is not None:
                     _t = time.perf_counter()

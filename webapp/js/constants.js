@@ -10,6 +10,11 @@ export const ROSBRIDGE_PORT = 9090;
 // every /joystick message straight to one /cmd_vel publish.
 export const JOYSTICK_TOPIC = "/joystick";
 
+// Chase-camera orbit pose (sim only): std_msgs/String carrying JSON
+// {azimuth, elevation, radius, pan_x, pan_y}. Latched — the sim publishes the
+// default once, the browser publishes on drag.
+export const CHASE_CAMERA_CONTROL_TOPIC = "/sim/chase_camera/control";
+
 // Head tilt: std_msgs/Int32 degrees in [HEAD_MIN_DEG, HEAD_MAX_DEG].
 export const HEAD_SET_POSITION_TOPIC = "/mars/head/set_position";
 // Current position: std_msgs/String carrying JSON (HeadPosition).

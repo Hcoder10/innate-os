@@ -120,6 +120,18 @@ export class RosClient {
   }
 
   /**
+   * Advertise a topic (fire-and-forget). Publish to a latched topic requires a
+   * TRANSIENT_LOCAL publisher, so advertise with `latch:true` before publishing.
+   * Not auto-replayed on reconnect — callers re-advertise via onStateChange.
+   * @param {string} topic
+   * @param {string} type ROS message type, e.g. "std_msgs/msg/String"
+   * @param {{ latch?: boolean }} [opts]
+   */
+  advertise(topic, type, { latch = false } = {}) {
+    this.#send({ op: "advertise", topic, type, ...(latch ? { latch: true } : {}) });
+  }
+
+  /**
    * @param {string} service
    * @param {object} [args]
    * @param {number} [timeoutMs]
@@ -207,13 +219,24 @@ export class RosClient {
    * @param {string} topic
    * @param {(msg: any) => void} handler Receives the message payload
    *   (`frame.msg`, falling back to the whole frame for rws variants).
-   * @param {number} [throttleRate] Server-side throttle in ms.
+   * @param {number | { throttleRate?: number, durability?: "transient_local", queueSize?: number }} [opts]
+   *   A number is treated as the server-side throttle in ms (back-compat).
+   *   `durability:"transient_local"` is required to receive a latched
+   *   publisher's retained value; `queueSize` sets the history depth.
    * @returns {() => void} unsubscribe
    */
-  subscribe(topic, handler, throttleRate) {
+  subscribe(topic, handler, opts) {
+    const o = typeof opts === "number" ? { throttleRate: opts } : opts || {};
     let sub = this.#subs.get(topic);
     if (!sub) {
-      sub = { handlers: new Set(), throttleRate, retryCount: 0, retryTimer: null };
+      sub = {
+        handlers: new Set(),
+        throttleRate: o.throttleRate,
+        durability: o.durability,
+        queueSize: o.queueSize,
+        retryCount: 0,
+        retryTimer: null,
+      };
       this.#subs.set(topic, sub);
       if (this.#state === "connected") this.#sendSubscribe(topic, sub);
     }
@@ -461,6 +484,8 @@ export class RosClient {
       op: "subscribe",
       topic,
       ...(sub.throttleRate ? { throttle_rate: sub.throttleRate } : {}),
+      ...(sub.durability ? { qos: { durability: sub.durability } } : {}),
+      ...(sub.queueSize != null ? { queue_size: sub.queueSize } : {}),
     });
   }
 

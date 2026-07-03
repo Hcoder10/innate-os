@@ -22,6 +22,8 @@ from src.agent.types import (
     ArmStateMsg,
     BrainActiveCmd,
     BrainBackendConfigCmd,
+    ChaseCameraCmd,
+    DEFAULT_CHASE_ORBIT,
     DirectiveCmd,
     HeadCmd,
     NavigationCancelMsg,
@@ -169,6 +171,8 @@ WEBRTC_INBOUND_TOPICS = {
     WEBRTC_ICE_IN_TOPIC,
 }
 
+CHASE_CAMERA_CONTROL_TOPIC = "/sim/chase_camera/control"  # browser<->server: latched orbit pose JSON
+
 
 def relay_webrtc_inbound(shared_queues, topic: str, msg_data: dict) -> None:
     """Parse a per-client /webrtc/* message ({client_id, ...} JSON) and hand it to the aiortc thread."""
@@ -199,12 +203,26 @@ def _loads_or_empty(data: str) -> dict:
 #
 # Rosbridge Utility Methods
 #
-def rosbridge_subscribe(topic: str, msg_type: str) -> dict:
-    return {"op": "subscribe", "topic": topic, "type": msg_type}
+def rosbridge_subscribe(
+    topic: str, msg_type: str, transient_local: bool = False, queue_size: int | None = None
+) -> dict:
+    op = {"op": "subscribe", "topic": topic, "type": msg_type}
+    # rws maps `transient_local` durability to DDS TRANSIENT_LOCAL so a late
+    # subscriber receives a latched publisher's retained value; without it the
+    # subscription stays volatile and won't even match a latched (transient_local)
+    # publisher. rws uses `queue_size` (history depth), not `queue_length`.
+    if transient_local:
+        op["qos"] = {"durability": "transient_local"}
+    if queue_size is not None:
+        op["queue_size"] = queue_size
+    return op
 
 
-def rosbridge_advertise(topic: str, msg_type: str) -> dict:
-    return {"op": "advertise", "topic": topic, "type": msg_type}
+def rosbridge_advertise(topic: str, msg_type: str, latch: bool = False) -> dict:
+    op = {"op": "advertise", "topic": topic, "type": msg_type}
+    if latch:
+        op["latch"] = True
+    return op
 
 
 def rosbridge_publish(topic: str, msg_dict: dict) -> dict:
@@ -673,6 +691,14 @@ async def inbound_data_loop(ws, shared_queues):
                 except queue.Full:
                     pass
 
+            # 1b3) /sim/chase_camera/control — orbit pose for the chase camera.
+            # Latest-value-wins single slot (not the agent_to_sim queue): the
+            # render loop reads shared_queues.chase_cam_state directly.
+            elif topic == CHASE_CAMERA_CONTROL_TOPIC:
+                cmd = parse_chase_camera_cmd(msg_data)
+                if cmd is not None:
+                    shared_queues.chase_cam_state = cmd
+
             # 1c) WebRTC signaling (browser -> sim aiortc server), relayed via
             # shared_queues so the aiortc thread stays decoupled from this loop.
             elif topic in WEBRTC_INBOUND_TOPICS:
@@ -1059,6 +1085,8 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
     adv_webrtc_ice_out = rosbridge_advertise(WEBRTC_ICE_OUT_TOPIC, "std_msgs/msg/String")
     adv_webrtc_active_streams = rosbridge_advertise(WEBRTC_ACTIVE_STREAMS_TOPIC, "std_msgs/msg/String")
+    # Latched so a connecting browser seeds its orbit UI from the retained value.
+    adv_chase_cam = rosbridge_advertise(CHASE_CAMERA_CONTROL_TOPIC, "std_msgs/msg/String", latch=True)
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -1081,6 +1109,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_webrtc_offer))
     await ws.send(json.dumps(adv_webrtc_ice_out))
     await ws.send(json.dumps(adv_webrtc_active_streams))
+    await ws.send(json.dumps(adv_chase_cam))
     for service_advert in arm_service_advertisements():
         await ws.send(json.dumps(service_advert))
     for service_advert in sim_control_service_advertisements():
@@ -1097,6 +1126,12 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(outbound))
     print("[ROSBridge] Published initial navigation mode: mapfree")
 
+    # Publish the default chase-camera pose once. The latched publisher retains it
+    # (DDS transient_local), so a browser connecting later seeds its orbit UI from
+    # this. After startup only the browser publishes this topic.
+    chase_default = {"data": json.dumps(shared_queues.chase_cam_state._asdict())}
+    await ws.send(json.dumps(rosbridge_publish(CHASE_CAMERA_CONTROL_TOPIC, chase_default)))
+
     # Also subscribe to /cmd_vel, /chat_out, and navigation topics
     sub_cmd_vel = rosbridge_subscribe("/cmd_vel", "geometry_msgs/msg/Twist")
     sub_chat_out = rosbridge_subscribe("/brain/chat_out", "std_msgs/msg/String")
@@ -1107,6 +1142,11 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
     sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
     sub_head_set = rosbridge_subscribe("/mars/head/set_position", "std_msgs/msg/Int32")
+    # transient_local so this matches the browser's latched publisher and receives
+    # the retained pose; queue_size 1 keeps only the newest orbit command.
+    sub_chase_cam = rosbridge_subscribe(
+        CHASE_CAMERA_CONTROL_TOPIC, "std_msgs/msg/String", transient_local=True, queue_size=1
+    )
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
     await ws.send(json.dumps(sub_skill_status))
@@ -1116,6 +1156,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
     await ws.send(json.dumps(sub_head_set))
+    await ws.send(json.dumps(sub_chase_cam))
     # WebRTC signaling (browser->server): start / answer / ice_in / active_streams.
     for webrtc_topic in WEBRTC_INBOUND_TOPICS:
         await ws.send(json.dumps(rosbridge_subscribe(webrtc_topic, "std_msgs/msg/String")))
@@ -1748,6 +1789,34 @@ def parse_arm_command(msg: dict) -> ArmCmd | None:
         return None
     except (TypeError, ValueError) as e:
         print(f"[ROSBridge] Failed to parse arm command: {e}, msg={msg}")
+        return None
+
+
+def parse_chase_camera_cmd(msg: dict) -> ChaseCameraCmd | None:
+    """Parse std_msgs/String carrying a chase-camera orbit pose JSON blob.
+
+    Clamps elevation (avoid gimbal flip at the poles) and radius to sane ranges;
+    returns None on malformed input so a bad message can't crash the render loop
+    or reset the camera to the default.
+    """
+    try:
+        payload = json.loads((msg or {}).get("data", ""))
+    except (json.JSONDecodeError, TypeError):
+        return None  # malformed -> ignore, keep the current pose (don't reset)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        d = DEFAULT_CHASE_ORBIT
+        elevation = float(payload.get("elevation", d.elevation))
+        radius = float(payload.get("radius", d.radius))
+        return ChaseCameraCmd(
+            azimuth=float(payload.get("azimuth", d.azimuth)),
+            elevation=max(-1.4, min(1.4, elevation)),
+            radius=max(0.5, min(15.0, radius)),
+            pan_x=float(payload.get("pan_x", d.pan_x)),
+            pan_y=float(payload.get("pan_y", d.pan_y)),
+        )
+    except (TypeError, ValueError):
         return None
 
 

@@ -26,6 +26,7 @@ import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createSimControls } from "./simControls.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
+import { createChaseCameraControl } from "./chaseCameraControl.js";
 
 initShell("teleop", "");
 
@@ -110,6 +111,8 @@ function buildCockpit(root) {
     createArmPanel(armOverlay, ros),
     createProfilingPanel(root, session),
     createCameraSwitch(root, session, ros),
+    // Drag-to-orbit the chase camera; no-op unless the chase view is primary.
+    createChaseCameraControl(root, session, ros),
     keyboard,
   );
 
