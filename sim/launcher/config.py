@@ -108,8 +108,7 @@ SIM_REQUIRED_DATA_PATHS = {
 
 SHOW_LIVE_DASHBOARD_DEFAULT = sys.stdout.isatty()
 TMUX_SESSION_NAME = "innate"
-CLI_ROOT = "./innate"
-CLI_SIM = "./innate sim"
+CLI_SIM = "./innate-sim"
 
 
 class StackError(RuntimeError):

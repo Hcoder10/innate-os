@@ -14,7 +14,6 @@ if sys.version_info < (3, 10):  # noqa: UP036
 
 from assets import pack_assets, publish_assets, validate_assets
 from config import (
-    CLI_ROOT,
     CLI_SIM,
     ENV_PATH,
     HOSTED_MODE,
@@ -323,14 +322,8 @@ def cmd_assets(args: argparse.Namespace, config: dict[str, object]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="innate", description="Innate local development CLI.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    sim_parser = subparsers.add_parser(
-        "sim",
-        prog=f"{CLI_ROOT} sim",
-        help="Set up and run the local simulator-backed runtime",
-    )
-    sim_subparsers = sim_parser.add_subparsers(dest="sim_command", required=True)
+    parser = argparse.ArgumentParser(prog="innate-sim", description="Innate local simulator CLI.")
+    sim_subparsers = parser.add_subparsers(dest="sim_command", required=True)
     sim_subparsers.add_parser(
         "setup",
         prog=f"{CLI_SIM} setup",
@@ -473,9 +466,6 @@ def main() -> int:
 
     try:
         config = get_config()
-
-        if args.command != "sim":
-            parser.error(f"Unknown command group: {args.command}")
 
         if args.sim_command == "setup":
             cmd_setup(config)

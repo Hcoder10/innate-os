@@ -437,7 +437,7 @@ def delete_sim_venv(config: dict[str, object]) -> None:
 def delete_sim_data(config: dict[str, object]) -> None:
     """Delete the downloaded ReplicaCAD datasets and the extracted asset pack.
 
-    Only removes content fetched by `./innate sim setup`. Git-tracked files
+    Only removes content fetched by `./innate-sim setup`. Git-tracked files
     (data/environments/, data/assets/.gitignore, assets.lock.json) are preserved;
     setup re-downloads the rest (asset state self-heals via missing-file checks).
     """

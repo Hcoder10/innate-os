@@ -7,7 +7,7 @@ log/
 scripts/build/
 ros2_ws/src/brain/manipulation/ckpts/*
 
-# Cloud-agent source lives OUTSIDE this repo (cloned next to it by `innate sim setup`).
+# Cloud-agent source lives OUTSIDE this repo (cloned next to it by `innate-sim setup`).
 # Ignore any stray in-repo copy so it never gets committed.
 sim/innate-cloud-agent/
 

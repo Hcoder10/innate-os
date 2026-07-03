@@ -26,4 +26,4 @@ jobs:
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Validate simulator assets
-        run: ./innate sim assets validate --ci
+        run: ./innate-sim assets validate --ci
