@@ -112,3 +112,5 @@ data/.last_mode
 arm_wave/
 
 .vscode
+ros2_ws/src/brain/brain_client/innate/skills.pyi
+workspace/innate_skills/**/*.engine

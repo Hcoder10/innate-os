@@ -15,7 +15,11 @@ import json
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
 
-from brain_client.skills.lifecycle import primitive_lifecycle_message
+from brain_client.skills.lifecycle import (
+    PRIMITIVE_LIFECYCLE_MESSAGE_TYPES,
+    decode_substep_feedback,
+    primitive_lifecycle_message,
+)
 from brain_client.skills.types import SkillResult
 from brain_client.transport.messages import MessageIn, MessageInType
 
@@ -120,6 +124,10 @@ class PrimitiveRunner:
     def _on_feedback(self, feedback_wrapper) -> None:
         try:
             feedback_text = feedback_wrapper.feedback.feedback
+            substep = decode_substep_feedback(feedback_text)
+            if substep is not None:
+                self._handle_substep(substep)
+                return
             self._logger.info(f"Received primitive feedback: {feedback_text}")
             payload = {"feedback": feedback_text}
             if feedback_wrapper.feedback.image_b64:
@@ -129,6 +137,28 @@ class PrimitiveRunner:
             self._logger.error(f"Error accessing feedback text. Structure: {feedback_wrapper}")
         except Exception as e:
             self._logger.error(f"Error in _on_feedback: {e}")
+
+    def _handle_substep(self, substep: dict) -> None:
+        """Turn a chained child's piggybacked event into its own step in the app.
+
+        Forwarded to the app only, deliberately NOT over self._ws: the cloud
+        agent runs one primitive at a time and would read a child finishing as
+        the parent finishing.
+        """
+        event = substep.get("event")
+        if event not in PRIMITIVE_LIFECYCLE_MESSAGE_TYPES:
+            self._logger.warn(f"Unknown substep event: {event}")
+            return
+        name = substep.get("name", "")
+        primitive_id = substep.get("primitive_id")
+        skill_id = substep.get("skill_id")
+        reason = substep.get("reason")
+        output = substep.get("output")
+        self._chat.publish_task_status(
+            primitive_name=name, primitive_id=primitive_id, status=event, skill_id=skill_id, reason=reason
+        )
+        if event == "completed" and output and output.strip():
+            self._chat.emit("skill_output", output, speak=False)
 
     def _on_goal_response(self, future) -> None:
         goal_handle = future.result()

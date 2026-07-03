@@ -25,6 +25,7 @@ from typing import get_args
 import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
 from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAgents, SaveAsReplaySkill
+from innate.skills import SkillCancelled, SkillFailed, use_invoker
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -38,8 +39,9 @@ from brain_client.robot.manipulation import ManipulationInterface
 from brain_client.robot.mobility import MobilityInterface
 from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
+from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.robot_state import RobotStateProvider
-from brain_client.skills.types import RobotStateType, SkillResult
+from brain_client.skills.types import RobotStateType, SkillResult, normalize_skill_result
 
 
 def _annotation_is_float(annotation) -> bool:
@@ -383,12 +385,7 @@ class SkillsActionServer(Node):
             self.get_logger().debug(f"Published feedback for '{skill_type}': {update_message}")
 
         skill.set_feedback_callback(_publish_feedback)
-
-        required_states = skill.get_required_robot_states()
-        needs_camera = required_states and (
-            RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states
-            or RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states
-        )
+        skill.skills = SkillInvoker(self, goal_handle, _publish_feedback)
 
         try:
             # Code skills otherwise publish no feedback until they call their own
@@ -401,14 +398,7 @@ class SkillsActionServer(Node):
             goal_handle.publish_feedback(initial_feedback)
 
             self.robot_state.start_subscriptions()
-            if needs_camera:
-                self._camera_node.start()
-            self.robot_state.update_skill_robot_state(skill)
-            if required_states:
-                self.robot_state.begin_continuous_updates(skill)
-                self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
-
-            result_message, result_status = skill.execute(**_coerce_numeric_inputs(skill, inputs))
+            result_message, result_status = self._run_code_skill_body(skill, skill_type, inputs)
 
             if result_status == SkillResult.SUCCESS:
                 self.get_logger().info(f"Skill '{skill_type}' succeeded: {result_message}")
@@ -438,10 +428,45 @@ class SkillsActionServer(Node):
                 success=False, message=str(e), skill_type=skill_type, success_type=SkillResult.FAILURE.value
             )
         finally:
-            self.robot_state.end_continuous_updates()
+            self.robot_state.stop_subscriptions()
+
+    def _run_code_skill_body(self, skill, skill_type, inputs):
+        """Prepare robot state for a code skill and run its ``execute()``.
+
+        Returns ``(message, SkillResult)``; goal finalization and subscriptions
+        stay with the caller (the top-level goal owns them, so they stay up
+        while a chaining skill runs its children). Nesting-safe: the 50 Hz
+        state slot suspends/resumes (see RobotStateProvider) and the camera is
+        refcounted.
+        """
+        required_states = skill.get_required_robot_states()
+        needs_camera = required_states and (
+            RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states
+            or RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states
+        )
+        try:
+            if needs_camera:
+                self._camera_node.start()
+            # singleton instances keep state from previous runs; drop it so a
+            # skill never mistakes a stale value for fresh sensor data
+            skill.clear_robot_state()
+            self.robot_state.update_skill_robot_state(skill)
+            if required_states:
+                self.robot_state.begin_continuous_updates(skill)
+                self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
+            # innate.skills proxies route to this skill's invoker while
+            # execute() runs
+            with use_invoker(skill.skills):
+                return normalize_skill_result(skill.execute(**_coerce_numeric_inputs(skill, inputs)))
+        except SkillCancelled as e:
+            return str(e) or "Skill cancelled", SkillResult.CANCELLED
+        except SkillFailed as e:
+            return str(e) or "Skill failed", SkillResult.FAILURE
+        finally:
+            if required_states:
+                self.robot_state.end_continuous_updates()
             if needs_camera:
                 self._camera_node.stop()
-            self.robot_state.stop_subscriptions()
 
     def _execute_physical_skill(self, goal_handle, skill_type, inputs):
         self.get_logger().info(f"Delegating physical skill '{skill_type}' to behavior_server")
@@ -455,19 +480,29 @@ class SkillsActionServer(Node):
                 skill_type=skill_type,
                 success_type=SkillResult.FAILURE.value,
             )
-        metadata = physical_data["metadata"]
-
         self.robot_state.start_subscriptions()
+        try:
+            success, message, success_type, finalize = self._run_physical_skill(goal_handle, skill_type, physical_data)
+            getattr(goal_handle, finalize)()
+            return ExecuteSkill.Result(
+                success=success, message=message, skill_type=skill_type, success_type=success_type
+            )
+        finally:
+            self.robot_state.stop_subscriptions()
+
+    def _run_physical_skill(self, goal_handle, skill_type, physical_data):
+        """Send a physical skill to behavior_server and wait for its result.
+
+        Returns ``(success, message, success_type, finalize)`` where ``finalize``
+        is the goal-handle method the caller should invoke ("succeed", "abort"
+        or "canceled"). Does not finalize the goal, so a chaining skill can run
+        a physical child on its own goal without ending the parent.
+        """
+        metadata = physical_data["metadata"]
         try:
             if not self._behavior_client.wait_for_server(timeout_sec=5.0):
                 self.get_logger().error("Behavior server not available!")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior server not available",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Behavior server not available", SkillResult.FAILURE.value, "abort"
 
             behavior_goal = ExecuteBehavior.Goal()
             behavior_goal.skill_dir = physical_data["directory"]
@@ -485,24 +520,12 @@ class SkillsActionServer(Node):
             if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
                 self._cancel_behavior_goal_when_ready(send_goal_future, skill_type)
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Timeout waiting for behavior goal acceptance",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Timeout waiting for behavior goal acceptance", SkillResult.FAILURE.value, "abort"
 
             behavior_goal_handle = send_goal_future.result()
             if not behavior_goal_handle.accepted:
                 self.get_logger().error("Behavior goal rejected by behavior_server")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior goal rejected by behavior_server",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Behavior goal rejected by behavior_server", SkillResult.FAILURE.value, "abort"
 
             self._register_behavior_goal_handle(goal_handle, behavior_goal_handle, skill_type)
             self.get_logger().info("Behavior goal accepted, waiting for result...")
@@ -520,66 +543,31 @@ class SkillsActionServer(Node):
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior server became unavailable while waiting for result",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
+                return (
+                    False,
+                    "Behavior server became unavailable while waiting for result",
+                    SkillResult.FAILURE.value,
+                    "abort",
                 )
 
             if not result_future.done():
                 self.get_logger().info(f"Physical skill '{skill_type}' cancelled before behavior result was ready")
-                goal_handle.canceled()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message="Physical skill cancelled",
-                    skill_type=skill_type,
-                    success_type=SkillResult.CANCELLED.value,
-                )
+                return True, "Physical skill cancelled", SkillResult.CANCELLED.value, "canceled"
 
             behavior_result = result_future.result().result
             if behavior_result.success:
                 self.get_logger().info(f"Physical skill '{skill_type}' succeeded: {behavior_result.message}")
-                goal_handle.succeed()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message=behavior_result.message,
-                    skill_type=skill_type,
-                    success_type=SkillResult.SUCCESS.value,
-                )
+                return True, behavior_result.message, SkillResult.SUCCESS.value, "succeed"
             if "cancel" in behavior_result.message.lower():
                 self.get_logger().info(f"Physical skill '{skill_type}' cancelled: {behavior_result.message}")
-                goal_handle.succeed()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message=behavior_result.message,
-                    skill_type=skill_type,
-                    success_type=SkillResult.CANCELLED.value,
-                )
+                return True, behavior_result.message, SkillResult.CANCELLED.value, "succeed"
             self.get_logger().error(f"Physical skill '{skill_type}' failed: {behavior_result.message}")
-            goal_handle.abort()
-            return ExecuteSkill.Result(
-                success=False,
-                message=behavior_result.message,
-                skill_type=skill_type,
-                success_type=SkillResult.FAILURE.value,
-            )
+            return False, behavior_result.message, SkillResult.FAILURE.value, "abort"
         except Exception as e:
             self.get_logger().error(f"Unexpected error executing physical skill '{skill_type}': {e}")
-            try:
-                goal_handle.abort()
-            except Exception as abort_err:
-                self.get_logger().error(f"Also failed to abort goal for '{skill_type}': {abort_err}")
-            return ExecuteSkill.Result(
-                success=False,
-                message=f"Unexpected error executing physical skill: {e}",
-                skill_type=skill_type,
-                success_type=SkillResult.FAILURE.value,
-            )
+            return False, f"Unexpected error executing physical skill: {e}", SkillResult.FAILURE.value, "abort"
         finally:
             self._unregister_behavior_goal_handle(goal_handle)
-            self.robot_state.stop_subscriptions()
 
     # ================= behavior goal tracking =================
     def _skill_goal_key(self, goal_handle) -> int:
