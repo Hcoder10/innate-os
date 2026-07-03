@@ -29,6 +29,17 @@ from aiortc.sdp import candidate_from_sdp
 
 from .camera_track import CameraTrack
 
+# The sim streams over loopback (localhost/same-host webapp), so there's no real
+# bandwidth constraint. aiortc's VP8 defaults (500 kbps default / 1.5 Mbps cap)
+# starve 1080p, so raise the module-level bitrate bounds. The encoder reads
+# these globals when clamping its REMB-driven target (aiortc/codecs/vpx.py),
+# so bumping them lifts the ceiling for every camera track.
+import aiortc.codecs.vpx as _vpx  # noqa: E402
+
+_vpx.MIN_BITRATE = 3_000_000      # 12x aiortc default (250 kbps)
+_vpx.DEFAULT_BITRATE = 6_000_000   # 12x aiortc default (500 kbps)
+_vpx.MAX_BITRATE = 18_000_000     # 12x aiortc cap (1.5 Mbps) — localhost, no bandwidth limit
+
 # Canonical order -> deterministic transceiver mids. All three tracks are always
 # present in the SDP (sendonly); the frontend derives the camera set from it.
 CAMERAS = ["first_person", "arm_wrist", "chase"]
