@@ -122,7 +122,7 @@ The frontend will typically be available at `http://localhost:5173`.
 > The frontend reads its endpoint URLs at runtime from `/config.json` (no
 > build-time `VITE_*` vars). In dev that file is served from
 > `frontend/public/config.json`; in the container it is written from env by the
-> entrypoint. With `../innate-sim up`, the frontend instead runs in its own
+> entrypoint. With `./innate-sim up`, the frontend instead runs in its own
 > Docker container (Caddy) at `http://localhost:3000`.
 
 #### Optional: Direct Robot Mode
