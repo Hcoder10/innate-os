@@ -5,6 +5,10 @@ SESSION_NAME="ros_nodes"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
 DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
+WEBAPP_URI_SCRIPT="$INNATE_OS_ROOT/scripts/webapp_uri.zsh"
+if [ -f "$WEBAPP_URI_SCRIPT" ]; then
+    source "$WEBAPP_URI_SCRIPT"
+fi
 
 # Detect a missing service key up front so we can warn loudly once launch is done.
 # Uses the same /etc/innate.env + repo .env merge as the runtime env, so this
@@ -132,6 +136,10 @@ done
 
 tmux select-window -t $SESSION_NAME:"${WINDOW_NAMES[1]}"
 
+WEBAPP_URI=""
+if typeset -f innate_webapp_uri >/dev/null 2>&1; then
+    WEBAPP_URI="$(innate_webapp_uri)"
+fi
 SESSION_FMT=$(printf "%-29s" "$SESSION_NAME")
 WINDOWS_FMT=$(printf "%-29s" "${#WINDOW_NAMES[@]}")
 ATTACH_FMT=$(printf "%-29s" "tmux attach -t $SESSION_NAME")
@@ -146,6 +154,9 @@ echo "  ║  Attach:   ${ATTACH_FMT}║     o  o"
 echo "  ║                                         ║"
 echo "  ║  Run 'innate view' to monitor nodes 👀  ║"
 echo "  ╚═════════════════════════════════════════╝"
+if [ -n "$WEBAPP_URI" ]; then
+    echo "  Web app: $WEBAPP_URI"
+fi
 echo ""
 
 # Loud, hard-to-miss warning when the robot has no service key. Printed last so
