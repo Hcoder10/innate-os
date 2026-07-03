@@ -52,6 +52,7 @@ from runtime import (
     config_simulator_port,
     down_cloud_agent,
     down_os,
+    ensure_custom_scene_assets,
     ensure_docker_available,
     ensure_os_container,
     ensure_sim_data,
@@ -140,6 +141,7 @@ def cmd_up(
             try:
                 sim_python = ensure_sim_setup(config)
                 ensure_skill_assets(config)
+                ensure_custom_scene_assets(config)
             except StackError as exc:
                 raise StackError(
                     f"{exc}\n\n"
@@ -294,6 +296,7 @@ def cmd_setup(config: dict[str, object]) -> None:
     configure_brain_backend(config)
     sim_python = ensure_sim_setup(config)
     ensure_sim_data(config, allow_fetch=True)
+    ensure_custom_scene_assets(config)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
     print(f"Sim config: {SIM_CONFIG_PATH}")

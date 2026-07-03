@@ -1208,6 +1208,42 @@ def ensure_skill_assets(config: dict[str, object]) -> None:
                 raise StackError(f"Failed to download skill asset {dest}: {exc}") from exc
 
 
+# Large custom scene assets kept out of git (sim/data/custom/ is gitignored) and
+# distributed via the public karmanyaah-public GCS bucket. Repo-relative dest ->
+# object name under the bucket prefix. Only runtime-required assets are listed;
+# the reference render/aerial PNGs also live in the bucket but aren't needed to run.
+CUSTOM_SCENE_ASSET_BASE_URL = "https://storage.googleapis.com/karmanyaah-public/innate-sim/custom"
+CUSTOM_SCENE_ASSETS = {
+    "data/custom/appartement.glb": "appartement.glb",
+}
+
+
+def ensure_custom_scene_assets(config: dict[str, object]) -> None:
+    """Download large custom scene assets that are kept out of git.
+
+    The 'appartement' scene GLB is distributed via the public karmanyaah-public
+    bucket rather than committed. Mirrors ensure_skill_assets: idempotent (skips
+    files already on disk), atomic tmp+replace, and needs only plain HTTPS (the
+    objects are public — no gcloud auth or Git LFS required).
+    """
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    for rel_path, object_name in CUSTOM_SCENE_ASSETS.items():
+        dest = sim_repo / rel_path
+        if dest.exists():
+            continue
+        url = f"{CUSTOM_SCENE_ASSET_BASE_URL}/{object_name}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        log(f"Downloading custom scene asset {rel_path}...")
+        tmp = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            with urlopen(Request(url), timeout=600) as resp, open(tmp, "wb") as out:
+                shutil.copyfileobj(resp, out)
+            tmp.replace(dest)
+        except (URLError, OSError) as exc:
+            tmp.unlink(missing_ok=True)
+            raise StackError(f"Failed to download custom scene asset {rel_path}: {exc}") from exc
+
+
 def sim_endpoint(port: str, path: str) -> str:
     return f"http://localhost:{port}/{path.lstrip('/')}"
 
