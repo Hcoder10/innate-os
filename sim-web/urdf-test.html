@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Innate Sim — URDF Physics Test</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div id="hud" class="panel hud">
+      <div class="hud-title">Innate Sim <span class="microlabel">urdf physics test</span></div>
+      <div class="hud-row"><span>x</span><span id="hud-x">0.00</span> m</div>
+      <div class="hud-row"><span>y</span><span id="hud-y">0.00</span> m</div>
+      <div class="hud-row"><span>yaw</span><span id="hud-yaw">0.0</span>&deg;</div>
+      <div class="hud-row"><span>fps</span><span id="hud-fps">0</span></div>
+    </div>
+
+    <div id="sliders" class="panel sliders"></div>
+
+    <div id="loading" class="panel loading">
+      <div id="loading-msg">Loading&hellip;</div>
+    </div>
+
+    <div id="controls" class="controls">
+      <div id="wasd-mount"></div>
+      <div id="joystick-mount"></div>
+    </div>
+
+    <button id="reset-btn" class="panel reset-btn" title="Reset robot pose">Reset</button>
+
+    <script type="module" src="/src/urdf-test-main.ts"></script>
+  </body>
+</html>

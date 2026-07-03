@@ -1,0 +1,22 @@
+{
+  "name": "sim-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser-based Three.js viewer for the Innate apartment scene + MARS robot (standalone kinematic drive, Mode A).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mujoco/mujoco": "^3.10.0",
+    "three": "^0.185.0",
+    "urdf-loader": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.2"
+  }
+}

@@ -44,3 +44,6 @@ ros-humble-nav2-navfn-planner
 ros-humble-nav2-planner
 ros-humble-nav2-util
 ros-humble-nav2-voxel-grid
+# Software-GL offscreen rendering for the virtual MARS driver (sim-mujoco):
+# containers have no GPU, MuJoCo renders the robot cameras through OSMesa.
+libosmesa6

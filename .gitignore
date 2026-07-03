@@ -112,3 +112,10 @@ data/.last_mode
 arm_wave/
 
 .vscode
+
+node_modules/
+
+# sim-mujoco: uv venv + regenerable scratch outputs (split OBJs, decompositions)
+sim-mujoco/.venv/
+sim-mujoco/work/
+sim-mujoco/__pycache__/

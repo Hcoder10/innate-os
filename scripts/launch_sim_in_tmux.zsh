@@ -78,29 +78,21 @@ tmux split-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:rosbridge-app.1" "ros2 launch mars_control app.sim.launch.py" C-m
 echo "Started app control..."
 
-# === Window 2: WebRTC Streamer (sim) ===
-# The C++ GStreamer streamer (mars_cam) routes camera video through ROS image
-# topics. In the sim it is replaced by the Python aiortc server in sim/ (started
-# by sim/main.py), which pulls frames directly and streams sim->browser without
-# the ROS hop. Both speak the same /webrtc/* rosbridge signaling, so running both
-# would conflict — leave the C++ streamer disabled here for the sim.
+# === Window 2: Virtual MARS driver (MuJoCo sim backend) ===
+# Headless MuJoCo impersonating the hardware drivers at the ROS topic level
+# (odom/TF, /scan, cameras, depth/points, arm/head) -- see
+# sim-mujoco/README.md. Runs in-container so it shares the zenoh graph.
 #
-# DO NOT try to run mars_cam in the sim container instead of the host aiortc
-# server. It was attempted and reverted after burning hours on docker NAT: the
-# container is on the docker BRIDGE, so mars_cam's ICE host candidates carry the
-# unreachable container IP, and the browser's mDNS candidates can't be reached
-# back (the peer-reflexive/local-STUN srflx path collapses to the docker gateway
-# and the userland-proxy hairpin fails). Workarounds all have dealbreakers:
-# announce-IP + published ports only fixes browser->robot (robot still can't
-# reach the browser); host networking breaks the novnc DISPLAY and is unsupported
-# on Docker Desktop/Mac; requiring a getUserMedia mic grant to de-obfuscate the
-# browser is the only thing that worked, but it's an unacceptable prompt. The
-# ROS image path is also throttled (~10 Hz, frame-dropping) vs the host server's
-# render-rate frames. The host aiortc server sits in the browser's own network
-# namespace, so none of this applies. Keep WebRTC on the host.
-# tmux new-window -t "$SESSION_NAME" -n webrtc
-# tmux send-keys -t "${TMUX_TARGET_PREFIX}:webrtc" "ros2 launch mars_cam webrtc_streamer.sim.launch.py" C-m
-echo "WebRTC: using sim/ aiortc server (C++ mars_cam streamer disabled for sim)..."
+# NOTE on in-browser video: the C++ mars_cam WebRTC streamer stays disabled
+# in the sim -- container-on-docker-bridge ICE candidates are unreachable
+# from the browser (host candidates carry the container IP; the mDNS /
+# srflx paths collapse at the docker NAT; host networking is unsupported on
+# Docker Desktop). Camera viewing in sim goes through sim-web connected
+# mode (?ros -> rosbridge state + local render) or Foxglove image panels.
+tmux new-window -t "$SESSION_NAME" -n sim-driver
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:sim-driver" "~/innate-os/sim-mujoco/run_virtual_mars.sh" C-m
+echo "Started virtual MARS driver (MuJoCo)..."
+settle_after_launch
 
 # === Window 3: Nav + Brain ===
 tmux new-window -t "$SESSION_NAME" -n nav-brain
@@ -146,9 +138,9 @@ tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp" "ros2 launch innate_con
 echo "Started console..."
 settle_after_launch
 tmux split-window -t "${TMUX_TARGET_PREFIX}:console-webapp" -h
-# WEBAPP_SIM_CONTROLS surfaces the webapp's sim-only debug controls (Reset
-# Position + FPS/queue), which the robot deployment leaves off.
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do WEBAPP_SIM_CONTROLS=1 python3 proxy/https_server.py; sleep 2; done" C-m
+# WEBAPP_SIM_CONTROLS stays off: those debug controls spoke to the genesis
+# HTTP API (:8000), which no longer exists -- the MuJoCo driver is pure ROS.
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:console-webapp.1" "cd ~/innate-os/webapp && while true; do python3 proxy/https_server.py; sleep 2; done" C-m
 echo "Started webapp (https :443 + http :80)..."
 
 # Select the rosbridge-app window

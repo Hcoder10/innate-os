@@ -1,303 +1,55 @@
-<div align="center">
+# innate sim
 
-<!-- Add your banner image here -->
-<!-- ![Innate Simulator Banner](./assets/banner.png) -->
-
-# Innate Simulator
-
-*A Genesis-powered simulation environment for robotics development and testing*
-
-[![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
-[![Documentation](https://img.shields.io/badge/Docs-Read%20the%20docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.innate.bot)
-[![Website](https://img.shields.io/badge/Website-Visit%20us-orange?style=for-the-badge&logo=safari&logoColor=white)](https://innate.bot)
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-
-</div>
-
----
-
-> [!NOTE]
-> **This simulator is in active development.** APIs and features may change. Join our Discord for updates and support.
-
----
-
-## Overview
-
-This repository contains a Genesis-based 3D simulation environment with a FastAPI backend and React frontend. The simulator communicates via WebSockets with the Innate operating system (running in a Docker container), allowing you to experiment with agents through a simple web interface.
-
-Use this to develop and test agents for Innate robots — navigation, task execution, and embodied AI. The simulator currently focuses on mobility; manipulation capabilities are planned for future releases.
-
-## Installation
-
-### Prerequisites
-
-*   Node.js v18.x
-*   Python 3.11
-*   Yarn package manager
-*   [uv](https://docs.astral.sh/uv/) (recommended) or pip
-
-### Simulator Setup
-
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url> # Replace with your repo URL
-    cd <repository-directory>
-    ```
-
-2.  **Install dependencies with uv (recommended):**
-    ```bash
-    ./setup.sh
-    source .venv/bin/activate
-    ```
-    This automatically detects your OS (macOS or Linux) and installs the appropriate dependencies.
-
-3.  **Alternative: Manual setup with pip:**
-    ```bash
-    python3.11 -m venv .venv
-    source .venv/bin/activate
-    # macOS:
-    pip install -r requirements.macos.txt
-    # Linux/Ubuntu:
-    pip install -r requirements.ubuntu.txt
-    ```
-
-4.  **Download scene data:**
-    The simulator requires ReplicaCAD scene data. See [`data/README.md`](data/README.md) for detailed download instructions.
-
-    Required datasets:
-    - `data/ReplicaCAD_baked_lighting/` — Pre-baked lighting stages
-    - `data/ReplicaCAD_dataset/` — Object meshes for collision
-
-### Frontend Setup
-
-1.  **Navigate to the frontend directory:**
-    ```bash
-    cd frontend
-    ```
-2.  **Install dependencies:**
-    ```bash
-    yarn install
-    ```
-
-## Running the Application
-
-> [!IMPORTANT]
-> Inside this monorepo, the recommended entrypoint is `../innate sim setup && ../innate sim up` from the repository root.
->
-> The simulator connects to the **[Innate OS](https://github.com/innate-inc/innate-os)** running locally in Docker on `ws://localhost:9090`.
->
-> **Before starting the simulator:**
-> 1. Start the **[Innate OS](https://github.com/innate-inc/innate-os)** in Docker
-> 2. (Optional) Start the **[Innate Cloud Agent](https://github.com/innate-inc/innate-cloud-agent)** locally — only needed if the Innate OS is configured to use a local agent instead of the cloud service
->
-> See the linked repositories for setup instructions.
-
-### 1. Start the Simulator
-
-From the project root directory:
+One-command development environment: the full innate-os robot stack (brain,
+Nav2, skills, webapp) running in Docker against a headless MuJoCo simulation
+of the MARS robot in an apartment. Local code edits + `./innate build`
+behave exactly like on a real robot.
 
 ```bash
-# Recommended for development
-python main.py --vis --log-everything
+./innate sim setup     # one-time: keys + config
+./innate sim up        # container + ROS stack + virtual robot
 ```
 
-**Options:**
+## Architecture
 
-- `--vis` — Enable the Genesis simulation visualization window
-- `--log-everything` — Verbose logging for agent inputs/outputs
-- `--no-web` — Run without the web server (headless mode)
-- `--no-agent` — Run without connecting to rosbridge/brain agent (useful for pure sim/API testing)
+- **Robot stack** -- the real innate-os ROS 2 graph, unchanged, in the
+  `innate-dev` container (see `docker-compose.dev.yml`), launched as tmux
+  windows by `scripts/launch_sim_in_tmux.zsh`.
+- **Virtual MARS driver** (`sim-mujoco/`) -- a headless MuJoCo node that
+  impersonates the hardware drivers at the ROS topic level: odom/TF, lidar
+  `/scan`, both cameras (raw + JPEG), depth + point cloud, arm/head commands
+  and services. Runs inside the container (tmux window `sim-driver`) so it
+  shares the zenoh graph. Readiness = `/odom` publishing.
+- **Viewing** -- sim-web in connected mode (`sim-web/`, open with `?ros`)
+  renders the simulation in the browser at native resolution from rosbridge
+  state (`ws://localhost:9090`); Foxglove connects to the same port for
+  debug panels (TF, `/scan`, point cloud, camera images, teleop). No video
+  streaming, no compression.
+- **Launcher** (`launcher/`) -- the `./innate sim` CLI: container lifecycle,
+  ROS workspace builds, brain backend config, status dashboard.
 
-### 2. Start the Frontend Development Server
-
-In a *separate* terminal, from the `frontend` directory:
-
-```bash
-cd frontend
-yarn dev
-```
-
-The frontend will typically be available at `http://localhost:5173`.
-
-> The frontend reads its endpoint URLs at runtime from `/config.json` (no
-> build-time `VITE_*` vars). In dev that file is served from
-> `frontend/public/config.json`; in the container it is written from env by the
-> entrypoint. With `../innate sim up`, the frontend instead runs in its own
-> Docker container (Caddy) at `http://localhost:3000`.
-
-#### Optional: Direct Robot Mode
-
-The frontend can connect directly to a robot ROSBridge endpoint (instead of proxying chat/video through the simulator backend) by editing `frontend/public/config.json`:
-
-```jsonc
-{
-  "directRobot": true,
-  "robotWsUrl": "ws://<robot-ip>:9090"
-}
-```
-
-When `directRobot` is `false` (default), the frontend uses `wsBaseUrl` and `simBaseUrl` to reach the simulator backend.
+The previous genesis-based simulator (host process, WebRTC video, `:8000`
+HTTP API) has been removed; see git history if you need to dig it up.
 
 ## Configuration
 
-### Environment Configuration Files
+`config.toml` (created from `config.toml.template` by setup): OS image
+selection and cloud-agent mode. Secrets live in the repo-root `.env`
+(`INNATE_SERVICE_KEY`, brain backend settings) -- `./innate sim setup`
+walks through them.
 
-Environment configurations are stored as JSON files in the `data/environments/` directory. These files define static scene settings (optional override) and dynamic entities.
-
-**Structure:**
-
-```json
-{
-  "environment_name": "Baked_sc0_staging_00", // Scene preset name
-  "scene": { // Optional static-scene override (applied immediately; may trigger scene rebuild)
-    "name": "scenesmith_house_042",
-    "mesh_path": "data/scenes/scene_042/combined_house/house.glb",
-    "mesh_euler": [90, 0, 0],
-    "collision_stage_config": null, // Optional; ReplicaCAD-style stage config
-    "occupancy_stl_path": "data/scenes/scene_042/combined_house/house.stl",
-    "slice_output_prefix": "scene_042_slice"
-  },
-  "entities": [
-    {
-      "name": "unique_entity_name", // e.g., "walker_1", "casualty_1"
-      "asset_path": "path/to/model.obj", // Relative to project root
-      "poses": [
-        {
-          "time": 0.0, // Simulation time for this keyframe
-          "position": [x, y, z],
-          "orientation": [w, x, y, z] // Quaternion
-        },
-        {
-          "time": 10.0, // Simulation time for the next keyframe
-          "position": [x2, y2, z2],
-          "orientation": [w2, x2, y2, z2]
-        }
-        // Add more poses here...
-      ],
-      "loop": false // Optional, defaults to false. If true, trajectory restarts after the last pose.
-    }
-    // Add more entities...
-  ]
-}
-```
-
-*   **Fixed Entities:** An entity with only one pose in the `poses` list will be considered fixed at that position/orientation.
-*   **Moving Entities:** Entities with multiple poses will linearly interpolate (LERP for position, SLERP for orientation) between consecutive poses based on the current simulation time. The `loop` parameter determines if the trajectory restarts from the beginning after reaching the last pose's time.
-*   **Dynamic Entity Loading:** Entities can be loaded from `entities[*].asset_path`. If the entity is not present in the currently built scene, the simulator rebuilds the scene and then applies the config.
-*   **Static Scene Changes:** Changing `environment_name`/`scene` at runtime triggers an in-process scene rebuild, then the requested environment is applied.
-*   **Entity/Asset Set Changes:** If the requested `name -> asset_path` set differs from the currently active environment, the simulator rebuilds before applying.
-*   **No Out-of-World Parking:** Entities are no longer parked at an arbitrary far-away position; active scene contents are managed through rebuild + explicit config placement.
-
-To start with a specific environment config at boot time:
+## Day-to-day
 
 ```bash
-python main.py --initial-environment walking_man_path
-# or
-python main.py --initial-environment-path data/environments/walking_man_path.json
+./innate sim up          # start (or resume) everything
+./innate sim status      # dashboard
+./innate sim logs        # startup logs; `logs os` / `logs agent` for live ones
+./innate sim sh          # shell into the container
+./innate build           # rebuild ros2_ws after code changes
+./innate sim down        # stop
 ```
 
-## API Endpoints
-
-The backend exposes several API endpoints for controlling the simulation and interacting with the agent.
-
-**Base URL:** `http://localhost:8000` (unless configured differently)
-
-### Configuration & Control (`/config_api`)
-
-*   **`/sim/set_environment`** — rosbridge service, type `brain_messages/srv/ChangeMap` (replaces the old `POST /set_environment` HTTP route).
-    *   Sets the active environment by placing configured entities. Waits for simulator apply completion and returns `success` plus a `message` (error text on failure).
-    *   The single string request field `map_name` is *either*:
-        *   an environment **name** — a config file (without `.json`) in `data/environments/`, or
-        *   an inline environment **config** — the full configuration dictionary serialized as a JSON string.
-    *   **Example (by name):**
-        ```bash
-        ros2 service call /sim/set_environment brain_messages/srv/ChangeMap \
-          "{map_name: 'walking_man_origin'}"
-        ```
-    *   **Example (inline JSON config):** pass the full config object as the `map_name` string, e.g.
-        ```bash
-        ros2 service call /sim/set_environment brain_messages/srv/ChangeMap \
-          "{map_name: '{\"environment_name\": \"Baked_sc0_staging_00\", \"entities\": [ ... ]}'}"
-        ```
-
-*   **`POST /reset_robot`**
-    *   Resets the robot's position and orientation.
-    *   **Request Body (Optional):** JSON object
-        ```json
-        {
-          "memory_state": "optional_state_to_load",
-          "position": [x, y, z],
-          "orientation": [w, x, y, z]
-        }
-        ```
-        *   If `position` and `orientation` are provided, the robot resets to that pose.
-        *   Otherwise, it resets to the default initial pose.
-        *   `memory_state` can be used to load a specific agent memory state (if implemented).
-
-*   **`POST /shutdown`**
-    *   Gracefully shuts down the simulation backend.
-
-### Video & State (`/video_api`)
-
-*   **`GET /video_feed`**: MJPEG stream of the robot's first-person camera.
-*   **`GET /video_feed_chase`**: MJPEG stream of the chase camera.
-*   **`GET /video_feeds_ready`**: Checks if the simulation and video feeds are initialized. Returns `{"ready": true/false, "message": "..."}`.
-*   **`GET /get_robot_position`**: Returns the robot's current position and timestamp. `{"position": [x,y,z], "timestamp": float}`.
-*   **`POST /set_directive`**: Sends a natural language directive to the agent. Request body: `{"text": "Your directive here"}`.
-
-### Chat (`/chat_api`)
-
-*   **`GET /is-connected/{user_id}`**: Checks if a user is connected via WebSocket.
-*   **`WS /ws/chat`**: WebSocket endpoint for real-time chat between frontend and agent.
-
-## Project Structure
-
-```
-├── data/
-│   ├── environments/      # Environment config JSON files
-│   └── assets/            # 3D models for dynamic entities
-│   └── ...                # Other simulation data (URDF, scene files)
-├── frontend/
-│   ├── src/               # React frontend source code
-│   ├── public/            # Static assets incl. config.json (runtime URLs)
-│   ├── Dockerfile         # Single image: node build tooling + Caddy
-│   ├── Caddyfile          # Web server config (SPA + build-state endpoints)
-│   ├── docker-entrypoint.sh # Writes config.json, rebuilds on start, serves
-│   └── ...                # Config files (package.json, vite.config.ts)
-├── src/
-│   ├── agent/             # Agent communication types, WebSocket bridge
-│   ├── routes/            # FastAPI API route definitions (config, video, chat)
-│   ├── simulation/        # SimulationNode, utilities
-│   └── shared_queues.py   # Inter-process/thread communication queues
-├── venv/                  # Virtual environment (ignored by git)
-├── .gitignore
-├── main.py            # Main FastAPI application entry point
-├── README.md              # This file
-├── requirements.macos.txt # Python dependencies for macOS
-└── requirements.txt       # Python dependencies (if needed for other OS)
-```
-
-## Development Notes
-
-*   **Containerized Frontend:** With `../innate sim up`, the frontend runs in its own Docker container (Caddy) at `http://localhost:3000`. The image carries the node/yarn build tooling and rebuilds on container start; endpoint URLs are injected at runtime via `/config.json`. The FastAPI backend no longer serves the frontend.
-*   **Frontend Dev Server:** For easier frontend development, run `yarn dev` in the `frontend` directory. This provides hot reloading but requires the backend to be running separately.
-*   **Communication:** Components (simulation, agent bridge, web API) communicate via thread-safe queues defined in `src/shared_queues.py`.
-*   **macOS Threading:** On macOS, the Genesis simulation runs in a separate thread managed by `gs.tools.run_in_another_thread` in `main.py`.
-
-## Troubleshooting
-
-*   **Genesis Viewer Issues:** If the visualization window doesn't appear or behaves strangely, try running `main.py` with the `-v` flag.
-*   **WebSocket Connection:** If the frontend cannot connect to the agent:
-    *   Ensure the backend is running.
-    *   Ensure the Innate OS is running in Docker.
-    *   Check browser console logs for errors.
-
----
-
-<div align="center">
-
-**Built with ❤️ by [Innate](https://innate.bot) in Palo Alto, California**
-
-[Discord](https://discord.gg/innate) • [Documentation](https://docs.innate.bot) • [Website](https://innate.bot)
-
-</div>
+The apartment collision/visual meshes the driver loads come from
+`sim-mujoco/work/` (gitignored). If they're missing (fresh clone), generate
+them with the pipeline in `sim-mujoco/tools/` (see sim-mujoco/README.md) or
+set `VIRTUAL_MARS_ASSETS` to a synced copy.

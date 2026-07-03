@@ -43,12 +43,11 @@ services:
       # which wins — so this default only affects raw `docker compose` runs.
       - BRAIN_WEBSOCKET_URI=${BRAIN_WEBSOCKET_URI:-${COMPOSE_PROFILES:+ws://cloud-agent:8765}}
     ports:
-      # rosbridge (rws). Bound to loopback only: the browser reaches it through
-      # the webapp's /ws proxy on 443, and the host-side native sim backend
-      # connects to ws://localhost:9090 — nothing off-host needs it. Publishing
-      # on 0.0.0.0 just invites internet probes that open, send nothing, and
-      # disconnect (End of File), spamming the rws log.
-      - "127.0.0.1:9090:9090"
+      # rosbridge (rws). Loopback by default: publishing on 0.0.0.0 invites
+      # internet probes that open, send nothing, and disconnect, spamming the
+      # rws log. Set SIM_ROSBRIDGE_BIND=0.0.0.0 to let LAN devices (e.g. a
+      # phone/laptop opening sim-web) reach it.
+      - "${SIM_ROSBRIDGE_BIND:-127.0.0.1}:9090:9090"
       # webapp front door (replaces the deprecated sim/frontend UI): the in-container
       # python server binds 443 (https) + 80 (http), both serving the full app.
       # Override the published side (e.g. SIM_HTTPS_PORT=8443 ./innate sim up) to
@@ -66,6 +65,13 @@ services:
       - ../config:/root/innate-os/config:ro
       - ../workspace:/root/innate-os/workspace:rw
       - ../webapp:/root/innate-os/webapp:ro
+      # Virtual MARS driver (headless MuJoCo impersonating the hardware
+      # drivers -- see sim-mujoco/README.md "Virtual MARS driver"). Runs
+      # inside this container so it shares the zenoh ROS graph.
+      - ../sim-mujoco:/root/innate-os/sim-mujoco:rw
+      # sim-web's public assets: the driver reads the mars.urdf mesh STLs
+      # referenced by sim-mujoco (same file the browser sim loads).
+      - ../sim-web/public:/root/innate-os/sim-web/public:ro
       - ${INNATE_OS_ENV_FILE:-../.env}:/root/innate-os/.env:ro
 
       # 2) Keep build/install/log folders as Docker named volumes, so they won't pollute your host

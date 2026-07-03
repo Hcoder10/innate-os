@@ -1,0 +1,30 @@
+<mujoco model="innate_sim_drive_test">
+  <!-- Drive test sandbox: the same driven robot_base box used against the
+       apartment (see world.xml / worker.ts's PD velocity-servo), plus one
+       fixed cube obstacle on a flat ground plane -- both plain MuJoCo
+       primitives instead of the apartment's triangle mesh. Drive the robot
+       into the cube with WASD/joystick; it should push against it and stop
+       (or slide along it) without spinning or diverging. If this behaves
+       but the apartment doesn't, the apartment's collision mesh is the
+       next thing to debug. -->
+
+  <option timestep="0.005" gravity="0 0 -9.81"/>
+
+  <worldbody>
+    <geom name="ground" type="plane" size="5 5 0.1" friction="0.9 0.01 0.001" rgba="0.3 0.3 0.32 1"/>
+
+    <!-- Fixed obstacle: a plain geom with no body/freejoint never moves, so
+         the scene can draw it once at this same position. -->
+    <geom name="obstacle" type="box" size="0.15 0.15 0.15" pos="1.0 0 0.15"
+          friction="0.9 0.01 0.001" rgba="1 0.45 0.1 1"/>
+
+    <!-- Free-floating collision box standing in for the MARS base -- same
+         box size/offset as world.xml's robot_base. -->
+    <body name="robot_base" pos="0 0 0">
+      <freejoint name="base_free"/>
+      <inertial pos="-0.0587 0 0.0838" mass="3.0" diaginertia="0.03 0.03 0.02"/>
+      <geom name="base_collision" type="box" size="0.0939 0.091 0.0838" pos="-0.0587 0 0.0838"
+            friction="0.9 0.01 0.001" rgba="0.2 0.6 1 1"/>
+    </body>
+  </worldbody>
+</mujoco>

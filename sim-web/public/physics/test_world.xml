@@ -1,0 +1,29 @@
+<mujoco model="innate_sim_test">
+  <!-- Minimal collision sandbox: two free boxes dropped onto a flat ground
+       plane, no robot geometry and no driving -- just gravity + MuJoCo's
+       built-in plane/box collision (much simpler than the apartment's
+       triangle mesh, see world.xml). cube_a starts stacked above cube_b so
+       both box-plane and box-box contact happen automatically on load; drag
+       either cube with the mouse to push it (see testWorker.ts) for a more
+       hands-on check. If both cubes settle and stay stacked without
+       spinning or diverging, this confirms basic collision works and the
+       apartment's mesh is the next thing to debug. -->
+
+  <option timestep="0.005" gravity="0 0 -9.81"/>
+
+  <worldbody>
+    <geom name="ground" type="plane" size="5 5 0.1" friction="0.9 0.01 0.001" rgba="0.3 0.3 0.32 1"/>
+
+    <body name="cube_b" pos="0 0 0.1">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="1.0" diaginertia="0.006 0.006 0.006"/>
+      <geom type="box" size="0.1 0.1 0.1" friction="0.9 0.01 0.001" rgba="1 0.45 0.1 1"/>
+    </body>
+
+    <body name="cube_a" pos="0 0 0.5">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="1.0" diaginertia="0.006 0.006 0.006"/>
+      <geom type="box" size="0.1 0.1 0.1" friction="0.9 0.01 0.001" rgba="0.2 0.6 1 1"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -97,10 +97,8 @@ THEME = {
 @dataclass(frozen=True)
 class DashboardCallbacks:
     collect_status_snapshot: Callable[[dict[str, object]], dict[str, object]]
-    capture_simulator_logs: Callable[..., list[str]]
     capture_os_brain_logs: Callable[..., list[str]]
     capture_agent_logs: Callable[..., list[str]]
-    set_simulator_log_mode: Callable[[str, str], bool]
     success: Callable[[str], None]
 
 
@@ -112,24 +110,11 @@ class DashboardOptions:
     state_dir: Path
 
 
-def config_simulator_port(config: dict[str, object]) -> str:
-    raw_env = config.get("raw_env")
-    if isinstance(raw_env, dict):
-        return str(raw_env.get("SIMULATOR_PORT", "8000"))
-    return "8000"
-
-
 class DashboardHistory:
     def __init__(self, maxlen: int = 32):
-        self.fps = deque(maxlen=maxlen)
-        self.queue_load = deque(maxlen=maxlen)
-        self.frame_age_ms = deque(maxlen=maxlen)
         self.health = deque(maxlen=maxlen)
 
     def add(self, snapshot: dict[str, object]) -> None:
-        self.fps.append(float(snapshot["primary_fps"]))
-        self.queue_load.append(float(snapshot["queue_load_score"]))
-        self.frame_age_ms.append(float(snapshot["frame_age_ms"]))
         self.health.append(float(snapshot["health_score"]))
 
     def seed_from_snapshot(self, snapshot: dict[str, object]) -> None:
@@ -158,9 +143,6 @@ class DashboardRuntime:
 
     def _collect_logs(self, snapshot: dict[str, object]) -> dict[str, list[str]]:
         logs = {
-            "simulator": self.callbacks.capture_simulator_logs(
-                bool(snapshot["sim_running"]), lines=self.log_cache_lines
-            ),
             "brain": self.callbacks.capture_os_brain_logs(self.config, lines=self.log_cache_lines),
         }
         if self.config["mode"] != self.options.hosted_mode:
@@ -218,24 +200,6 @@ def format_level(level: str, label: str) -> str:
     else:
         color = RED
     return f"{color}{label}{NC}"
-
-
-def format_sim_log_badge(mode: str) -> str:
-    normalized = (mode or "quiet").strip().lower()
-    if normalized == "debug":
-        return f"{BOLD}{YELLOW}DEBUG ON{NC}"
-    if normalized == "quiet":
-        return f"{BOLD}{CYAN}QUIET FILTER ON{NC}"
-    return f"{BOLD}{normalized.upper()}{NC}"
-
-
-def describe_sim_log_mode(mode: str) -> str:
-    normalized = (mode or "quiet").strip().lower()
-    if normalized == "debug":
-        return f"{BOLD}Simulator logs:{NC} {format_sim_log_badge(normalized)}  full simulator chatter visible  {DIM}(press d to return to quiet){NC}"
-    if normalized == "quiet":
-        return f"{BOLD}Simulator logs:{NC} {format_sim_log_badge(normalized)}  repetitive simulator chatter hidden  {DIM}(press d for full debug){NC}"
-    return f"{BOLD}Simulator logs:{NC} {format_sim_log_badge(normalized)}"
 
 
 def print_ascii_banner() -> None:
@@ -339,16 +303,6 @@ def dashboard_snapshot_worker(runtime: DashboardRuntime, interval_seconds: float
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_simulator_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.1) -> None:
-    while not runtime.stop_event.is_set():
-        snapshot, _, _, _ = runtime.read()
-        runtime.set_log(
-            "simulator",
-            runtime.callbacks.capture_simulator_logs(bool(snapshot["sim_running"]), lines=runtime.log_cache_lines),
-        )
-        runtime.stop_event.wait(interval_seconds)
-
-
 def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.35) -> None:
     while not runtime.stop_event.is_set():
         runtime.set_log(
@@ -376,7 +330,6 @@ def dashboard_runtime(
     runtime = DashboardRuntime(config, callbacks, options)
     threads = [
         threading.Thread(target=dashboard_snapshot_worker, args=(runtime,), daemon=True),
-        threading.Thread(target=dashboard_simulator_log_worker, args=(runtime,), daemon=True),
         threading.Thread(target=dashboard_brain_log_worker, args=(runtime,), daemon=True),
     ]
     if config["mode"] != options.hosted_mode:
@@ -503,106 +456,32 @@ def render_panel_box(
 
 def print_metric_panels(snapshot: dict[str, object], history: DashboardHistory) -> int:
     width = shutil.get_terminal_size((150, 40)).columns
-    gap = 2
-    columns = 4 if width >= 150 else 2
-    panel_width = max((width - gap * (columns - 1)) // columns, 24)
+    panel_width = max(min(width, 72), 24)
 
-    panels = [
-        (
-            " HEALTH ",
-            str(snapshot["stack_label"]),
-            str(snapshot["system_summary"]),
-            colorize_chart_rows(
-                bar_chart_rows(
-                    list(history.health),
-                    width=max(panel_width - 2, 12),
-                    height=4,
-                    minimum=0.0,
-                    maximum=100.0,
-                ),
-                start=THEME["health_start"],
-                mid=THEME["health_mid"],
-                end=THEME["health_end"],
+    rendered = render_panel_box(
+        " HEALTH ",
+        str(snapshot["stack_label"]),
+        str(snapshot["system_summary"]),
+        colorize_chart_rows(
+            bar_chart_rows(
+                list(history.health),
+                width=max(panel_width - 2, 12),
+                height=4,
+                minimum=0.0,
+                maximum=100.0,
             ),
-            THEME["panel_health"],
+            start=THEME["health_start"],
+            mid=THEME["health_mid"],
+            end=THEME["health_end"],
         ),
-        (
-            " FPS ",
-            f"{float(snapshot['primary_fps']):.1f} fps",
-            f"video {snapshot['video_label']}",
-            colorize_chart_rows(
-                bar_chart_rows(
-                    list(history.fps),
-                    width=max(panel_width - 2, 12),
-                    height=4,
-                    minimum=0.0,
-                    maximum=max(12.0, max(history.fps, default=12.0)),
-                ),
-                start=THEME["fps_start"],
-                mid=THEME["fps_mid"],
-                end=THEME["fps_end"],
-            ),
-            THEME["panel_fps"],
-        ),
-        (
-            " QUEUES ",
-            str(snapshot["queue_pressure"]),
-            f"peak {snapshot['queue_peak']} | {snapshot['transport_label']}",
-            colorize_chart_rows(
-                bar_chart_rows(
-                    list(history.queue_load),
-                    width=max(panel_width - 2, 12),
-                    height=4,
-                    minimum=0.0,
-                    maximum=100.0,
-                ),
-                start=THEME["queue_start"],
-                mid=THEME["queue_mid"],
-                end=THEME["queue_end"],
-            ),
-            THEME["panel_queue"],
-        ),
-        (
-            " FRAME AGE ",
-            f"{float(snapshot['frame_age_ms']):.0f} ms",
-            f"latest frame | {snapshot['video_label']}",
-            colorize_chart_rows(
-                bar_chart_rows(
-                    list(history.frame_age_ms),
-                    width=max(panel_width - 2, 12),
-                    height=4,
-                    minimum=0.0,
-                    maximum=max(400.0, max(history.frame_age_ms, default=400.0)),
-                ),
-                start=THEME["frame_start"],
-                mid=THEME["frame_mid"],
-                end=THEME["frame_end"],
-            ),
-            THEME["panel_frame"],
-        ),
-    ]
-
-    rows = [panels[index : index + columns] for index in range(0, len(panels), columns)]
-    line_count = 0
-    for row in rows:
-        rendered = [
-            render_panel_box(
-                title,
-                value,
-                subtitle,
-                chart,
-                width=panel_width,
-                border_rgb=border_rgb,
-                fill_rgb=THEME["panel_fill"],
-            )
-            for title, value, subtitle, chart, border_rgb in row
-        ]
-        for line_index in range(len(rendered[0])):
-            print((" " * gap).join(panel[line_index] for panel in rendered))
-            line_count += 1
-        print()
-        line_count += 1
-    return line_count
+        width=panel_width,
+        border_rgb=THEME["panel_health"],
+        fill_rgb=THEME["panel_fill"],
+    )
+    for line in rendered:
+        print(line)
+    print()
+    return len(rendered) + 1
 
 
 def truncate_line(text: str, width: int) -> str:
@@ -929,10 +808,9 @@ def render_status(
         "  ".join(
             [
                 f"{BOLD}Mood:{NC} {format_level(str(snapshot['stack_level']), str(snapshot['stack_label']))}",
-                f"{BOLD}Video:{NC} {format_level(str(snapshot['video_level']), str(snapshot['video_label']))}",
+                f"{BOLD}Sim driver:{NC} {format_level(str(snapshot['sim_level']), str(snapshot['sim_label']))}",
                 f"{BOLD}Transport:{NC} {format_level(str(snapshot['transport_level']), str(snapshot['transport_label']))}",
                 f"{BOLD}Brain:{NC} {format_level(str(snapshot['brain_level']), str(snapshot['brain_label']))}",
-                f"{BOLD}Backend:{NC} {format_level(str(snapshot['backend_level']), str(snapshot['backend_label']))}",
                 f"{BOLD}Agent:{NC} {format_level(str(snapshot['agent_level']), str(snapshot['agent_label']))}",
             ]
         ),
@@ -943,23 +821,6 @@ def render_status(
         "  ".join(
             [
                 f"{BOLD}Cloud mode:{NC} {config['mode']}",
-                f"{BOLD}Viewer:{NC} {'on' if config.get('sim_visualization') else 'off'}",
-                f"{BOLD}Sim logs:{NC} {format_sim_log_badge(str(snapshot['sim_log_mode']))}",
-                f"{BOLD}FPS:{NC} {float(snapshot['primary_fps']):.1f}",
-                f"{BOLD}Frame age:{NC} {float(snapshot['frame_age_ms']):.0f} ms",
-                f"{BOLD}Queue load:{NC} {format_level(str(snapshot['transport_level']), str(snapshot['queue_pressure']))} (peak {snapshot['queue_peak']})",
-            ]
-        ),
-        term_width,
-    )
-    used_lines += 1
-    print_dashboard_line(describe_sim_log_mode(str(snapshot["sim_log_mode"])), term_width)
-    used_lines += 1
-    print_dashboard_line(
-        "  ".join(
-            [
-                f"{BOLD}Queues:{NC} {snapshot['queue_summary']}",
-                f"{BOLD}Chat:{NC} {snapshot['chat_load']}",
                 f"{BOLD}System:{NC} {snapshot['system_summary']}",
             ]
         ),
@@ -974,12 +835,7 @@ def render_status(
     )
     used_lines += 1
     print_dashboard_line(
-        "  ".join(
-            [
-                f"{BOLD}Simulator API:{NC} http://localhost:{snapshot['simulator_port']}",
-                f"{BOLD}ROSBridge:{NC} ws://localhost:9090",
-            ]
-        ),
+        f"{BOLD}ROSBridge:{NC} ws://localhost:9090",
         term_width,
     )
     used_lines += 1
@@ -1000,7 +856,7 @@ def render_status(
     )
     used_lines += 1
     print_dashboard_line(
-        f"{DIM}Keys: q detach  d toggle sim logs  v verbose  Ctrl+C stop runtime{NC}",
+        f"{DIM}Keys: q detach  v verbose  Ctrl+C stop runtime{NC}",
         term_width,
     )
     used_lines += 1
@@ -1042,25 +898,12 @@ def render_status(
         used_lines += 5
     available_height = max(term_height - used_lines, 0)
     visible_log_rows = max(available_height, 3)
-    simulator_lines = (
-        cached_logs["simulator"]
-        if cached_logs is not None and "simulator" in cached_logs
-        else callbacks.capture_simulator_logs(
-            bool(snapshot["sim_running"]),
-            lines=visible_log_rows,
-        )
-    )
     brain_lines = (
         cached_logs["brain"]
         if cached_logs is not None and "brain" in cached_logs
         else callbacks.capture_os_brain_logs(config, lines=visible_log_rows)
     )
     log_columns = [
-        (
-            f"SIMULATOR LOGS [{str(snapshot['sim_log_mode']).upper()}]",
-            simulator_lines,
-            THEME["log_sim"],
-        ),
         (
             "OS BRAIN LOGS",
             brain_lines,
@@ -1074,7 +917,7 @@ def render_status(
             else callbacks.capture_agent_logs(config, lines=visible_log_rows)
         )
         log_columns.insert(
-            1,
+            0,
             (
                 "AGENT LOGS",
                 agent_lines,
@@ -1197,8 +1040,6 @@ def watch_dashboard(
 ) -> str:
     redraw = True
     history = DashboardHistory()
-    simulator_port = config_simulator_port(config)
-    sim_log_mode = str(config.get("sim_log_mode", "quiet"))
     top_padding_rows = 1
     try:
         with (
@@ -1216,7 +1057,6 @@ def watch_dashboard(
                 snapshot, cached_logs, snapshot_rev, log_rev = runtime.read()
                 if snapshot_rev != last_snapshot_rev:
                     history.add(snapshot)
-                    sim_log_mode = str(snapshot.get("sim_log_mode", sim_log_mode))
                     last_snapshot_rev = snapshot_rev
                     redraw = True
                 if log_rev != last_log_rev:
@@ -1248,13 +1088,6 @@ def watch_dashboard(
                 if normalized == "v":
                     verbose = not verbose
                     redraw = True
-                elif normalized == "d":
-                    target_mode = "quiet" if sim_log_mode == "debug" else "debug"
-                    if callbacks.set_simulator_log_mode(simulator_port, target_mode):
-                        sim_log_mode = target_mode
-                        runtime.refresh_snapshot()
-                    redraw = True
-                    next_refresh = 0.0
                 elif normalized == "q":
                     print()
                     callbacks.success("Left the live dashboard. The Innate runtime is still running.")

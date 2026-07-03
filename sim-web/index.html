@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Innate Sim — Apartment</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div id="hud" class="panel hud">
+      <div class="hud-title">Innate Sim <span class="microlabel">standalone</span></div>
+      <div class="hud-row"><span>x</span><span id="hud-x">0.00</span> m</div>
+      <div class="hud-row"><span>y</span><span id="hud-y">0.00</span> m</div>
+      <div class="hud-row"><span>yaw</span><span id="hud-yaw">0.0</span>&deg;</div>
+      <div class="hud-row"><span>fps</span><span id="hud-fps">0</span></div>
+      <div class="hud-row">
+        <span>view</span>
+        <select id="view-select">
+          <option value="orbit">orbit</option>
+          <option value="main">main camera</option>
+          <option value="arm">arm camera</option>
+        </select>
+      </div>
+      <label class="hud-row hud-toggle">
+        <input type="checkbox" id="collision-debug-toggle" />
+        <span>show collision mesh</span>
+      </label>
+      <label class="hud-row hud-toggle">
+        <input type="checkbox" id="sdf-collision-toggle" />
+        <span>SDF collision (experimental)</span>
+      </label>
+      <label class="hud-row hud-toggle" id="lidar-toggle-row" hidden>
+        <input type="checkbox" id="lidar-toggle" />
+        <span>show lidar</span>
+      </label>
+      <div class="hud-row hud-toggle" id="camera-feed-row" hidden>
+        <input type="checkbox" id="camera-feed-toggle" />
+        <span>robot camera</span>
+        <select id="camera-feed-select">
+          <option value="/mars/main_camera/left/image_raw/compressed">main</option>
+          <option value="/mars/arm/image_raw/compressed">wrist</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="sliders" class="panel sliders">
+      <div class="gains-row">
+        <label for="gain-kp">Kp</label>
+        <input type="number" id="gain-kp" step="1" min="0" value="50" />
+      </div>
+      <div class="gains-row">
+        <label for="gain-kd">Kd</label>
+        <input type="number" id="gain-kd" step="0.1" min="0" value="1" />
+      </div>
+      <div class="gains-row">
+        <label for="gain-effort">Max N&middot;m</label>
+        <input type="number" id="gain-effort" step="0.5" min="0" value="50" />
+      </div>
+
+      <div class="leader-arm">
+        <span id="leader-status" class="leader-status microlabel">no leader arm</span>
+        <div class="leader-buttons">
+          <button id="leader-connect-btn" type="button" class="mini-btn">Connect leader arm</button>
+          <button id="leader-engage-btn" type="button" class="mini-btn" hidden>Engage follow</button>
+        </div>
+      </div>
+
+      <div id="joint-sliders"></div>
+    </div>
+
+    <div id="loading" class="panel loading">
+      <div id="loading-msg">Loading&hellip;</div>
+    </div>
+
+    <div id="controls" class="controls">
+      <div id="wasd-mount"></div>
+      <div id="joystick-mount"></div>
+    </div>
+
+    <button id="reset-btn" class="panel reset-btn" title="Reset robot pose">Reset</button>
+
+    <!-- Live frame from the robot's actual camera pipeline (connected mode) -->
+    <img
+      id="camera-feed"
+      hidden
+      alt="robot camera feed"
+      style="position: fixed; right: 16px; bottom: 16px; width: 320px; border-radius: 8px; border: 1px solid #444; z-index: 10"
+    />
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

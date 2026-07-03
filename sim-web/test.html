@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Innate Sim — Collision Test</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div id="hud" class="panel hud">
+      <div class="hud-title">Innate Sim <span class="microlabel">collision test</span></div>
+      <div class="hud-row"><span>fps</span><span id="hud-fps">0</span></div>
+      <div class="hud-row microlabel">drag a cube to push it</div>
+    </div>
+
+    <div id="loading" class="panel loading">
+      <div id="loading-msg">Loading&hellip;</div>
+    </div>
+
+    <button id="reset-btn" class="panel reset-btn" title="Reset cube positions">Reset</button>
+
+    <script type="module" src="/src/test-main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,277 @@
+<mujoco model="innate_sim">
+  <!-- Combined physics world for sim-web: static apartment collision geometry
+       (from obj2mjcf, see sim-web/assets/apartment_collisions/) plus a
+       free-floating box standing in for the MARS base, driven by an applied
+       force/torque velocity servo (no wheel modeling yet -- see
+       src/physics/worker.ts). Generated file; regenerate rather than
+       hand-edit the mesh/geom lists if apartment_collisions/ changes. -->
+
+  <option timestep="0.005" gravity="0 0 -9.81"/>
+
+  <!-- TEMPORARY: the apartment's obj2mjcf/CoACD-decomposed collision mesh
+       turned out to be the actual bug (see sim-mujoco/ for the regeneration
+       work in progress) -- pieces merge disconnected geometry into hulls
+       that don't correspond to any real surface, so the robot can spawn on
+       top of "furniture" that isn't there or catch a corner on a hull edge
+       and spin out. Disabled (contype/conaffinity 0) rather than deleted so
+       it's a one-line revert once the mesh is regenerated. A flat ground
+       plane stands in below so the robot still has floor support for
+       driving/teleop in the meantime -- it will clip through walls and
+       furniture until the real collision mesh is back. -->
+  <default>
+    <default class="collision">
+      <geom group="3" type="mesh" friction="0.9 0.01 0.001" condim="6" margin="0.03" solref="0.01 1"
+            contype="0" conaffinity="0"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh file="apartment_collision_0.obj"/>
+    <mesh file="apartment_collision_1.obj"/>
+    <mesh file="apartment_collision_2.obj"/>
+    <mesh file="apartment_collision_3.obj"/>
+    <mesh file="apartment_collision_4.obj"/>
+    <mesh file="apartment_collision_5.obj"/>
+    <mesh file="apartment_collision_6.obj"/>
+    <mesh file="apartment_collision_7.obj"/>
+    <mesh file="apartment_collision_8.obj"/>
+    <mesh file="apartment_collision_9.obj"/>
+    <mesh file="apartment_collision_10.obj"/>
+    <mesh file="apartment_collision_11.obj"/>
+    <mesh file="apartment_collision_12.obj"/>
+    <mesh file="apartment_collision_13.obj"/>
+    <mesh file="apartment_collision_14.obj"/>
+    <mesh file="apartment_collision_15.obj"/>
+    <mesh file="apartment_collision_16.obj"/>
+    <mesh file="apartment_collision_17.obj"/>
+    <mesh file="apartment_collision_18.obj"/>
+    <mesh file="apartment_collision_19.obj"/>
+    <mesh file="apartment_collision_20.obj"/>
+    <mesh file="apartment_collision_21.obj"/>
+    <mesh file="apartment_collision_22.obj"/>
+    <mesh file="apartment_collision_23.obj"/>
+    <mesh file="apartment_collision_24.obj"/>
+    <mesh file="apartment_collision_25.obj"/>
+    <mesh file="apartment_collision_26.obj"/>
+    <mesh file="apartment_collision_27.obj"/>
+    <mesh file="apartment_collision_28.obj"/>
+    <mesh file="apartment_collision_29.obj"/>
+    <mesh file="apartment_collision_30.obj"/>
+    <mesh file="apartment_collision_31.obj"/>
+    <mesh file="apartment_collision_32.obj"/>
+    <mesh file="apartment_collision_33.obj"/>
+    <mesh file="apartment_collision_34.obj"/>
+    <mesh file="apartment_collision_35.obj"/>
+    <mesh file="apartment_collision_36.obj"/>
+    <mesh file="apartment_collision_37.obj"/>
+    <mesh file="apartment_collision_38.obj"/>
+    <mesh file="apartment_collision_39.obj"/>
+    <mesh file="apartment_collision_40.obj"/>
+    <mesh file="apartment_collision_41.obj"/>
+    <mesh file="apartment_collision_42.obj"/>
+    <mesh file="apartment_collision_43.obj"/>
+    <mesh file="apartment_collision_44.obj"/>
+    <mesh file="apartment_collision_45.obj"/>
+    <mesh file="apartment_collision_46.obj"/>
+    <mesh file="apartment_collision_47.obj"/>
+    <mesh file="apartment_collision_48.obj"/>
+    <mesh file="apartment_collision_49.obj"/>
+    <mesh file="apartment_collision_50.obj"/>
+    <mesh file="apartment_collision_51.obj"/>
+    <mesh file="apartment_collision_52.obj"/>
+    <mesh file="apartment_collision_53.obj"/>
+    <mesh file="apartment_collision_54.obj"/>
+    <mesh file="apartment_collision_55.obj"/>
+    <mesh file="apartment_collision_56.obj"/>
+    <mesh file="apartment_collision_57.obj"/>
+    <mesh file="apartment_collision_58.obj"/>
+    <mesh file="apartment_collision_59.obj"/>
+    <mesh file="apartment_collision_60.obj"/>
+    <mesh file="apartment_collision_61.obj"/>
+    <mesh file="apartment_collision_62.obj"/>
+    <mesh file="apartment_collision_63.obj"/>
+    <mesh file="apartment_collision_64.obj"/>
+    <mesh file="apartment_collision_65.obj"/>
+    <mesh file="apartment_collision_66.obj"/>
+    <mesh file="apartment_collision_67.obj"/>
+    <mesh file="apartment_collision_68.obj"/>
+    <mesh file="apartment_collision_69.obj"/>
+    <mesh file="apartment_collision_70.obj"/>
+    <mesh file="apartment_collision_71.obj"/>
+    <mesh file="apartment_collision_72.obj"/>
+    <mesh file="apartment_collision_73.obj"/>
+    <mesh file="apartment_collision_74.obj"/>
+    <mesh file="apartment_collision_75.obj"/>
+    <mesh file="apartment_collision_76.obj"/>
+    <mesh file="apartment_collision_77.obj"/>
+    <mesh file="apartment_collision_78.obj"/>
+    <mesh file="apartment_collision_79.obj"/>
+    <mesh file="apartment_collision_80.obj"/>
+    <mesh file="apartment_collision_81.obj"/>
+    <mesh file="apartment_collision_82.obj"/>
+    <mesh file="apartment_collision_83.obj"/>
+    <mesh file="apartment_collision_84.obj"/>
+    <mesh file="apartment_collision_85.obj"/>
+    <mesh file="apartment_collision_86.obj"/>
+    <mesh file="apartment_collision_87.obj"/>
+    <mesh file="apartment_collision_88.obj"/>
+    <mesh file="apartment_collision_89.obj"/>
+    <mesh file="apartment_collision_90.obj"/>
+    <mesh file="apartment_collision_91.obj"/>
+    <mesh file="apartment_collision_92.obj"/>
+    <mesh file="apartment_collision_93.obj"/>
+    <mesh file="apartment_collision_94.obj"/>
+    <mesh file="apartment_collision_95.obj"/>
+    <mesh file="apartment_collision_96.obj"/>
+    <mesh file="apartment_collision_97.obj"/>
+    <mesh file="apartment_collision_98.obj"/>
+    <mesh file="apartment_collision_99.obj"/>
+    <mesh file="apartment_collision_100.obj"/>
+    <mesh file="apartment_collision_101.obj"/>
+    <mesh file="apartment_collision_102.obj"/>
+    <mesh file="apartment_collision_103.obj"/>
+    <mesh file="apartment_collision_104.obj"/>
+    <mesh file="apartment_collision_105.obj"/>
+    <mesh file="apartment_collision_106.obj"/>
+    <mesh file="apartment_collision_107.obj"/>
+    <mesh file="apartment_collision_108.obj"/>
+    <mesh file="apartment_collision_109.obj"/>
+    <mesh file="apartment_collision_110.obj"/>
+    <mesh file="apartment_collision_111.obj"/>
+  </asset>
+
+  <worldbody>
+    <!-- Stand-in floor while the apartment collision mesh is disabled above
+         (see the TEMPORARY note on the collision default class). -->
+    <geom name="ground" type="plane" size="10 10 0.1" friction="0.9 0.01 0.001" rgba="0.5 0.5 0.5 0"/>
+
+    <!-- apartment_collisions/*.obj were exported from the apartment glTF
+         before its Y-up -> Z-up conversion (see SimScene.loadApartment).
+         Rotating +90 deg about X here reproduces that same conversion so
+         this body lines up with the apartment.glb rendered by Three.js. -->
+    <body name="apartment" quat="0.7071068 0.7071068 0 0">
+      <geom mesh="apartment_collision_0" class="collision"/>
+      <geom mesh="apartment_collision_1" class="collision"/>
+      <geom mesh="apartment_collision_2" class="collision"/>
+      <geom mesh="apartment_collision_3" class="collision"/>
+      <geom mesh="apartment_collision_4" class="collision"/>
+      <geom mesh="apartment_collision_5" class="collision"/>
+      <geom mesh="apartment_collision_6" class="collision"/>
+      <geom mesh="apartment_collision_7" class="collision"/>
+      <geom mesh="apartment_collision_8" class="collision"/>
+      <geom mesh="apartment_collision_9" class="collision"/>
+      <geom mesh="apartment_collision_10" class="collision"/>
+      <geom mesh="apartment_collision_11" class="collision"/>
+      <geom mesh="apartment_collision_12" class="collision"/>
+      <geom mesh="apartment_collision_13" class="collision"/>
+      <geom mesh="apartment_collision_14" class="collision"/>
+      <geom mesh="apartment_collision_15" class="collision"/>
+      <geom mesh="apartment_collision_16" class="collision"/>
+      <geom mesh="apartment_collision_17" class="collision"/>
+      <geom mesh="apartment_collision_18" class="collision"/>
+      <geom mesh="apartment_collision_19" class="collision"/>
+      <geom mesh="apartment_collision_20" class="collision"/>
+      <geom mesh="apartment_collision_21" class="collision"/>
+      <geom mesh="apartment_collision_22" class="collision"/>
+      <geom mesh="apartment_collision_23" class="collision"/>
+      <geom mesh="apartment_collision_24" class="collision"/>
+      <geom mesh="apartment_collision_25" class="collision"/>
+      <geom mesh="apartment_collision_26" class="collision"/>
+      <geom mesh="apartment_collision_27" class="collision"/>
+      <geom mesh="apartment_collision_28" class="collision"/>
+      <geom mesh="apartment_collision_29" class="collision"/>
+      <geom mesh="apartment_collision_30" class="collision"/>
+      <geom mesh="apartment_collision_31" class="collision"/>
+      <geom mesh="apartment_collision_32" class="collision"/>
+      <geom mesh="apartment_collision_33" class="collision"/>
+      <geom mesh="apartment_collision_34" class="collision"/>
+      <geom mesh="apartment_collision_35" class="collision"/>
+      <geom mesh="apartment_collision_36" class="collision"/>
+      <geom mesh="apartment_collision_37" class="collision"/>
+      <geom mesh="apartment_collision_38" class="collision"/>
+      <geom mesh="apartment_collision_39" class="collision"/>
+      <geom mesh="apartment_collision_40" class="collision"/>
+      <geom mesh="apartment_collision_41" class="collision"/>
+      <geom mesh="apartment_collision_42" class="collision"/>
+      <geom mesh="apartment_collision_43" class="collision"/>
+      <geom mesh="apartment_collision_44" class="collision"/>
+      <geom mesh="apartment_collision_45" class="collision"/>
+      <geom mesh="apartment_collision_46" class="collision"/>
+      <geom mesh="apartment_collision_47" class="collision"/>
+      <geom mesh="apartment_collision_48" class="collision"/>
+      <geom mesh="apartment_collision_49" class="collision"/>
+      <geom mesh="apartment_collision_50" class="collision"/>
+      <geom mesh="apartment_collision_51" class="collision"/>
+      <geom mesh="apartment_collision_52" class="collision"/>
+      <geom mesh="apartment_collision_53" class="collision"/>
+      <geom mesh="apartment_collision_54" class="collision"/>
+      <geom mesh="apartment_collision_55" class="collision"/>
+      <geom mesh="apartment_collision_56" class="collision"/>
+      <geom mesh="apartment_collision_57" class="collision"/>
+      <geom mesh="apartment_collision_58" class="collision"/>
+      <geom mesh="apartment_collision_59" class="collision"/>
+      <geom mesh="apartment_collision_60" class="collision"/>
+      <geom mesh="apartment_collision_61" class="collision"/>
+      <geom mesh="apartment_collision_62" class="collision"/>
+      <geom mesh="apartment_collision_63" class="collision"/>
+      <geom mesh="apartment_collision_64" class="collision"/>
+      <geom mesh="apartment_collision_65" class="collision"/>
+      <geom mesh="apartment_collision_66" class="collision"/>
+      <geom mesh="apartment_collision_67" class="collision"/>
+      <geom mesh="apartment_collision_68" class="collision"/>
+      <geom mesh="apartment_collision_69" class="collision"/>
+      <geom mesh="apartment_collision_70" class="collision"/>
+      <geom mesh="apartment_collision_71" class="collision"/>
+      <geom mesh="apartment_collision_72" class="collision"/>
+      <geom mesh="apartment_collision_73" class="collision"/>
+      <geom mesh="apartment_collision_74" class="collision"/>
+      <geom mesh="apartment_collision_75" class="collision"/>
+      <geom mesh="apartment_collision_76" class="collision"/>
+      <geom mesh="apartment_collision_77" class="collision"/>
+      <geom mesh="apartment_collision_78" class="collision"/>
+      <geom mesh="apartment_collision_79" class="collision"/>
+      <geom mesh="apartment_collision_80" class="collision"/>
+      <geom mesh="apartment_collision_81" class="collision"/>
+      <geom mesh="apartment_collision_82" class="collision"/>
+      <geom mesh="apartment_collision_83" class="collision"/>
+      <geom mesh="apartment_collision_84" class="collision"/>
+      <geom mesh="apartment_collision_85" class="collision"/>
+      <geom mesh="apartment_collision_86" class="collision"/>
+      <geom mesh="apartment_collision_87" class="collision"/>
+      <geom mesh="apartment_collision_88" class="collision"/>
+      <geom mesh="apartment_collision_89" class="collision"/>
+      <geom mesh="apartment_collision_90" class="collision"/>
+      <geom mesh="apartment_collision_91" class="collision"/>
+      <geom mesh="apartment_collision_92" class="collision"/>
+      <geom mesh="apartment_collision_93" class="collision"/>
+      <geom mesh="apartment_collision_94" class="collision"/>
+      <geom mesh="apartment_collision_95" class="collision"/>
+      <geom mesh="apartment_collision_96" class="collision"/>
+      <geom mesh="apartment_collision_97" class="collision"/>
+      <geom mesh="apartment_collision_98" class="collision"/>
+      <geom mesh="apartment_collision_99" class="collision"/>
+      <geom mesh="apartment_collision_100" class="collision"/>
+      <geom mesh="apartment_collision_101" class="collision"/>
+      <geom mesh="apartment_collision_102" class="collision"/>
+      <geom mesh="apartment_collision_103" class="collision"/>
+      <geom mesh="apartment_collision_104" class="collision"/>
+      <geom mesh="apartment_collision_105" class="collision"/>
+      <geom mesh="apartment_collision_106" class="collision"/>
+      <geom mesh="apartment_collision_107" class="collision"/>
+      <geom mesh="apartment_collision_108" class="collision"/>
+      <geom mesh="apartment_collision_109" class="collision"/>
+      <geom mesh="apartment_collision_110" class="collision"/>
+      <geom mesh="apartment_collision_111" class="collision"/>
+    </body>
+
+    <!-- Free-floating collision box standing in for the MARS base_link
+         (box size/offset taken directly from mars.urdf's base_link
+         collision). Mass/inertia are placeholders -- tune by feel. -->
+    <body name="robot_base" pos="0 0 0">
+      <freejoint name="base_free"/>
+      <inertial pos="-0.0587 0 0.0838" mass="3.0" diaginertia="0.03 0.03 0.02"/>
+      <geom name="base_collision" type="box" size="0.0939 0.091 0.0838" pos="-0.0587 0 0.0838"
+            friction="0.9 0.01 0.001" rgba="0.2 0.6 1 0.3"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -27,14 +27,9 @@ def generate_launch_description():
         arguments=["0", "0", "0", "0", "0", "0", "map", "odom"],
     )
 
-    # Dynamic odom -> base_footprint transform from /odom topic
-    # MuJoCo sim publishes /odom topic but not TF, so we convert it here
-    odom_to_tf_node = Node(
-        package="mars_nav",
-        executable="odom_to_tf_node.py",
-        name="odom_to_tf_node",
-        output="screen",
-    )
+    # odom -> base_link TF comes from the virtual MARS driver itself
+    # (sim-mujoco/virtual_mars_node.py, mirroring the real bringup.py) -- no
+    # /odom-to-TF conversion needed here.
 
     # Static transform: base_footprint -> base_link (identity, they're the same)
     static_tf_footprint_to_base = Node(
@@ -104,7 +99,6 @@ def generate_launch_description():
     return LaunchDescription(
         [
             static_tf_map_to_odom,
-            odom_to_tf_node,
             static_tf_footprint_to_base,
             planner_node,
             controller_node,

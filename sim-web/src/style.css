@@ -1,0 +1,365 @@
+:root {
+  --bg: #0e0e0e;
+  --panel-bg: rgb(20 20 22 / 82%);
+  --hairline: rgb(255 255 255 / 10%);
+  --hairline-strong: rgb(255 255 255 / 22%);
+  --text: #e8e8ea;
+  --text-dim: #8a8a90;
+  --accent: #57b8ff;
+  --accent-dim: rgb(87 184 255 / 55%);
+  --accent-faint: rgb(87 184 255 / 16%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+}
+
+.microlabel {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---- HUD ------------------------------------------------------------ */
+
+.hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 10px 14px;
+  font-size: 12px;
+  min-width: 140px;
+}
+
+.hud-title {
+  font-size: 13px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-dim);
+  padding: 1px 0;
+}
+
+.hud-row span:first-child {
+  color: var(--text-dim);
+}
+
+.hud-row span:nth-child(2) {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-toggle {
+  margin-top: 6px;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.hud-toggle input {
+  cursor: pointer;
+}
+
+/* ---- Loading overlay -------------------------------------------------- */
+
+.loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  border: none;
+  border-radius: 0;
+  z-index: 20;
+}
+
+.loading.hidden {
+  display: none;
+}
+
+/* ---- Controls dock ---------------------------------------------------- */
+
+.controls {
+  position: fixed;
+  bottom: 20px;
+  left: 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.reset-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 16px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.reset-btn:hover {
+  border-color: var(--hairline-strong);
+}
+
+/* ---- Joystick ---------------------------------------------------------- */
+
+.joystick {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.joy-rim {
+  fill: rgb(255 255 255 / 4%);
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+  transition: stroke 150ms ease;
+}
+
+.joystick.engaged .joy-rim {
+  stroke: rgb(255 255 255 / 30%);
+}
+
+.joystick.at-edge .joy-rim {
+  stroke: var(--accent-dim);
+}
+
+.joy-tick {
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+}
+
+.joy-trace {
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.joystick.engaged .joy-trace,
+.joystick.mirroring .joy-trace {
+  opacity: 0.35;
+}
+
+.joy-knob-group {
+  transition: transform 130ms ease-out;
+}
+
+.joystick.engaged .joy-knob-group {
+  transition: none;
+}
+
+.joy-knob {
+  fill: #b9b9c1;
+  transition: fill 150ms ease;
+}
+
+.joystick.engaged .joy-knob {
+  fill: var(--accent);
+}
+
+.joystick.mirroring .joy-knob {
+  fill: var(--accent-faint);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+/* ---- Joint sliders ------------------------------------------------------ */
+
+.sliders {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  padding: 10px 14px;
+  font-size: 12px;
+  width: 260px;
+}
+
+.gains-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.gains-row:last-of-type {
+  border-bottom: 1px solid var(--hairline-strong);
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+}
+
+.gains-row label {
+  width: 74px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.gains-row input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  padding: 2px 6px;
+}
+
+.leader-arm {
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--hairline-strong);
+  margin-bottom: 4px;
+}
+
+.leader-status {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.leader-status.warn {
+  color: #ff6b6b;
+}
+
+.leader-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.mini-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  border-color: var(--accent-dim);
+}
+
+.mini-btn.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+.mini-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.slider-row input:disabled {
+  opacity: 0.4;
+}
+
+.slider-row label {
+  width: 74px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.slider-row .slider-value {
+  width: 52px;
+  text-align: right;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+/* ---- WASD chips --------------------------------------------------------- */
+
+.wasd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wasd-row {
+  display: flex;
+  gap: 4px;
+}
+
+.wasd-row:first-child {
+  padding-left: 30px;
+}
+
+.wasd-chip {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 3%);
+}
+
+.wasd-chip.held {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+.wasd-hint {
+  margin-top: 7px;
+  font-size: 9px;
+}

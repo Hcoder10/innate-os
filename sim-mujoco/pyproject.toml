@@ -1,0 +1,16 @@
+[project]
+name = "sim-mujoco"
+version = "0.1.0"
+description = "Headless/native MuJoCo tooling for developing and debugging sim-web's physics worlds (apartment collision mesh, drive PD gains, etc.)"
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco>=3.2",
+    "numpy>=1.26",
+    "trimesh>=4.0",
+    "coacd>=1.0.5",
+    "websockets>=12.0",
+    "pillow>=12.3.0",
+]
+
+[tool.uv]
+package = false
