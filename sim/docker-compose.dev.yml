@@ -39,7 +39,7 @@ services:
       # the brain client is pointed at it over the shared x11 network. With no
       # profile this resolves empty and the brain client just idles (no brain);
       # set BRAIN_WEBSOCKET_URI explicitly to pin a hosted/remote agent. The
-      # launcher (`./innate sim up`) overlays its own value via the mounted .env,
+      # launcher (`./innate-sim up`) overlays its own value via the mounted .env,
       # which wins — so this default only affects raw `docker compose` runs.
       - BRAIN_WEBSOCKET_URI=${BRAIN_WEBSOCKET_URI:-${COMPOSE_PROFILES:+ws://cloud-agent:8765}}
     ports:
@@ -51,7 +51,7 @@ services:
       - "127.0.0.1:9090:9090"
       # webapp front door (replaces the deprecated sim/frontend UI): the in-container
       # python server binds 443 (https) + 80 (http), both serving the full app.
-      # Override the published side (e.g. SIM_HTTPS_PORT=8443 ./innate sim up) to
+      # Override the published side (e.g. SIM_HTTPS_PORT=8443 ./innate-sim up) to
       # publish on a non-privileged port; the container always binds 443/80.
       - "${SIM_HTTPS_PORT:-443}:443"
       - "${SIM_HTTP_PORT:-80}:80"
@@ -109,7 +109,7 @@ services:
   #   COMPOSE_PROFILES=local-brain docker compose -f sim/docker-compose.dev.yml up
   # The innate container's BRAIN_WEBSOCKET_URI then points here (ws://cloud-agent:8765)
   # over the shared x11 network. Reads GEMINI_API_KEY from the same .env the innate
-  # container uses. The source repo lives OUTSIDE this repo (cloned by `./innate sim
+  # container uses. The source repo lives OUTSIDE this repo (cloned by `./innate-sim
   # setup`); INNATE_CLOUD_AGENT_DIR overrides the location (the launcher sets it).
   cloud-agent:
     profiles: ["local-brain"]
