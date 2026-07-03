@@ -29,15 +29,21 @@ def _finite_below(value, eps):
 class LearnedStopDetector:
     """Decides when a learned behavior should stop on its own.
 
-    Fed one :class:`StepSignals` per step via :meth:`update`, it fires when either
-    EMA-smoothed progress exceeds ``progress_threshold``, or the robot has held
-    still (arm *and* base below their eps) for ``idle_seconds`` while smoothed
-    progress is at least ``progress_gate`` -- both only after the ``min_duration``
-    floor. The caller keeps ``duration`` as the always-on hard cap.
+    Fed one :class:`StepSignals` per step via :meth:`update`, it fires when any of:
 
-    Defaults are no-ops (idle off, no smoothing, no floor): an unconfigured skill
-    reduces to the legacy single-frame ``progress > progress_threshold`` check.
-    Build a fresh detector per behavior run.
+    - EMA-smoothed progress exceeds ``progress_threshold`` (single-frame legacy check);
+    - the robot has held still (arm *and* base below their eps) for ``idle_seconds``
+      while smoothed progress is at least ``progress_gate`` (idle stop);
+    - smoothed progress, having first dipped below ``engage_below``, then holds at or
+      above ``stable_min`` for ``stable_seconds`` (progress-stability stop -- for
+      checkpoints whose progress head saturates high both before and after the task).
+
+    All only after the ``min_duration`` floor; the caller keeps ``duration`` as the
+    always-on hard cap.
+
+    Defaults are no-ops (idle and stability off, no smoothing, no floor): an
+    unconfigured skill reduces to the legacy single-frame
+    ``progress > progress_threshold`` check. Build a fresh detector per behavior run.
     """
 
     def __init__(
@@ -50,6 +56,9 @@ class LearnedStopDetector:
         idle_arm_eps: float = 0.01,
         idle_base_eps: float = 0.01,
         progress_gate: float = 0.0,
+        engage_below: float = 0.0,
+        stable_min: float = 0.0,
+        stable_seconds: float = 0.0,
     ):
         self.min_duration = min_duration
         self.progress_threshold = progress_threshold
@@ -58,17 +67,25 @@ class LearnedStopDetector:
         self.idle_arm_eps = idle_arm_eps
         self.idle_base_eps = idle_base_eps
         self.progress_gate = progress_gate
+        self.engage_below = engage_below
+        self.stable_min = stable_min
+        self.stable_seconds = stable_seconds
         self._progress_ema: float | None = None
         self._idle_since: float | None = None
+        self._engaged = False
+        self._stable_since: float | None = None
 
     def note_gap(self):
-        """Restart the idle dwell after steps the detector never saw (inference
-        failed): the dwell must only count observed stillness."""
+        """Restart the idle and stability dwells after steps the detector never saw
+        (inference failed): a dwell must only count observed samples. Engagement is a
+        latched fact about the run, so a gap doesn't clear it."""
         self._idle_since = None
+        self._stable_since = None
 
     def update(self, signals: StepSignals, elapsed: float, now: float):
         """One step -> ``(stop, reason)``. ``elapsed`` is seconds since the behavior
-        started; ``now`` is the loop's ``time.time()``, used only for the idle dwell."""
+        started; ``now`` is the loop's ``time.time()``, used for the idle and stability
+        dwells."""
         # EMA-smooth progress. Missing and non-finite samples are skipped, carrying
         # the previous value forward: blending NaN in would poison the EMA for the
         # rest of the run (NaN survives the convex combination).
@@ -78,15 +95,34 @@ class LearnedStopDetector:
             self._progress_ema = p if self._progress_ema is None else a * p + (1.0 - a) * self._progress_ema
         ema = self._progress_ema
 
-        # Inside the floor nothing fires and the idle dwell doesn't accumulate:
-        # demos often start with a still beat, and a dwell running through the floor
-        # would fire "idle" the instant it expires. (The EMA above still warms up.)
+        # Inside the floor nothing fires and the dwells don't accumulate: demos often
+        # start with a still, high-progress beat, and a dwell running through the floor
+        # would fire the instant it expires. (The EMA above still warms up.)
         if elapsed < self.min_duration:
             self._idle_since = None
+            self._stable_since = None
             return False, None
 
         if ema is not None and ema > self.progress_threshold:
             return True, f"progress {ema:.4f} > {self.progress_threshold}"
+
+        # Progress-stability stop. The progress head can saturate near its max both
+        # before the task engages and after it finishes, so "progress is high" alone
+        # fires in the opening steps. Requiring progress to first dip below
+        # ``engage_below`` (the policy actually did something) arms the stop; it then
+        # fires once smoothed progress holds >= ``stable_min`` for ``stable_seconds``.
+        # ``engage_below <= 0`` arms immediately (bare stability, no dip required).
+        if self.stable_seconds > 0 and self.stable_min > 0 and ema is not None:
+            if self.engage_below <= 0 or ema < self.engage_below:
+                self._engaged = True
+            if self._engaged and ema >= self.stable_min:
+                if self._stable_since is None:
+                    self._stable_since = now
+                held = now - self._stable_since
+                if held >= self.stable_seconds:
+                    return True, f"progress stable >= {self.stable_min} for {held:.1f}s (>= {self.stable_seconds}s)"
+            else:
+                self._stable_since = None
 
         still = _finite_below(signals.arm_delta, self.idle_arm_eps) and _finite_below(
             signals.base_speed, self.idle_base_eps

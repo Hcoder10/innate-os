@@ -395,6 +395,9 @@ class ManipulationServer(Node):
                 idle_arm_eps=params.idle_arm_eps,
                 idle_base_eps=params.idle_base_eps,
                 progress_gate=params.progress_gate,
+                engage_below=params.engage_below,
+                stable_min=params.stable_min,
+                stable_seconds=params.stable_seconds,
             )
 
             iteration_count = 0

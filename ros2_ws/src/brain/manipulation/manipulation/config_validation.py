@@ -175,6 +175,17 @@ class LearnedExecCfg(_BaseExecCfg):
     # Idle only counts as "done" once smoothed progress reaches this (the "stopped
     # moving AND made progress" guard against mid-task pauses); 0 = idle alone may stop.
     progress_gate: float = Field(0.0, ge=0)
+    # Progress-stability stop, for checkpoints whose progress head saturates high both
+    # before the task engages and after it finishes (so a bare progress threshold fires
+    # in the opening steps). Stop once smoothed progress -- having first dipped below
+    # ``engage_below`` -- then holds >= ``stable_min`` for ``stable_seconds``.
+    # ``stable_seconds`` = 0 disables this stop; ``engage_below`` = 0 arms it immediately
+    # (no dip required). Read ``progress_max`` / the progress trace off the profiling tab
+    # to pick ``stable_min`` (just under the settled peak) and ``engage_below`` (above the
+    # active-phase dips).
+    engage_below: float = Field(0.0, ge=0)
+    stable_min: float = Field(0.0, ge=0)
+    stable_seconds: float = Field(0.0, ge=0)
 
     @field_validator("start_pose", "end_pose", mode="before")
     @classmethod
@@ -194,6 +205,9 @@ class LearnedExecCfg(_BaseExecCfg):
         "idle_arm_eps",
         "idle_base_eps",
         "progress_gate",
+        "engage_below",
+        "stable_min",
+        "stable_seconds",
         mode="before",
     )
     @classmethod
@@ -203,21 +217,29 @@ class LearnedExecCfg(_BaseExecCfg):
         return _finite_number(value)
 
     @model_validator(mode="after")
-    def _progress_gate_needs_progress_head(self) -> LearnedExecCfg:
-        """Reject a progress_gate on a skill without a progress head.
+    def _progress_features_need_progress_head(self) -> LearnedExecCfg:
+        """Reject progress-dependent stops on a skill without a progress head.
 
-        With ``action_dim < 10`` the policy has no progress output, so the gate
-        could never pass and the idle stop would silently never fire — the skill
-        would always run to the ``duration`` cap. Fail loudly at validation time
-        instead.
+        With ``action_dim < 10`` the policy has no progress output. A ``progress_gate``
+        could never pass (so the idle stop would silently never fire) and the
+        progress-stability stop has no signal at all -- either way the skill would
+        always run to the ``duration`` cap. Fail loudly at validation time instead.
         """
-        if self.progress_gate > 0 and self.action_dim < 10:
-            raise ValueError(
-                f"progress_gate={self.progress_gate} requires a progress head "
-                f"(action_dim >= 10, got {self.action_dim}): the gate could never pass, "
-                "so the idle stop would silently never fire. Set progress_gate to 0/null, "
-                "or use a checkpoint whose action head includes progress."
-            )
+        if self.action_dim < 10:
+            if self.progress_gate > 0:
+                raise ValueError(
+                    f"progress_gate={self.progress_gate} requires a progress head "
+                    f"(action_dim >= 10, got {self.action_dim}): the gate could never pass, "
+                    "so the idle stop would silently never fire. Set progress_gate to 0/null, "
+                    "or use a checkpoint whose action head includes progress."
+                )
+            if self.stable_seconds > 0:
+                raise ValueError(
+                    f"stable_seconds={self.stable_seconds} requires a progress head "
+                    f"(action_dim >= 10, got {self.action_dim}): the progress-stability stop "
+                    "has no signal without one, so it would silently never fire. Set "
+                    "stable_seconds to 0/null, or use a checkpoint whose action head includes progress."
+                )
         return self
 
 

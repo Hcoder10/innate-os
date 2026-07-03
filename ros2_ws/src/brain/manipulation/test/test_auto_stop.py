@@ -158,3 +158,71 @@ def test_ema_reaches_threshold_when_progress_sustains():
         if stop:
             break
     assert stop
+
+
+# --- Progress-stability stop -----------------------------------------------
+# High-progress step used to drive the stability path (motion doesn't matter here).
+HIGH = StepSignals(progress=0.95, arm_delta=1.0, base_speed=1.0)
+
+
+def test_stability_disabled_by_default():
+    """Sustained high progress does not stop unless the stability path is enabled."""
+    det = LearnedStopDetector()  # stable_seconds defaults to 0
+    for t in range(20):
+        assert det.update(HIGH, elapsed=float(t), now=float(t)) == (False, None)
+
+
+def test_stability_needs_engagement_first():
+    """Progress that starts high and stays high (never dips) must not stop: the head
+    saturates before the task engages, so a bare 'progress high' rule fires early."""
+    det = LearnedStopDetector(engage_below=0.75, stable_min=0.9, stable_seconds=2.0)
+    for t in range(20):
+        assert det.update(HIGH, elapsed=float(t), now=float(t)) == (False, None)
+
+
+def test_stability_fires_after_engage_then_settle():
+    det = LearnedStopDetector(engage_below=0.75, stable_min=0.9, stable_seconds=2.0)
+    # Saturated-high opening: armed=False, no stop.
+    assert det.update(HIGH, elapsed=1.0, now=1.0) == (False, None)
+    # Task engages (progress dips below engage_below).
+    assert det.update(StepSignals(0.5, 1.0, 1.0), elapsed=2.0, now=2.0) == (False, None)
+    # Settles high; dwell begins at now=3.0.
+    assert det.update(HIGH, elapsed=3.0, now=3.0) == (False, None)
+    assert det.update(HIGH, elapsed=4.0, now=4.0) == (False, None)
+    # A full stable_seconds after settling: fires.
+    stop, reason = det.update(HIGH, elapsed=5.0, now=5.0)
+    assert stop and "stable" in reason
+
+
+def test_stability_dip_resets_dwell():
+    det = LearnedStopDetector(engage_below=0.75, stable_min=0.9, stable_seconds=2.0)
+    det.update(StepSignals(0.5, 1.0, 1.0), elapsed=1.0, now=1.0)  # engage
+    det.update(HIGH, elapsed=2.0, now=2.0)  # dwell starts at 2.0
+    # Progress dips below stable_min -> dwell resets.
+    det.update(StepSignals(0.6, 1.0, 1.0), elapsed=3.0, now=3.0)
+    # Dwell restarts at 4.0; not yet satisfied at 5.0 (only 1.0s held).
+    assert det.update(HIGH, elapsed=4.0, now=4.0) == (False, None)
+    assert det.update(HIGH, elapsed=5.0, now=5.0) == (False, None)
+    stop, _ = det.update(HIGH, elapsed=6.0, now=6.0)
+    assert stop
+
+
+def test_stability_engage_below_zero_arms_immediately():
+    """engage_below <= 0 means no dip is required -- bare progress-stability."""
+    det = LearnedStopDetector(engage_below=0.0, stable_min=0.9, stable_seconds=2.0)
+    assert det.update(HIGH, elapsed=1.0, now=1.0) == (False, None)
+    assert det.update(HIGH, elapsed=2.0, now=2.0) == (False, None)
+    stop, _ = det.update(HIGH, elapsed=3.0, now=3.0)
+    assert stop
+
+
+def test_note_gap_restarts_stability_dwell():
+    det = LearnedStopDetector(engage_below=0.75, stable_min=0.9, stable_seconds=2.0)
+    det.update(StepSignals(0.5, 1.0, 1.0), elapsed=1.0, now=1.0)  # engage
+    det.update(HIGH, elapsed=2.0, now=2.0)  # dwell starts at 2.0
+    det.note_gap()  # inference failed for a while
+    # 5s later (past the dwell had the gap counted): dwell restarts at 7.0.
+    assert det.update(HIGH, elapsed=7.0, now=7.0) == (False, None)
+    assert det.update(HIGH, elapsed=8.0, now=8.0) == (False, None)
+    stop, _ = det.update(HIGH, elapsed=9.0, now=9.0)
+    assert stop

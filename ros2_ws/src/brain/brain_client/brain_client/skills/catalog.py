@@ -429,6 +429,9 @@ class SkillRepository:
                     "idle_arm_eps": None,
                     "idle_base_eps": None,
                     "progress_gate": None,
+                    "engage_below": None,
+                    "stable_min": None,
+                    "stable_seconds": None,
                 }
             )
             metadata = {

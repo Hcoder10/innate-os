@@ -397,6 +397,56 @@ class TestLearnedExecCfg:
         )
         assert result.params.progress_gate == 0.0
 
+    def test_stability_defaults_are_noops(self, tmp_path):
+        result = _validate({"type": "learned", "execution": {"checkpoint": "ckpt.pth"}}, tmp_path)
+        assert result.params.engage_below == 0.0
+        assert result.params.stable_min == 0.0
+        assert result.params.stable_seconds == 0.0
+
+    @pytest.mark.parametrize(
+        ("field", "bad"),
+        [
+            ("engage_below", -0.1),
+            ("stable_min", -0.1),
+            ("stable_seconds", -1.0),
+        ],
+    )
+    def test_stability_out_of_bounds_rejected(self, tmp_path, field, bad):
+        with pytest.raises(BehaviorConfigError, match=field):
+            _validate(
+                {"type": "learned", "execution": {"checkpoint": "ckpt.pth", field: bad}},
+                tmp_path,
+            )
+
+    def test_stability_config_accepted(self, tmp_path):
+        result = _validate(
+            {
+                "type": "learned",
+                "execution": {
+                    "checkpoint": "ckpt.pth",
+                    "engage_below": 0.75,
+                    "stable_min": 0.93,
+                    "stable_seconds": 3.0,
+                },
+            },
+            tmp_path,
+        )
+        assert result.params.engage_below == 0.75
+        assert result.params.stable_min == 0.93
+        assert result.params.stable_seconds == 3.0
+
+    def test_stable_seconds_without_progress_head_rejected(self, tmp_path):
+        """action_dim < 10 means no progress output: the stability stop has no signal
+        and would silently never fire, so it must fail loudly."""
+        with pytest.raises(BehaviorConfigError, match="stable_seconds"):
+            _validate(
+                {
+                    "type": "learned",
+                    "execution": {"checkpoint": "ckpt.pth", "action_dim": 8, "stable_seconds": 3.0},
+                },
+                tmp_path,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Poses config
