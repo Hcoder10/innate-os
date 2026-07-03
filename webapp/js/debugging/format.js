@@ -21,6 +21,12 @@ export const SEV_RANK = { debug: 0, info: 1, warn: 2, error: 3 };
 export function recSev(rec) {
   if (rec.level) return /** @type {any} */ (LVL_SEV[rec.level] || "info");
   const t = rec.text || "";
+  // zenoh/Rust tracing lines carry their own level after an ISO timestamp
+  // ("2026-…Z  WARN  zenoh_shm…: …"). Trust that over the word heuristic below:
+  // their prose often contains "error" (e.g. "this is not an hard error"), which
+  // would otherwise mis-paint a WARN as ERROR.
+  const tracing = /\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/.exec(t);
+  if (tracing) return tracing[1] === "TRACE" ? "debug" : /** @type {any} */ (LVL_SEV[tracing[1]]);
   if (/\b(error|fatal|traceback|exception|failed)\b/i.test(t)) return "error";
   if (/\bwarn(ing)?\b/i.test(t)) return "warn";
   return "info";

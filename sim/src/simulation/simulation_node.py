@@ -20,6 +20,7 @@ from src.agent.types import (
     ArmStateMsg,
     ClearTrajectoryCmd,
     DrawTrajectoryCmd,
+    HeadCmd,
     OccupancyGridMsg,
     PositionCmd,
     ResetRobotCmd,
@@ -32,7 +33,7 @@ from src.simulation.special_object_treatments import SpecialObjectHandler
 from src.simulation.stl_slicing import slice_stl
 from src.simulation.utils import rotate_vector
 
-ROBOT_INIT_POS = (2, -5, 0.05)
+ROBOT_INIT_POS = (3, -5, 0.05)
 ROBOT_INIT_QUAT = (0, 0, 0, 1)
 ROBOT_ROOT_POS = (0.0, 0.0, ROBOT_INIT_POS[2])
 ROBOT_ARM_HOME_POSITIONS = [
@@ -44,6 +45,12 @@ ROBOT_ARM_HOME_POSITIONS = [
     0.0015339807878856412,
 ]
 SIM_ROBOT_ORANGE_LINKS = {"link1", "link3", "link5", "ee_link"}
+# Head pitch joint, driven by /mars/head/set_position (degrees). Range is ±20°;
+# the URDF joint_head limits are set to match. Positive commands tilt the head
+# up (axis 0 -1 0), matching the webapp slider's +max-at-top.
+HEAD_JOINT_NAME = "joint_head"
+HEAD_MIN_DEG = -20.0
+HEAD_MAX_DEG = 20.0
 # Max valid depth (meters) before a pixel is treated as no-reading; matches the
 # real robot's mars_cam MAX_DEPTH_M so 16UC1 mm values stay in uint16 range.
 DEPTH_MAX_M = 10.0
@@ -157,6 +164,14 @@ class SimulationNode:
         self.commanded_lin_vel = np.zeros(3)  # [vx, vy, vz]
         self.commanded_ang_vel = np.zeros(3)  # [wx, wy, wz]
 
+        # Hold the latest /cmd_vel and re-apply it every physics step until it
+        # expires, so motion stays smooth when commands arrive slower/jittier
+        # than the sim step rate (otherwise the pose only advances on frames
+        # that happen to dequeue a command, which looks like stutter).
+        self.velocity_cmd_timeout = _env_float("SIM_VELOCITY_CMD_TIMEOUT", 0.25)  # s
+        self.held_velocity_cmd = None
+        self.held_velocity_cmd_time = 0.0  # sim_time when last received
+
         # Navigation control parameters - differential drive kinematics
         # Physical constraints:
         self.wheel_base = 0.18  # m - distance between wheels (from URDF collision box)
@@ -194,6 +209,9 @@ class SimulationNode:
         self.arm_interpolation_duration = None
         self.last_arm_state_time = 0
         self.arm_state_interval = 0.02  # Publish at ~50Hz
+
+        self.head_dof_index = None
+        self.head_current_deg = 0.0
 
         self.render_camera_vfov = 40
         self.render_camera_hfov = degrees(2 * atan(tan(radians(self.render_camera_vfov) / 2) * 1280 / 720))
@@ -246,6 +264,7 @@ class SimulationNode:
         self._startup_mark("scene.build")
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_head_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
@@ -1104,6 +1123,29 @@ class SimulationNode:
             except Exception as e:
                 print(f"[SimulationNode] Error applying arm positions: {e}")
 
+    def _init_head_control(self):
+        """Cache the head pitch DOF so /mars/head/set_position can drive it."""
+        try:
+            self.head_dof_index = self.robot.get_joint(HEAD_JOINT_NAME).dofs_idx_local[0]
+        except Exception:
+            self.head_dof_index = None
+            print(f"[SimulationNode] Robot URDF has no {HEAD_JOINT_NAME}; head control disabled.")
+
+    def _apply_head_position(self, angle_deg):
+        """Drive the head pitch joint to angle_deg (degrees), clamped to limits."""
+        if self.head_dof_index is None:
+            return
+        angle_deg = max(HEAD_MIN_DEG, min(HEAD_MAX_DEG, angle_deg))
+        try:
+            self.robot.set_dofs_position(
+                position=torch.tensor([radians(angle_deg)], dtype=torch.float32),
+                dofs_idx_local=[self.head_dof_index],
+                zero_velocity=True,
+            )
+            self.head_current_deg = angle_deg
+        except Exception as e:
+            print(f"[SimulationNode] Error applying head position: {e}")
+
     def _init_camera(self):
         """Initialize robot camera, arm wrist camera, and chase camera"""
         if not self.cameras_enabled:
@@ -1621,6 +1663,7 @@ class SimulationNode:
         self.scene.build()
         self._init_robot_base_pose_control()
         self._init_camera_link_refs()
+        self._init_head_control()
         self._set_robot_base_pose(ROBOT_INIT_POS, xyzw_to_wxyz(ROBOT_INIT_QUAT))
         self._reset_arm_pose()
         self.scene_built = True
@@ -1858,6 +1901,34 @@ class SimulationNode:
             error=error,
         )
 
+    def _apply_velocity_cmd(self, cmd: VelocityCmd, dt: float) -> None:
+        """Integrate one physics step of a velocity command into the robot pose."""
+        linear_vel = cmd.linear_x
+        angular_vel = cmd.angular_z
+
+        current_pos, current_quat = self._get_robot_base_pose()
+
+        # Convert current quaternion to rotation matrix to get forward direction
+        current_rot = R.from_quat([current_quat[1], current_quat[2], current_quat[3], current_quat[0]])
+        forward_dir = current_rot.apply([1, 0, 0])  # Transform x-axis by current rotation
+
+        # Move in the forward direction
+        new_pos = current_pos + forward_dir * linear_vel * dt
+
+        # Update orientation based on angular velocity
+        angle = angular_vel * dt
+        delta_rot = R.from_euler("z", angle)
+        new_rot = delta_rot * current_rot
+        new_quat = new_rot.as_quat()  # Returns [x, y, z, w]
+        new_quat = np.array([new_quat[3], new_quat[0], new_quat[1], new_quat[2]])
+
+        self._set_robot_base_pose(new_pos, new_quat)
+
+        # Store commanded velocities in world frame for odometry
+        # MULTIPLY BY 0 TO DISABLE MESSING WITH THE ACTUAL ROBOT ON ROS
+        self.commanded_lin_vel = forward_dir * linear_vel * 0
+        self.commanded_ang_vel = np.array([0, 0, angular_vel])
+
     def run(self):
         step_count = 0
         sim_time = 0  # Track simulation time
@@ -1876,6 +1947,7 @@ class SimulationNode:
                 latest_set_env_cmd = None  # Variable to hold the latest env command
                 latest_arm_cmd = None
                 latest_arm_goto_cmd = None
+                latest_head_cmd = None
 
                 while True:
                     try:
@@ -1886,6 +1958,8 @@ class SimulationNode:
                             latest_arm_cmd = cmd
                         elif isinstance(cmd, ArmGotoCmd):
                             latest_arm_goto_cmd = cmd
+                        elif isinstance(cmd, HeadCmd):
+                            latest_head_cmd = cmd
                         elif isinstance(cmd, PositionCmd):
                             latest_position_cmd = cmd
                         elif isinstance(cmd, ResetRobotCmd):
@@ -1956,6 +2030,10 @@ class SimulationNode:
                     # Cancel any ongoing interpolation
                     self.arm_target_positions = None
 
+                # Apply head pitch if we have a head command (immediate)
+                if latest_head_cmd is not None:
+                    self._apply_head_position(latest_head_cmd.angle_deg)
+
                 # Start arm interpolation if we have a goto command
                 if latest_arm_goto_cmd is not None:
                     self.arm_start_positions = self.arm_current_positions.copy()
@@ -1991,50 +2069,26 @@ class SimulationNode:
                         ]
                     )
                     self.nav_target_yaw = latest_position_cmd.target_yaw
+                    # A new nav target supersedes any held velocity command.
+                    self.held_velocity_cmd = None
 
                     # print(f"New nav target: pos=({self.nav_target_pos[0]:.3f}, {self.nav_target_pos[1]:.3f}), yaw={self.nav_target_yaw:.3f}")
                 elif latest_velocity_cmd is not None:
-                    linear_vel = latest_velocity_cmd.linear_x
-                    angular_vel = latest_velocity_cmd.angular_z
-
-                    # Convert desired velocities to robot position update
-                    current_pos, current_quat = self._get_robot_base_pose()
-
-                    # Update position based on linear velocity and current orientation
-                    dt = self.scene.sim_options.dt
-                    # Convert current quaternion to rotation matrix to get forward direction
-                    current_rot = R.from_quat(
-                        [
-                            current_quat[1],
-                            current_quat[2],
-                            current_quat[3],
-                            current_quat[0],
-                        ]
-                    )
-                    forward_dir = current_rot.apply([1, 0, 0])  # Transform x-axis by current rotation
-
-                    # Move in the forward direction
-                    new_pos = current_pos + forward_dir * linear_vel * dt
-
-                    # Update orientation based on angular velocity
-                    angle = angular_vel * dt
-                    delta_rot = R.from_euler("z", angle)
-                    new_rot = delta_rot * current_rot
-                    new_quat = new_rot.as_quat()  # Returns [x, y, z, w]
-                    new_quat = np.array([new_quat[3], new_quat[0], new_quat[1], new_quat[2]])
-
-                    # Set the new position and orientation
-                    self._set_robot_base_pose(new_pos, new_quat)
-
-                    # Store commanded velocities in world frame for odometry
-                    # MULTIPLY BY 0 TO DISABLE MESSING WITH TH EACTUAL ROBOT
-                    # ON ROS
-                    self.commanded_lin_vel = forward_dir * linear_vel * 0
-                    self.commanded_ang_vel = np.array([0, 0, angular_vel])
-
-                    print(f"Commanded vel: linear={linear_vel:.3f}, angular={angular_vel:.3f}")
+                    # Hold the command; it is integrated every step below until it
+                    # expires, so the pose advances smoothly between arrivals.
+                    self.held_velocity_cmd = latest_velocity_cmd
+                    self.held_velocity_cmd_time = sim_time
             except Exception as e:
                 print(f"Error processing commands: {e}")
+
+            # --- (A2) Apply the held velocity command every step until it expires
+            if self.held_velocity_cmd is not None:
+                if sim_time - self.held_velocity_cmd_time <= self.velocity_cmd_timeout:
+                    self._apply_velocity_cmd(self.held_velocity_cmd, dt)
+                else:
+                    self.held_velocity_cmd = None
+                    self.commanded_lin_vel = np.zeros(3)
+                    self.commanded_ang_vel = np.zeros(3)
 
             # --- (B) Handle smooth navigation movement ---
             if self.nav_target_pos is not None and self.nav_target_yaw is not None:
@@ -2165,6 +2219,14 @@ class SimulationNode:
                     joint_names=self.arm_joint_names,
                 )
                 self.shared_queues.set_latest_arm_state_msg(arm_state_msg)
+                self.shared_queues.set_head_position_state(
+                    {
+                        "current_position": self.head_current_deg,
+                        "min_angle": HEAD_MIN_DEG,
+                        "max_angle": HEAD_MAX_DEG,
+                        "default_angle": 0.0,
+                    }
+                )
                 self.last_arm_state_time = sim_time
 
             # --- (F) Build and publish RobotStateMsg with latest state
