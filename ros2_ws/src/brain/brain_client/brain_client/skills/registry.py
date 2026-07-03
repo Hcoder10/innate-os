@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Skill registry — pure name<->id bookkeeping, no ROS.
 
 The cloud agent and the LLM refer to skills sometimes by deterministic *id*

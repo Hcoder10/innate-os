@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Thread-safe shared state for training jobs and active transfers."""
 
 from __future__ import annotations

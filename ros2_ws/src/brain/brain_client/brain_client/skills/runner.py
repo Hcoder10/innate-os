@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Primitive execution lifecycle over the ``execute_skill`` action.
 
 Owns the action client and the execution state — the current goal handle, the
@@ -13,7 +15,11 @@ import json
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
 
-from brain_client.skills.lifecycle import primitive_lifecycle_message
+from brain_client.skills.lifecycle import (
+    PRIMITIVE_LIFECYCLE_MESSAGE_TYPES,
+    decode_substep_feedback,
+    primitive_lifecycle_message,
+)
 from brain_client.skills.types import SkillResult
 from brain_client.transport.messages import MessageIn, MessageInType
 
@@ -34,7 +40,12 @@ class PrimitiveRunner:
 
     # --- public API ---
     def start_task(self, skill_id: str, primitive_id: str | None, inputs: dict) -> None:
-        """Send a goal for ``skill_id`` and mark it running (announce + status)."""
+        """Send a goal for ``skill_id`` and mark it running (announce + status).
+
+        The local /brain/skill_status_update echo is skills_action_server's job now
+        (it publishes for every goal it runs, not just the agent's) — announcing it
+        here too would double the "running" entry in the chat.
+        """
         skill_name = self._state.registry.name_for(skill_id)
         self._send_goal(skill_id, inputs)
         self._ws.send_message(
@@ -43,9 +54,6 @@ class PrimitiveRunner:
                 primitive_name=skill_name,
                 primitive_id=primitive_id,
             )
-        )
-        self._chat.publish_task_status(
-            primitive_name=skill_name, primitive_id=primitive_id, status="running", skill_id=skill_id
         )
         self._state.primitive_running = {
             "primitive_name": skill_name,
@@ -82,7 +90,12 @@ class PrimitiveRunner:
         self._pending_next_task = None
 
     def interrupt_for_deactivation(self) -> None:
-        """Cancel the running primitive and announce it interrupted (used on deactivate)."""
+        """Cancel the running primitive and announce it interrupted (used on deactivate).
+
+        Skips the local /brain/skill_status_update echo — the action server publishes
+        "interrupted" itself once the cancellation actually lands, avoiding a duplicate
+        chat entry.
+        """
         if self._state.primitive_running and self._goal_handle:
             self._goal_handle.cancel_goal_async()  # fire-and-forget
             self._ws.send_message(
@@ -91,12 +104,6 @@ class PrimitiveRunner:
                     primitive_name=self._state.primitive_running["primitive_name"],
                     primitive_id=self._state.primitive_running["primitive_id"],
                 )
-            )
-            self._chat.publish_task_status(
-                primitive_name=self._state.primitive_running["primitive_name"],
-                primitive_id=self._state.primitive_running["primitive_id"],
-                status="interrupted",
-                skill_id=self._state.primitive_running.get("skill_id"),
             )
             self._goal_handle = None
         self._state.primitive_running = None
@@ -117,6 +124,10 @@ class PrimitiveRunner:
     def _on_feedback(self, feedback_wrapper) -> None:
         try:
             feedback_text = feedback_wrapper.feedback.feedback
+            substep = decode_substep_feedback(feedback_text)
+            if substep is not None:
+                self._handle_substep(substep)
+                return
             self._logger.info(f"Received primitive feedback: {feedback_text}")
             payload = {"feedback": feedback_text}
             if feedback_wrapper.feedback.image_b64:
@@ -126,6 +137,28 @@ class PrimitiveRunner:
             self._logger.error(f"Error accessing feedback text. Structure: {feedback_wrapper}")
         except Exception as e:
             self._logger.error(f"Error in _on_feedback: {e}")
+
+    def _handle_substep(self, substep: dict) -> None:
+        """Turn a chained child's piggybacked event into its own step in the app.
+
+        Forwarded to the app only, deliberately NOT over self._ws: the cloud
+        agent runs one primitive at a time and would read a child finishing as
+        the parent finishing.
+        """
+        event = substep.get("event")
+        if event not in PRIMITIVE_LIFECYCLE_MESSAGE_TYPES:
+            self._logger.warn(f"Unknown substep event: {event}")
+            return
+        name = substep.get("name", "")
+        primitive_id = substep.get("primitive_id")
+        skill_id = substep.get("skill_id")
+        reason = substep.get("reason")
+        output = substep.get("output")
+        self._chat.publish_task_status(
+            primitive_name=name, primitive_id=primitive_id, status=event, skill_id=skill_id, reason=reason
+        )
+        if event == "completed" and output and output.strip():
+            self._chat.emit("skill_output", output, speak=False)
 
     def _on_goal_response(self, future) -> None:
         goal_handle = future.result()
@@ -177,18 +210,13 @@ class PrimitiveRunner:
         self._on_task_finished()
 
         is_code = self._is_code_skill(skill_id)
-        outgoing_msg, local_status, local_reason = self._classify_result(result, primitive_name, primitive_id, is_code)
+        # The action server publishes the terminal /brain/skill_status_update itself
+        # (for every goal, not just the agent's) — only the cloud-facing ws message is
+        # this client's job.
+        outgoing_msg = self._classify_result(result, primitive_name, primitive_id, is_code)
         if outgoing_msg:
             self._ws.send_message(outgoing_msg)
             self._logger.info(f"Sent primitive status message: {outgoing_msg.type.name}")
-        if local_status:
-            self._chat.publish_task_status(
-                primitive_name=primitive_name,
-                primitive_id=primitive_id,
-                status=local_status,
-                skill_id=skill_id,
-                reason=local_reason,
-            )
 
         self._emit_skill_output(result, is_code)
         self._maybe_run_pending(result)
@@ -203,34 +231,31 @@ class PrimitiveRunner:
             self._chat.emit("skill_output", result.message, speak=False)
 
     def _classify_result(self, result, primitive_name, primitive_id, is_code):
-        """Map an action result to (ws message, local status, reason)."""
+        """Map an action result to the cloud-facing ws lifecycle message."""
         if result.success and result.success_type == SkillResult.SUCCESS.value:
-            msg = primitive_lifecycle_message(
+            return primitive_lifecycle_message(
                 status="completed",
                 primitive_name=primitive_name,
                 primitive_id=primitive_id,
                 output=result.message if is_code and result.message.strip() else None,
             )
-            return msg, "completed", None
         if result.success_type == SkillResult.CANCELLED.value:
-            msg = primitive_lifecycle_message(
+            return primitive_lifecycle_message(
                 status="interrupted",
                 primitive_name=primitive_name,
                 primitive_id=primitive_id,
             )
-            return msg, "interrupted", None
         if not result.success or result.success_type == SkillResult.FAILURE.value:
-            msg = primitive_lifecycle_message(
+            return primitive_lifecycle_message(
                 status="failed",
                 primitive_name=primitive_name,
                 primitive_id=primitive_id,
                 reason=result.message,
             )
-            return msg, "failed", result.message
         self._logger.error(
             f"Unknown primitive result combination: success={result.success}, type={result.success_type}"
         )
-        return None, None, None
+        return None
 
     def _maybe_run_pending(self, result) -> None:
         if self._pending_next_task is None:

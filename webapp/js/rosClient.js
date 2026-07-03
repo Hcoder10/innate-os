@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // RosClient — the single rosbridge (rws) WebSocket shared by the whole page.
 // Ported from the mobile app's useWebSocketManager: pending service-call map
 // with timeouts, per-topic handler registry, subscribe retry with backoff on
@@ -12,6 +14,9 @@ import { JOYSTICK_TOPIC, LAST_IP_KEY, ROSBRIDGE_PORT } from "./constants.js";
 const SERVICE_TIMEOUT_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 8_000;
 const RECONNECT_BASE_MS = 1_000;
+// Orphaned-goal backlog cap: enough for every plausibly-live goal across a
+// blip; anything older has long since terminated server-side.
+const MAX_ORPHANED_GOALS = 8;
 const RECONNECT_CAP_MS = 10_000;
 const SUB_RETRY_CAP_MS = 30_000;
 
@@ -30,6 +35,8 @@ export class RosClient {
   /** @type {Set<(state: ConnState, ip: string | null) => void>} */ #stateListeners = new Set();
   /** @type {Map<string, Subscription>} */ #subs = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, timer: number }>} */ #pendingCalls = new Map();
+  /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, onFeedback?: (v: any) => void, action: string, goalId: string, cancelRequested: boolean }>} */ #pendingActions = new Map();
+  /** Goals in flight when the socket died, cancelled on the next reconnect. @type {Array<{ id: string, action: string, goalId: string }>} */ #orphanedGoals = [];
   #callCounter = 0;
   #reconnectDelay = RECONNECT_BASE_MS;
   /** @type {number | null} */ #reconnectTimer = null;
@@ -136,6 +143,63 @@ export class RosClient {
   }
 
   /**
+   * Send a goal to a ROS action (rws action protocol over the shared socket).
+   * Long-running and cancelable, with streamed feedback — the right primitive
+   * for skill execution. The result `values` (e.g. {success, message, ...}) is
+   * resolved when the action terminates; onFeedback fires for each interim
+   * `action_feedback`.
+   * @param {string} action e.g. "/execute_skill"
+   * @param {string} actionType e.g. "brain_messages/action/ExecuteSkill"
+   * @param {object} [args] Goal fields.
+   * @param {{ onFeedback?: (values: any) => void }} [opts]
+   * @returns {{ promise: Promise<any>, cancel: () => void }}
+   */
+  sendActionGoal(action, actionType, args = {}, opts = {}) {
+    const id = `act_${this.#callCounter++}_${action.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const goalId = `${id}_${Date.now()}`;
+    let settled = false;
+    const promise = new Promise((resolve, reject) => {
+      if (this.#state !== "connected" || !this.#ws) {
+        reject(new Error(`Not connected; cannot run ${action}`));
+        return;
+      }
+      this.#pendingActions.set(id, {
+        resolve: (v) => {
+          settled = true;
+          resolve(v);
+        },
+        reject: (e) => {
+          settled = true;
+          reject(e);
+        },
+        onFeedback: opts.onFeedback,
+        action,
+        // rws assigns the authoritative goal_id and echoes it on feedback/result;
+        // cancel must reference THAT, not our client-side one. Seed with ours and
+        // upgrade when the server's arrives.
+        goalId,
+        cancelRequested: false,
+      });
+      this.#send({
+        op: "send_action_goal",
+        id,
+        action,
+        action_type: actionType,
+        args,
+        feedback: true,
+        goal_id: goalId,
+      });
+    });
+    const cancel = () => {
+      const pending = this.#pendingActions.get(id);
+      if (settled || !pending) return;
+      pending.cancelRequested = true;
+      this.#send({ op: "cancel_action_goal", id, action, goal_id: pending.goalId });
+    };
+    return { promise, cancel };
+  }
+
+  /**
    * Ref-counted subscribe. The first handler for a topic sends the subscribe
    * op; the last one leaving sends unsubscribe. Active topics are replayed
    * automatically after every reconnect, and retried with backoff when rws
@@ -168,14 +232,29 @@ export class RosClient {
   // ---- internals ----------------------------------------------------------
 
   /**
-   * Through the robot's HTTPS front door, rosbridge rides the same-origin
-   * wss proxy (plain ws:// would be blocked as mixed content). Everywhere
-   * else, talk to rws directly.
+   * True when `ip` points at the same host that served this page, so the
+   * connection can ride the same-origin `/ws` proxy. Beyond an exact match,
+   * the loopback aliases (localhost / 127.0.0.1 / ::1) name the same machine
+   * even though they differ as strings — the case that broke local dev.
+   * @param {string} ip
+   */
+  #isServingHost(ip) {
+    if (ip === location.hostname) return true;
+    const loopback = new Set(["localhost", "127.0.0.1", "::1"]);
+    return loopback.has(ip) && loopback.has(location.hostname);
+  }
+
+  /**
+   * Through the front door, rosbridge rides the same-origin `/ws` proxy, with
+   * the transport matched to the page: wss under https (plain ws:// would be
+   * blocked as mixed content), ws under http. A different host means talking
+   * to rws directly on its own port.
    * @param {string} ip
    */
   #urlFor(ip) {
-    if (location.protocol === "https:" && ip === location.hostname) {
-      return `wss://${location.host}/ws`;
+    if (this.#isServingHost(ip)) {
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      return `${scheme}://${location.host}/ws`;
     }
     return `ws://${ip}:${ROSBRIDGE_PORT}`;
   }
@@ -211,11 +290,20 @@ export class RosClient {
       } catch {
         // Storage can be unavailable (private mode); connection still works.
       }
-      this.#setState("connected");
+      // Re-subscribe BEFORE announcing "connected": #setState runs listeners
+      // synchronously, and some (e.g. WebRtcSession) publish a request whose
+      // reply rides a topic we must already be subscribed to. Flushing first
+      // closes the window where that first reply is dropped.
       for (const [topic, sub] of this.#subs) {
         sub.retryCount = 0;
         this.#sendSubscribe(topic, sub);
       }
+      // Cancel goals orphaned by the previous socket's death (see
+      // #rejectAllPending) so a skill can't keep running with no owner.
+      for (const goal of this.#orphanedGoals.splice(0)) {
+        this.#send({ op: "cancel_action_goal", id: goal.id, action: goal.action, goal_id: goal.goalId });
+      }
+      this.#setState("connected");
     };
 
     ws.onmessage = (event) => {
@@ -278,6 +366,41 @@ export class RosClient {
         pending.reject(new Error(typeof data.values === "string" ? data.values : "Service call failed"));
       } else {
         pending.resolve(data.values);
+      }
+      return;
+    }
+
+    if (data.op === "action_feedback") {
+      const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
+      if (pending && typeof data.goal_id === "string" && data.goal_id && data.goal_id !== pending.goalId) {
+        pending.goalId = data.goal_id;
+        // A cancel pressed before the server's goal_id arrived couldn't bind;
+        // re-issue it now against the authoritative id.
+        if (pending.cancelRequested) {
+          this.#send({ op: "cancel_action_goal", id: data.id, action: pending.action, goal_id: pending.goalId });
+        }
+      }
+      pending?.onFeedback?.(data.values);
+      return;
+    }
+
+    if (data.op === "action_result") {
+      const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
+      if (!pending) return;
+      this.#pendingActions.delete(data.id);
+      // rws sets `result: false` for any non-SUCCEEDED goal (aborted/canceled/
+      // rejected). A goal that actually terminated still carries its result
+      // message (e.g. {success, message, success_type}), so resolve with the
+      // payload and let the caller read the skill-level outcome. Reject only when
+      // it didn't succeed AND no usable result came back (rejected outright):
+      // otherwise a non-null-but-empty {} would masquerade as success, unlike the
+      // service_response path which rejects any result === false.
+      const values = data.values;
+      const emptyResult = values == null || (typeof values === "object" && Object.keys(values).length === 0);
+      if (data.result === false && emptyResult) {
+        pending.reject(new Error(`Action ${pending.action} was rejected`));
+      } else {
+        pending.resolve(values);
       }
       return;
     }
@@ -355,6 +478,18 @@ export class RosClient {
       pending.reject(err);
     }
     this.#pendingCalls.clear();
+    for (const [id, pending] of this.#pendingActions) {
+      // The socket died but the server-side goal may keep running — with the
+      // promise rejected, the caller's cancel handle is dead, so nothing could
+      // ever stop it (and the one-skill-at-a-time server would reject every
+      // new goal with "another skill is already running"). Remember the goal
+      // and best-effort cancel it after the next reconnect: a no-op if the
+      // bridge already reaped it, a rescue if it didn't.
+      this.#orphanedGoals.push({ id, action: pending.action, goalId: pending.goalId });
+      pending.reject(err);
+    }
+    while (this.#orphanedGoals.length > MAX_ORPHANED_GOALS) this.#orphanedGoals.shift();
+    this.#pendingActions.clear();
   }
 
   #teardownSocket() {

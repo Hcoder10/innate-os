@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Robot-facing topic names and protocol constants. Ported subset of the
 // mobile app's rosConstants.ts — keep names identical to the robot's.
 
@@ -15,6 +17,57 @@ export const HEAD_CURRENT_POSITION_TOPIC = "/mars/head/current_position";
 
 export const TTS_TOPIC = "/brain/tts";
 
+// Operator <-> brain chat. Send: std_msgs/String whose data is JSON
+// {text, sender:"user", timestamp}. Receive: std_msgs/String whose data is JSON
+// {sender, text, timestamp, ...} — sender "user" echoes the operator, "robot" is
+// the agent's reply. Same topics the sim console + mobile app use.
+export const CHAT_IN_TOPIC = "/brain/chat_in";
+export const CHAT_OUT_TOPIC = "/brain/chat_out";
+// Full chat history snapshot (brain_messages/srv/GetChatHistory → {history}, a
+// JSON string of {sender, text, timestamp, ...} entries). Fetched on connect so
+// the panel shows the conversation from before this page load, not just live.
+export const GET_CHAT_HISTORY_SERVICE = "/brain/get_chat_history";
+
+// Agent/directive selection. The roster comes from a service (response carries a
+// JSON-in-String `directives` array — directives[0] is {agents:[{id,
+// display_name,...}]} or a bare agent array — plus `current_directive`).
+// Selecting an agent publishes its id on /brain/set_directive and activates the
+// brain; "None" deactivates it (std_srvs/SetBool).
+export const GET_AVAILABLE_DIRECTIVES_SERVICE = "/brain/get_available_directives";
+export const SET_DIRECTIVE_TOPIC = "/brain/set_directive";
+export const SET_BRAIN_ACTIVE_SERVICE = "/brain/set_brain_active";
+// Set which skills the current directive may use (std_msgs/String JSON:
+// {agent_id, skills:[id,...]} — the full active set, not a delta).
+export const SET_ACTIVE_SKILLS_TOPIC = "/brain/set_active_skills";
+// Live agent state pushed by the brain (std_msgs/String JSON: {brain_active,
+// current_directive, active_skills:[id,...]}). Latched + ~3s heartbeat; this is
+// how a stop/start/directive change made from another client reaches this UI.
+export const AGENT_STATUS_TOPIC = "/brain/agent_status";
+// Reset the agent's brain/memory (brain_messages/srv/ResetBrain → {success}).
+export const RESET_BRAIN_SERVICE = "/brain/reset_brain";
+// Cloud/local agent backend connection (std_msgs/String JSON: {state, connected,
+// message, uri, hosted, timestamp}) — distinct from the rosbridge link.
+export const WEBSOCKET_STATUS_TOPIC = "/brain/websocket_status";
+
+// Sim-only: reset the robot to its start pose (std_srvs/Trigger). Gated behind
+// config.json's simControls (the real robot has no such service).
+export const RESET_POSITION_SERVICE = "/sim/reset_position";
+
+// Navigation map + odometry for the 2D map page.
+export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
+export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
+export const PLAN_TOPIC = "/plan"; // nav_msgs/Path — the planner's route to the goal
+// Click-to-navigate goal. Publishing a geometry_msgs/PoseStamped here kicks off
+// planning; the resulting route streams back on PLAN_TOPIC. Same topic the sim
+// console's map view publishes to.
+export const GOAL_POSE_TOPIC = "/goal_pose";
+
+// Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
+// status: running|completed|failed|interrupted, primitive_id, ...}), published
+// as the agent runs primitives. Separate from chat_out — the chat surfaces it so
+// operators can see which skills the agent is executing.
+export const SKILL_STATUS_UPDATE_TOPIC = "/brain/skill_status_update";
+
 // Per-step ACT inference timing breakdown (std_msgs/String carrying JSON), published
 // by the manipulation server while a learned behavior runs. Drives the Profiling page.
 export const INFERENCE_PROFILE_TOPIC = "/brain/manipulation/inference_profile";
@@ -28,14 +81,17 @@ export const ROBOT_INFO_TOPIC = "/robot/info";
 // mobile app's volume slider calls; current value rides on /robot/info.
 export const SET_VOLUME_SERVICE = "/set_volume";
 
-// WebRTC signaling over rosbridge. START payload is a std_msgs/String whose
-// data is JSON: {"source":"live","audio":bool}. The robot rebuilds its whole
-// pipeline on every START, so any config change means a full re-handshake.
+// WebRTC signaling over rosbridge. START is a std_msgs/String JSON payload that
+// carries our client_id: {"source":"live","audio":bool,"client_id":"...","video":[...]}.
+// The robot routes offer/answer/ICE on the *_id topics, each enveloped as {client_id, ...}
+// so several devices can negotiate concurrently on the same topics. START stays a shared
+// topic; the client_id lives in its payload, not the topic name.
 export const WEBRTC_START_TOPIC = "/webrtc/start";
-export const WEBRTC_OFFER_TOPIC = "/webrtc/offer";
-export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer";
-export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in";
-export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out";
+export const WEBRTC_OFFER_TOPIC = "/webrtc/offer_id";    // robot -> us: {client_id, sdp}
+export const WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id";  // us -> robot: {client_id, sdp}
+export const WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id";  // us -> robot: {client_id, candidate, sdpMLineIndex, sdpMid}
+export const WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out_id"; // robot -> us: {client_id, candidate, sdpMLineIndex, sdpMid}
+export const WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"; // robot -> us: {count, clients[], cameras[]}
 
 // Leader-arm teleop: raw Dynamixel ticks (Int32MultiArray, 6 servos) — the
 // robot's mars_app converts (tick - 2048) * 2π/4096 into /mars/arm/commands.
@@ -57,6 +113,20 @@ export const ARM_TORQUE_OFF_SERVICE = "/mars/arm/torque_off";
 // Arm health/torque state (mars_msgs/ArmStatus → {is_ok, error,
 // is_torque_enabled}), published ~0.2 Hz. Drives the live torque toggle.
 export const ARM_STATUS_TOPIC = "/mars/arm/status";
+
+// Skills pinned to the top of the Skills panel, in this order; matched against
+// the skill's display name (case-insensitive, last path segment, "_"→" ").
+// Skills not currently available are skipped, everything else keeps roster order.
+// Ported from the sim console's config.json `pinnedSkills`.
+export const PINNED_SKILLS = ["navigate with vision", "navigate with position", "wave"];
+
+// Run one skill directly (brain_messages/action/ExecuteSkill). Goal is
+// {skill_type, inputs} where inputs is a JSON object string; feedback streams
+// {skill_type, feedback, image_b64}; result is {success, message, skill_type,
+// success_type ∈ "success"|"cancelled"|"failure"}. Same action the sim console
+// drives. Skill roster + per-skill input schema come from AVAILABLE_SKILLS_TOPIC.
+export const EXECUTE_SKILL_ACTION = "/execute_skill";
+export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
 
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;

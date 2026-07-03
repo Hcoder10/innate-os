@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Composable node launch file for mars_cam.
 
@@ -94,6 +96,20 @@ def generate_launch_description():
                 # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
                 "playout_min_delay_ms": 0,
                 "playout_max_delay_ms": 40,
+                # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
+                # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
+                # IP:port observed by the robot, not a public NAT hairpin route.
+                "enable_local_stun": True,
+                "local_stun_port": 3478,
+                # Seconds without any RTCP from the peer before the node tears the pipeline down and
+                # releases the camera subscriptions / encoders / mic. webrtcbin never reports a
+                # vanished (closed-tab/killed) peer, so this inactivity watchdog is what makes the
+                # subscriptions lazy. Must exceed the peer's RTCP interval with margin: a browser's RR
+                # cadence for low-bitrate video can stretch to ~5 s, so a 5 s timeout false-positives and
+                # tears down a perfectly healthy connection. 15 s gives ~3 missed reports of slack; a
+                # genuinely-dead peer is still caught here and by the ICE DISCONNECTED/FAILED path.
+                # Runtime-tunable via `ros2 param set`.
+                "rtcp_inactivity_timeout_s": 15.0,
             }
         ],
         extra_arguments=[{"use_intra_process_comms": True}],

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Robot pose source: TF (map->base_link), odometry, and AMCL covariance.
 
 Owns the always-on ``/amcl_pose`` subscription plus the on-demand ``/odom`` and

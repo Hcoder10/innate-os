@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Handle the cloud agent's VisionAgentOutput: chat + drive the next primitive.
 
 Validates the incoming payload, surfaces thoughts/speech/anticipation via the chat

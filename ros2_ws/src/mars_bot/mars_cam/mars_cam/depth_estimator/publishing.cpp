@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // ROS message publishing: rectified images, disparity, depth.
 
 #include "mars_cam/stereo_depth_estimator.hpp"

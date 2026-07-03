@@ -124,7 +124,7 @@ echo "=== integration tests: --symlink-install ==="
 python3 -m pip install --quiet 'setuptools<80'
 rm -rf build install log
 colcon build --symlink-install \
-  --parallel-workers "$(( $(nproc) < 4 ? $(nproc) : 4 ))" --cmake-args \
+  --parallel-workers "$(( $(nproc) < 3 ? $(nproc) : 3 ))" --cmake-args \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

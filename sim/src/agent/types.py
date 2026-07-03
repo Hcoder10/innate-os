@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 # intypes.py
 
 from typing import Any, NamedTuple
@@ -88,6 +90,12 @@ class ArmGotoCmd(NamedTuple):
     joint_positions: list  # [j0, j1, j2, j3, j4, j5] - 6 floats in radians
     duration: float  # Duration in seconds
     service_id: str = None  # For service response callback
+
+
+class HeadCmd(NamedTuple):
+    """Agent -> Simulation: head pitch target in degrees (immediate)."""
+
+    angle_deg: float
 
 
 class ArmStateMsg(NamedTuple):

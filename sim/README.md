@@ -82,7 +82,7 @@ Use this to develop and test agents for Innate robots — navigation, task execu
 ## Running the Application
 
 > [!IMPORTANT]
-> Inside this monorepo, the recommended entrypoint is `../innate sim setup && ../innate sim up` from the repository root.
+> Inside this monorepo, the recommended entrypoint is `./innate-sim setup && ./innate-sim up` from the repository root.
 >
 > The simulator connects to the **[Innate OS](https://github.com/innate-inc/innate-os)** running locally in Docker on `ws://localhost:9090`.
 >
@@ -122,7 +122,7 @@ The frontend will typically be available at `http://localhost:5173`.
 > The frontend reads its endpoint URLs at runtime from `/config.json` (no
 > build-time `VITE_*` vars). In dev that file is served from
 > `frontend/public/config.json`; in the container it is written from env by the
-> entrypoint. With `../innate sim up`, the frontend instead runs in its own
+> entrypoint. With `./innate-sim up`, the frontend instead runs in its own
 > Docker container (Caddy) at `http://localhost:3000`.
 
 #### Optional: Direct Robot Mode
@@ -279,7 +279,7 @@ The backend exposes several API endpoints for controlling the simulation and int
 
 ## Development Notes
 
-*   **Containerized Frontend:** With `../innate sim up`, the frontend runs in its own Docker container (Caddy) at `http://localhost:3000`. The image carries the node/yarn build tooling and rebuilds on container start; endpoint URLs are injected at runtime via `/config.json`. The FastAPI backend no longer serves the frontend.
+*   **Containerized Frontend:** With `./innate-sim up`, the frontend runs in its own Docker container (Caddy) at `http://localhost:3000`. The image carries the node/yarn build tooling and rebuilds on container start; endpoint URLs are injected at runtime via `/config.json`. The FastAPI backend no longer serves the frontend.
 *   **Frontend Dev Server:** For easier frontend development, run `yarn dev` in the `frontend` directory. This provides hot reloading but requires the backend to be running separately.
 *   **Communication:** Components (simulation, agent bridge, web API) communicate via thread-safe queues defined in `src/shared_queues.py`.
 *   **macOS Threading:** On macOS, the Genesis simulation runs in a separate thread managed by `gs.tools.run_in_another_thread` in `main.py`.

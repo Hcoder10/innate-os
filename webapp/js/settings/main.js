@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Settings page — a guided editor over config/settings.yaml. The catalog (knobs,
 // defaults, docs) lives in catalog.js; this renders a row per knob showing its
 // default and current value, lets you override or reset, and saves over the

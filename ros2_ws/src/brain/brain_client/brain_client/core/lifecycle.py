@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Brain lifecycle: activate / deactivate / reset / reactivate + directive switching.
 
 Owns the agent timer and the on-demand sensor subscriptions (delegated to the
@@ -31,6 +33,7 @@ class BrainLifecycle:
         catalog,
         active_inputs_pub,
         stop_robot,
+        publish_status,
     ):
         self._node = node
         self._logger = node.get_logger()
@@ -46,6 +49,7 @@ class BrainLifecycle:
         self.catalog = catalog
         self._active_inputs_pub = active_inputs_pub
         self._stop_robot = stop_robot
+        self._publish_status = publish_status
 
         self.agent_timer = None
         self._memory_timer = None
@@ -104,6 +108,7 @@ class BrainLifecycle:
     def activate_for_simulator(self) -> None:
         self._state.is_brain_active = True
         self.start_brain_subscriptions()
+        self._publish_status()
 
     def deactivate_brain(self) -> None:
         self._logger.info("[BrainClient] Deactivating brain...")
@@ -127,6 +132,10 @@ class BrainLifecycle:
         self._logger.info("🔌 Deactivated all inputs")
 
         self._stop_robot()
+        self._publish_status()
+        # Announce in the shared chat so EVERY client sees the stop, not just
+        # the device whose button was pressed (clients don't echo locally).
+        self._chat.emit_system(f"{self._directive_label()} stopped.")
         self._logger.info("[BrainClient] Brain deactivated.")
 
     def reactivate_brain(self) -> None:
@@ -137,6 +146,9 @@ class BrainLifecycle:
 
         self._state.is_brain_active = True
         self.start_brain_subscriptions()
+        self._publish_status()
+        # Shared-chat counterpart of the "stopped." message in deactivate_brain.
+        self._chat.emit_system(f"{self._directive_label()} started.")
         self._logger.info(f"[BrainClient] Continuing with current directive: {self._state.current_directive.id}")
 
         self._gaze.update()
@@ -179,4 +191,14 @@ class BrainLifecycle:
         self.catalog.register()
         self.activate_directive_inputs()
         self._gaze.update()
-        self._chat.emit_system(f"Directive updated to: {name}")
+        self._publish_status()
+        # Only announce a LIVE switch; arming a directive while idle is followed
+        # by reactivate_brain's "… started." message, which carries the name.
+        if self._state.is_brain_active:
+            self._chat.emit_system(f"Directive updated to: {self._directive_label()}")
+
+    def _directive_label(self) -> str:
+        directive = self._state.current_directive
+        if directive is None:
+            return "Agent"
+        return getattr(directive, "display_name", None) or directive.id

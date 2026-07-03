@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 MobilityInterface - Provides base movement (wheels) control capabilities to skills.
 
@@ -41,13 +43,7 @@ class MobilityInterface:
         if duration is None or duration <= 0.0:
             return
 
-        # Cancel any existing timer first
-        if self._stop_timer is not None:
-            try:
-                self._stop_timer.cancel()
-            except Exception:
-                pass
-            self._stop_timer = None
+        self._destroy_stop_timer()
 
         def _stop_callback():
             try:
@@ -55,14 +51,19 @@ class MobilityInterface:
                 self._cmd_vel_pub.publish(stop_cmd)
                 self.logger.debug("MobilityInterface: stop command published")
             finally:
-                if self._stop_timer is not None:
-                    try:
-                        self._stop_timer.cancel()
-                    except Exception:
-                        pass
-                    self._stop_timer = None
+                self._destroy_stop_timer()
 
         self._stop_timer = self.node.create_timer(duration, _stop_callback)
+
+    def _destroy_stop_timer(self):
+        # destroy, don't just cancel: a cancelled timer stays in the node's
+        # timer list forever, which leaks at deadman rates (10-20 timers/s)
+        timer, self._stop_timer = self._stop_timer, None
+        if timer is not None:
+            try:
+                self.node.destroy_timer(timer)
+            except Exception:
+                pass
 
     def send_cmd_vel(
         self,

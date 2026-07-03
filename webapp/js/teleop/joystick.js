@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // On-screen joystick. Pointer events with capture give one code path for
 // mouse + touch (touch-action: none in CSS). The math is ported from the
 // mobile stick — knob clamped to outer radius minus knob radius, values

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 import os
 
 from ament_index_python.packages import get_package_share_directory

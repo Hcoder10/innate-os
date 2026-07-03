@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 
 import asyncio
 import base64
@@ -21,6 +23,7 @@ from src.agent.types import (
     BrainActiveCmd,
     BrainBackendConfigCmd,
     DirectiveCmd,
+    HeadCmd,
     NavigationCancelMsg,
     NavigationFeedbackMsg,
     NavigationPathMsg,
@@ -34,6 +37,7 @@ from src.agent.types import (
     VelocityCmd,
 )
 from src.shared_queues import AgentInfo, ChatMessage, ChatSignal, SkillInfo
+from src.webrtc.webrtc_server import CAMERAS as WEBRTC_CAMERAS  # camera roster for /webrtc/active_streams
 
 BACKEND_WARMUP_STATES = {
     "unknown",
@@ -46,6 +50,8 @@ BACKEND_STATUS_LOG_INTERVAL_SEC = 30.0
 SENSOR_PUBLISH_INTERVAL_SEC = 0.10
 CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
+ARM_STATUS_PUBLISH_INTERVAL_SEC = 0.5
+HEAD_POSITION_PUBLISH_INTERVAL_SEC = 0.5
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 ARM_JOINT_COUNT = 6
 ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
@@ -142,35 +148,38 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
 
 
 #
-# WebRTC signaling topics (emulates the robot's mars_cam streamer protocol).
+# WebRTC signaling topics — the per-client `_id` protocol the webapp speaks (same
+# as the robot's mars_cam streamer). Every message carries a `client_id` envelope.
 # Signaling only — media flows peer-to-peer between the browser and the sim's
-# aiortc server, not over rosbridge.
+# aiortc server, not over rosbridge. We OFFER (server->browser): /webrtc/offer_id;
+# the browser answers + trickles its ICE; we publish the camera roster on
+# /webrtc/active_streams so the webapp's camera switcher can build its buttons.
 #
-WEBRTC_OFFER_TOPIC = "/webrtc/offer"
-WEBRTC_ANSWER_TOPIC = "/webrtc/answer"
-WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in"
-WEBRTC_ICE_OUT_TOPIC = "/webrtc/ice_out"
-WEBRTC_START_TOPIC = "/webrtc/start"
-WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # additive: which cameras to encode
+WEBRTC_OFFER_TOPIC = "/webrtc/offer_id"  # server->browser: {client_id, sdp}
+WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id"  # browser->server: {client_id, sdp}
+WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id"  # browser->server: {client_id, candidate, sdpMLineIndex, sdpMid}
+WEBRTC_ICE_OUT_TOPIC = (
+    "/webrtc/ice_out_id"  # server->browser (unused: aiortc is non-trickle, candidates ride the offer)
+)
+WEBRTC_START_TOPIC = "/webrtc/start"  # browser->server: {client_id, video, audio, source, renegotiate}
+WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # server->browser: {count, clients, cameras}
 WEBRTC_INBOUND_TOPICS = {
     WEBRTC_START_TOPIC,
     WEBRTC_ANSWER_TOPIC,
     WEBRTC_ICE_IN_TOPIC,
-    WEBRTC_ACTIVE_STREAMS_TOPIC,
 }
 
 
 def relay_webrtc_inbound(shared_queues, topic: str, msg_data: dict) -> None:
-    """Parse a /webrtc/* std_msgs/String message and hand it to the aiortc thread."""
-    data = (msg_data or {}).get("data", "")
+    """Parse a per-client /webrtc/* message ({client_id, ...} JSON) and hand it to the aiortc thread."""
+    payload = _loads_or_empty((msg_data or {}).get("data", ""))
+    client_id = payload.get("client_id", "")
     if topic == WEBRTC_START_TOPIC:
-        item = {"kind": "start", "payload": _loads_or_empty(data)}
+        item = {"kind": "start", "payload": payload, "client_id": client_id}
     elif topic == WEBRTC_ANSWER_TOPIC:
-        item = {"kind": "answer", "sdp": data}  # raw SDP, not JSON
+        item = {"kind": "answer", "sdp": payload.get("sdp", ""), "client_id": client_id}
     elif topic == WEBRTC_ICE_IN_TOPIC:
-        item = {"kind": "ice", "payload": _loads_or_empty(data)}
-    elif topic == WEBRTC_ACTIVE_STREAMS_TOPIC:
-        item = {"kind": "active_streams", "cameras": _loads_or_empty(data).get("cameras", [])}
+        item = {"kind": "ice", "payload": payload, "client_id": client_id}
     else:
         return
     try:
@@ -442,7 +451,13 @@ def _resolve_environment_config(map_name: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    config_path = os.path.join(ENVIRONMENTS_DIR, f"{text}.json")
+    # Treat `text` as a config name and confine it to ENVIRONMENTS_DIR. The name
+    # arrives over unauthenticated rosbridge, so a traversal ("../…") or absolute
+    # path must not escape the directory and read arbitrary files off disk.
+    base = os.path.realpath(ENVIRONMENTS_DIR)
+    config_path = os.path.realpath(os.path.join(base, f"{text}.json"))
+    if os.path.commonpath([base, config_path]) != base:
+        raise FileNotFoundError(text)
     with open(config_path) as config_file:
         return json.load(config_file)
 
@@ -646,6 +661,18 @@ async def inbound_data_loop(ws, shared_queues):
                     except queue.Full:
                         pass
 
+            # 1b2) /mars/head/set_position — head pitch in degrees. Not gated by
+            # arm torque (the real head stays torqued even when the arm is limp).
+            elif topic == "/mars/head/set_position":
+                try:
+                    angle_deg = float(msg_data.get("data"))
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    shared_queues.agent_to_sim.put_nowait(HeadCmd(angle_deg=angle_deg))
+                except queue.Full:
+                    pass
+
             # 1c) WebRTC signaling (browser -> sim aiortc server), relayed via
             # shared_queues so the aiortc thread stays decoupled from this loop.
             elif topic in WEBRTC_INBOUND_TOPICS:
@@ -700,8 +727,14 @@ async def inbound_data_loop(ws, shared_queues):
 
             elif topic == "/brain/available_skills":
                 skills = parse_available_skills_message(msg_data)
-                shared_queues.update_available_skills(skills)
-                print(f"[ROSBridge] Received {len(skills)} available skills")
+                # The roster is latched and re-published on a heartbeat so late
+                # subscribers can catch it; skip unchanged repeats so we don't
+                # re-store identical state (and spam the log) every beat.
+                signature = tuple(skills)
+                if signature != getattr(shared_queues, "_last_available_skills_signature", None):
+                    shared_queues._last_available_skills_signature = signature
+                    shared_queues.update_available_skills(skills)
+                    print(f"[ROSBridge] Received {len(skills)} available skills")
 
             # 3) /sim_navigation/global_plan
             elif topic == "/sim_navigation/global_plan":
@@ -991,7 +1024,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
     last_sensor_publish_time = 0.0
     last_clock_publish_time = 0.0
+    last_active_streams_publish_time = 0.0
     last_arm_state_publish_time = 0.0
+    last_arm_status_publish_time = 0.0
+    last_head_position_publish_time = 0.0
     last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
@@ -1016,10 +1052,13 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
+    adv_arm_status = rosbridge_advertise("/mars/arm/status", "mars_msgs/msg/ArmStatus")
+    adv_head_position = rosbridge_advertise("/mars/head/current_position", "std_msgs/msg/String")
 
-    # WebRTC signaling (server->browser): offer + ICE candidates.
+    # WebRTC signaling (server->browser): per-client offer + ICE + the camera roster.
     adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
     adv_webrtc_ice_out = rosbridge_advertise(WEBRTC_ICE_OUT_TOPIC, "std_msgs/msg/String")
+    adv_webrtc_active_streams = rosbridge_advertise(WEBRTC_ACTIVE_STREAMS_TOPIC, "std_msgs/msg/String")
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -1036,9 +1075,12 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_feedback))
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
+    await ws.send(json.dumps(adv_arm_status))
+    await ws.send(json.dumps(adv_head_position))
     await ws.send(json.dumps(adv_arm_camera))
     await ws.send(json.dumps(adv_webrtc_offer))
     await ws.send(json.dumps(adv_webrtc_ice_out))
+    await ws.send(json.dumps(adv_webrtc_active_streams))
     for service_advert in arm_service_advertisements():
         await ws.send(json.dumps(service_advert))
     for service_advert in sim_control_service_advertisements():
@@ -1064,6 +1106,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     sub_nav_path = rosbridge_subscribe("/sim_navigation/global_plan", "nav_msgs/msg/Path")
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
     sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
+    sub_head_set = rosbridge_subscribe("/mars/head/set_position", "std_msgs/msg/Int32")
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
     await ws.send(json.dumps(sub_skill_status))
@@ -1072,6 +1115,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_nav_path))
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
+    await ws.send(json.dumps(sub_head_set))
     # WebRTC signaling (browser->server): start / answer / ice_in / active_streams.
     for webrtc_topic in WEBRTC_INBOUND_TOPICS:
         await ws.send(json.dumps(rosbridge_subscribe(webrtc_topic, "std_msgs/msg/String")))
@@ -1154,15 +1198,26 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             except queue.Empty:
                 break
             kind = signal.get("kind")
+            client_id = signal.get("client_id", "")
             if kind == "offer":
-                topic, payload = WEBRTC_OFFER_TOPIC, signal.get("sdp", "")
+                topic = WEBRTC_OFFER_TOPIC
+                payload = json.dumps({"client_id": client_id, "sdp": signal.get("sdp", "")})
             elif kind == "ice":
-                topic, payload = WEBRTC_ICE_OUT_TOPIC, json.dumps(signal.get("payload", {}))
+                topic = WEBRTC_ICE_OUT_TOPIC
+                payload = json.dumps({"client_id": client_id, **signal.get("payload", {})})
             else:
                 webrtc_processed += 1
                 continue
             await ws.send(json.dumps(rosbridge_publish(topic, {"data": payload})))
             webrtc_processed += 1
+
+        # PRIORITY 1c: Publish the WebRTC camera roster (~2 Hz). The webapp's camera
+        # switcher builds its buttons from this; without it, it never learns the
+        # sim's camera names (first_person / arm_wrist / chase).
+        if now - last_active_streams_publish_time >= 2.0:
+            roster = json.dumps({"count": 1, "clients": [], "cameras": list(WEBRTC_CAMERAS)})
+            await ws.send(json.dumps(rosbridge_publish(WEBRTC_ACTIVE_STREAMS_TOPIC, {"data": roster})))
+            last_active_streams_publish_time = now
 
         # PRIORITY 2: Process sensor data from the latest-only queue.
         # The web UI can render faster locally; ROSBridge cannot cheaply carry
@@ -1288,6 +1343,14 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             outbound = rosbridge_publish("/sim_navigation/feedback", feedback_msg)
             await ws.send(json.dumps(outbound))
             last_nav_feedback_publish_time = updates_now
+
+        if updates_now - last_arm_status_publish_time >= ARM_STATUS_PUBLISH_INTERVAL_SEC:
+            await publish_arm_status(ws, shared_queues)
+            last_arm_status_publish_time = updates_now
+
+        if updates_now - last_head_position_publish_time >= HEAD_POSITION_PUBLISH_INTERVAL_SEC:
+            await publish_head_position(ws, shared_queues)
+            last_head_position_publish_time = updates_now
 
         await asyncio.sleep(0.0001)
 
@@ -1627,6 +1690,34 @@ async def publish_arm_state(ws, arm_state: ArmStateMsg):
     }
 
     outbound = rosbridge_publish("/mars/arm/state", joint_state_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_arm_status(ws, shared_queues):
+    """Publish the sim arm torque state to /mars/arm/status (mars_msgs/ArmStatus).
+
+    The webapp's torque toggle reads is_torque_enabled from this topic; without
+    it the control sits disabled at "—". The sim arm is never in a fault state,
+    so is_ok is always True and error is empty.
+    """
+    status_msg = {
+        "is_ok": True,
+        "error": "",
+        "is_torque_enabled": is_arm_torque_enabled(shared_queues),
+    }
+    outbound = rosbridge_publish("/mars/arm/status", status_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_head_position(ws, shared_queues):
+    """Publish the sim head pitch to /mars/head/current_position.
+
+    std_msgs/String carrying JSON (current_position + min/max/default angle), the
+    shape the webapp's head-tilt slider parses. It adopts the reported min/max as
+    its range; without this feed the slider sits disabled at "-".
+    """
+    state = shared_queues.get_head_position_state()
+    outbound = rosbridge_publish("/mars/head/current_position", {"data": json.dumps(state)})
     await ws.send(json.dumps(outbound))
 
 

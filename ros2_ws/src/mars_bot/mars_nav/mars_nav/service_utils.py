@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Utilities for calling ROS2 services with timeout handling."""
 
 import time

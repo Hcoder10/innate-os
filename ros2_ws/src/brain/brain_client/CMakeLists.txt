@@ -15,6 +15,11 @@ ament_python_install_package(${PROJECT_NAME}
   PACKAGE_DIR brain_client
 )
 
+# Public authoring namespace for skill files (`from innate.skills import ...`)
+ament_python_install_package(innate
+  PACKAGE_DIR innate
+)
+
 # Install Python executables
 install(PROGRAMS
   brain_client/nodes/brain_client_node.py
