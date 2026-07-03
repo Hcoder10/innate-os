@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Read and write ``config/settings.yaml`` for the webapp Settings page.
 
 ``settings.yaml`` is a ROS 2 params overlay built from ``settings.yaml.template``:

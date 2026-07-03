@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 # src/shared_queues.py
 
 import queue
@@ -76,10 +78,27 @@ class SharedQueues:
         self.latest_nav_feedback_msg: Any | None = None
         self.latest_agent_update_lock = threading.Lock()
 
+        # Head pitch state, published to /mars/head/current_position. The sim
+        # node owns the limits (from the URDF joint_head), so this is the single
+        # source of truth the webapp slider self-calibrates against.
+        self.head_position_state: dict[str, float] = {
+            "current_position": 0.0,
+            "min_angle": 0.0,
+            "max_angle": 0.0,
+            "default_angle": 0.0,
+        }
+        self.head_position_lock = threading.Lock()
+
         # Flag to indicate if all model outputs should be logged
         self.log_everything = log_everything
         self._sim_log_mode = normalize_sim_log_mode(sim_log_mode)
         self.sim_log_mode_lock = threading.Lock()
+
+        # WebRTC signaling relay between the rosbridge thread and the aiortc
+        # server thread (decoupled, queue-only). _in: rosbridge->aiortc (start /
+        # answer / ice / active_streams); _out: aiortc->rosbridge (offer / ice).
+        self.webrtc_signal_in = queue.Queue(maxsize=256)
+        self.webrtc_signal_out = queue.Queue(maxsize=256)
 
         # Queues specifically for chat messages
         self.chat_to_bridge = queue.Queue(maxsize=5000)
@@ -272,6 +291,14 @@ class SharedQueues:
     def set_latest_nav_feedback_msg(self, msg: Any) -> None:
         with self.latest_agent_update_lock:
             self.latest_nav_feedback_msg = msg
+
+    def set_head_position_state(self, state: dict[str, float]) -> None:
+        with self.head_position_lock:
+            self.head_position_state = state
+
+    def get_head_position_state(self) -> dict[str, float]:
+        with self.head_position_lock:
+            return dict(self.head_position_state)
 
     def pop_latest_agent_updates(self) -> tuple[dict[str, Any] | None, Any | None, Any | None]:
         with self.latest_agent_update_lock:

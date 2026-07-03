@@ -1,7 +1,7 @@
 # Data Requirements
 
 This directory contains scene data and assets required by the simulator. Most
-large local files are intentionally not committed to Git; `./innate sim setup`
+large local files are intentionally not committed to Git; `./innate-sim setup`
 downloads them from pinned sources and verifies the Innate asset pack against
 `../assets.lock.json`.
 

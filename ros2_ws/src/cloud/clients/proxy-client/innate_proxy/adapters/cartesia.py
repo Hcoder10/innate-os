@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Cartesia TTS adapter for the Innate proxy client.
 
 The adapter expects a *parent* object that exposes:

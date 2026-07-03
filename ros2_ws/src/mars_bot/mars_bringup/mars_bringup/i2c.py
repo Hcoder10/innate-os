@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Enhanced I2C Motor Control Script for Jetson Orin Nano
 30Hz continuous communication with bidirectional feedback

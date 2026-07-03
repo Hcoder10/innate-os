@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Video stage — the full-bleed <video> plus a hidden <audio> for the robot
 // mic, with quiet connecting/error states layered on top. Also exports the
 // audio toggle, which must flip the track and call audio.play() inside the
@@ -104,9 +106,6 @@ export function createVideoStage(parent, session) {
     if (state.status === "error") {
       statusText.textContent = "video link failed";
       retry.hidden = false;
-    } else if (state.status === "preempted") {
-      statusText.textContent = "camera in use by another device";
-      retry.hidden = false;
     } else if (loading) {
       statusText.textContent = "loading video stream";
       retry.hidden = true;
@@ -140,7 +139,7 @@ export function createVideoStage(parent, session) {
       video.play().catch(() => {});
       watchFirstFrames();
     }
-    if (!state.videoStream && (state.status === "idle" || state.status === "preempted")) {
+    if (!state.videoStream && state.status === "idle") {
       video.srcObject = null;
       buffering = false;
       stopFrameWatch();

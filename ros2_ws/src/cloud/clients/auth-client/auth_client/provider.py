@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """OIDC robot authentication client.
 
 Handles service-key → JWT exchange via OpenID Connect discovery,

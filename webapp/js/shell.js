@@ -1,10 +1,21 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Shell — the 64px icon rail + connection badge rendered into every page,
 // and the placeholder renderer for not-yet-built sections.
 
 import { ros } from "./rosClient.js";
+import { initTtsAudio } from "./ttsAudio.js";
+import { createAgentState } from "./teleop/agentState.js";
+import { createAgentIndicator } from "./agentIndicator.js";
+import { maybeShowAppPromo } from "./appPromo.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
+
+// In sim mode (config.simControls) only these sections make sense — the rest
+// (Datasets/Collect/Training/Profiling) are robot-data workflows with no sim
+// backing, so they're hidden from the rail.
+const SIM_SECTIONS = new Set(["teleop", "agent", "debugging", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
@@ -13,6 +24,12 @@ const SECTIONS = [
     label: "Teleop",
     // The joystick motif: rim, cardinal ticks, knob.
     icon: '<circle cx="12" cy="12" r="8.5"/><line x1="12" y1="3.5" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="20.5"/><line x1="3.5" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="20.5" y2="12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>',
+  },
+  {
+    key: "agent",
+    label: "Agent",
+    // Sparkle motif: a four-point star for the autonomous brain.
+    icon: '<path d="M12 3.5l1.7 6.8 6.8 1.7-6.8 1.7L12 20.5l-1.7-6.8L3.5 12l6.8-1.7z"/>',
   },
   {
     key: "debugging",
@@ -73,6 +90,7 @@ export function initShell(activeKey, root) {
   for (const section of SECTIONS) {
     const a = document.createElement("a");
     a.className = "rail-link" + (section.key === activeKey ? " active" : "");
+    a.dataset.section = section.key;
     a.href = root + (section.key === "teleop" ? "index.html" : `${section.key}/index.html`);
     a.title = section.label;
     a.setAttribute("aria-label", section.label);
@@ -86,6 +104,54 @@ export function initShell(activeKey, root) {
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);
+
+  // Sim deployments only expose Teleop/Agent/Debugging/Settings — drop the rest
+  // from the rail once the (env-driven) config says we're in sim mode.
+  void applySimSectionFilter(nav);
+
+  // A running agent shows a top-center "running" pill on every other page,
+  // linking back here to take control. The Agent page has its own Start/Stop,
+  // so it's excluded.
+  if (activeKey !== "agent") {
+    // Pages like Settings never open a rosbridge socket of their own; ensure one
+    // so the indicator can read brain state. Idempotent with pageMount's connect.
+    ensureConnected();
+    createAgentIndicator(createAgentState(ros), root + "agent/index.html");
+  }
+
+  // Play robot speech (/tts/audio) regardless of which page is open.
+  initTtsAudio();
+
+  // On a phone/tablet, nudge toward the native app (shown once, then remembered).
+  maybeShowAppPromo(root);
+}
+
+/** Connect to the host that served the page (the robot in prod), preferring a
+ *  remembered address on laptop dev. Mirrors pageMount; safe to call twice. */
+function ensureConnected() {
+  const servedHost = location.hostname;
+  const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
+  const target = robotServed ? servedHost : (ros.lastIp ?? servedHost);
+  if (target) ros.connect(target);
+}
+
+/**
+ * Hide robot-only sections from the rail when running in sim mode.
+ * @param {HTMLElement} nav
+ */
+async function applySimSectionFilter(nav) {
+  /** @type {any} */
+  let config;
+  try {
+    config = await fetch("/config.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : {}));
+  } catch {
+    return; // no config → assume real robot, keep every section
+  }
+  if (!config?.simControls) return;
+  for (const link of nav.querySelectorAll(".rail-link")) {
+    const key = /** @type {HTMLElement} */ (link).dataset.section ?? "";
+    if (!SIM_SECTIONS.has(key)) link.remove();
+  }
 }
 
 /**

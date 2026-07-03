@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Dataclasses for training client configuration, progress, and state."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 /**
  * AppControl node for MARS robot.
  * Handles joystick input, leader arm control, and robot info publishing.
@@ -181,7 +183,9 @@ std::string get_tag_body(const std::string& mars_root) {
  * Get the current robot version.
  * - If HEAD is exactly on a tag (branch or detached), returns that tag
  * - Otherwise (development or detached HEAD), returns latest tag + "-dev"
- * - Throws runtime_error if no tags exist (this should not happen)
+ * - If no tags exist / not a git checkout (e.g. the sim container mounts the
+ *   source without .git), returns "0.0.0-dev". A real robot is always checked
+ *   out on a tag, so this fallback only applies in development.
  */
 std::string get_robot_version(const std::string& mars_root) {
     // Check if we're exactly on a tag (works for both branch and detached HEAD)
@@ -201,8 +205,12 @@ std::string get_robot_version(const std::string& mars_root) {
     std::string tags_cmd = "cd \"" + mars_root + "\" && git tag --list --sort=-version:refname 2>/dev/null";
     std::string tags_output = exec_command(tags_cmd);
 
+    // No tags, or not a git checkout at all (the sim container mounts the source
+    // without .git, so git errors and 2>/dev/null leaves this empty). Report a
+    // development version instead of failing every publish cycle. A real robot
+    // is always on a tag, so this only happens in dev/sim.
     if (tags_output.empty()) {
-        throw std::runtime_error("No git tags found - repository must have at least one tag");
+        return "0.0.0-dev";
     }
 
     // Get first tag (latest)
@@ -211,7 +219,7 @@ std::string get_robot_version(const std::string& mars_root) {
     std::getline(iss, latest_tag);
 
     if (latest_tag.empty()) {
-        throw std::runtime_error("No git tags found - repository must have at least one tag");
+        return "0.0.0-dev";
     }
 
     // Validate tag format (x.y.z, optionally with -rc<N> suffix)
@@ -940,7 +948,18 @@ class AppControl : public rclcpp::Node {
      * audible rather than ~-70dB (INN-467).
      */
     void apply_alsa_volume(int percent) {
-        std::string cmd = "amixer -M sset Master " + std::to_string(percent) + "% 2>/dev/null";
+        // Remap 0-100 onto the audible [AUDIBLE_FLOOR, 100] band; the speaker is
+        // silent across the lower range even with -M. 0 still mutes.
+        constexpr int AUDIBLE_FLOOR = 55;
+        int mixer_percent;
+        if (percent <= 0) {
+            mixer_percent = 0;
+        } else if (percent >= 100) {
+            mixer_percent = 100;
+        } else {
+            mixer_percent = AUDIBLE_FLOOR + (100 - AUDIBLE_FLOOR) * percent / 100;
+        }
+        std::string cmd = "amixer -M sset Master " + std::to_string(mixer_percent) + "% 2>/dev/null";
         int ret = std::system(cmd.c_str());
         if (ret != 0) {
             RCLCPP_WARN(this->get_logger(), "amixer sset Master failed (rc=%d)", ret);

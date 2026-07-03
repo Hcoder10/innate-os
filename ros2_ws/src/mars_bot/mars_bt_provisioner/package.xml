@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>Bluetooth provisioning service for Mars robot</description>
   <maintainer email="vignesh@innate.bot">jetson1</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

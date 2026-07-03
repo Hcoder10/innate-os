@@ -1,8 +1,10 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Keyboard drive: WASD/arrows with ramping, so taps nudge and holds glide.
 //
 // W/↑ = forward, S/↓ = back, A/← = left, D/→ = right. Opposing keys cancel,
-// the combined vector is clamped to unit magnitude, Shift scales to 0.4 for
+// the combined vector is clamped to unit magnitude, Shift scales to 0.75 for
 // precision work. A 50 ms tick ramps toward the target (~350 ms up, ~150 ms
 // down); when no keys are held and the vector decays below epsilon the loop
 // stops and the source disengages (DriveController emits the single zero).
@@ -15,7 +17,7 @@
 const TICK_MS = 50;
 const RAMP_UP_MS = 350;
 const RAMP_DOWN_MS = 150;
-const PRECISION_SCALE = 0.4;
+const PRECISION_SCALE = 0.75;
 const EPSILON = 0.02;
 
 /** @type {Map<string, "up" | "down" | "left" | "right">} */

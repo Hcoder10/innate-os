@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Arm Move To XYZ Skill - Move arm to a Cartesian position using IK.
 """
@@ -24,17 +26,26 @@ class ArmMoveToXYZ(Skill):
     def guidelines(self):
         return (
             "Move the arm end-effector to a target position in Cartesian space (x, y, z in meters). "
-            "Coordinates are relative to the robot base_link. Optionally specify roll, pitch, yaw orientation in radians."
+            "Coordinates are relative to the robot base_link. If x, y, z are omitted the arm moves to "
+            "its home/resting pose. Optionally specify roll, pitch, yaw orientation in radians."
         )
 
     def execute(
-        self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0, duration: int = 3
+        self,
+        x: float = 0.15,
+        y: float = 0.1,
+        z: float = 0.1,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+        duration: int = 3,
     ):
         """
         Move arm to Cartesian pose using IK.
 
         Args:
-            x: Target x position in meters (forward from base)
+            x: Target x position in meters (forward from base). Defaults to the
+               home/resting pose (0.15, 0.1, 0.1) when x/y/z are omitted.
             y: Target y position in meters (left from base)
             z: Target z position in meters (up from base)
             roll: Target roll orientation in radians

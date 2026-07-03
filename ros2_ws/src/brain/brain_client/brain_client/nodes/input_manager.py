@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Composition root for the input manager node.
 
 Owns the proxy config, the pubs/subs/service surface, and an
@@ -45,7 +47,7 @@ class InputManagerNode(Node):
         self.declare_parameter("openai_realtime_model", "gpt-4o-realtime-preview")
         self.declare_parameter("openai_realtime_url", "wss://api.openai.com/v1/realtime")
         self.declare_parameter("openai_transcribe_model", "gpt-4o-mini-transcribe")
-        self.declare_parameter("cartesia_voice_id", "f786b574-daa5-4673-aa0c-cbe3e8534c02")
+        self.declare_parameter("cartesia_voice_id", "9fdaae0b-f885-4813-b589-3c07cf9d5fea")
         proxy_config = {
             "openai_realtime_model": self.get_parameter("openai_realtime_model").value,
             "openai_realtime_url": self.get_parameter("openai_realtime_url").value,

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 Pick Up Piece Simple Skill - Pick up and place chess pieces using only
 calibration data and arm orientation, without Gemini vision or base driving.

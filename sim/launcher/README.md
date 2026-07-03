@@ -12,7 +12,7 @@ The local workflow uses:
 The CLI brings up:
 
 - `innate-os` in its Docker-based simulation setup
-- `sim/` on the host, serving the built frontend on `http://localhost:8000`
+- `sim/` on the host, serving the simulator backend/API on `http://localhost:8000` (the web UI is served by the OS container at `https://localhost`)
 - an optional local `innate-cloud-agent`
 
 By default, the launcher expects this layout:
@@ -31,41 +31,76 @@ innate-os/
 
 ```bash
 cd innate-os
-./innate setup
-./innate sim up
+./innate-sim setup
+./innate-sim up
 ```
 
 If any local config file does not exist yet, the CLI creates it from its template automatically.
-`./innate setup` prepares the Python environment, builds the simulator frontend, pulls the locked Innate simulator asset pack, and downloads the required ReplicaCAD scene datasets into `sim/data/` when needed. In hosted brain mode, it also asks for an Innate service key and stores it in `.env`. ReplicaCAD downloads require Git LFS (`brew install git-lfs && git lfs install` on macOS).
-On interactive terminals, `./innate sim up` drops into a live dashboard after startup. It keeps the simulator, agent, and brain logs visible together and adds a `btop`-style metrics band at the top. Use `d` to toggle the simulator's real runtime log mode between `quiet` and `debug` without restarting, `q` to leave the dashboard while keeping the runtime running, and `Ctrl+C` to stop the full runtime.
+`./innate-sim setup` prepares the Python environment, pulls the locked Innate simulator asset pack, and downloads the required ReplicaCAD scene datasets into `sim/data/` when needed. In hosted brain mode, it also asks for an Innate service key and stores it in `.env`. ReplicaCAD downloads require Git LFS (`brew install git-lfs && git lfs install` on macOS).
+On interactive terminals, `./innate-sim up` drops into a live dashboard after startup. It keeps the simulator, agent, and brain logs visible together and adds a `btop`-style metrics band at the top. Use `d` to toggle the simulator's real runtime log mode between `quiet` and `debug` without restarting, `q` to leave the dashboard while keeping the runtime running, and `Ctrl+C` to stop the full runtime.
 
 If you want the native simulator viewer window for a run:
 
 ```bash
-./innate sim up --vis
+./innate-sim up --vis
 ```
 
 If you just want a one-shot startup plus a single status snapshot:
 
 ```bash
-./innate sim up --once
+./innate-sim up --once
 ```
 
 To stop everything:
 
 ```bash
-./innate sim down
+./innate-sim down
 ```
+
+To stop everything **and** delete all related Docker containers, named volumes,
+and the local simulator virtualenv (a full reset — rerun `./innate-sim setup`
+afterward):
+
+```bash
+./innate-sim clean
+```
+
+Add `--data` to also delete the downloaded ReplicaCAD datasets and the simulator
+asset pack:
+
+```bash
+./innate-sim clean --data
+```
+
+`clean` never deletes your secrets (`.env`), OS/sim config (`config/settings.yaml`,
+`sim/config.toml`), or environment presets (`sim/data/environments/`); it prints
+what it preserved when it finishes.
 
 To inspect the current state:
 
 ```bash
-./innate sim status
-./innate sim status verbose
-./innate sim logs startup
-./innate sim logs brain
-./innate sim logs simulator
+./innate-sim status
+./innate-sim status verbose
+./innate-sim logs startup
+./innate-sim logs brain
+./innate-sim logs simulator
 ```
+
+`./innate-sim logs` accepts `-n/--lines N` to override how much history a stream
+shows (defaults: 120 for regular streams, 80 for startup, 60 for brain).
+
+To drop into an interactive shell inside the running ROS container (ROS is
+sourced, the workspace is on the path — useful for `ros2` commands, inspecting
+the tmux session, or rebuilding a package with `innate build`):
+
+```bash
+./innate-sim sh
+```
+
+Inside that shell the in-container `innate` developer CLI is on the path (run
+`innate --help`) for building the workspace, restarting nodes, and triggering
+skills. Note this is the container-side CLI (`scripts/innate`), distinct from
+the host `./innate-sim` launcher.
 
 ## Config Files
 
@@ -99,10 +134,9 @@ visible URL after applying them.
 
 ## Notes
 
-- The CLI uses the `sim/` frontend build instead of a separate Vite dev server so the runtime stays self-contained.
-- `./innate setup` and `./innate sim setup` both bootstrap the simulator environment, frontend build, required scene data, locked simulator assets, and hosted brain credentials when needed.
-- `./innate sim up` verifies setup state. If simulator assets are missing/stale, it stops and asks you to rerun setup instead of changing the checkout implicitly.
-- `sim/config.toml` can make the simulator start with its native viewer window by default, while `./innate sim up --vis` is the one-run override.
+- `./innate-sim setup` bootstraps the simulator environment, required scene data, locked simulator assets, and hosted brain credentials when needed.
+- `./innate-sim up` verifies setup state. If simulator assets are missing/stale, it stops and asks you to rerun setup instead of changing the checkout implicitly.
+- `sim/config.toml` can make the simulator start with its native viewer window by default, while `./innate-sim up --vis` is the one-run override.
 - The simulator starts in quiet log mode by default. Press `d` in the dashboard to switch between `quiet` and `debug` live.
 - `status` opens as a dashboard panel with simulator logs, local agent logs, and the OS brain pane side by side when your terminal is wide enough.
 - `up` now lands in a live-refreshing version of that dashboard with a charted metrics band for health, FPS, queue load, and frame age.

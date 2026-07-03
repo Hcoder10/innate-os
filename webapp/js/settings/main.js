@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Settings page — a guided editor over config/settings.yaml. The catalog (knobs,
 // defaults, docs) lives in catalog.js; this renders a row per knob showing its
 // default and current value, lets you override or reset, and saves over the
@@ -10,11 +12,45 @@
 // *unsaved* edit (differs from what's saved) shows blue. Save is enabled only
 // while there are unsaved changes.
 
+import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE } from "../constants.js";
+import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
 import { CATALOG } from "./catalog.js";
 
 initShell("settings", "../");
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
+
+// The yaml knobs below talk to the proxy, but the speaker-volume control is a
+// live rosbridge service call, so this page needs the shared socket: connect to
+// the serving host (the robot).
+const servedHost = location.hostname;
+if (servedHost) {
+  ros.connect(servedHost);
+  // rosClient retries on its own after a drop that follows a successful open, but
+  // a first connect that never opens fails fast with no retry — which would strand
+  // the volume control with no in-page recovery (this page has no connect card,
+  // unlike the mountPage ones). So retry the initial-connect-failed case here,
+  // debounced so a refused connection can't spin, and only until we've connected
+  // once: after that, drops self-heal via rosClient and an explicit disconnect
+  // (header badge) is respected.
+  let everConnected = false;
+  /** @type {number | null} */
+  let connectRetry = null;
+  ros.onStateChange((state) => {
+    if (state === "connected") everConnected = true;
+    if (state === "disconnected" && !everConnected) {
+      if (connectRetry === null) {
+        connectRetry = setTimeout(() => {
+          connectRetry = null;
+          ros.connect(servedHost);
+        }, 5000);
+      }
+    } else if (connectRetry !== null) {
+      clearTimeout(connectRetry);
+      connectRetry = null;
+    }
+  });
+}
 
 /**
  * @typedef {Object} Entry
@@ -41,6 +77,7 @@ const sections = [];
 
 let saveBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
 let resetAllBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
+let restartBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
 let dirtyEl = /** @type {HTMLElement} */ (document.createElement("span"));
 let statusEl = /** @type {HTMLElement} */ (document.createElement("span"));
 
@@ -66,14 +103,16 @@ const STYLE = `
 .set-group.open .set-group-body { display: block; }
 .set-group-body-inner { padding: 0 4px 14px; }
 .set-group-note { color: var(--muted, #8a90a0); font-size: 12px; margin: 0 0 10px; }
-.set-row { display: flex; align-items: center; gap: 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
+.set-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 11px 12px; border-radius: 10px; border: 1px solid transparent;
   transition: background .15s ease, border-color .15s ease; }
 .set-row:hover { background: rgba(255,255,255,.025); }
 .set-row.saved { border-color: rgba(224,145,58,.45); background: rgba(224,145,58,.07); }
 .set-row.dirty { border-color: rgba(117,105,253,.6); background: rgba(64,31,251,.10); }
-.set-info { flex: 1; min-width: 0; }
+.set-info { flex: 1 1 240px; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
+.set-doc-link { color: var(--primary, #7569FD); text-decoration: none; }
+.set-doc-link:hover { text-decoration: underline; }
 .set-ctl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .set-ctl input[type=number] { width: 84px; padding: 6px 8px; text-align: right; border-radius: 8px;
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
@@ -91,14 +130,19 @@ const STYLE = `
 .set-reset-all { margin-left: auto; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--hairline, #2a2f3a);
   background: none; color: var(--text, #e7e7ea); font: inherit; cursor: pointer; }
 .set-reset-all:disabled { opacity: .4; cursor: default; }
+.set-restart { padding: 8px 14px; border-radius: 9px; border: 1px solid var(--hairline, #2a2f3a);
+  background: none; color: var(--text, #e7e7ea); font: inherit; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
+.set-restart:not(:disabled):hover { border-color: var(--primary, #7569FD); color: var(--primary, #7569FD); }
+.set-restart:disabled { opacity: .4; cursor: default; }
 .set-dirty { font-size: 13px; color: var(--primary, #7569FD); }
 .set-status { font-size: 13px; }
 .set-status.ok { color: #3ecf8e; }
 .set-status.err { color: #ff6b6b; }
 .set-status.muted { color: var(--muted, #8a90a0); }
-.set-ctl input.set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
+.set-ctl :is(input, select).set-text { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hairline, #2a2f3a);
   background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl > input.set-text { width: 200px; }
+.set-ctl > select.set-text { width: 216px; cursor: pointer; }
 .set-default { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-row-list { flex-direction: column; align-items: stretch; }
 .set-row-list .set-ctl { flex-direction: column; align-items: stretch; gap: 8px; margin-top: 10px; }
@@ -113,6 +157,21 @@ const STYLE = `
 .set-slider { width: 120px; accent-color: var(--primary, #401FFB); }
 .set-slider-read { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 62px; text-align: right; }
 .set-slider-read .mx { color: var(--muted, #8a90a0); }
+.set-live { border: 1px solid rgba(62,207,142,.30); background: rgba(62,207,142,.05);
+  border-radius: 10px; padding: 14px 16px; margin: 0 0 26px; }
+.set-live .set-row:hover { background: none; }
+.set-live-status { font-size: 12px; margin-left: 6px; }
+.set-live .set-slider { width: 200px; }
+
+/* On narrow screens stack each row and give the controls the full width so the
+   voice picker's dropdown + paste field wrap and flex to fit instead of
+   overflowing. */
+@media (max-width: 520px) {
+  .set-row { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+  .set-info { flex: 0 0 auto; }
+  .set-ctl { width: 100%; flex-wrap: wrap; }
+  .set-ctl > select.set-text, .set-ctl > input.set-text { flex: 1 1 160px; width: auto; min-width: 0; }
+}
 `;
 
 /** Walk a path into the nested overrides dict; undefined if absent. */
@@ -146,6 +205,10 @@ function defaultLabel(/** @type {import("./catalog.js").Knob} */ knob) {
   if (knob.type === "list") {
     const arr = /** @type {string[]} */ (knob.default);
     return arr.length ? "default " + arr.join(", ") : "default (none)";
+  }
+  if (knob.options) {
+    const opt = knob.options.find((o) => o.value === knob.default);
+    if (opt) return "default " + opt.label;
   }
   return "default " + String(knob.default);
 }
@@ -192,6 +255,159 @@ function resetAll() {
   recompute();
 }
 
+const DEFAULT_VOLUME = 80; // robot's built-in default (percent) until /robot/info arrives.
+
+/** Clamp to an integer 0–100, mirroring the mobile app's clampVolumePercent. */
+function clampVolume(/** @type {number} */ value) {
+  if (!Number.isFinite(value)) return DEFAULT_VOLUME;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+/**
+ * Live speaker-volume control. Unlike the yaml knobs below, this is a rosbridge
+ * service call that applies immediately and persists on the robot — no restart.
+ * The slider is the raw volume_percent (0–100): it reads the current value from
+ * /robot/info and writes via /set_volume on release. The robot lifts the low end
+ * of the range so the bottom of the slider stays audible (see apply_alsa_volume).
+ */
+function buildVolumeSection() {
+  const section = document.createElement("section");
+  section.className = "set-live";
+
+  const row = document.createElement("div");
+  row.className = "set-row";
+
+  const info = document.createElement("div");
+  info.className = "set-info";
+  const label = document.createElement("span");
+  label.className = "set-label";
+  label.textContent = "Speaker volume";
+  const doc = document.createElement("span");
+  doc.className = "set-doc";
+  doc.textContent = "The robot's voice volume. Applies immediately — no restart.";
+  info.append(label, doc);
+  row.appendChild(info);
+
+  const ctl = document.createElement("div");
+  ctl.className = "set-ctl";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "set-slider";
+  slider.min = "0";
+  slider.max = "100";
+  slider.step = "1";
+  // Resting thumb position while we wait for the robot's value; the readout shows
+  // "—" and the slider stays disabled, so this isn't read as a real setting.
+  slider.value = "50";
+  slider.disabled = true;
+  ctl.appendChild(slider);
+
+  const read = document.createElement("span");
+  read.className = "set-slider-read";
+  const cur = document.createElement("span");
+  cur.textContent = "—"; // nothing until /robot/info reports the live volume
+  const mx = document.createElement("span");
+  mx.className = "mx";
+  mx.textContent = "";
+  read.append(cur, mx);
+  ctl.appendChild(read);
+
+  const status = document.createElement("span");
+  status.className = "set-live-status set-status muted";
+  ctl.appendChild(status);
+
+  row.appendChild(ctl);
+  section.appendChild(row);
+
+  // Last percent known to be applied on the robot; the revert target on failure.
+  let robotPercent = DEFAULT_VOLUME;
+  let hasValue = false; // false until /robot/info reports the live volume
+  let dragging = false;
+  let saving = false;
+
+  const setLiveStatus = (/** @type {string} */ msg, /** @type {string} */ cls) => {
+    status.textContent = msg;
+    status.className = "set-live-status set-status " + cls;
+  };
+
+  const renderValue = (/** @type {number} */ percent) => {
+    slider.value = String(percent);
+    cur.textContent = String(percent);
+    mx.textContent = " / 100";
+  };
+
+  // Disabled until connected AND the live volume has loaded (so the page never
+  // shows a guessed default), and while a save is in flight so a mid-save release
+  // can't be silently dropped (nor re-enabled by a state change). Clearing
+  // `dragging` on disable matters too: a disconnect mid-drag would otherwise
+  // leave it stuck true, so the subscription below would ignore every /robot/info
+  // after reconnect and the slider would freeze, diverging from the real volume.
+  const refreshEnabled = () => {
+    const shouldDisable = ros.state !== "connected" || saving || !hasValue;
+    if (shouldDisable) dragging = false;
+    slider.disabled = shouldDisable;
+  };
+
+  ros.onStateChange((state) => {
+    const connected = state === "connected";
+    refreshEnabled();
+    if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
+    else if (status.classList.contains("muted")) setLiveStatus("", "muted");
+  });
+
+  ros.subscribe(ROBOT_INFO_TOPIC, (/** @type {StringMsg} */ payload) => {
+    /** @type {RobotInfo} */
+    let infoData;
+    try {
+      infoData = JSON.parse(payload.data);
+    } catch {
+      return;
+    }
+    if (typeof infoData.volume_percent !== "number") return;
+    robotPercent = clampVolume(infoData.volume_percent);
+    const firstValue = !hasValue;
+    hasValue = true;
+    // Don't clobber a value the operator is actively dragging or saving.
+    if (!dragging && !saving) renderValue(robotPercent);
+    if (firstValue) refreshEnabled(); // enable now that the live value has loaded
+  });
+
+  slider.addEventListener("input", () => {
+    dragging = true;
+    cur.textContent = slider.value;
+  });
+
+  slider.addEventListener("change", async () => {
+    dragging = false;
+    const next = clampVolume(Number(slider.value));
+    renderValue(next);
+    if (next === robotPercent || saving) return;
+    const previous = robotPercent;
+    saving = true;
+    refreshEnabled();
+    setLiveStatus("Saving…", "muted");
+    try {
+      /** @type {{ success: boolean, message?: string }} */
+      const res = await ros.callService(SET_VOLUME_SERVICE, { volume_percent: next });
+      if (!res.success) throw new Error(res.message || "Failed to set volume.");
+      robotPercent = next;
+      setLiveStatus("Volume set.", "ok");
+    } catch {
+      // Re-seed robotPercent too: a /robot/info update may have moved it during
+      // the save, and on failure the robot's volume is still `previous`.
+      robotPercent = previous;
+      renderValue(previous);
+      setLiveStatus("Couldn't set volume. Try again.", "err");
+    } finally {
+      saving = false;
+      refreshEnabled();
+    }
+  });
+
+  return section;
+}
+
 function build() {
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -216,6 +432,8 @@ function build() {
   note.textContent =
     "Tunable parameter overrides. Blank = the robot's built-in default. Changes save to config/settings.yaml; restart the robot to apply.";
   wrap.appendChild(note);
+
+  wrap.appendChild(buildVolumeSection());
 
   for (const group of CATALOG) {
     const g = document.createElement("section");
@@ -272,10 +490,15 @@ function build() {
   resetAllBtn.textContent = "Reset all to defaults";
   resetAllBtn.disabled = true;
   resetAllBtn.addEventListener("click", resetAll);
+  restartBtn.className = "set-restart";
+  restartBtn.textContent = "Restart robot";
+  restartBtn.title = "Restart the robot to apply saved settings (same as `innate restart`)";
+  restartBtn.addEventListener("click", onRestart);
   bar.appendChild(saveBtn);
   bar.appendChild(dirtyEl);
   bar.appendChild(statusEl);
   bar.appendChild(resetAllBtn);
+  bar.appendChild(restartBtn);
   page.appendChild(bar);
 
   stage.appendChild(page);
@@ -295,6 +518,16 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
   const doc = document.createElement("span");
   doc.className = "set-doc";
   doc.textContent = knob.doc;
+  if (knob.docHref) {
+    doc.append(" ");
+    const link = document.createElement("a");
+    link.className = "set-doc-link";
+    link.href = knob.docHref;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = knob.docLinkText || "Learn more";
+    doc.append(link);
+  }
   info.append(label, doc);
   row.appendChild(info);
 
@@ -365,6 +598,56 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       entry.value = Number(slider.value);
       entry.overridden = true;
       cur.textContent = String(entry.value);
+      recompute();
+    });
+  } else if (knob.options) {
+    const CUSTOM = "__custom__";
+    const select = document.createElement("select");
+    select.className = "set-text set-select";
+    for (const opt of knob.options) {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      select.appendChild(o);
+    }
+    // A permanent "Custom…" choice that reveals a free-text field for any off-list value
+    // (e.g. a voice id pasted from Cartesia's library, or one set over SSH).
+    const customOpt = document.createElement("option");
+    customOpt.value = CUSTOM;
+    customOpt.textContent = "Custom…";
+    select.appendChild(customOpt);
+    ctl.appendChild(select);
+
+    const custom = document.createElement("input");
+    custom.type = "text";
+    custom.className = "set-text set-custom";
+    custom.placeholder = "Paste a voice ID";
+    ctl.appendChild(custom);
+
+    const isStock = () => knob.options.some((o) => o.value === entry.value);
+    entry.render = () => {
+      const stock = isStock();
+      select.value = stock ? String(entry.value) : CUSTOM;
+      custom.value = stock ? "" : String(entry.value);
+      custom.style.display = stock ? "none" : "";
+    };
+    select.addEventListener("change", () => {
+      const custable = select.value === CUSTOM;
+      custom.style.display = custable ? "" : "none";
+      if (custable) {
+        // Just reveal the field — don't commit an empty id. The input handler
+        // commits once the user actually types one.
+        custom.focus();
+        return;
+      }
+      entry.value = select.value;
+      entry.overridden = true;
+      recompute();
+    });
+    custom.addEventListener("input", () => {
+      entry.value = custom.value;
+      // An empty id is never valid (it breaks TTS), so it isn't a real override.
+      entry.overridden = custom.value !== "";
       recompute();
     });
   } else if (knob.type === "string") {
@@ -563,6 +846,14 @@ async function onSave() {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
   }
+  // The TTS voice used to be two per-node params (brain_client_node /
+  // input_manager_node cartesia_voice_id) before it became the global `/**` knob.
+  // A node-specific param beats a `/**` wildcard in ROS, so any leftover per-node
+  // entries silently shadow the picker. The catalog no longer has those paths, so
+  // its clears can't reach them — always clear them here so saving heals the orphans.
+  for (const node of ["brain_client_node", "input_manager_node"]) {
+    clears.push([node, "ros__parameters", "cartesia_voice_id"]);
+  }
   saveBtn.disabled = true;
   setStatus("Saving…");
   try {
@@ -581,6 +872,28 @@ async function onSave() {
   } catch (err) {
     setStatus("Save failed: " + (err instanceof Error ? err.message : String(err)), "err");
     recompute();
+  }
+}
+
+async function onRestart() {
+  if (!window.confirm("Restart the robot now? Any running task will stop, and the robot will come back in ~30s with the latest saved settings.")) {
+    return;
+  }
+  restartBtn.disabled = true;
+  setStatus("Restarting the robot…");
+  try {
+    const res = await fetch("/restart", { headers: { "X-Requested-By": "innate-webapp" } });
+    if (res.ok) {
+      // The proxy is torn down by the restart, so leave the button disabled —
+      // the page reconnects on its own once the robot is back.
+      setStatus("Restarting — the robot will be back in ~30s.", "ok");
+    } else {
+      setStatus("Restart failed: " + (await res.text().catch(() => "") || res.status), "err");
+      restartBtn.disabled = false;
+    }
+  } catch (err) {
+    setStatus("Couldn't reach the robot to restart: " + (err instanceof Error ? err.message : String(err)), "err");
+    restartBtn.disabled = false;
   }
 }
 

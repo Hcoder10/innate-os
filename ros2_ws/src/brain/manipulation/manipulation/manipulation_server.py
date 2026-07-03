@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 import gc
 import json
 import math
@@ -90,13 +92,13 @@ class ManipulationServer(Node):
         # ensembling (see manipulation_server.yaml for the behavior of each sign). Resolve and
         # validate it once here, normalizing 0 -> None ("disabled"), so the same value drives
         # both create_act_config (which pins n_action_steps=1 when ensembling) and TRTACTPolicy.
-        self.declare_parameter("temporal_ensemble_coeff", 0.01)
+        self.declare_parameter("temporal_ensemble_coeff", 0.0)
         coeff = self.get_parameter("temporal_ensemble_coeff").value
         if not math.isfinite(coeff):
             # nan/inf pass the float param but poison the ensemble weights (exp(-nan*i)=nan),
             # which would publish NaN joint commands. Reject like a malformed value.
-            self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); using default 0.01")
-            coeff = 0.01
+            self.get_logger().warn(f"Invalid temporal_ensemble_coeff ({coeff}); disabling ensembling")
+            coeff = 0.0
         self.temporal_ensemble_coeff = coeff if coeff != 0 else None
 
         # Image size for policy inference (matches checkpoint training)
@@ -354,18 +356,14 @@ class ManipulationServer(Node):
             ):
                 return "FAILURE", f"Failed to load policy from {checkpoint_path}"
 
-            # Wait for sensor data to arrive after subscription creation
-            sensor_wait_deadline = time.time() + 2.0
-            while not self._check_sensor_availability():
-                if time.time() > sensor_wait_deadline:
-                    self.get_logger().error("Required sensors not available after 2s. Cannot execute learned behavior.")
-                    return (
-                        "FAILURE",
-                        "Required sensors not available (cameras or joint state). "
-                        "If the arm joint state is missing, please check that the arm's USB-C cable is plugged in.",
-                    )
-                time.sleep(0.1)
-            self.get_logger().info("All sensors available")
+            # Don't run inference on empty/stale buffers: wait for every required
+            # sensor to come online first, and bail out if they don't.
+            if not self._wait_for_sensors():
+                return (
+                    "FAILURE",
+                    "Required sensors not available (cameras or joint state). "
+                    "If the arm joint state is missing, please check that the arm's USB-C cable is plugged in.",
+                )
 
             # Set head to AI position for optimal camera angle
             self.get_logger().info("Setting head to AI position for optimal camera angle")
@@ -1023,6 +1021,25 @@ class ManipulationServer(Node):
             time.sleep(3.0)  # Wait for head to move to AI position
         except Exception as e:
             self.get_logger().error(f"Error setting AI position: {e}")
+
+    def _wait_for_sensors(self, timeout=2.0, poll_interval=0.1):
+        """Poll until every required sensor is publishing, or give up after ``timeout``.
+
+        Returns True once all sensors are available, False if the timeout elapses
+        first. Returns immediately when sensors are already ready.
+        """
+        # Monotonic deadline: wall-clock time can jump (NTP, manual set) and
+        # either fire early or hang the wait, so don't gate the timeout on it.
+        deadline = time.monotonic() + timeout
+        while not self._check_sensor_availability():
+            if time.monotonic() > deadline:
+                self.get_logger().error(
+                    f"Required sensors not available after {timeout:.0f}s. Cannot execute learned behavior."
+                )
+                return False
+            time.sleep(poll_interval)
+        self.get_logger().info("All sensors available")
+        return True
 
     def _check_sensor_availability(self):
         """Check if all required sensors are providing data."""

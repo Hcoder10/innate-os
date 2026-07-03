@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Shared types for the Innate webapp.
 // Ambient declarations (no imports/exports), so every `// @ts-check`'d module
 // can reference them in JSDoc without import clutter.
@@ -189,6 +191,7 @@ interface RobotInfo {
   /** Newer robot software with the recorder/replay services — gates the
    * Collect page's "Recorded movement" (replay skill) option. */
   supports_digital_skills?: boolean;
+  volume_percent?: number; // 0–100 robot speaker volume
 }
 
 /** JSON payload carried inside /mars/head/current_position's std_msgs/String. */
@@ -234,14 +237,22 @@ interface Navigator {
   readonly serial?: Serial;
 }
 
-/** Video link lifecycle. "streaming" means a live main-camera track is up.
- * "preempted" means another device (the phone app) took the single camera. */
-type WebRtcStatus = "idle" | "connecting" | "streaming" | "error" | "preempted";
+/** Video link lifecycle. "streaming" means a live main-camera track is up. */
+type WebRtcStatus = "idle" | "connecting" | "streaming" | "error";
 
 /** Snapshot emitted by WebRtcSession on every change. */
 interface WebRtcState {
   status: WebRtcStatus;
+  /** The primary (big) camera's stream — what the full-bleed stage shows. */
   videoStream: MediaStream | null;
+  /** Every negotiated camera's stream, indexed by m-line (null until a track arrives). */
+  videoStreams: (MediaStream | null)[];
+  /** Per m-line liveness: true once that camera's track is unmuted (real frames flowing). */
+  videoLive: boolean[];
   audioStream: MediaStream | null;
   audioRequested: boolean;
+  /** Live RTCPeerConnection.iceConnectionState ("new" before a peer exists). */
+  iceState: string;
+  /** True once we've fallen back to a public STUN server after the local-only config failed. */
+  stunFallback: boolean;
 }

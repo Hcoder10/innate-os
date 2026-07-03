@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Input-device management: load, route data, activate/deactivate, TTS ducking.
 
 Bridges ROS topics to the pure-Python input devices. Input authors implement the

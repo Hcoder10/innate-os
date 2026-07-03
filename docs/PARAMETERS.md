@@ -7,7 +7,7 @@ Two files, two jobs:
 | **`config/settings.yaml`** | How the robot **behaves** — tunable ROS parameters: driving speed, camera, arm, manipulation, navigation, brain runtime knobs, TTS voice, extra agent/skill dirs | native ROS 2 params YAML |
 | **`.env`** | How to reach the cloud + **environment** — secrets (`INNATE_SERVICE_KEY`), all cloud endpoint URLs (`BRAIN_WEBSOCKET_URI`, `TELEMETRY_URL`, `UNINAVID_WS_URL`, `INNATE_PROXY_URL`, …) | dotenv |
 
-Both are auto-created from their `.template` on update (and by `./innate sim setup`); your edits are never overwritten.
+Both are auto-created from their `.template` on update (and by `./innate-sim setup`); your edits are never overwritten.
 
 > Cloud endpoint URLs all live in `.env` (one place to point the robot at a different
 > backend) — several are read by client libraries outside the ROS param system, so they

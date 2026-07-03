@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 from __future__ import annotations
 
 import hashlib
@@ -17,15 +19,16 @@ from assets import ensure_sim_assets
 from config import (
     BOOTSTRAP_LOG_PATH,
     CLI_SIM,
+    CLOUD_AGENT_DIR_NAME,
     CLOUD_AGENT_LOG_PATH,
     COMPOSE_LOG_PATH,
     DOWN_LOG_PATH,
-    FRONTEND_LOG_PATH,
     GENERATED_OS_ENV_PATH,
     HOSTED_MODE,
-    LAUNCHER_DIR,
+    LOCAL_BRAIN_COMPOSE_PROFILE,
     LOCAL_IMAGE_MODE,
     LOCAL_MODES,
+    NONE_MODE,
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
@@ -42,6 +45,7 @@ from config import (
     SIM_REQUIRED_DATA_PATHS,
     SIM_STARTUP_CHECK_DELAY_SECONDS,
     TMUX_SESSION_NAME,
+    WORKSPACE_ROOT,
     StackError,
     compute_ros_install_validation_hash,
     ensure_state_dir,
@@ -51,23 +55,6 @@ from config import (
 )
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
-FRONTEND_BUILD_INPUT_FILES = (
-    ".env",
-    ".env.development",
-    ".env.local",
-    ".env.production",
-    "index.html",
-    "package.json",
-    "tsconfig.app.json",
-    "tsconfig.json",
-    "tsconfig.node.json",
-    "vite.config.js",
-    "vite.config.mjs",
-    "vite.config.ts",
-    "yarn.lock",
-)
-FRONTEND_BUILD_INPUT_DIRS = ("public", "src")
-FRONTEND_DEPENDENCY_INPUT_FILES = ("package.json", "yarn.lock")
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
 
 
@@ -95,12 +82,18 @@ def run_logged(
         raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
+# Known-benign driver noise. Skipped by latest_log_line so a heartbeat doesn't
+# repeat a stale warning for minutes while silent work (e.g. Genesis kernel
+# compilation) runs underneath, hiding the last meaningful progress line.
+NOISE_LOG_MARKERS = ("UNSUPPORTED (log once)",)
+
+
 def latest_log_line(path: Path) -> str | None:
     if not path.exists():
         return None
     for line in reversed(path.read_text(errors="replace").splitlines()):
         stripped = line.strip()
-        if stripped:
+        if stripped and not any(marker in stripped for marker in NOISE_LOG_MARKERS):
             return stripped
     return None
 
@@ -201,134 +194,25 @@ def python_import_succeeds(python_path: Path, module: str) -> bool:
     return result.returncode == 0
 
 
-def frontend_build_inputs(frontend_dir: Path) -> list[Path]:
-    inputs: list[Path] = []
-    for rel_path in FRONTEND_BUILD_INPUT_FILES:
-        path = frontend_dir / rel_path
-        if path.is_file():
-            inputs.append(path)
-
-    for rel_dir in FRONTEND_BUILD_INPUT_DIRS:
-        path = frontend_dir / rel_dir
-        if not path.is_dir():
-            continue
-        inputs.extend(child for child in path.rglob("*") if child.is_file())
-
-    return inputs
-
-
-def newest_mtime(paths: list[Path]) -> float:
-    newest = 0.0
-    for path in paths:
-        try:
-            newest = max(newest, path.stat().st_mtime)
-        except OSError:
-            continue
-    return newest
-
-
-def frontend_build_is_stale(frontend_dir: Path, dist_index: Path) -> bool:
-    if not dist_index.exists():
-        return True
-    try:
-        dist_mtime = dist_index.stat().st_mtime
-    except OSError:
-        return True
-    return newest_mtime(frontend_build_inputs(frontend_dir)) > dist_mtime
-
-
-def frontend_dependencies_are_stale(frontend_dir: Path) -> bool:
-    node_modules = frontend_dir / "node_modules"
-    if not node_modules.exists():
-        return True
-
-    install_marker = node_modules / ".yarn-integrity"
-    if not install_marker.exists():
-        return True
-
-    dependency_inputs = [
-        frontend_dir / rel_path for rel_path in FRONTEND_DEPENDENCY_INPUT_FILES if (frontend_dir / rel_path).is_file()
-    ]
-    return newest_mtime(dependency_inputs) > newest_mtime([install_marker])
-
-
-def ensure_frontend_build(frontend_dir: Path, *, allow_setup: bool) -> None:
-    dist_index = frontend_dir / "dist" / "index.html"
-    build_exists = dist_index.exists()
-    build_stale = frontend_build_is_stale(frontend_dir, dist_index)
-    if not build_stale:
-        return
-
-    if not build_exists and not allow_setup:
-        raise StackError(f"Simulator frontend build is missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`.")
-
-    ensure_dependency("yarn")
-    node_modules = frontend_dir / "node_modules"
-    if not node_modules.exists():
-        if not allow_setup:
-            raise StackError(
-                f"Simulator frontend dependencies are missing.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Installing simulator frontend dependencies...")
-        run_logged(
-            ["yarn", "install"],
-            cwd=frontend_dir,
-            log_path=FRONTEND_LOG_PATH,
-            failure_message="Simulator frontend dependency install failed.",
-        )
-    elif frontend_dependencies_are_stale(frontend_dir):
-        if not allow_setup:
-            raise StackError(
-                f"Simulator frontend dependencies are stale.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Updating simulator frontend dependencies...")
-        run_logged(
-            ["yarn", "install"],
-            cwd=frontend_dir,
-            log_path=FRONTEND_LOG_PATH,
-            failure_message="Simulator frontend dependency install failed.",
-        )
-
-    if build_exists:
-        log("Simulator frontend build is stale. Rebuilding...")
-    else:
-        log("Building simulator frontend...")
-    run_logged(
-        ["yarn", "build"],
-        cwd=frontend_dir,
-        log_path=FRONTEND_LOG_PATH,
-        failure_message="Simulator frontend build failed.",
-    )
-
-
-def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
+def sim_venv_python(config: dict[str, object]) -> Path:
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    frontend_dir = sim_repo / "frontend"
-    sim_python = sim_repo / ".venv" / "bin" / "python"
+    return sim_repo / ".venv" / "bin" / "python"
+
+
+def ensure_sim_setup(config: dict[str, object]) -> Path:
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    sim_python = sim_venv_python(config)
 
     ensure_dependency("python3")
 
-    needs_setup = not sim_python.exists()
-    if sim_python.exists() and not python_import_succeeds(sim_python, "dotenv"):
-        if not allow_setup:
-            raise StackError(
-                f"Simulator virtualenv is incomplete.\nRun `{CLI_SIM} setup` to repair {sim_repo / '.venv'}."
-            )
-        warn("Simulator virtualenv is incomplete. Re-running setup to repair it...")
-        needs_setup = True
-
-    if needs_setup:
-        if not allow_setup:
-            raise StackError(
-                f"Simulator Python environment is not ready.\nRun `{CLI_SIM} setup` before `{CLI_SIM} up`."
-            )
-        log("Setting up sim Python environment...")
-        run_logged(
-            ["bash", "./setup.sh"],
-            cwd=sim_repo,
-            log_path=BOOTSTRAP_LOG_PATH,
-            failure_message="Simulator environment setup failed.",
-        )
+    log("Setting up sim Python environment...")
+    log(f"Logs: {BOOTSTRAP_LOG_PATH}")
+    run_logged(
+        ["bash", "./setup.sh"],
+        cwd=sim_repo,
+        log_path=BOOTSTRAP_LOG_PATH,
+        failure_message="Simulator environment setup failed.",
+    )
 
     if not sim_python.exists():
         raise StackError(f"Simulator Python environment was not created at {sim_python}")
@@ -336,8 +220,6 @@ def ensure_sim_setup(config: dict[str, object], *, allow_setup: bool) -> Path:
         raise StackError(
             f"Simulator Python environment is missing required packages after setup.\nCheck: {BOOTSTRAP_LOG_PATH}"
         )
-
-    ensure_frontend_build(frontend_dir, allow_setup=allow_setup)
 
     return sim_python
 
@@ -396,7 +278,7 @@ def ensure_os_image_available(
     )
 
 
-def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
+def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
     os_image_auto = bool(config["os_image_auto"])
@@ -406,7 +288,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
         log("Innate OS dev container already running.")
     else:
         up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
-        if os_image:
+        if offline:
+            # Reuse the locally-built OS image; never pull or build, which would
+            # reach for the prebuilt tag and base images over the network.
+            os_image = ""
+            up_cmd.append("--no-build")
+        elif os_image:
             try:
                 ensure_os_image_available(
                     os_image,
@@ -517,13 +404,16 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path) -> None:
     )
 
 
-def down_os(config: dict[str, object]) -> None:
+def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     compose_env = os_compose_env()
     ensure_state_dir()
+    down_args = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"]
+    if remove_volumes:
+        down_args += ["-v", "--remove-orphans"]
     with DOWN_LOG_PATH.open("a", encoding="utf-8") as log_file:
         subprocess.run(
-            ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"],
+            down_args,
             cwd=os_repo,
             env=compose_env,
             text=True,
@@ -534,37 +424,106 @@ def down_os(config: dict[str, object]) -> None:
         )
 
 
+def delete_sim_venv(config: dict[str, object]) -> None:
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    venv_dir = sim_repo / ".venv"
+    if not venv_dir.exists():
+        log("No simulator virtualenv to delete.")
+        return
+    log(f"Deleting simulator virtualenv at {venv_dir}...")
+    shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+def delete_sim_data(config: dict[str, object]) -> None:
+    """Delete the downloaded ReplicaCAD datasets and the extracted asset pack.
+
+    Only removes content fetched by `./innate-sim setup`. Git-tracked files
+    (data/environments/, data/assets/.gitignore, assets.lock.json) are preserved;
+    setup re-downloads the rest (asset state self-heals via missing-file checks).
+    """
+    data_dir: Path = config["sim_repo"] / "data"  # type: ignore[operator]
+    removed_any = False
+    for rel in ("ReplicaCAD_baked_lighting", "ReplicaCAD_dataset", "urdf", "replica_scene.stl"):
+        target = data_dir / rel
+        if not target.exists():
+            continue
+        log(f"Deleting {target}...")
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            target.unlink(missing_ok=True)
+        removed_any = True
+    # The asset pack extracts into data/assets/, which also holds a git-tracked
+    # .gitignore — clear the contents but keep that tracked file.
+    assets_dir = data_dir / "assets"
+    if assets_dir.is_dir():
+        for entry in assets_dir.iterdir():
+            if entry.name == ".gitignore":
+                continue
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+            removed_any = True
+    if removed_any:
+        log("Deleted ReplicaCAD datasets and simulator asset pack.")
+    else:
+        log("No downloaded simulator data to delete.")
+
+
+def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> None:
+    """Stop the runtime and delete all related Docker resources and the sim venv."""
+    stop_simulator()
+    down_cloud_agent()
+    log("Removing Innate OS containers, networks, and named volumes...")
+    down_os(config, remove_volumes=True)
+    # Belt-and-suspenders: force-remove named containers that may linger outside
+    # the compose project (e.g. after a partial or failed startup).
+    for container in ("innate-dev", "innate-cloud-agent"):
+        subprocess.run(
+            ["docker", "rm", "-f", container],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    delete_sim_venv(config)
+    if delete_data:
+        delete_sim_data(config)
+
+
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
+    """Bring up the local brain as the `cloud-agent` service in the OS compose
+    project (gated by the local-brain profile). Hosted/none modes run no local
+    agent."""
     mode = config["mode"]
     if mode == HOSTED_MODE:
-        log("Cloud agent mode is hosted. Skipping local cloud-agent startup.")
+        log("Brain backend is hosted. Skipping local cloud-agent startup.")
+        return
+    if mode == NONE_MODE:
+        log("No brain backend configured (no GEMINI_API_KEY or INNATE_SERVICE_KEY). Skipping cloud-agent.")
         return
 
     ensure_docker_available(command_hint=f"{CLI_SIM} up")
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
 
+    # The cloud-agent reads GEMINI_API_KEY from the same env file as the OS
+    # container, and the local-brain profile must be active to start the service.
     base_env = {
-        "STACK_CLOUD_AGENT_PORT": str(config["cloud_port"]),
-        "STACK_CLOUD_AGENT_ENV_FILE": str(cloud_env_file),
+        "COMPOSE_PROFILES": LOCAL_BRAIN_COMPOSE_PROFILE,
+        "INNATE_OS_ENV_FILE": str(cloud_env_file),
     }
+    up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
 
     if mode == LOCAL_IMAGE_MODE:
         image = str(config["cloud_image"]).strip()
         if not image:
             raise StackError("sim/config.toml must set cloud_agent.image when cloud_agent.mode = 'local-image'.")
         log(f"Starting local cloud-agent image {image}...")
-        compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_IMAGE": image})
+        compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_IMAGE": image})
         run_logged(
-            [
-                "docker",
-                "compose",
-                "-p",
-                "stack-cloud",
-                "-f",
-                "compose.cloud-agent.image.yml",
-                "up",
-                "-d",
-            ],
-            cwd=LAUNCHER_DIR,
+            [*up_cmd, "--no-build", "cloud-agent"],
+            cwd=os_repo,
             env=compose_env,
             log_path=CLOUD_AGENT_LOG_PATH,
             failure_message="Local cloud-agent image startup failed.",
@@ -573,23 +532,17 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
 
     cloud_repo: Path | None = config["cloud_repo"]  # type: ignore[assignment]
     if cloud_repo is None:
-        raise StackError("sim/config.toml must set cloud_agent.source_dir when cloud_agent.mode = 'local-source'.")
+        raise StackError(
+            "The innate-cloud-agent repository was not found next to innate-os "
+            f"(expected at {WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME}).\n"
+            f"Run `{CLI_SIM} setup` to clone it, or set sim/config.toml cloud_agent.source_dir."
+        )
     require_path(cloud_repo, "innate-cloud-agent repository")
     log(f"Starting local cloud-agent from source at {cloud_repo}...")
-    compose_env = docker_compose_env({**base_env, "STACK_CLOUD_AGENT_SOURCE_DIR": str(cloud_repo)})
+    compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_DIR": str(cloud_repo)})
     run_logged(
-        [
-            "docker",
-            "compose",
-            "-p",
-            "stack-cloud",
-            "-f",
-            "compose.cloud-agent.source.yml",
-            "up",
-            "-d",
-            "--build",
-        ],
-        cwd=LAUNCHER_DIR,
+        [*up_cmd, "--build", "cloud-agent"],
+        cwd=os_repo,
         env=compose_env,
         log_path=CLOUD_AGENT_LOG_PATH,
         failure_message="Local cloud-agent source startup failed.",
@@ -597,16 +550,10 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
 
 
 def down_cloud_agent() -> None:
+    # The cloud-agent now lives in the OS compose project, so `down_os` removes it.
+    # This is a defensive cleanup in case it was started on its own.
     subprocess.run(
-        ["docker", "rm", "-f", "stack-cloud-agent"],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        ["docker", "network", "rm", "stack-cloud_default"],
+        ["docker", "rm", "-f", "innate-cloud-agent"],
         text=True,
         stdin=subprocess.DEVNULL,
         check=False,
@@ -690,12 +637,24 @@ def start_simulator(config: dict[str, object], sim_python: Path) -> None:
         env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
     if config.get("sim_scene_dt") is not None:
         env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
+    if config.get("sim_ros_image_fps") is not None:
+        env["SIM_ROS_IMAGE_FPS"] = str(config["sim_ros_image_fps"])
     if config.get("sim_camera_near") is not None:
         env["SIM_CAMERA_NEAR"] = str(config["sim_camera_near"])
 
     sim_args = shlex.split(str(config["sim_args"]))
     if config.get("sim_visualization") and "--vis" not in sim_args and "-v" not in sim_args:
         sim_args.append("--vis")
+
+    # Fail fast on a taken port: the backend can't serve its HTTP endpoint, so
+    # letting it start would only burn the scene-load timeout before erroring.
+    sim_port = int(env["SIMULATOR_PORT"])
+    if tcp_port_in_use(sim_port):
+        raise StackError(
+            f"Port {sim_port} is already in use, so the simulator HTTP endpoint cannot start.\n"
+            f"Find the process with `lsof -nP -iTCP:{sim_port} -sTCP:LISTEN` and stop it, "
+            f"or set SIMULATOR_PORT in .env to a free port."
+        )
 
     cmd = [str(sim_python), "main.py", *sim_args]
     log("Starting simulator backend...")
@@ -737,6 +696,17 @@ def os_compose_zsh_cmd(command: str) -> list[str]:
     return os_compose_exec_cmd("zsh", "-lc", command)
 
 
+def open_os_container_shell() -> int:
+    """Drop the user into an interactive zsh inside the running ROS container.
+
+    Uses an interactive (TTY) shell so ~/.zshrc runs and sources ROS — a
+    non-interactive `zsh -lc` would leave `ros2` and the workspace unsourced.
+    """
+    if not container_running("innate-dev"):
+        raise StackError(f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first.")
+    return subprocess.run(["docker", "exec", "-it", "innate-dev", "zsh"]).returncode
+
+
 def capture_command_output(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         cmd,
@@ -764,10 +734,15 @@ def command_succeeds(cmd: list[str], *, cwd: Path | None = None, env: dict[str, 
     return result.returncode == 0
 
 
-def tcp_port_open(port: int) -> bool:
-    with socket.socket() as sock:
-        sock.settimeout(1.0)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
+def tcp_port_in_use(port: int) -> bool:
+    """True when something already holds the port (uvicorn binds 0.0.0.0)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+    return False
 
 
 def websocket_port_open(port: int) -> bool:
@@ -785,9 +760,18 @@ def websocket_port_open(port: int) -> bool:
             sock.settimeout(1.0)
             sock.sendall(request)
             response = sock.recv(128)
+            upgraded = response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
+            if upgraded:
+                # Close the upgraded WebSocket politely (masked, empty close
+                # frame) so rws logs a clean close instead of an "End of File"
+                # read error from us abandoning the socket.
+                try:
+                    sock.sendall(b"\x88\x80\x00\x00\x00\x00")
+                except OSError:
+                    pass
+            return upgraded
     except OSError:
         return False
-    return response.startswith(b"HTTP/1.1 101") or response.startswith(b"HTTP/1.0 101")
 
 
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
@@ -829,6 +813,28 @@ def config_simulator_port(config: dict[str, object]) -> str:
     return str(raw_env.get("SIMULATOR_PORT", "8000"))
 
 
+# Latch so the 0.5s dashboard refresh doesn't WS-probe rosbridge forever.
+_rosbridge_ws_confirmed = False
+
+
+def _rosbridge_live(os_status: dict[str, bool]) -> bool:
+    """rosbridge liveness for the steady dashboard refresh.
+
+    WS-probe the endpoint only until it first accepts a connection; afterwards
+    the rws process-liveness check (pgrep) is enough. This stops opening — and
+    immediately dropping — a WebSocket on every refresh, which rws logs as
+    connect/EOF/disconnect noise. Reset when the process dies so a restart is
+    re-probed.
+    """
+    global _rosbridge_ws_confirmed
+    process_live = bool(os_status["os_session_running"] and os_status["rosbridge_process_live"])
+    if not process_live:
+        _rosbridge_ws_confirmed = False
+    elif not _rosbridge_ws_confirmed:
+        _rosbridge_ws_confirmed = websocket_port_open(9090)
+    return process_live and _rosbridge_ws_confirmed
+
+
 def collect_runtime_probe(
     config: dict[str, object],
     *,
@@ -837,8 +843,8 @@ def collect_runtime_probe(
     simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
     sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
-    rosbridge_live = os_status["os_session_running"] and os_status["rosbridge_process_live"] and tcp_port_open(9090)
-    agent_running = True if config["mode"] == HOSTED_MODE else container_running("stack-cloud-agent")
+    rosbridge_live = _rosbridge_live(os_status)
+    agent_running = container_running("innate-cloud-agent") if config["mode"] in LOCAL_MODES else True
     metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
     backend_status = {}
     if isinstance(metrics, dict):
@@ -884,7 +890,7 @@ def runtime_already_running(config: dict[str, object]) -> bool:
         return False
     if not os_runtime_ready(config):
         return False
-    if config["mode"] in LOCAL_MODES and not container_running("stack-cloud-agent"):
+    if config["mode"] in LOCAL_MODES and not container_running("innate-cloud-agent"):
         return False
     return available_agent_count(simulator_port) > 0
 
@@ -987,9 +993,11 @@ def capture_os_brain_logs(config: dict[str, object], lines: int = 18) -> list[st
 def capture_agent_logs(config: dict[str, object], lines: int = 18) -> list[str]:
     if config["mode"] == HOSTED_MODE:
         return ["Hosted mode enabled.", "No local agent container is running."]
-    if not container_running("stack-cloud-agent"):
+    if config["mode"] == NONE_MODE:
+        return ["No brain backend configured.", "The sim is running without an agent."]
+    if not container_running("innate-cloud-agent"):
         return ["Local cloud-agent is not running."]
-    output = capture_command_output(["docker", "logs", "--tail", str(lines), "stack-cloud-agent"])
+    output = capture_command_output(["docker", "logs", "--tail", str(lines), "innate-cloud-agent"])
     if not output:
         return ["No local cloud-agent output yet."]
     return output.splitlines()[-lines:]
@@ -1167,6 +1175,39 @@ def ensure_sim_data(config: dict[str, object], *, allow_fetch: bool) -> None:
         )
 
 
+def ensure_skill_assets(config: dict[str, object]) -> None:
+    """Download skill assets declared in each skill's metadata.json.
+
+    The sim shares the repo workspace/ via bind mount but never runs the
+    hardware post_update.sh, which is where these assets are normally fetched.
+    Mirrors that step here so sim skills have their downloads present.
+    Idempotent: assets already on disk are skipped.
+    """
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    workspace = sim_repo.parent / "workspace"
+    meta_files = sorted(workspace.glob("innate_skills/*/metadata.json")) + sorted(
+        workspace.glob("custom_skills/*/metadata.json")
+    )
+    for meta_file in meta_files:
+        try:
+            downloads = json.loads(meta_file.read_text()).get("downloads") or {}
+        except (json.JSONDecodeError, OSError):
+            continue
+        for fname, url in downloads.items():
+            dest = meta_file.parent / fname
+            if dest.exists():
+                continue
+            log(f"Downloading skill asset {dest.relative_to(workspace)}...")
+            tmp = meta_file.parent / f"{fname}.tmp"
+            try:
+                with urlopen(Request(url), timeout=300) as resp, open(tmp, "wb") as out:
+                    shutil.copyfileobj(resp, out)
+                tmp.replace(dest)
+            except (URLError, OSError) as exc:
+                tmp.unlink(missing_ok=True)
+                raise StackError(f"Failed to download skill asset {dest}: {exc}") from exc
+
+
 def sim_endpoint(port: str, path: str) -> str:
     return f"http://localhost:{port}/{path.lstrip('/')}"
 
@@ -1285,6 +1326,8 @@ def wait_for_brain_directives(port: str, *, timeout_seconds: float = 30.0) -> in
 
 
 def health_from_brain_backend(status: dict[str, object], mode: str) -> tuple[str, str]:
+    if mode == NONE_MODE:
+        return "warn", "no agent"
     if not status:
         return ("warn", "unknown") if mode == HOSTED_MODE else ("warn", "not reported")
 
@@ -1364,8 +1407,13 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     else:
         brain_level = "warn"
         brain_label = "booting"
-    agent_level = "healthy" if config["mode"] == HOSTED_MODE or agent_running else "warn"
-    agent_label = "hosted" if config["mode"] == HOSTED_MODE else ("online" if agent_running else "offline")
+    if config["mode"] == NONE_MODE:
+        agent_level, agent_label = "warn", "none"
+    elif config["mode"] == HOSTED_MODE:
+        agent_level, agent_label = "healthy", "hosted"
+    else:
+        agent_level = "healthy" if agent_running else "warn"
+        agent_label = "online" if agent_running else "offline"
 
     if all(level == "healthy" for level in (video_level, transport_level, brain_level, backend_level, agent_level)):
         stack_mood = ("healthy", "LIVE")

@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>Innate cloud client libraries: auth, proxy, and training.</description>
   <maintainer email="eng@innate.bot">Innate Engineering</maintainer>
-  <license>Proprietary</license>
+  <license>Apache-2.0</license>
 
   <!-- pip deps (httpx, websockets, websocket-client, requests, click, zstandard)
        are listed in ros2_ws/pip-requirements.txt -->

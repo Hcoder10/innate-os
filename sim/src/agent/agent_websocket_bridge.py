@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 
 import asyncio
 import base64
 import json
 import math
+import os
 import queue
 import threading
 import time
@@ -20,6 +23,7 @@ from src.agent.types import (
     BrainActiveCmd,
     BrainBackendConfigCmd,
     DirectiveCmd,
+    HeadCmd,
     NavigationCancelMsg,
     NavigationFeedbackMsg,
     NavigationPathMsg,
@@ -29,9 +33,11 @@ from src.agent.types import (
     RefreshAgentsCmd,
     ResetRobotCmd,
     RobotStateMsg,
+    SetEnvironmentCmd,
     VelocityCmd,
 )
 from src.shared_queues import AgentInfo, ChatMessage, ChatSignal, SkillInfo
+from src.webrtc.webrtc_server import CAMERAS as WEBRTC_CAMERAS  # camera roster for /webrtc/active_streams
 
 BACKEND_WARMUP_STATES = {
     "unknown",
@@ -44,6 +50,8 @@ BACKEND_STATUS_LOG_INTERVAL_SEC = 30.0
 SENSOR_PUBLISH_INTERVAL_SEC = 0.10
 CLOCK_PUBLISH_INTERVAL_SEC = 0.05
 ARM_STATE_PUBLISH_INTERVAL_SEC = 0.10
+ARM_STATUS_PUBLISH_INTERVAL_SEC = 0.5
+HEAD_POSITION_PUBLISH_INTERVAL_SEC = 0.5
 NAV_FEEDBACK_PUBLISH_INTERVAL_SEC = 0.10
 ARM_JOINT_COUNT = 6
 ARM_GOTO_SERVICES = {"/mars/arm/goto_js", "/mars/arm/goto_js_v2"}
@@ -52,6 +60,16 @@ ARM_TRIGGER_SERVICES = {
     "/mars/arm/torque_off",
     "/mars/arm/reboot",
 }
+
+# Simulator-control services the sim advertises over rosbridge (replacing the
+# old FastAPI control routes). All live under the /sim/ namespace.
+SIM_CONTROL_TRIGGER_SERVICES = {"/sim/reset_position"}
+SIM_SET_ENVIRONMENT_SERVICE = "/sim/set_environment"
+
+# Where named environment configs live (data/environments/<name>.json), three
+# directories up from this file (sim/src/agent/ -> sim/).
+ENVIRONMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "environments")
+SET_ENV_APPLY_TIMEOUT_S = 30.0
 
 
 def np_encoder(obj):
@@ -130,6 +148,55 @@ def parse_available_skills_message(msg_data: dict) -> list[SkillInfo]:
 
 
 #
+# WebRTC signaling topics — the per-client `_id` protocol the webapp speaks (same
+# as the robot's mars_cam streamer). Every message carries a `client_id` envelope.
+# Signaling only — media flows peer-to-peer between the browser and the sim's
+# aiortc server, not over rosbridge. We OFFER (server->browser): /webrtc/offer_id;
+# the browser answers + trickles its ICE; we publish the camera roster on
+# /webrtc/active_streams so the webapp's camera switcher can build its buttons.
+#
+WEBRTC_OFFER_TOPIC = "/webrtc/offer_id"  # server->browser: {client_id, sdp}
+WEBRTC_ANSWER_TOPIC = "/webrtc/answer_id"  # browser->server: {client_id, sdp}
+WEBRTC_ICE_IN_TOPIC = "/webrtc/ice_in_id"  # browser->server: {client_id, candidate, sdpMLineIndex, sdpMid}
+WEBRTC_ICE_OUT_TOPIC = (
+    "/webrtc/ice_out_id"  # server->browser (unused: aiortc is non-trickle, candidates ride the offer)
+)
+WEBRTC_START_TOPIC = "/webrtc/start"  # browser->server: {client_id, video, audio, source, renegotiate}
+WEBRTC_ACTIVE_STREAMS_TOPIC = "/webrtc/active_streams"  # server->browser: {count, clients, cameras}
+WEBRTC_INBOUND_TOPICS = {
+    WEBRTC_START_TOPIC,
+    WEBRTC_ANSWER_TOPIC,
+    WEBRTC_ICE_IN_TOPIC,
+}
+
+
+def relay_webrtc_inbound(shared_queues, topic: str, msg_data: dict) -> None:
+    """Parse a per-client /webrtc/* message ({client_id, ...} JSON) and hand it to the aiortc thread."""
+    payload = _loads_or_empty((msg_data or {}).get("data", ""))
+    client_id = payload.get("client_id", "")
+    if topic == WEBRTC_START_TOPIC:
+        item = {"kind": "start", "payload": payload, "client_id": client_id}
+    elif topic == WEBRTC_ANSWER_TOPIC:
+        item = {"kind": "answer", "sdp": payload.get("sdp", ""), "client_id": client_id}
+    elif topic == WEBRTC_ICE_IN_TOPIC:
+        item = {"kind": "ice", "payload": payload, "client_id": client_id}
+    else:
+        return
+    try:
+        shared_queues.webrtc_signal_in.put_nowait(item)
+    except queue.Full:
+        pass
+
+
+def _loads_or_empty(data: str) -> dict:
+    try:
+        parsed = json.loads(data)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+#
 # Rosbridge Utility Methods
 #
 def rosbridge_subscribe(topic: str, msg_type: str) -> dict:
@@ -175,6 +242,18 @@ def arm_service_advertisements() -> list[dict]:
     adverts.extend(
         rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(ARM_TRIGGER_SERVICES)
     )
+    return adverts
+
+
+def sim_control_service_advertisements() -> list[dict]:
+    adverts = [
+        rosbridge_advertise_service(service, "std_srvs/srv/Trigger") for service in sorted(SIM_CONTROL_TRIGGER_SERVICES)
+    ]
+    # set_environment carries a string payload (an environment name or an inline
+    # JSON config) and returns success+message. Reuse brain_messages/ChangeMap,
+    # which has exactly that shape (string map_name -> bool success, string
+    # message), to avoid defining a new srv type.
+    adverts.append(rosbridge_advertise_service(SIM_SET_ENVIRONMENT_SERVICE, "brain_messages/srv/ChangeMap"))
     return adverts
 
 
@@ -353,6 +432,104 @@ async def _run_arm_trajectory_service(
         await _send_service_response(ws, service_name, {"success": False}, call_id)
 
 
+# Keep references to in-flight set_environment tasks so they are not garbage
+# collected before they finish (asyncio holds only weak references).
+_sim_control_tasks: set = set()
+
+
+def _resolve_environment_config(map_name: str) -> dict:
+    """Interpret the ChangeMap `map_name` field as either an inline JSON config
+    object or the name of a config in data/environments/<name>.json."""
+    text = (map_name or "").strip()
+    if not text:
+        raise ValueError("map_name is empty; provide an environment name or JSON config.")
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Treat `text` as a config name and confine it to ENVIRONMENTS_DIR. The name
+    # arrives over unauthenticated rosbridge, so a traversal ("../…") or absolute
+    # path must not escape the directory and read arbitrary files off disk.
+    base = os.path.realpath(ENVIRONMENTS_DIR)
+    config_path = os.path.realpath(os.path.join(base, f"{text}.json"))
+    if os.path.commonpath([base, config_path]) != base:
+        raise FileNotFoundError(text)
+    with open(config_path) as config_file:
+        return json.load(config_file)
+
+
+async def _run_set_environment_service(ws, shared_queues, service_name, call_id, args):
+    """Apply an environment and reply once the simulator reports success/error.
+
+    Runs as its own task (not inline in inbound_data_loop) so the up-to-30s
+    apply wait never starves topic publishing on the data connection.
+    """
+    try:
+        env_config = _resolve_environment_config(args.get("map_name", ""))
+    except FileNotFoundError:
+        await _send_service_response(ws, service_name, {"success": False, "message": "environment not found"}, call_id)
+        return
+    except (ValueError, json.JSONDecodeError) as exc:
+        await _send_service_response(ws, service_name, {"success": False, "message": str(exc)}, call_id)
+        return
+
+    # Reuse the inbound call id as the apply request id so the simulator's result
+    # can be correlated back to this call.
+    request_id = call_id
+    try:
+        shared_queues.agent_to_sim.put_nowait(
+            SetEnvironmentCmd(config=env_config, timestamp=time.time(), request_id=request_id)
+        )
+    except queue.Full:
+        await _send_service_response(ws, service_name, {"success": False, "message": "queue full"}, call_id)
+        return
+
+    deadline = time.time() + SET_ENV_APPLY_TIMEOUT_S
+    while time.time() < deadline:
+        result = shared_queues.pop_environment_apply_result(request_id)
+        if result is not None:
+            await _send_service_response(
+                ws,
+                service_name,
+                {"success": bool(result.get("success")), "message": result.get("error") or ""},
+                call_id,
+            )
+            return
+        await asyncio.sleep(0.05)
+
+    await _send_service_response(
+        ws, service_name, {"success": False, "message": "timed out applying environment"}, call_id
+    )
+
+
+async def _handle_sim_control_service_call(ws, shared_queues, service_name, call_id, args):
+    if service_name == "/sim/reset_position":
+        # Reset the simulator pose only (no brain reset). Mirrors the old
+        # POST /reset_position route: enqueue a default-pose ResetRobotCmd.
+        try:
+            shared_queues.agent_to_sim.put_nowait(ResetRobotCmd(pose=None))
+        except queue.Full:
+            await _send_service_response(ws, service_name, {"success": False, "message": "queue full"}, call_id)
+            return
+        await _send_service_response(ws, service_name, {"success": True}, call_id)
+        return
+
+    if service_name == SIM_SET_ENVIRONMENT_SERVICE:
+        if not call_id:
+            await _send_service_response(ws, service_name, {"success": False, "message": "missing call id"}, call_id)
+            return
+        task = asyncio.create_task(_run_set_environment_service(ws, shared_queues, service_name, call_id, args))
+        _sim_control_tasks.add(task)
+        task.add_done_callback(_sim_control_tasks.discard)
+        return
+
+    await _send_service_response(ws, service_name, {"success": False, "message": "unknown service"}, call_id)
+
+
 async def _handle_arm_service_call(ws, shared_queues, service_name, call_id, args):
     if service_name in ARM_GOTO_SERVICES:
         print(f"[ROSBridge] Received {service_name} service call: {args}")
@@ -484,6 +661,23 @@ async def inbound_data_loop(ws, shared_queues):
                     except queue.Full:
                         pass
 
+            # 1b2) /mars/head/set_position — head pitch in degrees. Not gated by
+            # arm torque (the real head stays torqued even when the arm is limp).
+            elif topic == "/mars/head/set_position":
+                try:
+                    angle_deg = float(msg_data.get("data"))
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    shared_queues.agent_to_sim.put_nowait(HeadCmd(angle_deg=angle_deg))
+                except queue.Full:
+                    pass
+
+            # 1c) WebRTC signaling (browser -> sim aiortc server), relayed via
+            # shared_queues so the aiortc thread stays decoupled from this loop.
+            elif topic in WEBRTC_INBOUND_TOPICS:
+                relay_webrtc_inbound(shared_queues, topic, msg_data)
+
             # 2) /chat_out
             elif topic == "/brain/chat_out":
                 payload = _parse_json_object_topic(topic, msg_data)
@@ -533,8 +727,14 @@ async def inbound_data_loop(ws, shared_queues):
 
             elif topic == "/brain/available_skills":
                 skills = parse_available_skills_message(msg_data)
-                shared_queues.update_available_skills(skills)
-                print(f"[ROSBridge] Received {len(skills)} available skills")
+                # The roster is latched and re-published on a heartbeat so late
+                # subscribers can catch it; skip unchanged repeats so we don't
+                # re-store identical state (and spam the log) every beat.
+                signature = tuple(skills)
+                if signature != getattr(shared_queues, "_last_available_skills_signature", None):
+                    shared_queues._last_available_skills_signature = signature
+                    shared_queues.update_available_skills(skills)
+                    print(f"[ROSBridge] Received {len(skills)} available skills")
 
             # 3) /sim_navigation/global_plan
             elif topic == "/sim_navigation/global_plan":
@@ -616,13 +816,22 @@ async def inbound_data_loop(ws, shared_queues):
             call_id = inbound_data.get("id", None)
             args = inbound_data.get("args", {})
 
-            await _handle_arm_service_call(
-                ws,
-                shared_queues,
-                service_name,
-                call_id,
-                args,
-            )
+            if service_name.startswith("/sim/"):
+                await _handle_sim_control_service_call(
+                    ws,
+                    shared_queues,
+                    service_name,
+                    call_id,
+                    args,
+                )
+            else:
+                await _handle_arm_service_call(
+                    ws,
+                    shared_queues,
+                    service_name,
+                    call_id,
+                    args,
+                )
 
         await asyncio.sleep(0.0001)
 
@@ -815,7 +1024,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     QUEUE_LOG_INTERVAL = 5.0  # Log every 5 seconds if there's a problem
     last_sensor_publish_time = 0.0
     last_clock_publish_time = 0.0
+    last_active_streams_publish_time = 0.0
     last_arm_state_publish_time = 0.0
+    last_arm_status_publish_time = 0.0
+    last_head_position_publish_time = 0.0
     last_nav_feedback_publish_time = 0.0
 
     # First, advertise standard topics once
@@ -840,6 +1052,13 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
 
     # Arm topics and services
     adv_arm_state = rosbridge_advertise("/mars/arm/state", "sensor_msgs/msg/JointState")
+    adv_arm_status = rosbridge_advertise("/mars/arm/status", "mars_msgs/msg/ArmStatus")
+    adv_head_position = rosbridge_advertise("/mars/head/current_position", "std_msgs/msg/String")
+
+    # WebRTC signaling (server->browser): per-client offer + ICE + the camera roster.
+    adv_webrtc_offer = rosbridge_advertise(WEBRTC_OFFER_TOPIC, "std_msgs/msg/String")
+    adv_webrtc_ice_out = rosbridge_advertise(WEBRTC_ICE_OUT_TOPIC, "std_msgs/msg/String")
+    adv_webrtc_active_streams = rosbridge_advertise(WEBRTC_ACTIVE_STREAMS_TOPIC, "std_msgs/msg/String")
 
     await ws.send(json.dumps(adv_color))
     await ws.send(json.dumps(adv_depth))
@@ -856,8 +1075,15 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(adv_nav_feedback))
     await ws.send(json.dumps(adv_nav_mode))
     await ws.send(json.dumps(adv_arm_state))
+    await ws.send(json.dumps(adv_arm_status))
+    await ws.send(json.dumps(adv_head_position))
     await ws.send(json.dumps(adv_arm_camera))
+    await ws.send(json.dumps(adv_webrtc_offer))
+    await ws.send(json.dumps(adv_webrtc_ice_out))
+    await ws.send(json.dumps(adv_webrtc_active_streams))
     for service_advert in arm_service_advertisements():
+        await ws.send(json.dumps(service_advert))
+    for service_advert in sim_control_service_advertisements():
         await ws.send(json.dumps(service_advert))
     print(
         "[ROSBridge] Advertised camera-related topics, /odom, /map, /chat_in, "
@@ -880,6 +1106,7 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     sub_nav_path = rosbridge_subscribe("/sim_navigation/global_plan", "nav_msgs/msg/Path")
     sub_nav_cancel = rosbridge_subscribe("/sim_navigation/cancel", "std_msgs/msg/Bool")
     sub_arm_cmd = rosbridge_subscribe("/mars/arm/commands", "std_msgs/msg/Float64MultiArray")
+    sub_head_set = rosbridge_subscribe("/mars/head/set_position", "std_msgs/msg/Int32")
     await ws.send(json.dumps(sub_cmd_vel))
     await ws.send(json.dumps(sub_chat_out))
     await ws.send(json.dumps(sub_skill_status))
@@ -888,6 +1115,10 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
     await ws.send(json.dumps(sub_nav_path))
     await ws.send(json.dumps(sub_nav_cancel))
     await ws.send(json.dumps(sub_arm_cmd))
+    await ws.send(json.dumps(sub_head_set))
+    # WebRTC signaling (browser->server): start / answer / ice_in / active_streams.
+    for webrtc_topic in WEBRTC_INBOUND_TOPICS:
+        await ws.send(json.dumps(rosbridge_subscribe(webrtc_topic, "std_msgs/msg/String")))
     print(
         "[ROSBridge] Subscribed to /cmd_vel, /brain/chat_out, "
         "/brain/skill_status_update, /brain/websocket_status, /brain/available_skills, "
@@ -957,6 +1188,36 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
                 chat_processed += 1
             except queue.Empty:
                 break
+
+        # PRIORITY 1b: WebRTC signaling out (offer / ice_out) — tiny text, keep it
+        # ahead of heavy sensor payloads so the handshake is snappy.
+        webrtc_processed = 0
+        while webrtc_processed < 20:
+            try:
+                signal = shared_queues.webrtc_signal_out.get_nowait()
+            except queue.Empty:
+                break
+            kind = signal.get("kind")
+            client_id = signal.get("client_id", "")
+            if kind == "offer":
+                topic = WEBRTC_OFFER_TOPIC
+                payload = json.dumps({"client_id": client_id, "sdp": signal.get("sdp", "")})
+            elif kind == "ice":
+                topic = WEBRTC_ICE_OUT_TOPIC
+                payload = json.dumps({"client_id": client_id, **signal.get("payload", {})})
+            else:
+                webrtc_processed += 1
+                continue
+            await ws.send(json.dumps(rosbridge_publish(topic, {"data": payload})))
+            webrtc_processed += 1
+
+        # PRIORITY 1c: Publish the WebRTC camera roster (~2 Hz). The webapp's camera
+        # switcher builds its buttons from this; without it, it never learns the
+        # sim's camera names (first_person / arm_wrist / chase).
+        if now - last_active_streams_publish_time >= 2.0:
+            roster = json.dumps({"count": 1, "clients": [], "cameras": list(WEBRTC_CAMERAS)})
+            await ws.send(json.dumps(rosbridge_publish(WEBRTC_ACTIVE_STREAMS_TOPIC, {"data": roster})))
+            last_active_streams_publish_time = now
 
         # PRIORITY 2: Process sensor data from the latest-only queue.
         # The web UI can render faster locally; ROSBridge cannot cheaply carry
@@ -1082,6 +1343,14 @@ async def outbound_data_loop(ws, shared_queues, service_call_queue):
             outbound = rosbridge_publish("/sim_navigation/feedback", feedback_msg)
             await ws.send(json.dumps(outbound))
             last_nav_feedback_publish_time = updates_now
+
+        if updates_now - last_arm_status_publish_time >= ARM_STATUS_PUBLISH_INTERVAL_SEC:
+            await publish_arm_status(ws, shared_queues)
+            last_arm_status_publish_time = updates_now
+
+        if updates_now - last_head_position_publish_time >= HEAD_POSITION_PUBLISH_INTERVAL_SEC:
+            await publish_head_position(ws, shared_queues)
+            last_head_position_publish_time = updates_now
 
         await asyncio.sleep(0.0001)
 
@@ -1246,15 +1515,17 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
         if ret:
             jpg_bytes = encoded_img.tobytes()
 
-            # Build a sensor_msgs/CompressedImage message
-            # RWS expects uint8[] as a JSON int array, not base64
+            # Build a sensor_msgs/CompressedImage message.
+            # uint8[] is sent as a base64 string per the rosbridge protocol; this
+            # is ~60-70% smaller on the wire than a JSON int array (and cheaper to
+            # serialize). The server re-encodes to base64 for subscribers anyway.
             compressed_msg = {
                 "header": {
                     "stamp": {"sec": sec, "nanosec": nsec},
                     "frame_id": rsm.frame_id,
                 },
                 "format": "jpeg",
-                "data": list(jpg_bytes),
+                "data": base64.b64encode(jpg_bytes).decode("utf-8"),
             }
             outbound = rosbridge_publish("/mars/main_camera/left/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
@@ -1267,15 +1538,14 @@ async def publish_robot_state(ws, rsm: RobotStateMsg, shared_queues):
         if ret:
             jpg_bytes = encoded_img.tobytes()
 
-            # Build a sensor_msgs/CompressedImage message
-            # RWS expects uint8[] as a JSON int array, not base64
+            # Build a sensor_msgs/CompressedImage message (base64 uint8[], see above).
             compressed_msg = {
                 "header": {
                     "stamp": {"sec": sec, "nanosec": nsec},
                     "frame_id": "arm_wrist_camera_frame",
                 },
                 "format": "jpeg",
-                "data": list(jpg_bytes),
+                "data": base64.b64encode(jpg_bytes).decode("utf-8"),
             }
             outbound = rosbridge_publish("/mars/arm/image_raw/compressed", compressed_msg)
             await ws.send(json.dumps(outbound))
@@ -1420,6 +1690,34 @@ async def publish_arm_state(ws, arm_state: ArmStateMsg):
     }
 
     outbound = rosbridge_publish("/mars/arm/state", joint_state_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_arm_status(ws, shared_queues):
+    """Publish the sim arm torque state to /mars/arm/status (mars_msgs/ArmStatus).
+
+    The webapp's torque toggle reads is_torque_enabled from this topic; without
+    it the control sits disabled at "—". The sim arm is never in a fault state,
+    so is_ok is always True and error is empty.
+    """
+    status_msg = {
+        "is_ok": True,
+        "error": "",
+        "is_torque_enabled": is_arm_torque_enabled(shared_queues),
+    }
+    outbound = rosbridge_publish("/mars/arm/status", status_msg)
+    await ws.send(json.dumps(outbound))
+
+
+async def publish_head_position(ws, shared_queues):
+    """Publish the sim head pitch to /mars/head/current_position.
+
+    std_msgs/String carrying JSON (current_position + min/max/default angle), the
+    shape the webapp's head-tilt slider parses. It adopts the reported min/max as
+    its range; without this feed the slider sits disabled at "-".
+    """
+    state = shared_queues.get_head_position_state()
+    outbound = rosbridge_publish("/mars/head/current_position", {"data": json.dumps(state)})
     await ws.send(json.dumps(outbound))
 
 

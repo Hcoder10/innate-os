@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Brain orchestration: the perception loop and cloud-message reactions.
 
 Pulls together the perception (camera, pose, map) and transport collaborators to build
@@ -105,7 +107,10 @@ class Orchestrator:
             return
         self.check_lidar_health()
         if not self._state.primitives_registered:
-            self._logger.info("[BrainClient] Primitives not registered. Skipping agent_loop.")
+            # Idle state (connected, no directive/agent selected) — the loop runs
+            # at 10 Hz, so keep this at debug to avoid flooding the log. Matches
+            # the "Brain not active" skip above.
+            self._logger.debug("[BrainClient] Primitives not registered. Skipping agent_loop.")
             return
         if not (self._state.ready_for_image and self._camera.has_image):
             return

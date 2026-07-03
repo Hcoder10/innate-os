@@ -1,4 +1,6 @@
 // @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
 // Leader-arm panel — plug the leader arm into THIS computer's USB, click
 // connect once (Chromium remembers the grant; later sessions auto-attach),
 // watch the joint dots follow the physical arm, then ENGAGE to publish.
@@ -38,6 +40,29 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   const wrap = document.createElement("div");
   wrap.className = "arm-panel";
 
+  // Collapsible header. On a phone the arm controls are mostly dead weight
+  // (no WebSerial for the leader arm), so the whole panel starts collapsed and
+  // the operator taps to reveal it. On desktop the header is hidden (CSS) and
+  // the panel is always open — unchanged.
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "arm-header";
+  header.innerHTML =
+    '<span class="microlabel">arm</span>' +
+    '<svg class="arm-caret" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+  wrap.appendChild(header);
+
+  let collapsed = window.matchMedia("(max-width: 640px)").matches;
+  function applyCollapsed() {
+    wrap.classList.toggle("collapsed", collapsed);
+    header.setAttribute("aria-expanded", String(!collapsed));
+  }
+  header.addEventListener("click", () => {
+    collapsed = !collapsed;
+    applyCollapsed();
+  });
+  applyCollapsed();
+
   const label = document.createElement("p");
   label.className = "microlabel";
   label.textContent = "leader arm";
@@ -52,8 +77,29 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   if (!serial) {
     const hint = document.createElement("p");
     hint.className = "arm-hint";
-    hint.textContent = "Needs Chrome or Edge (WebSerial).";
-    wrap.append(hint, divider(), armSvc.el);
+    /** @type {HTMLElement[]} */
+    const extras = [];
+    if (!window.isSecureContext) {
+      // WebSerial needs a secure origin. The robot serves the same app over
+      // HTTPS (self-signed), so point the operator there — the cert warning is
+      // a one-time click-through. (Localhost is already secure, so plain http
+      // only happens off-box, which is exactly where this redirect helps.)
+      hint.textContent = "Leader arm needs HTTPS — switch over and continue past the certificate warning.";
+      const switchBtn = document.createElement("button");
+      switchBtn.className = "arm-button";
+      switchBtn.type = "button";
+      switchBtn.textContent = "Switch to HTTPS";
+      switchBtn.addEventListener("click", () => {
+        const url = new URL(location.href);
+        url.protocol = "https:";
+        url.port = ""; // 80 -> default 443; the TLS front door listens there
+        location.href = url.href;
+      });
+      extras.push(switchBtn);
+    } else {
+      hint.textContent = "Needs Chrome or Edge (WebSerial).";
+    }
+    wrap.append(hint, ...extras, divider(), armSvc.el);
     // No leader-arm link possible here — tell the gate it will never be ready.
     opts.onState?.({ engaged: false, reading: false, rate: 0 });
     return {
@@ -178,7 +224,11 @@ export function createArmPanel(parent, rosClient, opts = {}) {
 
   connectBtn.addEventListener("click", async () => {
     try {
-      const port = await serial.requestPort();
+      // QinHeng CH9102 USB-serial bridge on the leader arm ("USB Single
+      // Serial") — filtering narrows the chooser to just it.
+      const port = await serial.requestPort({
+        filters: [{ usbVendorId: 0x1a86, usbProductId: 0x55d3 }],
+      });
       await openPort(port);
     } catch {
       render(leader.state); // chooser dismissed — not an error

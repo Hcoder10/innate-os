@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """
 CameraProvider – lightweight ROS 2 node that subscribes to camera topics
 in its own spin thread, storing raw compressed bytes.
@@ -54,11 +56,15 @@ class CameraProvider(Node):
         self._executor: rclpy.executors.SingleThreadedExecutor | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        # start()/stop() are refcounted: a chained child that needs the camera
+        # must not tear it down on exit while its parent still does
+        self._users = 0
 
     # ---- lifecycle ----
 
     def start(self):
         """Create subscriptions and begin spinning in a background thread."""
+        self._users += 1
         if self._running:
             return
         self._main_sub = self.create_subscription(
@@ -81,8 +87,14 @@ class CameraProvider(Node):
         self.get_logger().info("Camera subscriptions started")
 
     def stop(self):
-        """Destroy subscriptions and stop the background thread."""
+        """Destroy subscriptions and stop the background thread.
+
+        Refcounted with start(): only the last outstanding user stops it.
+        """
         if not self._running:
+            return
+        self._users = max(0, self._users - 1)
+        if self._users:
             return
         if self._executor is not None:
             self._executor.shutdown()

@@ -1,10 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+import json
+import os
+import time
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from brain_client.common.logging import UniversalLogger
+
+# brain_client_node plays text published here (see transport/tts.py) and
+# reports playback on the status topic, which say(wait=True) watches.
+TTS_TOPIC = "/brain/tts"
+TTS_STATUS_TOPIC = "/tts/is_playing"
 
 
 class SkillResult(Enum):
@@ -17,6 +29,27 @@ class SkillResult(Enum):
     CANCELLED = "cancelled"  # The skill was cancelled before completion
 
 
+class SkillOutput(str):
+    """A skill's output message (a plain str), with an optional structured
+    payload on .data — the third element of an execute() return, if any."""
+
+    data: Any = None
+
+    def __new__(cls, message: str, data: Any = None):
+        output = super().__new__(cls, message)
+        output.data = data
+        return output
+
+
+def normalize_skill_result(result) -> tuple[SkillOutput, "SkillResult"]:
+    """Turn execute()'s (message, status[, data]) into (SkillOutput, status)."""
+    if isinstance(result, (tuple, list)) and len(result) == 3:
+        message, status, data = result
+        return SkillOutput(message, data), status
+    message, status = result
+    return SkillOutput(message), status
+
+
 class RobotStateType(Enum):
     """
     Enum representing the types of robot state a skill might require.
@@ -27,6 +60,8 @@ class RobotStateType(Enum):
     LAST_ODOM = "last_odom"
     LAST_MAP = "last_map"
     LAST_HEAD_POSITION = "last_head_position"
+    LAST_JOINT_STATES = "last_joint_states"
+    LAST_BATTERY = "last_battery"
 
 
 class InterfaceType(Enum):
@@ -37,6 +72,55 @@ class InterfaceType(Enum):
     MANIPULATION = "manipulation"
     MOBILITY = "mobility"
     HEAD = "head"
+
+
+class SkillStorage:
+    """Persistent per-skill key-value store: a JSON file with dict access.
+
+    Values must be JSON-serializable. Loaded lazily; writes are atomic
+    (tmp file + os.replace).
+    """
+
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
+        self._data: dict | None = None
+
+    def _load(self) -> dict:
+        if self._data is None:
+            try:
+                self._data = json.loads(self._path.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):
+                self._data = {}
+        return self._data
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2))
+        os.replace(tmp, self._path)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._load().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._load()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._load()[key] = value
+        self._save()
+
+    def __delitem__(self, key: str) -> None:
+        del self._load()[key]
+        self._save()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._load()
+
+
+def _storage_dir() -> Path:
+    # same INNATE_OS_ROOT resolution as common/script_paths.py
+    root = Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
+    return root / "workspace" / "skill_storage"
 
 
 class RobotState:
@@ -112,6 +196,13 @@ class Skill(ABC):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
+        # SkillInvoker for running other skills from execute(); injected by the
+        # skills server before each run (see invoker.py and innate/skills.py).
+        self.skills = None
+        self._say_publisher = None
+        self._tts_status_sub = None
+        self._tts_playing = None  # last /tts/is_playing value ("true"/"false")
+        self._storage = None
 
     @property
     @abstractmethod
@@ -128,23 +219,64 @@ class Skill(ABC):
         Execute the skill.
 
         Subclasses must implement this method.
-        Returns a tuple of (result_message, result_status) where result_status
-        is a SkillResult enum value.
+        Returns (result_message, result_status) where result_status is a
+        SkillResult enum value; an optional third element is a structured
+        payload chaining callers receive as ``.data`` (see SkillOutput).
         """
         pass
 
-    @abstractmethod
     def cancel(self):
         """
-        Cancel the execution of the skill.
+        Cancel the execution of the skill. Safe to call at any time; returns
+        a message describing the result.
 
-        Subclasses must implement this method to properly handle cancellation.
-        This method should be safe to call at any time, even if the skill
-        is not currently executing.
-
-        Returns a message describing the cancellation result.
+        The default stops the child skill currently running via self.skills.
+        Override it to stop work of your own (motion, loops, timers) — and if
+        you also chain children, call self.skills.cancel() too.
         """
-        pass
+        if self.skills is not None:
+            return self.skills.cancel()
+        return "Nothing to cancel"
+
+    @property
+    def storage(self) -> SkillStorage:
+        """Persistent per-skill key-value store (survives restarts), backed by
+        workspace/skill_storage/<skill_name>.json."""
+        if self._storage is None:
+            self._storage = SkillStorage(_storage_dir() / f"{self.name}.json")
+        return self._storage
+
+    def say(self, text: str, wait: bool = False) -> None:
+        """
+        Speak text through the robot's voice. Fire-and-forget by default;
+        with ``wait=True`` it blocks until playback ends (best effort — it
+        watches the TTS playback status). No-op if speech isn't available.
+        """
+        if not text or self.node is None:
+            return
+        if self._say_publisher is None:
+            self._say_publisher = self.node.create_publisher(String, TTS_TOPIC, 10)
+        if wait and self._tts_status_sub is None:
+            self._tts_status_sub = self.node.create_subscription(String, TTS_STATUS_TOPIC, self._on_tts_status, 10)
+        self._say_publisher.publish(String(data=text))
+        if wait:
+            self._wait_for_speech_end(text)
+
+    def _on_tts_status(self, msg: String) -> None:
+        self._tts_playing = msg.data
+
+    def _wait_for_speech_end(self, text: str) -> None:
+        # wait for playback to start; if it never does (TTS off, muted)
+        # don't hang the skill
+        deadline = time.time() + 15.0
+        while self._tts_playing != "true":
+            if time.time() > deadline:
+                return
+            time.sleep(0.05)
+        # then wait for it to finish; budget scales with utterance length
+        deadline = time.time() + max(30.0, 0.1 * len(text))
+        while self._tts_playing == "true" and time.time() < deadline:
+            time.sleep(0.05)
 
     def update_robot_state(self, **kwargs):
         """
@@ -157,6 +289,17 @@ class Skill(ABC):
             state_key = descriptor.state_type.value
             if state_key in kwargs:
                 setattr(self, name, kwargs[state_key])
+
+    def clear_robot_state(self):
+        """
+        Reset all RobotState descriptors to None.
+
+        Skill instances are singletons, so values from a previous run would
+        otherwise read as fresh sensor data on the next one. The skills
+        server calls this before each run.
+        """
+        for name in self._get_robot_state_descriptors():
+            setattr(self, name, None)
 
     def get_required_robot_states(self) -> list[RobotStateType]:
         """

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Skill catalog: discovery, metadata, publishing, reload, and physical skills.
 
 Owns the loaded code/physical/in-training skill dicts (guarded by a lock against
@@ -65,6 +67,11 @@ class SkillRepository:
             reliability=QoSReliabilityPolicy.RELIABLE,
         )
         self._skills_publisher = node.create_publisher(AvailableSkills, "/brain/available_skills", qos)
+        # Last roster we published, kept so the heartbeat can re-emit it cheaply
+        # without re-inspecting every skill. The topic is latched, but bridges
+        # (rws) that subscribe after boot don't get the latched sample, so a
+        # periodic re-publish is what actually reaches late-joining webapp clients.
+        self._last_published_msg: AvailableSkills | None = None
 
         self._hot_reload_watcher = None
 
@@ -119,18 +126,25 @@ class SkillRepository:
         if not skill_names:
             self.reload_all()
             return
+        # drop entries whose source is gone so a rename doesn't ghost-publish
+        # both the old and new id
+        removed = self._prune_stale_skills()
         skill_ids = []
         for stem in skill_names:
             for d in self._skills_directories:
                 py_file = Path(d) / f"{stem}.py"
                 subdir = Path(d) / stem
-                if py_file.exists():
-                    skill_ids.append(self._compute_skill_id(py_file))
-                    break
-                elif subdir.is_dir():
-                    skill_ids.append(self._compute_skill_id(subdir))
-                    break
-        self.reload_selective(skill_ids)
+                source = py_file if py_file.exists() else subdir if subdir.is_dir() else None
+                if source is None:
+                    continue
+                skill_ids.append(self._compute_skill_id(source))
+                break
+        if skill_ids:
+            self.reload_selective(skill_ids)  # publishes when done
+        elif removed:
+            self.publish_skills_list()
+        else:
+            self.reload_all()  # couldn't resolve the change; rebuild from disk
 
     # --- loading ---
     def _load_code_skills(self, skills_directories) -> dict[str, tuple[str, Skill]]:
@@ -292,6 +306,36 @@ class SkillRepository:
     def _is_code_skill_id(self, skill_id: str) -> bool:
         basename = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
         return any((Path(d) / f"{basename}.py").exists() for d in self._skills_directories)
+
+    def _prune_stale_skills(self) -> list[str]:
+        """Drop catalog entries whose source file/directory is gone; returns removed ids."""
+        removed = []
+        with self._skills_lock:
+            for skill_id in list(self._code_skills):
+                if not self._code_source_exists(skill_id):
+                    del self._code_skills[skill_id]
+                    removed.append(skill_id)
+            for skills in (self._physical_skills, self._in_training_skills):
+                for skill_id, data in list(skills.items()):
+                    if not os.path.exists(os.path.join(data.get("directory", ""), "metadata.json")):
+                        del skills[skill_id]
+                        removed.append(skill_id)
+        if removed:
+            self._logger.info(f"Pruned stale skills (source removed): {removed}")
+        return removed
+
+    def _code_source_exists(self, skill_id: str) -> bool:
+        """True if some scan dir still holds a .py that maps to this exact id.
+
+        Prefix-aware, unlike _is_code_skill_id: a deleted local/foo must not be
+        kept alive by a shipped innate-os/foo of the same stem.
+        """
+        stem = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
+        for d in self._skills_directories:
+            py_file = Path(d) / f"{stem}.py"
+            if py_file.exists() and self._compute_skill_id(py_file) == skill_id:
+                return True
+        return False
 
     def _reload_physical_skill(self, skill_id: str) -> bool:
         basename = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id
@@ -620,26 +664,126 @@ class SkillRepository:
                 self._logger.error(f"Skipping in-training skill '{skill_id}' in available_skills: {e}")
                 continue
 
-        # Enforce unique display names (the LLM can't disambiguate duplicates).
-        filtered_skills = []
-        seen_names: dict[str, str] = {}
-        for s in skills:
-            if s.name in seen_names:
-                self._logger.error(
-                    f"DUPLICATE skill name '{s.name}' between {seen_names[s.name]} and {s.id}. "
-                    f"Skipping '{s.id}' — rename the skill to fix this."
-                )
-                continue
-            seen_names[s.name] = s.id
-            filtered_skills.append(s)
+        filtered_skills = self._dedupe_display_names(skills)
 
         msg.skills = filtered_skills
         try:
             self._skills_publisher.publish(msg)
+            self._last_published_msg = msg
             self._write_skill_cache(filtered_skills)
             self._logger.info(f"Published {len(filtered_skills)} skills on /brain/available_skills")
         except Exception as e:
             self._logger.error(f"Failed to publish AvailableSkills (had {len(filtered_skills)} entries): {e}")
+        self._write_import_stub(filtered_skills)
+
+    def _write_import_stub(self, skills: list[SkillInfo]) -> None:
+        """Regenerate ``innate/skills.pyi`` so IDEs complete the proxy imports.
+        Best effort — never load-bearing, so failures only log."""
+        try:
+            import innate
+
+            stub_path = Path(innate.__file__).with_name("skills.pyi")
+            stub_path.write_text(self._render_import_stub(skills))
+        except Exception as e:
+            self._logger.warn(f"Could not write innate/skills.pyi: {e}")
+
+    @staticmethod
+    def _render_import_stub(skills: list[SkillInfo]) -> str:
+        """One typed def per importable skill, from the published inputs schema."""
+        type_names = {"str": "str", "float": "float", "int": "int", "bool": "bool"}
+        lines = [
+            "# Auto-generated from the skill catalog on every (re)load. Do not edit.",
+            "# A .pyi replaces the module's visible API, so the real names live here too.",
+            "from contextlib import contextmanager",
+            "from typing import Any, Iterator",
+            "",
+            "from brain_client.skills.types import SkillOutput as SkillOutput",
+            "",
+            "class SkillFailed(Exception): ...",
+            "class SkillCancelled(Exception): ...",
+            "@contextmanager",
+            "def use_invoker(invoker: Any) -> Iterator[None]: ...",
+        ]
+        # bare import name = id minus prefix; local/ wins, matching SkillInvoker._resolve
+        by_stem: dict[str, SkillInfo] = {}
+        for skill in skills:
+            stem = skill.id.split("/", 1)[-1]
+            if not stem.isidentifier():  # dashed dirs etc. — self.skills.run() only
+                continue
+            if stem not in by_stem or skill.id.startswith("local/"):
+                by_stem[stem] = skill
+        for stem, skill in sorted(by_stem.items()):
+            try:
+                inputs = json.loads(skill.inputs_json or "{}")
+            except json.JSONDecodeError:
+                inputs = {}
+            params = []
+            for param_name, schema in inputs.items():
+                if not isinstance(schema, dict) or not param_name.isidentifier():
+                    continue
+                annotation = type_names.get(schema.get("type"), "Any")
+                default = "" if schema.get("required") else " = ..."
+                params.append(f"{param_name}: {annotation}{default}")
+            params.append("*, timeout: float | None = ...")
+            lines.append("")
+            lines.append(f"def {stem}({', '.join(params)}) -> SkillOutput:")
+            guidelines = (skill.guidelines or "").replace('"""', "'''").strip()
+            lines.append(f'    """{guidelines}"""' if guidelines else "    ...")
+        return "\n".join(lines) + "\n"
+
+    def _dedupe_display_names(self, skills: list[SkillInfo]) -> list[SkillInfo]:
+        """Enforce unique display names (the LLM can't disambiguate duplicates).
+
+        A user skill (local/) claims the plain name — the same precedence as
+        SkillInvoker._resolve. The shipped skill stays published under a
+        qualified name: dropping it would silently unregister directives that
+        reference it by full id. Duplicates within the same source are a
+        mistake: the first wins and the rest are skipped.
+        """
+        deduped: list[SkillInfo] = []
+        by_name: dict[str, SkillInfo] = {}
+        for skill in skills:
+            existing = by_name.get(skill.name)
+            if existing is None:
+                by_name[skill.name] = skill
+                deduped.append(skill)
+                continue
+            if skill.id.startswith("local/") == existing.id.startswith("local/"):
+                self._logger.error(
+                    f"DUPLICATE skill name '{skill.name}' between {existing.id} and {skill.id}. "
+                    f"Skipping '{skill.id}' — rename the skill to fix this."
+                )
+                continue
+            user, shipped = (skill, existing) if skill.id.startswith("local/") else (existing, skill)
+            qualified = f"{user.name} (innate-os)"
+            if qualified in by_name:  # a second shipped skill with the same name
+                self._logger.error(
+                    f"DUPLICATE skill name '{qualified}' between {by_name[qualified].id} and {shipped.id}. "
+                    f"Skipping '{shipped.id}' — rename the skill to fix this."
+                )
+                continue
+            self._logger.warning(
+                f"Skill '{user.name}': user skill {user.id} overrides shipped {shipped.id}; "
+                f"publishing the shipped skill as '{qualified}'"
+            )
+            shipped.name = qualified
+            by_name[user.name] = user
+            by_name[shipped.name] = shipped
+            # whichever was seen first is already in deduped; append the newcomer
+            deduped.append(skill)
+        return deduped
+
+    def republish_cached(self) -> None:
+        """Re-emit the last published roster (no rebuild).
+
+        Latched delivery only reaches subscribers present at publish time; the
+        webapp connects through rws after boot and never receives the latched
+        sample. A low-rate heartbeat calling this lets late subscribers pick up
+        the roster within one interval. Downstream consumers dedupe by content,
+        so re-emitting the same message is a no-op for the UI.
+        """
+        if self._last_published_msg is not None:
+            self._skills_publisher.publish(self._last_published_msg)
 
     def _build_skill_info(
         self,

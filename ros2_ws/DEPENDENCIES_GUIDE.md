@@ -1,41 +1,54 @@
 # Dependencies Guide
 
-This directory contains mode-specific dependency files for the Innate OS ROS2 workspace.
+This directory contains mode-specific apt dependency files for the Innate OS ROS2
+workspace. `common` is the shared base; `sim` and `hardware` are overlays
+installed on top of it.
 
 ## Files
 
 ### `apt-dependencies.common.txt`
-Common system dependencies required for **both simulation and hardware modes**.
-This includes ROS2 packages, GStreamer, Python packages, and navigation/manipulation tools.
+Packages required by **both simulation and hardware modes**, plus the build/test
+tooling CI relies on (colcon, vcstool, rosdep, pip). Includes core ROS2 packages,
+GStreamer, and the shared message/transform/nav subset.
+
+### `apt-dependencies.sim.txt`
+**Simulation-only** overlay. C++ libs and the trimmed navigation sub-packages the
+sim build needs because it omits the heavy meta-packages (`navigation2`,
+`moveit`, …) that the robot installs. The robot does **not** use this file; it
+gets these transitively from the hardware meta-packages.
 
 ### `apt-dependencies.hardware.txt`
-Hardware-specific dependencies **only for physical robots** (NVIDIA Jetson).
-This includes:
-- `nvidia-vpi-dev` - NVIDIA Vision Programming Interface for stereo depth
-- `nvidia-l4t-gstreamer` - NVIDIA hardware-accelerated GStreamer plugins
-
-### `apt-dependencies.txt` (Deprecated)
-Legacy file kept for backwards compatibility. Points to the new mode-specific files.
+**Physical-robot-only** overlay. Two groups:
+- NVIDIA/Jetson packages (`nvidia-vpi-dev`, `cuda-toolkit-*`, `tensorrt`, …)
+- Robot-only ROS/system packages the sim build does not need (full `navigation2`
+  / `moveit` / SLAM stack, lidar/point-cloud, USB/serial/audio, on-robot tools).
 
 ## Usage
 
 ### Docker
 
-The dev Dockerfile at [sim/Dockerfile](../sim/Dockerfile) builds a simulation-only image using [sim/apt-dependencies.txt](../sim/apt-dependencies.txt):
+The dev image at [sim/Dockerfile](../sim/Dockerfile) installs `common + sim`:
 ```bash
 docker compose -f sim/docker-compose.dev.yml build
 # or
 docker build -t innate-os -f sim/Dockerfile .
 ```
 
-Hardware (Jetson) builds run natively on the robot via `scripts/update/post_update.sh`, not through Docker.
+The CI test base ([ci/Dockerfile.test-base](../ci/Dockerfile.test-base)) installs
+`common` alone and resolves any robot-only build deps it needs via
+`rosdep install --from-paths src` (they are declared in each `package.xml`).
+
+Hardware (Jetson) builds run natively on the robot via
+`scripts/update/post_update.sh`, which installs `common + hardware`.
 
 ### Manual Installation
 
 **For Simulation (Mac/PC):**
 ```bash
 cd ros2_ws
-xargs sudo apt-get install -y < apt-dependencies.common.txt
+cat apt-dependencies.common.txt apt-dependencies.sim.txt | \
+  grep -v '^#' | grep -v '^$' | \
+  xargs sudo apt-get install -y
 ```
 
 **For Physical Robot (Jetson):**
@@ -46,19 +59,17 @@ cat apt-dependencies.common.txt apt-dependencies.hardware.txt | \
   xargs sudo apt-get install -y
 ```
 
-Or install separately:
-```bash
-xargs sudo apt-get install -y < apt-dependencies.common.txt
-xargs sudo apt-get install -y < apt-dependencies.hardware.txt
-```
-
 ## Why Separate Files?
 
-- **Cleaner builds**: Simulation environments don't need Jetson-specific packages
-- **Cross-platform support**: Build on Mac, Linux, or ARM without modification
-- **Faster iterations**: Skip unnecessary hardware packages in development
-- **Clear separation**: Easy to see which dependencies are platform-specific
+- **`common` stays truly common**: only what both modes need, so neither image
+  carries the other's packages.
+- **Smaller sim image**: simulation skips Jetson packages and the heavy robot-only
+  ROS meta-packages.
+- **Cross-platform**: build the sim image on Mac, Linux, or ARM without changes.
+- **Clear separation**: easy to see which dependencies are mode-specific.
 
-## Migration Notes
+## Adding a Dependency
 
-If you have scripts or documentation referencing `apt-dependencies.txt`, they will continue to work but should be updated to use the mode-specific files for better clarity.
+Put it in `common` if **both** sim and robot need it. Otherwise add it to the
+matching overlay (`sim` or `hardware`). If a robot-only package is also a build
+dependency declared in a `package.xml`, CI will still pull it via `rosdep`.

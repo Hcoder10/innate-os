@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Unit tests for the nav2 motion-limit remap (``config_loader.load_motion_limit_overrides``).
 
 Locks in: the exact dict each schema emits, that every emitted name still exists in the real

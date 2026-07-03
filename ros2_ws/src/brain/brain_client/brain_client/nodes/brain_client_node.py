@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Composition root for the brain client node.
 
 This file does no behaviour of its own: it declares config, builds the perception /
@@ -16,6 +18,7 @@ import rclpy
 from brain_messages.srv import GetAvailableDirectives, GetChatHistory, ReloadSkillsAgents, ResetBrain
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
@@ -58,7 +61,22 @@ class BrainClientNode(Node):
         self.chat_out_pub = self.create_publisher(String, "/brain/chat_out", 10)
         self.task_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
         self.tts_status_pub = self.create_publisher(String, "/tts/is_playing", 10)
+        # Synthesized speech (base64 WAV) for clients to play. Sim-only: the sim
+        # has no audio device, so the webapp is the speaker. On the real robot
+        # speech plays through the robot's own speaker and nothing is published
+        # here — a client playing it too would double the voice.
+        self.tts_audio_pub = self.create_publisher(String, "/tts/audio", 10)
         self.memory_positions_pub = self.create_publisher(String, "/brain/memory_positions", 10)
+        # Live agent state, so clients see a stop/start/directive change made
+        # from another device without polling get_available_directives (see
+        # publish_agent_status for the latched + heartbeat delivery).
+        agent_status_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
+        self.agent_status_pub = self.create_publisher(String, "/brain/agent_status", agent_status_qos)
+        self._agent_status_heartbeat = None
 
         self._proxy = self._init_proxy()
         self._tts_handler = self._init_tts()
@@ -108,7 +126,13 @@ class BrainClientNode(Node):
         if self._proxy is None:
             self.get_logger().info("🔇 Text-to-speech disabled (proxy not available)")
             return None
-        handler = TTSHandler(logger=self.get_logger(), proxy=self._proxy, tts_status_pub=self.tts_status_pub)
+        handler = TTSHandler(
+            logger=self.get_logger(),
+            proxy=self._proxy,
+            tts_status_pub=self.tts_status_pub,
+            tts_audio_pub=self.tts_audio_pub,
+            simulator_mode=self.config.simulator_mode,
+        )
         if handler.is_available():
             self.get_logger().info(f"🗣️ Text-to-speech enabled (voice: {handler.voice_id})")
         else:
@@ -120,6 +144,27 @@ class BrainClientNode(Node):
         stop.linear.x = 0.0
         stop.angular.z = 0.0
         self.cmd_vel_pub.publish(stop)
+
+    def publish_agent_status(self) -> None:
+        """Broadcast the live agent state on the latched /brain/agent_status topic.
+
+        Published on every activate/deactivate/directive/active-skills change so
+        every client learns about changes made from any other client. Latched for
+        late joiners, plus re-emitted by a low-rate heartbeat because bridges
+        (rws) that subscribe after boot don't get the latched sample — the same
+        reason /brain/available_skills is heartbeated.
+        """
+        self.agent_status_pub.publish(
+            String(
+                data=json.dumps(
+                    {
+                        "brain_active": self.state.is_brain_active,
+                        "current_directive": self.state.current_directive.id if self.state.current_directive else "",
+                        "active_skills": list(self.state.active_skill_ids or []),
+                    }
+                )
+            )
+        )
 
     def _build_collaborators(self) -> None:
         cfg, state = self.config, self.state
@@ -172,6 +217,7 @@ class BrainClientNode(Node):
             catalog=self.catalog,
             active_inputs_pub=self.active_inputs_pub,
             stop_robot=self._stop_robot,
+            publish_status=self.publish_agent_status,
         )
         # Close the one irreducible cycle: Orchestrator needs the lifecycle that
         # can only be built after it.
@@ -240,6 +286,12 @@ class BrainClientNode(Node):
         self.lifecycle.start_agent_timer()
         self.orchestrator.start_ready_for_connection_broadcast()
         self.orchestrator.start_initial_active_inputs()
+
+        # First status sample now that directives are initialized; the heartbeat
+        # also converges any state change that doesn't publish explicitly (e.g.
+        # hot reload swapping the current directive).
+        self.publish_agent_status()
+        self._agent_status_heartbeat = self.create_timer(3.0, self.publish_agent_status)
 
     # ================= always-on subscription callbacks =================
     def _on_chat_in(self, msg: String) -> None:
@@ -313,6 +365,7 @@ class BrainClientNode(Node):
             f"Active skills for directive '{self.state.current_directive.id}': {self.state.active_skill_ids}"
         )
         self.catalog.register()
+        self.publish_agent_status()
 
     def _skill_name_for_id(self, skill_id: str) -> str:
         for metadata in self.state.registry.metadata:
@@ -454,6 +507,8 @@ class BrainClientNode(Node):
             self.orchestrator.pose_image_timer.cancel()
         if self.lifecycle.agent_timer and not self.lifecycle.agent_timer.is_canceled():
             self.lifecycle.agent_timer.cancel()
+        if self._agent_status_heartbeat is not None and not self._agent_status_heartbeat.is_canceled():
+            self._agent_status_heartbeat.cancel()
         self.reload.stop_watcher()
         self._ws_manager.shutdown()
         if self._tts_handler is not None:

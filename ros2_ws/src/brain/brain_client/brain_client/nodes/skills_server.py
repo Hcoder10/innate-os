@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Skills action server: executes skills dispatched as ExecuteSkill goals.
 
 Focused on the action/execution flow — code-skill execution, physical-skill
@@ -11,17 +13,24 @@ the action server.
 
 from __future__ import annotations
 
+import inspect
 import json
+import os
 import queue
 import threading
 import time
+import uuid
+from typing import get_args
 
 import rclpy
 from brain_messages.action import ExecuteBehavior, ExecuteSkill
 from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAgents, SaveAsReplaySkill
+from innate.skills import SkillCancelled, SkillFailed, use_invoker
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from brain_client.perception.camera_provider import CameraProvider
@@ -30,8 +39,42 @@ from brain_client.robot.manipulation import ManipulationInterface
 from brain_client.robot.mobility import MobilityInterface
 from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
+from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.robot_state import RobotStateProvider
-from brain_client.skills.types import RobotStateType, SkillResult
+from brain_client.skills.types import RobotStateType, SkillResult, normalize_skill_result
+
+
+def _annotation_is_float(annotation) -> bool:
+    """True if a param annotation is ``float`` (or a union including it).
+
+    Handles both real type objects and string annotations (skills using
+    ``from __future__ import annotations`` expose ``"float"`` instead).
+    """
+    if annotation is float or annotation == "float":
+        return True
+    return any(arg is float or arg == "float" for arg in get_args(annotation))
+
+
+def _coerce_numeric_inputs(skill, inputs: dict) -> dict:
+    """Widen whole-number ints to floats for ``float``-annotated params.
+
+    JSON has a single number type, so a UI/agent serializing a float param
+    whose value happens to be whole (e.g. ``x=3``) sends an int. ROS
+    ``float64`` setters reject ints (``must be of type 'float'``), so we match
+    each value to its declared ``execute()`` annotation before dispatch. bools
+    are left alone (``bool`` subclasses ``int``)."""
+    try:
+        signature = inspect.signature(skill.execute)
+    except (TypeError, ValueError):
+        return inputs
+    coerced = dict(inputs)
+    for name, value in inputs.items():
+        if not isinstance(value, int) or isinstance(value, bool):
+            continue
+        param = signature.parameters.get(name)
+        if param is not None and _annotation_is_float(param.annotation):
+            coerced[name] = float(value)
+    return coerced
 
 
 class SkillsActionServer(Node):
@@ -72,12 +115,25 @@ class SkillsActionServer(Node):
             simulator_mode=self.simulator_mode,
         )
 
+        # Broadcasts every run's lifecycle (running/completed/failed/interrupted) so any
+        # client — webapp, mobile app, another webapp tab — can see a skill someone else
+        # triggered, not just the one that sent the goal. Payload mirrors ChatManager's
+        # (webapp consumers read either), keyed by a fresh id per run so repeats of the
+        # same skill don't collapse into one chat entry.
+        self._skill_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
+
         # Behavior delegation for physical skills.
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
         self._behavior_goal_lock = threading.Lock()
         self._behavior_goal_handles = {}
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
+
+        # The robot runs one skill at a time. Guards execute_callback so a goal
+        # that arrives while another skill is still executing is aborted promptly
+        # (see execute_callback) instead of contending for the arm/robot state.
+        self._skill_execution_lock = threading.Lock()
+        self._skill_running = False
 
         # ReentrantCallbackGroup so a cancel request can be serviced *while* a
         # skill's execute_callback is blocked waiting on the behavior result.
@@ -120,6 +176,12 @@ class SkillsActionServer(Node):
         self.get_logger().info(f"Total skills available: {self.catalog.code_count + self.catalog.physical_count}")
         self.catalog.publish_skills_list()
         self.catalog.start_watcher()
+
+        # Heartbeat: the roster is published once (latched), but the webapp
+        # reaches /brain/available_skills through rws, which subscribes after
+        # boot and never receives the latched sample. Re-emit the cached roster
+        # at a low rate so late-joining clients get it within one interval.
+        self._skills_heartbeat_timer = self.create_timer(3.0, self.catalog.republish_cached)
 
     # ================= service handlers (delegate to catalog) =================
     def _handle_reload_skills(self, request, response):
@@ -220,17 +282,86 @@ class SkillsActionServer(Node):
             )
 
         skill_type = goal_handle.request.skill_type
-        if self.catalog.get_code_skill(skill_type) is not None:
-            return self._execute_code_skill(goal_handle, skill_type, inputs)
-        if self.catalog.get_physical_skill(skill_type) is not None:
-            return self._execute_physical_skill(goal_handle, skill_type, inputs)
 
-        self.get_logger().error(f"Skill '{skill_type}' not available")
-        self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
-        goal_handle.abort()
-        return ExecuteSkill.Result(
-            success=False, message="Skill not available", skill_type=skill_type, success_type=SkillResult.FAILURE.value
-        )
+        # Serialize: the robot runs one skill at a time. If a goal arrives while
+        # another skill is still executing (e.g. rapid Run/Stop toggling, where
+        # the previous skill is mid-teardown), abort it here so the app gets a
+        # prompt result. Rejecting in goal_callback instead would surface nothing
+        # back through the rws bridge, leaving the app hung until its timeout.
+        # No skill-status broadcast for the rejected goal — it never ran.
+        with self._skill_execution_lock:
+            if self._skill_running:
+                self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
+                goal_handle.abort()
+                return ExecuteSkill.Result(
+                    success=False,
+                    message="Another skill is already running",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
+            self._skill_running = True
+
+        name = self._skill_display_name(skill_type)
+        run_id = uuid.uuid4().hex
+        self._publish_skill_status(run_id, skill_type, name, "running")
+        try:
+            if self.catalog.get_code_skill(skill_type) is not None:
+                result = self._execute_code_skill(goal_handle, skill_type, inputs)
+            elif self.catalog.get_physical_skill(skill_type) is not None:
+                result = self._execute_physical_skill(goal_handle, skill_type, inputs)
+            else:
+                self.get_logger().error(f"Skill '{skill_type}' not available")
+                self.get_logger().error(f"Available skills: {self.catalog.all_skill_ids()}")
+                goal_handle.abort()
+                result = ExecuteSkill.Result(
+                    success=False,
+                    message="Skill not available",
+                    skill_type=skill_type,
+                    success_type=SkillResult.FAILURE.value,
+                )
+        except Exception as e:
+            # A 'running' broadcast went out above — a terminal status MUST
+            # follow or every client shows this skill as active forever.
+            self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error")
+            raise
+        finally:
+            with self._skill_execution_lock:
+                self._skill_running = False
+        status, reason = self._terminal_skill_status(result)
+        self._publish_skill_status(run_id, skill_type, name, status, reason)
+        return result
+
+    def _skill_display_name(self, skill_type: str) -> str:
+        code_entry = self.catalog.get_code_skill(skill_type)
+        if code_entry is not None:
+            return code_entry[0]
+        physical = self.catalog.get_physical_skill(skill_type)
+        if physical is not None:
+            return physical.get("metadata", {}).get("name", skill_type)
+        return skill_type
+
+    @staticmethod
+    def _terminal_skill_status(result) -> tuple[str, str | None]:
+        if result.success and result.success_type == SkillResult.SUCCESS.value:
+            return "completed", None
+        if result.success_type == SkillResult.CANCELLED.value:
+            return "interrupted", None
+        return "failed", result.message or None
+
+    def _publish_skill_status(
+        self, run_id: str, skill_type: str, name: str, status: str, reason: str | None = None
+    ) -> None:
+        payload = {
+            "primitive_name": name,
+            "skill_name": name,
+            "skill_id": skill_type,
+            "primitive_id": run_id,
+            "status": status,
+            "timestamp": time.time(),
+        }
+        if reason:
+            payload["reason"] = reason
+        self._skill_status_pub.publish(String(data=json.dumps(payload)))
 
     # ================= execution =================
     def _execute_code_skill(self, goal_handle, skill_type, inputs):
@@ -254,23 +385,20 @@ class SkillsActionServer(Node):
             self.get_logger().debug(f"Published feedback for '{skill_type}': {update_message}")
 
         skill.set_feedback_callback(_publish_feedback)
-
-        required_states = skill.get_required_robot_states()
-        needs_camera = required_states and (
-            RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states
-            or RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states
-        )
+        skill.skills = SkillInvoker(self, goal_handle, _publish_feedback)
 
         try:
-            self.robot_state.start_subscriptions()
-            if needs_camera:
-                self._camera_node.start()
-            self.robot_state.update_skill_robot_state(skill)
-            if required_states:
-                self.robot_state.begin_continuous_updates(skill)
-                self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
+            # Code skills otherwise publish no feedback until they call their own
+            # feedback callback. Emit one so the websocket bridge (rws) relays its
+            # assigned goal_id to the app — without it the app has no id to
+            # cancel/interrupt the running skill with.
+            initial_feedback = ExecuteSkill.Feedback()
+            initial_feedback.feedback = "running"
+            initial_feedback.image_b64 = ""
+            goal_handle.publish_feedback(initial_feedback)
 
-            result_message, result_status = skill.execute(**inputs)
+            self.robot_state.start_subscriptions()
+            result_message, result_status = self._run_code_skill_body(skill, skill_type, inputs)
 
             if result_status == SkillResult.SUCCESS:
                 self.get_logger().info(f"Skill '{skill_type}' succeeded: {result_message}")
@@ -300,10 +428,45 @@ class SkillsActionServer(Node):
                 success=False, message=str(e), skill_type=skill_type, success_type=SkillResult.FAILURE.value
             )
         finally:
-            self.robot_state.end_continuous_updates()
+            self.robot_state.stop_subscriptions()
+
+    def _run_code_skill_body(self, skill, skill_type, inputs):
+        """Prepare robot state for a code skill and run its ``execute()``.
+
+        Returns ``(message, SkillResult)``; goal finalization and subscriptions
+        stay with the caller (the top-level goal owns them, so they stay up
+        while a chaining skill runs its children). Nesting-safe: the 50 Hz
+        state slot suspends/resumes (see RobotStateProvider) and the camera is
+        refcounted.
+        """
+        required_states = skill.get_required_robot_states()
+        needs_camera = required_states and (
+            RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states
+            or RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states
+        )
+        try:
+            if needs_camera:
+                self._camera_node.start()
+            # singleton instances keep state from previous runs; drop it so a
+            # skill never mistakes a stale value for fresh sensor data
+            skill.clear_robot_state()
+            self.robot_state.update_skill_robot_state(skill)
+            if required_states:
+                self.robot_state.begin_continuous_updates(skill)
+                self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
+            # innate.skills proxies route to this skill's invoker while
+            # execute() runs
+            with use_invoker(skill.skills):
+                return normalize_skill_result(skill.execute(**_coerce_numeric_inputs(skill, inputs)))
+        except SkillCancelled as e:
+            return str(e) or "Skill cancelled", SkillResult.CANCELLED
+        except SkillFailed as e:
+            return str(e) or "Skill failed", SkillResult.FAILURE
+        finally:
+            if required_states:
+                self.robot_state.end_continuous_updates()
             if needs_camera:
                 self._camera_node.stop()
-            self.robot_state.stop_subscriptions()
 
     def _execute_physical_skill(self, goal_handle, skill_type, inputs):
         self.get_logger().info(f"Delegating physical skill '{skill_type}' to behavior_server")
@@ -317,19 +480,29 @@ class SkillsActionServer(Node):
                 skill_type=skill_type,
                 success_type=SkillResult.FAILURE.value,
             )
-        metadata = physical_data["metadata"]
-
         self.robot_state.start_subscriptions()
+        try:
+            success, message, success_type, finalize = self._run_physical_skill(goal_handle, skill_type, physical_data)
+            getattr(goal_handle, finalize)()
+            return ExecuteSkill.Result(
+                success=success, message=message, skill_type=skill_type, success_type=success_type
+            )
+        finally:
+            self.robot_state.stop_subscriptions()
+
+    def _run_physical_skill(self, goal_handle, skill_type, physical_data):
+        """Send a physical skill to behavior_server and wait for its result.
+
+        Returns ``(success, message, success_type, finalize)`` where ``finalize``
+        is the goal-handle method the caller should invoke ("succeed", "abort"
+        or "canceled"). Does not finalize the goal, so a chaining skill can run
+        a physical child on its own goal without ending the parent.
+        """
+        metadata = physical_data["metadata"]
         try:
             if not self._behavior_client.wait_for_server(timeout_sec=5.0):
                 self.get_logger().error("Behavior server not available!")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior server not available",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Behavior server not available", SkillResult.FAILURE.value, "abort"
 
             behavior_goal = ExecuteBehavior.Goal()
             behavior_goal.skill_dir = physical_data["directory"]
@@ -338,36 +511,21 @@ class SkillsActionServer(Node):
             self.get_logger().info(f"Sending behavior goal to behavior_server: {skill_type}")
             send_goal_future = self._behavior_client.send_goal_async(behavior_goal)
 
-            # CLI requests run on a background worker so the main spin loop can
-            # service the behavior action response; recursive spinning from that
-            # worker races the main executor and can falsely time out.
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
-            else:
-                rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
-                goal_ready = send_goal_future.done()
+            # Wait on the behavior goal via the executor (event-based) instead of
+            # re-spinning this node. The dedicated MultiThreadedExecutor services the
+            # behavior response on another thread while we block here; re-spinning
+            # required rclpy's global executor and raced Nav2's own global spins.
+            goal_ready = self._wait_for_cli_future(send_goal_future, timeout_sec=10.0) == "done"
 
             if not goal_ready:
                 self.get_logger().error("Timeout waiting for behavior goal acceptance")
                 self._cancel_behavior_goal_when_ready(send_goal_future, skill_type)
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Timeout waiting for behavior goal acceptance",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Timeout waiting for behavior goal acceptance", SkillResult.FAILURE.value, "abort"
 
             behavior_goal_handle = send_goal_future.result()
             if not behavior_goal_handle.accepted:
                 self.get_logger().error("Behavior goal rejected by behavior_server")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior goal rejected by behavior_server",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
+                return False, "Behavior goal rejected by behavior_server", SkillResult.FAILURE.value, "abort"
 
             self._register_behavior_goal_handle(goal_handle, behavior_goal_handle, skill_type)
             self.get_logger().info("Behavior goal accepted, waiting for result...")
@@ -381,76 +539,35 @@ class SkillsActionServer(Node):
             goal_handle.publish_feedback(initial_feedback)
 
             result_future = behavior_goal_handle.get_result_async()
-            if isinstance(goal_handle, SkillCliGoalHandle):
-                result_wait_state = self._wait_for_cli_future(
-                    result_future, server_ready_check=self._behavior_server_ready
-                )
-            else:
-                rclpy.spin_until_future_complete(self, result_future)
-                result_wait_state = "done" if result_future.done() else "pending"
+            result_wait_state = self._wait_for_cli_future(result_future, server_ready_check=self._behavior_server_ready)
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Behavior server became unavailable while waiting for result",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
+                return (
+                    False,
+                    "Behavior server became unavailable while waiting for result",
+                    SkillResult.FAILURE.value,
+                    "abort",
                 )
 
             if not result_future.done():
                 self.get_logger().info(f"Physical skill '{skill_type}' cancelled before behavior result was ready")
-                goal_handle.canceled()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message="Physical skill cancelled",
-                    skill_type=skill_type,
-                    success_type=SkillResult.CANCELLED.value,
-                )
+                return True, "Physical skill cancelled", SkillResult.CANCELLED.value, "canceled"
 
             behavior_result = result_future.result().result
             if behavior_result.success:
                 self.get_logger().info(f"Physical skill '{skill_type}' succeeded: {behavior_result.message}")
-                goal_handle.succeed()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message=behavior_result.message,
-                    skill_type=skill_type,
-                    success_type=SkillResult.SUCCESS.value,
-                )
+                return True, behavior_result.message, SkillResult.SUCCESS.value, "succeed"
             if "cancel" in behavior_result.message.lower():
                 self.get_logger().info(f"Physical skill '{skill_type}' cancelled: {behavior_result.message}")
-                goal_handle.succeed()
-                return ExecuteSkill.Result(
-                    success=True,
-                    message=behavior_result.message,
-                    skill_type=skill_type,
-                    success_type=SkillResult.CANCELLED.value,
-                )
+                return True, behavior_result.message, SkillResult.CANCELLED.value, "succeed"
             self.get_logger().error(f"Physical skill '{skill_type}' failed: {behavior_result.message}")
-            goal_handle.abort()
-            return ExecuteSkill.Result(
-                success=False,
-                message=behavior_result.message,
-                skill_type=skill_type,
-                success_type=SkillResult.FAILURE.value,
-            )
+            return False, behavior_result.message, SkillResult.FAILURE.value, "abort"
         except Exception as e:
             self.get_logger().error(f"Unexpected error executing physical skill '{skill_type}': {e}")
-            try:
-                goal_handle.abort()
-            except Exception as abort_err:
-                self.get_logger().error(f"Also failed to abort goal for '{skill_type}': {abort_err}")
-            return ExecuteSkill.Result(
-                success=False,
-                message=f"Unexpected error executing physical skill: {e}",
-                skill_type=skill_type,
-                success_type=SkillResult.FAILURE.value,
-            )
+            return False, f"Unexpected error executing physical skill: {e}", SkillResult.FAILURE.value, "abort"
         finally:
             self._unregister_behavior_goal_handle(goal_handle)
-            self.robot_state.stop_subscriptions()
 
     # ================= behavior goal tracking =================
     def _skill_goal_key(self, goal_handle) -> int:
@@ -585,9 +702,23 @@ class SkillsActionServer(Node):
 def main(args=None):
     rclpy.init(args=args)
     action_server = SkillsActionServer()
+    # Spin on a dedicated executor instead of rclpy's global one. Skills that drive
+    # Nav2 (mobility.rotate, navigate_to_position) call BasicNavigator, whose blocking
+    # helpers spin the *global* executor; sharing it with this node lets those Nav2
+    # action clients enter our wait set and corrupt it ("wait set index ... out of
+    # bounds" -> SIGABRT). A dedicated MultiThreadedExecutor isolates us and lets a
+    # blocked physical-skill execute() wait on behavior results serviced by another
+    # thread (see _wait_for_cli_future) without re-spinning this node.
+    #
+    # Floor the thread pool well above the max expected concurrent skill count.
+    # execute_callback runs on a pool thread and blocks in _wait_for_cli_future
+    # until another pool thread dispatches the behavior response it waits on; with
+    # only os.cpu_count() threads (4 on a Jetson), enough concurrent skills could
+    # occupy every thread and leave none to resolve their futures -> deadlock.
+    executor = MultiThreadedExecutor(num_threads=max(8, (os.cpu_count() or 4) + 4))
+    executor.add_node(action_server)
     try:
-        while rclpy.ok():
-            rclpy.spin_once(action_server, timeout_sec=1.0)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     action_server.destroy()
