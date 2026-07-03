@@ -215,7 +215,7 @@ class SimulationNode:
 
         self.render_camera_vfov = 40
         self.render_camera_hfov = degrees(2 * atan(tan(radians(self.render_camera_vfov) / 2) * 1280 / 720))
-        self.render_camera_res = (1280, 720)
+        self.render_camera_res = (1920, 1080)
 
         self.robot_camera_vfov = 80
         self.robot_camera_hfov = degrees(2 * atan(tan(radians(self.robot_camera_vfov) / 2) * 640 / 480))
