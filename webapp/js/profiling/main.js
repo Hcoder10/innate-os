@@ -31,8 +31,15 @@ mountPage(stage, "profiling-page", buildView);
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,
  *   engine_ms:number, transfer_ms:number, postprocess_ms:number, total_ms:number,
  *   engine_ran:boolean, period_ms:number, progress?:number, disagreement?:number,
- *   arm_jerk?:number, base_jerk?:number }} Sample
+ *   arm_jerk?:number, base_jerk?:number, base_speed?:number }} Sample
  */
+
+// The auto-stop idle detector fires when arm_jerk and base_speed both hold below
+// their eps for idle_seconds. These mirror the LearnedStopDetector defaults
+// (idle_arm_eps / idle_base_eps) so the stillness stats and the eps guide lines on
+// the motion charts measure the same thing the detector checks.
+const STILL_ARM_EPS = 0.01;
+const STILL_BASE_EPS = 0.01;
 
 /**
  * @param {HTMLElement} root
@@ -83,19 +90,18 @@ function buildView(root) {
 
   const charts = document.createElement("div");
   charts.className = "prof-charts";
-  const tsCard = chartCard("Total step latency vs 25 Hz budget", "ms over recorded steps");
-  const histCard = chartCard("Model inference time", "engine-run steps only");
-  const breakdownCard = chartCard("Average per-step breakdown", "where each step spends time");
-  // Behavior quality: how well / how confident the policy is, vs just how fast.
-  const progressCard = chartCard("Progress", "policy's learned progress head (action[8])");
-  const disagreementCard = chartCard("Ensemble disagreement", "uncertainty — spikes precede failures");
-  charts.append(
-    tsCard.card,
-    histCard.card,
-    breakdownCard.card,
-    progressCard.card,
-    disagreementCard.card,
-  );
+  const cards = {
+    ts: chartCard("Total step latency vs 25 Hz budget", "ms over recorded steps"),
+    hist: chartCard("Model inference time", "engine-run steps only"),
+    breakdown: chartCard("Average per-step breakdown", "where each step spends time"),
+    // Behavior quality: how well / how confident the policy is, vs just how fast.
+    progress: chartCard("Progress", "policy's learned progress head (action[8])"),
+    disagreement: chartCard("Ensemble disagreement", "uncertainty — spikes precede failures"),
+    // Auto-stop signals: what the idle detector watches, with its eps as a guide line.
+    armMotion: chartCard("Arm motion", `‖Δ arm cmd‖ per step — idle stop needs < ${STILL_ARM_EPS}`),
+    baseSpeed: chartCard("Base speed", `commanded |lin|+|ang| — idle stop needs < ${STILL_BASE_EPS}`),
+  };
+  for (const c of Object.values(cards)) charts.append(c.card);
 
   const hint = document.createElement("p");
   hint.className = "prof-hint microlabel";
@@ -142,12 +148,12 @@ function buildView(root) {
     const flowing = lastMsgAt > 0 && sinceMsg < 500;
     setLive(live, flowing, recording);
     if (dirty) {
-      render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard);
+      render(samples, statsRow, cards);
       dirty = false;
     }
   }, 140);
 
-  render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard);
+  render(samples, statsRow, cards);
 
   return {
     destroy() {
@@ -220,7 +226,13 @@ async function exportJson(samples, btn) {
       "for engine-run steps; engine_forward_ms is just the GPU forward. behavior_quality holds " +
       "policy signals (not timing): progress (learned progress head action[8]), disagreement " +
       "(ensemble uncertainty — weighted std across overlapping chunk predictions; spikes precede " +
-      "failures/OOD), arm_jerk/base_jerk (per-step ‖Δcommand‖, lower=smoother). samples is the raw record.",
+      "failures/OOD), arm_jerk/base_jerk (per-step ‖Δcommand‖, lower=smoother), base_speed " +
+      "(commanded |lin.x|+|ang.z|). auto_stop maps to the LearnedStopDetector knobs: " +
+      "progress_max bounds progress_threshold; arm_jerk_floor_p5/base_speed_floor_p5 are the " +
+      "quietest the motion signals get (idle_arm_eps/idle_base_eps must exceed them to fire); " +
+      "still_longest_s/still_now_s are the longest and trailing runs with both signals below " +
+      `the detector's default eps (${STILL_ARM_EPS}), to read against idle_seconds. ` +
+      "samples is the raw record.",
     sample_count: st.sampleCount,
     budget_ms: r(st.budgetMs),
     summary: {
@@ -244,6 +256,13 @@ async function exportJson(samples, btn) {
         arm_jerk_mean: rn(st.quality.armJerkMean, 4),
         base_jerk_mean: rn(st.quality.baseJerkMean, 4),
       },
+      auto_stop: {
+        progress_max: rn(st.quality.progressMax, 4),
+        arm_jerk_floor_p5: rn(st.quality.armJerkFloor, 4),
+        base_speed_floor_p5: rn(st.quality.baseSpeedFloor, 4),
+        still_longest_s: rn(st.quality.stillLongest, 1),
+        still_now_s: rn(st.quality.stillNow, 1),
+      },
     },
     samples: samples.map((s) => ({
       seq: s.seq,
@@ -259,6 +278,7 @@ async function exportJson(samples, btn) {
       ...(s.disagreement != null ? { disagreement: r(s.disagreement, 4) } : {}),
       ...(s.arm_jerk != null ? { arm_jerk: r(s.arm_jerk, 4) } : {}),
       ...(s.base_jerk != null ? { base_jerk: r(s.base_jerk, 4) } : {}),
+      ...(s.base_speed != null ? { base_speed: r(s.base_speed, 4) } : {}),
     })),
   };
 
@@ -297,22 +317,26 @@ function downloadText(text, filename) {
 /**
  * @param {Sample[]} samples
  * @param {HTMLElement} statsRow
- * @param {ReturnType<typeof chartCard>} tsCard
- * @param {ReturnType<typeof chartCard>} histCard
- * @param {ReturnType<typeof chartCard>} breakdownCard
- * @param {ReturnType<typeof chartCard>} progressCard
- * @param {ReturnType<typeof chartCard>} disagreementCard
+ * @param {Record<string, ReturnType<typeof chartCard>>} cards
  */
-function render(samples, statsRow, tsCard, histCard, breakdownCard, progressCard, disagreementCard) {
+function render(samples, statsRow, cards) {
   // computeStats sorts the retained record for percentiles, so do it once per tick and
   // share it with the views that need aggregates.
   const st = computeStats(samples);
   renderStats(st, statsRow);
-  renderTimeseries(samples, tsCard.body);
-  renderHistogram(samples, histCard.body);
-  renderBreakdown(st, breakdownCard.body);
-  renderLine(samples, progressCard.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: 1 });
-  renderLine(samples, disagreementCard.body, (s) => s.disagreement, "var(--blue)", {});
+  renderTimeseries(samples, cards.ts.body);
+  renderHistogram(samples, cards.hist.body);
+  renderBreakdown(st, cards.breakdown.body);
+  renderLine(samples, cards.progress.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: 1 });
+  renderLine(samples, cards.disagreement.body, (s) => s.disagreement, "var(--blue)", {});
+  renderLine(samples, cards.armMotion.body, (s) => s.arm_jerk, "var(--accent)", {
+    lo: 0,
+    threshold: STILL_ARM_EPS,
+  });
+  renderLine(samples, cards.baseSpeed.body, (s) => s.base_speed, "var(--blue)", {
+    lo: 0,
+    threshold: STILL_BASE_EPS,
+  });
 }
 
 /**
@@ -341,7 +365,8 @@ function scaffold(host, key, build) {
  * @param {HTMLElement} host
  * @param {(s: Sample) => number|undefined} accessor
  * @param {string} color
- * @param {{lo?: number, hi?: number}} fixed  optional fixed y-range (else auto)
+ * @param {{lo?: number, hi?: number, threshold?: number}} fixed  optional fixed y-range
+ *   (else auto) and an optional dashed guide line at a threshold value
  */
 function renderLine(samples, host, accessor, color, fixed) {
   const pts = samples.slice(-MAX_PLOT_POINTS).map(accessor).filter((v) => typeof v === "number");
@@ -356,9 +381,11 @@ function renderLine(samples, host, accessor, color, fixed) {
   const W = 1000;
   const H = 240;
   // Persist the svg + path + axis; only the path's `d` and the axis labels change each tick.
-  const { path, axis } = scaffold(host, "data", (h) => {
+  const { path, axis, thresholdLine } = scaffold(host, "data", (h) => {
     const svg = makeSvg(W, H);
     svg.setAttribute("preserveAspectRatio", "none");
+    const thr = fixed.threshold != null ? hline(0, W, "var(--danger)", "4 4") : null;
+    if (thr) svg.appendChild(thr);
     const p = document.createElementNS(SVG_NS, "path");
     p.setAttribute("fill", "none");
     p.setAttribute("stroke", color);
@@ -368,8 +395,16 @@ function renderLine(samples, host, accessor, color, fixed) {
     h.appendChild(svg);
     const ax = axisLabels(["", "", ""]);
     h.appendChild(ax);
-    return { path: p, axis: ax };
+    return { path: p, axis: ax, thresholdLine: thr };
   });
+
+  if (thresholdLine && fixed.threshold != null) {
+    // Reposition each tick — the auto range rescales with the data.
+    const ty = H - ((fixed.threshold - lo) / span) * H;
+    thresholdLine.setAttribute("y1", ty.toFixed(1));
+    thresholdLine.setAttribute("y2", ty.toFixed(1));
+    thresholdLine.setAttribute("opacity", ty >= 0 && ty <= H ? "1" : "0");
+  }
 
   let d = "";
   pts.forEach((v, i) => {
@@ -407,6 +442,8 @@ function computeStats(samples) {
   const disagree = num("disagreement");
   const armJerk = num("arm_jerk");
   const baseJerk = num("base_jerk");
+  const baseSpeed = num("base_speed");
+  const still = stillness(samples);
   return {
     sampleCount: n,
     budgetMs: period,
@@ -431,12 +468,51 @@ function computeStats(samples) {
     },
     quality: {
       progressLast: progress.length ? progress[progress.length - 1] : null,
+      progressMax: progress.length ? Math.max(...progress) : null,
       disagreementMean: disagree.length ? mean(disagree) : null,
       disagreementP95: disagree.length ? percentile(disagree, 95) : null,
       armJerkMean: armJerk.length ? mean(armJerk) : null,
+      // The p5 floors are the quietest the signals get — idle_arm_eps/idle_base_eps
+      // must sit above them for the idle stop to ever fire.
+      armJerkFloor: armJerk.length ? percentile(armJerk, 5) : null,
       baseJerkMean: baseJerk.length ? mean(baseJerk) : null,
+      baseSpeedFloor: baseSpeed.length ? percentile(baseSpeed, 5) : null,
+      stillLongest: still.longest,
+      stillNow: still.now,
     },
   };
+}
+
+/**
+ * Still-dwell stats at the detector's default eps: a sample is "still" when both
+ * motion signals are below eps, exactly the condition the idle stop dwells on.
+ * `longest` is the longest still run in the record and `now` the trailing one, in
+ * seconds of message time — read them against idle_seconds. Samples missing either
+ * signal break the run (the detector likewise restarts its dwell on gaps).
+ * @param {Sample[]} samples
+ * @returns {{ longest: number|null, now: number|null }}
+ */
+function stillness(samples) {
+  if (!samples.some((s) => typeof s.arm_jerk === "number" && typeof s.base_speed === "number")) {
+    return { longest: null, now: null };
+  }
+  let longest = 0;
+  let now = 0;
+  let runStart = null;
+  for (const s of samples) {
+    const isStill =
+      typeof s.arm_jerk === "number" && s.arm_jerk < STILL_ARM_EPS &&
+      typeof s.base_speed === "number" && s.base_speed < STILL_BASE_EPS;
+    if (!isStill) {
+      runStart = null;
+      now = 0;
+      continue;
+    }
+    if (runStart === null) runStart = s.t;
+    now = s.t - runStart;
+    if (now > longest) longest = now;
+  }
+  return { longest, now };
 }
 
 /** @param {ReturnType<typeof computeStats>} st @param {HTMLElement} host */
@@ -458,6 +534,12 @@ function renderStats(st, host) {
     ["headroom", n ? fmtMs(st.headroomMs) : "—", "budget − p95", st.headroomMs < 0, true],
     ["arm jerk", `${fmt(q.armJerkMean)} rad`, "mean ‖Δcmd‖ — smoothness", false, q.armJerkMean != null],
     ["uncertainty", fmt(q.disagreementMean), "mean ensemble disagreement", false, q.disagreementMean != null],
+    // Auto-stop tuning: each card names the LearnedStopDetector knob it informs.
+    ["progress", fmt(q.progressLast), `max ${fmt(q.progressMax)} — progress_threshold`, false, q.progressLast != null],
+    ["arm floor", fmt(q.armJerkFloor, 4), "p5 ‖Δcmd‖ — idle_arm_eps above this", false, q.armJerkFloor != null],
+    ["base floor", fmt(q.baseSpeedFloor, 4), "p5 |cmd speed| — idle_base_eps above this", false, q.baseSpeedFloor != null],
+    ["longest still", q.stillLongest == null ? "—" : `${q.stillLongest.toFixed(1)} s`, `both < ${STILL_ARM_EPS} — idle_seconds`, false, q.stillLongest != null],
+    ["still now", q.stillNow == null ? "—" : `${q.stillNow.toFixed(1)} s`, "trailing dwell at default eps", false, q.stillNow != null],
   ];
   const cards = scaffold(host, "stats", (h) => rows.map((r) => stat(/** @type {string} */ (r[0]), h)));
   rows.forEach((r, i) => {
