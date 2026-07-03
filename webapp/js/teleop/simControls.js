@@ -37,6 +37,7 @@ export function createSimControls(parent, rosClient, simApiUrl) {
 
   const metrics = document.createElement("p");
   metrics.className = "sim-metrics mono";
+  metrics.style.whiteSpace = "pre-line"; // stack the readout over multiple lines
   metrics.hidden = true;
 
   wrap.append(label, resetBtn, metrics);
@@ -48,9 +49,24 @@ export function createSimControls(parent, rosClient, simApiUrl) {
       if (!res.ok) throw new Error("bad status");
       const m = await res.json();
       const fpsVals = Object.values(m?.fps_by_camera || {}).filter((v) => typeof v === "number");
-      const fps = fpsVals.length ? Math.round(Math.max(...fpsVals)) : 0;
+      const camFps = fpsVals.length ? Math.round(Math.max(...fpsVals)) : 0;
       const queue = Object.values(m?.queue_sizes || {}).reduce((a, v) => a + (typeof v === "number" ? v : 0), 0);
-      metrics.textContent = `${fps} fps · queue ${queue}`;
+
+      // Sim core-loop metrics are optional (absent on the real robot / older sim);
+      // show them when present, otherwise fall back to the camera-fps readout.
+      // Stacked over two lines to keep the overlay narrow.
+      const loopLine = [];
+      if (typeof m?.loop_fps === "number") loopLine.push(`${m.loop_fps.toFixed(1)}fps`);
+      const phys = m?.loop_timings_ms?.physics_ms?.p50;
+      const rend = m?.loop_timings_ms?.render_ms?.p50;
+      if (typeof phys === "number" || typeof rend === "number") {
+        const p = typeof phys === "number" ? Math.round(phys) : "—";
+        const r = typeof rend === "number" ? Math.round(rend) : "—";
+        loopLine.push(`p${p}/r${r}ms`);
+      }
+      const tailLine = [`cam${camFps}`, `q${queue}`];
+      const lines = loopLine.length ? [loopLine.join(" · "), tailLine.join(" · ")] : [tailLine.join(" · ")];
+      metrics.textContent = lines.join("\n");
       metrics.hidden = false;
     } catch {
       metrics.hidden = true;

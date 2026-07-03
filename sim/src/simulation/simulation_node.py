@@ -1936,8 +1936,13 @@ class SimulationNode:
         # Get the simulation timestep from the scene
         dt = self.scene.sim_options.dt
         last_step_time = time.time()
+        last_timing_log = 0.0  # perf: throttle detailed timing log to ~1 Hz
 
         while not self.shared_queues.exit_event.is_set():
+            iter_start = time.perf_counter()
+            physics_ms = 0.0
+            render_ms = None  # stays None on iterations that skip rendering
+            fp_ms = arm_ms = chase_ms = 0.0  # per-camera render timings (perf logging)
             # --- (A) Handle velocity commands from agent -> sim first
             try:
                 # Process all messages in queue and keep track of latest commands
@@ -2139,18 +2144,26 @@ class SimulationNode:
                     self.chase_camera.set_pose(pos=chase_pos, lookat=robot_pos, up=(0, 0, 1))
 
                 # Render all cameras
+                render_t0 = time.perf_counter()
                 if self.robot_camera is not None:
+                    _t = time.perf_counter()
                     rgb, depth, seg, normal = self.robot_camera.render(depth=True)
+                    fp_ms = (time.perf_counter() - _t) * 1000.0
                 else:
                     rgb, depth = None, None
                 if self.arm_wrist_camera is not None:
+                    _t = time.perf_counter()
                     arm_rgb, _, _, _ = self.arm_wrist_camera.render()
+                    arm_ms = (time.perf_counter() - _t) * 1000.0
                 else:
                     arm_rgb = None
                 if self.chase_camera is not None:
+                    _t = time.perf_counter()
                     chase_rgb, _, _, _ = self.chase_camera.render()
+                    chase_ms = (time.perf_counter() - _t) * 1000.0
                 else:
                     chase_rgb = None
+                render_ms = (time.perf_counter() - render_t0) * 1000.0
 
                 # Convert RGB to BGR format if needed (or BGR to RGB)
                 if rgb is not None:
@@ -2309,7 +2322,9 @@ class SimulationNode:
 
             # --- (H) Step the physics
             try:
+                step_t0 = time.perf_counter()
                 self.scene.step()
+                physics_ms = (time.perf_counter() - step_t0) * 1000.0
                 step_count += 1
 
                 # --- (I) Sleep to maintain real-time simulation
@@ -2326,6 +2341,25 @@ class SimulationNode:
 
                 # Update last step time for next iteration
                 last_step_time = time.time()
+
+                # Record core-loop phase timings for /stack_metrics. loop_ms
+                # includes the real-time sleep, so its derived FPS is the actual
+                # achieved rate, not just compute time.
+                loop_ms = (time.perf_counter() - iter_start) * 1000.0
+                self.shared_queues.record_loop_timings(loop_ms, physics_ms, render_ms)
+
+                # Detailed per-phase / per-camera timing in the running logs
+                # (throttled to ~1 Hz) for perf debugging.
+                _now_log = time.perf_counter()
+                if _now_log - last_timing_log >= 1.0:
+                    last_timing_log = _now_log
+                    _fps = 1000.0 / loop_ms if loop_ms > 0 else 0.0
+                    _rms = render_ms if render_ms is not None else 0.0
+                    print(
+                        f"[SimTiming] fps={_fps:.2f} loop={loop_ms:.0f}ms "
+                        f"physics={physics_ms:.1f}ms render={_rms:.0f}ms "
+                        f"(fp={fp_ms:.0f} arm={arm_ms:.0f} chase={chase_ms:.0f})"
+                    )
 
             except Exception as e:
                 if "Viewer closed" in str(e):

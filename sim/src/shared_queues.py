@@ -11,6 +11,20 @@ from typing import Any, NamedTuple
 from src.runtime_logging import normalize_sim_log_mode
 
 
+def _summarize_ms(samples: list[float]) -> dict[str, float] | None:
+    """Reduce a window of millisecond samples to mean / p50 / p95 / count."""
+    if not samples:
+        return None
+    ordered = sorted(samples)
+    n = len(ordered)
+    return {
+        "mean": round(sum(ordered) / n, 2),
+        "p50": round(ordered[n // 2], 2),
+        "p95": round(ordered[min(n - 1, int(n * 0.95))], 2),
+        "n": n,
+    }
+
+
 class ChatMessage(NamedTuple):
     sender: str
     text: str
@@ -144,6 +158,16 @@ class SharedQueues:
         # Lightweight runtime metrics for the local stack dashboard.
         self.camera_frame_times: dict[str, deque[float]] = {}
         self.camera_metrics_lock = threading.Lock()
+
+        # Core simulation-loop phase timings (milliseconds). render_ms only gets a
+        # sample on iterations that actually rendered, so its rate reveals how
+        # often the loop renders vs. steps physics.
+        self.loop_timing_lock = threading.Lock()
+        self.loop_timings: dict[str, deque[float]] = {
+            "loop_ms": deque(maxlen=240),
+            "physics_ms": deque(maxlen=240),
+            "render_ms": deque(maxlen=240),
+        }
 
     def set_sim_log_mode(self, mode: str) -> str:
         with self.sim_log_mode_lock:
@@ -395,9 +419,27 @@ class SharedQueues:
                     self.camera_frame_times[camera_name] = history
                 history.append(timestamp)
 
+    def record_loop_timings(self, loop_ms: float, physics_ms: float, render_ms: float | None = None):
+        """Record core-loop phase durations (ms) for the stack dashboard.
+
+        render_ms is None on iterations that skipped rendering; those iterations
+        still record loop/physics time so the render sample rate stays meaningful.
+        """
+        with self.loop_timing_lock:
+            self.loop_timings["loop_ms"].append(loop_ms)
+            self.loop_timings["physics_ms"].append(physics_ms)
+            if render_ms is not None:
+                self.loop_timings["render_ms"].append(render_ms)
+
     def get_runtime_metrics(self) -> dict[str, Any]:
         """Return lightweight runtime metrics for local stack dashboards."""
         now = time.time()
+
+        with self.loop_timing_lock:
+            loop_timing_samples = {name: list(samples) for name, samples in self.loop_timings.items()}
+        loop_timings = {name: _summarize_ms(samples) for name, samples in loop_timing_samples.items()}
+        loop_ms_mean = loop_timings["loop_ms"]["mean"] if loop_timings["loop_ms"] else None
+        loop_fps = round(1000.0 / loop_ms_mean, 1) if loop_ms_mean else 0.0
         with self.camera_metrics_lock:
             fps_by_camera: dict[str, float] = {}
             latest_frame_age_by_camera: dict[str, float | None] = {}
@@ -433,6 +475,8 @@ class SharedQueues:
             "latest_agent_updates": latest_agent_updates,
             "fps_by_camera": fps_by_camera,
             "latest_frame_age_by_camera": latest_frame_age_by_camera,
+            "loop_fps": loop_fps,
+            "loop_timings_ms": loop_timings,
             "available_agent_count": available_agent_count,
             "available_agents_updated_at": available_agents_updated_at,
             "available_agent_state_updated_at": available_agent_state_updated_at,
