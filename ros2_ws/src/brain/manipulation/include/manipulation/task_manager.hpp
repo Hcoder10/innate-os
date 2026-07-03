@@ -28,8 +28,14 @@ class TaskManager {
 
     // Rename the already-finalized streaming file at `temp_file_path` to its
     // final episode slot and update the dataset metadata.
+    //
+    // action_head_source records what the trailing two /action columns contain:
+    // "synthesized" (teleop demo: linear-ramp training labels written at
+    // finalize) or "policy" (rollout: the policy's live progress/termination
+    // head). It describes the data, not who drove the robot — consumers (e.g.
+    // training uploads) must not treat "policy" episodes as demo labels.
     void add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
-                     const std::string& end_timestamp);
+                     const std::string& end_timestamp, const std::string& action_head_source = "synthesized");
 
     void end_task();
 

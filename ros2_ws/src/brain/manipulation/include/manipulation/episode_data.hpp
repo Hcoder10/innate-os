@@ -39,6 +39,17 @@ class EpisodeData {
     // Set the output path. Does not touch disk yet.
     void open_file(const std::string& path);
 
+    // Record the policy's own progress/termination head into the trailing two
+    // /action columns instead of synthesizing them at finalize(). For teleop
+    // demos (default off) there is no real head, so finalize() writes the
+    // linear-ramp training labels; for a policy rollout the live head values
+    // are the data under evaluation and must not be overwritten. Call before
+    // the first add_timestep(); the choice holds for the whole episode so a
+    // column can never mix real and synthesized values.
+    void enable_policy_head() {
+        policy_head_enabled_ = true;
+    }
+
     // Append one timestep to the file. On the first call we create the
     // HDF5 file and all chunked extendable datasets sized from the inputs.
     //
@@ -46,14 +57,23 @@ class EpisodeData {
     // /head_command dataset — kept out of /action so the learned-policy action
     // space is unaffected. Pass NaN (the default) to omit head recording; if it
     // is NaN on the first timestep the dataset is never created.
+    //
+    // policy_progress / policy_termination are only consumed when
+    // enable_policy_head() was called: they land in the trailing two /action
+    // columns. NaN marks a step with no fresh head sample (policy not running
+    // or stale) — deliberately not zero-filled so gaps stay visible.
     void add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
                       const std::vector<double>& qvel, const std::vector<cv::Mat>& images, double arm_timestamp = -1.0,
                       const std::vector<double>& image_timestamps = {},
-                      double head_command = std::numeric_limits<double>::quiet_NaN());
+                      double head_command = std::numeric_limits<double>::quiet_NaN(),
+                      double policy_progress = std::numeric_limits<double>::quiet_NaN(),
+                      double policy_termination = std::numeric_limits<double>::quiet_NaN());
 
-    // Write the termination columns of /action, then close the file.
-    // Safe to call when no timesteps were written; in that case behaves
-    // like cancel() (since an empty file is useless).
+    // Write the termination columns of /action (skipped when
+    // enable_policy_head() was called — the real head was streamed per
+    // timestep), then close the file. Safe to call when no timesteps were
+    // written; in that case behaves like cancel() (since an empty file is
+    // useless).
     void finalize();
 
     // Close any open handles and delete the file on disk.
@@ -82,6 +102,10 @@ class EpisodeData {
     std::string file_path_;
     bool file_created_;
     size_t timestep_count_;
+    // When true, the trailing two /action columns carry the policy's live
+    // progress/termination head (written per timestep) and finalize() must not
+    // overwrite them with synthesized training labels.
+    bool policy_head_enabled_ = false;
 
     std::vector<std::string> camera_names_;
     bool camera_names_set_;

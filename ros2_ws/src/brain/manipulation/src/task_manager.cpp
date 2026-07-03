@@ -209,7 +209,7 @@ void TaskManager::cleanup_stale_streaming_files() {
 }
 
 void TaskManager::add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
-                              const std::string& end_timestamp) {
+                              const std::string& end_timestamp, const std::string& action_head_source) {
     std::string data_dir = current_task_dir_ + "/data";
     fs::create_directories(data_dir);
 
@@ -242,7 +242,8 @@ void TaskManager::add_episode(const std::string& temp_file_path, const std::stri
     nlohmann::json episode_info = {{"episode_id", episode_id},
                                    {"file_name", file_name},
                                    {"start_timestamp", start_timestamp},
-                                   {"end_timestamp", end_timestamp}};
+                                   {"end_timestamp", end_timestamp},
+                                   {"action_head_source", action_head_source}};
     metadata_["episodes"].push_back(episode_info);
     metadata_["number_of_episodes"] = episode_id + 1;
     save_metadata();

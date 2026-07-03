@@ -53,6 +53,7 @@ class RecorderNode : public rclcpp::Node {
     void head_position_callback(const std_msgs::msg::String::SharedPtr msg);
     void cmd_vel_callback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void policy_head_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
     void timer_callback();
 
     // Service handlers
@@ -108,6 +109,7 @@ class RecorderNode : public rclcpp::Node {
     std::string head_position_topic_;
     std::string velocity_topic_;
     std::string odom_topic_;
+    std::string policy_head_topic_;
     std::vector<int64_t> image_size_;
     int max_timesteps_;
 
@@ -131,6 +133,18 @@ class RecorderNode : public rclcpp::Node {
     // for replay skills only. head_received_ stays false until the first reading.
     double latest_head_position_ = 0.0;
     bool head_received_ = false;
+    // Policy progress/termination head, published by the inference server while
+    // a learned behavior runs. Only recorded when the capture_policy_head param
+    // was true at episode start (snapshotted into episode_policy_head_ so the
+    // semantics can't flip mid-episode). Receipt time gates staleness: a value
+    // older than kPolicyHeadStaleSec is recorded as NaN rather than reusing the
+    // last sample after the policy stopped.
+    double latest_policy_progress_ = 0.0;
+    double latest_policy_termination_ = 0.0;
+    std::chrono::steady_clock::time_point latest_policy_head_time_;
+    bool policy_head_received_ = false;
+    bool episode_policy_head_ = false;
+    static constexpr double kPolicyHeadStaleSec = 0.5;
 
     // Topic tracking
     std::map<std::string, bool> topics_received_;
@@ -143,6 +157,7 @@ class RecorderNode : public rclcpp::Node {
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr head_position_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr policy_head_sub_;
 
     // Publishers
     rclcpp::Publisher<brain_messages::msg::RecorderStatus>::SharedPtr status_pub_;

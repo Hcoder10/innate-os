@@ -36,6 +36,13 @@ RecorderNode::RecorderNode()
     this->declare_parameter("odom_topic", "/odom");
     this->declare_parameter("image_size", std::vector<int64_t>{640, 480});
     this->declare_parameter("max_timesteps", 1800);
+    // Policy-rollout capture: when capture_policy_head is true at episode
+    // start, the trailing two /action columns record the policy's live
+    // progress/termination head (from policy_head_topic) instead of the
+    // synthesized training-label ramp. Settable at runtime via `ros2 param set`
+    // so an eval orchestrator can flip it without restarting the recorder.
+    this->declare_parameter("capture_policy_head", false);
+    this->declare_parameter("policy_head_topic", "/brain/manipulation/policy_head");
 
     // Get parameter values
     std::string data_dir_param = this->get_parameter("data_directory").as_string();
@@ -60,6 +67,7 @@ RecorderNode::RecorderNode()
     odom_topic_ = this->get_parameter("odom_topic").as_string();
     image_size_ = this->get_parameter("image_size").as_integer_array();
     max_timesteps_ = this->get_parameter("max_timesteps").as_int();
+    policy_head_topic_ = this->get_parameter("policy_head_topic").as_string();
 
     // Initialize TaskManager
     task_manager_ = std::make_unique<TaskManager>(data_directory_);
@@ -101,6 +109,9 @@ RecorderNode::RecorderNode()
 
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 10, std::bind(&RecorderNode::odom_callback, this, std::placeholders::_1));
+
+    policy_head_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
+        policy_head_topic_, 10, std::bind(&RecorderNode::policy_head_callback, this, std::placeholders::_1));
 
     // Log subscriptions (debug — detail; the "initialized" line below is the summary)
     RCLCPP_DEBUG(this->get_logger(), "Subscribing to image topics:");
@@ -282,6 +293,21 @@ void RecorderNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     latest_odom_ = msg;
 }
 
+void RecorderNode::policy_head_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
+    // [progress, termination] from the inference server, emitted per inference
+    // step while a learned behavior runs. Never a required topic: absence just
+    // means NaN head columns when capture is enabled.
+    if (msg->data.size() < 2) {
+        RCLCPP_WARN_ONCE(this->get_logger(), "Policy head message on %s has %zu values, expected 2; ignoring.",
+                         policy_head_topic_.c_str(), msg->data.size());
+        return;
+    }
+    latest_policy_progress_ = msg->data[0];
+    latest_policy_termination_ = msg->data[1];
+    latest_policy_head_time_ = std::chrono::steady_clock::now();
+    policy_head_received_ = true;
+}
+
 void RecorderNode::timer_callback() {
     if (state_ != State::EPISODE_ACTIVE || !current_episode_) {
         return;
@@ -358,10 +384,25 @@ void RecorderNode::timer_callback() {
         }
     }
 
+    // Policy head values for this tick (NaN unless capture is on for this
+    // episode AND a fresh sample exists — reusing the last sample after the
+    // policy stopped would fabricate a head that was never emitted).
+    double policy_progress = std::numeric_limits<double>::quiet_NaN();
+    double policy_termination = std::numeric_limits<double>::quiet_NaN();
+    if (episode_policy_head_ && policy_head_received_) {
+        const double age =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - latest_policy_head_time_).count();
+        if (age <= kPolicyHeadStaleSec) {
+            policy_progress = latest_policy_progress_;
+            policy_termination = latest_policy_termination_;
+        }
+    }
+
     try {
         current_episode_->add_timestep(
             action_data, qpos, qvel, images_converted, arm_timestamp, image_timestamps,
-            head_received_ ? latest_head_position_ : std::numeric_limits<double>::quiet_NaN());
+            head_received_ ? latest_head_position_ : std::numeric_limits<double>::quiet_NaN(), policy_progress,
+            policy_termination);
         size_t timestep_count = current_episode_->get_episode_length();
 
         // Check if timestep limit reached
@@ -537,6 +578,18 @@ void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigg
     }
 
     current_episode_ = std::make_unique<EpisodeData>();
+    // Snapshot the capture mode for the whole episode so a runtime param flip
+    // can't mix real and synthesized values within one file.
+    episode_policy_head_ = this->get_parameter("capture_policy_head").as_bool();
+    if (episode_policy_head_) {
+        current_episode_->enable_policy_head();
+        // Forget any head sample from a previous behavior run; only samples
+        // received during this episode may be recorded.
+        policy_head_received_ = false;
+        RCLCPP_INFO(this->get_logger(),
+                    "Policy-head capture enabled: /action[-2:] will hold the live policy head from %s.",
+                    policy_head_topic_.c_str());
+    }
     try {
         current_episode_->open_file(task_manager_->get_streaming_episode_path());
     } catch (const std::exception& e) {
@@ -641,7 +694,7 @@ void RecorderNode::handle_save_episode(const std::shared_ptr<std_srvs::srv::Trig
     }
 
     try {
-        task_manager_->add_episode(temp_path, start_ts, end_ts);
+        task_manager_->add_episode(temp_path, start_ts, end_ts, episode_policy_head_ ? "policy" : "synthesized");
     } catch (const std::exception& e) {
         // The file is already finalized but couldn't be moved into the slot;
         // remove it so we don't leak a stranded file.

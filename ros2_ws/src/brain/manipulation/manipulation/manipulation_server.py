@@ -150,6 +150,11 @@ class ManipulationServer(Node):
         # Per-step inference timing breakdown (JSON String), for the webapp Profiling page.
         # Only published while a learned behavior is executing, so it's free when idle.
         self.inference_profile_pub = self.create_publisher(String, "/brain/manipulation/inference_profile", 10)
+        # The policy's [progress, termination] head, one message per inference step
+        # (only when the action head is wide enough to carry it). The recorder
+        # subscribes to this during policy-rollout capture so evaluation episodes
+        # store the real head instead of synthesized training labels.
+        self.policy_head_pub = self.create_publisher(Float64MultiArray, "/brain/manipulation/policy_head", 10)
         self._inference_seq = 0
         # Previous emitted action, for the per-step command-jerk (smoothness) metric.
         self._prev_action_np = None
@@ -925,10 +930,16 @@ class ManipulationServer(Node):
                 )
                 return None
 
-            # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z, [8] progress.
+            # Action layout: [0:6] arm joint targets, [6] linear.x, [7] angular.z,
+            # [8] progress, [9] termination.
             self._publish_base(float(action_np[6]), float(action_np[7]), self.learned_base_speed_scale)
             self._publish_arm(action_np[:6])
             t3 = time.perf_counter()
+
+            if self.current_action_dim >= 10:
+                head_msg = Float64MultiArray()
+                head_msg.data = [float(action_np[8]), float(action_np[9])]
+                self.policy_head_pub.publish(head_msg)
 
             if profiling:
                 quality = {}

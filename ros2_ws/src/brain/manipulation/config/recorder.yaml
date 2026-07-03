@@ -12,3 +12,13 @@
     odom_topic: "/odom"                    # Topic for odometry data (used to verify robot is alive)
     image_size: [640, 480]
     max_timesteps: 1800                    # Maximum number of timesteps before automatically stopping episode
+    # Policy-rollout capture (evaluation datasets). Off for teleop demos: the
+    # trailing two /action columns are then synthesized training labels
+    # (progress ramp + termination flag) written at save time. When true at
+    # episode start, those columns instead record the policy's live
+    # [progress, termination] head from policy_head_topic (NaN on steps with no
+    # fresh sample), and the episode is tagged action_head_source: "policy" in
+    # dataset_metadata.json. Flip at runtime with:
+    #   ros2 param set /recorder_node capture_policy_head true
+    capture_policy_head: false
+    policy_head_topic: "/brain/manipulation/policy_head"

@@ -74,6 +74,7 @@ void EpisodeData::steal_from(EpisodeData& other) noexcept {
     file_path_ = std::move(other.file_path_);
     file_created_ = other.file_created_;
     timestep_count_ = other.timestep_count_;
+    policy_head_enabled_ = other.policy_head_enabled_;
     camera_names_ = std::move(other.camera_names_);
     camera_names_set_ = other.camera_names_set_;
     img_h_ = other.img_h_;
@@ -263,7 +264,8 @@ void EpisodeData::create_file_and_datasets(const std::vector<double>& action, co
 
 void EpisodeData::add_timestep(const std::vector<double>& action, const std::vector<double>& qpos,
                                const std::vector<double>& qvel, const std::vector<cv::Mat>& images,
-                               double arm_timestamp, const std::vector<double>& image_timestamps, double head_command) {
+                               double arm_timestamp, const std::vector<double>& image_timestamps, double head_command,
+                               double policy_progress, double policy_termination) {
     if (!file_created_) {
         create_file_and_datasets(action, qpos, qvel, images, head_command);
     } else if (images.size() != camera_names_.size()) {
@@ -315,12 +317,17 @@ void EpisodeData::add_timestep(const std::vector<double>& action, const std::vec
     };
 
     try {
-        // /action: write the first action_dim_ columns; trailing termination
-        // columns stay 0 until finalize() rewrites them.
+        // /action: write the first action_dim_ columns. The trailing two
+        // columns carry the policy's live head when enabled; otherwise they
+        // stay 0 until finalize() rewrites them with synthesized labels.
         {
             std::vector<double> row(action_dim_ + 2, 0.0);
             const size_t copy_n = std::min(action.size(), action_dim_);
             std::copy(action.begin(), action.begin() + copy_n, row.begin());
+            if (policy_head_enabled_) {
+                row[action_dim_] = policy_progress;
+                row[action_dim_ + 1] = policy_termination;
+            }
             write_2d_row(action_dset_, action_dim_ + 2, row.data(), "/action");
         }
 
@@ -430,6 +437,14 @@ void EpisodeData::finalize() {
     if (!file_created_ || timestep_count_ == 0) {
         // Nothing useful was written; treat as cancel.
         cancel();
+        return;
+    }
+
+    // Policy rollout: the trailing columns already hold the policy's real
+    // head, streamed per timestep. Overwriting them with the synthesized
+    // teleop-demo ramp would destroy the data under evaluation.
+    if (policy_head_enabled_) {
+        close_handles();
         return;
     }
 
