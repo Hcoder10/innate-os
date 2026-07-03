@@ -283,17 +283,17 @@ Use the [simulator](#simulator) to test custom agents before running them on a p
 Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, and input devices before you have a robot on your desk.
 
 ```bash
-./innate sim setup
-./innate sim up
+./innate-sim setup
+./innate-sim up
 ```
 
 This starts the Docker-based Innate OS runtime, the simulator, and the built frontend at [http://localhost:8000](http://localhost:8000). The terminal opens a live dashboard with startup logs, simulator logs, brain logs, and runtime health.
 
 ```bash
-./innate sim up --vis       # open the native simulator viewer
-./innate sim status         # show current runtime state
-./innate sim logs simulator # inspect simulator logs
-./innate sim down           # stop the runtime
+./innate-sim up --vis       # open the native simulator viewer
+./innate-sim status         # show current runtime state
+./innate-sim logs simulator # inspect simulator logs
+./innate-sim down           # stop the runtime
 ```
 
 See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simulator workflow.
