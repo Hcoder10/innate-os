@@ -733,11 +733,13 @@ button {
   display: flex;
   align-items: baseline;
   gap: 3px;
+  white-space: nowrap;
 }
 
 .profiling-value {
   font-size: 14px;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .profiling-unit {

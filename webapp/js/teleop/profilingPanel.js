@@ -66,7 +66,7 @@ export function createProfilingPanel(parent, session) {
   const jitter = metric("jitter", "ms");
   const fps = metric("fps", "");
   const resolution = metric("res", "");
-  const bitrate = metric("bitrate", "kb/s");
+  const bitrate = metric("bitrate", "Mb/s");
   const loss = metric("loss", "%");
   const dropped = metric("dropped", "");
   const freezes = metric("freezes", "");
@@ -180,7 +180,7 @@ export function createProfilingPanel(parent, session) {
       const dDelay = now.jbDelay - prev.jbDelay;
       jitterBuffer.value.textContent = dEmitted > 0 ? fmt((dDelay / dEmitted) * 1000, 0) : "—";
 
-      if (dt > 0) bitrate.value.textContent = fmt(((now.bytes - prev.bytes) * 8) / dt / 1000, 0);
+      if (dt > 0) bitrate.value.textContent = fmt(((now.bytes - prev.bytes) * 8) / dt / 1e6, 1);
 
       const dRecv = now.packets - prev.packets;
       const dLost = now.lost - prev.lost;
