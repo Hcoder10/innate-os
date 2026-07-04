@@ -644,6 +644,7 @@ ROS_WS = INNATE_OS_ROOT / "ros2_ws"
 LAUNCH_HW = INNATE_OS_ROOT / "scripts" / "launch_ros_in_tmux.sh"
 LAUNCH_SIM = INNATE_OS_ROOT / "scripts" / "launch_sim_in_tmux.zsh"
 DIAGNOSTICS = INNATE_OS_ROOT / "scripts" / "diagnostics.py"
+WEBAPP_URI_SCRIPT = INNATE_OS_ROOT / "scripts" / "webapp_uri.zsh"
 SKILL_CACHE_PATH = Path(os.environ.get("INNATE_SKILL_CACHE", "/tmp/innate_skill_contracts.json"))
 SKILL_SOCKET_PATH = Path(os.environ.get("INNATE_SKILL_SOCKET", "/tmp/innate_skill_cli.sock"))
 
@@ -739,6 +740,34 @@ def run(cmd, **kwargs):
     return subprocess.run(cmd, **kwargs)
 
 
+def get_webapp_uri():
+    zsh = shutil.which("zsh")
+    if zsh is None or not WEBAPP_URI_SCRIPT.exists():
+        return None
+
+    try:
+        result = subprocess.run(
+            [zsh, str(WEBAPP_URI_SCRIPT), "--print"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+    uri = result.stdout.strip().splitlines()
+    return uri[0] if uri else None
+
+
+def print_webapp_uri():
+    uri = get_webapp_uri()
+    if uri:
+        print(f"  {C.BOLD}Web app:{C.NC} {uri}")
+
+
 @contextmanager
 def _suppress_process_output():
     sys.stdout.flush()
@@ -828,6 +857,8 @@ def _show_status():
     print(f"  {C.BOLD}Mode:{C.NC}     {mode}")
     print(f"  {C.BOLD}ROS:{C.NC}      {ros_status}")
     print(f"  {C.BOLD}DDS:{C.NC}      {dds_status}")
+    if not is_sim_mode():
+        print_webapp_uri()
     print()
     print(f"  {C.BOLD}innate view{C.NC}         Attach to nodes")
     print(f"  {C.BOLD}innate restart{C.NC}      Restart nodes")
@@ -849,6 +880,7 @@ def _service_start():
     service = SYSTEMD_SERVICE_HW
     if systemd_active(service):
         warn(f"Already running (systemd: {service})")
+        print_webapp_uri()
         return 0
 
     r = run(["sudo", "systemctl", "start", service])
@@ -857,6 +889,7 @@ def _service_start():
         return 1
 
     ok("ROS nodes starting (systemd)")
+    print_webapp_uri()
     return 0
 
 
@@ -917,6 +950,7 @@ def _service_restart():
         return 1
 
     ok("ROS nodes restarting (systemd)")
+    print_webapp_uri()
     return 0
 
 
@@ -1792,6 +1826,9 @@ class _UpdateServiceManager:
     def start(self) -> int:
         if self.is_running():
             self.logger.warning("ROS services already running")
+            uri = get_webapp_uri()
+            if uri:
+                self.logger.info(f"Web app: {uri}")
             return 0
 
         result = self._run(["sudo", "systemctl", "start", self.SYSTEMD_SERVICE], check=False)
@@ -1800,6 +1837,9 @@ class _UpdateServiceManager:
             return 1
 
         self.logger.success("ROS services starting (systemd)")
+        uri = get_webapp_uri()
+        if uri:
+            self.logger.info(f"Web app: {uri}")
         return 0
 
     def status(self) -> dict:

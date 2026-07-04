@@ -15,11 +15,16 @@ export INNATE_WELCOME_SHOWN=1
 INNATE_OS_ROOT="${INNATE_OS_ROOT:-$HOME/innate-os}"
 UPDATE_BRANCH="${INNATE_UPDATE_BRANCH:-main}"
 UPDATE_CMD="${INNATE_OS_ROOT}/scripts/update/innate-update"
+WEBAPP_URI_SCRIPT="${INNATE_OS_ROOT}/scripts/webapp_uri.zsh"
 ANIMATE="${INNATE_WELCOME_ANIMATE:-1}"
 ANIMATION_DELAY="${INNATE_WELCOME_DELAY:-0.04}"
 
 if [[ ! -x "$UPDATE_CMD" ]] && command -v innate-update >/dev/null 2>&1; then
     UPDATE_CMD="$(command -v innate-update)"
+fi
+
+if [[ -f "$WEBAPP_URI_SCRIPT" ]]; then
+    source "$WEBAPP_URI_SCRIPT"
 fi
 
 # Colors (safe for plain terminals too).
@@ -64,6 +69,10 @@ if [[ -x "$UPDATE_CMD" ]] && [[ -d "${INNATE_OS_ROOT}/.git" ]]; then
         *) STATUS_MODE="unknown" ;;
     esac
 fi
+WEBAPP_URI=""
+if typeset -f innate_webapp_uri >/dev/null 2>&1; then
+    WEBAPP_URI="$(innate_webapp_uri)"
+fi
 
 echo ""
 for line in "${LOGO_LINES[@]}"; do
@@ -77,6 +86,9 @@ echo ""
 printf "%bCurrent:%b %s\n" "$BOLD" "$NC" "${CURRENT_VERSION:-unknown}"
 if [[ -n "$LATEST_TAG" ]]; then
     printf "%bLatest:%b  %s\n" "$BOLD" "$NC" "$LATEST_TAG"
+fi
+if [[ -n "$WEBAPP_URI" ]]; then
+    printf "%bWeb app:%b %s\n" "$BOLD" "$NC" "$WEBAPP_URI"
 fi
 
 case "$STATUS_MODE" in

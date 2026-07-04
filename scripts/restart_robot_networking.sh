@@ -19,4 +19,12 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Service restarts requested." >&2
-exit 0 
+INNATE_OS_ROOT="${INNATE_OS_ROOT:-/home/jetson1/innate-os}"
+WEBAPP_URI_SCRIPT="$INNATE_OS_ROOT/scripts/webapp_uri.zsh"
+if command -v zsh >/dev/null 2>&1 && [ -f "$WEBAPP_URI_SCRIPT" ]; then
+  WEBAPP_URI="$(zsh "$WEBAPP_URI_SCRIPT" --print 2>/dev/null || true)"
+  if [ -n "$WEBAPP_URI" ]; then
+    echo "Web app: $WEBAPP_URI" >&2
+  fi
+fi
+exit 0
