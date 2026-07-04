@@ -5,7 +5,7 @@
   <img src="docs/assets/readme/innate-os-repo-intro.png" alt="Innate OS" width="80%">
 </p>
 
-**A lightweight, agentic, ROS2-based operating system for Innate robots**
+**The lightweight agentic operating system for general-purpose robots**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/innate)
 [![Documentation](https://img.shields.io/badge/Docs-Read%20the%20docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.innate.bot)
