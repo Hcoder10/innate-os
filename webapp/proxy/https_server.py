@@ -38,6 +38,7 @@ from media_routes import (
     _plain,
     episode_response,
     joints_response,
+    profile_response,
     run_info_response,
     run_log_response,
     thumb_response,
@@ -243,6 +244,8 @@ async def _dispatch_request(connection, request):
         return await asyncio.to_thread(episode_response, request, qs)
     if split.path == "/episode/joints":
         return await asyncio.to_thread(joints_response, qs)
+    if split.path == "/episode/profile":
+        return await asyncio.to_thread(profile_response, qs)
     if split.path == "/episode/thumb":
         return await thumb_response(qs)
     if split.path == "/run/info":

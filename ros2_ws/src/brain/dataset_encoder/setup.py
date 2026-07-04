@@ -25,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "dataset_encoder_node = dataset_encoder.dataset_encoder_node:main",
+            "profile_recorder_node = dataset_encoder.profile_recorder_node:main",
         ],
     },
 )

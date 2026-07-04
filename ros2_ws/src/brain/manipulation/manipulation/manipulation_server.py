@@ -970,6 +970,11 @@ class ManipulationServer(Node):
                 # base_speed is published so idle_base_eps can be tuned against the exact
                 # quantity the auto-stop detector checks (base_jerk is the command *delta*).
                 quality = {"base_speed": base_speed}
+                # Full raw action (pre base-speed scaling, every dim incl. the progress /
+                # termination heads): a persisted profile is then a complete per-step
+                # record of the policy's output, not just derived scalars. Non-finite
+                # entries become null here since fin() below only handles scalars.
+                quality["action"] = [float(a) if math.isfinite(a) else None for a in action_np]
                 if progress is not None:
                     quality["progress"] = progress
                 if arm_delta is not None:
@@ -1014,7 +1019,9 @@ class ManipulationServer(Node):
             "period_ms": fin(1000.0 / self.inference_hz),
         }
         if quality:
-            payload.update({k: fin(v) for k, v in quality.items()})
+            # Lists (the raw action vector) are pre-sanitized at construction; fin()
+            # only guards scalar fields.
+            payload.update({k: v if isinstance(v, list) else fin(v) for k, v in quality.items()})
         try:
             msg = String()
             msg.data = json.dumps(payload, allow_nan=False)

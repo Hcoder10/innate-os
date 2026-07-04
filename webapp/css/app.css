@@ -3511,6 +3511,10 @@ button {
   border-color: var(--danger);
   color: var(--danger);
 }
+.prof-capture {
+  display: inline-flex;
+  gap: 8px;
+}
 
 .prof-body {
   flex: 1;

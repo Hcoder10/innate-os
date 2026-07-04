@@ -9,6 +9,7 @@
 // GET /episode/joints.
 
 import { SET_EPISODE_OUTCOME_SERVICE, DELETE_EPISODE_SERVICE } from "../constants.js";
+import { buildProfileTrace } from "./profileTrace.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 // Per-joint hues for the telemetry legend (cycled if there are more joints).
@@ -207,7 +208,11 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   plot.className = "telemetry-plot";
   telemetry.append(telHead, plot);
 
-  wrap.append(header, pair, transport, scrub, telemetry);
+  // Inference-profile trace (policy rollouts only; hidden when the episode has
+  // no persisted profile).
+  const profileTrace = buildProfileTrace(q);
+
+  wrap.append(header, pair, transport, scrub, telemetry, profileTrace.el);
   parent.appendChild(wrap);
 
   // ---- video group control -----------------------------------------------
@@ -493,6 +498,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   return {
     destroy() {
       jointsAbort.abort();
+      profileTrace.destroy();
       if (jointsRetryTimer !== null) clearTimeout(jointsRetryTimer);
       for (const v of videos) {
         v.pause();
