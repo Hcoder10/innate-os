@@ -26,6 +26,15 @@ import {
 
 const EVAL_SKILL_NAME = "Policy Rollouts";
 
+/** GetTaskMetadata's enriched episodes carry episode_id as the display string
+ * "episode_0", not a number (see task_manager.cpp get_enriched_metadata_for_task)
+ * — sending that string straight into SetEpisodeOutcome's int32 field corrupts
+ * it. Same extraction datasets/episodeList.js uses. @param {any} ep */
+function numericEpisodeId(ep) {
+  const m = /(\d+)/.exec(String(ep.episode_id)) || /(\d+)/.exec(ep.file_name || "");
+  return m ? Number(m[1]) : 0;
+}
+
 export function buildCaptureControl() {
   const el = document.createElement("span");
   el.className = "prof-capture";
@@ -76,7 +85,7 @@ export function buildCaptureControl() {
     const meta = await ros.callService(GET_TASK_METADATA_SERVICE, { task_directory: taskDir });
     const episodes = JSON.parse(meta?.json_metadata || "{}")?.episodes || [];
     if (!episodes.length) throw new Error("no episode to label");
-    const id = episodes[episodes.length - 1].episode_id;
+    const id = numericEpisodeId(episodes[episodes.length - 1]);
     const res = await ros.callService(SET_EPISODE_OUTCOME_SERVICE, {
       task_directory: taskDir,
       episode_id: id,
