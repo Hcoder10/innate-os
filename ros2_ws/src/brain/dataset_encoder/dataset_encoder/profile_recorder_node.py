@@ -70,18 +70,19 @@ class ProfileRecorder(Node):
         self._samples.append(msg.data)
 
     def _on_recorder(self, msg: RecorderStatus):
+        # "stopped" (a paused episode, awaiting save/cancel) is deliberately left
+        # unhandled: it's reachable from teleop's stop_episode, which never has
+        # profile samples to lose, and staying subscribed through it means a
+        # rollout that gets paused mid-run keeps its trace gap-free instead of
+        # this node guessing whether to hold or drop the buffer.
         recording = msg.status == "active" and msg.episode_number != ""
         if recording:
             self._start_capture(msg.task_directory)
         elif msg.status == "saved":
             self._write_profile(msg.task_directory or self._task_dir)
-            self._stop_capture(clear=True)
+            self._stop_capture()
         elif msg.status in ("cancelled", "idle"):
-            self._stop_capture(clear=True)
-        elif msg.status == "stopped":
-            # Episode paused, awaiting save/cancel: stop appending but keep the
-            # buffer — the samples so far belong to the episode if it's saved.
-            self._stop_capture(clear=False)
+            self._stop_capture()
 
     # ---- capture lifecycle -----------------------------------------------
     def _start_capture(self, task_dir: str):
@@ -91,13 +92,12 @@ class ProfileRecorder(Node):
             self.get_logger().info(f"capturing inference profile for episode in {task_dir}")
         self._task_dir = task_dir or self._task_dir
 
-    def _stop_capture(self, *, clear: bool):
+    def _stop_capture(self):
         if self._profile_sub is not None:
             self.destroy_subscription(self._profile_sub)
             self._profile_sub = None
-        if clear:
-            self._samples.clear()
-            self._task_dir = ""
+        self._samples.clear()
+        self._task_dir = ""
 
     # ---- output ------------------------------------------------------------
     def _write_profile(self, task_dir: str):

@@ -9,7 +9,9 @@
 // and they're immediately browsable/comparable on the Datasets page.
 //
 // Flow: Capture (activate + new_episode, pressed while/before a rollout runs)
-// → Save or Discard → label ✓/✗ (set_episode_outcome) or Skip.
+// → Save or Discard → label ✓/✗ (set_episode_outcome). Leaving it unlabeled and
+// navigating away is fine too — the Datasets page can set/change any episode's
+// outcome later, so there's no separate "skip" affordance here.
 
 import { ros } from "../rosClient.js";
 import {
@@ -36,10 +38,7 @@ export function buildCaptureControl() {
   const fail = document.createElement("button");
   fail.className = "prof-btn";
   fail.textContent = "✗ Failure";
-  const skip = document.createElement("button");
-  skip.className = "prof-btn";
-  skip.textContent = "Skip";
-  el.append(main, discard, fail, skip);
+  el.append(main, discard, fail);
 
   let state = "idle"; // idle | starting | capturing | saving | labeling
   let taskDir = "";
@@ -54,7 +53,6 @@ export function buildCaptureControl() {
     main.classList.toggle("active", state === "capturing");
     discard.style.display = state === "capturing" ? "" : "none";
     fail.style.display = state === "labeling" ? "" : "none";
-    skip.style.display = state === "labeling" ? "" : "none";
   }
 
   function toIdle(flash) {
@@ -135,7 +133,6 @@ export function buildCaptureControl() {
       toIdle("Saved ✗");
     })
   );
-  skip.addEventListener("click", () => toIdle("Saved"));
 
   sync();
 
