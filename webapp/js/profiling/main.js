@@ -23,6 +23,15 @@ const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full retained r
 // samples roll off; stats and the export reflect the most recent MAX_SAMPLES.
 const MAX_SAMPLES = 30000;
 
+// The auto-stop idle detector fires when arm_jerk and base_speed both hold below
+// their eps for idle_seconds. These mirror the LearnedStopDetector defaults
+// (idle_arm_eps / idle_base_eps) so the stillness stats and the eps guide lines on
+// the motion charts measure the same thing the detector checks.
+// Declared before the mountPage call below: buildView runs synchronously inside it
+// and reads these, so a later declaration would be a TDZ ReferenceError.
+const STILL_ARM_EPS = 0.01;
+const STILL_BASE_EPS = 0.01;
+
 initShell("profiling", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
@@ -34,13 +43,6 @@ mountPage(stage, "profiling-page", buildView);
  *   engine_ran:boolean, period_ms:number, progress?:number, disagreement?:number,
  *   arm_jerk?:number, base_jerk?:number, base_speed?:number }} Sample
  */
-
-// The auto-stop idle detector fires when arm_jerk and base_speed both hold below
-// their eps for idle_seconds. These mirror the LearnedStopDetector defaults
-// (idle_arm_eps / idle_base_eps) so the stillness stats and the eps guide lines on
-// the motion charts measure the same thing the detector checks.
-const STILL_ARM_EPS = 0.01;
-const STILL_BASE_EPS = 0.01;
 
 /**
  * @param {HTMLElement} root

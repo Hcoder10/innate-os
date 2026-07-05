@@ -65,6 +65,15 @@ const SECTIONS = [
   },
 ];
 
+/** True when focus is in a text field, so global key shortcuts must stand down. */
+function isTypingContext() {
+  const el = document.activeElement;
+  return (
+    el instanceof HTMLElement &&
+    (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+  );
+}
+
 /**
  * Render the icon rail into the page (prepended to <body>, before #stage).
  * @param {string} activeKey Section key of the current page.
@@ -87,20 +96,37 @@ export function initShell(activeKey, root) {
   const nav = document.createElement("nav");
   nav.className = "rail-nav";
   nav.setAttribute("aria-label", "Sections");
-  for (const section of SECTIONS) {
+  SECTIONS.forEach((section, i) => {
+    const shortcut = i + 1; // 1..N, the number-key shortcut for this section
     const a = document.createElement("a");
     a.className = "rail-link" + (section.key === activeKey ? " active" : "");
     a.dataset.section = section.key;
     a.href = root + (section.key === "teleop" ? "index.html" : `${section.key}/index.html`);
-    a.title = section.label;
+    a.title = `${section.label} (${shortcut})`;
     a.setAttribute("aria-label", section.label);
+    a.setAttribute("aria-keyshortcuts", String(shortcut));
     if (section.key === activeKey) a.setAttribute("aria-current", "page");
     a.innerHTML =
       `<span class="rail-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${section.icon}</svg></span>` +
-      `<span class="rail-label">${section.label}</span>`;
+      `<span class="rail-label">${section.label}</span>` +
+      `<span class="rail-key" aria-hidden="true">${shortcut}</span>`;
     nav.appendChild(a);
-  }
+  });
   rail.appendChild(nav);
+
+  // Number keys 1..N jump between sections (the number shows in each tooltip).
+  // Guarded so it never fires while typing in a field or as part of a
+  // browser/OS combo like Cmd+1 (tab switch). A removed link (sim-mode filter)
+  // simply has no match, so its number is inert.
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTypingContext()) return;
+    const section = SECTIONS[Number(e.key) - 1];
+    if (!section || section.key === activeKey) return;
+    const link = /** @type {HTMLAnchorElement | null} */ (
+      nav.querySelector(`.rail-link[data-section="${section.key}"]`)
+    );
+    if (link) link.click();
+  });
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);

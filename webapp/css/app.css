@@ -162,6 +162,20 @@ button {
   opacity: 1;
 }
 
+/* Keycap hint: the number key that jumps to this section. A small digit pinned
+   to the top-right corner of the icon, always visible even when collapsed. */
+.rail-key {
+  position: absolute;
+  top: 3px;
+  left: 33px;              /* top-right corner of the 48px icon box */
+  font-size: 9px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
 .rail-link.active::before {
   content: "";
   position: absolute;

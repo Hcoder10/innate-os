@@ -23,6 +23,7 @@ Persist:    launched on boot in the `console-webapp` tmux window
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import mimetypes
@@ -157,7 +158,7 @@ CONTENT_TYPES = {
 }
 
 
-def static_response(path: str) -> Response:
+def static_response(path: str, if_none_match: str = "") -> Response:
     clean = path.split("?", 1)[0].split("#", 1)[0]
     target = (ROOT / clean.lstrip("/")).resolve()
     if target.is_dir():
@@ -167,12 +168,22 @@ def static_response(path: str) -> Response:
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
     body = body_path.read_bytes()
+    # Content-hash ETag: a full-app reload (every tab switch is one — the app is
+    # multi-page) re-requests all ~27 modules, but unchanged ones now come back as
+    # a bodyless 304 instead of a full re-download, which was the bulk of the
+    # switch latency. Cache-Control stays no-cache so a redeploy is always picked
+    # up — the browser still revalidates every load, but revalidation is now a
+    # tiny conditional request, not a transfer of the whole file.
+    etag = f'"{hashlib.sha1(body).hexdigest()}"'
+    if if_none_match == etag:
+        return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
     headers = Headers(
         {
             "Content-Type": ctype,
             "Content-Length": str(len(body)),
             "Cache-Control": "no-cache",
+            "ETag": etag,
         }
     )
     return Response(200, "OK", headers, body)
@@ -262,7 +273,7 @@ async def _dispatch_request(connection, request):
         if request.headers.get("X-Requested-By", "") != "innate-webapp":
             return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
-    return await asyncio.to_thread(static_response, request.path)
+    return await asyncio.to_thread(static_response, request.path, request.headers.get("If-None-Match", ""))
 
 
 async def relay(source, sink):
