@@ -14,6 +14,7 @@ import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { INFERENCE_PROFILE_TOPIC } from "../constants.js";
 import { buildCaptureControl } from "./captureControl.js";
+import { buildSkillTrigger } from "./skillTrigger.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full retained record
@@ -81,11 +82,13 @@ function buildView(root) {
   const clearBtn = document.createElement("button");
   clearBtn.className = "prof-btn";
   clearBtn.textContent = "Clear";
+  // Pick + run a learned skill without leaving this page.
+  const skillTrigger = buildSkillTrigger();
   // Robot-side capture: saves the rollout as a labeled dataset episode (video +
   // trajectory + profile trace), independent of the browser-side Record buffer.
   const capture = buildCaptureControl();
 
-  head.append(title, sub, live, spacer, capture.el, recordBtn, exportBtn, clearBtn);
+  head.append(title, sub, live, spacer, skillTrigger.el, capture.el, recordBtn, exportBtn, clearBtn);
 
   // ---- body ---------------------------------------------------------------
   const body = document.createElement("div");
@@ -112,8 +115,9 @@ function buildView(root) {
   const hint = document.createElement("p");
   hint.className = "prof-hint microlabel";
   hint.textContent =
-    "Run a learned behavior, then press Record to chart it live — or Capture episode to save the " +
-    "rollout on the robot as a labeled dataset episode (video + trajectory + profile trace).";
+    "Pick a learned skill and press Run, or start one anywhere else — then press Record to chart it " +
+    "live, or Capture episode to save the rollout on the robot as a labeled dataset episode " +
+    "(video + trajectory + profile trace).";
 
   body.append(statsRow, charts, hint);
   root.append(head, body);
@@ -167,6 +171,7 @@ function buildView(root) {
       clearInterval(timer);
       unsubscribe();
       capture.destroy();
+      skillTrigger.destroy();
     },
   };
 }
