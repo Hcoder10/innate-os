@@ -42,8 +42,10 @@ function buildView(root) {
 
   // One subscription, fanned out to both the log view and the sources panel.
   const source = createConsoleSource(ros);
-  const log = createLogStream(mainEl, source);
-  const sources = createSources(sideEl, source, ros, { onSelect: (scope) => log.setScope(scope) });
+  /** @type {ReturnType<typeof createSources>} */
+  let sources;
+  const log = createLogStream(mainEl, source, { onSourceClick: (rec) => sources.selectFromRecord(rec) });
+  sources = createSources(sideEl, source, ros, { onSelect: (scope) => log.setScope(scope) });
 
   return {
     destroy() {

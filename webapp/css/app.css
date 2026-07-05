@@ -1713,6 +1713,10 @@ button {
   border-color: rgb(86 194 140 / 50%);
 }
 
+.debug-btn.debug-icon-btn {
+  line-height: 0;
+}
+
 /* log list */
 /* columns shared by the header and each log row */
 .debug-cols,
@@ -1771,6 +1775,11 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.col-source:hover {
+  text-decoration: underline;
 }
 
 .col-msg {
@@ -3076,6 +3085,19 @@ button {
 
 .logs-filesel {
   max-width: 360px;
+}
+
+.logs-copy-btn {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.logs-copy-btn:hover {
+  color: var(--text);
+}
+
+.logs-copy-btn.copied {
+  color: var(--ok);
 }
 
 .logs-live-badge {
