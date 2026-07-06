@@ -20,6 +20,14 @@ export ZENOH_ROUTER_CONFIG_OVERRIDE='transport/shared_memory/enabled=false;trans
 export ZENOH_CONFIG_OVERRIDE="$ZENOH_SESSION_CONFIG_OVERRIDE"
 # export RUST_LOG=debug
 
+# Docker can't give Zenoh's SHM watchdog threads realtime priority, so under
+# load the SHM pool seizes and stalls service/action traffic for seconds. The
+# sim container sets this (docker-compose.dev.yml); loopback TCP is plenty.
+if [[ -n "$INNATE_ZENOH_DISABLE_SHM" ]]; then
+  export ZENOH_SESSION_CONFIG_OVERRIDE="${ZENOH_SESSION_CONFIG_OVERRIDE/enabled=true/enabled=false}"
+  export ZENOH_CONFIG_OVERRIDE="$ZENOH_SESSION_CONFIG_OVERRIDE"
+fi
+
 # Standardize every node's console output so each line is self-describing:
 # severity, timestamp, and logger/node name. This is the contract the
 # observability tooling relies on to attribute logs by node (see

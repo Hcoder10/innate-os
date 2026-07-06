@@ -203,7 +203,6 @@ def generate_launch_description():
                     {
                         "image_topic": LaunchConfiguration("image_topic"),
                         "map_topic": LaunchConfiguration("map_topic"),
-                        "simulator_mode": LaunchConfiguration("simulator_mode"),
                     }
                 ],
                 # Skill loading spins up short-lived helper nodes (camera, tf,
