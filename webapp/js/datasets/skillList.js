@@ -1,9 +1,14 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Skill roster — live list of recordable skills from /brain/available_skills.
-// Only physical skills (those with a dataset `directory`) can have episodes, so
-// code-only skills are filtered out. Click a skill to load its episodes.
+// Dataset roster — live list of recordable skills from /brain/available_skills,
+// split into two groups: "skills" (teleop demo datasets, the trainable kind)
+// and "evaluations" (type=="eval" rollout-capture datasets like Policy
+// Rollouts). They hold different kinds of episodes — demonstrations vs judged
+// policy runs — so listing them as flat peers misread the eval bucket as a
+// trainable skill. Only physical skills (those with a dataset `directory`) can
+// have episodes, so code-only skills are filtered out. Click one to load its
+// episodes.
 
 import { AVAILABLE_SKILLS_TOPIC } from "../constants.js";
 
@@ -21,7 +26,7 @@ export function createSkillList(parent, ros, opts) {
   head.className = "skillpanel-head";
   const title = document.createElement("p");
   title.className = "microlabel";
-  title.textContent = "skills";
+  title.textContent = "datasets";
   const tally = document.createElement("span");
   tally.className = "skillpanel-count";
   head.append(title, tally);
@@ -40,30 +45,51 @@ export function createSkillList(parent, ros, opts) {
   // Auto-selected once its skill appears in the roster, then cleared.
   let pendingDir = new URLSearchParams(location.search).get("dir");
 
+  /** @param {Skill} skill */
+  function skillRow(skill) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "skill-row" + (skill.id === selectedId ? " active" : "");
+    row.title = skill.directory || skill.name;
+
+    const name = document.createElement("span");
+    name.className = "skill-name";
+    name.textContent = skill.name;
+
+    const count = document.createElement("span");
+    count.className = "skill-count mono";
+    const n = skill.episode_count ?? 0;
+    count.textContent = `${n} ep${n === 1 ? "" : "s"}`;
+
+    row.append(name, count);
+    row.addEventListener("click", () => {
+      selectedId = skill.id;
+      render();
+      opts.onSelect(skill);
+    });
+    return row;
+  }
+
+  /** @param {string} label */
+  function groupLabel(label) {
+    const p = document.createElement("p");
+    p.className = "skillpanel-group microlabel";
+    p.textContent = label;
+    return p;
+  }
+
   function render() {
+    const demos = skills.filter((s) => s.type !== "eval");
+    const evals = skills.filter((s) => s.type === "eval");
+
     const frag = document.createDocumentFragment();
-    for (const skill of skills) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "skill-row" + (skill.id === selectedId ? " active" : "");
-      row.title = skill.directory || skill.name;
-
-      const name = document.createElement("span");
-      name.className = "skill-name";
-      name.textContent = skill.name;
-
-      const count = document.createElement("span");
-      count.className = "skill-count mono";
-      const n = skill.episode_count ?? 0;
-      count.textContent = `${n} ep${n === 1 ? "" : "s"}`;
-
-      row.append(name, count);
-      row.addEventListener("click", () => {
-        selectedId = skill.id;
-        render();
-        opts.onSelect(skill);
-      });
-      frag.appendChild(row);
+    // Demo datasets are the page's main content, so they get the top slot; the
+    // "skills" label only appears once there are evals AND demos to tell apart.
+    if (evals.length && demos.length) frag.appendChild(groupLabel("skills"));
+    for (const skill of demos) frag.appendChild(skillRow(skill));
+    if (evals.length) {
+      frag.appendChild(groupLabel("evaluations"));
+      for (const skill of evals) frag.appendChild(skillRow(skill));
     }
     listEl.replaceChildren(frag);
     tally.textContent = String(skills.length);

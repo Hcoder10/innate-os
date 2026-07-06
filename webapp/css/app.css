@@ -2057,6 +2057,17 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Group divider between the demo-dataset and evaluation sections. */
+.skillpanel-group {
+  padding: 12px 16px 4px;
+  color: var(--muted);
+}
+.skill-row + .skillpanel-group {
+  margin-top: 8px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+}
+
 .skill-row {
   display: flex;
   align-items: baseline;
@@ -3706,6 +3717,99 @@ button {
 }
 .prof-hint {
   text-align: center;
+}
+
+/* Unified rollout control: skill picker + Run rollout / Profile only. */
+.prof-rollout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.prof-btn-quiet {
+  color: var(--muted);
+}
+/* Arm recovery — an accent outline sets it apart from the run/utility buttons. */
+.prof-btn-reboot {
+  border-color: var(--accent-dim);
+}
+.prof-btn-reboot:disabled {
+  opacity: 0.4;
+}
+.prof-btn-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.prof-btn-fail {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.prof-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Review bar: shown between run end and ✓/✗/Discard. */
+.prof-review {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+}
+.prof-review-text {
+  font-size: 12px;
+}
+.prof-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.prof-tag {
+  padding: 3px 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prof-tag.active {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Eval-session tally + per-rollout ribbon. */
+.prof-session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.prof-session-ribbon {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prof-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prof-chip.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.prof-chip.fail {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 @media (max-width: 720px) {

@@ -1,20 +1,22 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Profiling page entry — record and visualize ACT policy inference timing.
+// Profiling page entry — run, watch, and judge learned-skill rollouts.
 //
 // The manipulation server publishes a per-step timing breakdown on
 // INFERENCE_PROFILE_TOPIC (std_msgs/String → JSON) while a learned behavior
-// runs. This page subscribes, lets the operator Record / Stop / Clear a window
-// of those samples, and renders live latency graphs so we can see where the
-// 25 Hz inference budget goes and whether there's headroom to improve.
+// runs. This page subscribes and charts it live, but the lifecycle belongs to
+// rolloutControl: one "Run rollout" starts the skill + these charts + robot-
+// side episode capture together, and ending the run lands in a ✓/✗ review.
+// The chart window opens on run start and freezes on run end — there is no
+// separate Record toggle.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { INFERENCE_PROFILE_TOPIC } from "../constants.js";
-import { buildCaptureControl } from "./captureControl.js";
-import { buildSkillTrigger } from "./skillTrigger.js";
+import { buildRolloutControl } from "./rolloutControl.js";
+import { createEvalSession } from "./evalSession.js";
+import { buildRebootArm } from "./rebootArm.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full retained record
@@ -28,15 +30,15 @@ const MAX_SAMPLES = 30000;
 // their eps for idle_seconds. These mirror the LearnedStopDetector defaults
 // (idle_arm_eps / idle_base_eps) so the stillness stats and the eps guide lines on
 // the motion charts measure the same thing the detector checks.
-// Declared before the mountPage call below: buildView runs synchronously inside it
+// Declared before mount() below: buildView runs synchronously inside mountPage
 // and reads these, so a later declaration would be a TDZ ReferenceError.
 const STILL_ARM_EPS = 0.01;
 const STILL_BASE_EPS = 0.01;
 
-initShell("profiling", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-mountPage(stage, "profiling-page", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "profiling-page", buildView);
+}
 
 /**
  * @typedef {{ seq:number, t:number, preprocess_ms:number, inference_ms:number,
@@ -52,7 +54,7 @@ mountPage(stage, "profiling-page", buildView);
 function buildView(root) {
   /** @type {Sample[]} */
   let samples = [];
-  let recording = false;
+  let windowOpen = false; // a rollout is in flight — buffer incoming samples
   let lastMsgAt = 0; // wall-clock of last received message, for the live dot
   let dirty = false;
 
@@ -74,21 +76,34 @@ function buildView(root) {
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
 
-  const recordBtn = document.createElement("button");
-  recordBtn.className = "prof-btn prof-btn-rec";
   const exportBtn = document.createElement("button");
   exportBtn.className = "prof-btn";
   exportBtn.textContent = "Export JSON";
   const clearBtn = document.createElement("button");
   clearBtn.className = "prof-btn";
   clearBtn.textContent = "Clear";
-  // Pick + run a learned skill without leaving this page.
-  const skillTrigger = buildSkillTrigger();
-  // Robot-side capture: saves the rollout as a labeled dataset episode (video +
-  // trajectory + profile trace), independent of the browser-side Record buffer.
-  const capture = buildCaptureControl();
 
-  head.append(title, sub, live, spacer, skillTrigger.el, capture.el, recordBtn, exportBtn, clearBtn);
+  // The whole rollout lifecycle (skill run + this chart window + robot-side
+  // episode capture) hangs off one control; the page just lends it the buffer.
+  const chartWindow = {
+    begin() {
+      samples = [];
+      windowOpen = true;
+      dirty = true;
+    },
+    end() {
+      windowOpen = false;
+      dirty = true;
+    },
+    samples: () => samples,
+  };
+  const session = createEvalSession();
+  const rollout = buildRolloutControl(chartWindow, session);
+  // Arm recovery — available regardless of rollout state (an overload can latch
+  // the servos off mid-run); orthogonal to the run lifecycle, so it lives here.
+  const reboot = buildRebootArm();
+
+  head.append(title, sub, live, spacer, rollout.el, reboot.el, exportBtn, clearBtn);
 
   // ---- body ---------------------------------------------------------------
   const body = document.createElement("div");
@@ -115,34 +130,24 @@ function buildView(root) {
   const hint = document.createElement("p");
   hint.className = "prof-hint microlabel";
   hint.textContent =
-    "Pick a learned skill and press Run, or start one anywhere else — then press Record to chart it " +
-    "live, or Capture episode to save the rollout on the robot as a labeled dataset episode " +
-    "(video + trajectory + profile trace).";
+    "Pick a learned skill, then Run rollout to drive it with charts live and save it as a labeled " +
+    "eval episode (video + trajectory + profile trace, in the Policy Rollouts dataset) — or " +
+    "Profile only to watch the charts without recording anything on the robot.";
 
-  body.append(statsRow, charts, hint);
+  body.append(rollout.reviewEl, session.el, statsRow, charts, hint);
   root.append(head, body);
 
   // ---- controls -----------------------------------------------------------
-  function syncRecordBtn() {
-    recordBtn.textContent = recording ? "■ Stop" : "● Record";
-    recordBtn.classList.toggle("active", recording);
-  }
-  recordBtn.addEventListener("click", () => {
-    recording = !recording;
-    syncRecordBtn();
-    dirty = true;
-  });
   clearBtn.addEventListener("click", () => {
     samples = [];
     dirty = true;
   });
   exportBtn.addEventListener("click", () => exportJson(samples, exportBtn));
-  syncRecordBtn();
 
   // ---- subscription -------------------------------------------------------
   const unsubscribe = ros.subscribe(INFERENCE_PROFILE_TOPIC, (msg) => {
     lastMsgAt = performance.now();
-    if (!recording) return;
+    if (!windowOpen) return;
     const s = parseSample(msg?.data);
     if (s) {
       samples.push(s);
@@ -157,7 +162,7 @@ function buildView(root) {
   const timer = setInterval(() => {
     const sinceMsg = performance.now() - lastMsgAt;
     const flowing = lastMsgAt > 0 && sinceMsg < 500;
-    setLive(live, flowing, recording);
+    setLive(live, flowing, windowOpen);
     if (dirty) {
       render(samples, statsRow, cards);
       dirty = false;
@@ -170,8 +175,8 @@ function buildView(root) {
     destroy() {
       clearInterval(timer);
       unsubscribe();
-      capture.destroy();
-      skillTrigger.destroy();
+      rollout.destroy();
+      reboot.destroy();
     },
   };
 }
@@ -202,12 +207,12 @@ function parseSample(data) {
   return s;
 }
 
-/** @param {HTMLElement} live @param {boolean} flowing @param {boolean} recording */
-function setLive(live, flowing, recording) {
+/** @param {HTMLElement} live @param {boolean} flowing @param {boolean} windowOpen */
+function setLive(live, flowing, windowOpen) {
   const dot = live.querySelector(".prof-live-dot");
   const text = live.querySelector(".prof-live-text");
   if (!dot || !text) return;
-  const state = !flowing ? "idle" : recording ? "rec" : "live";
+  const state = !flowing ? "idle" : windowOpen ? "rec" : "live";
   live.dataset.state = state;
   text.textContent = state === "idle" ? "no signal" : state === "rec" ? "recording" : "receiving";
 }
@@ -823,7 +828,7 @@ function legend(items) {
 }
 
 /** @param {HTMLElement} host @param {string} [text] */
-function placeholder(host, text = "no data — press Record while a behavior runs") {
+function placeholder(host, text = "no data — run a rollout to chart it") {
   const p = document.createElement("p");
   p.className = "prof-empty microlabel";
   p.textContent = text;

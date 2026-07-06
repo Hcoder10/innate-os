@@ -83,7 +83,7 @@ interface TrainingParams {
 interface Skill {
   id: string;
   name: string;
-  type: "code" | "learned" | "replay" | "poses";
+  type: "code" | "learned" | "replay" | "poses" | "eval";
   episode_count: number;
   /** Dataset directory on the robot; absent for code-only skills. */
   directory?: string;
