@@ -91,6 +91,7 @@ LOG_TARGETS = {
     "cloud-agent": CLOUD_AGENT_LOG_PATH,
     "compose": COMPOSE_LOG_PATH,
     "os-build": OS_BUILD_LOG_PATH,
+    "viewer-build": VIEWER_BUILD_LOG_PATH,
     "os-session": OS_SESSION_LOG_PATH,
     "down": DOWN_LOG_PATH,
 }

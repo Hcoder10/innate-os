@@ -220,7 +220,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
 def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "startup":
         found_logs = False
-        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "os-session"):
+        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "viewer-build", "os-session"):
             path = LOG_TARGETS[name]
             if path.exists():
                 found_logs = True
@@ -325,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
             "compose",
             "cloud-agent",
             "os-build",
+            "viewer-build",
             "os-session",
             "brain",
             "down",
