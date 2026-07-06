@@ -273,11 +273,6 @@ _NAV_MOTION_SCALAR_KEYS = {
         "reverse_speed": ("InnateFollowPath.vx_min",),
         "max_angular_speed": ("InnateFollowPath.wz_max",),
     },
-    "dwb": {  # nav2_navigation_params_sim.yaml — plugin "FollowPath"
-        "max_speed": ("FollowPath.max_vel_x", "FollowPath.max_speed_xy"),
-        "reverse_speed": ("FollowPath.min_vel_x",),
-        "max_angular_speed": ("FollowPath.max_vel_theta",),
-    },
 }
 
 
@@ -311,7 +306,7 @@ def load_motion_limit_overrides(schema: str, defaults: dict | None = None) -> di
     """Remap settings.yaml's ``/** nav`` knob onto a nav2 node's velocity params. Returns
     ``{}`` when ``nav`` is unset (package YAML default then used unchanged).
 
-    ``schema`` is ``"mppi"``, ``"dwb"`` or ``"smoother"``. Pass ``defaults``
+    ``schema`` is ``"mppi"`` or ``"smoother"``. Pass ``defaults``
     (``load_yaml_param_defaults`` on the schema's package YAML) so the forward cap also caps
     reverse-linear toward zero; ``"smoother"`` also needs them to preserve the lateral component.
     """
@@ -338,6 +333,4 @@ def load_motion_limit_overrides(schema: str, defaults: dict | None = None) -> di
     if ang is not None:
         for key in mapping.get("max_angular_speed", ()):
             overrides[key] = float(ang)
-        if schema == "dwb":
-            overrides["FollowPath.min_vel_theta"] = -float(ang)
     return overrides

@@ -94,8 +94,6 @@ class SkillsActionServer(Node):
         self.head_position_topic = self.get_parameter("head_position_topic").value
         self.declare_parameter("head_current_position_topic", "/mars/head/current_position")
         self.head_current_position_topic = self.get_parameter("head_current_position_topic").value
-        self.declare_parameter("simulator_mode", False)
-        self.simulator_mode = self.get_parameter("simulator_mode").value
 
         # Robot interfaces injected into skills.
         self.manipulation = ManipulationInterface(self, self.get_logger(), lazy=True)
@@ -132,7 +130,6 @@ class SkillsActionServer(Node):
         self.catalog = SkillRepository(
             self,
             interface_injector=self.robot_state.inject_required_interfaces,
-            simulator_mode=self.simulator_mode,
             retire_instances=self._retire_skill_instances,
         )
 

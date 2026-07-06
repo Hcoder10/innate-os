@@ -210,7 +210,12 @@
     <origin xyz="0.044 -0.0092 0" rpy="0 0 0"/>
     <axis  xyz="0 0 -1"/>
     <dynamics damping="5"/>
-    <limit lower="-0.8727" upper="0.3491" effort="2.0" velocity="2.0"/>
+    <!-- Canonical (unflipped) range: negation of the real follower servo's
+         raw position_limits [-0.8727, 0.3491] (arm_config.yaml joint_6).
+         arm_control.cpp negates joint6 both reading encoders and writing
+         goals, so 0 = closed, +0.8727 = fully open in this (and every other
+         software) convention. See leaderArmMapping.ts's header comment. -->
+    <limit lower="0" upper="0.8727" effort="2.0" velocity="2.0"/>
   </joint>
   <link name="link61">
     <inertial>
@@ -241,7 +246,9 @@
     <origin xyz="0.044 0.0091 0" rpy="0 0 0"/>
     <axis  xyz="0 0 -1"/>
     <dynamics damping="5"/>
-    <limit lower="-0.8727" upper="0.3491" effort="2.0" velocity="2.0"/>
+    <!-- Mirrors joint6 (multiplier -1), so its achievable range is joint6's
+         negated: [-0.8727, 0]. -->
+    <limit lower="-0.8727" upper="0" effort="2.0" velocity="2.0"/>
     <mimic joint="joint6" multiplier="-1" offset="0"/>
   </joint>
   <link name="link62">
