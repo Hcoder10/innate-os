@@ -115,3 +115,18 @@ arm_wave/
 .vscode
 ros2_ws/src/brain/brain_client/innate/skills.pyi
 workspace/innate_skills/**/*.engine
+
+node_modules/
+dist-lib/
+*.tsbuildinfo
+
+# sim: uv venv + generated apartment assets (hulls, textured rooms -- sim/tools outputs)
+sim/.venv/
+sim/assets
+sim/sandbox/__pycache__/
+MUJOCO_LOG.TXT
+# sim: fetched asset bundle (see sim/sim-assets.lock + tools/publish_assets.py);
+# the launcher extracts these on `up`
+sim/viewer/public/
+sim/viewer/assets/
+sim/.sim-assets.tmp*
