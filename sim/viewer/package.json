@@ -1,0 +1,20 @@
+{
+  "name": "@innate/sim-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Three.js SimSession library the Innate webapp embeds to render the simulated MARS over rosbridge",
+  "scripts": {
+    "build:lib": "vite build --config vite.lib.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.185.0",
+    "urdf-loader": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.2"
+  }
+}
