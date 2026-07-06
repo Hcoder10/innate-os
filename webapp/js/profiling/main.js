@@ -35,6 +35,20 @@ const MAX_SAMPLES = 30000;
 const STILL_ARM_EPS = 0.01;
 const STILL_BASE_EPS = 0.01;
 
+// Fixed y-axis maxima per signal. Charts don't auto-scale to their data: a genuinely small
+// signal reads as a low, flat line instead of being zoomed to fill the card, and the scale
+// stays put across ticks and runs so charts stay comparable. Values above the max clip at
+// the top edge (the numeric y-axis makes the ceiling obvious). Tune to each signal's range.
+const PROGRESS_MAX = 1; // learned progress head, normalized 0–1
+const DISAGREEMENT_MAX = 0.5; // ensemble std — baseline sits low, pre-failure spikes pop
+const ARM_MOTION_MAX = 0.5; // ‖Δ arm cmd‖ per step (rad); idle eps is 0.01
+const BASE_SPEED_MAX = 1.0; // commanded |lin|+|ang|; idle eps is 0.01
+const TIMESERIES_MAX_MULT = 2.5; // total-latency chart tops out at this × the 25 Hz budget
+
+// Horizontal gridlines / y-axis ticks on the value charts: GRID_DIVS intervals → GRID_DIVS+1
+// labeled ticks from the fixed max down to 0.
+const GRID_DIVS = 4;
+
 /** @param {HTMLElement} stage */
 export function mount(stage) {
   return mountPage(stage, "profiling-page", buildView);
@@ -345,14 +359,16 @@ function render(samples, statsRow, cards) {
   renderTimeseries(samples, cards.ts.body);
   renderHistogram(samples, cards.hist.body);
   renderBreakdown(st, cards.breakdown.body);
-  renderLine(samples, cards.progress.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: 1 });
-  renderLine(samples, cards.disagreement.body, (s) => s.disagreement, "var(--blue)", {});
+  renderLine(samples, cards.progress.body, (s) => s.progress, "var(--ok)", { lo: 0, hi: PROGRESS_MAX });
+  renderLine(samples, cards.disagreement.body, (s) => s.disagreement, "var(--blue)", { lo: 0, hi: DISAGREEMENT_MAX });
   renderLine(samples, cards.armMotion.body, (s) => s.arm_jerk, "var(--accent)", {
     lo: 0,
+    hi: ARM_MOTION_MAX,
     threshold: STILL_ARM_EPS,
   });
   renderLine(samples, cards.baseSpeed.body, (s) => s.base_speed, "var(--blue)", {
     lo: 0,
+    hi: BASE_SPEED_MAX,
     threshold: STILL_BASE_EPS,
   });
 }
@@ -383,8 +399,8 @@ function scaffold(host, key, build) {
  * @param {HTMLElement} host
  * @param {(s: Sample) => number|undefined} accessor
  * @param {string} color
- * @param {{lo?: number, hi?: number, threshold?: number}} fixed  optional fixed y-range
- *   (else auto) and an optional dashed guide line at a threshold value
+ * @param {{lo?: number, hi?: number, threshold?: number}} fixed  fixed y-range (falls back to
+ *   the data range if unset) and an optional dashed guide line at a threshold value
  */
 function renderLine(samples, host, accessor, color, fixed) {
   const pts = samples.slice(-MAX_PLOT_POINTS).map(accessor).filter((v) => typeof v === "number");
@@ -398,10 +414,10 @@ function renderLine(samples, host, accessor, color, fixed) {
   const span = hi - lo || 1;
   const W = 1000;
   const H = 240;
-  // Persist the svg + path + axis; only the path's `d` and the axis labels change each tick.
-  const { path, axis, thresholdLine } = scaffold(host, "data", (h) => {
-    const svg = makeSvg(W, H);
-    svg.setAttribute("preserveAspectRatio", "none");
+  // Persist the frame (y-axis + gridlines), path, and caption; only the path's `d`, the
+  // y-tick labels, and the "now" caption change each tick.
+  const { path, axis, setY, thresholdLine } = scaffold(host, "data", (h) => {
+    const { svg, setY } = plotFrame(h, W, H);
     const thr = fixed.threshold != null ? hline(0, W, "var(--danger)", "4 4") : null;
     if (thr) svg.appendChild(thr);
     const p = document.createElementNS(SVG_NS, "path");
@@ -410,14 +426,14 @@ function renderLine(samples, host, accessor, color, fixed) {
     p.setAttribute("stroke-width", "1.5");
     p.setAttribute("vector-effect", "non-scaling-stroke");
     svg.appendChild(p);
-    h.appendChild(svg);
     const ax = axisLabels(["", "", ""]);
     h.appendChild(ax);
-    return { path: p, axis: ax, thresholdLine: thr };
+    return { path: p, axis: ax, setY, thresholdLine: thr };
   });
 
+  setY(hi, lo, (v) => v.toFixed(2));
+
   if (thresholdLine && fixed.threshold != null) {
-    // Reposition each tick — the auto range rescales with the data.
     const ty = H - ((fixed.threshold - lo) / span) * H;
     thresholdLine.setAttribute("y1", ty.toFixed(1));
     thresholdLine.setAttribute("y2", ty.toFixed(1));
@@ -432,7 +448,7 @@ function renderLine(samples, host, accessor, color, fixed) {
   });
   path.setAttribute("d", d.trim());
   const last = pts[pts.length - 1];
-  setAxis(axis, [hi.toFixed(2), `now ${last.toFixed(2)}`, lo.toFixed(2)]);
+  setAxis(axis, ["", `now ${last.toFixed(2)}`, ""]);
 }
 
 /**
@@ -597,30 +613,33 @@ function renderTimeseries(samples, host) {
 
   const pts = samples.slice(-MAX_PLOT_POINTS);
   const period = pts[pts.length - 1].period_ms;
-  const totals = pts.map((s) => s.total_ms);
-  const max = Math.max(period, ...totals) * 1.1;
+  // Fixed scale at a multiple of the budget instead of auto-fitting the data, so a healthy
+  // run reads low and a spike doesn't squash everything else — it clips at the top instead.
+  const max = period * TIMESERIES_MAX_MULT;
   const W = 1000;
   const H = 240;
 
-  const { svg, axis } = scaffold(host, "data", (h) => {
-    const el = makeSvg(W, H);
-    el.setAttribute("preserveAspectRatio", "none");
-    h.appendChild(el);
+  const { dyn, axis, setY } = scaffold(host, "data", (h) => {
+    const { svg, setY } = plotFrame(h, W, H);
+    // Static frame (y-axis + gridlines) lives on the svg; the scrolling series redraws into
+    // its own group each tick so the gridlines survive the wipe.
+    const g = document.createElementNS(SVG_NS, "g");
+    svg.appendChild(g);
     const ax = axisLabels(["", "", ""]);
     h.appendChild(ax);
     h.appendChild(legend([["var(--accent)", "total step"], ["var(--danger)", "budget"], ["var(--accent-dim)", "model ran"]]));
-    return { svg: el, axis: ax };
+    return { dyn: g, axis: ax, setY };
   });
 
-  // The plotted geometry changes every tick (window scrolls, model-ran marker count varies),
-  // so redraw the svg's interior; the card, axis, and legend persist across ticks.
-  svg.replaceChildren();
+  setY(max, 0, (v) => fmtMs(v, 0));
+
+  dyn.replaceChildren();
   const by = H - (period / max) * H;
-  svg.appendChild(hline(by, W, "var(--danger)", "4 4")); // budget line
+  dyn.appendChild(hline(by, W, "var(--danger)", "4 4")); // budget line
   pts.forEach((s, i) => {
     if (!s.engine_ran) return; // model-ran markers (faint) so the chunk cadence is visible
     const x = (i / Math.max(1, pts.length - 1)) * W;
-    svg.appendChild(vline(x, H, "var(--accent-faint)"));
+    dyn.appendChild(vline(x, H, "var(--accent-faint)"));
   });
   let d = "";
   pts.forEach((s, i) => {
@@ -634,9 +653,9 @@ function renderTimeseries(samples, host) {
   path.setAttribute("stroke", "var(--accent)");
   path.setAttribute("stroke-width", "1.5");
   path.setAttribute("vector-effect", "non-scaling-stroke");
-  svg.appendChild(path);
+  dyn.appendChild(path);
 
-  setAxis(axis, [fmtMs(max, 0), `budget ${period.toFixed(0)} ms`, "0"]);
+  setAxis(axis, ["", `budget ${period.toFixed(0)} ms`, ""]);
 }
 
 /** @param {Sample[]} samples @param {HTMLElement} host */
@@ -766,6 +785,43 @@ function makeSvg(w, h) {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.setAttribute("class", "prof-svg");
   return svg;
+}
+
+/**
+ * A plot area with a left y-axis tick column and horizontal gridlines at the same fractions.
+ * The caller draws its series into the returned `svg` (over the gridlines) and calls `setY`
+ * with the fixed range to label the ticks from `hi` (top) down to `lo` (bottom).
+ * @param {HTMLElement} host @param {number} W @param {number} H
+ * @returns {{ svg: SVGElement, setY: (hi: number, lo: number, fmt: (v: number) => string) => void }}
+ */
+function plotFrame(host, W, H) {
+  const plot = document.createElement("div");
+  plot.className = "prof-plot";
+  const yaxis = document.createElement("div");
+  yaxis.className = "prof-yaxis";
+  const ticks = [];
+  for (let i = 0; i <= GRID_DIVS; i++) {
+    const span = document.createElement("span");
+    yaxis.appendChild(span);
+    ticks.push(span);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "prof-plot-svg";
+  const svg = makeSvg(W, H);
+  svg.setAttribute("preserveAspectRatio", "none");
+  for (let i = 1; i < GRID_DIVS; i++) {
+    svg.appendChild(hline((H * i) / GRID_DIVS, W, "var(--hairline)", "none")); // interior gridlines
+  }
+  wrap.appendChild(svg);
+  plot.append(yaxis, wrap);
+  host.appendChild(plot);
+
+  const setY = (hi, lo, fmt) => {
+    ticks.forEach((span, i) => {
+      span.textContent = fmt(hi - ((hi - lo) * i) / GRID_DIVS);
+    });
+  };
+  return { svg, setY };
 }
 
 /** @param {number} y @param {number} w @param {string} color @param {string} dash */

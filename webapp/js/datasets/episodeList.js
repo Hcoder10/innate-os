@@ -1,13 +1,21 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Episode list — the recorded episodes of the selected skill as a rich table
-// (thumbnail, recorded time, duration, status), from /brain/recorder/get_task_metadata.
-// Each episode is in one of three states:
-//   ready    — has H.264 MP4s (video_files present) → click the row to replay
-//   encoding — the dataset_encoder is converting it now (live status topic)
-//   raw      — not yet converted → a "Prepare video" button queues encoding
-// Thumbnails are lazily-loaded <video> frames from the same /episode route.
+// Episode list — the episodes of the selected dataset as a rich table, from
+// /brain/recorder/get_task_metadata. Two flavors sharing one component:
+//
+//   Training dataset (skill.type != "eval") — operator demonstrations:
+//     Episode · Recorded · Duration · Label · actions. An episode promoted
+//     from an evaluation keeps a "rollout" provenance badge.
+//
+//   Evaluation dataset (skill.type == "eval") — judged policy rollouts:
+//     Episode · Policy · Recorded · Duration · Result · actions, plus a
+//     success-rate summary and per-policy filter chips. Right-click a run (or
+//     use the + action) to add it to a training dataset via CopyEpisode.
+//
+// Each episode is "ready" (has H.264 MP4s → click to replay) or "preparing"
+// (the dataset_encoder is converting it; a "Prepare video" button can requeue).
+// Thumbnails are lazily-loaded frames from the /episode/thumb route.
 
 import {
   GET_TASK_METADATA_SERVICE,
@@ -16,6 +24,7 @@ import {
   SET_EPISODE_OUTCOME_SERVICE,
   DELETE_EPISODE_SERVICE,
 } from "../constants.js";
+import { openEpisodeMenu } from "./episodeMenu.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -24,11 +33,16 @@ const ICON_TRASH =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>';
 const ICON_DOWNLOAD =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10"/><path d="M8 11l4 4 4-4"/><path d="M5 19h14"/></svg>';
+const ICON_PLUS =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
+const TRAIN_COLS = ["Episode", "Recorded", "Duration", "Label", ""];
+const EVAL_COLS = ["Run", "Policy", "Recorded", "Duration", "Result", ""];
 
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} ros
- * @param {{ onOpen: (skill: Skill, episode: EpisodeSummary) => void }} opts
+ * @param {{ onOpen: (skill: Skill, episode: EpisodeSummary) => void, getTargets: () => Skill[] }} opts
  * @returns {{ show: (skill: Skill) => void, neighbor: (ep: EpisodeSummary, delta: number) => EpisodeSummary | null, destroy: () => void }}
  */
 export function createEpisodeList(parent, ros, opts) {
@@ -39,11 +53,19 @@ export function createEpisodeList(parent, ros, opts) {
   const head = document.createElement("div");
   head.className = "episodes-head";
   const headText = document.createElement("div");
+  const titleRow = document.createElement("div");
+  titleRow.className = "episodes-titlerow";
   const title = document.createElement("h2");
   title.className = "episodes-title";
+  const kindBadge = document.createElement("span");
+  kindBadge.className = "episodes-kind";
+  kindBadge.textContent = "evaluation";
+  kindBadge.title = "Policy rollouts recorded during evaluation — never used for training";
+  kindBadge.hidden = true;
+  titleRow.append(title, kindBadge);
   const sub = document.createElement("p");
   sub.className = "episodes-sub";
-  headText.append(title, sub);
+  headText.append(titleRow, sub);
 
   const tools = document.createElement("div");
   tools.className = "episodes-tools";
@@ -59,23 +81,21 @@ export function createEpisodeList(parent, ros, opts) {
   refreshBtn.className = "episodes-tool";
   refreshBtn.textContent = "↻";
   refreshBtn.title = "Refresh";
-  // Jump to the Collect page with this dataset pre-selected to record more.
+  // Training datasets: jump to Collect to record more demonstrations.
+  // Eval datasets: jump to Profiling to run more evaluations instead.
   const collectLink = document.createElement("a");
   collectLink.className = "episodes-tool episodes-collect";
-  collectLink.textContent = "+ Collect";
-  collectLink.title = "Record new episodes for this dataset";
   tools.append(search, sortBtn, refreshBtn, collectLink);
   head.append(headText, tools);
+
+  // --- eval-only per-policy filter chips ------------------------------------
+  const policyBar = document.createElement("div");
+  policyBar.className = "policy-bar";
+  policyBar.hidden = true;
 
   // --- column header + scrolling rows --------------------------------------
   const colhead = document.createElement("div");
   colhead.className = "episodes-colhead";
-  for (const label of ["Episode", "Recorded", "Duration", "Label", ""]) {
-    const c = document.createElement("span");
-    c.className = "col";
-    c.textContent = label;
-    colhead.appendChild(c);
-  }
 
   const rowsEl = document.createElement("div");
   rowsEl.className = "episodes-rows";
@@ -83,7 +103,7 @@ export function createEpisodeList(parent, ros, opts) {
   const foot = document.createElement("p");
   foot.className = "episodes-foot";
 
-  wrap.append(head, colhead, rowsEl, foot);
+  wrap.append(head, policyBar, colhead, rowsEl, foot);
   parent.appendChild(wrap);
 
   let requestSeq = 0;
@@ -96,6 +116,8 @@ export function createEpisodeList(parent, ros, opts) {
   let encodeStatus = null;
   let query = "";
   let sortNewest = true;
+  /** @type {string | null} eval view: only show runs of this policy */
+  let policyFilter = null;
 
   syncSortLabel();
   showIdle();
@@ -122,6 +144,10 @@ export function createEpisodeList(parent, ros, opts) {
   });
   refreshBtn.addEventListener("click", () => current && show(current));
 
+  function isEval() {
+    return current?.type === "eval";
+  }
+
   function syncSortLabel() {
     sortBtn.textContent = `Sort: ${sortNewest ? "Newest" : "Oldest"}`;
   }
@@ -136,22 +162,49 @@ export function createEpisodeList(parent, ros, opts) {
 
   function showIdle() {
     title.textContent = "Datasets";
-    sub.textContent = "Select a skill to browse its episodes.";
+    kindBadge.hidden = true;
+    sub.textContent = "Select a dataset to browse its episodes.";
     tools.hidden = true;
     colhead.hidden = true;
+    policyBar.hidden = true;
     foot.textContent = "";
-    showMessage("Pick a skill on the left to browse and replay its recorded episodes.");
+    showMessage(
+      "Pick a dataset on the left — training data holds the operator's recorded demonstrations, evaluation runs hold judged policy rollouts.",
+    );
+  }
+
+  function buildColhead() {
+    colhead.replaceChildren();
+    for (const label of isEval() ? EVAL_COLS : TRAIN_COLS) {
+      const c = document.createElement("span");
+      c.className = "col";
+      c.textContent = label;
+      colhead.appendChild(c);
+    }
   }
 
   /** @param {Skill} skill */
   function show(skill) {
     const seq = ++requestSeq;
     current = skill;
+    policyFilter = null;
+    wrap.classList.toggle("episodes--eval", isEval());
+    kindBadge.hidden = !isEval();
+    buildColhead();
     tools.hidden = false;
-    collectLink.href = `/collect?dir=${encodeURIComponent(skill.directory || "")}&name=${encodeURIComponent(skill.name)}`;
+    search.placeholder = isEval() ? "Search runs or policies" : "Search episodes";
+    if (isEval()) {
+      collectLink.href = "/profiling";
+      collectLink.textContent = "▶ Evaluate";
+      collectLink.title = "Run new policy rollouts on the Profiling page";
+    } else {
+      collectLink.href = `/collect?dir=${encodeURIComponent(skill.directory || "")}&name=${encodeURIComponent(skill.name)}`;
+      collectLink.textContent = "+ Collect";
+      collectLink.title = "Record new episodes for this dataset";
+    }
     title.textContent = skill.name;
     sub.textContent = "loading…";
-    showMessage("Loading episodes…");
+    showMessage(isEval() ? "Loading evaluation runs…" : "Loading episodes…");
 
     ros.callService(GET_TASK_METADATA_SERVICE, { task_directory: skill.directory })
       .then((res) => {
@@ -167,6 +220,7 @@ export function createEpisodeList(parent, ros, opts) {
         if (seq !== requestSeq) return;
         episodes = [];
         colhead.hidden = true;
+        policyBar.hidden = true;
         foot.textContent = "";
         sub.textContent = "error";
         showMessage(`Couldn't load episodes — ${err.message}`);
@@ -190,10 +244,15 @@ export function createEpisodeList(parent, ros, opts) {
     return isReady(ep) ? "ready" : "preparing";
   }
 
-  /** Episodes in display order (current sort + search filter). @returns {EpisodeSummary[]} */
+  /** Episodes in display order (current sort + search + policy filter). @returns {EpisodeSummary[]} */
   function orderedEpisodes() {
     const sorted = [...episodes].sort((a, b) => (sortNewest ? numericId(b) - numericId(a) : numericId(a) - numericId(b)));
-    return query ? sorted.filter((e) => String(numericId(e)).includes(query)) : sorted;
+    const q = query.toLowerCase();
+    return sorted.filter((e) => {
+      if (policyFilter !== null && (e.policy || "") !== policyFilter) return false;
+      if (!q) return true;
+      return String(numericId(e)).includes(q) || (e.policy || "").toLowerCase().includes(q);
+    });
   }
 
   /** Nearest *ready* (playable) neighbor of *ep* in display order, walking in the
@@ -212,23 +271,99 @@ export function createEpisodeList(parent, ros, opts) {
     return null;
   }
 
+  /** Header summary. Training: ready/preparing counts. Eval: the running score
+   * (✓/✗/unlabeled + success rate over labeled runs). */
+  function renderSub() {
+    sub.innerHTML = "";
+    const n = episodes.length;
+    if (!isEval()) {
+      const readyCount = episodes.filter(isReady).length;
+      const preparingCount = n - readyCount;
+      sub.append(
+        document.createTextNode(`${n} episode${n === 1 ? "" : "s"} · `),
+        spanText(`${readyCount} ready`, "episodes-ready"),
+      );
+      if (preparingCount > 0) {
+        sub.append(document.createTextNode(" · "), spanText(`${preparingCount} preparing`, "episodes-preparing"));
+      }
+      return;
+    }
+    const ok = episodes.filter((e) => e.outcome === "success").length;
+    const fail = episodes.filter((e) => e.outcome === "failure").length;
+    const unlabeled = n - ok - fail;
+    sub.append(document.createTextNode(`${n} run${n === 1 ? "" : "s"} · `));
+    sub.append(spanText(`${ok}✓`, "episodes-ready"), document.createTextNode(" "));
+    sub.append(spanText(`${fail}✗`, "episodes-fail"));
+    if (ok + fail > 0) {
+      sub.append(document.createTextNode(` · ${Math.round((100 * ok) / (ok + fail))}% success`));
+    }
+    if (unlabeled > 0) {
+      sub.append(document.createTextNode(" · "), spanText(`${unlabeled} unlabeled`, "episodes-preparing"));
+    }
+  }
+
+  /** Eval view: one filter chip per policy seen in this dataset, with its own
+   * ✓/✗ tally — evaluations are compared per policy, so this is the primary
+   * way to slice the list. */
+  function renderPolicyBar() {
+    if (!isEval()) {
+      policyBar.hidden = true;
+      return;
+    }
+    /** @type {Map<string, {ok: number, fail: number, n: number}>} */
+    const byPolicy = new Map();
+    for (const ep of episodes) {
+      const key = ep.policy || "";
+      const t = byPolicy.get(key) || { ok: 0, fail: 0, n: 0 };
+      t.n++;
+      if (ep.outcome === "success") t.ok++;
+      else if (ep.outcome === "failure") t.fail++;
+      byPolicy.set(key, t);
+    }
+    // A filter is only useful once there are ≥2 policies to tell apart.
+    if (byPolicy.size < 2) {
+      policyBar.hidden = true;
+      if (policyFilter !== null) policyFilter = null;
+      return;
+    }
+    policyBar.hidden = false;
+    const frag = document.createDocumentFragment();
+    const mk = (/** @type {string} */ label, /** @type {string | null} */ value, /** @type {string} */ tallyText) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "policy-chip" + (policyFilter === value ? " active" : "");
+      const name = document.createElement("span");
+      name.className = "policy-chip-name";
+      name.textContent = label;
+      chip.appendChild(name);
+      if (tallyText) chip.appendChild(spanText(tallyText, "policy-chip-tally mono"));
+      chip.title = value === null ? "Show all policies" : `Show only runs of ${label}`;
+      chip.addEventListener("click", () => {
+        policyFilter = policyFilter === value ? null : value;
+        render();
+      });
+      frag.appendChild(chip);
+    };
+    mk("All policies", null, `${episodes.length}`);
+    for (const [policy, t] of [...byPolicy.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      mk(policy || "unknown", policy, `${t.ok}✓ ${t.fail}✗`);
+    }
+    policyBar.replaceChildren(frag);
+  }
+
   function render() {
     if (!current) return;
-    const readyCount = episodes.filter(isReady).length;
-    const preparingCount = episodes.length - readyCount;
-    sub.innerHTML = "";
-    sub.append(
-      document.createTextNode(`${episodes.length} episode${episodes.length === 1 ? "" : "s"} · `),
-      spanText(`${readyCount} ready`, "episodes-ready"),
-    );
-    if (preparingCount > 0) {
-      sub.append(document.createTextNode(" · "), spanText(`${preparingCount} preparing`, "episodes-preparing"));
-    }
+    renderSub();
+    renderPolicyBar();
 
     if (episodes.length === 0) {
       colhead.hidden = true;
       foot.textContent = "";
-      showMessage("This skill has no recorded episodes yet.");
+      showMessage(
+        isEval()
+          ? "No evaluation runs saved yet. Run a rollout from the Profiling page — every ✓/✗-labeled run lands here."
+          : "This skill has no recorded episodes yet.",
+      );
       return;
     }
     colhead.hidden = false;
@@ -240,7 +375,7 @@ export function createEpisodeList(parent, ros, opts) {
       frag.appendChild(buildRow(ep));
     }
     rowsEl.replaceChildren(frag);
-    foot.textContent = `Showing ${shown.length} of ${episodes.length} episodes`;
+    foot.textContent = `Showing ${shown.length} of ${episodes.length} ${isEval() ? "runs" : "episodes"}`;
   }
 
   /** @param {EpisodeSummary} ep @returns {HTMLElement} */
@@ -271,18 +406,21 @@ export function createEpisodeList(parent, ros, opts) {
     idEl.className = "ep-id mono";
     idEl.textContent = `#${id}`;
     epCol.append(dot, thumb, idEl);
+    // In a training dataset, an episode that came from a rollout (promoted from
+    // an evaluation) or a replay is not an operator demonstration — badge it.
+    if (!isEval() && ep.source && ep.source !== "teleop") {
+      epCol.appendChild(sourceBadge(ep));
+    }
 
-    // col 2: recorded
+    // recorded + duration
     const recCol = document.createElement("span");
     recCol.className = "ep-recorded";
     recCol.textContent = formatRecorded(ep.start_time);
-
-    // col 3: duration
     const durCol = document.createElement("span");
     durCol.className = "ep-duration mono";
     durCol.textContent = formatDuration(ep, dataFreq);
 
-    // readiness is conveyed by the dot (Status column removed); replay on click
+    // readiness is conveyed by the dot; replay on click
     const pct = encodeStatus ? Math.round((encodeStatus.progress || 0) * 100) : 0;
     dot.title = state === "ready" ? "ready" : encodeStatus?.stage === "encoding" ? `encoding ${pct}%` : "preparing";
     if (state === "ready") {
@@ -291,10 +429,7 @@ export function createEpisodeList(parent, ros, opts) {
       row.addEventListener("click", () => opts.onOpen(/** @type {Skill} */ (current), ep));
     }
 
-    // col 4: label dropdown (default Successful)
-    const labelCol = buildLabelSelect(ep);
-
-    // col 5: actions — manual re-encode kick (preparing only) + delete
+    // actions — manual re-encode kick (preparing only) + eval promote + delete
     const actions = document.createElement("div");
     actions.className = "ep-actions";
     if (state === "preparing") {
@@ -307,6 +442,14 @@ export function createEpisodeList(parent, ros, opts) {
       });
       actions.appendChild(prep);
     }
+    if (isEval()) {
+      const add = actionBtn(ICON_PLUS, "Add to training dataset", (e) => {
+        e.stopPropagation();
+        const r = add.getBoundingClientRect();
+        openMenu(ep, id, r.left, r.bottom + 4, state === "ready");
+      });
+      actions.appendChild(add);
+    }
     actions.appendChild(
       actionBtn(ICON_TRASH, "Delete episode", (e) => {
         e.stopPropagation();
@@ -314,11 +457,102 @@ export function createEpisodeList(parent, ros, opts) {
       }),
     );
 
-    row.append(epCol, recCol, durCol, labelCol, actions);
+    if (isEval()) {
+      // col 2: the policy that drove this run
+      const polCol = document.createElement("span");
+      polCol.className = "ep-policy mono";
+      polCol.textContent = ep.policy || "—";
+      if (ep.policy) polCol.title = ep.policy;
+
+      row.append(epCol, polCol, recCol, durCol, buildResultCell(ep), actions);
+      // The whole point of keeping eval runs: judge them, then promote the
+      // good ones. Right-click = the full episode menu.
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        openMenu(ep, id, e.clientX, e.clientY, state === "ready");
+      });
+    } else {
+      row.append(epCol, recCol, durCol, buildLabelSelect(ep), actions);
+    }
     return row;
   }
 
-  /** Label dropdown: Successful (default) / Unsuccessful, calls SetEpisodeOutcome.
+  /** @param {EpisodeSummary} ep @param {number} id @param {number} x @param {number} y @param {boolean} ready */
+  function openMenu(ep, id, x, y, ready) {
+    openEpisodeMenu({
+      x,
+      y,
+      ros,
+      sourceDir: current?.directory || "",
+      episodeId: id,
+      targets: opts.getTargets(),
+      onReplay: ready ? () => opts.onOpen(/** @type {Skill} */ (current), ep) : null,
+      onDelete: () => deleteEpisode(ep, id),
+    });
+  }
+
+  /** Provenance badge for non-teleop episodes in a training dataset.
+   * @param {EpisodeSummary} ep */
+  function sourceBadge(ep) {
+    const badge = document.createElement("span");
+    badge.className = `ep-src ep-src-${ep.source}`;
+    badge.textContent = ep.source === "rollout" ? "rollout" : "replay";
+    badge.title =
+      ep.source === "rollout"
+        ? `Recorded during a policy rollout${ep.policy ? ` of ${ep.policy}` : ""} — added from an evaluation`
+        : "Recorded by replaying a saved trajectory";
+    return badge;
+  }
+
+  /** Eval result cell: outcome dropdown (with an explicit Unlabeled state — a
+   * run saved but never judged must not read as a success) + failure-mode tags.
+   * @param {EpisodeSummary} ep @returns {HTMLElement} */
+  function buildResultCell(ep) {
+    const cell = document.createElement("div");
+    cell.className = "ep-result";
+    const sel = document.createElement("select");
+    const stateOfOutcome = () => (ep.outcome === "success" ? "is-success" : ep.outcome === "failure" ? "is-fail" : "is-unlabeled");
+    const applyClass = () => (sel.className = `ep-label-select ${stateOfOutcome()}`);
+    for (const [val, text] of [
+      ["", "Unlabeled"],
+      ["success", "✓ Success"],
+      ["failure", "✗ Failure"],
+    ]) {
+      const o = document.createElement("option");
+      o.value = val;
+      o.textContent = text;
+      if (val === (ep.outcome || "")) o.selected = true;
+      sel.appendChild(o);
+    }
+    applyClass();
+    sel.addEventListener("click", (e) => e.stopPropagation());
+    sel.addEventListener("change", (e) => {
+      e.stopPropagation();
+      const outcome = /** @type {""|"success"|"failure"} */ (sel.value);
+      ep.outcome = outcome;
+      applyClass();
+      renderSub(); // keep the header score in step with the relabel
+      renderPolicyBar();
+      ros.callService(SET_EPISODE_OUTCOME_SERVICE, {
+        task_directory: current?.directory,
+        episode_id: numericId(ep),
+        outcome,
+        tags: [],
+      }).catch((err) => console.error("[datasets] set outcome failed:", err));
+    });
+    cell.appendChild(sel);
+    if (Array.isArray(ep.tags) && ep.tags.length) {
+      const tags = document.createElement("span");
+      tags.className = "ep-tags";
+      tags.title = ep.tags.join(", ");
+      for (const t of ep.tags.slice(0, 2)) tags.appendChild(spanText(t, "ep-tag"));
+      if (ep.tags.length > 2) tags.appendChild(spanText(`+${ep.tags.length - 2}`, "ep-tag more"));
+      cell.appendChild(tags);
+    }
+    return cell;
+  }
+
+  /** Training label dropdown: Successful (default) / Unsuccessful.
    * @param {EpisodeSummary} ep @returns {HTMLElement} */
   function buildLabelSelect(ep) {
     const cell = document.createElement("div");
@@ -347,6 +581,7 @@ export function createEpisodeList(parent, ros, opts) {
         task_directory: current?.directory,
         episode_id: numericId(ep),
         outcome,
+        tags: [],
       }).catch((err) => console.error("[datasets] set outcome failed:", err));
     });
     cell.appendChild(sel);

@@ -2,15 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 // Dataset roster — live list of recordable skills from /brain/available_skills,
-// split into two groups: "skills" (teleop demo datasets, the trainable kind)
-// and "evaluations" (type=="eval" rollout-capture datasets like Policy
-// Rollouts). They hold different kinds of episodes — demonstrations vs judged
-// policy runs — so listing them as flat peers misread the eval bucket as a
-// trainable skill. Only physical skills (those with a dataset `directory`) can
-// have episodes, so code-only skills are filtered out. Click one to load its
+// split into two always-visible sections with distinct identities:
+//   "Training data"    — teleop demo datasets recorded by a human operator;
+//                        what the robot learns from.
+//   "Evaluation runs"  — type=="eval" rollout-capture datasets (judged policy
+//                        runs saved from the Profiling page); never trained.
+// They hold different kinds of episodes, so they must never read as one flat
+// list. Only physical skills (those with a dataset `directory`) can have
+// episodes, so code-only skills are filtered out. Click one to load its
 // episodes.
 
 import { AVAILABLE_SKILLS_TOPIC } from "../constants.js";
+
+// Line-style icons, same stroke language as the rail (stroke currentColor).
+const ICON_OPERATOR =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.4 3.8-5 7-5s5.8 1.6 7 5"/></svg>';
+const ICON_EVAL =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>';
 
 /**
  * @param {HTMLElement} parent
@@ -45,11 +53,11 @@ export function createSkillList(parent, ros, opts) {
   // Auto-selected once its skill appears in the roster, then cleared.
   let pendingDir = new URLSearchParams(location.search).get("dir");
 
-  /** @param {Skill} skill */
-  function skillRow(skill) {
+  /** @param {Skill} skill @param {boolean} isEval */
+  function skillRow(skill, isEval) {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "skill-row" + (skill.id === selectedId ? " active" : "");
+    row.className = "skill-row" + (isEval ? " eval" : "") + (skill.id === selectedId ? " active" : "");
     row.title = skill.directory || skill.name;
 
     const name = document.createElement("span");
@@ -59,7 +67,7 @@ export function createSkillList(parent, ros, opts) {
     const count = document.createElement("span");
     count.className = "skill-count mono";
     const n = skill.episode_count ?? 0;
-    count.textContent = `${n} ep${n === 1 ? "" : "s"}`;
+    count.textContent = isEval ? `${n} run${n === 1 ? "" : "s"}` : `${n} ep${n === 1 ? "" : "s"}`;
 
     row.append(name, count);
     row.addEventListener("click", () => {
@@ -70,11 +78,20 @@ export function createSkillList(parent, ros, opts) {
     return row;
   }
 
-  /** @param {string} label */
-  function groupLabel(label) {
+  /** @param {string} label @param {string} icon @param {boolean} isEval */
+  function sectionHead(label, icon, isEval) {
     const p = document.createElement("p");
-    p.className = "skillpanel-group microlabel";
-    p.textContent = label;
+    p.className = "skillpanel-group microlabel" + (isEval ? " eval" : "");
+    p.innerHTML = icon;
+    p.appendChild(document.createTextNode(label));
+    return p;
+  }
+
+  /** @param {string} text */
+  function sectionHint(text) {
+    const p = document.createElement("p");
+    p.className = "skillpanel-hint";
+    p.textContent = text;
     return p;
   }
 
@@ -83,22 +100,22 @@ export function createSkillList(parent, ros, opts) {
     const evals = skills.filter((s) => s.type === "eval");
 
     const frag = document.createDocumentFragment();
-    // Demo datasets are the page's main content, so they get the top slot; the
-    // "skills" label only appears once there are evals AND demos to tell apart.
-    if (evals.length && demos.length) frag.appendChild(groupLabel("skills"));
-    for (const skill of demos) frag.appendChild(skillRow(skill));
+    // Both sections always render, even empty — the split between operator
+    // demonstrations and policy evaluations is the page's core distinction.
+    frag.appendChild(sectionHead("Training data", ICON_OPERATOR, false));
+    if (demos.length) {
+      for (const skill of demos) frag.appendChild(skillRow(skill, false));
+    } else {
+      frag.appendChild(sectionHint("No recorded skills yet — record demonstrations on the Collect page."));
+    }
+    frag.appendChild(sectionHead("Evaluation runs", ICON_EVAL, true));
     if (evals.length) {
-      frag.appendChild(groupLabel("evaluations"));
-      for (const skill of evals) frag.appendChild(skillRow(skill));
+      for (const skill of evals) frag.appendChild(skillRow(skill, true));
+    } else {
+      frag.appendChild(sectionHint("No evaluations yet — run policy rollouts from the Profiling page."));
     }
     listEl.replaceChildren(frag);
     tally.textContent = String(skills.length);
-    if (skills.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "datasets-empty";
-      empty.textContent = "No recorded skills yet.";
-      listEl.appendChild(empty);
-    }
   }
 
   const unsub = ros.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {

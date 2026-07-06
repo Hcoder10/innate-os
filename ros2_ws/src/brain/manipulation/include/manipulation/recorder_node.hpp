@@ -29,6 +29,7 @@
 #include "brain_messages/srv/new_episode.hpp"
 #include "brain_messages/srv/set_episode_outcome.hpp"
 #include "brain_messages/srv/delete_episode.hpp"
+#include "brain_messages/srv/copy_episode.hpp"
 
 #include "manipulation/episode_data.hpp"
 #include "manipulation/task_manager.hpp"
@@ -76,6 +77,8 @@ class RecorderNode : public rclcpp::Node {
                                     std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Response> response);
     void handle_delete_episode(const std::shared_ptr<brain_messages::srv::DeleteEpisode::Request> request,
                                std::shared_ptr<brain_messages::srv::DeleteEpisode::Response> response);
+    void handle_copy_episode(const std::shared_ptr<brain_messages::srv::CopyEpisode::Request> request,
+                             std::shared_ptr<brain_messages::srv::CopyEpisode::Response> response);
 
     // Replay service handlers
     void handle_load_episode(const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
@@ -162,6 +165,7 @@ class RecorderNode : public rclcpp::Node {
     rclcpp::Service<brain_messages::srv::GetTaskMetadata>::SharedPtr get_task_metadata_srv_;
     rclcpp::Service<brain_messages::srv::SetEpisodeOutcome>::SharedPtr set_episode_outcome_srv_;
     rclcpp::Service<brain_messages::srv::DeleteEpisode>::SharedPtr delete_episode_srv_;
+    rclcpp::Service<brain_messages::srv::CopyEpisode>::SharedPtr copy_episode_srv_;
 
     // Service clients
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr head_ai_position_client_;

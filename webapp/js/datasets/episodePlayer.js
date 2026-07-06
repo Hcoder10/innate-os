@@ -10,6 +10,7 @@
 
 import { SET_EPISODE_OUTCOME_SERVICE, DELETE_EPISODE_SERVICE } from "../constants.js";
 import { buildProfileTrace } from "./profileTrace.js";
+import { openEpisodeMenu } from "./episodeMenu.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 // Per-joint hues for the telemetry legend (cycled if there are more joints).
@@ -22,7 +23,8 @@ const SPEEDS = [1, 2, 0.5]; // playback-rate cycle
  * @param {import("../rosClient.js").RosClient} ros
  * @param {Skill} skill
  * @param {EpisodeSummary} episode
- * @param {{ onBack: () => void, onPrev?: (() => void) | null, onNext?: (() => void) | null }} opts
+ * @param {{ onBack: () => void, onPrev?: (() => void) | null, onNext?: (() => void) | null,
+ *   getTargets?: () => Skill[] }} opts
  * @returns {{ destroy: () => void }}
  */
 export function createEpisodePlayer(parent, ros, skill, episode, opts) {
@@ -72,42 +74,62 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
     navButton("›", "Next episode", opts.onNext),
   );
   subrow.append(epName, nav);
+  // Provenance chips: a rollout episode is a policy evaluation, not an operator
+  // demonstration — say so right next to the episode name, with the driving
+  // policy and any failure-mode tags from review.
+  if (episode.source === "rollout") {
+    subrow.insertBefore(chip("policy rollout", "prov-chip rollout"), nav);
+    if (episode.policy) {
+      subrow.insertBefore(chip(episode.policy, "prov-chip policy mono", `Driven by policy ${episode.policy}`), nav);
+    }
+    for (const t of episode.tags || []) subrow.insertBefore(chip(t, "prov-chip tag"), nav);
+  } else if (episode.source === "replay") {
+    subrow.insertBefore(chip("replay", "prov-chip"), nav);
+  }
   headinfo.append(titleBtn, subrow);
 
   // Right-side actions: outcome label + delete.
   const actions = document.createElement("div");
   actions.className = "player-actions";
   const label = document.createElement("select");
-  const applyLabelClass = (/** @type {boolean} */ fail) =>
-    (label.className = `ep-label-select ${fail ? "is-fail" : "is-success"}`);
-  applyLabelClass(episode.outcome === "failure");
-  for (const [val, text] of [
-    ["success", "Successful"],
-    ["failure", "Unsuccessful"],
-  ]) {
+  const isEvalRun = skill.type === "eval";
+  const classOf = (/** @type {string | undefined} */ outcome) =>
+    outcome === "failure" ? "is-fail" : outcome === "success" || !isEvalRun ? "is-success" : "is-unlabeled";
+  const applyLabelClass = (/** @type {string | undefined} */ outcome) =>
+    (label.className = `ep-label-select ${classOf(outcome)}`);
+  applyLabelClass(episode.outcome);
+  // Eval runs carry an explicit Unlabeled state — a run saved but never judged
+  // must not read as a success. Training episodes keep the success default.
+  const options = isEvalRun
+    ? [["", "Unlabeled"], ["success", "✓ Success"], ["failure", "✗ Failure"]]
+    : [["success", "Successful"], ["failure", "Unsuccessful"]];
+  for (const [val, text] of options) {
     const o = document.createElement("option");
     o.value = val;
     o.textContent = text;
-    if ((val === "failure") === (episode.outcome === "failure")) o.selected = true;
+    if (isEvalRun ? val === (episode.outcome || "") : (val === "failure") === (episode.outcome === "failure")) {
+      o.selected = true;
+    }
     label.appendChild(o);
   }
   label.addEventListener("change", () => {
-    const outcome = /** @type {"success"|"failure"} */ (label.value);
+    const outcome = /** @type {""|"success"|"failure"} */ (label.value);
     const prev = episode.outcome;
     episode.outcome = outcome;
-    applyLabelClass(outcome === "failure");
+    applyLabelClass(outcome);
     ros.callService(SET_EPISODE_OUTCOME_SERVICE, {
       task_directory: dir,
       episode_id: id,
       outcome,
+      tags: [],
     }).catch((err) => {
       // Revert the optimistic update so the UI can't keep showing a label the
       // robot never stored — outcome gates which episodes upload for training,
       // so a silent divergence is misleading.
       console.error("[datasets] set outcome failed:", err);
       episode.outcome = prev;
-      label.value = prev === "failure" ? "failure" : "success";
-      applyLabelClass(prev === "failure");
+      label.value = isEvalRun ? prev || "" : prev === "failure" ? "failure" : "success";
+      applyLabelClass(prev);
     });
   });
   const del = document.createElement("button");
@@ -128,6 +150,26 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
         window.alert(`Couldn't delete episode: ${err.message}`);
       });
   });
+  // Eval runs can be promoted straight from the player — after watching one is
+  // exactly when you decide it's worth training on.
+  if (skill.type === "eval" && opts.getTargets) {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "player-add";
+    add.textContent = "+ Add to training dataset";
+    add.addEventListener("click", () => {
+      const r = add.getBoundingClientRect();
+      openEpisodeMenu({
+        x: r.left,
+        y: r.bottom + 4,
+        ros,
+        sourceDir: dir,
+        episodeId: id,
+        targets: /** @type {() => Skill[]} */ (opts.getTargets)(),
+      });
+    });
+    actions.prepend(add);
+  }
   actions.append(label, del);
 
   header.append(headinfo, actions);
@@ -209,10 +251,15 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   telemetry.append(telHead, plot);
 
   // Inference-profile trace (policy rollouts only; hidden when the episode has
-  // no persisted profile).
+  // no persisted profile). For a rollout the profile IS the interesting
+  // telemetry — how the policy behaved — so it sits above the joint graph.
   const profileTrace = buildProfileTrace(q);
 
-  wrap.append(header, pair, transport, scrub, telemetry, profileTrace.el);
+  if (episode.source === "rollout") {
+    wrap.append(header, pair, transport, scrub, profileTrace.el, telemetry);
+  } else {
+    wrap.append(header, pair, transport, scrub, telemetry, profileTrace.el);
+  }
   parent.appendChild(wrap);
 
   // ---- video group control -----------------------------------------------
@@ -508,6 +555,15 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
       wrap.remove();
     },
   };
+}
+
+/** @param {string} text @param {string} cls @param {string} [title] */
+function chip(text, cls, title) {
+  const s = document.createElement("span");
+  s.className = cls;
+  s.textContent = text;
+  if (title) s.title = title;
+  return s;
 }
 
 /** @param {string} text @param {string} title @param {() => void} onClick */

@@ -152,6 +152,10 @@ RecorderNode::RecorderNode()
         "brain/recorder/delete_episode",
         std::bind(&RecorderNode::handle_delete_episode, this, std::placeholders::_1, std::placeholders::_2));
 
+    copy_episode_srv_ = this->create_service<brain_messages::srv::CopyEpisode>(
+        "brain/recorder/copy_episode",
+        std::bind(&RecorderNode::handle_copy_episode, this, std::placeholders::_1, std::placeholders::_2));
+
     RCLCPP_DEBUG(this->get_logger(), "Hosting services:");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/activate_physical_primitive");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/new_episode");
@@ -817,6 +821,29 @@ void RecorderNode::handle_delete_episode(const std::shared_ptr<brain_messages::s
     } catch (const std::exception& e) {
         response->success = false;
         response->message = std::string("Error deleting episode: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+    }
+}
+
+void RecorderNode::handle_copy_episode(const std::shared_ptr<brain_messages::srv::CopyEpisode::Request> request,
+                                       std::shared_ptr<brain_messages::srv::CopyEpisode::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Copy episode %d from %s to %s", request->episode_id,
+                request->source_task_directory.c_str(), request->dest_task_directory.c_str());
+    try {
+        auto [success, message, new_id] = task_manager_->copy_episode(
+            request->source_task_directory, request->episode_id, request->dest_task_directory);
+        response->success = success;
+        response->message = message;
+        response->new_episode_id = new_id;
+        if (success) {
+            RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
+        } else {
+            RCLCPP_WARN(this->get_logger(), "copy_episode failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error copying episode: ") + e.what();
+        response->new_episode_id = -1;
         RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
     }
 }

@@ -18,6 +18,9 @@
   --type-learned: #5fb8a3;      /* skill-type dot: trained ACT policy */
   --type-replay: #6b93d6;       /* skill-type dot: recorded trajectory */
   --type-digital: #a389d4;      /* skill-type dot: code/SDK skill */
+  --eval: #b58ce6;              /* evaluation identity — policy rollouts, never training data */
+  --eval-dim: rgb(181 140 230 / 40%);
+  --eval-faint: rgb(181 140 230 / 12%);
   --glass: rgb(0 0 0 / 40%);
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -2057,15 +2060,46 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Group divider between the demo-dataset and evaluation sections. */
+/* Section headers: "Training data" (operator demos) vs "Evaluation runs"
+   (policy rollouts). Two different kinds of episodes — the icons + the eval
+   tint keep them from ever reading as one flat list. */
 .skillpanel-group {
-  padding: 12px 16px 4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 16px 6px;
   color: var(--muted);
 }
-.skill-row + .skillpanel-group {
+.skillpanel-group svg {
+  flex: none;
+  opacity: 0.8;
+}
+.skillpanel-group.eval {
   margin-top: 8px;
   border-top: 1px solid var(--hairline);
-  padding-top: 12px;
+  padding-top: 14px;
+  color: var(--eval);
+}
+
+.skillpanel-hint {
+  margin: 0;
+  padding: 4px 16px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Evaluation dataset rows carry the eval accent instead of signal amber. */
+.skill-row.eval .skill-count {
+  color: var(--eval);
+  opacity: 0.85;
+}
+.skill-row.eval.active {
+  background: var(--eval-faint);
+  box-shadow: inset 2px 0 0 var(--eval);
+}
+.skill-row.eval.active .skill-name {
+  color: var(--eval);
 }
 
 .skill-row {
@@ -2388,6 +2422,254 @@ button {
   cursor: progress;
 }
 
+/* ---- evaluation view (skill.type == "eval") --------------------------------
+   Judged policy rollouts, not training data: a sixth Policy column, a Result
+   column with an explicit Unlabeled state + failure tags, per-policy filter
+   chips, and the eval violet replacing signal amber throughout. */
+.episodes--eval {
+  --ep-grid: minmax(0, 1.35fr) minmax(0, 0.9fr) 0.95fr 0.6fr 1.15fr 84px;
+}
+
+.episodes-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.episodes-kind {
+  padding: 3px 8px;
+  border: 1px solid var(--eval-dim);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--eval);
+  background: var(--eval-faint);
+}
+
+.episodes-fail {
+  color: var(--danger);
+}
+
+.episodes--eval .episode-row.clickable:hover {
+  background: var(--eval-faint);
+  box-shadow: inset 2px 0 0 var(--eval);
+}
+
+.episodes--eval .episodes-collect {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+}
+.episodes--eval .episodes-collect:hover {
+  background: var(--eval-faint);
+}
+
+/* per-policy filter chips (shown once ≥2 policies have runs here) */
+.policy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 20px 12px;
+}
+
+.policy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.policy-chip:hover {
+  color: var(--text);
+  border-color: var(--eval-dim);
+}
+.policy-chip.active {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+  background: var(--eval-faint);
+}
+.policy-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.policy-chip-tally {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.ep-policy {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* provenance badge on training episodes that weren't teleop demonstrations */
+.ep-src {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ep-src-rollout {
+  color: var(--eval);
+  background: var(--eval-faint);
+  border: 1px solid var(--eval-dim);
+}
+.ep-src-replay {
+  color: var(--type-replay);
+  background: rgb(107 147 214 / 12%);
+  border: 1px solid rgb(107 147 214 / 40%);
+}
+
+/* result cell: outcome select + failure-mode tags */
+.ep-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ep-label-select.is-unlabeled {
+  color: var(--muted);
+}
+
+.ep-tags {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ep-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ep-tag.more {
+  border-style: dashed;
+}
+
+/* ---- episode context menu + promote flow ---------------------------------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+}
+
+.ctx-head {
+  padding: 7px 10px 3px;
+  color: var(--eval);
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-item:hover {
+  background: rgb(255 255 255 / 6%);
+}
+.ctx-item.danger:hover {
+  color: var(--danger);
+}
+
+.ctx-sep {
+  margin: 5px 6px;
+  border-top: 1px solid var(--hairline);
+}
+
+.ctx-empty {
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ep-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  max-width: 360px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+  font-size: 12px;
+  color: var(--text);
+}
+.ep-toast.ok {
+  border-color: var(--ok);
+}
+.ep-toast.fail {
+  border-color: var(--danger);
+}
+
+/* provenance chips in the player header */
+.prov-chip {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.prov-chip.rollout {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+  background: var(--eval-faint);
+}
+.prov-chip.policy {
+  text-transform: none;
+  letter-spacing: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-add {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--eval-dim);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--eval);
+}
+.player-add:hover {
+  background: var(--eval-faint);
+}
+
 /* episode player (MP4 replay) */
 .datasets-pane {
   display: flex;
@@ -2434,7 +2716,8 @@ button {
 .player-subrow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap; /* provenance chips (policy rollout · policy · tags) may overflow */
+  gap: 8px 10px;
 }
 
 .player-nav {
@@ -3652,6 +3935,29 @@ button {
   height: 200px;
   display: block;
   border-bottom: 1px solid var(--hairline);
+}
+/* Plot area: a fixed-width y-axis tick column beside the stretched svg. */
+.prof-plot {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.prof-plot-svg {
+  flex: 1;
+  min-width: 0;
+}
+.prof-yaxis {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  font-family: var(--font-mono);
 }
 .prof-axis {
   display: flex;

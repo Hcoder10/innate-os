@@ -52,6 +52,13 @@ class TaskManager {
     // are not renumbered. Returns {success, message}.
     std::tuple<bool, std::string> delete_episode(const std::string& task_directory, int episode_id);
 
+    // Copy an episode into another dataset under the destination's next id:
+    // h5 + per-camera mp4s + profile trace + raw_data original, plus a metadata
+    // entry that keeps provenance (source/policy), outcome and tags. The source
+    // episode is untouched. Returns {success, message, new_episode_id}.
+    std::tuple<bool, std::string, int> copy_episode(const std::string& source_task_directory, int episode_id,
+                                                    const std::string& dest_task_directory);
+
     // Accessors
     const std::string& get_current_task_name() const {
         return current_task_name_;

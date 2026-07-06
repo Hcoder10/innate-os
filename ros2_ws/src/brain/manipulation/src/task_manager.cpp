@@ -548,4 +548,154 @@ std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& tas
     return {true, "Deleted episode " + std::to_string(episode_id) + " (" + std::to_string(removed) + " files)"};
 }
 
+std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& source_task_directory, int episode_id,
+                                                             const std::string& dest_task_directory) {
+    std::error_code ec;
+    if (fs::weakly_canonical(source_task_directory, ec) == fs::weakly_canonical(dest_task_directory, ec)) {
+        return {false, "Source and destination datasets are the same", -1};
+    }
+    const std::string src_data = source_task_directory + "/data";
+    const std::string src_meta_path = src_data + "/dataset_metadata.json";
+    if (!fs::exists(src_meta_path)) {
+        return {false, "No dataset metadata at " + src_meta_path, -1};
+    }
+
+    // Snapshot the source entry under the source lock, then release it — the two
+    // locks are never held together, so opposite-direction copies can't deadlock.
+    nlohmann::json src_entry;
+    nlohmann::json src_meta;
+    {
+        MetadataLock lock(src_meta_path);
+        try {
+            std::ifstream in(src_meta_path);
+            in >> src_meta;
+        } catch (const std::exception& e) {
+            return {false, std::string("Failed to parse source metadata: ") + e.what(), -1};
+        }
+        if (!src_meta.is_object() || !src_meta.contains("episodes") || !src_meta["episodes"].is_array()) {
+            return {false, "Source metadata has no episodes array", -1};
+        }
+        for (const auto& ep : src_meta["episodes"]) {
+            if (ep.value("episode_id", -1) == episode_id) {
+                src_entry = ep;
+                break;
+            }
+        }
+    }
+    if (src_entry.is_null()) {
+        return {false, "Episode " + std::to_string(episode_id) + " not found in source dataset", -1};
+    }
+
+    const std::string dest_data = dest_task_directory + "/data";
+    const std::string dest_meta_path = dest_data + "/dataset_metadata.json";
+    fs::create_directories(dest_data);
+
+    MetadataLock lock(dest_meta_path);
+    nlohmann::json dest_meta;
+    if (fs::exists(dest_meta_path) && fs::file_size(dest_meta_path) > 0) {
+        try {
+            std::ifstream in(dest_meta_path);
+            in >> dest_meta;
+        } catch (const std::exception& e) {
+            return {false, std::string("Failed to parse destination metadata: ") + e.what(), -1};
+        }
+    } else {
+        // Fresh destination (skill created but never recorded into): inherit the
+        // source's frequency/type so the copied episode stays self-consistent.
+        dest_meta = {{"data_frequency", src_meta.value("data_frequency", 0.0)},
+                     {"dataset_type", src_meta.value("dataset_type", "h5")},
+                     {"number_of_episodes", 0},
+                     {"episodes", nlohmann::json::array()}};
+    }
+    if (!dest_meta.is_object() || !dest_meta.contains("episodes") || !dest_meta["episodes"].is_array()) {
+        return {false, "Destination metadata has no episodes array", -1};
+    }
+    // Mixed-frequency datasets would silently corrupt training, so refuse.
+    const double src_freq = src_meta.value("data_frequency", 0.0);
+    const double dest_freq = dest_meta.value("data_frequency", 0.0);
+    if (src_freq > 0 && dest_freq > 0 && src_freq != dest_freq) {
+        return {false,
+                "Destination records at " + std::to_string(dest_freq) + " Hz but the episode was recorded at " +
+                    std::to_string(src_freq) + " Hz",
+                -1};
+    }
+
+    const int new_id = dest_meta.value("number_of_episodes", 0);
+    const std::string old_stem = "episode_" + std::to_string(episode_id);
+    const std::string new_stem = "episode_" + std::to_string(new_id);
+
+    // Copy the h5 and every "episode_<id>_*" sibling (mp4s, profile trace) from
+    // data/ and raw_data/, renaming the stem. Track what we copied so a failure
+    // can't leave a half-copied episode behind.
+    std::vector<fs::path> copied;
+    auto rollback = [&copied]() {
+        for (const auto& p : copied) {
+            std::error_code rm_ec;
+            fs::remove(p, rm_ec);
+        }
+    };
+    if (!fs::exists(src_data + "/" + old_stem + ".h5")) {
+        return {false, "Source episode file missing: " + old_stem + ".h5", -1};
+    }
+    for (const char* sub : {"/data", "/raw_data"}) {
+        fs::path src_dir = fs::path(source_task_directory + sub);
+        if (!fs::is_directory(src_dir, ec)) {
+            continue;
+        }
+        for (const auto& entry : fs::directory_iterator(src_dir, ec)) {
+            const std::string name = entry.path().filename().string();
+            // "episode_3.h5" or "episode_3_*" — the underscore/dot boundary keeps
+            // episode_3 from matching episode_30's files.
+            if (name != old_stem + ".h5" && name.rfind(old_stem + "_", 0) != 0) {
+                continue;
+            }
+            fs::path dest_dir = fs::path(dest_task_directory + sub);
+            fs::create_directories(dest_dir, ec);
+            fs::path dest_path = dest_dir / (new_stem + name.substr(old_stem.size()));
+            std::error_code cp_ec;
+            fs::copy_file(entry.path(), dest_path, fs::copy_options::none, cp_ec);
+            if (cp_ec) {
+                rollback();
+                return {false, "Failed to copy " + name + ": " + cp_ec.message(), -1};
+            }
+            copied.push_back(dest_path);
+        }
+    }
+
+    // Metadata entry: same provenance/labels, new id and file names.
+    nlohmann::json new_entry = src_entry;
+    new_entry["episode_id"] = new_id;
+    new_entry["file_name"] = new_stem + ".h5";
+    if (new_entry.contains("video_files") && new_entry["video_files"].is_array()) {
+        for (auto& vf : new_entry["video_files"]) {
+            std::string name = vf.get<std::string>();
+            if (name.rfind(old_stem + "_", 0) == 0) {
+                vf = new_stem + name.substr(old_stem.size());
+            }
+        }
+    }
+    dest_meta["episodes"].push_back(new_entry);
+    dest_meta["number_of_episodes"] = new_id + 1;
+    if (dest_freq <= 0 && src_freq > 0) {
+        dest_meta["data_frequency"] = src_freq;
+    }
+    try {
+        write_json_atomic(dest_meta_path, dest_meta);
+    } catch (const std::exception& e) {
+        rollback();
+        return {false, std::string("Failed to write destination metadata: ") + e.what(), -1};
+    }
+
+    // If the destination is the actively-recording task, refresh the in-memory
+    // snapshot so the recorder's next add_episode doesn't reuse the id we took.
+    if (dest_task_directory == current_task_dir_) {
+        metadata_ = dest_meta;
+    }
+    return {true,
+            "Copied episode " + std::to_string(episode_id) + " to " +
+                fs::path(dest_task_directory).filename().string() + " as episode " + std::to_string(new_id) + " (" +
+                std::to_string(copied.size()) + " files)",
+            new_id};
+}
+
 }  // namespace manipulation
