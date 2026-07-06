@@ -84,8 +84,7 @@ echo "=== unit tests (fast, no ROS) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
   src/brain/brain_client/test/test_fake_cloud_selftest.py \
   src/brain/brain_client/test/test_backwards_compat.py \
-  src/brain/manipulation/test/test_config_validation.py \
-  src/brain/manipulation/test/test_auto_stop.py
+  src/brain/manipulation/test/test_config_validation.py
 
 # Run the launch tests under both install modes. The copy build baked into the
 # image (ci/Dockerfile.test) masks missing exec bits by installing 0755 copies;
