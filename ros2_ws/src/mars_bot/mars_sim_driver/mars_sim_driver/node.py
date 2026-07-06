@@ -36,6 +36,7 @@ import json
 import math
 import threading
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import rclpy
@@ -94,14 +95,13 @@ class VirtualMarsNode(Node):
         self.sim = VirtualMars()
         self._lock = threading.Lock()
         # Active joint-space trajectory: list of (from, to, duration) dicts
-        # consumed by the physics loop; _traj_done fires when it drains.
+        # consumed by the physics loop. _traj_req is the waiting goto_js*
+        # call's completion token (done event + ok flag) -- per-request, not
+        # shared state, so concurrent service calls can't race each other's
+        # preemption result (the services run in a reentrant group).
         self._segments: list[tuple[dict, dict, float]] = []
         self._segment_started: float | None = None
-        self._traj_done = threading.Event()
-        self._traj_done.set()
-        # Streaming commands / reset preempt a pending goto_js*; the waiting
-        # service must then report failure, not success (real arm semantics).
-        self._traj_preempted = False
+        self._traj_req: SimpleNamespace | None = None
 
         self._tf = TransformBroadcaster(self)
         self._odom_pub = self.create_publisher(Odometry, "/odom", 10)
@@ -182,22 +182,26 @@ class VirtualMarsNode(Node):
         with self._lock:
             self.sim.set_cmd_vel(msg.linear.x, msg.angular.z)
 
+    def _fail_active_traj(self) -> None:
+        """Preempt the queued trajectory: wake its waiting goto_js* call with
+        failure (real arm semantics -- the pose was abandoned). Lock held."""
+        if self._traj_req is not None:
+            self._traj_req.ok = False
+            self._traj_req.done.set()
+            self._traj_req = None
+        self._segments.clear()
+        self._segment_started = None
+
     def _on_arm_commands(self, msg: Float64MultiArray) -> None:
         values = list(msg.data)[: len(ARM_JOINTS)]
         with self._lock:
-            if self._segments:
-                self._traj_preempted = True  # streaming preempts trajectories
-            self._segments.clear()
-            self._traj_done.set()
+            self._fail_active_traj()  # streaming preempts trajectories
             for name, value in zip(ARM_JOINTS, values, strict=False):
                 self.sim.set_joint_target(name, float(value))
 
     def _on_reset(self, _msg: Empty) -> None:
         with self._lock:
-            if self._segments:
-                self._traj_preempted = True
-            self._segments.clear()
-            self._traj_done.set()
+            self._fail_active_traj()
             self.sim.reset()
 
     def _on_head_position(self, msg: Int32) -> None:
@@ -206,17 +210,17 @@ class VirtualMarsNode(Node):
             self.sim.set_joint_target("joint_head", math.radians(deg))
 
     def _enqueue_segments(self, waypoints: list[dict], durations: list[float]) -> bool:
+        req = SimpleNamespace(done=threading.Event(), ok=False)
         with self._lock:
+            self._fail_active_traj()  # latest command wins, like the real arm
             current = self.sim.joint_targets()
             start = {k: current[k] for k in ARM_JOINTS}
             for target, duration in zip(waypoints, durations, strict=True):
                 self._segments.append((start, target, max(duration, 0.05)))
                 start = target
-            self._segment_started = None
-            self._traj_preempted = False
-            self._traj_done.clear()
+            self._traj_req = req
         total = sum(durations)
-        return self._traj_done.wait(timeout=total + 5.0) and not self._traj_preempted
+        return req.done.wait(timeout=total + 5.0) and req.ok
 
     def _on_goto_js(self, request, response):
         values = list(request.data.data)
@@ -276,9 +280,7 @@ class VirtualMarsNode(Node):
             except Exception as exc:  # noqa: BLE001 -- this thread must never die
                 self.get_logger().error(f"physics step failed ({exc!r}); dropping active trajectory")
                 with self._lock:
-                    self._segments.clear()
-                    self._traj_preempted = True
-                    self._traj_done.set()
+                    self._fail_active_traj()
             time.sleep(PHYSICS_CHUNK_S)
 
     def _advance_trajectory(self) -> None:
@@ -296,8 +298,10 @@ class VirtualMarsNode(Node):
         if alpha >= 1.0:
             self._segments.pop(0)
             self._segment_started = None
-            if not self._segments:
-                self._traj_done.set()
+            if not self._segments and self._traj_req is not None:
+                self._traj_req.ok = True
+                self._traj_req.done.set()
+                self._traj_req = None
 
     # --- outputs ---
 
