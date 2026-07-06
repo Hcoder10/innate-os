@@ -27,20 +27,25 @@ class TaskManager {
     std::string get_streaming_episode_path() const;
 
     // Rename the already-finalized streaming file at `temp_file_path` to its
-    // final episode slot and update the dataset metadata.
+    // final episode slot and update the dataset metadata. `source` records how
+    // the episode was produced ("teleop"/"rollout"/"replay"); `policy` is the
+    // checkpoint/version id of the model that drove a rollout ("" if n/a).
     void add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
-                     const std::string& end_timestamp);
+                     const std::string& end_timestamp, const std::string& source, const std::string& policy);
 
     void end_task();
 
     // Metadata accessors
     std::tuple<bool, std::string, std::string> get_task_metadata_by_directory(const std::string& task_directory);
 
-    // Curation: set/clear an episode's `outcome` label ("success"/"failure"/"").
+    // Curation: set/clear an episode's `outcome` label ("success"/"failure"/"")
+    // and its free-form failure-mode `tags`. A non-empty `tags` list replaces
+    // the episode's stored tags; an empty list leaves them unchanged.
     // Operates directly on the given task's dataset_metadata.json (any skill,
     // not just the active one). Returns {success, message}.
     std::tuple<bool, std::string> set_episode_outcome(const std::string& task_directory, int episode_id,
-                                                      const std::string& outcome);
+                                                      const std::string& outcome,
+                                                      const std::vector<std::string>& tags);
 
     // Hard-delete an episode: remove its metadata entry and all derived files
     // (h5, per-camera mp4s, raw_data original, cached thumbnails). Episode ids

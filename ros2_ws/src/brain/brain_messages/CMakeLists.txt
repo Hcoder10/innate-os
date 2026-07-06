@@ -26,6 +26,7 @@ set(srv_files
   "srv/DeleteMap.srv"
   "srv/GetDatasetInfo.srv"
   "srv/LoadEpisode.srv"
+  "srv/NewEpisode.srv"
   "srv/ReloadSkillsAgents.srv"
   "srv/CreatePhysicalSkill.srv"
   "srv/SaveAsReplaySkill.srv"

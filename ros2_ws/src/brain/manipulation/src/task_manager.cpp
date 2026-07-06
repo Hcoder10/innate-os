@@ -209,7 +209,8 @@ void TaskManager::cleanup_stale_streaming_files() {
 }
 
 void TaskManager::add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
-                              const std::string& end_timestamp) {
+                              const std::string& end_timestamp, const std::string& source,
+                              const std::string& policy) {
     std::string data_dir = current_task_dir_ + "/data";
     fs::create_directories(data_dir);
 
@@ -239,10 +240,17 @@ void TaskManager::add_episode(const std::string& temp_file_path, const std::stri
                                  file_path + "': " + ec.message());
     }
 
+    // Provenance: `source` records how the episode was produced; `policy` (only
+    // for rollouts) records which model drove it. `policy` is written only when
+    // present so teleop/replay episodes stay clean.
     nlohmann::json episode_info = {{"episode_id", episode_id},
                                    {"file_name", file_name},
                                    {"start_timestamp", start_timestamp},
-                                   {"end_timestamp", end_timestamp}};
+                                   {"end_timestamp", end_timestamp},
+                                   {"source", source.empty() ? "teleop" : source}};
+    if (!policy.empty()) {
+        episode_info["policy"] = policy;
+    }
     metadata_["episodes"].push_back(episode_info);
     metadata_["number_of_episodes"] = episode_id + 1;
     save_metadata();
@@ -371,7 +379,14 @@ std::optional<nlohmann::json> TaskManager::get_enriched_metadata_for_task(const 
                  {"video_files", episode_info.value("video_files", nlohmann::json::array())},
                  // Curation label ("success"/"failure"/""); absent => unlabeled,
                  // which clients treat as success by default.
-                 {"outcome", episode_info.value("outcome", "")}});
+                 {"outcome", episode_info.value("outcome", "")},
+                 // Provenance: how the episode was produced and, for rollouts,
+                 // which model drove it. Legacy episodes predate `source`, so
+                 // default to "teleop" (the only pre-provenance recording path).
+                 {"source", episode_info.value("source", "teleop")},
+                 {"policy", episode_info.value("policy", "")},
+                 // Free-form failure-mode tags, absent => none.
+                 {"tags", episode_info.value("tags", nlohmann::json::array())}});
         }
     }
 
@@ -401,7 +416,8 @@ std::tuple<bool, std::string, std::string> TaskManager::get_task_metadata_by_dir
 }
 
 std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string& task_directory, int episode_id,
-                                                               const std::string& outcome) {
+                                                               const std::string& outcome,
+                                                               const std::vector<std::string>& tags) {
     if (outcome != "success" && outcome != "failure" && !outcome.empty()) {
         return {false, "Invalid outcome '" + outcome + "' (expected success|failure|\"\")"};
     }
@@ -432,6 +448,12 @@ std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string
                 ep.erase("outcome");
             } else {
                 ep["outcome"] = outcome;
+            }
+            // A non-empty `tags` list replaces the stored tags; an empty list
+            // leaves them unchanged. There is no tag-clearing UI, so this keeps
+            // an outcome-only relabel (Datasets page) from wiping review tags.
+            if (!tags.empty()) {
+                ep["tags"] = tags;
             }
             found = true;
             break;

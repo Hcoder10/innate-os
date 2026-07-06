@@ -120,7 +120,7 @@ RecorderNode::RecorderNode()
         "brain/recorder/activate_physical_primitive",
         std::bind(&RecorderNode::activate_physical_primitive, this, std::placeholders::_1, std::placeholders::_2));
 
-    new_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
+    new_episode_srv_ = this->create_service<brain_messages::srv::NewEpisode>(
         "brain/recorder/new_episode",
         std::bind(&RecorderNode::handle_new_episode, this, std::placeholders::_1, std::placeholders::_2));
 
@@ -516,8 +516,8 @@ void RecorderNode::activate_physical_primitive(
     response->success = true;
 }
 
-void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-                                      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void RecorderNode::handle_new_episode(const std::shared_ptr<brain_messages::srv::NewEpisode::Request> request,
+                                      std::shared_ptr<brain_messages::srv::NewEpisode::Response> response) {
     if (state_ == State::IDLE) {
         RCLCPP_ERROR(this->get_logger(), "Cannot start a new episode unless a task is active.");
         publish_status("failed - no active task");
@@ -551,6 +551,11 @@ void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigg
     episode_start_system_time_ = std::chrono::system_clock::now();
     state_ = State::EPISODE_ACTIVE;
     episode_count_++;
+
+    // Capture provenance for this episode; written to metadata by add_episode on
+    // save. Empty source => "teleop", the only pre-provenance recording path.
+    current_episode_source_ = request->source.empty() ? "teleop" : request->source;
+    current_episode_policy_ = request->policy;
 
     std::string episode_str = std::to_string(episode_count_);
     RCLCPP_INFO(this->get_logger(), "=== RECORDING STARTED ===");
@@ -641,7 +646,7 @@ void RecorderNode::handle_save_episode(const std::shared_ptr<std_srvs::srv::Trig
     }
 
     try {
-        task_manager_->add_episode(temp_path, start_ts, end_ts);
+        task_manager_->add_episode(temp_path, start_ts, end_ts, current_episode_source_, current_episode_policy_);
     } catch (const std::exception& e) {
         // The file is already finalized but couldn't be moved into the slot;
         // remove it so we don't leak a stranded file.
@@ -772,8 +777,8 @@ void RecorderNode::handle_set_episode_outcome(
     RCLCPP_INFO(this->get_logger(), "Set outcome '%s' for episode %d in %s", request->outcome.c_str(),
                 request->episode_id, request->task_directory.c_str());
     try {
-        auto [success, message] =
-            task_manager_->set_episode_outcome(request->task_directory, request->episode_id, request->outcome);
+        auto [success, message] = task_manager_->set_episode_outcome(
+            request->task_directory, request->episode_id, request->outcome, request->tags);
         response->success = success;
         response->message = message;
         if (!success) {
