@@ -13,6 +13,7 @@ import { ros } from "../rosClient.js";
 import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { WebRtcSession } from "../webrtcSession.js";
+import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
 import { createTelemetry } from "../teleop/telemetry.js";
 import { createCameraSwitch } from "../teleop/cameraSwitch.js";
@@ -30,6 +31,10 @@ const config = await fetch("/config.json", { cache: "no-store" })
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
+// Resolved before the cockpit builds: WebRTC for real robots, the Three.js
+// SimSession in simulation (see robotSession.js).
+const { createSession, createStage } = await robotSessionFactory();
+
 mountPage(stage, "cockpit agent-cockpit", buildAgentView);
 
 /**
@@ -37,9 +42,9 @@ mountPage(stage, "cockpit agent-cockpit", buildAgentView);
  * @returns {{ destroy: () => void }}
  */
 function buildAgentView(root) {
-  const session = new WebRtcSession(ros);
+  const session = createSession();
 
-  const videoStage = createVideoStage(root, session);
+  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
   const telemetryOverlay = overlay("overlay-top-left");
   root.append(telemetryOverlay);

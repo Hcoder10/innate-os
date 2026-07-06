@@ -13,6 +13,7 @@ import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
 import { initShell } from "../shell.js";
 import { WebRtcSession } from "../webrtcSession.js";
+import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
 import { createJoystick } from "../teleop/joystick.js";
@@ -27,6 +28,10 @@ initShell("collect", "../");
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
+// Resolved before the cockpit builds: WebRTC for real robots, the Three.js
+// SimSession in simulation (see robotSession.js).
+const { createSession, createStage } = await robotSessionFactory();
+
 mountPage(stage, "cockpit", buildCockpit);
 
 /**
@@ -34,9 +39,9 @@ mountPage(stage, "cockpit", buildCockpit);
  * @returns {{ destroy: () => void }}
  */
 function buildCockpit(root) {
-  const session = new WebRtcSession(ros);
+  const session = createSession();
 
-  const videoStage = createVideoStage(root, session);
+  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
   const telemetryOverlay = overlay("overlay-top-left");
   const rightRail = overlay("overlay-right");
@@ -75,7 +80,7 @@ function buildCockpit(root) {
   const parts = [
     videoStage,
     createTelemetry(telemetryOverlay, ros),
-    createAudioToggle(rightRail, session, videoStage.audioEl),
+    ...(videoStage.audioEl ? [createAudioToggle(rightRail, session, videoStage.audioEl)] : []),
     headTilt,
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),

@@ -33,20 +33,14 @@ SIM_CONFIG_PATH = REPO_ROOT / "sim" / "config.toml"
 SIM_CONFIG_TEMPLATE_PATH = REPO_ROOT / "sim" / "config.toml.template"
 STATE_DIR = LAUNCHER_DIR / ".state"
 LOG_DIR = STATE_DIR / "logs"
-SIM_LOG_PATH = LOG_DIR / "simulator.log"
 BOOTSTRAP_LOG_PATH = LOG_DIR / "bootstrap.log"
 CLOUD_AGENT_LOG_PATH = LOG_DIR / "cloud-agent.log"
 COMPOSE_LOG_PATH = LOG_DIR / "compose.log"
 OS_BUILD_LOG_PATH = LOG_DIR / "os-build.log"
+VIEWER_BUILD_LOG_PATH = LOG_DIR / "viewer-build.log"
 OS_SESSION_LOG_PATH = LOG_DIR / "os-session.log"
 DOWN_LOG_PATH = LOG_DIR / "down.log"
-SIM_PID_PATH = STATE_DIR / "simulator.pid"
 ROS_INSTALL_STATE_PATH = STATE_DIR / "ros-install.inputs.sha256"
-SIM_STARTUP_CHECK_DELAY_SECONDS = 0.25
-SIM_HTTP_POLL_SECONDS = 0.25
-SIM_HTTP_REQUEST_TIMEOUT_SECONDS = 0.5
-SIM_HTTP_STARTUP_TIMEOUT_SECONDS = 600.0
-SIM_HTTP_STARTUP_HEARTBEAT_SECONDS = 15.0
 OS_SESSION_READY_POLL_SECONDS = 0.25
 GENERATED_OS_ENV_PATH = STATE_DIR / "innate-os.env"
 GENERATED_CLOUD_ENV_PATH = STATE_DIR / "cloud-agent.env"
@@ -79,6 +73,15 @@ SIM_IMAGE_INPUT_FILES = (
     "ros2_ws/apt-dependencies.common.txt",
     "ros2_ws/apt-dependencies.hardware.txt",
 )
+# What the local (deps-only) sim/Dockerfile build actually reads from the repo.
+LOCAL_OS_IMAGE_REPO = "innate-os-sim-clean-innate"
+LOCAL_IMAGE_INPUT_FILES = (
+    ".dockerignore",
+    "sim/Dockerfile",
+    "ros2_ws/apt-dependencies.common.txt",
+    "ros2_ws/apt-dependencies.sim.txt",
+    "scripts/update/setup_repos.sh",
+)
 ROS_INSTALL_VALIDATION_INPUT_FILES = ("scripts/validate_sim_ros_install.zsh",)
 OS_CONTAINER_SERVICE = "innate"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
@@ -89,21 +92,7 @@ LOG_TARGETS = {
     "compose": COMPOSE_LOG_PATH,
     "os-build": OS_BUILD_LOG_PATH,
     "os-session": OS_SESSION_LOG_PATH,
-    "simulator": SIM_LOG_PATH,
     "down": DOWN_LOG_PATH,
-}
-SIM_DATASET_REPOS = {
-    "ReplicaCAD_baked_lighting": "https://huggingface.co/datasets/ai-habitat/ReplicaCAD_baked_lighting",
-    "ReplicaCAD_dataset": "https://huggingface.co/datasets/ai-habitat/ReplicaCAD_dataset",
-}
-SIM_REQUIRED_DATA_PATHS = {
-    "ReplicaCAD baked lighting stage": Path(
-        "data/ReplicaCAD_baked_lighting/stages_uncompressed/Baked_sc0_staging_00.glb"
-    ),
-    "ReplicaCAD stage config": Path(
-        "data/ReplicaCAD_baked_lighting/configs/stages/Baked_sc0_staging_00.stage_config.json"
-    ),
-    "ReplicaCAD object dataset": Path("data/ReplicaCAD_dataset/objects"),
 }
 
 SHOW_LIVE_DASHBOARD_DEFAULT = sys.stdout.isatty()
@@ -278,40 +267,6 @@ def get_nested_str(data: dict[str, object], *keys: str) -> str | None:
     return None
 
 
-def get_nested_float(data: dict[str, object], *keys: str) -> float | None:
-    value = get_nested_value(data, *keys)
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        parsed = float(value)
-    elif isinstance(value, str):
-        try:
-            parsed = float(value.strip())
-        except ValueError:
-            return None
-    else:
-        return None
-    return parsed if parsed > 0 else None
-
-
-def resolve_sim_startup_timeout_seconds(
-    sim_config: dict[str, object],
-    *,
-    raw_env: dict[str, str] | None = None,
-) -> float:
-    env_val = os.environ.get("INNATE_SIM_STARTUP_TIMEOUT_SECONDS", "").strip()
-    if not env_val and raw_env:
-        env_val = raw_env.get("INNATE_SIM_STARTUP_TIMEOUT_SECONDS", "").strip()
-    if env_val:
-        return float(env_val)
-
-    config_val = get_nested_value(sim_config, "simulator", "startup_timeout_seconds")
-    if config_val is not None:
-        return float(config_val)
-
-    return SIM_HTTP_STARTUP_TIMEOUT_SECONDS
-
-
 def get_nested_bool(data: dict[str, object], *keys: str) -> bool | None:
     value = get_nested_value(data, *keys)
     if isinstance(value, bool):
@@ -441,6 +396,34 @@ def resolve_auto_os_image(repo_root: Path) -> str:
     return f"{DEFAULT_SIM_OS_IMAGE}:inputs-{compute_sim_image_inputs_hash(repo_root)}"
 
 
+def compute_local_image_inputs_hash(repo_root: Path) -> str:
+    """Hash of only what the local sim/Dockerfile build actually consumes.
+
+    Unlike the prebuilt image (which bakes the colcon workspace and rightly
+    hashes all of ros2_ws/src), the local fallback is deps-only -- source is
+    bind-mounted and built in-container. Hashing source here made every code
+    edit rename an identical image: a doomed pull attempt, a no-op rebuild, a
+    recreated container, and one more stale tag per edit.
+    """
+    digest = hashlib.sha256()
+    for raw_path in LOCAL_IMAGE_INPUT_FILES:
+        path = repo_root / raw_path
+        if not path.is_file():
+            continue
+        digest.update(raw_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def resolve_local_os_image(repo_root: Path) -> str:
+    """Content-addressed tag for the local fallback build, so checkouts with
+    different image inputs (Dockerfile, apt lists) keep separate images
+    instead of clobbering a shared :latest."""
+    return f"{LOCAL_OS_IMAGE_REPO}:inputs-{compute_local_image_inputs_hash(repo_root)}"
+
+
 def resolve_os_image_setting(value: str | None, repo_root: Path) -> tuple[str, bool]:
     if value is None or value == AUTO_OS_IMAGE:
         return resolve_auto_os_image(repo_root), True
@@ -465,7 +448,6 @@ def get_config() -> dict[str, object]:
 
     merged_env = dict(raw_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
-    merged_env.setdefault("SIMULATOR_PORT", "8000")
 
     mode = resolve_cloud_agent_mode(sim_config, merged_env)
 
@@ -501,19 +483,6 @@ def get_config() -> dict[str, object]:
         "brain_websocket_uri": resolve_brain_websocket_uri(mode, merged_env),
         "brain_client_version": resolve_brain_client_version(os_repo),
         "cloud_image": get_nested_str(sim_config, "cloud_agent", "image") or "",
-        "sim_visualization": get_nested_bool(sim_config, "display", "visualization")
-        if get_nested_bool(sim_config, "display", "visualization") is not None
-        else False,
-        "sim_render_fps": get_nested_float(sim_config, "display", "render_fps"),
-        "sim_scene_dt": get_nested_float(sim_config, "display", "scene_dt"),
-        "sim_ros_image_fps": get_nested_float(sim_config, "display", "ros_image_fps"),
-        "sim_camera_near": get_nested_float(sim_config, "display", "camera_near"),
-        "sim_log_mode": "quiet",
-        "sim_args": "--log-everything",
-        "sim_startup_timeout_seconds": resolve_sim_startup_timeout_seconds(
-            sim_config,
-            raw_env=merged_env,
-        ),
         "os_image": os_image,
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,

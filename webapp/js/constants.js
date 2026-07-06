@@ -49,10 +49,6 @@ export const RESET_BRAIN_SERVICE = "/brain/reset_brain";
 // message, uri, hosted, timestamp}) — distinct from the rosbridge link.
 export const WEBSOCKET_STATUS_TOPIC = "/brain/websocket_status";
 
-// Sim-only: reset the robot to its start pose (std_srvs/Trigger). Gated behind
-// config.json's simControls (the real robot has no such service).
-export const RESET_POSITION_SERVICE = "/sim/reset_position";
-
 // Navigation map + odometry for the 2D map page.
 export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
 export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry

@@ -14,6 +14,7 @@ import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
 import { initShell } from "../shell.js";
 import { WebRtcSession } from "../webrtcSession.js";
+import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "./videoStage.js";
 import { createJoystick } from "./joystick.js";
@@ -24,7 +25,6 @@ import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
-import { createSimControls } from "./simControls.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
 
 initShell("teleop", "");
@@ -43,38 +43,21 @@ const dbg = { ros, drive, session: null };
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
-mountPage(stage, "cockpit", buildCockpit);
+// Resolved before the cockpit builds: WebRTC for real robots, the Three.js
+// SimSession in simulation (see robotSession.js).
+const { createSession, createStage } = await robotSessionFactory();
 
-/**
- * Sim API base for /stack_metrics. The committed config.json points at
- * localhost — fine when the webapp is opened on the same machine, but when the
- * page is served from another host that loopback names the viewer's box, not
- * the sim. Swap in the serving host, keeping the configured port/scheme.
- * @param {string | undefined} configured
- * @returns {string}
- */
-function resolveSimApiUrl(configured) {
-  const base = configured || "http://localhost:8000";
-  const host = location.hostname;
-  if (!host || host === "localhost" || host === "127.0.0.1") return base;
-  try {
-    const url = new URL(base);
-    url.hostname = host;
-    return url.href.replace(/\/$/, "");
-  } catch {
-    return base;
-  }
-}
+mountPage(stage, "cockpit", buildCockpit);
 
 /**
  * @param {HTMLElement} root
  * @returns {{ destroy: () => void }}
  */
 function buildCockpit(root) {
-  const session = new WebRtcSession(ros);
+  const session = createSession();
   dbg.session = session;
 
-  const videoStage = createVideoStage(root, session);
+  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
   const telemetryOverlay = overlay("overlay-top-left");
   const rightRail = overlay("overlay-right");
@@ -97,7 +80,7 @@ function buildCockpit(root) {
   // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
   // video only (no microphone), so the toggle would do nothing. config.simControls
   // is the sim deployment's feature flag (env-driven; false on the real robot).
-  if (!config.simControls) {
+  if (!config.simControls && videoStage.audioEl) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
   }
   parts.push(
@@ -112,11 +95,6 @@ function buildCockpit(root) {
     createCameraSwitch(root, session, ros),
     keyboard,
   );
-
-  // Sim-only debug controls (Reset Position + FPS/queue) — opt-in via config.json.
-  if (config.simControls) {
-    parts.push(createSimControls(root, ros, resolveSimApiUrl(config.simApiUrl)));
-  }
 
   session.start();
 
