@@ -155,7 +155,39 @@ CONTENT_TYPES = {
     ".md": "text/plain; charset=utf-8",
     ".tgz": "application/gzip",
     ".mp4": "video/mp4",
+    # Sim viewer assets.
+    ".glb": "model/gltf-binary",
+    ".obj": "text/plain; charset=utf-8",
+    ".urdf": "application/xml",
+    ".stl": "application/octet-stream",
 }
+
+# Simulation viewer (sim/viewer): the SimSession bundle plus the 3D assets it
+# fetches at their canonical absolute paths. Only served when the directories
+# exist (i.e. in the sim container / a dev checkout, never on the robot).
+SIM_VIEWER_ROOT = ROOT.parent / "sim" / "viewer"
+SIM_VIEWER_ROUTES = {
+    "/sim-viewer/": SIM_VIEWER_ROOT / "dist-lib",
+    "/models/": SIM_VIEWER_ROOT / "public" / "models",
+    "/robot/": SIM_VIEWER_ROOT / "public" / "robot",
+    # Collision hulls for the SimSession's "collisions" debug overlay.
+    "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
+}
+
+
+def sim_viewer_response(path: str) -> "Response | None":
+    clean = path.split("?", 1)[0].split("#", 1)[0]
+    for prefix, base in SIM_VIEWER_ROUTES.items():
+        if not clean.startswith(prefix):
+            continue
+        target = (base / clean[len(prefix) :]).resolve()
+        if not target.is_file() or not target.is_relative_to(base.resolve()):
+            return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
+        body = target.read_bytes()
+        ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        headers = Headers({"Content-Type": ctype, "Content-Length": str(len(body)), "Cache-Control": "no-cache"})
+        return Response(200, "OK", headers, body)
+    return None
 
 
 def static_response(path: str, if_none_match: str = "") -> Response:
@@ -252,6 +284,9 @@ async def _dispatch_request(connection, request):
         return None  # proceed with the WebSocket handshake
     if request.path.split("?", 1)[0] == "/config.json":
         return await asyncio.to_thread(config_response)
+    sim_viewer = await asyncio.to_thread(sim_viewer_response, request.path)
+    if sim_viewer is not None:
+        return sim_viewer
     split = urlsplit(request.path)
     qs = parse_qs(split.query)
     # These builders do blocking disk I/O — reading multi-MB MP4s, h5py decodes,

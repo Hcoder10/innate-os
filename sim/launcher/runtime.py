@@ -7,17 +7,15 @@ import json
 import os
 import shlex
 import shutil
-import signal
 import socket
 import subprocess
+import tarfile
 import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from assets import ensure_sim_assets
 from config import (
-    BOOTSTRAP_LOG_PATH,
     CLI_SIM,
     CLOUD_AGENT_DIR_NAME,
     CLOUD_AGENT_LOG_PATH,
@@ -28,6 +26,7 @@ from config import (
     LOCAL_BRAIN_COMPOSE_PROFILE,
     LOCAL_IMAGE_MODE,
     LOCAL_MODES,
+    LOCAL_OS_IMAGE_REPO,
     NONE_MODE,
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_SERVICE,
@@ -35,22 +34,15 @@ from config import (
     OS_SESSION_LOG_PATH,
     OS_SESSION_READY_POLL_SECONDS,
     ROS_INSTALL_STATE_PATH,
-    SIM_DATASET_REPOS,
-    SIM_HTTP_POLL_SECONDS,
-    SIM_HTTP_REQUEST_TIMEOUT_SECONDS,
-    SIM_HTTP_STARTUP_HEARTBEAT_SECONDS,
-    SIM_HTTP_STARTUP_TIMEOUT_SECONDS,
-    SIM_LOG_PATH,
-    SIM_PID_PATH,
-    SIM_REQUIRED_DATA_PATHS,
-    SIM_STARTUP_CHECK_DELAY_SECONDS,
     TMUX_SESSION_NAME,
+    VIEWER_BUILD_LOG_PATH,
     WORKSPACE_ROOT,
     StackError,
     compute_ros_install_validation_hash,
     ensure_state_dir,
     log,
     require_path,
+    resolve_local_os_image,
     warn,
 )
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
@@ -82,18 +74,12 @@ def run_logged(
         raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
-# Known-benign driver noise. Skipped by latest_log_line so a heartbeat doesn't
-# repeat a stale warning for minutes while silent work (e.g. Genesis kernel
-# compilation) runs underneath, hiding the last meaningful progress line.
-NOISE_LOG_MARKERS = ("UNSUPPORTED (log once)",)
-
-
 def latest_log_line(path: Path) -> str | None:
     if not path.exists():
         return None
     for line in reversed(path.read_text(errors="replace").splitlines()):
         stripped = line.strip()
-        if stripped and not any(marker in stripped for marker in NOISE_LOG_MARKERS):
+        if stripped:
             return stripped
     return None
 
@@ -141,11 +127,6 @@ def run_logged_with_heartbeat(
         raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
-def ensure_dependency(command: str, label: str | None = None) -> None:
-    if shutil.which(command) is None:
-        raise StackError(f"Missing dependency: {label or command}")
-
-
 def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
     if shutil.which("docker") is None:
         raise StackError(
@@ -180,48 +161,6 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
         f"Start Docker Desktop or your Docker daemon, wait until it finishes starting, then rerun `{command_hint}`.\n"
         f"Install/start guide: {DOCKER_INSTALL_URL}"
     )
-
-
-def python_import_succeeds(python_path: Path, module: str) -> bool:
-    result = subprocess.run(
-        [str(python_path), "-c", f"import {module}"],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    return result.returncode == 0
-
-
-def sim_venv_python(config: dict[str, object]) -> Path:
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    return sim_repo / ".venv" / "bin" / "python"
-
-
-def ensure_sim_setup(config: dict[str, object]) -> Path:
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    sim_python = sim_venv_python(config)
-
-    ensure_dependency("python3")
-
-    log("Setting up sim Python environment...")
-    log(f"Logs: {BOOTSTRAP_LOG_PATH}")
-    run_logged(
-        ["bash", "./setup.sh"],
-        cwd=sim_repo,
-        log_path=BOOTSTRAP_LOG_PATH,
-        failure_message="Simulator environment setup failed.",
-    )
-
-    if not sim_python.exists():
-        raise StackError(f"Simulator Python environment was not created at {sim_python}")
-    if not python_import_succeeds(sim_python, "dotenv"):
-        raise StackError(
-            f"Simulator Python environment is missing required packages after setup.\nCheck: {BOOTSTRAP_LOG_PATH}"
-        )
-
-    return sim_python
 
 
 def docker_compose_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -278,6 +217,37 @@ def ensure_os_image_available(
     )
 
 
+def prune_stale_local_os_images(current_image: str, *, cwd: Path, env: dict[str, str]) -> None:
+    """Untag superseded local fallback images (LOCAL_OS_IMAGE_REPO:inputs-*).
+
+    Each image-inputs change mints a new tag; without cleanup the old ones
+    accumulate in `docker images` forever. Best-effort: an image still used by
+    a container simply fails to untag and is left alone.
+    """
+    listing = subprocess.run(
+        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", LOCAL_OS_IMAGE_REPO],
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
+    )
+    if listing.returncode != 0:
+        return
+    stale = [
+        ref
+        for ref in listing.stdout.split()
+        if ref != current_image and ref.startswith(f"{LOCAL_OS_IMAGE_REPO}:inputs-")
+    ]
+    pruned = 0
+    for ref in stale:
+        if command_succeeds(["docker", "rmi", ref], cwd=cwd, env=env):
+            pruned += 1
+    if pruned:
+        log(f"Pruned {pruned} superseded local Innate OS image tag(s).")
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
@@ -294,26 +264,40 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
             os_image = ""
             up_cmd.append("--no-build")
         elif os_image:
-            try:
-                ensure_os_image_available(
-                    os_image,
-                    cwd=os_repo,
-                    env=os_compose_env(env_file=os_env_file),
-                    pull_if_missing=bool(config["os_pull_image"]),
-                    include_pull_log_on_failure=not os_image_auto,
-                )
-            except StackError:
-                if not os_image_auto:
-                    raise
-                warn(
-                    "No matching prebuilt Innate OS image is available for this checkout "
-                    f"({shorten_docker_image_ref(os_image)}). Building it locally instead. "
-                    f"Pull details are in {COMPOSE_LOG_PATH}."
-                )
-                os_image = ""
-                up_cmd.append("--build")
-            else:
+            compose_probe_env = os_compose_env(env_file=os_env_file)
+            local_image = resolve_local_os_image(os_repo)
+            if (
+                os_image_auto
+                and not command_succeeds(["docker", "image", "inspect", os_image], cwd=os_repo, env=compose_probe_env)
+                and command_succeeds(["docker", "image", "inspect", local_image], cwd=os_repo, env=compose_probe_env)
+            ):
+                # No prebuilt for this exact source tree, but the deps-only local
+                # image is content-current (source is bind-mounted, not baked) --
+                # reuse it instead of a doomed pull + no-op rebuild.
+                log(f"Reusing local Innate OS image {shorten_docker_image_ref(local_image)} (image inputs unchanged).")
+                os_image = local_image
                 up_cmd.append("--no-build")
+            else:
+                try:
+                    ensure_os_image_available(
+                        os_image,
+                        cwd=os_repo,
+                        env=compose_probe_env,
+                        pull_if_missing=bool(config["os_pull_image"]),
+                        include_pull_log_on_failure=not os_image_auto,
+                    )
+                except StackError:
+                    if not os_image_auto:
+                        raise
+                    warn(
+                        "No matching prebuilt Innate OS image is available for this checkout "
+                        f"({shorten_docker_image_ref(os_image)}). Building it locally instead. "
+                        f"Pull details are in {COMPOSE_LOG_PATH}."
+                    )
+                    os_image = local_image
+                    up_cmd.append("--build")
+                else:
+                    up_cmd.append("--no-build")
 
         compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
         if os_image:
@@ -330,6 +314,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
                 "Docker is still preparing the Innate OS container. First boot or an image rebuild can take a minute."
             ),
         )
+        prune_stale_local_os_images(resolve_local_os_image(os_repo), cwd=os_repo, env=compose_env)
     compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
@@ -424,56 +409,8 @@ def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
         )
 
 
-def delete_sim_venv(config: dict[str, object]) -> None:
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    venv_dir = sim_repo / ".venv"
-    if not venv_dir.exists():
-        log("No simulator virtualenv to delete.")
-        return
-    log(f"Deleting simulator virtualenv at {venv_dir}...")
-    shutil.rmtree(venv_dir, ignore_errors=True)
-
-
-def delete_sim_data(config: dict[str, object]) -> None:
-    """Delete the downloaded ReplicaCAD datasets and the extracted asset pack.
-
-    Only removes content fetched by `./innate-sim setup`. Git-tracked files
-    (data/environments/, data/assets/.gitignore, assets.lock.json) are preserved;
-    setup re-downloads the rest (asset state self-heals via missing-file checks).
-    """
-    data_dir: Path = config["sim_repo"] / "data"  # type: ignore[operator]
-    removed_any = False
-    for rel in ("ReplicaCAD_baked_lighting", "ReplicaCAD_dataset", "urdf", "replica_scene.stl"):
-        target = data_dir / rel
-        if not target.exists():
-            continue
-        log(f"Deleting {target}...")
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-        else:
-            target.unlink(missing_ok=True)
-        removed_any = True
-    # The asset pack extracts into data/assets/, which also holds a git-tracked
-    # .gitignore — clear the contents but keep that tracked file.
-    assets_dir = data_dir / "assets"
-    if assets_dir.is_dir():
-        for entry in assets_dir.iterdir():
-            if entry.name == ".gitignore":
-                continue
-            if entry.is_dir():
-                shutil.rmtree(entry, ignore_errors=True)
-            else:
-                entry.unlink(missing_ok=True)
-            removed_any = True
-    if removed_any:
-        log("Deleted ReplicaCAD datasets and simulator asset pack.")
-    else:
-        log("No downloaded simulator data to delete.")
-
-
-def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> None:
-    """Stop the runtime and delete all related Docker resources and the sim venv."""
-    stop_simulator()
+def clean_runtime(config: dict[str, object]) -> None:
+    """Stop the runtime and delete all related Docker resources."""
     down_cloud_agent()
     log("Removing Innate OS containers, networks, and named volumes...")
     down_os(config, remove_volumes=True)
@@ -487,9 +424,6 @@ def clean_runtime(config: dict[str, object], *, delete_data: bool = False) -> No
             stderr=subprocess.DEVNULL,
             check=False,
         )
-    delete_sim_venv(config)
-    if delete_data:
-        delete_sim_data(config)
 
 
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
@@ -562,121 +496,6 @@ def down_cloud_agent() -> None:
     )
 
 
-def pid_is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    result = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return False
-    status = result.stdout.strip()
-    if not status:
-        return False
-    return not status.startswith("Z")
-
-
-def read_sim_pid() -> int | None:
-    if not SIM_PID_PATH.exists():
-        return None
-    try:
-        pid = int(SIM_PID_PATH.read_text().strip())
-    except ValueError:
-        return None
-    if pid_is_running(pid):
-        return pid
-    SIM_PID_PATH.unlink(missing_ok=True)
-    return None
-
-
-def stop_simulator() -> None:
-    pid = read_sim_pid()
-    if pid is None:
-        return
-    log("Stopping simulator backend...")
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        os.kill(pid, signal.SIGTERM)
-    for _ in range(20):
-        if not pid_is_running(pid):
-            break
-        time.sleep(0.25)
-    else:
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            os.kill(pid, signal.SIGKILL)
-    SIM_PID_PATH.unlink(missing_ok=True)
-
-
-def start_simulator(config: dict[str, object], sim_python: Path) -> None:
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    existing_pid = read_sim_pid()
-    if existing_pid is not None:
-        log(f"Simulator backend already running (pid {existing_pid}).")
-        return
-
-    ensure_state_dir()
-    env = os.environ.copy()
-    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-    env["ROSBRIDGE_URI"] = raw_env.get("ROSBRIDGE_URI", "ws://localhost:9090")
-    env["SIMULATOR_PORT"] = raw_env.get("SIMULATOR_PORT", "8000")
-    env["SIM_LOG_MODE"] = str(config.get("sim_log_mode", "quiet"))
-    if config.get("sim_render_fps") is not None:
-        env["SIM_RENDER_FPS"] = str(config["sim_render_fps"])
-    if config.get("sim_scene_dt") is not None:
-        env["SIM_SCENE_DT"] = str(config["sim_scene_dt"])
-    if config.get("sim_ros_image_fps") is not None:
-        env["SIM_ROS_IMAGE_FPS"] = str(config["sim_ros_image_fps"])
-    if config.get("sim_camera_near") is not None:
-        env["SIM_CAMERA_NEAR"] = str(config["sim_camera_near"])
-
-    sim_args = shlex.split(str(config["sim_args"]))
-    if config.get("sim_visualization") and "--vis" not in sim_args and "-v" not in sim_args:
-        sim_args.append("--vis")
-
-    # Fail fast on a taken port: the backend can't serve its HTTP endpoint, so
-    # letting it start would only burn the scene-load timeout before erroring.
-    sim_port = int(env["SIMULATOR_PORT"])
-    if tcp_port_in_use(sim_port):
-        raise StackError(
-            f"Port {sim_port} is already in use, so the simulator HTTP endpoint cannot start.\n"
-            f"Find the process with `lsof -nP -iTCP:{sim_port} -sTCP:LISTEN` and stop it, "
-            f"or set SIMULATOR_PORT in .env to a free port."
-        )
-
-    cmd = [str(sim_python), "main.py", *sim_args]
-    log("Starting simulator backend...")
-    with SIM_LOG_PATH.open("ab") as log_file:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=sim_repo,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-    SIM_PID_PATH.write_text(f"{proc.pid}\n")
-    time.sleep(SIM_STARTUP_CHECK_DELAY_SECONDS)
-    if proc.poll() is not None:
-        SIM_PID_PATH.unlink(missing_ok=True)
-        tail = tail_file(SIM_LOG_PATH)
-        raise StackError(f"Simulator backend exited immediately.\nRecent log output:\n{tail}")
-
-
 def tail_file(path: Path, limit: int = 40) -> str:
     if not path.exists():
         return "<no log output yet>"
@@ -694,6 +513,12 @@ def os_compose_exec_cmd(*parts: str) -> list[str]:
 
 def os_compose_zsh_cmd(command: str) -> list[str]:
     return os_compose_exec_cmd("zsh", "-lc", command)
+
+
+def os_compose_zsh_interactive_cmd(command: str) -> list[str]:
+    """Interactive zsh so ~/.zshrc runs: that's where ROS + the zenoh RMW env
+    come from -- `ros2` in a plain -lc shell probes an empty default-DDS graph."""
+    return os_compose_exec_cmd("zsh", "-ic", command)
 
 
 def open_os_container_shell() -> int:
@@ -734,17 +559,6 @@ def command_succeeds(cmd: list[str], *, cwd: Path | None = None, env: dict[str, 
     return result.returncode == 0
 
 
-def tcp_port_in_use(port: int) -> bool:
-    """True when something already holds the port (uvicorn binds 0.0.0.0)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("0.0.0.0", port))
-        except OSError:
-            return True
-    return False
-
-
 def websocket_port_open(port: int) -> bool:
     request = (
         f"GET / HTTP/1.1\r\n"
@@ -781,6 +595,7 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
         "os_session_running": False,
         "rosbridge_process_live": False,
         "brain_process_live": False,
+        "sim_driver_process_live": False,
     }
     if not os_running:
         return status
@@ -792,7 +607,8 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
             f"tmux has-session -t {shlex.quote(TMUX_SESSION_NAME)} >/dev/null 2>&1; "
             "echo tmux=$?; "
             "pgrep -f '[r]ws_server|[r]osbridge_websocket' >/dev/null; echo rosbridge=$?; "
-            "pgrep -f '[b]rain_client_node.py' >/dev/null; echo brain=$?"
+            "pgrep -f '[b]rain_client_node.py' >/dev/null; echo brain=$?; "
+            "pgrep -f 'mars_sim_driver/[s]im_driver' >/dev/null; echo simdriver=$?"
         ),
         cwd=os_repo,
         env=compose_env,
@@ -805,12 +621,8 @@ def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
     status["os_session_running"] = values.get("tmux") == "0"
     status["rosbridge_process_live"] = values.get("rosbridge") == "0"
     status["brain_process_live"] = values.get("brain") == "0"
+    status["sim_driver_process_live"] = values.get("simdriver") == "0"
     return status
-
-
-def config_simulator_port(config: dict[str, object]) -> str:
-    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-    return str(raw_env.get("SIMULATOR_PORT", "8000"))
 
 
 # Latch so the 0.5s dashboard refresh doesn't WS-probe rosbridge forever.
@@ -835,33 +647,60 @@ def _rosbridge_live(os_status: dict[str, bool]) -> bool:
     return process_live and _rosbridge_ws_confirmed
 
 
+# On failure, kick the ros2 CLI daemon: in a fresh container it can start
+# before the zenoh router and wedge with "!rclpy.ok()", failing every probe
+# while the driver is actually fine. The stop makes the NEXT poll succeed.
+VIRTUAL_MARS_PROBE_CMD = (
+    "timeout 8 ros2 topic echo /odom --once >/dev/null 2>&1 && echo VIRTUAL_MARS_OK || ros2 daemon stop >/dev/null 2>&1"
+)
+
+# Latch so the 0.5s dashboard refresh doesn't ros2-probe /odom forever.
+_virtual_mars_confirmed = False
+
+
+def virtual_mars_ready(config: dict[str, object]) -> bool:
+    """True if the virtual MARS driver is publishing /odom in the container."""
+    if not container_running("innate-dev"):
+        return False
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    output = capture_command_output(
+        os_compose_zsh_interactive_cmd(VIRTUAL_MARS_PROBE_CMD),
+        cwd=os_repo,
+        env=os_compose_env(),
+    )
+    return "VIRTUAL_MARS_OK" in output
+
+
+def _sim_driver_live(config: dict[str, object], os_status: dict[str, bool]) -> bool:
+    """Sim driver liveness for the steady dashboard refresh.
+
+    Probe /odom via ros2 only until it is first confirmed; afterwards the
+    driver process-liveness check (pgrep) is enough. Reset when the process
+    dies so a restart is re-probed.
+    """
+    global _virtual_mars_confirmed
+    process_live = bool(os_status["os_session_running"] and os_status["sim_driver_process_live"])
+    if not process_live:
+        _virtual_mars_confirmed = False
+    elif not _virtual_mars_confirmed:
+        _virtual_mars_confirmed = virtual_mars_ready(config)
+    return process_live and _virtual_mars_confirmed
+
+
 def collect_runtime_probe(
     config: dict[str, object],
     *,
-    simulator_http_ready: bool | None = None,
+    sim_driver_ready: bool | None = None,
 ) -> dict[str, object]:
-    simulator_port = config_simulator_port(config)
     os_status = collect_os_process_status(config)
-    sim_running = bool(simulator_http_ready) if simulator_http_ready is not None else simulator_ready(simulator_port)
+    sim_running = bool(sim_driver_ready) if sim_driver_ready is not None else _sim_driver_live(config, os_status)
     rosbridge_live = _rosbridge_live(os_status)
     agent_running = container_running("innate-cloud-agent") if config["mode"] in LOCAL_MODES else True
-    metrics = fetch_simulator_metrics(simulator_port) if sim_running else {}
-    backend_status = {}
-    if isinstance(metrics, dict):
-        raw_backend_status = metrics.get("brain_backend_status")
-        if isinstance(raw_backend_status, dict):
-            backend_status = raw_backend_status
-    backend_level, backend_label = health_from_brain_backend(backend_status, str(config["mode"]))
     return {
-        "simulator_port": simulator_port,
         "os_status": os_status,
         "sim_running": sim_running,
         "rosbridge_live": rosbridge_live,
         "agent_running": agent_running,
-        "metrics": metrics,
-        "backend_status": backend_status,
-        "backend_level": backend_level,
-        "backend_label": backend_label,
     }
 
 
@@ -884,15 +723,25 @@ def wait_for_os_runtime_ready(config: dict[str, object], *, timeout_seconds: flo
     return False
 
 
+def wait_for_virtual_mars(config: dict[str, object], *, timeout_seconds: float = 180.0) -> bool:
+    """True once the virtual MARS driver is publishing /odom in the container."""
+    deadline = time.time() + timeout_seconds
+    while True:
+        if virtual_mars_ready(config):
+            return True
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        log(f"Waiting for the sim driver (/odom)... ({int(remaining)}s remaining)")
+        time.sleep(min(3.0, remaining))
+
+
 def runtime_already_running(config: dict[str, object]) -> bool:
-    simulator_port = config_simulator_port(config)
-    if not simulator_ready(simulator_port):
-        return False
     if not os_runtime_ready(config):
         return False
     if config["mode"] in LOCAL_MODES and not container_running("innate-cloud-agent"):
         return False
-    return available_agent_count(simulator_port) > 0
+    return True
 
 
 def format_startup_check(ok: bool, label: str, detail: str) -> str:
@@ -904,11 +753,9 @@ def format_startup_check(ok: bool, label: str, detail: str) -> str:
 def print_startup_checks(
     config: dict[str, object],
     *,
-    simulator_http_ready: bool,
-    brain_directive_count: int,
+    sim_driver_ready: bool,
 ) -> None:
-    probe = collect_runtime_probe(config, simulator_http_ready=simulator_http_ready)
-    simulator_port = str(probe["simulator_port"])
+    probe = collect_runtime_probe(config, sim_driver_ready=sim_driver_ready)
     os_status: dict[str, bool] = probe["os_status"]  # type: ignore[assignment]
     checks = [
         (
@@ -937,21 +784,9 @@ def print_startup_checks(
             "brain_client_node.py running" if os_status["brain_process_live"] else "brain_client_node.py missing",
         ),
         (
-            brain_directive_count > 0,
-            "Brain directives",
-            f"{brain_directive_count} loaded" if brain_directive_count > 0 else "not available yet",
-        ),
-        (
-            simulator_http_ready,
-            "Simulator HTTP",
-            f"http://localhost:{simulator_port} ready"
-            if simulator_http_ready
-            else f"http://localhost:{simulator_port} not ready",
-        ),
-        (
-            probe["backend_level"] == "healthy",
-            "Brain backend",
-            str(probe["backend_label"]),
+            sim_driver_ready,
+            "Sim driver (MuJoCo)",
+            "/odom publishing" if sim_driver_ready else "/odom not publishing",
         ),
     ]
 
@@ -1003,79 +838,6 @@ def capture_agent_logs(config: dict[str, object], lines: int = 18) -> list[str]:
     return output.splitlines()[-lines:]
 
 
-def capture_simulator_logs(
-    simulator_live: bool,
-    *,
-    lines: int = 18,
-) -> list[str]:
-    if not simulator_live:
-        return [
-            "Simulator is down.",
-            f"Start it with: {CLI_SIM} up",
-            f"Historical logs: {CLI_SIM} logs simulator",
-        ][:lines]
-    if not SIM_LOG_PATH.exists():
-        return [
-            "Simulator is healthy.",
-            "No launcher-owned simulator log exists for this run yet.",
-        ]
-    raw_lines = SIM_LOG_PATH.read_text(errors="replace").splitlines()
-    selected = raw_lines[-lines:]
-    return selected or ["Simulator log is empty."]
-
-
-def pick_primary_fps(metrics: dict[str, object]) -> float:
-    fps_by_camera = metrics.get("fps_by_camera", {}) if isinstance(metrics, dict) else {}
-    if not isinstance(fps_by_camera, dict):
-        return 0.0
-    for camera_name in ("first_person", "chase"):
-        value = fps_by_camera.get(camera_name)
-        if isinstance(value, (float, int)):
-            return float(value)
-    return 0.0
-
-
-def pick_latest_frame_age(metrics: dict[str, object]) -> float | None:
-    latest_frame_age = metrics.get("latest_frame_age_by_camera", {}) if isinstance(metrics, dict) else {}
-    if not isinstance(latest_frame_age, dict):
-        return None
-    ages = [float(value) for value in latest_frame_age.values() if isinstance(value, (float, int))]
-    if not ages:
-        return None
-    return min(ages)
-
-
-def summarize_queue_pressure(queue_sizes: object) -> tuple[str, str, int]:
-    if not isinstance(queue_sizes, dict) or not queue_sizes:
-        return ("unknown", "n/a", 0)
-
-    tracked_keys = (
-        "sensor_to_agent",
-        "sim_to_agent",
-        "agent_to_sim",
-        "sim_to_web",
-        "chat_to_bridge",
-        "chat_from_bridge",
-    )
-    numeric_sizes = [int(queue_sizes.get(key, 0)) for key in tracked_keys if isinstance(queue_sizes.get(key, 0), int)]
-    max_depth = max(numeric_sizes, default=0)
-    total_depth = sum(numeric_sizes)
-
-    if max_depth >= 25 or total_depth >= 40:
-        return ("error", "high", max_depth)
-    if max_depth >= 8 or total_depth >= 15:
-        return ("warn", "elevated", max_depth)
-    return ("healthy", "light", max_depth)
-
-
-def queue_load_score(level: str, max_depth: int) -> float:
-    if level == "error":
-        return min(100.0, 65.0 + max_depth * 1.5)
-    if level == "warn":
-        return min(100.0, 35.0 + max_depth * 2.0)
-    return min(100.0, max_depth * 4.0)
-
-
 def health_score(level: str) -> float:
     if level == "healthy":
         return 100.0
@@ -1084,95 +846,129 @@ def health_score(level: str) -> float:
     return 20.0
 
 
-def health_from_video(sim_running: bool, fps: float, frame_age: float | None) -> tuple[str, str]:
-    if not sim_running:
-        return ("error", "offline")
-    if fps >= 8.0 and (frame_age is None or frame_age <= 0.25):
-        return ("healthy", "smooth")
-    if fps >= 2.0:
-        return ("warn", "starting")
-    return ("error", "stalled")
+# Directories wholly owned by the published asset bundle: each is replaced
+# atomically on refresh. work/* land under sim/assets/, viewer/* under
+# sim/viewer/. Must stay in sync with sim/tools/publish_assets.py's layout.
+SIM_ASSET_UNITS = [
+    "work/apartment_split",
+    "work/apartment_split_v2",
+    "work/apartment_visual",
+    "work/sdf_shells",
+    "work/map",
+    # (The bundle's viewer/public/physics/apartment_sdf is demo-only and not
+    # extracted; the hulls feed the webapp's "collisions" overlay.)
+    "viewer/public/physics/apartment_collisions_v2",
+    "viewer/public/models",
+    "viewer/public/robot",
+    "viewer/assets/apartment_obj",
+]
 
 
-def health_from_transport(rosbridge_live: bool, queue_sizes: object) -> tuple[str, str, str, int]:
-    if not rosbridge_live:
-        return ("error", "down", "n/a", 0)
-    level, label, max_depth = summarize_queue_pressure(queue_sizes)
-    return (level, "live", label, max_depth)
+def ensure_sim_assets(config: dict[str, object]) -> None:
+    """Download + extract the sim asset bundle pinned by sim/sim-assets.lock.
 
-
-def missing_sim_data_paths(sim_repo: Path) -> list[tuple[str, Path]]:
-    missing: list[tuple[str, Path]] = []
-    for label, relative_path in SIM_REQUIRED_DATA_PATHS.items():
-        candidate = sim_repo / relative_path
-        if not candidate.exists():
-            missing.append((label, candidate))
-    return missing
-
-
-def ensure_sim_data(config: dict[str, object], *, allow_fetch: bool) -> None:
+    The generated geometry (collision hulls, room meshes, nav map, GLB/STLs)
+    lives in a GitHub release, not in git. Extracting in place -- work/ into
+    sim/assets/, viewer/ into sim/viewer/ -- keeps every existing consumer
+    (compose mounts, webapp routes, tools) pointed at unchanged paths.
+    Idempotent via the .assets-tag marker; tools/publish_assets.py bumps the
+    lock and the next `up` refreshes.
+    """
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    ensure_sim_assets(config, allow_fetch=allow_fetch)
-
-    missing_before = missing_sim_data_paths(sim_repo)
-    if not missing_before:
+    lock = json.loads((sim_repo / "sim-assets.lock").read_text())
+    marker = sim_repo / "assets" / ".assets-tag"
+    if marker.exists() and marker.read_text().strip() == lock["tag"]:
         return
 
-    if not allow_fetch:
-        details = "\n".join(f"- {label}: {path}" for label, path in missing_before)
-        raise StackError(
-            "Required simulator scene data is missing.\n"
-            f"{details}\nRun `{CLI_SIM} setup` to download it.\n"
-            f"See: {sim_repo / 'data' / 'README.md'}"
+    log(f"Downloading sim assets {lock['tag']} (~100 MB, one-time)...")
+    tarball = sim_repo / ".sim-assets.tmp.tar.gz"
+    try:
+        with urlopen(Request(lock["url"]), timeout=600) as resp, open(tarball, "wb") as out:
+            shutil.copyfileobj(resp, out)
+    except (URLError, OSError) as exc:
+        tarball.unlink(missing_ok=True)
+        raise StackError(f"Failed to download sim assets from {lock['url']}: {exc}") from exc
+
+    sha = hashlib.sha256()
+    with open(tarball, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            sha.update(chunk)
+    digest = sha.hexdigest()
+    if digest != lock["sha256"]:
+        tarball.unlink()
+        raise StackError(f"sim asset bundle checksum mismatch (got {digest}, lock says {lock['sha256']})")
+
+    staging = sim_repo / ".sim-assets.tmp"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        with tarfile.open(tarball) as tar:
+            for member in tar.getmembers():
+                if member.name.startswith(("/", "..")) or ".." in Path(member.name).parts:
+                    raise StackError(f"unsafe path in asset bundle: {member.name}")
+                # The publisher only emits regular files; links could escape
+                # the staging dir during extractall, so reject them outright.
+                if not (member.isfile() or member.isdir()):
+                    raise StackError(f"unsupported member type in asset bundle: {member.name}")
+            tar.extractall(staging)
+        for unit in SIM_ASSET_UNITS:
+            src = staging / unit
+            if not src.is_dir():
+                continue
+            top, rel = unit.split("/", 1)
+            dest = (sim_repo / "assets" / rel) if top == "work" else (sim_repo / "viewer" / rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(src), str(dest))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(lock["tag"] + "\n")
+        log(f"Sim assets {lock['tag']} installed.")
+    finally:
+        tarball.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:
+    """Build sim/viewer's SimSession bundle (dist-lib) when missing or stale.
+
+    The webapp loads /sim-viewer/sim-session.js for the 3D sim view; it's a
+    gitignored build artifact, so a fresh clone doesn't have it. Requires npm
+    on the host -- if absent, the stack still runs, so warn and continue
+    (the webapp then falls back to no 3D view). Never runs on robots.
+    """
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    viewer = sim_repo / "viewer"
+    bundle = viewer / "dist-lib" / "sim-session.js"
+    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
+    sources += sorted((viewer / "src").rglob("*.ts"))
+    if bundle.exists():
+        newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
+        if bundle.stat().st_mtime >= newest_src:
+            return
+    npm = shutil.which("npm")
+    manual_hint = "build it manually with: cd sim/viewer && npm install && npm run build:lib"
+    if npm is None:
+        warn(
+            f"npm not found -- cannot build the sim viewer bundle (no 3D webapp view). Install Node.js, or {manual_hint}"
         )
-
-    ensure_dependency("git")
-    if not command_succeeds(["git", "lfs", "version"], cwd=sim_repo):
-        raise StackError(
-            "Git LFS is required to download simulator scene data automatically.\n"
-            "Install it first, for example: `brew install git-lfs && git lfs install`.\n"
-            f"Then rerun `{CLI_SIM} setup`."
+        return
+    if not (viewer / "node_modules").is_dir():
+        if offline:
+            warn(f"Offline and sim/viewer/node_modules is missing -- skipping the viewer bundle build; {manual_hint}")
+            return
+        log("Installing sim viewer npm dependencies (one-time)...")
+        run_logged(
+            [npm, "ci"],
+            cwd=viewer,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message="npm ci failed for sim/viewer.",
         )
-
-    data_dir = sim_repo / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    log("Ensuring required simulator scene data is present...")
+    log("Building the sim viewer bundle (dist-lib)...")
     run_logged(
-        ["git", "lfs", "install"],
-        cwd=sim_repo,
-        log_path=BOOTSTRAP_LOG_PATH,
-        failure_message="Git LFS setup failed for simulator data bootstrap.",
+        [npm, "run", "build:lib"],
+        cwd=viewer,
+        log_path=VIEWER_BUILD_LOG_PATH,
+        failure_message="Sim viewer bundle build failed (npm run build:lib).",
     )
-
-    for dataset_name, dataset_url in SIM_DATASET_REPOS.items():
-        dataset_dir = data_dir / dataset_name
-        if not dataset_dir.exists():
-            log(f"Downloading simulator dataset {dataset_name}...")
-            run_logged(
-                ["git", "clone", dataset_url],
-                cwd=data_dir,
-                log_path=BOOTSTRAP_LOG_PATH,
-                failure_message=f"Downloading {dataset_name} failed.",
-            )
-            continue
-
-        if command_succeeds(["git", "rev-parse", "--is-inside-work-tree"], cwd=dataset_dir):
-            log(f"Refreshing simulator dataset {dataset_name} via Git LFS...")
-            run_logged(
-                ["git", "lfs", "pull"],
-                cwd=dataset_dir,
-                log_path=BOOTSTRAP_LOG_PATH,
-                failure_message=f"Fetching large files for {dataset_name} failed.",
-            )
-
-    missing_after = missing_sim_data_paths(sim_repo)
-    if missing_after:
-        details = "\n".join(f"- {label}: {path}" for label, path in missing_after)
-        raise StackError(
-            "Required simulator scene data is still missing after automatic download.\n"
-            f"{details}\nSee: {sim_repo / 'data' / 'README.md'}"
-        )
 
 
 def ensure_skill_assets(config: dict[str, object]) -> None:
@@ -1208,151 +1004,6 @@ def ensure_skill_assets(config: dict[str, object]) -> None:
                 raise StackError(f"Failed to download skill asset {dest}: {exc}") from exc
 
 
-def sim_endpoint(port: str, path: str) -> str:
-    return f"http://localhost:{port}/{path.lstrip('/')}"
-
-
-def request_json(
-    url: str,
-    *,
-    timeout: float = 2.0,
-    payload: dict[str, object] | None = None,
-    method: str = "GET",
-) -> dict[str, object]:
-    data = None
-    headers = {}
-    request: str | Request = url
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    if method != "GET" or payload is not None:
-        request = Request(url, data=data, headers=headers, method=method)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            if response.status != 200:
-                return {}
-            body = json.loads(response.read().decode("utf-8"))
-            return body if isinstance(body, dict) else {}
-    except (URLError, TimeoutError, json.JSONDecodeError):
-        return {}
-
-
-def sim_get_json(port: str, path: str, *, timeout: float = 2.0) -> dict[str, object]:
-    return request_json(sim_endpoint(port, path), timeout=timeout)
-
-
-def sim_post_json(
-    port: str,
-    path: str,
-    payload: dict[str, object],
-    *,
-    timeout: float = 2.0,
-) -> dict[str, object]:
-    return request_json(
-        sim_endpoint(port, path),
-        timeout=timeout,
-        payload=payload,
-        method="POST",
-    )
-
-
-def wait_for_simulator_http(
-    port: str,
-    *,
-    timeout_seconds: float = SIM_HTTP_STARTUP_TIMEOUT_SECONDS,
-) -> None:
-    deadline = time.time() + timeout_seconds
-    next_heartbeat = time.monotonic() + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-    while time.time() < deadline:
-        if read_sim_pid() is None:
-            tail = tail_file(SIM_LOG_PATH, limit=80)
-            hint = ""
-            if "ReplicaCAD_baked_lighting" in tail or "ReplicaCAD_dataset" in tail:
-                hint = "\nHint: required simulator scene data is missing. See sim/data/README.md."
-            raise StackError(
-                f"Simulator backend exited while waiting for the HTTP endpoint.\nRecent log output:\n{tail}{hint}"
-            )
-        payload = sim_get_json(
-            port,
-            "video_feeds_ready",
-            timeout=SIM_HTTP_REQUEST_TIMEOUT_SECONDS,
-        )
-        if payload.get("ready"):
-            return
-
-        now = time.monotonic()
-        if now >= next_heartbeat:
-            remaining = max(0, int(deadline - time.time()))
-            latest = latest_log_line(SIM_LOG_PATH)
-            if latest:
-                log(f"Simulator is still loading the scene ({remaining}s remaining). Latest log: {latest}")
-            else:
-                log(f"Waiting for the simulator HTTP endpoint ({remaining}s remaining)...")
-            next_heartbeat = now + SIM_HTTP_STARTUP_HEARTBEAT_SECONDS
-
-        time.sleep(SIM_HTTP_POLL_SECONDS)
-    tail = tail_file(SIM_LOG_PATH, limit=80)
-    raise StackError(
-        "Timed out waiting for the simulator HTTP endpoint.\n"
-        f"Recent log output:\n{tail}\n"
-        "Hint: first scene load can take several minutes on Apple Silicon. "
-        "Increase simulator.startup_timeout_seconds in sim/config.toml or set "
-        "INNATE_SIM_STARTUP_TIMEOUT_SECONDS."
-    )
-
-
-def simulator_ready(port: str) -> bool:
-    return bool(sim_get_json(port, "video_feeds_ready").get("ready"))
-
-
-def fetch_simulator_metrics(port: str) -> dict[str, object]:
-    return sim_get_json(port, "stack_metrics")
-
-
-def available_agent_count(port: str) -> int:
-    metrics = fetch_simulator_metrics(port)
-    count = metrics.get("available_agent_count")
-    return count if isinstance(count, int) else 0
-
-
-def wait_for_brain_directives(port: str, *, timeout_seconds: float = 30.0) -> int:
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        count = available_agent_count(port)
-        if count > 0:
-            return count
-        time.sleep(OS_SESSION_READY_POLL_SECONDS)
-    return 0
-
-
-def health_from_brain_backend(status: dict[str, object], mode: str) -> tuple[str, str]:
-    if mode == NONE_MODE:
-        return "warn", "no agent"
-    if not status:
-        return ("warn", "unknown") if mode == HOSTED_MODE else ("warn", "not reported")
-
-    connected = bool(status.get("connected", False))
-    state = str(status.get("state", "unknown") or "unknown")
-    message = str(status.get("message", "") or "")
-    label = state.replace("_", " ")
-
-    if connected:
-        return "healthy", "connected"
-    if state == "invalid_config" and "KEY" in message.upper():
-        return "error", "missing key"
-    if state == "invalid_config":
-        return "error", "invalid config"
-    if state in {"connection_error", "backend_error", "disconnected", "stopped"}:
-        return "error", label
-    if state in {"unknown", "starting", "configured", "connecting", "authenticating"}:
-        return "warn", label
-    return "warn", label
-
-
-def set_simulator_log_mode(port: str, mode: str) -> bool:
-    return sim_post_json(port, "sim_log_config", {"mode": mode}).get("mode") == mode
-
-
 def container_running(container_name: str) -> bool:
     result = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
@@ -1366,7 +1017,6 @@ def container_running(container_name: str) -> bool:
 
 def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     probe = collect_runtime_probe(config)
-    simulator_port = str(probe["simulator_port"])
     os_status: dict[str, bool] = probe["os_status"]  # type: ignore[assignment]
     os_running = os_status["os_running"]
     os_session_running = os_status["os_session_running"]
@@ -1375,20 +1025,9 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     agent_running = bool(probe["agent_running"])
     sim_running = bool(probe["sim_running"])
     rosbridge_live = bool(probe["rosbridge_live"])
-    metrics: dict[str, object] = probe["metrics"]  # type: ignore[assignment]
-    backend_status: dict[str, object] = probe["backend_status"]  # type: ignore[assignment]
-    backend_level = str(probe["backend_level"])
-    backend_label = str(probe["backend_label"])
-    queue_sizes = metrics.get("queue_sizes", {}) if isinstance(metrics, dict) else {}
-    sim_log_mode = (
-        str(metrics.get("sim_log_mode", config.get("sim_log_mode", "quiet")))
-        if isinstance(metrics, dict)
-        else str(config.get("sim_log_mode", "quiet"))
-    )
-    primary_fps = pick_primary_fps(metrics)
-    frame_age = pick_latest_frame_age(metrics)
-    video_level, video_label = health_from_video(sim_running, primary_fps, frame_age)
-    transport_level, transport_label, queue_pressure, queue_peak = health_from_transport(rosbridge_live, queue_sizes)
+
+    sim_level, sim_label = ("healthy", "ok") if sim_running else ("error", "down")
+    transport_level, transport_label = ("healthy", "live") if rosbridge_live else ("error", "down")
     if not os_running:
         brain_level = "error"
         brain_label = "offline"
@@ -1415,35 +1054,20 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
         agent_level = "healthy" if agent_running else "warn"
         agent_label = "online" if agent_running else "offline"
 
-    if all(level == "healthy" for level in (video_level, transport_level, brain_level, backend_level, agent_level)):
+    if all(level == "healthy" for level in (sim_level, transport_level, brain_level, agent_level)):
         stack_mood = ("healthy", "LIVE")
-    elif any(level == "error" for level in (video_level, transport_level, brain_level, backend_level)):
+    elif any(level == "error" for level in (sim_level, transport_level, brain_level)):
         stack_mood = ("error", "DEGRADED")
     else:
         stack_mood = ("warn", "WARMING")
 
-    chat_load = "n/a"
-    if isinstance(queue_sizes, dict) and queue_sizes:
-        chat_load = f"to {queue_sizes.get('chat_to_bridge', 0)} / from {queue_sizes.get('chat_from_bridge', 0)}"
-    frame_age_ms = (frame_age or 0.0) * 1000.0
-    queue_summary = "n/a"
-    if isinstance(queue_sizes, dict) and queue_sizes:
-        queue_summary = (
-            f"s->agent {queue_sizes.get('sensor_to_agent', 0)} | "
-            f"sim->agent {queue_sizes.get('sim_to_agent', 0)} | "
-            f"agent->sim {queue_sizes.get('agent_to_sim', 0)} | "
-            f"web {queue_sizes.get('sim_to_web', 0)}"
-        )
-
     system_summary = (
         f"os {'up' if os_running else 'down'} | "
         f"sim {'up' if sim_running else 'down'} | "
-        f"brain {'ok' if brain_level == 'healthy' else brain_label} | "
-        f"backend {'ok' if backend_level == 'healthy' else backend_label}"
+        f"brain {'ok' if brain_level == 'healthy' else brain_label}"
     )
 
     return {
-        "simulator_port": simulator_port,
         "os_running": os_running,
         "os_session_running": os_session_running,
         "agent_running": agent_running,
@@ -1451,29 +1075,16 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
         "rosbridge_live": rosbridge_live,
         "rosbridge_process_live": rosbridge_process_live,
         "brain_process_live": brain_process_live,
-        "primary_fps": primary_fps,
-        "frame_age": frame_age,
-        "frame_age_ms": frame_age_ms,
-        "video_level": video_level,
-        "video_label": video_label,
+        "sim_level": sim_level,
+        "sim_label": sim_label,
         "transport_level": transport_level,
         "transport_label": transport_label,
-        "queue_pressure": queue_pressure,
-        "queue_peak": queue_peak,
-        "queue_load_score": queue_load_score(transport_level, queue_peak),
         "brain_level": brain_level,
         "brain_label": brain_label,
-        "backend_status": backend_status,
-        "backend_level": backend_level,
-        "backend_label": backend_label,
         "agent_level": agent_level,
         "agent_label": agent_label,
         "stack_level": stack_mood[0],
         "stack_label": stack_mood[1],
         "health_score": health_score(stack_mood[0]),
-        "queue_sizes": queue_sizes,
-        "queue_summary": queue_summary,
-        "chat_load": chat_load,
         "system_summary": system_summary,
-        "sim_log_mode": sim_log_mode,
     }

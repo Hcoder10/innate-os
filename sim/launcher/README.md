@@ -1,146 +1,61 @@
 # Innate Local CLI
 
-This directory holds the implementation of the local `innate` CLI. User-facing configuration no longer lives here.
+This directory holds the implementation of the local `innate` CLI. User-facing
+configuration no longer lives here.
 
 The local workflow uses:
 
 - Python 3.10 or newer for the launcher
-- [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env) for secrets and cloud endpoint URLs
-- [`config/settings.yaml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/settings.yaml.template) for optional non-secret tunable ROS parameters and extra agent/skill dirs
-- [`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) for optional non-secret simulator overrides
+- the repo-root `.env` for secrets and cloud endpoint URLs
+- `config/settings.yaml` for optional non-secret tunable ROS parameters and
+  extra agent/skill dirs
+- `sim/config.toml` for optional non-secret overrides (OS image, cloud-agent
+  mode)
 
 The CLI brings up:
 
-- `innate-os` in its Docker-based simulation setup
-- `sim/` on the host, serving the simulator backend/API on `http://localhost:8000` (the web UI is served by the OS container at `https://localhost`)
+- `innate-os` in its Docker-based simulation setup, including the virtual
+  MARS driver (headless MuJoCo, `ros2_ws/.../mars_sim_driver`) as the sim backend --
+  everything runs inside the container's ROS graph
 - an optional local `innate-cloud-agent`
-
-By default, the launcher expects this layout:
-
-```text
-innate-os/
-├── innate
-├── .env
-├── config/settings.yaml
-├── sim/launcher/
-├── sim/config.toml
-└── ../innate-cloud-agent/   # optional
-```
 
 ## Quick Start
 
 ```bash
 cd innate-os
-./innate-sim setup
+./innate-sim setup   # one-time: brain backend + service key into .env
 ./innate-sim up
 ```
 
-If any local config file does not exist yet, the CLI creates it from its template automatically.
-`./innate-sim setup` prepares the Python environment, pulls the locked Innate simulator asset pack, and downloads the required ReplicaCAD scene datasets into `sim/data/` when needed. In hosted brain mode, it also asks for an Innate service key and stores it in `.env`. ReplicaCAD downloads require Git LFS (`brew install git-lfs && git lfs install` on macOS).
-On interactive terminals, `./innate-sim up` drops into a live dashboard after startup. It keeps the simulator, agent, and brain logs visible together and adds a `btop`-style metrics band at the top. Use `d` to toggle the simulator's real runtime log mode between `quiet` and `debug` without restarting, `q` to leave the dashboard while keeping the runtime running, and `Ctrl+C` to stop the full runtime.
+`./innate-sim setup` configures the brain backend (hosted needs an Innate
+service key, stored in `.env`). `./innate-sim up` starts the dev container,
+builds/validates the ROS workspace, launches the tmux ROS session (including
+the `sim-driver` window running the MuJoCo virtual robot), and waits until
+`/odom` is publishing. On interactive terminals it then drops into a live
+dashboard (`q` detaches, `Ctrl+C` stops the runtime).
 
-If you want the native simulator viewer window for a run:
-
-```bash
-./innate-sim up --vis
-```
-
-If you just want a one-shot startup plus a single status snapshot:
+## Everyday commands
 
 ```bash
-./innate-sim up --once
+./innate-sim status    # startup checks + health snapshot
+./innate-sim logs      # startup logs; `logs os` / `logs agent` follow live
+./innate-sim sh        # shell into the innate-dev container
+./innate-sim down      # stop the runtime
+./innate-sim clean     # remove containers/volumes (keeps .env + config)
 ```
 
-To stop everything:
+Inside the container the ROS session lives in tmux: `tmux attach -t innate`
+shows one window per subsystem (zenoh, rosbridge, sim-driver, nav-brain,
+behavior, arm-ik, vision-nav, console-webapp).
 
-```bash
-./innate-sim down
-```
+## Viewing the simulation
 
-To stop everything **and** delete all related Docker containers, named volumes,
-and the local simulator virtualenv (a full reset — rerun `./innate-sim setup`
-afterward):
-
-```bash
-./innate-sim clean
-```
-
-Add `--data` to also delete the downloaded ReplicaCAD datasets and the simulator
-asset pack:
-
-```bash
-./innate-sim clean --data
-```
-
-`clean` never deletes your secrets (`.env`), OS/sim config (`config/settings.yaml`,
-`sim/config.toml`), or environment presets (`sim/data/environments/`); it prints
-what it preserved when it finishes.
-
-To inspect the current state:
-
-```bash
-./innate-sim status
-./innate-sim status verbose
-./innate-sim logs startup
-./innate-sim logs brain
-./innate-sim logs simulator
-```
-
-`./innate-sim logs` accepts `-n/--lines N` to override how much history a stream
-shows (defaults: 120 for regular streams, 80 for startup, 60 for brain).
-
-To drop into an interactive shell inside the running ROS container (ROS is
-sourced, the workspace is on the path — useful for `ros2` commands, inspecting
-the tmux session, or rebuilding a package with `innate build`):
-
-```bash
-./innate-sim sh
-```
-
-Inside that shell the in-container `innate` developer CLI is on the path (run
-`innate --help`) for building the workspace, restarting nodes, and triggering
-skills. Note this is the container-side CLI (`scripts/innate`), distinct from
-the host `./innate-sim` launcher.
-
-## Config Files
-
-[`config/settings.yaml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/config/settings.yaml.template) is for optional non-secret tunable ROS parameters such as:
-
-- driving speed, camera, arm, and navigation knobs
-- Cartesia TTS voice id
-- extra agent/skill dirs (`script_paths.extra_agent_dirs` / `extra_skill_dirs`)
-
-Cloud endpoint URLs (brain websocket URI, telemetry URL, …) live in [`.env`](/Users/axelpeytavin/Projects/innate-repos/innate-os/.env).
-
-[`sim/config.toml`](/Users/axelpeytavin/Projects/innate-repos/innate-os/sim/config.toml.template) is for optional non-secret simulator overrides such as:
-
-- native viewer on/off
-- rendered camera FPS and Genesis timestep
-- hosted vs local cloud-agent mode
-- local cloud-agent image or source checkout
-
-Everything else uses built-in defaults.
-
-You can override the brain backend for a single running sim session from the
-frontend URL. The hash form keeps secrets out of the HTTP request line:
-
-```text
-http://localhost:8000/static/#innate_service_key=<key>&brain_uri=wss://agent-v1.innate.bot
-```
-
-The frontend also accepts query params with the same names, plus
-`brain_websocket_uri` and `websocket_uri` aliases, then removes them from the
-visible URL after applying them.
-
-## Notes
-
-- `./innate-sim setup` bootstraps the simulator environment, required scene data, locked simulator assets, and hosted brain credentials when needed.
-- `./innate-sim up` verifies setup state. If simulator assets are missing/stale, it stops and asks you to rerun setup instead of changing the checkout implicitly.
-- `sim/config.toml` can make the simulator start with its native viewer window by default, while `./innate-sim up --vis` is the one-run override.
-- The simulator starts in quiet log mode by default. Press `d` in the dashboard to switch between `quiet` and `debug` live.
-- `status` opens as a dashboard panel with simulator logs, local agent logs, and the OS brain pane side by side when your terminal is wide enough.
-- `up` now lands in a live-refreshing version of that dashboard with a charted metrics band for health, FPS, queue load, and frame age.
-- The dashboard now switches to a more compact header on medium-height terminals so the top of the frame does not get pushed off-screen.
-- The dashboard now renders log lines as-is, including ANSI colors from the source process. It no longer rewrites or recolors the log content.
-- The transport numbers are queue-depth estimates for the sim/OS bridge, not byte-level network throughput yet.
-- `logs startup` shows the captured startup logs, while `logs brain` pulls live output from the brain tmux pane inside the OS container.
+- **webapp** -- `https://localhost`: in sim mode the camera panel is the
+  SimSession 3D view (full-resolution Three.js driven by rosbridge state);
+  teleop drives the sim robot exactly like a real one.
+- **Foxglove** -- Open connection -> Rosbridge -> `ws://localhost:9090`.
+  Panels for TF, `/scan`, `/mars/main_camera/points`, camera image topics,
+  and `/cmd_vel` teleop.
+- **Operator webapp** -- `https://localhost` (served by the container).
+  Drive/arm controls work over rosbridge; camera video panels are not
+  available in sim; the camera panel renders the sim directly (SimSession).
