@@ -12,7 +12,6 @@
 
 import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
-import { initShell } from "../shell.js";
 import { WebRtcSession } from "../webrtcSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "./videoStage.js";
@@ -27,10 +26,9 @@ import { createSkillsMenu } from "./skillsMenu.js";
 import { createSimControls } from "./simControls.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
 
-initShell("teleop", "");
-
 // Runtime feature flags (config.json, served static). Sim-only debug controls are
-// off unless a deployment opts in. Loaded before the cockpit builds.
+// off unless a deployment opts in. Fetched once when this module first loads (the
+// router's dynamic import awaits this), so buildCockpit can read it synchronously.
 /** @type {any} */
 const config = await fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
@@ -41,9 +39,10 @@ const config = await fetch("/config.json", { cache: "no-store" })
 const dbg = { ros, drive, session: null };
 /** @type {any} */ (window).innate = dbg;
 
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "cockpit", buildCockpit);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "cockpit", buildCockpit);
+}
 
 /**
  * Sim API base for /stack_metrics. The committed config.json points at

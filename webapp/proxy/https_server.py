@@ -164,16 +164,22 @@ def static_response(path: str, if_none_match: str = "") -> Response:
     if target.is_dir():
         target = target / "index.html"
     body_path = target if target.is_file() else None
+    # SPA fallback: an extensionless route that maps to no file (e.g. /profiling,
+    # /settings, or a deep link/refresh on any client-side route) is served the
+    # app shell so the router can render it. Asset requests carry a suffix
+    # (.js/.css/...), so a genuinely missing asset still 404s below. The
+    # in-root guard keeps a traversal like /../secrets a 404, not the shell.
+    if body_path is None and target.is_relative_to(ROOT) and "." not in clean.rsplit("/", 1)[-1]:
+        body_path = ROOT / "index.html"
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
     body = body_path.read_bytes()
-    # Content-hash ETag: a full-app reload (every tab switch is one — the app is
-    # multi-page) re-requests all ~27 modules, but unchanged ones now come back as
-    # a bodyless 304 instead of a full re-download, which was the bulk of the
-    # switch latency. Cache-Control stays no-cache so a redeploy is always picked
-    # up — the browser still revalidates every load, but revalidation is now a
-    # tiny conditional request, not a transfer of the whole file.
+    # Content-hash ETag: the first load (and any hard refresh) requests all ~27
+    # modules, but unchanged ones come back as a bodyless 304 instead of a full
+    # re-download. Cache-Control stays no-cache so a redeploy is always picked up
+    # — the browser still revalidates every load, but revalidation is now a tiny
+    # conditional request, not a transfer of the whole file.
     etag = f'"{hashlib.sha1(body).hexdigest()}"'
     if if_none_match == etag:
         return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")

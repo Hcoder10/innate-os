@@ -8,17 +8,15 @@
 // Mirrors the debugging page's connect/view lifecycle.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { createSkillList } from "./skillList.js";
 import { createEpisodeList } from "./episodeList.js";
 import { createEpisodePlayer } from "./episodePlayer.js";
 
-initShell("datasets", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "datasets", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "datasets", buildView);
+}
 
 /**
  * @param {HTMLElement} root

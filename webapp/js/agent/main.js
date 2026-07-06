@@ -10,7 +10,6 @@
 // shell's ttsAudio.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { WebRtcSession } from "../webrtcSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
@@ -19,18 +18,19 @@ import { createCameraSwitch } from "../teleop/cameraSwitch.js";
 import { createAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 
-initShell("agent", "../");
-
 // Runtime feature flags (config.json, served static), same as teleop. simControls
-// marks a sim deployment — used here to drop the (absent) battery readout.
+// marks a sim deployment — used here to drop the (absent) battery readout. Fetched
+// once on first import (the router's dynamic import awaits it) so the view reads
+// it synchronously.
 /** @type {any} */
 const config = await fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));
 
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "cockpit agent-cockpit", buildAgentView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "cockpit agent-cockpit", buildAgentView);
+}
 
 /**
  * @param {HTMLElement} root

@@ -14,43 +14,18 @@
 
 import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE } from "../constants.js";
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { CATALOG } from "./catalog.js";
 
-initShell("settings", "../");
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-// The yaml knobs below talk to the proxy, but the speaker-volume control is a
-// live rosbridge service call, so this page needs the shared socket: connect to
-// the serving host (the robot).
-const servedHost = location.hostname;
-if (servedHost) {
-  ros.connect(servedHost);
-  // rosClient retries on its own after a drop that follows a successful open, but
-  // a first connect that never opens fails fast with no retry — which would strand
-  // the volume control with no in-page recovery (this page has no connect card,
-  // unlike the mountPage ones). So retry the initial-connect-failed case here,
-  // debounced so a refused connection can't spin, and only until we've connected
-  // once: after that, drops self-heal via rosClient and an explicit disconnect
-  // (header badge) is respected.
-  let everConnected = false;
-  /** @type {number | null} */
-  let connectRetry = null;
-  ros.onStateChange((state) => {
-    if (state === "connected") everConnected = true;
-    if (state === "disconnected" && !everConnected) {
-      if (connectRetry === null) {
-        connectRetry = setTimeout(() => {
-          connectRetry = null;
-          ros.connect(servedHost);
-        }, 5000);
-      }
-    } else if (connectRetry !== null) {
-      clearTimeout(connectRetry);
-      connectRetry = null;
-    }
-  });
-}
+// Assigned per mount by mount() at the bottom. The volume control uses the shared
+// rosbridge socket, which the router connects once at boot and keeps up across
+// navigation, so this page no longer manages its own connection.
+/** @type {HTMLElement} */
+let stage;
+/** @type {HTMLStyleElement | null} */
+let styleEl = null;
+/** Per-mount teardowns: ros subscriptions to drop when we navigate away. */
+/** @type {(() => void)[]} */
+let cleanups = [];
 
 /**
  * @typedef {Object} Entry
@@ -75,11 +50,13 @@ const entries = [];
 /** @type {GroupUI[]} */
 const sections = [];
 
-let saveBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
-let resetAllBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
-let restartBtn = /** @type {HTMLButtonElement} */ (document.createElement("button"));
-let dirtyEl = /** @type {HTMLElement} */ (document.createElement("span"));
-let statusEl = /** @type {HTMLElement} */ (document.createElement("span"));
+// Created fresh in build() each mount, so re-mounting never double-binds their
+// click handlers.
+/** @type {HTMLButtonElement} */ let saveBtn;
+/** @type {HTMLButtonElement} */ let resetAllBtn;
+/** @type {HTMLButtonElement} */ let restartBtn;
+/** @type {HTMLElement} */ let dirtyEl;
+/** @type {HTMLElement} */ let statusEl;
 
 const STYLE = `
 .settings-page { position: absolute; inset: 0; display: flex; flex-direction: column; }
@@ -349,14 +326,16 @@ function buildVolumeSection() {
     slider.disabled = shouldDisable;
   };
 
-  ros.onStateChange((state) => {
-    const connected = state === "connected";
-    refreshEnabled();
-    if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
-    else if (status.classList.contains("muted")) setLiveStatus("", "muted");
-  });
+  cleanups.push(
+    ros.onStateChange((state) => {
+      const connected = state === "connected";
+      refreshEnabled();
+      if (!connected) setLiveStatus("Connect to the robot to set volume.", "muted");
+      else if (status.classList.contains("muted")) setLiveStatus("", "muted");
+    }),
+  );
 
-  ros.subscribe(ROBOT_INFO_TOPIC, (/** @type {StringMsg} */ payload) => {
+  const unsubInfo = ros.subscribe(ROBOT_INFO_TOPIC, (/** @type {StringMsg} */ payload) => {
     /** @type {RobotInfo} */
     let infoData;
     try {
@@ -372,6 +351,7 @@ function buildVolumeSection() {
     if (!dragging && !saving) renderValue(robotPercent);
     if (firstValue) refreshEnabled(); // enable now that the live value has loaded
   });
+  cleanups.push(unsubInfo);
 
   slider.addEventListener("input", () => {
     dragging = true;
@@ -409,9 +389,9 @@ function buildVolumeSection() {
 }
 
 function build() {
-  const style = document.createElement("style");
-  style.textContent = STYLE;
-  document.head.appendChild(style);
+  styleEl = document.createElement("style");
+  styleEl.textContent = STYLE;
+  document.head.appendChild(styleEl);
 
   const page = document.createElement("div");
   page.className = "settings-page";
@@ -481,19 +461,24 @@ function build() {
 
   const bar = document.createElement("div");
   bar.className = "set-bar";
+  saveBtn = document.createElement("button");
   saveBtn.className = "set-save";
   saveBtn.textContent = "Save";
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", onSave);
+  dirtyEl = document.createElement("span");
   dirtyEl.className = "set-dirty";
+  resetAllBtn = document.createElement("button");
   resetAllBtn.className = "set-reset-all";
   resetAllBtn.textContent = "Reset all to defaults";
   resetAllBtn.disabled = true;
   resetAllBtn.addEventListener("click", resetAll);
+  restartBtn = document.createElement("button");
   restartBtn.className = "set-restart";
   restartBtn.textContent = "Restart robot";
   restartBtn.title = "Restart the robot to apply saved settings (same as `innate restart`)";
   restartBtn.addEventListener("click", onRestart);
+  statusEl = document.createElement("span");
   bar.appendChild(saveBtn);
   bar.appendChild(dirtyEl);
   bar.appendChild(statusEl);
@@ -897,5 +882,20 @@ async function onRestart() {
   }
 }
 
-build();
-load();
+/** @param {HTMLElement} stageEl */
+export function mount(stageEl) {
+  stage = stageEl;
+  cleanups = [];
+  entries.length = 0;
+  sections.length = 0;
+  build();
+  load();
+  return {
+    destroy() {
+      for (const fn of cleanups.splice(0)) fn();
+      styleEl?.remove();
+      styleEl = null;
+      stage.replaceChildren();
+    },
+  };
+}

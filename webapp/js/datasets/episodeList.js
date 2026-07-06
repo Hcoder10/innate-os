@@ -148,7 +148,7 @@ export function createEpisodeList(parent, ros, opts) {
     const seq = ++requestSeq;
     current = skill;
     tools.hidden = false;
-    collectLink.href = `../collect/index.html?dir=${encodeURIComponent(skill.directory || "")}&name=${encodeURIComponent(skill.name)}`;
+    collectLink.href = `/collect?dir=${encodeURIComponent(skill.directory || "")}&name=${encodeURIComponent(skill.name)}`;
     title.textContent = skill.name;
     sub.textContent = "loading…";
     showMessage("Loading episodes…");

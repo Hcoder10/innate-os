@@ -7,17 +7,15 @@
 // card as teleop. Mirrors teleop's connect/cockpit lifecycle.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { createConsoleSource } from "./consoleSource.js";
 import { createLogStream } from "./logStream.js";
 import { createSources } from "./sources.js";
 
-initShell("debugging", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "debug", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "debug", buildView);
+}
 
 /**
  * @param {HTMLElement} root
