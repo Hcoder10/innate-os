@@ -69,7 +69,12 @@ ASSETS_DIR = world.default_assets_dir()
 
 
 class VirtualMars:
-    def __init__(self, split_dir: Path | None = None):
+    def __init__(self, split_dir: Path | None = None, render_wh: tuple[int, int] | None = None):
+        # render_wh overrides the offscreen render resolution (default: the
+        # camera-native CAMERA_WIDTH x CAMERA_HEIGHT). The ROS driver renders
+        # at half res -- software-GL cost scales with fill rate -- and
+        # upscales at the wire; direct/notebook users keep full res.
+        self._render_w, self._render_h = render_wh or (CAMERA_WIDTH, CAMERA_HEIGHT)
         rooms = world.find_decomposed_rooms(split_dir or ASSETS_DIR / "apartment_split_v2")
         if not rooms:
             raise RuntimeError(
@@ -211,7 +216,7 @@ class VirtualMars:
         """Snapshot sim state into the renderer's scene (fast; call under the
         physics lock). The GL render itself (read_rgb) can then run outside."""
         if self._renderer is None:
-            self._renderer = mujoco.Renderer(self.model, height=CAMERA_HEIGHT, width=CAMERA_WIDTH)
+            self._renderer = mujoco.Renderer(self.model, height=self._render_h, width=self._render_w)
         self._renderer.update_scene(self.data, camera=camera)
         # Shadows/reflections cost ~3x on software GL (242 -> 71 ms/frame).
         self._renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
@@ -236,7 +241,7 @@ class VirtualMars:
         robot never appears in its own depth -- without this, STVL marks the
         arm as an obstacle at the footprint and Nav2 can't plan."""
         if self._depth_renderer is None:
-            self._depth_renderer = mujoco.Renderer(self.model, height=CAMERA_HEIGHT, width=CAMERA_WIDTH)
+            self._depth_renderer = mujoco.Renderer(self.model, height=self._render_h, width=self._render_w)
             self._depth_renderer.enable_depth_rendering()
             self._depth_scene_option = mujoco.MjvOption()
             self._depth_scene_option.geomgroup[0] = 0
@@ -246,7 +251,7 @@ class VirtualMars:
         return self._depth_renderer.render()
 
     def render_depth(self, camera: str) -> np.ndarray:
-        """Depth image in meters (float32, CAMERA_HEIGHT x CAMERA_WIDTH)."""
+        """Depth image in meters (float32, render height x width)."""
         self.update_depth(camera)
         return self.read_depth()
 

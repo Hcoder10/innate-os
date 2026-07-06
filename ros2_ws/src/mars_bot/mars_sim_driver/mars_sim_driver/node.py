@@ -42,6 +42,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
+from PIL import Image as PILImage
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -85,14 +86,27 @@ ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 # centered): fy from the vertical FOV, fx = fy.
 FOCAL = CAMERA_HEIGHT / (2 * math.tan(math.radians(CAMERA_FOVY) / 2))
 CX, CY = CAMERA_WIDTH / 2, CAMERA_HEIGHT / 2
-# Subsampled pixel grid for the pointcloud, precomputed once (published at 8 Hz).
-POINTS_VS, POINTS_US = np.mgrid[0:CAMERA_HEIGHT:POINTS_SUBSAMPLE, 0:CAMERA_WIDTH:POINTS_SUBSAMPLE].astype(np.float32)
+
+# Software-GL render cost scales with fill rate, and one thread does every
+# render: at 640x480 a single OSMesa frame costs ~105ms and the camera/depth
+# rates collapse far below their targets (measured 2 / 0.85 Hz vs 7.5 / 8 Hz
+# in the container). Render at half resolution (4x cheaper) and upscale at
+# the wire, so the published topics keep the hardware contract (640x480,
+# camera_info intrinsics unchanged).
+RENDER_SCALE = 2
+RENDER_WH = (CAMERA_WIDTH // RENDER_SCALE, CAMERA_HEIGHT // RENDER_SCALE)
+# Pointcloud pixel grid, precomputed once, in RENDER coordinates: the cloud
+# is built straight from the half-res depth with proportionally scaled
+# intrinsics, yielding the same cloud size/geometry as full res.
+POINTS_STEP = max(1, POINTS_SUBSAMPLE // RENDER_SCALE)
+POINTS_VS, POINTS_US = np.mgrid[0 : RENDER_WH[1] : POINTS_STEP, 0 : RENDER_WH[0] : POINTS_STEP].astype(np.float32)
+RFOCAL, RCX, RCY = FOCAL / RENDER_SCALE, CX / RENDER_SCALE, CY / RENDER_SCALE
 
 
 class VirtualMarsNode(Node):
     def __init__(self) -> None:
         super().__init__("virtual_mars")
-        self.sim = VirtualMars()
+        self.sim = VirtualMars(render_wh=RENDER_WH)
         self._lock = threading.Lock()
         # Active joint-space trajectory: list of (from, to, duration) dicts
         # consumed by the physics loop. _traj_req is the waiting goto_js*
@@ -386,6 +400,8 @@ class VirtualMarsNode(Node):
     def _publish_camera_frames(self, pub, raw_pub, camera: str, rgb) -> None:
         stamp = self._stamp()
         frame_id = "camera_optical_frame" if camera == "main" else "arm_camera_link"
+        # Upscale the half-res render to the wire resolution (bilinear).
+        rgb = np.asarray(PILImage.fromarray(rgb).resize((CAMERA_WIDTH, CAMERA_HEIGHT), PILImage.BILINEAR))
 
         if pub.get_subscription_count() > 0:
             msg = CompressedImage()
@@ -414,8 +430,11 @@ class VirtualMarsNode(Node):
 
         if want_depth:
             # 16SC1 millimeters, invalid = 0 -- publishing.cpp's convention.
+            # Nearest-neighbor upscale of the half-res render to the wire
+            # resolution (depth must not be interpolated across edges).
             mm = np.where(invalid, 0, depth * 1000.0)
             mm = np.clip(mm, 0, np.iinfo(np.int16).max).astype(np.int16)
+            mm = np.repeat(np.repeat(mm, RENDER_SCALE, axis=0), RENDER_SCALE, axis=1)
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = "camera_optical_frame"
@@ -427,10 +446,10 @@ class VirtualMarsNode(Node):
             self._depth_pub.publish(msg)
 
         if want_points:
-            s = POINTS_SUBSAMPLE
+            s = POINTS_STEP
             z = np.where(invalid, np.nan, depth)[::s, ::s].astype(np.float32)
-            x = (POINTS_US - CX) / FOCAL * z
-            y = (POINTS_VS - CY) / FOCAL * z
+            x = (POINTS_US - RCX) / RFOCAL * z
+            y = (POINTS_VS - RCY) / RFOCAL * z
             cloud = np.stack([x, y, z], axis=-1)
 
             msg = PointCloud2()

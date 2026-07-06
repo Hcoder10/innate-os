@@ -237,8 +237,14 @@ class NavigateToPosition(Skill):
             "If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"
         )
 
-    def execute(self, x: float, y: float, theta_degrees: float, local_frame: bool = False):
-        theta = math.radians(theta_degrees)
+    def execute(self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, theta: float = None):
+        # The tool schema speaks theta_degrees, but the cloud agent and the
+        # pose-adjustment pipeline speak `theta` in radians (the same keys the
+        # robot's pose payload uses). Accept both; radians win when present.
+        if theta is not None:
+            theta_degrees = math.degrees(theta)
+        else:
+            theta = math.radians(theta_degrees)
         self.logger.info(
             f"Initiating navigation to position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
         )
