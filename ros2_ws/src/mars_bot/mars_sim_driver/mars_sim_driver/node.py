@@ -90,23 +90,23 @@ CX, CY = CAMERA_WIDTH / 2, CAMERA_HEIGHT / 2
 # Software-GL render cost scales with fill rate, and one thread does every
 # render: at 640x480 a single OSMesa frame costs ~105ms and the camera/depth
 # rates collapse far below their targets (measured 2 / 0.85 Hz vs 7.5 / 8 Hz
-# in the container). Render at half resolution (4x cheaper) and upscale at
-# the wire, so the published topics keep the hardware contract (640x480,
+# in the container). Render RGB at half res, and depth at the pointcloud's
+# native res (the cloud was a 4x subsample anyway, so nothing is lost), then
+# upscale at the wire: published topics keep the hardware contract (640x480,
 # camera_info intrinsics unchanged).
 RENDER_SCALE = 2
 RENDER_WH = (CAMERA_WIDTH // RENDER_SCALE, CAMERA_HEIGHT // RENDER_SCALE)
-# Pointcloud pixel grid, precomputed once, in RENDER coordinates: the cloud
-# is built straight from the half-res depth with proportionally scaled
-# intrinsics, yielding the same cloud size/geometry as full res.
-POINTS_STEP = max(1, POINTS_SUBSAMPLE // RENDER_SCALE)
-POINTS_VS, POINTS_US = np.mgrid[0 : RENDER_WH[1] : POINTS_STEP, 0 : RENDER_WH[0] : POINTS_STEP].astype(np.float32)
-RFOCAL, RCX, RCY = FOCAL / RENDER_SCALE, CX / RENDER_SCALE, CY / RENDER_SCALE
+DEPTH_SCALE = POINTS_SUBSAMPLE  # depth render == pointcloud grid, 1:1
+DEPTH_WH = (CAMERA_WIDTH // DEPTH_SCALE, CAMERA_HEIGHT // DEPTH_SCALE)
+# Pointcloud pixel grid, precomputed once, 1:1 with the depth render.
+POINTS_VS, POINTS_US = np.mgrid[0 : DEPTH_WH[1], 0 : DEPTH_WH[0]].astype(np.float32)
+DFOCAL, DCX, DCY = FOCAL / DEPTH_SCALE, CX / DEPTH_SCALE, CY / DEPTH_SCALE
 
 
 class VirtualMarsNode(Node):
     def __init__(self) -> None:
         super().__init__("virtual_mars")
-        self.sim = VirtualMars(render_wh=RENDER_WH)
+        self.sim = VirtualMars(render_wh=RENDER_WH, depth_render_wh=DEPTH_WH)
         self._lock = threading.Lock()
         # Active joint-space trajectory: list of (from, to, duration) dicts
         # consumed by the physics loop. _traj_req is the waiting goto_js*
@@ -367,33 +367,66 @@ class VirtualMarsNode(Node):
 
     def _render_loop(self) -> None:
         """Paced rendering off the executor: physics lock held only for the
-        update_scene snapshot, the slow GL render runs unlocked."""
+        update_scene snapshot, the slow GL render runs unlocked.
+
+        Adaptive shedding: one thread renders everything, and on a weak
+        machine the demanded rates can exceed what it can produce -- without
+        a governor every topic starves equally, including the depth that
+        feeds the costmaps. Each source's render cost is tracked (EMA); when
+        total demand would oversubscribe the thread, the CAMERA periods are
+        stretched proportionally while depth keeps its full rate -- nav
+        stays healthy, the camera stream degrades gracefully.
+        """
         last = {"main": 0.0, "wrist": 0.0, "depth": 0.0}
         period = {"main": 1.0 / MAIN_CAMERA_FPS, "wrist": 1.0 / WRIST_CAMERA_FPS, "depth": 1.0 / DEPTH_FPS}
+        cost = {"main": 0.0, "wrist": 0.0, "depth": 0.0}  # EMA seconds per render
+        target_util = 0.85  # leave headroom for physics/publishing on the other threads
+        stretch = 1.0
+        saturated = False
+
         while rclpy.ok():
+            wanted = {
+                "main": self._main_pub.get_subscription_count() > 0 or self._main_raw_pub.get_subscription_count() > 0,
+                "wrist": self._wrist_pub.get_subscription_count() > 0
+                or self._wrist_raw_pub.get_subscription_count() > 0,
+                "depth": self._depth_pub.get_subscription_count() > 0 or self._points_pub.get_subscription_count() > 0,
+            }
+            demand = sum(cost[s] / period[s] for s in wanted if wanted[s])
+            stretch = max(1.0, demand / target_util)
+            if (stretch > 1.5) != saturated:
+                saturated = stretch > 1.5
+                if saturated:
+                    self.get_logger().warning(
+                        f"render thread saturated; reducing camera rates ~{stretch:.1f}x (depth keeps {DEPTH_FPS} Hz)"
+                    )
+                else:
+                    self.get_logger().info("render thread recovered; camera rates back to target")
+
             now = time.monotonic()
             rendered = False
+            if wanted["depth"] and now - last["depth"] >= period["depth"]:
+                last["depth"] = now
+                rendered = True
+                t0 = time.perf_counter()
+                with self._lock:
+                    self.sim.update_depth("main")
+                depth = self.sim.read_depth()
+                cost["depth"] = 0.8 * cost["depth"] + 0.2 * (time.perf_counter() - t0)
+                self._publish_depth_and_points(depth)
             for camera, pub, raw_pub in (
                 ("main", self._main_pub, self._main_raw_pub),
                 ("wrist", self._wrist_pub, self._wrist_raw_pub),
             ):
-                if now - last[camera] < period[camera]:
-                    continue
-                if pub.get_subscription_count() == 0 and raw_pub.get_subscription_count() == 0:
-                    continue  # lazy, like the real drivers
+                if not wanted[camera] or now - last[camera] < period[camera] * stretch:
+                    continue  # lazy, like the real drivers; stretched under load
                 last[camera] = now
                 rendered = True
+                t0 = time.perf_counter()
                 with self._lock:
                     self.sim.update_camera(camera)
-                self._publish_camera_frames(pub, raw_pub, camera, self.sim.read_rgb())
-            if now - last["depth"] >= period["depth"] and (
-                self._depth_pub.get_subscription_count() > 0 or self._points_pub.get_subscription_count() > 0
-            ):
-                last["depth"] = now
-                rendered = True
-                with self._lock:
-                    self.sim.update_depth("main")
-                self._publish_depth_and_points(self.sim.read_depth())
+                rgb = self.sim.read_rgb()
+                cost[camera] = 0.8 * cost[camera] + 0.2 * (time.perf_counter() - t0)
+                self._publish_camera_frames(pub, raw_pub, camera, rgb)
             if not rendered:
                 time.sleep(0.02)
 
@@ -434,7 +467,7 @@ class VirtualMarsNode(Node):
             # resolution (depth must not be interpolated across edges).
             mm = np.where(invalid, 0, depth * 1000.0)
             mm = np.clip(mm, 0, np.iinfo(np.int16).max).astype(np.int16)
-            mm = np.repeat(np.repeat(mm, RENDER_SCALE, axis=0), RENDER_SCALE, axis=1)
+            mm = np.repeat(np.repeat(mm, DEPTH_SCALE, axis=0), DEPTH_SCALE, axis=1)
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = "camera_optical_frame"
@@ -446,10 +479,9 @@ class VirtualMarsNode(Node):
             self._depth_pub.publish(msg)
 
         if want_points:
-            s = POINTS_STEP
-            z = np.where(invalid, np.nan, depth)[::s, ::s].astype(np.float32)
-            x = (POINTS_US - RCX) / RFOCAL * z
-            y = (POINTS_VS - RCY) / RFOCAL * z
+            z = np.where(invalid, np.nan, depth).astype(np.float32)
+            x = (POINTS_US - DCX) / DFOCAL * z
+            y = (POINTS_VS - DCY) / DFOCAL * z
             cloud = np.stack([x, y, z], axis=-1)
 
             msg = PointCloud2()

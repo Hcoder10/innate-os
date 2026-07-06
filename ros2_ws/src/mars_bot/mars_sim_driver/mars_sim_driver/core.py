@@ -69,12 +69,19 @@ ASSETS_DIR = world.default_assets_dir()
 
 
 class VirtualMars:
-    def __init__(self, split_dir: Path | None = None, render_wh: tuple[int, int] | None = None):
-        # render_wh overrides the offscreen render resolution (default: the
-        # camera-native CAMERA_WIDTH x CAMERA_HEIGHT). The ROS driver renders
-        # at half res -- software-GL cost scales with fill rate -- and
-        # upscales at the wire; direct/notebook users keep full res.
+    def __init__(
+        self,
+        split_dir: Path | None = None,
+        render_wh: tuple[int, int] | None = None,
+        depth_render_wh: tuple[int, int] | None = None,
+    ):
+        # render_wh / depth_render_wh override the offscreen render
+        # resolutions (default: the camera-native CAMERA_WIDTH x
+        # CAMERA_HEIGHT). The ROS driver renders RGB at half res and depth at
+        # the pointcloud's native res -- software-GL cost scales with fill
+        # rate -- and upscales at the wire; direct/notebook users keep full res.
         self._render_w, self._render_h = render_wh or (CAMERA_WIDTH, CAMERA_HEIGHT)
+        self._depth_w, self._depth_h = depth_render_wh or (self._render_w, self._render_h)
         rooms = world.find_decomposed_rooms(split_dir or ASSETS_DIR / "apartment_split_v2")
         if not rooms:
             raise RuntimeError(
@@ -241,7 +248,7 @@ class VirtualMars:
         robot never appears in its own depth -- without this, STVL marks the
         arm as an obstacle at the footprint and Nav2 can't plan."""
         if self._depth_renderer is None:
-            self._depth_renderer = mujoco.Renderer(self.model, height=self._render_h, width=self._render_w)
+            self._depth_renderer = mujoco.Renderer(self.model, height=self._depth_h, width=self._depth_w)
             self._depth_renderer.enable_depth_rendering()
             self._depth_scene_option = mujoco.MjvOption()
             self._depth_scene_option.geomgroup[0] = 0
