@@ -412,7 +412,6 @@ export function createEpisodeList(parent, ros, opts) {
       epCol.appendChild(sourceBadge(ep));
     }
 
-    // recorded + duration
     const recCol = document.createElement("span");
     recCol.className = "ep-recorded";
     recCol.textContent = formatRecorded(ep.start_time);
@@ -467,7 +466,6 @@ export function createEpisodeList(parent, ros, opts) {
     );
 
     if (isEval()) {
-      // col 2: the policy that drove this run
       const polCol = document.createElement("span");
       polCol.className = "ep-policy mono";
       polCol.textContent = ep.policy || "—";

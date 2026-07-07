@@ -35,8 +35,7 @@ from manipulation.act_config import (  # noqa: E402
     validate_action_dim,
 )
 
-# Pure (ROS-free) auto-stop logic; kept in its own module so it can be unit-tested
-# without a ROS environment (see manipulation.auto_stop / test/test_auto_stop.py).
+# Pure (ROS-free) auto-stop logic, kept in its own module.
 from manipulation.auto_stop import LearnedStopDetector, StepSignals  # noqa: E402
 
 # NOTE: manipulation.act_trt is imported lazily inside _load_policy_for_behavior, not here.
