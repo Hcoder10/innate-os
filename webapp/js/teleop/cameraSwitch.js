@@ -194,6 +194,16 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     if (!enabledCams.has(name)) return offTile(name, name, `Turn on ${name} camera`);
     // alwaysOn cameras are never turned off, so they carry no close affordance.
     const tile = liveTile(name, name, `Make ${name} the main view`, !alwaysOn);
+    // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
+    // capture pinned page composition to its capture rate); mount those
+    // directly. Real robots keep the <video> + WebRTC stream path.
+    const thumbCanvas = session.thumbnailCanvas?.(index) ?? null;
+    if (thumbCanvas) {
+      thumbCanvas.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+      tile.prepend(thumbCanvas);
+      tiles.set(name, { tile, video: null, index });
+      return tile;
+    }
     const video = document.createElement("video");
     video.autoplay = true;
     video.muted = true;
@@ -251,10 +261,12 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   /** @param {WebRtcState} state */
   function syncStreams(state) {
     for (const { tile, video, index } of tiles.values()) {
-      const stream = state.videoStreams[index] ?? null;
-      if (video.srcObject !== stream) {
-        video.srcObject = stream;
-        video.play().catch(() => {});
+      if (video) {
+        const stream = state.videoStreams[index] ?? null;
+        if (video.srcObject !== stream) {
+          video.srcObject = stream;
+          video.play().catch(() => {});
+        }
       }
       tile.classList.toggle("connecting", !state.videoLive[index]);
     }

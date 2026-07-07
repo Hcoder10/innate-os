@@ -13,7 +13,12 @@
 import { SimScene, type CameraView } from "./scene";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
-const THUMB_FRAME_DIV = 3;
+// One PiP tile refresh per N rAF frames, round-robin: each refresh is an
+// extra scene render + a canvas-to-canvas composite (cheap now that the
+// captureStream pipeline is gone -- THAT was what pinned the page to 15fps).
+// N=2 with two live tiles gives each ~30fps at a 120Hz display while
+// costing at most half an extra scene render per frame.
+const THUMB_FRAME_DIV = 2;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
 
@@ -38,8 +43,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     b.type = "button";
     b.textContent = label;
     b.style.cssText =
+      // No backdrop-filter: blurring over an animated canvas forces a
+      // re-blur pass every frame the canvas changes (fps drops while moving).
       `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-      "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;backdrop-filter:blur(6px);";
+      "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
     let on = false;
     b.onclick = () => {
       on = !on;
@@ -52,6 +59,28 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   wrap.appendChild(chips);
+
+  // Tiny frame-time readout (?simperf in the URL): median/p95 of the last
+  // second, so render regressions are measurable instead of guessed at.
+  let perfEl: HTMLElement | null = null;
+  let frameTimes: number[] = [];
+  let perfNextAt = 0;
+  let longTaskMs = 0;
+  const bare = new URLSearchParams(location.search).has("simbare");
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) longTaskMs += e.duration;
+    }).observe({ type: "longtask", buffered: false });
+  } catch {
+    /* longtask unsupported -- HUD just shows 0 */
+  }
+  if (new URLSearchParams(location.search).has("simperf")) {
+    perfEl = document.createElement("div");
+    perfEl.style.cssText =
+      "position:absolute;right:10px;bottom:10px;z-index:5;padding:3px 8px;border-radius:6px;" +
+      "background:rgba(0,0,0,.6);color:#9f9;font:11px ui-monospace,monospace;pointer-events:none;";
+    wrap.appendChild(perfEl);
+  }
 
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
@@ -67,6 +96,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   let raf = 0;
   let frame = 0;
+  let thumbCursor = 0;
   let lastTime = performance.now();
   let disposed = false;
 
@@ -76,18 +106,40 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     lastTime = now;
     session.tick(scene, dt);
 
-    // Thumbnails first (scissor corner renders, blitted out)...
-    if (frame % THUMB_FRAME_DIV === 0) {
-      for (const { index, name } of session.liveThumbnails()) {
+    // Thumbnails first (scissor corner renders, blitted out), one tile per
+    // slot -- see THUMB_FRAME_DIV.
+    if (!bare && frame % THUMB_FRAME_DIV === 0) {
+      const live = session.liveThumbnails();
+      if (live.length) {
+        const { index, name } = live[thumbCursor++ % live.length];
         scene.setView(VIEW_FOR[name] ?? "orbit");
         scene.renderRegion(0, 0, THUMB_W, THUMB_H);
-        session.blitThumbnail(index, canvas, THUMB_W, THUMB_H);
+        // renderRegion speaks logical px; the canvas backing store is
+        // scaled by the pixel ratio -- blit the full physical region or
+        // the tile shows a zoomed-in crop.
+        const ratio = scene.renderer.getPixelRatio();
+        session.blitThumbnail(index, canvas, THUMB_W * ratio, THUMB_H * ratio);
       }
     }
     // ...then the primary view full-frame on top.
     scene.setView(VIEW_FOR[session.primaryCamera] ?? "orbit");
     scene.render();
     frame++;
+
+    if (perfEl) {
+      frameTimes.push(performance.now() - now);
+      if (now >= perfNextAt) {
+        perfNextAt = now + 1000;
+        const sorted = [...frameTimes].sort((x, y) => x - y);
+        const med = sorted[sorted.length >> 1] ?? 0;
+        const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+        const lag = session.pipelineLag;
+        const lagTxt = lag ? `  lag ${lag.curMs.toFixed(0)}ms (min ${lag.minMs.toFixed(0)})` : "";
+        perfEl.textContent = `js ${med.toFixed(1)}/${p95.toFixed(1)}ms  lt ${longTaskMs.toFixed(0)}ms  ${frameTimes.length}fps${lagTxt}`;
+        frameTimes = [];
+        longTaskMs = 0;
+      }
+    }
   };
 
   (async () => {
