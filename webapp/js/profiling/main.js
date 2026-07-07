@@ -19,7 +19,10 @@ import { createEvalSession } from "./evalSession.js";
 import { buildRebootArm } from "./rebootArm.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const MAX_PLOT_POINTS = 400; // timeseries window; stats use the full retained record
+// Drawn-point budget per chart. The quality line charts decimate the WHOLE retained
+// run down to this many points (min/max per bucket, so spikes survive); the latency
+// timeseries shows a sliding window of the most recent steps.
+const MAX_PLOT_POINTS = 400;
 // Cap the retained record so an unattended recording can't grow without bound. At the
 // 25 Hz inference rate this is ~20 min of history — well past any real profiling session —
 // and it bounds the per-tick computeStats/histogram sort cost, not just memory. Older
@@ -139,7 +142,7 @@ function buildView(root) {
     "eval episode (video + trajectory + profile trace, in the Policy Rollouts dataset) — or " +
     "Profile only to watch the charts without recording anything on the robot.";
 
-  body.append(rollout.reviewEl, session.el, statsRow, charts, hint);
+  body.append(rollout.reviewEl, rollout.errorEl, session.el, statsRow, charts, hint);
   root.append(head, body);
 
   // ---- controls -----------------------------------------------------------
@@ -369,7 +372,12 @@ function scaffold(host, key, build) {
 }
 
 /**
- * Generic line chart over the recorded window for an optional per-sample scalar.
+ * Generic line chart for an optional per-sample scalar, drawn over the WHOLE
+ * recorded run — not a sliding window. The record is decimated to at most
+ * MAX_PLOT_POINTS keeping each bucket's min and max (spikes survive), and x is
+ * elapsed time (0s → run length), so the run's full shape stays visible on
+ * long recordings and a spike can be placed in time. Hover reads the exact
+ * (time, value) pair — that's the auto-stop tuning workflow on a frozen run.
  * @param {Sample[]} samples
  * @param {HTMLElement} host
  * @param {(s: Sample) => number|undefined} accessor
@@ -377,20 +385,28 @@ function scaffold(host, key, build) {
  * @param {{lo?: number, hi?: number}} fixed  fixed y-range (falls back to the data range if unset)
  */
 function renderLine(samples, host, accessor, color, fixed) {
-  const pts = samples.slice(-MAX_PLOT_POINTS).map(accessor).filter((v) => typeof v === "number");
-  if (!pts.length) {
+  /** @type {{t:number, v:number}[]} */
+  const all = [];
+  for (const s of samples) {
+    const v = accessor(s);
+    if (typeof v === "number" && isFinite(v)) all.push({ t: s.t, v });
+  }
+  if (!all.length) {
     scaffold(host, "empty", (h) => placeholder(h, "no signal in this recording"));
     return;
   }
 
-  const lo = fixed.lo ?? Math.min(...pts);
-  const hi = fixed.hi ?? Math.max(...pts);
+  const pts = decimateMinMax(all, MAX_PLOT_POINTS);
+  const t0 = all[0].t;
+  const tSpan = Math.max(all[all.length - 1].t - t0, 1e-9);
+  const lo = fixed.lo ?? pts.reduce((m, p) => Math.min(m, p.v), Infinity);
+  const hi = fixed.hi ?? pts.reduce((m, p) => Math.max(m, p.v), -Infinity);
   const span = hi - lo || 1;
   const W = 1000;
   const H = 240;
-  // Persist the frame (y-axis + gridlines), path, and caption; only the path's `d`, the
-  // y-tick labels, and the "now" caption change each tick.
-  const { path, axis, setY } = scaffold(host, "data", (h) => {
+  // Persist the frame (y-axis + gridlines), path, hover overlay, and captions; only the
+  // path's `d`, the tick labels, the captions, and the hover's data change each tick.
+  const ui = scaffold(host, "data", (h) => {
     const { svg, setY } = plotFrame(h, W, H);
     const p = document.createElementNS(SVG_NS, "path");
     p.setAttribute("fill", "none");
@@ -400,20 +416,102 @@ function renderLine(samples, host, accessor, color, fixed) {
     svg.appendChild(p);
     const ax = axisLabels(["", "", ""]);
     h.appendChild(ax);
-    return { path: p, axis: ax, setY };
+    const hover = { pts: /** @type {{t:number,v:number}[]} */ ([]), t0: 0, tSpan: 1 };
+    attachHoverReadout(/** @type {HTMLElement} */ (svg.parentElement), hover);
+    return { path: p, axis: ax, setY, hover };
   });
 
-  setY(hi, lo, (v) => v.toFixed(2));
+  ui.setY(hi, lo, (v) => v.toFixed(2));
+  ui.hover.pts = pts;
+  ui.hover.t0 = t0;
+  ui.hover.tSpan = tSpan;
 
   let d = "";
-  pts.forEach((v, i) => {
-    const x = (i / Math.max(1, pts.length - 1)) * W;
-    const y = H - ((v - lo) / span) * H;
+  pts.forEach((p, i) => {
+    const x = ((p.t - t0) / tSpan) * W;
+    const y = H - ((p.v - lo) / span) * H;
     d += `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)} `;
   });
-  path.setAttribute("d", d.trim());
-  const last = pts[pts.length - 1];
-  setAxis(axis, ["", `now ${last.toFixed(2)}`, ""]);
+  ui.path.setAttribute("d", d.trim());
+  const last = all[all.length - 1].v;
+  setAxis(ui.axis, ["0s", `now ${last.toFixed(2)}`, fmtSeconds(tSpan)]);
+}
+
+/**
+ * Bucketed min/max decimation: bound the drawn point count while keeping every
+ * spike — each bucket contributes its extreme samples, in temporal order.
+ * @param {{t:number, v:number}[]} pts @param {number} maxPoints
+ */
+function decimateMinMax(pts, maxPoints) {
+  if (pts.length <= maxPoints) return pts;
+  const buckets = Math.max(1, Math.floor(maxPoints / 2));
+  const out = [];
+  for (let b = 0; b < buckets; b++) {
+    const start = Math.floor((b * pts.length) / buckets);
+    const end = Math.max(start + 1, Math.floor(((b + 1) * pts.length) / buckets));
+    let lo = start;
+    let hi = start;
+    for (let i = start + 1; i < end; i++) {
+      if (pts[i].v < pts[lo].v) lo = i;
+      if (pts[i].v > pts[hi].v) hi = i;
+    }
+    if (lo === hi) out.push(pts[lo]);
+    else out.push(pts[Math.min(lo, hi)], pts[Math.max(lo, hi)]);
+  }
+  return out;
+}
+
+/**
+ * Hover guide + (time · value) readout over a plot. `state` is re-pointed at the
+ * currently drawn points on every render; the pointer handler reads it live.
+ * @param {HTMLElement} wrap  the .prof-plot-svg wrapper (position: relative)
+ * @param {{pts: {t:number,v:number}[], t0: number, tSpan: number}} state
+ */
+function attachHoverReadout(wrap, state) {
+  const line = document.createElement("div");
+  line.className = "telemetry-hoverline";
+  line.hidden = true;
+  const tip = document.createElement("div");
+  tip.className = "telemetry-tip";
+  tip.hidden = true;
+  const text = document.createElement("div");
+  text.className = "tip-time mono";
+  tip.appendChild(text);
+  wrap.append(line, tip);
+  wrap.addEventListener("pointermove", (e) => {
+    if (!state.pts.length) return;
+    const rect = wrap.getBoundingClientRect();
+    if (!rect.width) return;
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const p = nearestByTime(state.pts, state.t0 + frac * state.tSpan);
+    line.style.left = `${frac * 100}%`;
+    line.hidden = false;
+    text.textContent = `${(p.t - state.t0).toFixed(1)}s · ${p.v.toFixed(3)}`;
+    tip.style.left = `${frac * 100}%`;
+    tip.classList.toggle("flip", frac > 0.6);
+    tip.hidden = false;
+  });
+  wrap.addEventListener("pointerleave", () => {
+    line.hidden = true;
+    tip.hidden = true;
+  });
+}
+
+/** Nearest point by timestamp; pts are t-sorted. @param {{t:number,v:number}[]} pts @param {number} t */
+function nearestByTime(pts, t) {
+  let lo = 0;
+  let hi = pts.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].t < t) lo = mid;
+    else hi = mid;
+  }
+  return t - pts[lo].t <= pts[hi].t - t ? pts[lo] : pts[hi];
+}
+
+/** @param {number} s */
+function fmtSeconds(s) {
+  return s >= 10 ? `${s.toFixed(0)}s` : `${s.toFixed(1)}s`;
 }
 
 /**
@@ -576,7 +674,7 @@ function renderTimeseries(samples, host) {
   path.setAttribute("vector-effect", "non-scaling-stroke");
   dyn.appendChild(path);
 
-  setAxis(axis, ["", `budget ${period.toFixed(0)} ms`, ""]);
+  setAxis(axis, [samples.length > pts.length ? `last ${pts.length} steps` : "", `budget ${period.toFixed(0)} ms`, ""]);
 }
 
 /** @param {Sample[]} samples @param {HTMLElement} host */

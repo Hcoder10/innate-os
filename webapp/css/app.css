@@ -3006,6 +3006,17 @@ button {
   transform: translateX(calc(-100% - 10px));
 }
 
+/* y-axis tick labels for an absolutely-scaled trace series (profile chart) */
+.trace-ytick {
+  position: absolute;
+  left: 4px;
+  transform: translateY(-50%);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 .tip-time {
   margin-bottom: 5px;
   padding-bottom: 5px;
@@ -3907,6 +3918,7 @@ button {
   align-items: stretch;
 }
 .prof-plot-svg {
+  position: relative; /* hover guide + value tip overlay anchor */
   flex: 1;
   min-width: 0;
 }
@@ -4019,6 +4031,17 @@ button {
   gap: 5px;
   color: var(--muted);
   cursor: pointer;
+}
+
+/* Rollout failure line: the actual error message, kept up until the next run. */
+.prof-error {
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  padding: 8px 14px;
+  background: var(--panel);
+  color: var(--danger);
+  font-size: 12px;
+  font-family: var(--font-mono);
 }
 
 /* Review bar: shown between run end and ✓/✗/Discard. */
