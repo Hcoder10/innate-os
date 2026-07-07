@@ -50,9 +50,11 @@ if [[ -d "${INNATE_OS_ROOT}/.git" ]]; then
     if [[ -z "$CURRENT_VERSION" ]]; then
         CURRENT_VERSION="$(git -C "$INNATE_OS_ROOT" describe --tags --always --dirty 2>/dev/null)"
     fi
-    LATEST_TAG="$(git -C "$INNATE_OS_ROOT" tag --sort=-v:refname --merged "origin/$UPDATE_BRANCH" 2>/dev/null | head -1)"
+    # Only version-shaped tags (x.y.z...) count as releases -- any other tag
+    # in the repo (infra, experiments) must never trip the update banner.
+    LATEST_TAG="$(git -C "$INNATE_OS_ROOT" tag --sort=-v:refname --merged "origin/$UPDATE_BRANCH" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     if [[ -z "$LATEST_TAG" ]]; then
-        LATEST_TAG="$(git -C "$INNATE_OS_ROOT" tag --sort=-v:refname 2>/dev/null | head -1)"
+        LATEST_TAG="$(git -C "$INNATE_OS_ROOT" tag --sort=-v:refname 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     fi
 fi
 
