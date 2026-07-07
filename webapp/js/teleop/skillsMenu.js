@@ -158,7 +158,7 @@ export function createSkillsMenu(parent, rosClient) {
         if (!/^-?\d+$/.test(raw)) return { error: "Whole number expected", param: name };
         out[name] = parseInt(raw, 10);
       } else if (isNumeric(t)) {
-        const n = Number(raw);
+        const n = Number(raw.replace(",", "."));
         if (!Number.isFinite(n)) return { error: "Number expected", param: name };
         out[name] = n;
       } else if (isJson(t)) {
@@ -465,7 +465,11 @@ export function createSkillsMenu(parent, rosClient) {
     } else {
       const inp = document.createElement("input");
       inp.className = "skill-input mono";
-      inp.type = isNumeric(t) ? "number" : "text";
+      // type=text (not number) so a numeric field's decimal separator always
+      // renders as a dot regardless of browser/OS locale; inputmode keeps the
+      // mobile numpad. buildInputs() normalizes any comma the user still types.
+      inp.type = "text";
+      if (isNumeric(t)) inp.inputMode = "decimal";
       inp.value = value;
       inp.placeholder = `${paramName}…`;
       inp.addEventListener("input", () => setValue(skill.id, paramName, inp.value));

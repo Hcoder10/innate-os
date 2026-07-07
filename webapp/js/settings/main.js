@@ -91,7 +91,7 @@ const STYLE = `
 .set-doc-link { color: var(--primary, #7569FD); text-decoration: none; }
 .set-doc-link:hover { text-decoration: underline; }
 .set-ctl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.set-ctl input[type=number] { width: 84px; padding: 6px 8px; text-align: right; border-radius: 8px;
+.set-ctl input.set-num { width: 84px; padding: 6px 8px; text-align: right; border-radius: 8px;
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl input[type=checkbox] { width: 18px; height: 18px; }
 .set-unit { color: var(--muted, #8a90a0); font-size: 12px; width: 34px; }
@@ -650,14 +650,18 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
     });
   } else {
     const input = document.createElement("input");
-    input.type = "number";
-    input.step = knob.type === "int" ? "1" : "0.05";
+    // type=text (not number) so the decimal separator always renders as a dot,
+    // regardless of the browser/OS locale; inputmode keeps the mobile numpad.
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.className = "set-num";
     ctl.appendChild(input);
     entry.render = () => {
       input.value = String(entry.value);
     };
     input.addEventListener("input", () => {
-      entry.value = Number(input.value);
+      // Tolerate a comma decimal separator from locale-habit typing.
+      entry.value = Number(input.value.replace(",", "."));
       entry.overridden = true;
       recompute();
     });
