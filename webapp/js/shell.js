@@ -227,29 +227,3 @@ function createBadge() {
   });
   return badge;
 }
-
-/**
- * Placeholder body for future sections: section name + one-liner, centered.
- * @param {HTMLElement | null} stage
- * @param {{ title: string, blurb: string }} opts
- */
-export function renderPlaceholder(stage, opts) {
-  if (!stage) return;
-  const wrap = document.createElement("div");
-  wrap.className = "placeholder";
-
-  const title = document.createElement("h1");
-  title.className = "placeholder-title";
-  title.textContent = opts.title;
-
-  const blurb = document.createElement("p");
-  blurb.className = "placeholder-blurb";
-  blurb.textContent = opts.blurb;
-
-  const soon = document.createElement("p");
-  soon.className = "microlabel";
-  soon.textContent = "coming soon";
-
-  wrap.append(title, blurb, soon);
-  stage.appendChild(wrap);
-}

@@ -173,24 +173,11 @@ class LearnedExecCfg(_BaseExecCfg):
     # for how the individual stops combine.
     auto_stop: bool = Field(False)
     #
-    # Floor (s) before any early stop may fire (the idle dwell also only starts
-    # counting after it); 0 = no floor.
+    # Floor (s) before any early stop may fire; 0 = no floor.
     min_duration: float = Field(0.0, ge=0)
     # EMA smoothing for the progress signal, in (0, 1]; 1.0 = raw (no smoothing),
-    # smaller = smoother but slower to react. Applied to both the progress-threshold
-    # and progress-gate checks.
+    # smaller = smoother but slower to react.
     progress_ema_alpha: float = Field(1.0, gt=0, le=1.0)
-    # Stop once the robot has held still this long (s); 0 = idle stop disabled.
-    idle_seconds: float = Field(0.0, ge=0)
-    # Per-step "not moving" thresholds: arm = L2 norm of the commanded joint-target
-    # change (rad), base = |linear.x| + |angular.z| (m/s + rad/s). Both are published
-    # on the inference-profile topic (``arm_jerk`` / ``base_speed``) while a learned
-    # skill runs -- read them off while the skill holds its end pose.
-    idle_arm_eps: float = Field(0.01, gt=0)
-    idle_base_eps: float = Field(0.01, gt=0)
-    # Idle only counts as "done" once smoothed progress reaches this (the "stopped
-    # moving AND made progress" guard against mid-task pauses); 0 = idle alone may stop.
-    progress_gate: float = Field(0.0, ge=0)
     # Progress-stability stop, for checkpoints whose progress head saturates high both
     # before the task engages and after it finishes (so a bare progress threshold fires
     # in the opening steps). Stop once smoothed progress -- having first dipped below
@@ -217,10 +204,6 @@ class LearnedExecCfg(_BaseExecCfg):
         "n_action_steps",
         "min_duration",
         "progress_ema_alpha",
-        "idle_seconds",
-        "idle_arm_eps",
-        "idle_base_eps",
-        "progress_gate",
         "engage_below",
         "stable_min",
         "stable_seconds",
@@ -252,26 +235,17 @@ class LearnedExecCfg(_BaseExecCfg):
     def _progress_features_need_progress_head(self) -> LearnedExecCfg:
         """Reject progress-dependent stops on a skill without a progress head.
 
-        With ``action_dim < 10`` the policy has no progress output. A ``progress_gate``
-        could never pass (so the idle stop would silently never fire) and the
-        progress-stability stop has no signal at all -- either way the skill would
-        always run to the ``duration`` cap. Fail loudly at validation time instead.
+        With ``action_dim < 10`` the policy has no progress output, so the
+        progress-stability stop has no signal at all and the skill would always run
+        to the ``duration`` cap. Fail loudly at validation time instead.
         """
-        if self.action_dim < 10:
-            if self.progress_gate > 0:
-                raise ValueError(
-                    f"progress_gate={self.progress_gate} requires a progress head "
-                    f"(action_dim >= 10, got {self.action_dim}): the gate could never pass, "
-                    "so the idle stop would silently never fire. Set progress_gate to 0/null, "
-                    "or use a checkpoint whose action head includes progress."
-                )
-            if self.stable_seconds > 0:
-                raise ValueError(
-                    f"stable_seconds={self.stable_seconds} requires a progress head "
-                    f"(action_dim >= 10, got {self.action_dim}): the progress-stability stop "
-                    "has no signal without one, so it would silently never fire. Set "
-                    "stable_seconds to 0/null, or use a checkpoint whose action head includes progress."
-                )
+        if self.action_dim < 10 and self.stable_seconds > 0:
+            raise ValueError(
+                f"stable_seconds={self.stable_seconds} requires a progress head "
+                f"(action_dim >= 10, got {self.action_dim}): the progress-stability stop "
+                "has no signal without one, so it would silently never fire. Set "
+                "stable_seconds to 0/null, or use a checkpoint whose action head includes progress."
+            )
         return self
 
 

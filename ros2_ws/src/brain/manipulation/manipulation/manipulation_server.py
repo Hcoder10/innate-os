@@ -394,10 +394,6 @@ class ManipulationServer(Node):
                     min_duration=params.min_duration,
                     progress_threshold=progress_threshold,
                     progress_ema_alpha=params.progress_ema_alpha,
-                    idle_seconds=params.idle_seconds,
-                    idle_arm_eps=params.idle_arm_eps,
-                    idle_base_eps=params.idle_base_eps,
-                    progress_gate=params.progress_gate,
                     engage_below=params.engage_below,
                     stable_min=params.stable_min,
                     stable_seconds=params.stable_seconds,
@@ -439,7 +435,7 @@ class ManipulationServer(Node):
                         self._stop_robot()
                         return "FAILURE", "Required sensors became unavailable during execution"
                     # The detector saw nothing this step; discount one loop period from
-                    # its dwells so the failure window isn't counted as observed stillness.
+                    # its stability dwell so the failure window isn't counted as observed.
                     if stop_detector is not None:
                         stop_detector.note_gap(period)
                 elif stop_detector is not None:
@@ -905,8 +901,8 @@ class ManipulationServer(Node):
     def _run_inference_once(self):
         """Run one inference step and publish its commands.
 
-        Returns a :class:`StepSignals` (progress, arm_delta, base_speed) for the
-        auto-stop detector, or None if inputs aren't ready yet or inference failed.
+        Returns a :class:`StepSignals` (progress) for the auto-stop detector, or None
+        if inputs aren't ready yet or inference failed.
         """
         if (
             not self.current_policy
@@ -955,12 +951,11 @@ class ManipulationServer(Node):
             self._publish_arm(action_np[:6])
             t3 = time.perf_counter()
 
-            # Motion signals for the auto-stop detector, reused below for the profiler's
-            # jerk metrics. arm_delta is the L2 change in the commanded joint targets vs.
-            # the previous step; base_speed is the commanded base velocity magnitude. Both
-            # collapse to ~0 once the policy holds still. Update prev first (and guard on
-            # matching shape: switching to a behavior with a different action_dim leaves a
-            # stale prev whose slices won't broadcast) so a failure below can't stall it.
+            # Motion signals for the profiler's jerk metrics. arm_delta is the L2 change
+            # in the commanded joint targets vs. the previous step; base_speed is the
+            # commanded base velocity magnitude. Update prev first (and guard on matching
+            # shape: switching to a behavior with a different action_dim leaves a stale
+            # prev whose slices won't broadcast) so a failure below can't stall it.
             prev = self._prev_action_np
             self._prev_action_np = action_np
             arm_delta = (
@@ -972,8 +967,8 @@ class ManipulationServer(Node):
             progress = float(action_np[8]) if self.current_action_dim >= 10 else None
 
             if profiling:
-                # base_speed is published so idle_base_eps can be tuned against the exact
-                # quantity the auto-stop detector checks (base_jerk is the command *delta*).
+                # base_speed is the commanded velocity magnitude (base_jerk is its
+                # per-step delta) -- both charted on the Profiling page.
                 quality = {"base_speed": base_speed}
                 # Full raw action (pre base-speed scaling, every dim incl. the progress /
                 # termination heads): a persisted profile is then a complete per-step
@@ -990,7 +985,7 @@ class ManipulationServer(Node):
                     quality["disagreement"] = float(disagreement)
                 self._publish_inference_profile(t0, t1, t_sel, t2, t3, engine_ran, engine_ms, quality)
 
-            return StepSignals(progress=progress, arm_delta=arm_delta, base_speed=base_speed)
+            return StepSignals(progress=progress)
 
         except Exception as e:
             self.get_logger().error(f"Error during inference: {e}")
