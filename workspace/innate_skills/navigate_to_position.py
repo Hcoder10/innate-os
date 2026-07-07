@@ -219,6 +219,19 @@ class Nav2Controller:
         # Set the cancellation flag
         self._cancel_requested.set()
 
+    def destroy(self):
+        """Destroy the navigator nodes so their graph entities disappear now,
+        not at some eventual GC pass. Safe outside go_to_position — nothing
+        else spins these nodes."""
+        for navigator in (self.navigator, self.navigator_mapfree, self.navigator_navigation):
+            try:
+                # Humble's BasicNavigator.destroy_node() misses this client; its
+                # live handle would keep the rcl node and graph entities alive.
+                navigator.assisted_teleop_client.destroy()
+                navigator.destroy_node()
+            except Exception as e:
+                self.logger.warning(f"Error destroying navigator node: {e}")
+
 
 class NavigateToPosition(Skill):
     def __init__(self, logger):
@@ -265,3 +278,7 @@ class NavigateToPosition(Skill):
         self.logger.debug("Canceling navigation task")
         self.nav2_controller.cancel_navigation()
         return "Navigation canceled"
+
+    def shutdown(self):
+        """Destroy this instance's navigator nodes when the server retires it."""
+        self.nav2_controller.destroy()

@@ -109,11 +109,22 @@ class SkillsActionServer(Node):
             head_current_position_topic=self.head_current_position_topic,
         )
 
+        # The robot runs one skill at a time. Guards execute_callback so a goal
+        # that arrives while another skill is still executing is aborted promptly
+        # (see execute_callback) instead of contending for the arm/robot state.
+        # Also gates disposal of reload-retired skill instances: destroying a
+        # retired instance's ROS entities mid-run would crash the skill that is
+        # still spinning them, so disposal waits until execution ends.
+        self._skill_execution_lock = threading.Lock()
+        self._skill_running = False
+        self._pending_retired_skills = []
+
         # Skill catalog (discovery, metadata, publishing, reload).
         self.catalog = SkillRepository(
             self,
             interface_injector=self.robot_state.inject_required_interfaces,
             simulator_mode=self.simulator_mode,
+            retire_instances=self._retire_skill_instances,
         )
 
         # Broadcasts every run's lifecycle (running/completed/failed/interrupted) so any
@@ -129,12 +140,6 @@ class SkillsActionServer(Node):
         self._behavior_goal_handles = {}
         self._behavior_goal_cancel_requested = set()
         self._behavior_goal_cancel_sent = set()
-
-        # The robot runs one skill at a time. Guards execute_callback so a goal
-        # that arrives while another skill is still executing is aborted promptly
-        # (see execute_callback) instead of contending for the arm/robot state.
-        self._skill_execution_lock = threading.Lock()
-        self._skill_running = False
 
         # ReentrantCallbackGroup so a cancel request can be serviced *while* a
         # skill's execute_callback is blocked waiting on the behavior result.
@@ -183,6 +188,20 @@ class SkillsActionServer(Node):
         # boot and never receives the latched sample. Re-emit the cached roster
         # at a low rate so late-joining clients get it within one interval.
         self._skills_heartbeat_timer = self.create_timer(3.0, self.catalog.republish_cached)
+
+    # ================= retired skill instances =================
+    def _retire_skill_instances(self, instances):
+        """Dispose skill instances a reload replaced, deferring while a skill runs.
+
+        The running skill may itself be a retired instance (reload mid-run), and
+        its execute() is still spinning the ROS entities it owns — so disposal
+        waits for the run to end (drained in execute_callback's finally).
+        """
+        with self._skill_execution_lock:
+            if self._skill_running:
+                self._pending_retired_skills.extend(instances)
+                return
+        SkillRepository.dispose_instances(instances, self.get_logger())
 
     # ================= service handlers (delegate to catalog) =================
     def _handle_reload_skills(self, request, response):
@@ -328,6 +347,8 @@ class SkillsActionServer(Node):
         finally:
             with self._skill_execution_lock:
                 self._skill_running = False
+                retired, self._pending_retired_skills = self._pending_retired_skills, []
+            SkillRepository.dispose_instances(retired, self.get_logger())
         status, reason = self._terminal_skill_status(result)
         self._publish_skill_status(run_id, skill_type, name, status, reason)
         return result
