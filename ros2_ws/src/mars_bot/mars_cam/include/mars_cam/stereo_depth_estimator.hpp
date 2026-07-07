@@ -85,6 +85,7 @@ class StereoDepthEstimator : public rclcpp::Node {
     void syncCallback(const sensor_msgs::msg::Image::ConstSharedPtr& left_msg,
                       const sensor_msgs::msg::Image::ConstSharedPtr& right_msg);
     void processFrame(const cv::Mat& left_img, const cv::Mat& right_img, const rclcpp::Time& timestamp);
+    bool anyOutputSubscribed() const;
 
     // ── Camera Info Calibration ────────────────────────────────────────────
     void leftCameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr& msg);
@@ -209,6 +210,7 @@ class StereoDepthEstimator : public rclcpp::Node {
 
     bool vpi_initialized_{false};
     bool calibration_loaded_{false};
+    bool pipeline_active_{true};  // lazy gate: false while no output has subscribers
     int frame_count_{0};
     int input_frame_count_{0};
     rclcpp::Time last_stats_time_;

@@ -14,6 +14,12 @@ namespace mars_cam {
 // =============================================================================
 void StereoDepthEstimator::scaleToCalibRes(const cv::Mat& left_in, const cv::Mat& right_in, cv::Mat& left_out,
                                            cv::Mat& right_out) {
+    if (left_in.cols == calib_width_ && left_in.rows == calib_height_) {
+        // Already at calibration resolution: shallow copy (downstream only reads).
+        left_out = left_in;
+        right_out = right_in;
+        return;
+    }
     cv::resize(left_in, left_out, cv::Size(calib_width_, calib_height_), 0, 0, cv::INTER_LINEAR);
     cv::resize(right_in, right_out, cv::Size(calib_width_, calib_height_), 0, 0, cv::INTER_LINEAR);
 }
