@@ -35,7 +35,7 @@ RecorderNode::RecorderNode()
     this->declare_parameter("velocity_topic", "/cmd_vel");
     this->declare_parameter("odom_topic", "/odom");
     this->declare_parameter("image_size", std::vector<int64_t>{640, 480});
-    this->declare_parameter("max_timesteps", 1800);
+    this->declare_parameter("max_timesteps", 18000);
 
     // Get parameter values
     std::string data_dir_param = this->get_parameter("data_directory").as_string();
