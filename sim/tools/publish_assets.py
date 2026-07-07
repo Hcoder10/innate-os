@@ -4,6 +4,9 @@ out of git -- collision hulls, SDF shells, room meshes, nav map, GLB/STLs).
 Bundle layout (extracted by the launcher's ensure_sim_assets):
     work/    -> sim/assets/          the driver-side store the tools generate
     viewer/  -> sim/viewer/          browser-served assets (public/*, assets/*)
+                                     + dist-lib/ (the built SimSession bundle,
+                                     so users need no Node.js -- npm is only
+                                     required here, at publish time)
 
 The viewer's apartment_collisions_v2 (flat hulls + manifest.json) and
 apartment_sdf are REBUILT here from the work/ store, so the two consumers can
@@ -33,9 +36,17 @@ ASSETS = SIM / "assets"
 VIEWER = SIM / "viewer"
 LOCK_FILE = SIM / "sim-assets.lock"
 MARKER = ASSETS / ".assets-tag"
-REPO = "innate-inc/innate-os"
+REPO = (
+    "innate-inc/innate-sim-assets"  # dedicated repo: keeps asset tags out of innate-os (robots version-check its tags)
+)
 
 WORK_DIRS = ["apartment_split", "apartment_split_v2", "apartment_visual", "sdf_shells", "map"]
+
+# Kept in sync with sim/README.md's Credits section.
+ATTRIBUTION = (
+    "# Attribution\n\n"
+    + 'The apartment environment is derived from ["Appartement"](https://sketchfab.com/3d-models/appartement-6a7a5fe208344b2e8123a88923dbd5b3) by [SrMonteiro](https://sketchfab.com/crispimrafael), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: split per room, convex-decomposed for collision, re-exported for rendering (GLB/MuJoCo meshes), and rasterized into a navigation map.'
+)
 VIEWER_CARRYOVER = ["public/models", "public/robot", "assets/apartment_obj"]
 
 
@@ -53,7 +64,12 @@ def stage(root: Path) -> None:
         shutil.copy2(obj, hulls_dir / obj.name)
         names.append(obj.name)
     (hulls_dir / "manifest.json").write_text(json.dumps(names, indent=1) + "\n")
-    print(f"  apartment_collisions_v2: {len(names)} hulls")
+    # One binary triangle soup of ALL hulls (float32 xyz per vertex, 3 verts
+    # per tri): the browser overlay loads this in one fetch + zero parsing,
+    # vs ~30s for 1300 individual OBJ fetches through the TLS proxy.
+    soup = _hull_soup(hulls_dir, names)
+    (hulls_dir / "hulls.f32").write_bytes(soup.tobytes())
+    print(f"  apartment_collisions_v2: {len(names)} hulls, soup {soup.shape[0] // 3} tris")
 
     sdf_dir = root / "viewer" / "public" / "physics" / "apartment_sdf"
     sdf_dir.mkdir(parents=True)
@@ -65,6 +81,37 @@ def stage(root: Path) -> None:
         if not src.is_dir():
             sys.exit(f"missing {src} -- need a full asset checkout to publish")
         shutil.copytree(src, root / "viewer" / rel, ignore=shutil.ignore_patterns(".DS_Store"))
+
+    # Ship the BUILT SimSession bundle so `up` never needs Node.js: rebuild
+    # here (publishers are developers) so the published artifact can't be
+    # stale relative to the viewer sources in this checkout.
+    if shutil.which("npm") is None:
+        sys.exit("npm is required to publish: the bundle ships the built sim viewer (dist-lib)")
+    if not (VIEWER / "node_modules").is_dir():
+        subprocess.run(["npm", "ci"], cwd=VIEWER, check=True)
+    subprocess.run(["npm", "run", "build:lib"], cwd=VIEWER, check=True)
+    shutil.copytree(VIEWER / "dist-lib", root / "viewer" / "dist-lib")
+
+    # CC BY attribution must travel with the distributed material -- this
+    # bundle is downloadable without ever seeing the innate-os repo.
+    (root / "ATTRIBUTION.md").write_text(ATTRIBUTION + "\n")
+
+
+def _hull_soup(hulls_dir: Path, names: list[str]):
+    """Concatenate every hull OBJ into one (N*3, 3) float32 triangle soup."""
+    import numpy as np
+
+    chunks = []
+    for name in names:
+        verts, faces = [], []
+        for line in (hulls_dir / name).read_text().splitlines():
+            if line.startswith("v "):
+                verts.append([float(v) for v in line.split()[1:4]])
+            elif line.startswith("f "):
+                faces.append([int(t.split("/")[0]) - 1 for t in line.split()[1:4]])
+        v = np.asarray(verts, dtype=np.float32)
+        chunks.append(v[np.asarray(faces, dtype=np.int32)].reshape(-1, 3))
+    return np.concatenate(chunks)
 
 
 def deterministic_targz(root: Path, out: Path) -> str:
@@ -126,7 +173,9 @@ def main() -> None:
                     tag,
                     "--notes",
                     f"Sim asset bundle ({n_files} files). Fetched by the launcher via sim/sim-assets.lock; "
-                    f"regenerate with sim/tools/ (see sandbox/README.md), republish with tools/publish_assets.py.",
+                    f"regenerate with sim/tools/ (see sandbox/README.md), republish with tools/publish_assets.py. "
+                    f"Apartment model: 'Appartement' by SrMonteiro (sketchfab.com/crispimrafael), CC BY 4.0; "
+                    f"see ATTRIBUTION.md in the bundle.",
                 ],
                 check=True,
             )

@@ -70,6 +70,11 @@ WEBAPP_SIM_CONTROLS = os.environ.get("WEBAPP_SIM_CONTROLS", "").strip().lower() 
 CERT_DIR = Path.home() / ".innate-webapp-tls"
 ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 
+# /worldstate -> the sim world server's observer stream: host of
+# VIRTUAL_MARS_REMOTE (else in-container), always port 8800 (its default).
+_WORLD_HOST = os.environ.get("VIRTUAL_MARS_REMOTE", "").strip().partition(":")[0] or "127.0.0.1"
+WORLD_STATE_URL = f"ws://{_WORLD_HOST}:8800"
+
 
 def _quiet_benign_disconnects() -> None:
     """Stop the websockets library from logging a full traceback every time a
@@ -175,7 +180,7 @@ SIM_VIEWER_ROUTES = {
 }
 
 
-def sim_viewer_response(path: str) -> "Response | None":
+def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
     clean = path.split("?", 1)[0].split("#", 1)[0]
     for prefix, base in SIM_VIEWER_ROUTES.items():
         if not clean.startswith(prefix):
@@ -184,8 +189,16 @@ def sim_viewer_response(path: str) -> "Response | None":
         if not target.is_file() or not target.is_relative_to(base.resolve()):
             return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
         body = target.read_bytes()
+        # Same ETag/304 revalidation as static_response -- these routes carry
+        # the ~35MB apartment glb + robot meshes, re-requested on every page
+        # mount now that the SPA router remounts the stage per visit.
+        etag = f'"{hashlib.sha1(body).hexdigest()}"'
+        if if_none_match == etag:
+            return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
         ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        headers = Headers({"Content-Type": ctype, "Content-Length": str(len(body)), "Cache-Control": "no-cache"})
+        headers = Headers(
+            {"Content-Type": ctype, "Content-Length": str(len(body)), "Cache-Control": "no-cache", "ETag": etag}
+        )
         return Response(200, "OK", headers, body)
     return None
 
@@ -280,11 +293,11 @@ def restart_response() -> Response:
 
 
 async def _dispatch_request(connection, request):
-    if request.path == "/ws":
+    if request.path in ("/ws", "/worldstate"):
         return None  # proceed with the WebSocket handshake
     if request.path.split("?", 1)[0] == "/config.json":
         return await asyncio.to_thread(config_response)
-    sim_viewer = await asyncio.to_thread(sim_viewer_response, request.path)
+    sim_viewer = await asyncio.to_thread(sim_viewer_response, request.path, request.headers.get("If-None-Match", ""))
     if sim_viewer is not None:
         return sim_viewer
     split = urlsplit(request.path)
@@ -326,12 +339,14 @@ async def relay(source, sink):
 
 
 async def ws_handler(connection):
-    """Bidirectional /ws <-> rosbridge relay (or the /settings write channel)."""
+    """Bidirectional relay: /ws <-> rosbridge, /worldstate <-> the sim world
+    server's observer stream (or the /settings write channel)."""
     if connection.request.path == "/settings":
         await settings_ws(connection)
         return
+    upstream_url = WORLD_STATE_URL if connection.request.path == "/worldstate" else ROSBRIDGE_URL
     try:
-        async with ws_connect(ROSBRIDGE_URL, max_size=None) as upstream:
+        async with ws_connect(upstream_url, max_size=None) as upstream:
             done, pending = await asyncio.wait(
                 [
                     asyncio.ensure_future(relay(connection, upstream)),
@@ -360,7 +375,10 @@ async def main():
         await stack.enter_async_context(
             serve(ws_handler, "0.0.0.0", HTTPS_PORT, ssl=ctx, process_request=_dispatch_request, max_size=None)
         )
-        print(f"https front door on https://0.0.0.0:{HTTPS_PORT} (app + /ws -> {ROSBRIDGE_URL})")
+        print(
+            f"https front door on https://0.0.0.0:{HTTPS_PORT} "
+            f"(app + /ws -> {ROSBRIDGE_URL} + /worldstate -> {WORLD_STATE_URL})"
+        )
         if HTTP_PORT:
             # Same app over cleartext — no auto-upgrade; the arm panel offers a manual HTTPS switch.
             await stack.enter_async_context(

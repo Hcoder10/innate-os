@@ -1,8 +1,9 @@
-// Connected-mode state source for the webapp's SimSession: subscribe to the
-// real innate-os ROS graph over rosbridge and mirror the virtual MARS
-// driver's pose + joint state. Read-only -- teleop/commands go through the
-// webapp's own rosbridge client, and physics lives in the mars_sim_driver
-// container.
+// /scan overlay source for the webapp's SimSession: subscribe to the robot's
+// lidar over rosbridge and emit world-frame hit points. Pose/joints for the
+// 3D view come from the world server's observer stream (worldStateController)
+// -- lidar stays here deliberately: it is a robot sensor, so the robot's own
+// pipeline is the honest source for the debug overlay. Read-only --
+// teleop/commands go through the webapp's own rosbridge client.
 //
 // Speaks the rosbridge JSON protocol directly (subscribe/publish) -- no
 // roslib dependency for two message types.
@@ -11,7 +12,6 @@
 const LASER_OFFSET = { x: -0.0764, z: 0.17165 };
 
 export class RosbridgePhysicsController {
-  onPose?: (pose: { x: number; y: number; z: number; yaw: number; joints: Record<string, number> }) => void;
   /** World-frame lidar hit points [x0,y0,z0, x1,...], null-range rays skipped. */
   onScan?: (points: Float32Array) => void;
 
@@ -23,8 +23,8 @@ export class RosbridgePhysicsController {
   #everOpened = false;
   #disposed = false;
   #retryMs = 500;
+  // Latest driver pose -- only anchors scan points in the world frame.
   #pose = { x: 0, y: 0, yaw: 0 };
-  #joints: Record<string, number> = {};
 
   constructor(url: string) {
     this.#url = url;
@@ -44,9 +44,12 @@ export class RosbridgePhysicsController {
     ws.onopen = () => {
       this.#everOpened = true;
       this.#retryMs = 500;
-      this.#send({ op: "subscribe", topic: "/odom", type: "nav_msgs/msg/Odometry", throttle_rate: 33 });
-      this.#send({ op: "subscribe", topic: "/joint_states", type: "sensor_msgs/msg/JointState", throttle_rate: 33 });
-      this.#send({ op: "subscribe", topic: "/scan", type: "sensor_msgs/msg/LaserScan", throttle_rate: 150 });
+      // /odom only anchors the scan overlay, so a mild throttle is fine here
+      // (the 3D view's pose comes from the world state stream, not rosbridge).
+      // queue_length 1: latest-wins -- a hop buffering more than the newest
+      // sample converts load hiccups into permanent lag.
+      this.#send({ op: "subscribe", topic: "/odom", type: "nav_msgs/msg/Odometry", throttle_rate: 100, queue_length: 1 });
+      this.#send({ op: "subscribe", topic: "/scan", type: "sensor_msgs/msg/LaserScan", throttle_rate: 150, queue_length: 1 });
       this.#resolveOpen();
     };
     ws.onerror = () => {
@@ -74,17 +77,11 @@ export class RosbridgePhysicsController {
   #onMessage(msg: { op: string; topic?: string; msg?: unknown }): void {
     if (msg.op !== "publish") return;
     if (msg.topic === "/odom") {
-      const odom = msg.msg as { pose: { pose: { position: { x: number; y: number }; orientation: { z: number; w: number } } } };
+      const odom = msg.msg as {
+        pose: { pose: { position: { x: number; y: number }; orientation: { z: number; w: number } } };
+      };
       const { position, orientation } = odom.pose.pose;
       this.#pose = { x: position.x, y: position.y, yaw: 2 * Math.atan2(orientation.z, orientation.w) };
-      this.#emit();
-    } else if (msg.topic === "/joint_states") {
-      const js = msg.msg as { name: string[]; position: number[] };
-      js.name.forEach((name, i) => (this.#joints[name] = js.position[i]));
-      // joint6M is the gripper's mirrored finger (URDF mimic of joint6,
-      // multiplier -1) -- the driver doesn't publish it, so derive it here.
-      this.#joints["joint6M"] = -(this.#joints["joint6"] ?? 0);
-      this.#emit();
     } else if (msg.topic === "/scan" && this.onScan) {
       const scan = msg.msg as { angle_min: number; angle_increment: number; range_max: number; ranges: number[] };
       const { x, y, yaw } = this.#pose;
@@ -100,10 +97,6 @@ export class RosbridgePhysicsController {
       });
       this.onScan(new Float32Array(points));
     }
-  }
-
-  #emit(): void {
-    this.onPose?.({ x: this.#pose.x, y: this.#pose.y, z: 0, yaw: this.#pose.yaw, joints: this.#joints });
   }
 
   #send(payload: object): void {

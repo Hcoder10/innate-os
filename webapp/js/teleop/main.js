@@ -90,8 +90,8 @@ function buildCockpit(root) {
     createTtsBar(ttsOverlay, ros),
     // Collapsible skill launcher pinned next to the speak bar.
     createSkillsMenu(ttsOverlay, ros),
-    createArmPanel(armOverlay, ros),
-    createProfilingPanel(root, session),
+    createArmPanel(armOverlay, ros, { hideServices: !!config.simControls }),
+    ...(config.simControls ? [] : [createProfilingPanel(root, session)]),
     createCameraSwitch(root, session, ros),
     keyboard,
   );

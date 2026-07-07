@@ -26,22 +26,19 @@ export function createTtsBar(parent, rosClient) {
   input.spellcheck = false;
   input.setAttribute("aria-label", "Text to speech");
 
-  const hint = document.createElement("span");
-  hint.className = "tts-hint mono";
-  hint.textContent = "↵";
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "tts-hint mono";
+  sendBtn.textContent = "↵";
+  sendBtn.setAttribute("aria-label", "Send");
 
-  wrap.append(input, hint);
+  wrap.append(input, sendBtn);
   parent.appendChild(wrap);
 
   /** @type {number | null} */
   let flashTimer = null;
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      input.blur();
-      return;
-    }
-    if (e.key !== "Enter") return;
+  function send() {
     const text = input.value.trim();
     if (!text) return;
     rosClient.publish(TTS_TOPIC, { data: text });
@@ -52,6 +49,15 @@ export function createTtsBar(parent, rosClient) {
       flashTimer = null;
       wrap.classList.remove("sent");
     }, SENT_FLASH_MS);
+  }
+
+  sendBtn.onclick = send;
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      input.blur();
+      return;
+    }
+    if (e.key === "Enter") send();
   });
 
   return {

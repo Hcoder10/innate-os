@@ -2,9 +2,12 @@
 
 The Three.js **SimSession library** the webapp embeds when the robot is
 simulated: a live, full-resolution, drag-to-orbit 3D view of the apartment +
-MARS robot, mirroring the `mars_sim_driver` container's state over rosbridge
-(`/odom` + `/joint_states`, a few KB/s -- no video pipe). Physics never runs
-in the browser; this is rendering only.
+MARS robot, fed by the world server's ground-truth observer stream (~75Hz
+pose + joints over a WebSocket, a few KB/s -- no video pipe): direct to
+loopback when the page is local, else the webapp's proxied `/worldstate`
+route. Physics never runs in the browser; this is rendering only. Only the
+lidar debug overlay reads a robot topic (`/scan` over rosbridge, connected
+on first toggle), because it deliberately shows what the robot senses.
 
 The standalone browser sim (MuJoCo WASM physics, no ROS) lives in the
 separate `innate-sim-demo` repo -- it was extracted from this source tree
@@ -20,6 +23,11 @@ extracts them from the published bundle (see `sim/sim-assets.lock`).
 
 ## Build
 
+Users never build this: `dist-lib/` ships prebuilt in the sim asset bundle
+(`./innate-sim up` extracts it), so running the sim needs no Node.js. The
+toolchain below is only for developing the viewer -- the launcher rebuilds
+automatically when sources are newer than the bundle.
+
 ```bash
 npm install
 npm run build:lib   # dist-lib/sim-session.js, served by the webapp at /sim-viewer/
@@ -34,10 +42,12 @@ and nothing here is ever installed on a robot.
 
 ```
 src/
-  simSession.ts     Session facade (WebRtcSession-compatible state shape)
-  simStage.ts       Mounts the canvas, render loop, PiP thumbnail blits
+  simSession.ts     Session facade (WebRtcSession-compatible state shape),
+                    jitter-sized interpolated playback of the state stream
+  simStage.ts       Mounts the canvas, render loop (60fps cap), PiP thumbnails
   scene.ts          Three.js scene: apartment glb + URDF robot, cameras
-  physics/rosbridgeController.ts   /odom + /joint_states mirror (auto-reconnect)
+  physics/worldStateController.ts  observer-stream client (auto-reconnect)
+  physics/rosbridgeController.ts   /scan overlay source (lazy-connected)
 public/             (fetched bundle) robot URDF+STLs, apartment glb
 ```
 

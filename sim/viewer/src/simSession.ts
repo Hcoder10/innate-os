@@ -1,20 +1,33 @@
 // SimSession — a drop-in for the webapp's WebRtcSession when the robot is
-// simulated: same state shape and methods, so cameraSwitch/profiling consume
-// it unchanged. Unlike WebRTC there is no video pipeline at all -- the
-// primary view is a real Three.js canvas mounted by createSimStage (full
-// resolution, drag-to-orbit), and only the small PiP thumbnails are
-// captureStream canvases the stage blits into.
-//
-// The session owns the rosbridge state feed (/odom + /joint_states, from the
-// virtual driver) and the pose-smoothing applied per rendered frame; the
-// stage owns the GL context and calls tick()/liveThumbnails()/blitThumbnail.
+// simulated: same state shape and methods, no video pipeline. State comes
+// from the world server's ground-truth observer stream (~75Hz pose+joints),
+// played back with a short clamped interpolation; rosbridge remains only
+// for the /scan debug overlay. Architecture: sim/README.md.
 
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
+import { WorldStateController } from "./physics/worldStateController";
 
-/** Thumbnail (PiP tile) render size, shared with createSimStage's scissor pass. */
-export const THUMB_W = 320;
-export const THUMB_H = 180;
+/** PiP tile render size; square to match the webapp's .cam-tile. */
+export const THUMB_W = 240;
+export const THUMB_H = 240;
+
+/** Playback delay bounds (see #delayS): one stream interval up to a
+ * still-watchable worst case. */
+const DELAY_MIN_S = 0.025;
+const DELAY_MAX_S = 0.25;
+
+/** Advance `samples` past renderT and return the bracketing pair plus the
+ * clamped interpolation factor (holds the last sample during a gap instead
+ * of extrapolating past it). Mutates the array (drops consumed history). */
+function bracket<T extends { t: number }>(samples: T[], renderT: number): [T, T, number] {
+  while (samples.length > 2 && samples[1].t <= renderT) samples.shift();
+  const a = samples[0];
+  const b = samples.length > 1 ? samples[1] : a;
+  const span = b.t - a.t;
+  const u = span > 1e-4 ? Math.min(1, Math.max(0, (renderT - a.t) / span)) : 1;
+  return [a, b, u];
+}
 
 export interface SimSessionState {
   status: "idle" | "connecting" | "streaming" | "error";
@@ -45,19 +58,26 @@ export class SimSession {
   #primaryIndex = 0;
   #primaryName = "main";
 
-  #controller: RosbridgePhysicsController | null = null;
+  #controller: WorldStateController | null = null;
+  #scanFeed: RosbridgePhysicsController | null = null;
   #thumbCanvases: HTMLCanvasElement[] = [];
   #thumbContexts: (CanvasRenderingContext2D | null)[] = [];
-  #streams: (MediaStream | null)[] = [];
   #started = false;
   #gotPose = false;
   #stageReady = false;
 
-  // Smoothing target; applied by tick() every rendered frame.
-  #target = { x: 0, y: 0, yaw: 0, joints: {} as Record<string, number>, live: false };
-  #pose = { x: 0, y: 0, yaw: 0 };
-  #shownJoints: Record<string, number> = {};
+  // Ground-truth snapshots on the sim clock.
+  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
+  #lastArrival = 0;
+  // Playback position on the sim clock (see tick).
+  #playT: number | null = null;
+  #live = false;
   #spawned = false;
+
+  // True server->browser delivery lag (shared wall clock); ?simperf HUD.
+  #lagRecent: number[] = [];
+  #lagMinS = Infinity;
 
   // Debug overlays (stage toggle chips); applied to the scene in tick().
   #scan: Float32Array | null = null;
@@ -66,10 +86,21 @@ export class SimSession {
   #hullsOn = false;
   #overlaysDirty = false;
 
+  #stateUrls: string[];
   #rosUrl: string;
 
-  constructor(opts: { rosUrl?: string } = {}) {
+  constructor(opts: { stateUrl?: string; rosUrl?: string } = {}) {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const proxied = `${scheme}://${location.host}/worldstate`;
+    // Local browsers connect straight to the world server (loopback is
+    // mixed-content-exempt in Chrome/Firefox, and skips the container
+    // relay's latency tail); Safari and remote browsers fall back to the
+    // proxied route.
+    this.#stateUrls = opts.stateUrl
+      ? [opts.stateUrl]
+      : ["localhost", "127.0.0.1"].includes(location.hostname)
+        ? ["ws://127.0.0.1:8800", proxied]
+        : [proxied];
     this.#rosUrl = opts.rosUrl ?? `${scheme}://${location.host}/ws`;
   }
 
@@ -99,25 +130,54 @@ export class SimSession {
       return c;
     });
     this.#thumbContexts = this.#thumbCanvases.map((c) => c.getContext("2d"));
-    this.#streams = this.#thumbCanvases.map((c) => c.captureStream(15));
+    // No captureStream: an active canvas-capture pipeline pins the page's
+    // composition to its 15fps tick; the webapp mounts these canvases
+    // directly (thumbnailCanvas below).
 
-    this.#controller = new RosbridgePhysicsController(this.#rosUrl);
-    this.#controller.onScan = (points) => {
-      this.#scan = points;
-      this.#scanDirty = true;
-    };
-    this.#controller.onPose = ({ x, y, yaw, joints }) => {
-      Object.assign(this.#target, { x, y, yaw, live: true });
-      Object.assign(this.#target.joints, joints);
+    this.#connectState(0);
+  }
+
+  /** Connect the state feed, falling through the URL candidates (direct
+   * loopback first when local, then the proxied route). */
+  #connectState(i: number): void {
+    const url = this.#stateUrls[i];
+    this.#controller = new WorldStateController(url);
+    this.#controller.onState = (s) => {
+      const lag = Date.now() / 1000 - s.wall;
+      if (lag < this.#lagMinS) this.#lagMinS = lag;
+      this.#lagRecent.push(lag);
+      if (this.#lagRecent.length > 60) this.#lagRecent.shift();
+
+      const now = performance.now() / 1000;
+      if (this.#lastArrival > 0) {
+        this.#gaps.push(Math.min(now - this.#lastArrival, 0.5));
+        if (this.#gaps.length > 60) this.#gaps.shift();
+      }
+      this.#lastArrival = now;
+
+      const last = this.#samples[this.#samples.length - 1];
+      if (last === undefined || s.t > last.t) {
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        if (this.#samples.length > 60) this.#samples.shift();
+      } else if (s.t < last.t - 0.5) {
+        // Sim clock jumped backwards (world-server restart): restart playback.
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#playT = null;
+      }
+      this.#live = true;
       if (!this.#gotPose) {
         this.#gotPose = true;
-        this.#pose = { x, y, yaw };
-        Object.assign(this.#shownJoints, joints);
         this.#maybeStreaming();
       }
     };
     this.#controller.init().catch((err) => {
-      console.error("[sim-session] rosbridge init failed:", err);
+      this.#controller?.dispose();
+      if (i + 1 < this.#stateUrls.length) {
+        console.warn(`[sim-session] ${url} unavailable, falling back:`, err);
+        this.#connectState(i + 1);
+        return;
+      }
+      console.error("[sim-session] world state feed failed:", err);
       this.#patch({ status: "error" });
     });
   }
@@ -125,6 +185,8 @@ export class SimSession {
   stop(): void {
     this.#controller?.dispose();
     this.#controller = null;
+    this.#scanFeed?.dispose();
+    this.#scanFeed = null;
     this.#started = false;
     this.#gotPose = false;
     this.#patch({ status: "idle", videoStream: null });
@@ -135,10 +197,20 @@ export class SimSession {
     this.#listeners.clear();
   }
 
-  /** Toggle the /scan hit-point overlay (stage "lidar" chip). */
+  /** Toggle the /scan hit-point overlay (stage "lidar" chip). The rosbridge
+   * connection is opened on first use -- the 3D view itself never consumes
+   * robot telemetry. */
   setLidarVisible(on: boolean): void {
     this.#lidarOn = on;
     this.#overlaysDirty = true;
+    if (on && this.#scanFeed === null) {
+      this.#scanFeed = new RosbridgePhysicsController(this.#rosUrl);
+      this.#scanFeed.onScan = (points) => {
+        this.#scan = points;
+        this.#scanDirty = true;
+      };
+      this.#scanFeed.init().catch((err) => console.warn("[sim-session] scan overlay unavailable:", err));
+    }
   }
 
   /** Toggle the collision-hull wireframe overlay (stage "collisions" chip). */
@@ -183,23 +255,44 @@ export class SimSession {
     this.#patch({ status: "error" });
   }
 
-  /** Per-frame: smooth the scene toward the latest network sample. */
+  /** Playback delay behind the newest sample: 2x the p90 inter-arrival gap
+   * (clamped) -- ~30ms locally, growing only as the transport demands. */
+  #delayS(): number {
+    if (this.#gaps.length < 5) return 0.05; // conservative until measured
+    const sorted = [...this.#gaps].sort((a, b) => a - b);
+    const p90 = sorted[Math.floor(sorted.length * 0.9)];
+    return Math.min(DELAY_MAX_S, Math.max(DELAY_MIN_S, p90 * 2.0));
+  }
+
+  /** Per-frame: clamped interpolation on the sim clock, #delayS behind the
+   * newest sample; a delivery gap holds the last pose, never extrapolates. */
   tick(scene: SimScene, dt: number): void {
-    if (!this.#target.live) return;
+    if (!this.#live || this.#samples.length === 0) return;
+    const first = this.#samples[0];
     if (!this.#spawned) {
       this.#spawned = true;
-      scene.spawnAt(this.#pose.x, this.#pose.y, this.#pose.yaw);
+      scene.spawnAt(first.x, first.y, first.yaw);
     }
-    const alpha = 1 - Math.exp(-dt * 15);
-    this.#pose.x += (this.#target.x - this.#pose.x) * alpha;
-    this.#pose.y += (this.#target.y - this.#pose.y) * alpha;
-    const dyaw = Math.atan2(Math.sin(this.#target.yaw - this.#pose.yaw), Math.cos(this.#target.yaw - this.#pose.yaw));
-    this.#pose.yaw += dyaw * alpha;
-    for (const [name, target] of Object.entries(this.#target.joints)) {
-      this.#shownJoints[name] = (this.#shownJoints[name] ?? target) + (target - (this.#shownJoints[name] ?? target)) * alpha;
+
+    // Playback advances with the frame clock, softly steered toward the
+    // stream (a hard lock would replay delivery jitter 1:1); a large error
+    // (hidden tab, server restart) snaps instead of chasing for seconds.
+    const target = this.#samples[this.#samples.length - 1].t - this.#delayS();
+    if (this.#playT === null || Math.abs(target - this.#playT) > 0.3) this.#playT = target;
+    else this.#playT += dt + (target - this.#playT) * Math.min(1, dt * 4);
+
+    const [a, b, u] = bracket(this.#samples, this.#playT);
+    const x = a.x + (b.x - a.x) * u;
+    const y = a.y + (b.y - a.y) * u;
+    const dyaw = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
+    scene.setPose(x, y, a.yaw + dyaw * u);
+
+    const joints: Record<string, number> = {};
+    for (const [name, va] of Object.entries(a.joints)) {
+      const vb = b.joints[name] ?? va;
+      joints[name] = va + (vb - va) * u;
     }
-    scene.setPose(this.#pose.x, this.#pose.y, this.#pose.yaw);
-    scene.setJointAngles(this.#shownJoints);
+    scene.setJointAngles(joints);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;
@@ -234,11 +327,24 @@ export class SimSession {
 
   #videoArrays() {
     return {
-      // The primary view is the live stage canvas, not a stream -- but tiles
-      // only display non-primary entries, so streams exist for all actives.
-      videoStreams: this.#roster.map((name, i) => (this.#activeCams.includes(name) ? this.#streams[i] : null)),
+      // No MediaStreams in sim: tiles mount thumbnailCanvas() nodes instead.
+      videoStreams: this.#roster.map(() => null),
       videoLive: this.#roster.map((name) => this.#gotPose && this.#stageReady && this.#activeCams.includes(name)),
     };
+  }
+
+  /** The live 2D canvas behind a PiP tile; the webapp mounts it directly. */
+  thumbnailCanvas(index: number): HTMLCanvasElement | null {
+    return this.#thumbCanvases[index] ?? null;
+  }
+
+  /** Server->browser state delivery lag: cur is the median of the last ~2s,
+   * min is the session floor (the pipeline's fixed cost). cur >> min means
+   * a queue is filling upstream. Null until state has arrived. */
+  get pipelineLag(): { curMs: number; minMs: number } | null {
+    if (this.#lagRecent.length === 0) return null;
+    const sorted = [...this.#lagRecent].sort((a, b) => a - b);
+    return { curMs: sorted[sorted.length >> 1] * 1000, minMs: this.#lagMinS * 1000 };
   }
 
   #patch(partial: Partial<SimSessionState>): void {
@@ -248,7 +354,7 @@ export class SimSession {
   }
 }
 
-export function createSimSession(opts: { rosUrl?: string } = {}): SimSession {
+export function createSimSession(opts: { stateUrl?: string; rosUrl?: string } = {}): SimSession {
   return new SimSession(opts);
 }
 

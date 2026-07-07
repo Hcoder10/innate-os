@@ -11,7 +11,6 @@
 
 import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
-import { WebRtcSession } from "../webrtcSession.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
@@ -27,6 +26,11 @@ import { createRecordPanel } from "./recordPanel.js";
 // WebRTC for real robots, the Three.js SimSession in simulation (see
 // robotSession.js).
 const { createSession, createStage } = await robotSessionFactory();
+
+/** @type {any} */
+const config = await fetch("/config.json", { cache: "no-store" })
+  .then((r) => (r.ok ? r.json() : {}))
+  .catch(() => ({}));
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {
@@ -86,6 +90,7 @@ function buildCockpit(root) {
     createTtsBar(ttsOverlay, ros),
     createArmPanel(armOverlay, ros, {
       onState: (s) => recordPanel.setArmReady(s.engaged && s.reading),
+      hideServices: !!config.simControls,
     }),
     recordPanel,
     keyboard,

@@ -2,13 +2,16 @@
 # Copyright (c) 2026 Innate Inc
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -37,6 +40,9 @@ from config import (
     TMUX_SESSION_NAME,
     VIEWER_BUILD_LOG_PATH,
     WORKSPACE_ROOT,
+    WORLD_SERVER_LOG_PATH,
+    WORLD_SERVER_PID_PATH,
+    WORLD_SERVER_PORT,
     StackError,
     compute_ros_install_validation_hash,
     ensure_state_dir,
@@ -248,6 +254,29 @@ def prune_stale_local_os_images(current_image: str, *, cwd: Path, env: dict[str,
         log(f"Pruned {pruned} superseded local Innate OS image tag(s).")
 
 
+# Directories the container's ROS nodes create lazily on the workspace
+# bind-mount. The container runs as root: on native Linux a root mkdir lands
+# on the host as root:root and locks the user out of their own skills dir
+# (macOS is immune -- Docker Desktop's file sharing rewrites ownership).
+WORKSPACE_USER_DIRS = ("custom_agents", "custom_skills")
+
+
+def ensure_workspace_dirs(config: dict[str, object]) -> None:
+    """Pre-create container-written workspace dirs as the invoking user."""
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    for name in WORKSPACE_USER_DIRS:
+        path = os_repo / "workspace" / name
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass  # fall through to the writability warning
+        if not os.access(path, os.W_OK):
+            warn(
+                f"{path} is not writable -- likely created as root by an earlier run. "
+                f"Fix with: sudo chown -R $(id -un):$(id -gn) {path}"
+            )
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
@@ -302,6 +331,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
         if os_image:
             compose_values["INNATE_OS_IMAGE"] = os_image
+        compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
         run_logged_with_heartbeat(
@@ -318,6 +348,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
+    compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
     host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[:16]
 
@@ -426,6 +457,63 @@ def clean_runtime(config: dict[str, object]) -> None:
         )
 
 
+def cloud_agent_lock(config: dict[str, object]) -> dict | None:
+    """The pinned cloud-agent revision this innate-os is tested against
+    (sim/cloud-agent.lock), or None when unpinned/unreadable."""
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    try:
+        lock = json.loads((os_repo / "sim" / "cloud-agent.lock").read_text())
+        return lock if isinstance(lock.get("commit"), str) else None
+    except (OSError, ValueError):
+        return None
+
+
+def cloud_agent_git_status(repo: Path) -> dict | None:
+    """Local-only git state of a cloud-agent checkout (no network): full/short
+    HEAD sha, dirty, and whether origin is the official innate repo."""
+
+    def git(*args: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    try:
+        sha = git("rev-parse", "HEAD")
+        if sha is None:
+            return None
+        origin = git("remote", "get-url", "origin") or ""
+        return {
+            "sha": sha,
+            "short": sha[:9],
+            "dirty": bool(git("status", "--porcelain")),
+            "official": origin.rstrip("/").removesuffix(".git").endswith("innate-inc/innate-cloud-agent"),
+        }
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def cloud_agent_checkout_pinned(repo: Path, commit: str) -> bool:
+    """Fetch + detach onto the pinned revision. Callers must ensure the
+    worktree is clean first."""
+    for args in (["fetch", "--quiet", "origin"], ["checkout", "--quiet", "--detach", commit]):
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
     """Bring up the local brain as the `cloud-agent` service in the OS compose
     project (gated by the local-brain profile). Hosted/none modes run no local
@@ -472,6 +560,20 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
             f"Run `{CLI_SIM} setup` to clone it, or set sim/config.toml cloud_agent.source_dir."
         )
     require_path(cloud_repo, "innate-cloud-agent repository")
+    # Surface what will actually run: a checkout off the pinned (tested)
+    # revision is the #1 source of "agent crashes for me" reports. Local-only
+    # check; aligning is setup's interactive job.
+    status = cloud_agent_git_status(cloud_repo)
+    lock = cloud_agent_lock(config)
+    if status is not None and lock is not None and status["official"] and status["sha"] != lock["commit"]:
+        warn(
+            f"cloud-agent source is at {status['short']}, but this innate-os is tested against "
+            f"{lock['commit'][:9]} -- run `{CLI_SIM} setup` to align (or ignore if intentional)."
+        )
+    elif status is not None and not status["official"]:
+        log(
+            f"Using custom cloud-agent source at {cloud_repo} ({status['short']}{', dirty' if status['dirty'] else ''})."
+        )
     log(f"Starting local cloud-agent from source at {cloud_repo}...")
     compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_DIR": str(cloud_repo)})
     run_logged(
@@ -861,6 +963,9 @@ SIM_ASSET_UNITS = [
     "viewer/public/models",
     "viewer/public/robot",
     "viewer/assets/apartment_obj",
+    # Built SimSession bundle: ships prebuilt so `up` needs no Node.js
+    # (absent from pre-dist-lib bundles; the extractor skips missing units).
+    "viewer/dist-lib",
 ]
 
 
@@ -928,29 +1033,30 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
 
 
 def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:
-    """Build sim/viewer's SimSession bundle (dist-lib) when missing or stale.
+    """Rebuild sim/viewer's SimSession bundle (dist-lib) when a developer's
+    viewer sources are newer than it.
 
-    The webapp loads /sim-viewer/sim-session.js for the 3D sim view; it's a
-    gitignored build artifact, so a fresh clone doesn't have it. Requires npm
-    on the host -- if absent, the stack still runs, so warn and continue
-    (the webapp then falls back to no 3D view). Never runs on robots.
+    The webapp loads /sim-viewer/sim-session.js for the 3D sim view. Users
+    never build it: the asset bundle ships it prebuilt (publish_assets.py),
+    so Node.js is only needed when EDITING sim/viewer -- with npm absent the
+    fetched bundle is used as-is. Never runs on robots.
     """
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
     viewer = sim_repo / "viewer"
     bundle = viewer / "dist-lib" / "sim-session.js"
+    npm = shutil.which("npm")
+    manual_hint = "build it manually with: cd sim/viewer && npm install && npm run build:lib"
+    if npm is None:
+        if not bundle.exists():
+            # Only reachable with a pre-dist-lib asset bundle pinned.
+            warn(f"No prebuilt sim viewer bundle and no npm (no 3D webapp view). Install Node.js, or {manual_hint}")
+        return
     sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
     sources += sorted((viewer / "src").rglob("*.ts"))
     if bundle.exists():
         newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
         if bundle.stat().st_mtime >= newest_src:
             return
-    npm = shutil.which("npm")
-    manual_hint = "build it manually with: cd sim/viewer && npm install && npm run build:lib"
-    if npm is None:
-        warn(
-            f"npm not found -- cannot build the sim viewer bundle (no 3D webapp view). Install Node.js, or {manual_hint}"
-        )
-        return
     if not (viewer / "node_modules").is_dir():
         if offline:
             warn(f"Offline and sim/viewer/node_modules is missing -- skipping the viewer bundle build; {manual_hint}")
@@ -969,6 +1075,132 @@ def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False
         log_path=VIEWER_BUILD_LOG_PATH,
         failure_message="Sim viewer bundle build failed (npm run build:lib).",
     )
+
+
+def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _world_server_ping_reply(port: int, timeout: float = 2.0) -> dict | None:
+    """The server's ping reply (advertises state_port), or None."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as conn:
+            payload = json.dumps({"op": "ping"}).encode()
+            conn.sendall(len(payload).to_bytes(4, "big") + payload)
+            header = _recv_exact(conn, 4)
+            if header is None:
+                return None
+            body = _recv_exact(conn, int.from_bytes(header, "big"))
+            if body is None:
+                return None
+            reply = json.loads(body)
+            return reply if reply.get("ok") is True else None
+    except (OSError, ValueError):
+        return None
+
+
+def _world_server_ping(port: int, timeout: float = 2.0) -> bool:
+    return _world_server_ping_reply(port, timeout) is not None
+
+
+def _stop_stale_world_server() -> None:
+    """SIGTERM whatever owns the RPC port (the PID file only covers servers
+    this checkout started)."""
+    stop_world_server()
+    out = subprocess.run(
+        ["lsof", "-ti", f"tcp:{WORLD_SERVER_PORT}", "-sTCP:LISTEN"], capture_output=True, text=True, check=False
+    )
+    for pid in out.stdout.split():
+        with contextlib.suppress(ProcessLookupError, OSError, ValueError):
+            os.kill(int(pid), signal.SIGTERM)
+    for _ in range(20):
+        if not _world_server_ping(WORLD_SERVER_PORT, timeout=0.5):
+            return
+        time.sleep(0.25)
+    warn("A previous world server is still holding the port; the new one may fail to bind.")
+
+
+def ensure_world_server(config: dict[str, object]) -> str:
+    """Start the host world server (physics + native-GL rendering outside
+    Docker -- see mars_sim_driver/world_server.py) and return the endpoint
+    the container should use, or "" for in-container rendering.
+
+    Docker has no GPU on macOS/Windows, so in-container renders run on
+    software GL at ~105ms/frame; the host renders the same frame in ~15ms.
+    Default: on for macOS, off elsewhere; INNATE_SIM_HOST_WORLD=1/0 overrides.
+    Requires uv on the host (for the mujoco environment); falls back to
+    in-container rendering with a warning when unavailable.
+    """
+    override = os.environ.get("INNATE_SIM_HOST_WORLD", "").strip()
+    enabled = override == "1" if override else sys.platform == "darwin"
+    if not enabled:
+        return ""
+    if shutil.which("uv") is None:
+        warn("uv not found -- running the sim world in-container (software GL). Install uv for native-speed rendering.")
+        return ""
+
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    endpoint = f"host.docker.internal:{WORLD_SERVER_PORT}"
+    reply = _world_server_ping_reply(WORLD_SERVER_PORT)
+    if reply is not None:
+        if reply.get("state_port"):
+            log("Host world server already running.")
+            return endpoint
+        # Pre-stream server: reusing it would starve the webapp's 3D view.
+        log("Host world server is outdated (no observer state stream) -- restarting it...")
+        _stop_stale_world_server()
+
+    log("Starting host world server (native GL rendering)...")
+    ensure_state_dir()
+    bootstrap = (
+        "import sys; sys.path.insert(0, 'ros2_ws/src/mars_bot/mars_sim_driver'); "
+        "from mars_sim_driver.world_server import main; main()"
+    )
+    env = os.environ.copy()
+    env["VIRTUAL_MARS_ASSETS"] = str(sim_repo / "assets")
+    with WORLD_SERVER_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            ["uv", "run", "--project", str(sim_repo), "python", "-c", bootstrap],
+            cwd=sim_repo.parent,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    WORLD_SERVER_PID_PATH.write_text(f"{proc.pid}\n", encoding="utf-8")
+    for _ in range(60):  # model build takes a few seconds
+        if _world_server_ping(WORLD_SERVER_PORT):
+            log("Host world server ready.")
+            return endpoint
+        if proc.poll() is not None:
+            break
+        time.sleep(0.5)
+    warn(
+        "Host world server failed to start -- running the sim world in-container instead. "
+        f"Details: {WORLD_SERVER_LOG_PATH}"
+    )
+    with contextlib.suppress(ProcessLookupError, OSError):
+        proc.kill()
+    WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
+    return ""
+
+
+def stop_world_server() -> None:
+    if not WORLD_SERVER_PID_PATH.exists():
+        return
+    try:
+        pid = int(WORLD_SERVER_PID_PATH.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        log("Stopped host world server.")
+    except (ValueError, ProcessLookupError, PermissionError):
+        pass
+    WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
 
 
 def ensure_skill_assets(config: dict[str, object]) -> None:

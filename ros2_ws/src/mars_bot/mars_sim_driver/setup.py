@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "sim_driver = mars_sim_driver.node:main",
+            "world_server = mars_sim_driver.world_server:main",
             "grid_localizer_sim = mars_sim_driver.grid_localizer_sim:main",
         ],
     },

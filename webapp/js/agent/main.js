@@ -11,7 +11,6 @@
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
-import { WebRtcSession } from "../webrtcSession.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
 import { createTelemetry } from "../teleop/telemetry.js";
@@ -56,7 +55,7 @@ function buildAgentView(root) {
     videoStage,
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
-    createCameraSwitch(root, session, ros, { alwaysOn: true, storeKey: "innate.cameras.agent" }),
+    createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" }),
     createAgentPanel(root, ros, agentState),
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },

@@ -52,10 +52,13 @@ from runtime import (
     ensure_sim_assets,
     ensure_sim_viewer_bundle,
     ensure_skill_assets,
+    ensure_workspace_dirs,
+    ensure_world_server,
     open_os_container_shell,
     print_startup_checks,
     runtime_already_running,
     start_cloud_agent,
+    stop_world_server,
     tail_file,
     wait_for_os_runtime_ready,
     wait_for_virtual_mars,
@@ -106,7 +109,14 @@ def cmd_up(
         ensure_docker_available(command_hint=f"{CLI_SIM} up")
         print_banner()
         report_configured_keys(config)
+        # Before anything containerized runs: claims the container-written
+        # workspace dirs for the invoking user (root-owned bind-mount dirs on
+        # Linux otherwise), and warns if an earlier run already claimed them.
+        ensure_workspace_dirs(config)
         if runtime_already_running(config):
+            # A code update can leave a stale world server running (frozen
+            # 3D view); ensure_world_server restarts it.
+            ensure_world_server(config)
             log("Innate sim runtime is already running. Opening dashboard...")
             show_runtime_dashboard(config, watch=watch)
             return
@@ -126,6 +136,7 @@ def cmd_up(
                     f"`{CLI_SIM} up --offline` to start with whatever is already downloaded."
                 ) from exc
         ensure_sim_viewer_bundle(config, offline=offline)
+        config["world_endpoint"] = ensure_world_server(config)
 
         started = True
         try:
@@ -187,6 +198,7 @@ def cmd_up(
 def cmd_down(config: dict[str, object]) -> None:
     down_cloud_agent()
     down_os(config)
+    stop_world_server()
     log("Innate sim runtime is down.")
 
 
@@ -206,6 +218,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
         warn("Aborted. Nothing was deleted.")
         return
 
+    stop_world_server()
     clean_runtime(config)
     success("Innate sim runtime cleaned (containers and volumes removed).")
 
@@ -220,7 +233,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
 def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "startup":
         found_logs = False
-        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "os-session"):
+        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "viewer-build", "os-session"):
             path = LOG_TARGETS[name]
             if path.exists():
                 found_logs = True
@@ -284,6 +297,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog=f"{CLI_SIM} down",
         help="Stop the local simulator-backed runtime",
     )
+    sim_subparsers.add_parser(
+        "assets",
+        prog=f"{CLI_SIM} assets",
+        help="Download/refresh the sim asset bundle only (no Docker) -- for VirtualMars/notebook use",
+    )
     clean_parser = sim_subparsers.add_parser(
         "clean",
         prog=f"{CLI_SIM} clean",
@@ -325,6 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
             "compose",
             "cloud-agent",
             "os-build",
+            "viewer-build",
             "os-session",
             "brain",
             "down",
@@ -359,6 +378,11 @@ def main() -> int:
         elif args.sim_command == "down":
             ensure_docker_available(command_hint=f"{CLI_SIM} down")
             cmd_down(config)
+        elif args.sim_command == "assets":
+            # Pure download+extract: VirtualMars (scripts/notebooks, no ROS,
+            # no Docker) needs sim/assets without bringing the stack up.
+            ensure_sim_assets(config)
+            success("Sim assets are in place (sim/assets + sim/viewer).")
         elif args.sim_command == "clean":
             ensure_docker_available(command_hint=f"{CLI_SIM} clean")
             cmd_clean(config, assume_yes=args.yes)

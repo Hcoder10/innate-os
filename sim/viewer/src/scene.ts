@@ -1,12 +1,6 @@
-// SimScene — Three.js scene: the apartment.glb environment (visual only —
-// physics lives in the mars_sim_driver container) plus the real MARS robot
-// loaded from its ROS URDF.
-//
-// Scene convention: Z-up, X-forward, matching ROS's REP-103 (and /odom).
-// urdf-loader instantiates the URDF without any frame remap (its meshes are
-// already Z-up as authored), so the robot needs no rotation; the apartment
-// glb is authored Y-up (the glTF convention) and gets rotated into the
-// scene's Z-up frame on load.
+// SimScene — Three.js scene: the apartment.glb environment (visual only)
+// plus the real MARS robot from its ROS URDF. Convention: Z-up, X-forward
+// (REP-103); the URDF loads unrotated, the Y-up glb is rotated on load.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -57,6 +51,9 @@ export class SimScene {
 
   followCamera = true;
 
+  // Hidden until the first real pose (spawnAt): a robot at the world origin
+  // before state arrives reads as "spawned in the wrong place" when the true
+  // failure is "no state yet".
   private robotRoot = new THREE.Group();
   private robot?: URDFRobot;
   private followPrevXY: [number, number] = [0, 0];
@@ -102,18 +99,16 @@ export class SimScene {
 
     this.addLights();
     this.addGround();
+    this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
     if (!this.fixedSize) window.addEventListener("resize", () => this.onResize());
   }
 
   private addLights(): void {
-    // No environment map on purpose — a PMREM env map averages a uniform
-    // reflection over the whole surface, which grey-washes dark, low-
-    // roughness materials. Multiple directional lights from different
-    // angles give distinct specular highlights instead, which is what
-    // actually reads as "glossy" for the matte-black/metalness-boosted
-    // robot parts (see loadRobot below).
+    // No env map on purpose: it grey-washes dark low-roughness materials;
+    // several directional lights give the distinct highlights that read as
+    // "glossy" on the robot parts.
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -126,11 +121,8 @@ export class SimScene {
     key.shadow.camera.right = 8;
     key.shadow.camera.top = 8;
     key.shadow.camera.bottom = -8;
-    // The robot self-shadows against a coarse shadow map (a 16m frustum over
-    // ~2cm detail), producing diagonal shadow-acne stripes on its own
-    // surfaces. normalBias offsets the shadow lookup along the surface normal,
-    // which clears acne on detailed meshes without the peter-panning that a
-    // large depth bias causes.
+    // normalBias clears the shadow-acne stripes a coarse 16m shadow map
+    // paints on the robot's ~2cm detail, without depth-bias peter-panning.
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.05;
     this.scene.add(key);
@@ -178,7 +170,14 @@ export class SimScene {
    */
   setCollisionHullsVisible(visible: boolean): void {
     this.hullsVisible = visible;
-    if (visible && !this.hullsPromise) this.hullsPromise = this.loadCollisionHulls();
+    if (visible && !this.hullsPromise) {
+      // ~1300 OBJ fetches; takes seconds on first show. A failure resets the
+      // promise so toggling again retries instead of staying dead forever.
+      this.hullsPromise = this.loadCollisionHulls().catch((err) => {
+        console.error("[sim-viewer] collision hulls failed to load:", err);
+        this.hullsPromise = undefined;
+      });
+    }
     if (this.hullsGroup) this.hullsGroup.visible = visible;
   }
 
@@ -186,18 +185,30 @@ export class SimScene {
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
     const baseUrl = "/physics/apartment_collisions_v2/";
-    const manifest: string[] = await (await fetch(`${baseUrl}manifest.json`)).json();
-    const loader = new OBJLoader();
     const material = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
-    await Promise.all(
-      manifest.map(async (filename) => {
-        const obj = await loader.loadAsync(`${baseUrl}${filename}`);
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = material;
-        });
-        group.add(obj);
-      }),
-    );
+
+    // Fast path: one binary triangle soup (float32 xyz), one fetch, no
+    // parsing -- publish_assets writes it next to the per-hull OBJs.
+    const bin = await fetch(`${baseUrl}hulls.f32`);
+    if (bin.ok) {
+      const positions = new Float32Array(await bin.arrayBuffer());
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      group.add(new THREE.Mesh(geometry, material));
+    } else {
+      // Older bundles: fetch + parse every hull OBJ individually (slow).
+      const manifest: string[] = await (await fetch(`${baseUrl}manifest.json`)).json();
+      const loader = new OBJLoader();
+      await Promise.all(
+        manifest.map(async (filename) => {
+          const obj = await loader.loadAsync(`${baseUrl}${filename}`);
+          obj.traverse((child) => {
+            if (child instanceof THREE.Mesh) child.material = material;
+          });
+          group.add(obj);
+        }),
+      );
+    }
     group.visible = this.hullsVisible; // honor toggles made while loading
     this.hullsGroup = group;
     this.scene.add(group);
@@ -211,17 +222,9 @@ export class SimScene {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.receiveShadow = true;
-        // appartement.glb's materials are exported with doubleSided:true,
-        // so GLTFLoader assigns THREE.DoubleSide and every wall/ceiling
-        // renders from both sides. Forcing FrontSide instead makes MuJoCo's
-        // renderer-default single-sided culling behavior match here too:
-        // a wall/ceiling triangle only draws when viewed from the side its
-        // normal points to (into the room, as authored), so a camera
-        // outside/above the apartment sees straight through to the
-        // interior instead of a solid shell -- the "dollhouse cutaway"
-        // look, useful for orbit/overview cameras. If some geometry has
-        // inconsistent winding and ends up invisible from the inside too,
-        // flip this to THREE.BackSide instead.
+        // Force FrontSide (the glb ships doubleSided): walls draw only from
+        // inside the room, so overview cameras get the dollhouse-cutaway
+        // look. If winding issues hide geometry, flip to BackSide.
         const setFrontSide = (mat: THREE.Material) => {
           mat.side = THREE.FrontSide;
         };
@@ -233,12 +236,8 @@ export class SimScene {
   }
 
   async loadRobot(): Promise<URDFRobot> {
-    // URDFLoader.loadAsync resolves once the URDF XML is parsed, but the STL
-    // meshes are loaded asynchronously through this LoadingManager and only
-    // attached to the tree afterward. Wait on the manager's onLoad so every
-    // mesh exists before we restyle — otherwise traverse only catches the
-    // synchronous URDF primitives (the marker spheres) and the STL bodies
-    // keep their default grey material.
+    // loadAsync resolves at URDF parse, but the STL meshes attach later via
+    // this LoadingManager -- wait for onLoad or the restyle below misses them.
     const manager = new THREE.LoadingManager();
     const allMeshesLoaded = new Promise<void>((resolve) => {
       manager.onLoad = () => resolve();
@@ -325,12 +324,9 @@ export class SimScene {
     return this.orange;
   }
 
-  // The URDF's plain MeshPhongMaterials (untextured matte plastic) look flat
-  // under direct lighting. Swap to a PBR MeshStandardMaterial. Moderate
-  // metalness keeps a soft sheen while leaving enough diffuse response that
-  // the body is lit from all sides (pure metal + no env map reads as a
-  // near-black void), and the higher roughness keeps it matte rather than
-  // mirror-like.
+  // Swap the URDF's flat MeshPhong for PBR: moderate metalness for a soft
+  // sheen (pure metal with no env map reads near-black), rough enough to
+  // stay matte.
   private toGlossyMaterial(source: THREE.Material): THREE.MeshStandardMaterial {
     const cached = this.glossyMaterialCache.get(source);
     if (cached) return cached;
@@ -359,6 +355,7 @@ export class SimScene {
    * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
+    this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
 
@@ -394,6 +391,15 @@ export class SimScene {
     this.renderer.render(this.scene, robotCam ?? this.camera);
   }
 
+  /** Release the GL context + control listeners: the SPA router remounts the
+   * stage per visit, and undisposed contexts pile up until the browser kills
+   * the oldest (~16), breaking the live view. */
+  dispose(): void {
+    this.controls.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+  }
+
   /** Resize the render target (offscreen/stage use). Logical pixels + ratio. */
   setRenderSize(width: number, height: number, pixelRatio = 1): void {
     this.fixedSize = { width, height };
@@ -401,6 +407,10 @@ export class SimScene {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    // Portrait stages (phones): bias the orbit framing so the robot reads in
+    // the upper half -- webapp sheets/joystick cover the lower half.
+    if (height > width * 1.2) this.camera.setViewOffset(width, height, 0, height * 0.22, width, height);
+    else this.camera.clearViewOffset();
     for (const cam of this.robotCameras.values()) {
       cam.aspect = width / height;
       cam.updateProjectionMatrix();
@@ -431,6 +441,7 @@ export class SimScene {
   }
 
   private onResize(): void {
+    if (this.fixedSize) return; // stage mode: the ResizeObserver drives sizing
     const { width: w, height: h } = this.viewSize();
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;

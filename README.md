@@ -280,23 +280,23 @@ Use the [simulator](#simulator) to test custom agents before running them on a p
 
 ## Simulator
 
-Innate OS includes a high-level simulator running a replica of MARS. Use it to play with skills, agents, and input devices before you have a robot on your desk.
+Innate OS includes a MuJoCo digital twin of MARS that runs the **real robot software** -- the same navigation stack, skills, brain client, and webapp as the physical robot, with only the hardware drivers swapped for a simulated equivalent. Use it to build and test skills, agents, and input devices before you have a robot on your desk.
 
 ```bash
 ./innate-sim setup
 ./innate-sim up
 ```
 
-This starts the Docker-based Innate OS runtime, the simulator, and the built frontend at [http://localhost:8000](http://localhost:8000). The terminal opens a live dashboard with startup logs, simulator logs, brain logs, and runtime health.
+The first `up` provisions everything automatically (simulation assets, the 3D viewer bundle, the Docker image, the ROS workspace build); later runs reuse all of it and start in seconds. The terminal opens a live dashboard, and the robot webapp at [https://localhost](https://localhost) is the sim UI -- drive and operate the simulated MARS exactly like a real one, with a live 3D view instead of camera streams.
 
 ```bash
-./innate-sim up --vis       # open the native simulator viewer
 ./innate-sim status         # show current runtime state
-./innate-sim logs simulator # inspect simulator logs
+./innate-sim sh             # open a shell inside the ROS container
+./innate-sim logs os-session # inspect runtime logs (see `logs --help` for targets)
 ./innate-sim down           # stop the runtime
 ```
 
-See [`sim/launcher/README.md`](sim/launcher/README.md) for the full local simulator workflow.
+See [`sim/README.md`](sim/README.md) for everything else: the day-to-day workflow, the ROS-free VirtualMars Python API (with a walkthrough notebook), and the architecture.
 
 ---
 

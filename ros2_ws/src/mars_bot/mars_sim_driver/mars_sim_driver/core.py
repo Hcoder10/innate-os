@@ -48,10 +48,19 @@ def encode_jpeg(rgb: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def _tonemap(rgb: np.ndarray) -> np.ndarray:
-    linear = (rgb.astype(np.float32) / 255.0) ** 2.2 * TONEMAP_EXPOSURE
+def _build_tonemap_lut() -> np.ndarray:
+    linear = (np.arange(256, dtype=np.float32) / 255.0) ** 2.2 * TONEMAP_EXPOSURE
     mapped = np.clip(linear * (2.51 * linear + 0.03) / (linear * (2.43 * linear + 0.59) + 0.14), 0, 1)
     return (mapped ** (1 / 2.2) * 255).astype(np.uint8)
+
+
+# The map is per-channel uint8 -> uint8, so a 256-entry LUT replaces two pow()
+# passes over every pixel of every frame.
+_TONEMAP_LUT = _build_tonemap_lut()
+
+
+def _tonemap(rgb: np.ndarray) -> np.ndarray:
+    return _TONEMAP_LUT[rgb]
 
 
 def _camera_quat(forward, up) -> np.ndarray:
@@ -69,7 +78,19 @@ ASSETS_DIR = world.default_assets_dir()
 
 
 class VirtualMars:
-    def __init__(self, split_dir: Path | None = None):
+    def __init__(
+        self,
+        split_dir: Path | None = None,
+        render_wh: tuple[int, int] | None = None,
+        depth_render_wh: tuple[int, int] | None = None,
+    ):
+        # render_wh / depth_render_wh override the offscreen render
+        # resolutions (default: the camera-native CAMERA_WIDTH x
+        # CAMERA_HEIGHT). The ROS driver renders RGB at half res and depth at
+        # the pointcloud's native res -- software-GL cost scales with fill
+        # rate -- and upscales at the wire; direct/notebook users keep full res.
+        self._render_w, self._render_h = render_wh or (CAMERA_WIDTH, CAMERA_HEIGHT)
+        self._depth_w, self._depth_h = depth_render_wh or (self._render_w, self._render_h)
         rooms = world.find_decomposed_rooms(split_dir or ASSETS_DIR / "apartment_split_v2")
         if not rooms:
             raise RuntimeError(
@@ -211,7 +232,7 @@ class VirtualMars:
         """Snapshot sim state into the renderer's scene (fast; call under the
         physics lock). The GL render itself (read_rgb) can then run outside."""
         if self._renderer is None:
-            self._renderer = mujoco.Renderer(self.model, height=CAMERA_HEIGHT, width=CAMERA_WIDTH)
+            self._renderer = mujoco.Renderer(self.model, height=self._render_h, width=self._render_w)
         self._renderer.update_scene(self.data, camera=camera)
         # Shadows/reflections cost ~3x on software GL (242 -> 71 ms/frame).
         self._renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
@@ -236,7 +257,7 @@ class VirtualMars:
         robot never appears in its own depth -- without this, STVL marks the
         arm as an obstacle at the footprint and Nav2 can't plan."""
         if self._depth_renderer is None:
-            self._depth_renderer = mujoco.Renderer(self.model, height=CAMERA_HEIGHT, width=CAMERA_WIDTH)
+            self._depth_renderer = mujoco.Renderer(self.model, height=self._depth_h, width=self._depth_w)
             self._depth_renderer.enable_depth_rendering()
             self._depth_scene_option = mujoco.MjvOption()
             self._depth_scene_option.geomgroup[0] = 0
@@ -246,7 +267,7 @@ class VirtualMars:
         return self._depth_renderer.render()
 
     def render_depth(self, camera: str) -> np.ndarray:
-        """Depth image in meters (float32, CAMERA_HEIGHT x CAMERA_WIDTH)."""
+        """Depth image in meters (float32, render height x width)."""
         self.update_depth(camera)
         return self.read_depth()
 
@@ -282,10 +303,12 @@ class VirtualMars:
 
     def occupancy_grid(self, resolution: float = 0.05) -> tuple[np.ndarray, float, float]:
         """Rasterize the collision world into a nav occupancy grid (values
-        -1/0/100, row-major from the origin cell) by casting downward rays;
-        returns (grid, origin_x, origin_y). The robot is teleported out of
-        bounds for the scan and restored -- call before/independent of use."""
-        ray_top, wall_min = 1.4, 0.10  # below ceilings; above rugs/thresholds
+        -1/0/100, row-major from the origin cell); returns (grid, origin_x,
+        origin_y). Occupied = static collision triangles clipped to the
+        robot-height slab and projected (height-exact: a probe-ray scheme
+        loses any wall taller than the probe start). Free vs unknown =
+        downward floor rays, with the robot parked out of bounds."""
+        wall_min, wall_top = 0.10, 1.4  # above rugs/thresholds; below ceilings
 
         # Apartment bounds from its geoms' bounding spheres.
         apt = self.model.body("apartment").id
@@ -296,7 +319,7 @@ class VirtualMars:
         xmin, ymin = (centers[:, :2] - radii[:, None]).min(axis=0) - 0.3
         xmax, ymax = (centers[:, :2] + radii[:, None]).max(axis=0) + 0.3
 
-        # Park the robot outside the map so it doesn't rasterize as a wall.
+        # Park the robot outside the map so the floor rays don't see it.
         saved = self.data.qpos.copy()
         self.data.qpos[self._base["x"][0]] = xmax + 50.0
         mujoco.mj_forward(self.model, self.data)
@@ -309,20 +332,78 @@ class VirtualMars:
         n = width * height
 
         grid = np.full(n, -1, dtype=np.int8)
-        origins = np.column_stack([gx.ravel(), gy.ravel(), np.full(n, ray_top)])
+        origins = np.column_stack([gx.ravel(), gy.ravel(), np.full(n, wall_top)])
         # mj_multiRay shares one origin, so cast per cell (one-time, ~40k rays, ~1s).
         geomid_out = np.zeros(1, dtype=np.int32)
         down = np.array([0.0, 0.0, -1.0])
         for i in range(n):
             d = mujoco.mj_ray(self.model, self.data, origins[i], down, None, 1, -1, geomid_out)
-            if geomid_out[0] == -1 or d < 0:
-                continue  # nothing below: outside the apartment
-            hit_z = ray_top - d
-            grid[i] = 100 if hit_z > wall_min else 0
+            if geomid_out[0] != -1 and d >= 0:
+                grid[i] = 0  # something below: inside the world
+        grid = grid.reshape(height, width)
+        grid[self._rasterize_static_slab(wall_min, wall_top, xmin, ymin, width, height, resolution)] = 100
 
         self.data.qpos[:] = saved
         mujoco.mj_forward(self.model, self.data)
-        return grid.reshape(height, width), float(xmin), float(ymin)
+        return grid, float(xmin), float(ymin)
+
+    def _rasterize_static_slab(
+        self, zlo: float, zhi: float, xmin: float, ymin: float, width: int, height: int, resolution: float
+    ) -> np.ndarray:
+        """Boolean (height, width) mask of cells touched by static collision
+        triangles within the z-slab [zlo, zhi] (clipped before projecting)."""
+        from PIL import ImageDraw
+
+        robot_bodies = set()
+        for b in range(self.model.nbody):
+            parent = b
+            while parent != 0:
+                if parent == self._base_id:
+                    robot_bodies.add(b)
+                    break
+                parent = self.model.body_parentid[parent]
+
+        polys: list[np.ndarray] = []
+        for g in range(self.model.ngeom):
+            if self.model.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+                continue  # the only non-mesh static geom is the ground plane
+            if self.model.geom_bodyid[g] in robot_bodies:
+                continue
+            did = self.model.geom_dataid[g]
+            vadr, vnum = self.model.mesh_vertadr[did], self.model.mesh_vertnum[did]
+            fadr, fnum = self.model.mesh_faceadr[did], self.model.mesh_facenum[did]
+            verts = self.model.mesh_vert[vadr : vadr + vnum]
+            faces = self.model.mesh_face[fadr : fadr + fnum]
+            world_verts = verts @ self.data.geom_xmat[g].reshape(3, 3).T + self.data.geom_xpos[g]
+            tris = world_verts[faces]  # (nf, 3, 3)
+            zs = tris[:, :, 2]
+            polys.extend(tris[(zs.max(axis=1) > zlo) & (zs.min(axis=1) < zhi)])
+
+        def clip_z(poly: np.ndarray, z: float, keep_above: bool) -> np.ndarray:
+            """Sutherland-Hodgman against one z-plane."""
+            sign = 1.0 if keep_above else -1.0
+            out: list[np.ndarray] = []
+            for i in range(len(poly)):
+                a, b = poly[i], poly[(i + 1) % len(poly)]
+                da, db = sign * (a[2] - z), sign * (b[2] - z)
+                if da >= 0:
+                    out.append(a)
+                if (da >= 0) != (db >= 0):
+                    out.append(a + (b - a) * (da / (da - db)))
+            return np.asarray(out)
+
+        mask_img = Image.new("L", (width, height), 0)
+        draw = ImageDraw.Draw(mask_img)
+        for tri in polys:
+            poly = clip_z(clip_z(tri, zlo, True), zhi, False)
+            if len(poly) < 2:
+                continue
+            px = [((x - xmin) / resolution, (y - ymin) / resolution) for x, y, _z in poly]
+            if len(px) == 2:
+                draw.line(px, fill=255, width=1)
+            else:
+                draw.polygon(px, fill=255, outline=255)
+        return np.asarray(mask_img) > 0
 
     def pose(self) -> tuple[float, float, float]:
         return (

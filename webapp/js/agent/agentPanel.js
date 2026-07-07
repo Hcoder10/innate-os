@@ -35,7 +35,18 @@ export function createAgentPanel(root, rosClient, agentState) {
   titleEl.textContent = "Agent";
   const stateDot = document.createElement("span");
   stateDot.className = "agent-state-dot";
-  head.append(titleEl, stateDot);
+  // Phones dock the panel as a bottom sheet (CSS); this expands it upward.
+  const expandBtn = document.createElement("button");
+  expandBtn.type = "button";
+  expandBtn.className = "agent-expand";
+  expandBtn.setAttribute("aria-label", "Expand panel");
+  expandBtn.textContent = "\u25b4";
+  expandBtn.onclick = () => {
+    const expanded = panel.classList.toggle("expanded");
+    expandBtn.textContent = expanded ? "\u25be" : "\u25b4";
+    expandBtn.setAttribute("aria-label", expanded ? "Collapse panel" : "Expand panel");
+  };
+  head.append(titleEl, stateDot, expandBtn);
 
   // ---- directive + start/stop --------------------------------------------
   const controls = document.createElement("div");
@@ -182,7 +193,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     if (wasAtBottom) stream.scrollTop = stream.scrollHeight;
   }
 
-  /** @type {{ wrap: HTMLElement, status: HTMLElement, list: HTMLElement, preview: HTMLElement, lastByKind: Record<string, string>, startTs: number, latestTs: number } | null} */
+  /** @type {{ wrap: HTMLElement, status: HTMLElement, list: HTMLElement, lastByKind: Record<string, string>, startTs: number, latestTs: number } | null} */
   let thoughts = null;
   let lastTs = 0;
 
@@ -219,17 +230,15 @@ export function createAgentPanel(root, rosClient, agentState) {
       const status = document.createElement("span");
       status.className = "chat-thoughts-status";
       toggle.append(label, status, arrow);
-      const preview = document.createElement("div");
-      preview.className = "agent-thought-preview";
       const list = document.createElement("div");
       list.className = "chat-thoughts-list";
       toggle.addEventListener("click", () => {
         const open = wrap.classList.toggle("open");
         arrow.textContent = open ? "▴" : "▾";
       });
-      wrap.append(toggle, preview, list);
+      wrap.append(toggle, list);
       stream.appendChild(wrap);
-      thoughts = { wrap, status, list, preview, lastByKind: {}, startTs: ts, latestTs: ts };
+      thoughts = { wrap, status, list, lastByKind: {}, startTs: ts, latestTs: ts };
     }
     thoughts.latestTs = ts;
     if (thoughts.lastByKind[kind] !== text) {
@@ -238,8 +247,6 @@ export function createAgentPanel(root, rosClient, agentState) {
       item.className = "chat-thought-item";
       item.textContent = roundNums(text);
       thoughts.list.appendChild(item);
-      // Keep the collapsed preview on the most recent thought.
-      thoughts.preview.textContent = roundNums(text);
     }
     setThoughtsStatus(true);
     snapIfAtBottom(wasAtBottom);
