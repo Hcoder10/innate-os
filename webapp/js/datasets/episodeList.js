@@ -443,10 +443,19 @@ export function createEpisodeList(parent, ros, opts) {
       actions.appendChild(prep);
     }
     if (isEval()) {
+      // The + is a single-purpose "add to…" picker — Replay/Delete live on the
+      // row and in the right-click menu, so repeating them here reads wrong.
       const add = actionBtn(ICON_PLUS, "Add to training dataset", (e) => {
         e.stopPropagation();
         const r = add.getBoundingClientRect();
-        openMenu(ep, id, r.left, r.bottom + 4, state === "ready");
+        openEpisodeMenu({
+          x: r.left,
+          y: r.bottom + 4,
+          ros,
+          sourceDir: current?.directory || "",
+          episodeId: id,
+          targets: opts.getTargets(),
+        });
       });
       actions.appendChild(add);
     }
