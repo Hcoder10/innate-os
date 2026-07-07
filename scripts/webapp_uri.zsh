@@ -1,5 +1,8 @@
 #!/bin/zsh
-# Shared helper for printing the webapp URL on the robot's current Wi-Fi IP.
+# Shared helper for printing the webapp URL as the robot's mDNS hostname
+# (e.g. https://mars-the-27th.local), falling back to the Wi-Fi IP when no
+# hostname is available. Wi-Fi connectivity is still required either way so
+# the URL is only shown when the webapp is actually reachable.
 
 innate_current_wifi_ip() {
     local iface ip
@@ -22,12 +25,18 @@ innate_current_wifi_ip() {
 }
 
 innate_webapp_uri() {
-    local ip
+    local ip host
     ip="$(innate_current_wifi_ip)"
     if [[ -z "$ip" ]]; then
         return 1
     fi
-    print -r -- "https://$ip"
+
+    host="$(hostname -s 2>/dev/null)"
+    if [[ -n "$host" ]]; then
+        print -r -- "https://${host}.local"
+    else
+        print -r -- "https://$ip"
+    fi
 }
 
 if [[ "${ZSH_EVAL_CONTEXT:-}" != *:file && "${1:-}" == "--print" ]]; then
