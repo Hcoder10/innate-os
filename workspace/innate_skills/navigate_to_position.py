@@ -237,11 +237,13 @@ class NavigateToPosition(Skill):
             "If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"
         )
 
-    def execute(self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, theta: float = None):
+    def execute(self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, **legacy):
         # The tool schema speaks theta_degrees, but the cloud agent and the
         # pose-adjustment pipeline speak `theta` in radians (the same keys the
-        # robot's pose payload uses). Accept both; radians win when present.
-        if theta is not None:
+        # robot's pose payload uses). The alias lives in **legacy so schema
+        # introspection doesn't surface it as a second UI field.
+        if legacy.get("theta") is not None:
+            theta = float(legacy["theta"])
             theta_degrees = math.degrees(theta)
         else:
             theta = math.radians(theta_degrees)

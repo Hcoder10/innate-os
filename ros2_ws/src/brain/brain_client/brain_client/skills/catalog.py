@@ -811,6 +811,8 @@ class SkillRepository:
         for param_name, param in signature.parameters.items():
             if param_name == "self":
                 continue
+            if param.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL):
+                continue  # *args/**kwargs are compat plumbing, not inputs
             param_type = "any"
             enum_values = None
             try:
