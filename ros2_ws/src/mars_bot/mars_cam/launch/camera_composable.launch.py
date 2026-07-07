@@ -110,7 +110,8 @@ def generate_launch_description():
                 # genuinely-dead peer is still caught here and by the ICE DISCONNECTED/FAILED path.
                 # Runtime-tunable via `ros2 param set`.
                 "rtcp_inactivity_timeout_s": 15.0,
-            }
+            },
+            *settings_params(),
         ],
         extra_arguments=[{"use_intra_process_comms": True}],
     )

@@ -48,7 +48,6 @@ bool StereoDepthEstimator::initCalibrationFromCameraInfo() {
 
     calib_width_ = static_cast<int>(left.width);
     calib_height_ = static_cast<int>(left.height);
-    depth_scale_ = static_cast<double>(calib_width_) / static_cast<double>(image_width_);
 
     // ── Extract matrices from CameraInfo messages ───────────────────────────
     // k/r/p are contiguous row-major doubles — same layout as cv::Mat(CV_64F).
@@ -94,8 +93,6 @@ bool StereoDepthEstimator::initCalibrationFromCameraInfo() {
 
     RCLCPP_INFO(this->get_logger(), "Calibration extracted from camera_info:");
     RCLCPP_INFO(this->get_logger(), "  Resolution: %dx%d", calib_width_, calib_height_);
-    RCLCPP_INFO(this->get_logger(), "  Scale: input %dx%d -> calib %dx%d (scale=%.3f)", image_width_, image_height_,
-                calib_width_, calib_height_, depth_scale_);
     RCLCPP_INFO(this->get_logger(), "  Stereo: focal=%.2f px, baseline=%.4f m (%.1f mm)", focal_length_, baseline_,
                 baseline_ * 1000.0);
 

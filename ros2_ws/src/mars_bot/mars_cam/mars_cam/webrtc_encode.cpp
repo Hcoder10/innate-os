@@ -27,22 +27,22 @@ struct FanOutTarget {
 // Persistent encode pipeline
 // =============================================================================
 
-std::string WebRTCStreamer::video_encode_branch(const std::string& name, int pt, int fps, guint ssrc) const {
+std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const {
     // appsrc -> encoder -> payloader -> appsink. The appsink is the fan-out tap: every connected peer's
     // transport appsrc is fed from here, so each camera is encoded exactly once regardless of peer count.
-    return "appsrc name=src_" + name +
-           " is-live=true format=time caps=video/x-raw,format=BGR,width=640,height=480,framerate=" +
-           std::to_string(fps) +
+    return "appsrc name=src_" + cam.name + " is-live=true format=time caps=video/x-raw,format=BGR,width=" +
+           std::to_string(cam.width) + ",height=" + std::to_string(cam.height) +
+           ",framerate=" + std::to_string(cam.fps) +
            "/1 ! "
            "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
            "videoconvert ! "
            "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=15 "
            "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
            "rtpvp8pay name=pay_" +
-           name + " pt=" + std::to_string(pt) + " ssrc=" + std::to_string(ssrc) +
+           cam.name + " pt=" + std::to_string(cam.pt) + " ssrc=" + std::to_string(cam.ssrc) +
            " ! "
            "appsink name=sink_" +
-           name + " emit-signals=true sync=false async=false max-buffers=2 drop=true ";
+           cam.name + " emit-signals=true sync=false async=false max-buffers=2 drop=true ";
 }
 
 void WebRTCStreamer::attach_playout_delay_extension(const std::string& cam) {
@@ -64,7 +64,7 @@ void WebRTCStreamer::attach_playout_delay_extension(const std::string& cam) {
 bool WebRTCStreamer::build_encode_pipeline() {
     std::string desc;
     for (const auto& cam : cameras_) {
-        desc += video_encode_branch(cam->name, cam->pt, cam->fps, cam->ssrc);
+        desc += video_encode_branch(*cam);
     }
     GError* error = nullptr;
     encode_pipeline_ = gst_parse_launch(desc.c_str(), &error);
@@ -86,8 +86,8 @@ bool WebRTCStreamer::build_encode_pipeline() {
             return false;
         }
         g_object_set(cam->appsrc, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
-                     "max-bytes", 2 * 640 * 480 * 3, nullptr);
-        cam->pool = create_frame_pool(640, 480, 3);
+                     "max-bytes", 2 * cam->width * cam->height * 3, nullptr);
+        cam->pool = create_frame_pool(cam->width, cam->height, 3);
         attach_playout_delay_extension(cam->name);
         // user_data = the CameraEncoder* so the one static handler knows which camera fired.
         g_signal_connect(cam->sink, "new-sample", G_CALLBACK(on_sample), cam.get());
@@ -460,7 +460,7 @@ void WebRTCStreamer::on_image_raw(CameraEncoder* cam, const sensor_msgs::msg::Im
     if (cam->want.load(std::memory_order_relaxed) == 0) {
         return;  // no peer wants this camera -> skip all encode work (flat memory, zero idle CPU)
     }
-    cv::Mat img = process_raw_image(msg, 640, 480);
+    cv::Mat img = process_raw_image(msg, cam->width, cam->height);
     if (!img.empty()) {
         push_frame(cam, img);
     }
@@ -470,7 +470,7 @@ void WebRTCStreamer::on_image_compressed(CameraEncoder* cam, const sensor_msgs::
     if (cam->want.load(std::memory_order_relaxed) == 0) {
         return;
     }
-    cv::Mat img = process_compressed_image(msg, 640, 480);
+    cv::Mat img = process_compressed_image(msg, cam->width, cam->height);
     if (!img.empty()) {
         push_frame(cam, img);
     }

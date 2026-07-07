@@ -113,7 +113,7 @@ void StereoDepthEstimator::publishDisparityMsg(const cv::Mat& disparity_float, c
     msg->image.data.resize(msg->image.height * msg->image.step);
     memcpy(msg->image.data.data(), disp_full.data, msg->image.data.size());
 
-    const float scale_up = 1.0f / static_cast<float>(depth_scale_);
+    const float scale_up = static_cast<float>(image_width_) / static_cast<float>(calib_width_);
     msg->f = static_cast<float>(focal_length_) * scale_up;
     msg->t = static_cast<float>(baseline_);
     msg->min_disparity = static_cast<float>(min_disparity_);

@@ -44,8 +44,10 @@ class WebRTCStreamer;  // CameraEncoder back-references the node for the static 
 struct CameraEncoder {
     std::string name;
     std::string live_topic, replay_topic;
-    int pt = 96;     // RTP payload type, unique per camera (audio uses 98)
-    int fps = 30;    // encoder framerate (appsrc caps)
+    int pt = 96;       // RTP payload type, unique per camera (audio uses 98)
+    int fps = 30;      // encoder framerate (appsrc caps)
+    int width = 640;   // encode resolution (appsrc caps); incoming frames are resized to it
+    int height = 480;
     guint ssrc = 0;  // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
 
     GstElement* appsrc = nullptr;  // src_<name>, ref'd out of the encode pipeline
@@ -172,7 +174,7 @@ class WebRTCStreamer : public rclcpp::Node {
 
     // ---- Persistent encode pipeline (built once in the constructor) ----
     void configure_cameras();  // read the camera list + per-camera params into cameras_
-    std::string video_encode_branch(const std::string& name, int pt, int fps, guint ssrc) const;
+    std::string video_encode_branch(const CameraEncoder& cam) const;
     bool build_encode_pipeline();
     void attach_playout_delay_extension(const std::string& cam);  // adds the ext to one payloader
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int w, int h);

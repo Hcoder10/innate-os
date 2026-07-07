@@ -66,12 +66,22 @@
 #     max_jerk: 150.0               # rad/s^3 trajectory jerk limit (0 disables)
 #     stress_enabled: false         # motor-protection cooldown
 
-# ── Camera (physical main camera; hardware only) ──────────────────────
+# ── Camera: main (stereo; hardware only) ──────────────────────────────
+# Resolution is staged: the sensor captures the full side-by-side stereo frame at
+# width x height (must be a mode the sensor supports), the GPU downscales it to
+# publish_stereo_*, and each eye (half the stereo width) is resized to
+# publish_left_* — the size every ROS topic carries. Downstream consumers (depth,
+# brain, manipulation) follow the published size automatically; the teleop stream
+# size is separate (see webrtc_streamer below).
 # main_camera_driver:
 #   ros__parameters:
-#     publish_left_width: 640       # streamed main-camera image width (px)
-#     publish_left_height: 480      # streamed main-camera image height (px)
-#     fps: 30.0                     # camera frame rate
+#     width: 2560                   # capture width, both eyes combined (px)
+#     height: 720                   # capture height (px)
+#     publish_stereo_width: 1280    # stereo-frame downscale before the left/right split
+#     publish_stereo_height: 480
+#     publish_left_width: 640       # published per-eye image width (px)
+#     publish_left_height: 480      # published per-eye image height (px)
+#     fps: 15.0                     # camera frame rate
 #     jpeg_quality: 80              # JPEG compression quality (1-100)
 #     auto_exposure_mode: 0         # 0=hardware AE, 1=custom PID, 2=manual
 #     exposure: -1                  # manual exposure time (-1 = keep current; 1-10000)
@@ -79,6 +89,23 @@
 #     default_gain: 110             # gain used in auto-exposure mode (0-255)
 #     target_brightness: 128.0      # auto-exposure target brightness (0-255)
 #     ae_kp: 0.8                    # auto-exposure proportional gain
+
+# ── Camera: arm/wrist (hardware only) ─────────────────────────────────
+# arm_camera_driver:
+#   ros__parameters:
+#     width: 640                    # capture width (must be a mode the sensor supports)
+#     height: 480                   # capture height
+#     fps: 30.0                     # camera frame rate
+
+# ── Camera: teleop stream (WebRTC) ────────────────────────────────────
+# The size each camera is encoded at for the app/teleop video stream — incoming
+# frames are resized to it, independent of the published topic size above.
+# webrtc_streamer:
+#   ros__parameters:
+#     main_width: 640               # main-camera stream size (px)
+#     main_height: 480
+#     arm_width: 640                # arm-camera stream size (px)
+#     arm_height: 480
 
 # ── Manipulation (learned-skill execution) ────────────────────────────
 # chunk_size is fixed by the trained model. These are node-level (restart to apply);

@@ -51,10 +51,6 @@ arm_camera_driver:
     data_directory: "/home/jetson1/innate-os/data"
     frame_id: "camera_optical_frame"
 
-    # Input image size (single eye, not the combined stereo frame)
-    image_width: 640
-    image_height: 480
-
     # Maximum processing rate (Hz). 0 = unlimited (process every incoming frame).
     max_fps: 8.0
 
