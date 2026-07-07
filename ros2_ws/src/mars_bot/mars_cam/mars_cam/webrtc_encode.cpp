@@ -30,9 +30,9 @@ struct FanOutTarget {
 std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const {
     // appsrc -> encoder -> payloader -> appsink. The appsink is the fan-out tap: every connected peer's
     // transport appsrc is fed from here, so each camera is encoded exactly once regardless of peer count.
-    return "appsrc name=src_" + cam.name + " is-live=true format=time caps=video/x-raw,format=BGR,width=" +
-           std::to_string(cam.width) + ",height=" + std::to_string(cam.height) +
-           ",framerate=" + std::to_string(cam.fps) +
+    return "appsrc name=src_" + cam.name +
+           " is-live=true format=time caps=video/x-raw,format=BGR,width=" + std::to_string(cam.width) +
+           ",height=" + std::to_string(cam.height) + ",framerate=" + std::to_string(cam.fps) +
            "/1 ! "
            "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
            "videoconvert ! "

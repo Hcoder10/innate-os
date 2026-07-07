@@ -178,7 +178,7 @@ class StereoDepthEstimator : public rclcpp::Node {
 
     // Image dimensions
     int image_width_ = 0, image_height_ = 0;  // input/output — adopted from the incoming images
-    int calib_width_, calib_height_;          // calibration (processing)
+    int calib_width_ = 0, calib_height_ = 0;  // calibration (processing)
 
     // Calibration (from camera_info topics)
     cv::Mat P1_;  // left projection matrix (3×4), for point cloud intrinsics
