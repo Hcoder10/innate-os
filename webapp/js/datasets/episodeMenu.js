@@ -103,6 +103,15 @@ export function openEpisodeMenu(opts) {
   window.addEventListener("blur", closeMenu);
 }
 
+// A copy is a real file copy on the robot (h5 + per-camera MP4s + profile
+// trace), seconds each — and the recorder serializes them server-side. Firing
+// N calls at once just lets the later ones' timers expire while they wait in
+// line, so copies are chained here: each call's window covers only its own
+// copy. The window itself is sized for a long episode on robot storage.
+const COPY_TIMEOUT_MS = 60_000;
+/** @type {Promise<void>} tail of the copy queue */
+let copyChain = Promise.resolve();
+
 /**
  * @param {{ ros: import("../rosClient.js").RosClient, sourceDir: string, episodeId: number,
  *   onCopied?: ((target: Skill, newId: number) => void) | null }} opts
@@ -110,12 +119,18 @@ export function openEpisodeMenu(opts) {
  */
 function copyTo(opts, target) {
   toast(`Adding episode #${opts.episodeId} to ${target.name}…`, "");
-  opts.ros
-    .callService(COPY_EPISODE_SERVICE, {
-      source_task_directory: opts.sourceDir,
-      episode_id: opts.episodeId,
-      dest_task_directory: target.directory,
-    })
+  copyChain = copyChain
+    .then(() =>
+      opts.ros.callService(
+        COPY_EPISODE_SERVICE,
+        {
+          source_task_directory: opts.sourceDir,
+          episode_id: opts.episodeId,
+          dest_task_directory: target.directory,
+        },
+        COPY_TIMEOUT_MS,
+      ),
+    )
     .then((res) => {
       if (!res?.success) throw new Error(res?.message || "copy failed");
       toast(`Episode #${opts.episodeId} added to ${target.name} as #${res.new_episode_id} ✓`, "ok");
@@ -123,7 +138,10 @@ function copyTo(opts, target) {
     })
     .catch((err) => {
       console.error("[datasets] copy episode failed:", err);
-      toast(`Couldn't add episode: ${err.message}`, "fail");
+      // A timed-out copy isn't cancelled robot-side — it may still land.
+      // Say so, or a retry quietly duplicates the episode.
+      const note = /timed out/i.test(err.message) ? " — it may still finish; refresh before retrying" : "";
+      toast(`Couldn't add episode #${opts.episodeId}: ${err.message}${note}`, "fail");
     });
 }
 
