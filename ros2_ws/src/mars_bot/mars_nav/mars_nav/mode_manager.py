@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import subprocess
+import threading
 import time
 import traceback
 from enum import Enum
@@ -14,6 +15,7 @@ import rclpy
 
 # TF2 imports for transform lookup
 import tf2_ros
+from action_msgs.srv import CancelGoal
 from brain_messages.srv import ChangeMap, ChangeNavigationMode, DeleteMap, SaveMap
 from geometry_msgs.msg import TransformStamped
 from lifecycle_msgs.msg import State
@@ -25,6 +27,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mars_nav.service_utils import call_service, get_node_state, transition_node
 
@@ -105,6 +108,23 @@ class ModeManager(Node):
             ChangeNavigationMode,
             "/nav/change_mode",
             self.change_mode_callback,
+            callback_group=self._internal_callbacks_group,
+        )
+
+        # Cancel every active NavigateToPose goal at the internal bt_navigator
+        # action (a zeroed CancelGoal request means "cancel all"). Both skill
+        # navigation (via navigate_to_pose_router) and map-page /goal_pose
+        # goals terminate through their normal result path, so callers waiting
+        # on a result unblock instead of hanging.
+        self._nav_cancel_client = self.create_client(
+            CancelGoal,
+            "/internal_navigate_to_pose/_action/cancel_goal",
+            callback_group=self._calls_going_outside_group,
+        )
+        self.cancel_navigation_service = self.create_service(
+            Trigger,
+            "/nav/cancel_navigation",
+            self.cancel_navigation_callback,
             callback_group=self._internal_callbacks_group,
         )
 
@@ -891,6 +911,36 @@ class ModeManager(Node):
         except Exception as e:
             self.get_logger().warn(f"Cleanup warning: {e}")
 
+    def _cancel_active_navigation(self, timeout_sec=3.0):
+        """Cancel all active NavigateToPose goals. Returns (success, message).
+
+        Sends a zeroed CancelGoal request ("cancel all") to the internal
+        bt_navigator action. Waits for the response so callers (mode switch,
+        the /nav/cancel_navigation service) know the goals are winding down
+        before tearing Nav2 down underneath them.
+        """
+        if not self._nav_cancel_client.service_is_ready():
+            return True, "Navigation is not running; nothing to cancel"
+        done = threading.Event()
+        future = self._nav_cancel_client.call_async(CancelGoal.Request())
+        future.add_done_callback(lambda _f: done.set())
+        if not done.wait(timeout_sec):
+            future.cancel()
+            return False, f"Timed out after {timeout_sec}s waiting for navigation cancel"
+        try:
+            cancelling = len(future.result().goals_canceling)
+        except Exception as e:
+            return False, f"Navigation cancel failed: {e}"
+        if cancelling:
+            return True, f"Cancelling {cancelling} active navigation goal(s)"
+        return True, "No active navigation goals"
+
+    def cancel_navigation_callback(self, request, response):
+        """Trigger service: stop all active navigation (app Stop button)."""
+        response.success, response.message = self._cancel_active_navigation()
+        self.get_logger().info(f"/nav/cancel_navigation: {response.message}")
+        return response
+
     def change_mode_callback(self, request, response, first_start=False):
         """
         Service callback to switch between modes
@@ -934,6 +984,15 @@ class ModeManager(Node):
                 response.message = f"Already in {target_mode} mode"
                 self.get_logger().info(response.message)
                 return response
+
+            # A mode switch tears down the Nav2 lifecycle under any active
+            # NavigateToPose goal, which would otherwise never deliver a result
+            # (the navigating skill hangs and the robot rejects all new skills
+            # until a manual Stop). Cancel active goals first so they terminate
+            # through their normal result path.
+            cancelled_ok, cancel_message = self._cancel_active_navigation()
+            if not cancelled_ok:
+                self.get_logger().warning(f"Proceeding with mode switch despite: {cancel_message}")
 
             # Set mode to switching
             self.current_mode = "switching"
