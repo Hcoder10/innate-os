@@ -136,11 +136,13 @@ function buildView(root) {
     onTrain: openConfigure,
     onOpenLogs: openLogs,
     onSelect: (dir, runId) => store.selectRun(dir, runId),
+    onRunInfo: () => detail.render(), // outcome may flip Downloaded → Failed
   });
   const detail = createRunDetail(detailHost, ros, store, {
     onClose: () => store.selectRun(null),
     onOpenLogs: openLogs,
     actionsFor: dashboard.actionsFor,
+    infoFor: dashboard.infoFor,
   });
   const unsubRender = store.onUpdate(() => {
     dashboard.render();

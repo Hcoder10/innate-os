@@ -42,7 +42,7 @@ const isTerminal = (s) =>
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} ros
  * @param {{ jobList: TrainingJobList | null, skills: Skill[], statusFor: (d: string) => any, pending?: Map<string, any>, selected?: { skillDir: string, runId: number } | null }} store
- * @param {{ onTrain: (skill?: Skill) => void, onOpenLogs: (skillDir: string, runId: number, live?: boolean) => void, onSelect?: (skillDir: string, runId: number) => void }} opts
+ * @param {{ onTrain: (skill?: Skill) => void, onOpenLogs: (skillDir: string, runId: number, live?: boolean) => void, onSelect?: (skillDir: string, runId: number) => void, onRunInfo?: () => void }} opts
  * @returns {{ render: () => void, destroy: () => void }}
  */
 export function createRunDashboard(parent, ros, store, opts) {
@@ -294,6 +294,7 @@ export function createRunDashboard(parent, ros, store, opts) {
         infoInflight.delete(key);
         if (info.downloaded) runInfo.set(key, info); // only cache once results exist
         render();
+        opts.onRunInfo?.(); // the detail pane derives Failed from the same info
       })
       .catch(() => infoInflight.delete(key));
     return undefined;
@@ -321,14 +322,24 @@ export function createRunDashboard(parent, ros, store, opts) {
     const label = document.createElement("span");
     label.className = "run-label";
     label.textContent = LABEL[run.status] || "Unknown";
-    // Outcome chip for finished runs: trained (checkpoint) vs failed (none).
+    // Outcome for finished runs. A terminal run with no checkpoint IS a failed
+    // training run — say "Failed" with a red dot, not a green "Downloaded"
+    // with the outcome buried in a chip.
+    const info = run.status === STATUS.DOWNLOADED ? ensureRunInfo(sk, run) : undefined;
     if (run.status === STATUS.DOWNLOADED) {
-      const info = ensureRunInfo(sk, run);
       const chip = document.createElement("span");
-      if (!info) chip.className = "run-outcome oc-checking";
-      else if (info.has_checkpoint) chip.className = "run-outcome oc-ok";
-      else chip.className = "run-outcome oc-fail";
-      chip.textContent = !info ? "checking…" : info.has_checkpoint ? "✓ trained" : "✗ no checkpoint";
+      if (!info) {
+        chip.className = "run-outcome oc-checking";
+        chip.textContent = "checking…";
+      } else if (info.has_checkpoint) {
+        chip.className = "run-outcome oc-ok";
+        chip.textContent = "✓ trained";
+      } else {
+        label.textContent = "Failed";
+        dot.className = "run-dot s-failed";
+        chip.className = "run-outcome oc-fail";
+        chip.textContent = "✗ no checkpoint — see Logs";
+      }
       label.appendChild(chip);
     }
     if (run.daemon_state && !isTerminal(run.status)) {
@@ -349,6 +360,14 @@ export function createRunDashboard(parent, ros, store, opts) {
       const err = document.createElement("span");
       err.className = "run-error";
       err.textContent = run.error_message;
+      mid.appendChild(err);
+    } else if (info && !info.has_checkpoint && info.error_excerpt) {
+      // No orchestrator message — show the exception line dug out of the
+      // downloaded training logs, so the card says WHY it failed.
+      const err = document.createElement("span");
+      err.className = "run-error";
+      err.textContent = info.error_excerpt;
+      err.title = info.error_excerpt;
       mid.appendChild(err);
     }
     // Progress: download transfer (determinate) takes precedence; then a
@@ -473,6 +492,9 @@ export function createRunDashboard(parent, ros, store, opts) {
     render,
     /** Build the action buttons for a run (reused by the detail pane). */
     actionsFor: runActions,
+    /** Results info for a finished run (cached; triggers a fetch when absent).
+     * Reused by the detail pane so both surfaces derive the same outcome. */
+    infoFor: ensureRunInfo,
     destroy() {
       wrap.remove();
     },

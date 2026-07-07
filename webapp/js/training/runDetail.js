@@ -69,7 +69,7 @@ function humanize(k) {
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} ros
  * @param {{ jobList: TrainingJobList | null, selected?: { skillDir: string, runId: number } | null }} store
- * @param {{ onClose: () => void, onOpenLogs: (skillDir: string, runId: number, live?: boolean) => void, actionsFor: (sk: TrainingSkillStatus, run: TrainingRunStatus) => HTMLElement[] }} opts
+ * @param {{ onClose: () => void, onOpenLogs: (skillDir: string, runId: number, live?: boolean) => void, actionsFor: (sk: TrainingSkillStatus, run: TrainingRunStatus) => HTMLElement[], infoFor: (sk: TrainingSkillStatus, run: TrainingRunStatus) => ({ downloaded: boolean, has_checkpoint: boolean, error_excerpt?: string } | undefined) }} opts
  * @returns {{ render: () => void, destroy: () => void }}
  */
 export function createRunDetail(parent, ros, store, opts) {
@@ -142,12 +142,18 @@ export function createRunDetail(parent, ros, store, opts) {
     head.append(titleBox, close);
     frag.appendChild(head);
 
+    // Same derived outcome as the dashboard card: a finished run with no
+    // checkpoint is a failed run, and this pane must not soften that.
+    const info = run.status === STATUS.DOWNLOADED ? opts.infoFor(sk, run) : undefined;
+    const failed = !!info && !info.has_checkpoint;
+    const statusText = failed ? "Failed" : LABEL[run.status] || "Unknown";
+
     const statusRow = document.createElement("div");
     statusRow.className = "rd-statusrow";
     const dot = document.createElement("span");
-    dot.className = `run-dot s-${run.status}`;
+    dot.className = failed ? "run-dot s-failed" : `run-dot s-${run.status}`;
     const statusLbl = document.createElement("span");
-    statusLbl.textContent = LABEL[run.status] || "Unknown";
+    statusLbl.textContent = statusText;
     statusRow.append(dot, statusLbl);
     if (run.daemon_state && run.status === STATUS.RUNNING) {
       const ds = document.createElement("span");
@@ -179,7 +185,15 @@ export function createRunDetail(parent, ros, store, opts) {
 
     // ── details ─────────────────────────────────────────────────────
     frag.appendChild(section("Details"));
-    frag.appendChild(row("Status", LABEL[run.status] || "Unknown"));
+    frag.appendChild(row("Status", statusText));
+    if (info) {
+      frag.appendChild(
+        row("Outcome", info.has_checkpoint ? "✓ checkpoint trained" : "✗ no checkpoint produced — check the logs"),
+      );
+      if (!info.has_checkpoint && info.error_excerpt) {
+        frag.appendChild(row("Error", info.error_excerpt));
+      }
+    }
     frag.appendChild(row("Started", fmtTime(run.started_at)));
     const startSec = run.started_at?.sec || 0;
     const endSec = run.finished_at?.sec || 0;

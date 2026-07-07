@@ -3159,6 +3159,8 @@ button {
 .run-dot.s-7 { background: var(--ok); }
 .run-dot.s-3 { background: var(--danger); }
 .run-dot.s-8 { background: #5a5a63; }
+/* Derived state: terminal run whose results hold no checkpoint (training failed). */
+.run-dot.s-failed { background: var(--danger); }
 
 .run-btn.run-cancel:hover:not(:disabled) {
   border-color: var(--danger);
