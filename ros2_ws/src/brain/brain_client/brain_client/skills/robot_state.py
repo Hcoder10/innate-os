@@ -46,10 +46,14 @@ class RobotStateProvider:
         self._joint_states_sub = None
         self._battery_sub = None
         # Feeds are gated by this flag instead of destroying the subscriptions:
-        # destroying a subscription the spinning MultiThreadedExecutor has
-        # already selected as "ready" races _take_subscription and crashes the
-        # process (InvalidHandle -> rmw_zenoh Rust panic -> SIGABRT), easiest
-        # to hit right after a skill cancellation.
+        # destroying a subscription an executor has already selected as
+        # "ready" races _take_subscription and crashes the process
+        # (InvalidHandle -> rmw_zenoh Rust panic -> SIGABRT), easiest to hit
+        # right after a skill cancellation. The subscriptions live on the
+        # manipulation interface's private node, whose executor is parked
+        # between skills — always-alive high-rate feeds (/joint_states + head
+        # position alone are ~400 msgs/s) would otherwise cost ~half a Jetson
+        # core in executor dispatch even while idle.
         self._active = False
         # warn once per missing state, not at 50 Hz while a slow topic
         # (battery publishes at 0.2 Hz) sends its first message
@@ -77,24 +81,27 @@ class RobotStateProvider:
     def start_subscriptions(self) -> None:
         """Enable robot-state feeds for skill execution (subscriptions are created once)."""
         self._warned_missing.clear()
+        # start() first: it spins up the private executor that also dispatches
+        # the robot-state subscriptions below
         self._manipulation.start()
         self._active = True
         if self._odom_sub is not None:
             return
-        self._odom_sub = self._node.create_subscription(Odometry, "/odom", self._on_odom, 10)
-        self._map_sub = self._node.create_subscription(OccupancyGrid, "/map", self._on_map, 1)
-        self._head_position_sub = self._node.create_subscription(
+        feed_node = self._manipulation.node
+        self._odom_sub = feed_node.create_subscription(Odometry, "/odom", self._on_odom, 10)
+        self._map_sub = feed_node.create_subscription(OccupancyGrid, "/map", self._on_map, 1)
+        self._head_position_sub = feed_node.create_subscription(
             String, self._head_current_position_topic, self._on_head_position, 10
         )
-        self._joint_states_sub = self._node.create_subscription(JointState, "/joint_states", self._on_joint_states, 10)
-        self._battery_sub = self._node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
+        self._joint_states_sub = feed_node.create_subscription(JointState, "/joint_states", self._on_joint_states, 10)
+        self._battery_sub = feed_node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
 
     def stop_subscriptions(self) -> None:
         """Deactivate robot-state feeds when no skill is running.
 
         The subscriptions are deliberately NOT destroyed (see __init__); the
-        callbacks early-return while inactive, so the idle cost is bounded by
-        message deserialization.
+        callbacks early-return while inactive, and parking the private
+        executor (manipulation.stop()) stops them being invoked at all.
         """
         self._active = False
         self._manipulation.stop()
