@@ -16,9 +16,21 @@ hardware topic contract: RGB is upscaled to the 640x480 wire here before
 JPEG encoding, and depth always renders at the pointcloud's native 160x120
 (the cloud was a 4x subsample anyway; the node upscales the wire image).
 
-No ROS, no third-party deps beyond VirtualMars' own (mujoco/numpy/PIL).
-Framing: 4-byte big-endian length | JSON request; responses are one JSON
-frame, followed by one binary frame iff the JSON says "blob": <nbytes>.
+Two interfaces, two kinds of consumers:
+
+- driver RPC (--port): sensing/actuation for the robot adapter (node.py),
+  robot-shaped and rate-limited like real hardware. Framing: 4-byte
+  big-endian length | JSON request; responses are one JSON frame, followed
+  by one binary frame iff the JSON says "blob": <nbytes>.
+- observer state stream (--state-port): a WebSocket broadcasting ground
+  truth ({t, wall, pose, joints}) after every physics slice, for things
+  that WATCH the world rather than run in it -- the webapp's 3D view
+  (proxied at /worldstate), future challenge UIs/graders. Robot software
+  must never consume this; fidelity lives on the RPC/topic path.
+
+No ROS. Beyond VirtualMars' own deps (mujoco/numpy/PIL) only `websockets`
+(already a sim-project and webapp-proxy dependency); if it's missing the
+stream is disabled and everything else still runs.
 
 Binds 127.0.0.1 only. GL contexts are macOS-main-thread-sensitive, so all
 render work runs on the main thread via a job queue; state reads/writes
@@ -34,6 +46,11 @@ import time
 
 import numpy as np
 from PIL import Image as PILImage
+
+try:
+    from websockets.sync.server import serve as ws_serve
+except ImportError:  # view-only feature; the sim must not die without it
+    ws_serve = None
 
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg
 
@@ -82,6 +99,11 @@ class WorldServer:
         self.latest: dict[str, tuple[dict, bytes]] = {}
         self.requested_at: dict[str, float] = {}
         self.frame_ready = threading.Condition()
+        # Observer state stream: newest ground-truth snapshot + a seq,
+        # broadcast to every connected WebSocket (see serve_state).
+        self.state_payload = "{}"
+        self.state_seq = 0
+        self.state_cond = threading.Condition()
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
 
@@ -90,6 +112,7 @@ class WorldServer:
         start_sim = self.sim.data.time
         while True:
             target = start_sim + (time.perf_counter() - start_wall)
+            stepped = False
             with self.lock:
                 behind = target - self.sim.data.time
                 if behind > 0.5:
@@ -101,7 +124,39 @@ class WorldServer:
                     start_sim = self.sim.data.time
                 elif behind > 0:
                     self.sim.step(min(behind, 0.1))
+                    stepped = True
+            if stepped:
+                self.publish_state()
             time.sleep(0.01)
+
+    # --- observer state stream (ground truth for viewers, never for robot code) ---
+
+    def publish_state(self) -> None:
+        with self.lock:
+            x, y, yaw = self.sim.pose()
+            joints = self.sim.joint_positions()
+            sim_time = float(self.sim.data.time)
+        # `wall` shares the browser's physical clock, so viewers can measure
+        # true delivery lag; `t` is the sim clock the playback interpolates on.
+        payload = json.dumps({"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints})
+        with self.state_cond:
+            self.state_payload = payload
+            self.state_seq += 1
+            self.state_cond.notify_all()
+
+    def serve_state(self, ws) -> None:
+        """One observer connection: push each new state as it is produced,
+        latest-wins -- a slow client skips intermediate states instead of
+        queueing them (pose is state, not a stream)."""
+        last_seq = -1
+        try:
+            while True:
+                with self.state_cond:
+                    self.state_cond.wait_for(lambda: self.state_seq != last_seq)
+                    payload, last_seq = self.state_payload, self.state_seq
+                ws.send(payload)
+        except Exception:  # noqa: BLE001,S110 -- client gone; the stream just ends
+            pass
 
     # --- renders (main thread only: macOS GL is main-thread-sensitive) ---
 
@@ -234,6 +289,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8799)
     parser.add_argument(
+        "--state-port",
+        type=int,
+        default=8800,
+        help="Observer state-stream WebSocket port (the webapp proxy's /worldstate assumes this default)",
+    )
+    parser.add_argument(
         "--render-scale",
         type=int,
         default=1,
@@ -258,6 +319,14 @@ def main() -> None:
 
     listener = socket.create_server(("127.0.0.1", args.port))
     print(f"[world-server] ready on 127.0.0.1:{args.port}", flush=True)
+
+    server.publish_state()  # observers get a frame before the first physics slice
+    if ws_serve is None:
+        print("[world-server] `websockets` not installed -- observer state stream disabled", flush=True)
+    else:
+        state_server = ws_serve(server.serve_state, "127.0.0.1", args.state_port)
+        threading.Thread(target=state_server.serve_forever, daemon=True).start()
+        print(f"[world-server] observer state stream on ws://127.0.0.1:{args.state_port}", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()
 

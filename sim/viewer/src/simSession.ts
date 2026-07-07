@@ -5,12 +5,17 @@
 // resolution, drag-to-orbit), and only the small PiP thumbnails are
 // captureStream canvases the stage blits into.
 //
-// The session owns the rosbridge state feed (/odom + /joint_states, from the
-// virtual driver) and the pose-smoothing applied per rendered frame; the
-// stage owns the GL context and calls tick()/liveThumbnails()/blitThumbnail.
+// State comes from the world server's ground-truth observer stream
+// (/worldstate -> world_server.py), NOT from robot telemetry: one message
+// per physics slice (~100Hz) carrying pose + joints on the sim clock, so
+// playback is a short clamped interpolation with no wall-clock mapping and
+// no extrapolation. The rosbridge connection remains only for the /scan
+// debug overlay -- lidar is a robot sensor, so the robot's pipeline is the
+// honest source for it.
 
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
+import { WorldStateController } from "./physics/worldStateController";
 
 /** Thumbnail (PiP tile) render size, shared with createSimStage's scissor
  * pass. Square, matching the webapp's square .cam-tile (--pip-w/h), so
@@ -18,22 +23,11 @@ import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 export const THUMB_W = 240;
 export const THUMB_H = 240;
 
-/** Playback delay behind the driver's (offset-mapped) clock: sized for
- * typical delivery jitter around its mean, so a bracketing sample has
- * usually arrived when playback needs it. Deliberately NOT worst-case --
- * rare longer gaps are dead-reckoned through instead (see tick), keeping
- * the scene close to the map widget, which draws raw samples on arrival. */
-const INTERP_DELAY_S = 0.05;
-
-/** Longest gap the pose stream extrapolates through before holding. The
- * base accelerates at ~1 m/s^2, so 150ms of dead reckoning mis-predicts by
- * ~1cm worst-case -- invisible, unlike a fatter interpolation delay. */
-const MAX_EXTRAP_S = 0.15;
-
-/** EMA weight per sample for the browser-to-driver clock offset (~1s time
- * constant at 30Hz): fast enough to absorb the container clock's drift and
- * step corrections, slow enough that delivery jitter averages out. */
-const OFFSET_EMA_ALPHA = 0.03;
+/** Playback delay bounds (see #delayS): the floor covers one ~100Hz stream
+ * interval plus a frame; the ceiling keeps a terrible connection watchable
+ * rather than minutes behind. */
+const DELAY_MIN_S = 0.015;
+const DELAY_MAX_S = 0.25;
 
 /** Advance `samples` past renderT and return the bracketing pair plus the
  * clamped interpolation factor (holds the last sample during a gap instead
@@ -76,37 +70,33 @@ export class SimSession {
   #primaryIndex = 0;
   #primaryName = "main";
 
-  #controller: RosbridgePhysicsController | null = null;
+  #controller: WorldStateController | null = null;
+  #scanFeed: RosbridgePhysicsController | null = null;
   #thumbCanvases: HTMLCanvasElement[] = [];
   #thumbContexts: (CanvasRenderingContext2D | null)[] = [];
   #started = false;
   #gotPose = false;
   #stageReady = false;
 
-  // Snapshot buffers for interpolated playback, keyed by the driver's own
-  // stamps: rws delivery is bursty (median 32ms gaps, p90 ~70ms), and
-  // arrival-time playback replays every burst as uneven motion, while the
-  // stamps are an evenly spaced 30Hz timer. Playback maps the local clock
-  // onto the stamp clock through #offsetS and renders INTERP_DELAY_S behind.
-  // Pose and joints are separate streams: /odom and /joint_states interleave,
-  // and a merged buffer stamps stale poses with fresh joint times, rendering
-  // 30Hz pose data as 60Hz stop-go stutter.
-  #poseSamples: { t: number; x: number; y: number; yaw: number }[] = [];
-  #jointSamples: { t: number; joints: Record<string, number> }[] = [];
-  // EMA of (local arrival - stamp). An AVERAGE is the whole trick: it is
-  // bounded by construction (a min-ratchet integrates clock steps forever;
-  // an incrementally built timeline ratchets on every hiccup -- both were
-  // tried, both accumulated visible delay), it absorbs the container
-  // clock's drift within ~1s, and jitter cancels out of it.
-  #offsetS: number | null = null;
+  // Ground-truth snapshots on the sim clock (one stream: pose and joints
+  // arrive in the same message, so no cross-stream stamp mixing to avoid).
+  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  // Recent inter-arrival gaps (s) -- sizes the playback delay to measured
+  // delivery jitter instead of a hand-tuned constant.
+  #gaps: number[] = [];
+  #lastArrival = 0;
+  // Playback position on the sim clock: advanced by the frame clock and
+  // softly steered toward (newest - delay), so delivery jitter is absorbed
+  // instead of replayed 1:1 into the scene.
+  #playT: number | null = null;
   #live = false;
   #spawned = false;
 
-  // Delivery-lag tracking: the driver stamps state with the same physical
-  // wall clock the browser reads, so Date.now()/1000 - stampS is the true
-  // driver->browser pipeline delay. The session minimum is the fixed cost
+  // Delivery-lag tracking: the server stamps state with the same physical
+  // wall clock the browser reads, so Date.now()/1000 - wall is the true
+  // server->browser pipeline delay. The session minimum is the fixed cost
   // of the pipeline; current-minus-min growing while driving means a queue
-  // is filling at some hop (rws, DDS, proxy). Shown by the ?simperf HUD.
+  // is filling at some hop. Shown by the ?simperf HUD.
   #lagRecent: number[] = [];
   #lagMinS = Infinity;
 
@@ -117,10 +107,12 @@ export class SimSession {
   #hullsOn = false;
   #overlaysDirty = false;
 
+  #stateUrl: string;
   #rosUrl: string;
 
-  constructor(opts: { rosUrl?: string } = {}) {
+  constructor(opts: { stateUrl?: string; rosUrl?: string } = {}) {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
+    this.#stateUrl = opts.stateUrl ?? `${scheme}://${location.host}/worldstate`;
     this.#rosUrl = opts.rosUrl ?? `${scheme}://${location.host}/ws`;
   }
 
@@ -156,22 +148,28 @@ export class SimSession {
     // (thumbnailCanvas below); a 2D canvas in the DOM repaints only when
     // drawn into -- no media pipeline at all.
 
-    this.#controller = new RosbridgePhysicsController(this.#rosUrl);
-    this.#controller.onScan = (points) => {
-      this.#scan = points;
-      this.#scanDirty = true;
-    };
-    this.#controller.onPose = ({ x, y, yaw, stampS }) => {
-      const lag = Date.now() / 1000 - stampS;
+    this.#controller = new WorldStateController(this.#stateUrl);
+    this.#controller.onState = (s) => {
+      const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
       this.#lagRecent.push(lag);
       if (this.#lagRecent.length > 60) this.#lagRecent.shift();
-      const off = performance.now() / 1000 - stampS;
-      this.#offsetS = this.#offsetS === null ? off : this.#offsetS + OFFSET_EMA_ALPHA * (off - this.#offsetS);
-      const last = this.#poseSamples[this.#poseSamples.length - 1];
-      if (last === undefined || stampS > last.t) {
-        this.#poseSamples.push({ t: stampS, x, y, yaw });
-        if (this.#poseSamples.length > 40) this.#poseSamples.shift();
+
+      const now = performance.now() / 1000;
+      if (this.#lastArrival > 0) {
+        this.#gaps.push(Math.min(now - this.#lastArrival, 0.5));
+        if (this.#gaps.length > 60) this.#gaps.shift();
+      }
+      this.#lastArrival = now;
+
+      const last = this.#samples[this.#samples.length - 1];
+      if (last === undefined || s.t > last.t) {
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        if (this.#samples.length > 60) this.#samples.shift();
+      } else if (s.t < last.t - 0.5) {
+        // Sim clock jumped backwards (world-server restart): restart playback.
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#playT = null;
       }
       this.#live = true;
       if (!this.#gotPose) {
@@ -179,15 +177,8 @@ export class SimSession {
         this.#maybeStreaming();
       }
     };
-    this.#controller.onJoints = ({ joints, stampS }) => {
-      const last = this.#jointSamples[this.#jointSamples.length - 1];
-      if (last === undefined || stampS > last.t) {
-        this.#jointSamples.push({ t: stampS, joints });
-        if (this.#jointSamples.length > 40) this.#jointSamples.shift();
-      }
-    };
     this.#controller.init().catch((err) => {
-      console.error("[sim-session] rosbridge init failed:", err);
+      console.error("[sim-session] world state feed failed:", err);
       this.#patch({ status: "error" });
     });
   }
@@ -195,6 +186,8 @@ export class SimSession {
   stop(): void {
     this.#controller?.dispose();
     this.#controller = null;
+    this.#scanFeed?.dispose();
+    this.#scanFeed = null;
     this.#started = false;
     this.#gotPose = false;
     this.#patch({ status: "idle", videoStream: null });
@@ -205,10 +198,20 @@ export class SimSession {
     this.#listeners.clear();
   }
 
-  /** Toggle the /scan hit-point overlay (stage "lidar" chip). */
+  /** Toggle the /scan hit-point overlay (stage "lidar" chip). The rosbridge
+   * connection is opened on first use -- the 3D view itself never consumes
+   * robot telemetry. */
   setLidarVisible(on: boolean): void {
     this.#lidarOn = on;
     this.#overlaysDirty = true;
+    if (on && this.#scanFeed === null) {
+      this.#scanFeed = new RosbridgePhysicsController(this.#rosUrl);
+      this.#scanFeed.onScan = (points) => {
+        this.#scan = points;
+        this.#scanDirty = true;
+      };
+      this.#scanFeed.init().catch((err) => console.warn("[sim-session] scan overlay unavailable:", err));
+    }
   }
 
   /** Toggle the collision-hull wireframe overlay (stage "collisions" chip). */
@@ -253,43 +256,48 @@ export class SimSession {
     this.#patch({ status: "error" });
   }
 
-  /** Per-frame: interpolated playback INTERP_DELAY_S behind the driver's
-   * stamp clock, mapped onto the local clock via #offsetS. */
-  tick(scene: SimScene, _dt: number): void {
-    if (!this.#live || this.#poseSamples.length === 0 || this.#offsetS === null) return;
-    const first = this.#poseSamples[0];
+  /** Playback delay behind the newest sample: 1.5x the p90 inter-arrival gap
+   * (clamped), so a bracketing sample has usually arrived when playback needs
+   * it. Resolves to ~20ms on a localhost stream and grows only as much as the
+   * actual transport demands. */
+  #delayS(): number {
+    if (this.#gaps.length < 5) return 0.05; // conservative until measured
+    const sorted = [...this.#gaps].sort((a, b) => a - b);
+    const p90 = sorted[Math.floor(sorted.length * 0.9)];
+    return Math.min(DELAY_MAX_S, Math.max(DELAY_MIN_S, p90 * 1.5));
+  }
+
+  /** Per-frame: clamped interpolation on the sim clock, #delayS behind the
+   * newest sample. A delivery gap holds the last pose -- never extrapolates;
+   * delayed-but-coherent beats optimistic-and-wrong. */
+  tick(scene: SimScene, dt: number): void {
+    if (!this.#live || this.#samples.length === 0) return;
+    const first = this.#samples[0];
     if (!this.#spawned) {
       this.#spawned = true;
       scene.spawnAt(first.x, first.y, first.yaw);
     }
 
-    const renderT = performance.now() / 1000 - this.#offsetS - INTERP_DELAY_S;
-    const [a, b, u] = bracket(this.#poseSamples, renderT);
-    let x = a.x + (b.x - a.x) * u;
-    let y = a.y + (b.y - a.y) * u;
-    const dyaw = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
-    let yaw = a.yaw + dyaw * u;
-    // Playback caught up with the newest sample (delivery gap): dead-reckon
-    // from the last two samples' velocity instead of visibly freezing. The
-    // span guard skips degenerate pairs whose velocity would be noise.
-    const span = b.t - a.t;
-    if (renderT > b.t && span > 0.005) {
-      const dt = Math.min(renderT - b.t, MAX_EXTRAP_S);
-      x = b.x + ((b.x - a.x) / span) * dt;
-      y = b.y + ((b.y - a.y) / span) * dt;
-      yaw = b.yaw + (dyaw / span) * dt;
-    }
-    scene.setPose(x, y, yaw);
+    // Advance the playback clock with the frame clock, softly steered toward
+    // the stream (hard-locking to `target` would replay delivery jitter 1:1;
+    // the ~250ms steering constant absorbs it). A large error -- tab was
+    // hidden, server restarted -- snaps instead of chasing for seconds.
+    const target = this.#samples[this.#samples.length - 1].t - this.#delayS();
+    if (this.#playT === null || Math.abs(target - this.#playT) > 0.3) this.#playT = target;
+    else this.#playT += dt + (target - this.#playT) * Math.min(1, dt * 4);
 
-    if (this.#jointSamples.length > 0) {
-      const [ja, jb, ju] = bracket(this.#jointSamples, renderT);
-      const joints: Record<string, number> = {};
-      for (const [name, va] of Object.entries(ja.joints)) {
-        const vb = jb.joints[name] ?? va;
-        joints[name] = va + (vb - va) * ju;
-      }
-      scene.setJointAngles(joints);
+    const [a, b, u] = bracket(this.#samples, this.#playT);
+    const x = a.x + (b.x - a.x) * u;
+    const y = a.y + (b.y - a.y) * u;
+    const dyaw = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));
+    scene.setPose(x, y, a.yaw + dyaw * u);
+
+    const joints: Record<string, number> = {};
+    for (const [name, va] of Object.entries(a.joints)) {
+      const vb = b.joints[name] ?? va;
+      joints[name] = va + (vb - va) * u;
     }
+    scene.setJointAngles(joints);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;
@@ -335,7 +343,7 @@ export class SimSession {
     return this.#thumbCanvases[index] ?? null;
   }
 
-  /** Driver->browser state delivery lag: cur is the median of the last ~2s,
+  /** Server->browser state delivery lag: cur is the median of the last ~2s,
    * min is the session floor (the pipeline's fixed cost). cur >> min means
    * a queue is filling upstream. Null until state has arrived. */
   get pipelineLag(): { curMs: number; minMs: number } | null {
@@ -351,7 +359,7 @@ export class SimSession {
   }
 }
 
-export function createSimSession(opts: { rosUrl?: string } = {}): SimSession {
+export function createSimSession(opts: { stateUrl?: string; rosUrl?: string } = {}): SimSession {
   return new SimSession(opts);
 }
 

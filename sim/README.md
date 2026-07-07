@@ -23,10 +23,15 @@ of the MARS robot in an apartment. Local code edits + `innate build`
   `sim-driver`). Readiness = `/odom` publishing.
 - **Viewing** -- the operator webapp at `https://localhost` IS the sim UI:
   in sim mode its camera panel is a SimSession (built from `viewer/`) that
-  renders the live simulation with Three.js from rosbridge state -- main
-  and wrist robot-camera views plus a sim-only orbit chase view, all at
-  render rate, no video streaming. (The standalone browser sim with WASM
-  physics lives in the separate innate-sim-demo repo.)
+  renders the live simulation with Three.js -- main and wrist robot-camera
+  views plus a sim-only orbit chase view, all at render rate, no video
+  streaming. State comes from the world server's ground-truth observer
+  stream (`/worldstate`, ~100Hz pose + joints), NOT from robot telemetry:
+  the robot's topics stay hardware-shaped (30Hz odom) for the software
+  under test, while things that merely watch the world get it fresh. Only
+  the lidar debug overlay reads a robot topic (`/scan` over rosbridge),
+  because it deliberately shows what the robot senses. (The standalone
+  browser sim with WASM physics lives in the separate innate-sim-demo repo.)
 - **Dev tooling** -- `sandbox/` (native MuJoCo viewers + physics stress
   gates, see its README), `tools/` (apartment asset pipeline -> `assets/`,
   gitignored), `viewer/` (the Three.js renderer package).
@@ -133,6 +138,14 @@ file starts the same server inside the container (software GL, scaled
 renders, identical wire contract). `INNATE_SIM_HOST_WORLD=1/0` forces host
 placement on/off; without `uv` on the host it falls back to in-container
 with a warning. `./innate-sim logs world-server` shows the host server log.
+
+The server exposes two interfaces because it has two kinds of consumers:
+the driver RPC (port 8799) serves the robot adapter, robot-shaped and
+rate-limited like real hardware; the observer state stream (WebSocket,
+port 8800, proxied by the webapp at `/worldstate`) broadcasts ground truth
+after every physics slice for things that watch the world -- the webapp's
+3D view today, challenge UIs/graders tomorrow. Robot software must never
+consume the observer stream; fidelity lives on the RPC/topic path.
 
 The generated geometry (driver meshes in `sim/assets/`, the viewer's hulls,
 GLB, and robot meshes) is not in git: `./innate-sim up` downloads the bundle
