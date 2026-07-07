@@ -36,6 +36,10 @@
                         <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
                         <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="navigation/global_costmap/clear_entirely_global_costmap"/>
                     </Sequence>
+                    <!-- Costmap clears can't fix a bad AMCL pose (the static layer
+                         repaints map speckle immediately); a spin feeds AMCL fresh
+                         scan matches so localization can reconverge. -->
+                    <Spin spin_dist="1.57"/>
                     <BackUp backup_dist="0.15" backup_speed="0.3"/>
                     <Wait wait_duration="2"/>
                 </RoundRobin>

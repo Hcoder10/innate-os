@@ -4,7 +4,6 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 0.1
-    filter_duration: 0.3
     wait_for_service_timeout: 10000
 
     # Use your custom Behavior Tree XML for navigate-to-pose
@@ -12,14 +11,13 @@ bt_navigator:
     default_nav_to_pose_bt_xml: "nav_to_pose.xml"
     default_nav_through_poses_bt_xml: "nav_through_poses.xml"
 
-    always_reload_bt_xml: false
     goal_blackboard_id: goal
     path_blackboard_id: path
 
-    # Only need the navigate_to_pose navigator
-    navigators: ['navigate_to_pose']
-    navigate_to_pose:
-      plugin: "nav2_bt_navigator/NavigateToPoseNavigator"
+    # NOTE (Humble): there is no `navigators` param — both the to-pose and
+    # through-poses navigators always run, which is why nav_through_poses.xml
+    # must be a real tree (it used to be an <AlwaysSuccess/> stub that made
+    # every NavigateThroughPoses goal fake-succeed instantly).
 
     # Plugin libraries used by the BT nodes
     plugin_lib_names:
@@ -52,11 +50,3 @@ bt_navigator:
       - mars_nav_bt_nodes
       # Uncomment if available in your distribution:
       # - nav2_planner_recovery_condition_bt_node
-
-    # Error code prefixes can help with recovery logging
-    error_code_name_prefixes:
-      - nav_to_pose
-      - follow_path
-      - backup
-      - spin
-      - wait
