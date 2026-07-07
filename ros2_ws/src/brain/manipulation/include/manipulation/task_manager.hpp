@@ -44,8 +44,7 @@ class TaskManager {
     // Operates directly on the given task's dataset_metadata.json (any skill,
     // not just the active one). Returns {success, message}.
     std::tuple<bool, std::string> set_episode_outcome(const std::string& task_directory, int episode_id,
-                                                      const std::string& outcome,
-                                                      const std::vector<std::string>& tags);
+                                                      const std::string& outcome, const std::vector<std::string>& tags);
 
     // Hard-delete an episode: remove its metadata entry and all derived files
     // (h5, per-camera mp4s, raw_data original, cached thumbnails). Episode ids

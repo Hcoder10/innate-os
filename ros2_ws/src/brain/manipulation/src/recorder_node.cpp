@@ -781,8 +781,8 @@ void RecorderNode::handle_set_episode_outcome(
     RCLCPP_INFO(this->get_logger(), "Set outcome '%s' for episode %d in %s", request->outcome.c_str(),
                 request->episode_id, request->task_directory.c_str());
     try {
-        auto [success, message] = task_manager_->set_episode_outcome(
-            request->task_directory, request->episode_id, request->outcome, request->tags);
+        auto [success, message] = task_manager_->set_episode_outcome(request->task_directory, request->episode_id,
+                                                                     request->outcome, request->tags);
         response->success = success;
         response->message = message;
         if (!success) {
