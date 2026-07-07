@@ -9,6 +9,7 @@ import { initTtsAudio } from "./ttsAudio.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
 import { maybeShowAppPromo } from "./appPromo.js";
+import { installPressActivate } from "./pressActivate.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -71,6 +72,10 @@ const SECTIONS = [
  * @param {string} root Relative prefix to the site root ("" or "../").
  */
 export function initShell(activeKey, root) {
+  // Buttons fire on press-down instead of release, app-wide. Installed here
+  // because every page boots through initShell. Idempotent.
+  installPressActivate();
+
   const rail = document.createElement("aside");
   rail.className = "rail";
 
