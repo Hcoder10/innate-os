@@ -13,12 +13,19 @@
 import { SimScene, type CameraView } from "./scene";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
-// One PiP tile refresh per N rAF frames, round-robin: each refresh is an
+// One PiP tile refresh per N rendered frames, round-robin: each refresh is an
 // extra scene render + a canvas-to-canvas composite (cheap now that the
 // captureStream pipeline is gone -- THAT was what pinned the page to 15fps).
-// N=2 with two live tiles gives each ~30fps at a 120Hz display while
-// costing at most half an extra scene render per frame.
+// N=2 with two live tiles gives each ~30fps while costing at most half an
+// extra scene render per frame.
 const THUMB_FRAME_DIV = 2;
+
+// Render cap: on a 120Hz display an uncapped rAF loop doubles the GPU/CPU
+// cost of the page for no visible gain (state arrives at ~75Hz and is
+// interpolated), and on a loaded machine that pressure comes straight back
+// as scheduling jitter everywhere -- including the world server's physics
+// cadence. 60fps is indistinguishable here and halves the load.
+const MIN_FRAME_MS = 1000 / 62;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
 
@@ -102,6 +109,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   const loop = (now: number) => {
     raf = requestAnimationFrame(loop);
+    if (now - lastTime < MIN_FRAME_MS - 1) return; // 120Hz display -> render every other vsync
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     session.tick(scene, dt);

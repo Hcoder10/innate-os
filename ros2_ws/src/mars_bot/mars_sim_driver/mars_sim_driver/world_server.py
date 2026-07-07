@@ -104,6 +104,12 @@ class WorldServer:
         self.latest: dict[str, tuple[dict, bytes]] = {}
         self.requested_at: dict[str, float] = {}
         self.frame_ready = threading.Condition()
+        # Demand pacing: a product renders when a client has asked since its
+        # last render, so the pump tracks consumer rates (~8Hz) instead of
+        # free-running at GPU speed (~30-60Hz, half a core of pure waste that
+        # jitters every sleep on the machine, including our own physics).
+        self.wanted: set[str] = set()
+        self.render_demand = threading.Event()
         # Observer state stream: newest ground-truth snapshot + a seq,
         # broadcast to every connected WebSocket (see serve_state).
         self.state_payload = "{}"
@@ -111,6 +117,12 @@ class WorldServer:
         self.state_cond = threading.Condition()
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
+
+    # Longest single step slice: bounds both the lock hold and the sim-time
+    # jump between two published states, so a scheduling stall (loaded
+    # machine stretches every sleep) replays as several small, smooth slices
+    # instead of one 100ms teleport in the 3D view.
+    MAX_SLICE_S = 0.025
 
     def physics_loop(self) -> None:
         start_wall = time.perf_counter()
@@ -128,11 +140,14 @@ class WorldServer:
                     start_wall = time.perf_counter()
                     start_sim = self.sim.data.time
                 elif behind > 0:
-                    self.sim.step(min(behind, 0.1))
+                    self.sim.step(min(behind, self.MAX_SLICE_S))
                     stepped = True
+                    behind -= self.MAX_SLICE_S
             if stepped:
                 self.publish_state()
-            time.sleep(0.01)
+            # Catch up through a backlog in quick small slices (publishing
+            # each), then settle back to the 10ms cadence.
+            time.sleep(0.001 if behind > self.MAX_SLICE_S else 0.01)
 
     # --- observer state stream (ground truth for viewers, never for robot code) ---
 
@@ -184,8 +199,11 @@ class WorldServer:
             self.frame_ready.notify_all()
 
     def render_loop(self) -> None:
-        """Free-running frame pump: renders every recently-requested product
-        round-robin, as fast as the GPU allows (idle-capped)."""
+        """Demand-paced frame pump: renders a product once per client request
+        (the node pulls at its publish rates, so render work tracks consumer
+        demand -- ~8Hz per product -- rather than free-running at GPU speed).
+        The context never idles long: demand keeps it busy with clients, and
+        a heartbeat covers the clientless case."""
         while True:
             now = time.monotonic()
             active = [p for p in PRODUCTS if now - self.requested_at.get(p, -1e9) < PRODUCT_TTL_S]
@@ -201,20 +219,27 @@ class WorldServer:
                     pass
                 time.sleep(0.2)
                 continue
-            for product in active:
+            todo = [p for p in active if p in self.wanted]
+            if not todo:
+                self.render_demand.wait(timeout=0.2)
+                self.render_demand.clear()
+                continue
+            for product in todo:
+                self.wanted.discard(product)
                 try:
                     self._render_product(product)
                 except Exception as exc:  # noqa: BLE001 -- the pump must never die
                     with self.frame_ready:
                         self.latest[product] = ({"ok": False, "error": repr(exc)}, None)
                         self.frame_ready.notify_all()
-            time.sleep(0.02)  # idle cap; under load the renders self-pace
 
     def render(self, camera: str, kind: str) -> tuple[dict, bytes | None]:
         """Return the freshest frame for this product (waits only for the
-        very first one after activation)."""
+        very first one after activation) and queue the next render."""
         product = f"{kind}:{camera}"
         self.requested_at[product] = time.monotonic()
+        self.wanted.add(product)
+        self.render_demand.set()
         with self.frame_ready:
             if product not in self.latest:
                 self.frame_ready.wait_for(lambda: product in self.latest, timeout=10.0)

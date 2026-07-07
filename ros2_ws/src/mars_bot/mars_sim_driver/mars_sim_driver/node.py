@@ -126,6 +126,7 @@ class VirtualMarsNode(Node):
         self._segment_started: float | None = None
         self._traj_req: SimpleNamespace | None = None
         self._last_stream_at = 0.0  # /mars/arm/commands ramp pacing
+        self._stream_interval = 0.1  # EMA of the stream's cadence (see _on_arm_commands)
 
         self._tf = TransformBroadcaster(self)
         # State topics publish with history depth 1 (latest-wins): pose is
@@ -234,25 +235,48 @@ class VirtualMarsNode(Node):
         self._segments.clear()
         self._segment_started = None
 
+    # Streamed setpoints buffered beyond this are dropped from the front:
+    # bounds added playback latency when delivery falls behind for a while.
+    STREAM_QUEUE_CAP_S = 0.3
+
     def _on_arm_commands(self, msg: Float64MultiArray) -> None:
         values = list(msg.data)[: len(ARM_JOINTS)]
         now = time.monotonic()
         with self._lock:
-            self._fail_active_traj()  # streaming preempts trajectories
-            # Ramp to each streamed target over the stream interval instead of
-            # stepping: replay skills stream at ~12Hz, and a stiff PD snapping
-            # to each point reads as a staircase. Real Dynamixels velocity-
-            # profile between points; the 50Hz trajectory interpolator is our
-            # equivalent. Interval is measured (clamped) so any stream rate
-            # plays back smoothly.
-            interval = 0.1 if self._last_stream_at == 0.0 else min(0.25, max(0.05, now - self._last_stream_at))
+            gap = now - self._last_stream_at
+            new_stream = self._last_stream_at == 0.0 or gap > 0.5
             self._last_stream_at = now
-            current = self.sim.joint_targets()
-            start = {k: current[k] for k in ARM_JOINTS}
+            # A goto trajectory, or a stale leftover from a stream that ended,
+            # is preempted; within a live stream the queue is NOT cleared --
+            # zenoh delivers the 50Hz command stream in ~100ms clumps when the
+            # session also carries bulk camera/depth traffic, and clearing per
+            # message collapses each clump into one PD teleport (measured:
+            # stop-go wave with 3x overspeed bursts). Appending replays the
+            # stream on its own timeline, one segment per setpoint.
+            if self._traj_req is not None or new_stream:
+                self._fail_active_traj()
+            # Segment duration is the stream's CADENCE, not the raw delivery
+            # gap: an EMA over gaps recovers the true rate even under clumped
+            # delivery (the mean of [~0,~0,~0,~0, 120ms] is the 24ms truth),
+            # where using the clump leader's 120ms gap would overfill the
+            # queue and replay the stream slower than commanded.
+            if new_stream:
+                self._stream_interval = 0.1  # bootstrap: first segment ramps gently
+            else:
+                self._stream_interval = 0.8 * self._stream_interval + 0.2 * gap
+            interval = min(0.25, max(0.02, self._stream_interval))
+            if self._segments:
+                start = dict(self._segments[-1][1])
+            else:
+                current = self.sim.joint_targets()
+                start = {k: current[k] for k in ARM_JOINTS}
             target = dict(start)
             for name, value in zip(ARM_JOINTS, values, strict=False):
                 target[name] = float(value)
             self._segments.append((start, target, interval))
+            while sum(d for _, _, d in self._segments) > self.STREAM_QUEUE_CAP_S:
+                self._segments.pop(0)
+                self._segment_started = None
 
     def _on_reset(self, _msg: Empty) -> None:
         with self._lock:
@@ -334,27 +358,38 @@ class VirtualMarsNode(Node):
             time.sleep(0.02)
 
     def _sim_now(self) -> float:
-        return self.sim.time
+        # The world server steps physics against the wall clock, so local
+        # monotonic time IS the sim clock -- without an RPC per tick, and
+        # without the state cache's 15ms quantization jittering the
+        # interpolation alpha of 20ms stream segments.
+        return time.monotonic()
 
     def _advance_trajectory(self) -> None:
-        """Linear joint-space interpolation of the queued goto segments
-        (called with the lock held, sim time as the clock)."""
+        """Linear joint-space interpolation of the queued segments (called
+        with the lock held, sim time as the clock). Completed segments roll
+        the clock forward within one tick -- a segment shorter than the 20ms
+        tick must not cost a whole tick, or a 50Hz setpoint stream plays back
+        at a fraction of its commanded speed."""
         if not self._segments:
             return
         now = self._sim_now()
         if self._segment_started is None:
             self._segment_started = now
+        while self._segments and now - self._segment_started >= self._segments[0][2]:
+            _start, end, duration = self._segments.pop(0)
+            self._segment_started += duration
+            if not self._segments:
+                self.sim.set_joint_targets(dict(end))  # land exactly on the final pose
+                self._segment_started = None
+                if self._traj_req is not None:
+                    self._traj_req.ok = True
+                    self._traj_req.done.set()
+                    self._traj_req = None
+                return
         start, end, duration = self._segments[0]
-        alpha = min(1.0, (now - self._segment_started) / duration)
+        alpha = min(1.0, max(0.0, (now - self._segment_started) / duration))
         # One batched RPC per tick, not one per joint (7x fewer round-trips).
         self.sim.set_joint_targets({name: start[name] + alpha * (end[name] - start[name]) for name in ARM_JOINTS})
-        if alpha >= 1.0:
-            self._segments.pop(0)
-            self._segment_started = None
-            if not self._segments and self._traj_req is not None:
-                self._traj_req.ok = True
-                self._traj_req.done.set()
-                self._traj_req = None
 
     # --- outputs ---
 

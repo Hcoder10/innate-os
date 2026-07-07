@@ -23,10 +23,10 @@ import { WorldStateController } from "./physics/worldStateController";
 export const THUMB_W = 240;
 export const THUMB_H = 240;
 
-/** Playback delay bounds (see #delayS): the floor covers one ~100Hz stream
+/** Playback delay bounds (see #delayS): the floor covers one ~75Hz stream
  * interval plus a frame; the ceiling keeps a terrible connection watchable
  * rather than minutes behind. */
-const DELAY_MIN_S = 0.015;
+const DELAY_MIN_S = 0.025;
 const DELAY_MAX_S = 0.25;
 
 /** Advance `samples` past renderT and return the bracketing pair plus the
@@ -107,12 +107,23 @@ export class SimSession {
   #hullsOn = false;
   #overlaysDirty = false;
 
-  #stateUrl: string;
+  #stateUrls: string[];
   #rosUrl: string;
 
   constructor(opts: { stateUrl?: string; rosUrl?: string } = {}) {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    this.#stateUrl = opts.stateUrl ?? `${scheme}://${location.host}/worldstate`;
+    const proxied = `${scheme}://${location.host}/worldstate`;
+    // A local browser connects straight to the world server: loopback is
+    // exempt from mixed-content blocking in Chrome/Firefox, and skipping the
+    // container relay removes its occasional 100-400ms delivery tail
+    // (measured under load). Safari blocks loopback from a secure page, and
+    // remote browsers can't reach it -- both fall back to the same-origin
+    // proxied route automatically when the direct connection fails.
+    this.#stateUrls = opts.stateUrl
+      ? [opts.stateUrl]
+      : ["localhost", "127.0.0.1"].includes(location.hostname)
+        ? ["ws://127.0.0.1:8800", proxied]
+        : [proxied];
     this.#rosUrl = opts.rosUrl ?? `${scheme}://${location.host}/ws`;
   }
 
@@ -148,7 +159,14 @@ export class SimSession {
     // (thumbnailCanvas below); a 2D canvas in the DOM repaints only when
     // drawn into -- no media pipeline at all.
 
-    this.#controller = new WorldStateController(this.#stateUrl);
+    this.#connectState(0);
+  }
+
+  /** Connect the state feed, falling through the URL candidates (direct
+   * loopback first when local, then the proxied route). */
+  #connectState(i: number): void {
+    const url = this.#stateUrls[i];
+    this.#controller = new WorldStateController(url);
     this.#controller.onState = (s) => {
       const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
@@ -178,6 +196,12 @@ export class SimSession {
       }
     };
     this.#controller.init().catch((err) => {
+      this.#controller?.dispose();
+      if (i + 1 < this.#stateUrls.length) {
+        console.warn(`[sim-session] ${url} unavailable, falling back:`, err);
+        this.#connectState(i + 1);
+        return;
+      }
       console.error("[sim-session] world state feed failed:", err);
       this.#patch({ status: "error" });
     });
@@ -256,15 +280,16 @@ export class SimSession {
     this.#patch({ status: "error" });
   }
 
-  /** Playback delay behind the newest sample: 1.5x the p90 inter-arrival gap
+  /** Playback delay behind the newest sample: 2x the p90 inter-arrival gap
    * (clamped), so a bracketing sample has usually arrived when playback needs
-   * it. Resolves to ~20ms on a localhost stream and grows only as much as the
-   * actual transport demands. */
+   * it -- p90-based with margin rather than p99, which one outlier in the
+   * window would own. Resolves to ~30ms on a localhost stream and grows only
+   * as much as the actual transport demands. */
   #delayS(): number {
     if (this.#gaps.length < 5) return 0.05; // conservative until measured
     const sorted = [...this.#gaps].sort((a, b) => a - b);
     const p90 = sorted[Math.floor(sorted.length * 0.9)];
-    return Math.min(DELAY_MAX_S, Math.max(DELAY_MIN_S, p90 * 1.5));
+    return Math.min(DELAY_MAX_S, Math.max(DELAY_MIN_S, p90 * 2.0));
   }
 
   /** Per-frame: clamped interpolation on the sim clock, #delayS behind the

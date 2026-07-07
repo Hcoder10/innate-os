@@ -34,6 +34,13 @@ def generate_launch_description():
         [
             # Software GL for the in-container world server (no GPU in Docker).
             SetEnvironmentVariable("MUJOCO_GL", os.environ.get("MUJOCO_GL", "osmesa")),
+            # rosidl's generated setters assert-validate EVERY byte of a
+            # message in pure Python under __debug__: one 640x480 Image is
+            # 921K iterations, and with raw camera + depth + points
+            # subscribed the driver burned ~1.5 cores on asserts alone
+            # (measured via py-spy), starving its executor -- /cmd_vel and
+            # /mars/arm/commands callbacks dropped to ~5Hz. -O strips them.
+            SetEnvironmentVariable("PYTHONOPTIMIZE", "1"),
             *world_actions,
             Node(
                 package="robot_state_publisher",
