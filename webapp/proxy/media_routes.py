@@ -233,8 +233,11 @@ def joints_response(qs: dict) -> Response:
 
 # A run's own exception line, e.g. "RuntimeError: stack expects each tensor to
 # be equal size...". Anchored to the exception-name shape rather than a bare
-# "error" substring so progress lines mentioning errors don't match.
-_ERROR_LINE_RE = re.compile(r"^\s*(?:[\w.]+\.)?[A-Z]\w*(?:Error|Exception|Interrupt)\b.*|^\s*(?:FATAL|fatal error)\b.*")
+# "error" substring so progress lines mentioning errors don't match; the FATAL
+# branch is case-insensitive (scoped flag) since tools spell it every way.
+_ERROR_LINE_RE = re.compile(
+    r"^\s*(?:[\w.]+\.)?[A-Z]\w*(?:Error|Exception|Interrupt)\b.*|^\s*(?i:FATAL(?:\s+error)?)\b.*"
+)
 _TAIL_BYTES = 128 * 1024  # errors live at the end; don't read multi-MB logs whole
 
 
@@ -252,7 +255,8 @@ def _failure_excerpt(run_dir) -> str:
             continue
         try:
             with open(path, "rb") as fh:
-                fh.seek(max(0, path.stat().st_size - _TAIL_BYTES))
+                size = fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, size - _TAIL_BYTES))
                 tail = fh.read().decode("utf-8", errors="replace")
         except OSError:
             continue
