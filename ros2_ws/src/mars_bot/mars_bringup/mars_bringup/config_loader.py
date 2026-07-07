@@ -245,22 +245,29 @@ def _validate_settings_camera_resolutions(data: dict) -> None:
                 resolved[key] = value
 
     if resolved["publish_stereo_width"] % 2:
+        # Skip the width ladder checks below: they'd pile on with advice that doesn't
+        # apply when the real fix is simply "make it even".
         problems.append(
             f"  main_camera_driver: publish_stereo_width: {resolved['publish_stereo_width']}  ->  must be even "
             "(the stereo frame is split into left/right eyes)"
         )
-    for axis in ("width", "height"):
-        if resolved[f"publish_stereo_{axis}"] > resolved[axis]:
+    else:
+        if resolved["publish_stereo_width"] > resolved["width"]:
             problems.append(
-                f"  main_camera_driver: publish_stereo_{axis}: {resolved[f'publish_stereo_{axis}']} is larger than "
-                f"the capture {axis} ({axis}: {resolved[axis]}) — raise {axis} too"
+                f"  main_camera_driver: publish_stereo_width: {resolved['publish_stereo_width']} is larger than "
+                f"the capture width (width: {resolved['width']}) — raise width too"
             )
-    eye_width = resolved["publish_stereo_width"] // 2
-    if resolved["publish_left_width"] > eye_width:
+        eye_width = resolved["publish_stereo_width"] // 2
+        if resolved["publish_left_width"] > eye_width:
+            problems.append(
+                f"  main_camera_driver: publish_left_width: {resolved['publish_left_width']} is larger than one eye "
+                f"of the stereo frame (publish_stereo_width / 2 = {eye_width}) — that only upscales (no extra "
+                "detail); raise width and publish_stereo_width together instead"
+            )
+    if resolved["publish_stereo_height"] > resolved["height"]:
         problems.append(
-            f"  main_camera_driver: publish_left_width: {resolved['publish_left_width']} is larger than one eye of "
-            f"the stereo frame (publish_stereo_width / 2 = {eye_width}) — that only upscales (no extra detail); "
-            "raise width and publish_stereo_width together instead"
+            f"  main_camera_driver: publish_stereo_height: {resolved['publish_stereo_height']} is larger than "
+            f"the capture height (height: {resolved['height']}) — raise height too"
         )
     if resolved["publish_left_height"] > resolved["publish_stereo_height"]:
         problems.append(
