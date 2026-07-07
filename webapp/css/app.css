@@ -3841,11 +3841,6 @@ button {
   border-color: var(--danger);
   color: var(--danger);
 }
-.prof-capture,
-.prof-skill-trigger {
-  display: inline-flex;
-  gap: 8px;
-}
 .prof-select {
   background: transparent;
   border: 1px solid var(--hairline-strong);
