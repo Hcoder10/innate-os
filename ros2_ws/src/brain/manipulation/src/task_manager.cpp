@@ -139,6 +139,22 @@ void merge_encoder_fields_from_disk(const std::string& path, nlohmann::json& met
         }
     }
 }
+
+// Path equality that tolerates trailing slashes, dot segments and symlinks.
+// Directory paths here arrive from independent service requests (start_recording,
+// copy_episode), so the same dataset can be spelled two ways; a raw string compare
+// would miss the match. Falls back to the raw compare if canonicalization fails —
+// two failed canonicalizations both return "" and must not read as equal.
+bool same_directory(const std::string& a, const std::string& b) {
+    std::error_code ec_a;
+    std::error_code ec_b;
+    const fs::path canon_a = fs::weakly_canonical(a, ec_a);
+    const fs::path canon_b = fs::weakly_canonical(b, ec_b);
+    if (ec_a || ec_b) {
+        return a == b;
+    }
+    return canon_a == canon_b;
+}
 }  // namespace
 
 namespace manipulation {
@@ -549,8 +565,7 @@ std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& tas
 
 std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& source_task_directory, int episode_id,
                                                              const std::string& dest_task_directory) {
-    std::error_code ec;
-    if (fs::weakly_canonical(source_task_directory, ec) == fs::weakly_canonical(dest_task_directory, ec)) {
+    if (same_directory(source_task_directory, dest_task_directory)) {
         return {false, "Source and destination datasets are the same", -1};
     }
     const std::string src_data = source_task_directory + "/data";
@@ -636,6 +651,7 @@ std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& 
     if (!fs::exists(src_data + "/" + old_stem + ".h5")) {
         return {false, "Source episode file missing: " + old_stem + ".h5", -1};
     }
+    std::error_code ec;  // scratch for the probes below; copies check their own cp_ec
     for (const char* sub : {"/data", "/raw_data"}) {
         fs::path src_dir = fs::path(source_task_directory + sub);
         if (!fs::is_directory(src_dir, ec)) {
@@ -687,7 +703,9 @@ std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& 
 
     // If the destination is the actively-recording task, refresh the in-memory
     // snapshot so the recorder's next add_episode doesn't reuse the id we took.
-    if (dest_task_directory == current_task_dir_) {
+    // Canonical compare: the two paths come from different service requests, and
+    // a spelling mismatch here would silently skip the refresh and collide ids.
+    if (!current_task_dir_.empty() && same_directory(dest_task_directory, current_task_dir_)) {
         metadata_ = dest_meta;
     }
     return {true,

@@ -131,7 +131,33 @@ window.addEventListener("popstate", () => {
 const servedHost = location.hostname;
 const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
 const connectTarget = robotServed ? servedHost : (ros.lastIp ?? servedHost);
-if (connectTarget) ros.connect(connectTarget);
+if (connectTarget) {
+  ros.connect(connectTarget);
+  // rosClient retries on its own after a drop that follows a successful open, but
+  // a first connect that never opens fails fast with no retry — which would strand
+  // pages with no connect card (settings, profiling) on a refresh or deep link
+  // while the robot is momentarily unreachable. So retry the initial-connect-failed
+  // case here, debounced so a refused connection can't spin, and only until we've
+  // connected once: after that, drops self-heal via rosClient, and an explicit
+  // disconnect (header badge) or a manual connect from teleop's panel is respected.
+  let everConnected = false;
+  /** @type {number | null} */
+  let connectRetry = null;
+  ros.onStateChange((state) => {
+    if (state === "connected") everConnected = true;
+    if (state === "disconnected" && !everConnected) {
+      if (connectRetry === null) {
+        connectRetry = setTimeout(() => {
+          connectRetry = null;
+          ros.connect(connectTarget);
+        }, 5000);
+      }
+    } else if (connectRetry !== null) {
+      clearTimeout(connectRetry);
+      connectRetry = null;
+    }
+  });
+}
 
 // Render the page for the URL we loaded at (deep link or refresh), then prefetch
 // the other route modules while idle so later switches are instant.

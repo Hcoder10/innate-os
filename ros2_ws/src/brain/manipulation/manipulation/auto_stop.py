@@ -75,12 +75,16 @@ class LearnedStopDetector:
         self._engaged = False
         self._stable_since: float | None = None
 
-    def note_gap(self):
-        """Restart the idle and stability dwells after steps the detector never saw
-        (inference failed): a dwell must only count observed samples. Engagement is a
-        latched fact about the run, so a gap doesn't clear it."""
-        self._idle_since = None
-        self._stable_since = None
+    def note_gap(self, seconds: float):
+        """Discount a step the detector never saw (inference failed) from the idle and
+        stability dwells: a dwell must only count observed samples, but a lone dropped
+        step must not throw away seconds of genuinely observed stillness — so push the
+        dwell starts forward by the unobserved window instead of restarting them.
+        Engagement is a latched fact about the run, so a gap doesn't clear it."""
+        if self._idle_since is not None:
+            self._idle_since += seconds
+        if self._stable_since is not None:
+            self._stable_since += seconds
 
     def update(self, signals: StepSignals, elapsed: float, now: float):
         """One step -> ``(stop, reason)``. ``elapsed`` is seconds since the behavior
