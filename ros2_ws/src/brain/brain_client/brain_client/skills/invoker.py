@@ -166,7 +166,7 @@ class SkillInvoker:
         prev = self._active_code_skill
         self._active_code_skill = skill
         try:
-            return self._server._run_code_skill_body(skill, skill_id, inputs)
+            return self._server._run_code_skill_body(skill, skill_id, inputs, self._goal_handle)
         finally:
             self._active_code_skill = prev
 
