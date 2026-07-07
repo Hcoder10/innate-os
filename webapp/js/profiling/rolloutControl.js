@@ -42,6 +42,7 @@ export function buildRolloutControl(chartWindow, session) {
   select.className = "prof-select";
   const placeholder = new Option("Select a learned skill…", "");
   select.add(placeholder);
+  select.addEventListener("change", () => sync());
 
   const runBtn = document.createElement("button");
   runBtn.className = "prof-btn prof-btn-rec";
