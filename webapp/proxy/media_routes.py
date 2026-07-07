@@ -9,6 +9,7 @@ import asyncio
 import fnmatch
 import json
 import os
+import re
 from pathlib import Path
 
 from websockets.datastructures import Headers
@@ -256,6 +257,49 @@ def profile_response(qs: dict) -> Response:
     )
 
 
+# A run's own exception line, e.g. "RuntimeError: stack expects each tensor to
+# be equal size...". Anchored to the exception-name shape rather than a bare
+# "error" substring so progress lines mentioning errors don't match; the FATAL
+# branch is case-insensitive (scoped flag) since tools spell it every way.
+_ERROR_LINE_RE = re.compile(
+    r"^\s*(?:[\w.]+\.)?[A-Z]\w*(?:Error|Exception|Interrupt)\b.*|^\s*(?i:FATAL(?:\s+error)?)\b.*"
+)
+_TAIL_BYTES = 128 * 1024  # errors live at the end; don't read multi-MB logs whole
+
+
+def _failure_excerpt(run_dir) -> str:
+    """Last exception-looking line from the run's logs, or "".
+
+    Scans the tail of the same files the Logs modal prefers. jsonl lines are
+    {"line": ..., "stream": ...}; plain logs are read as-is. The *last* match
+    wins — a traceback's final line names the actual exception.
+    """
+    excerpt = ""
+    for name in ("process_output.jsonl", "daemon.log", "output.log"):
+        path = run_dir / name
+        if not path.is_file():
+            continue
+        try:
+            with open(path, "rb") as fh:
+                size = fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, size - _TAIL_BYTES))
+                tail = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        for raw in tail.splitlines():
+            line = raw
+            if name.endswith(".jsonl"):
+                try:
+                    line = str(json.loads(raw).get("line", ""))
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+            if _ERROR_LINE_RE.match(line):
+                excerpt = line.strip()
+        if excerpt:
+            return excerpt[:400]
+    return ""
+
+
 def run_info_response(qs: dict) -> Response:
     """GET /run/info?dir=<skill_dir>&id=<run_id> → downloaded?/has_checkpoint?/files.
     A run is 'successful' if its downloaded results contain a *_step_*.pth — the
@@ -287,7 +331,18 @@ def run_info_response(qs: dict) -> Response:
                 truncated = True
     except OSError as err:
         return _plain(500, "Internal Server Error", f"failed to read run dir: {err}")
-    body = json.dumps({"downloaded": True, "has_checkpoint": has_ckpt, "files": files, "truncated": truncated}).encode()
+    # Failed run (no checkpoint): pull the actual exception line out of the
+    # downloaded logs so the Training page can say WHY, not just "no checkpoint".
+    error_excerpt = "" if has_ckpt else _failure_excerpt(run_dir)
+    body = json.dumps(
+        {
+            "downloaded": True,
+            "has_checkpoint": has_ckpt,
+            "files": files,
+            "truncated": truncated,
+            "error_excerpt": error_excerpt,
+        }
+    ).encode()
     return Response(
         200,
         "OK",
