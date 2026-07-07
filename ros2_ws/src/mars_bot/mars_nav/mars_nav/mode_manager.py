@@ -111,11 +111,8 @@ class ModeManager(Node):
             callback_group=self._internal_callbacks_group,
         )
 
-        # Cancel every active NavigateToPose goal at the internal bt_navigator
-        # action (a zeroed CancelGoal request means "cancel all"). Both skill
-        # navigation (via navigate_to_pose_router) and map-page /goal_pose
-        # goals terminate through their normal result path, so callers waiting
-        # on a result unblock instead of hanging.
+        # Cancel-all for NavigateToPose goals (skill nav and /goal_pose alike
+        # both terminate at the internal bt_navigator action).
         self._nav_cancel_client = self.create_client(
             CancelGoal,
             "/internal_navigate_to_pose/_action/cancel_goal",
@@ -912,13 +909,8 @@ class ModeManager(Node):
             self.get_logger().warn(f"Cleanup warning: {e}")
 
     def _cancel_active_navigation(self, timeout_sec=3.0):
-        """Cancel all active NavigateToPose goals. Returns (success, message).
-
-        Sends a zeroed CancelGoal request ("cancel all") to the internal
-        bt_navigator action. Waits for the response so callers (mode switch,
-        the /nav/cancel_navigation service) know the goals are winding down
-        before tearing Nav2 down underneath them.
-        """
+        """Cancel all active NavigateToPose goals (zeroed CancelGoal = cancel
+        all). Returns (success, message)."""
         if not self._nav_cancel_client.service_is_ready():
             return True, "Navigation is not running; nothing to cancel"
         done = threading.Event()
@@ -985,11 +977,8 @@ class ModeManager(Node):
                 self.get_logger().info(response.message)
                 return response
 
-            # A mode switch tears down the Nav2 lifecycle under any active
-            # NavigateToPose goal, which would otherwise never deliver a result
-            # (the navigating skill hangs and the robot rejects all new skills
-            # until a manual Stop). Cancel active goals first so they terminate
-            # through their normal result path.
+            # Cancel active nav goals before tearing down their lifecycle nodes,
+            # or they never deliver a result and the navigating skill hangs.
             cancelled_ok, cancel_message = self._cancel_active_navigation()
             if not cancelled_ok:
                 self.get_logger().warning(f"Proceeding with mode switch despite: {cancel_message}")

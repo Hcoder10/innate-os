@@ -411,9 +411,7 @@ class AppControl : public rclcpp::Node {
         leader_sub_ = this->create_subscription<std_msgs::msg::Int32MultiArray>(
             "/leader_positions", 10, std::bind(&AppControl::leader_positions_callback, this, std::placeholders::_1));
 
-        // Publisher for velocity commands (Twist). Teleop goes through the
-        // cmd_vel priority mux (mars_nav cmd_vel_mux.py), where it overrides
-        // autonomous sources instead of interleaving with them on /cmd_vel.
+        // Teleop input of the cmd_vel priority mux (mars_nav cmd_vel_mux.py)
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_teleop", 10);
 
         // Publisher for leader arm commands (Float64MultiArray) on /mars/arm/commands

@@ -11,12 +11,8 @@ velocity_smoother:
     min_velocity: [-0.2, 0.0, -0.6]  # Based on controller min_vel_x, min_vel_y, symmetric min_vel_theta
     
     max_accel: [0.3, 0.0, 0.5]
-    # Decel deliberately harder than accel: it binds when the command stream
-    # stops or drops (cancel, preemption, velocity_timeout), where the old
-    # [-0.3, -0.5] kept the base moving 1.0-1.5 s after the app already showed
-    # "cancelled". Goal approaches still use the controller's gentler ax_min;
-    # this only makes Stop feel like stop (~0.3-0.45 s from full speed).
-    # Validate on a powered base before fleet rollout.
+    # Decel harder than accel so cancels stop fast; goal approaches still use
+    # the controller's gentler ax_min. Validate on a powered base.
     max_decel: [-1.0, 0.0, -2.0]
 
     deadband_velocity: [0.01, 0.0, 0.02] # Deadband for x, y, theta based on previous 'min_velocity_deadband'

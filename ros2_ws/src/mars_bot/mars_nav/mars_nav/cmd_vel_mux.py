@@ -3,22 +3,13 @@
 # Copyright (c) 2026 Innate Inc
 """cmd_vel priority mux — one writer to the base at a time.
 
-Before this node, teleop (mars_app), skills (brain_client's MobilityInterface)
-and Nav2 (velocity_smoother) all published /cmd_vel directly; a joystick nudge
-during navigation interleaved conflicting twists at the combined publish rate
-(measured: 56 source flips in 2.2 s — violent jerking on a powered base).
+Forwards messages from the highest-priority source that has published within
+its freshness window:
 
-Each source now publishes its own topic and the mux forwards messages from the
-highest-priority source that has published within its freshness window:
+    /cmd_vel_teleop > /cmd_vel_skills > /cmd_vel_nav  ->  /cmd_vel
 
-    /cmd_vel_teleop   (human override — wins over everything)
-    /cmd_vel_skills   (code skills driving the base directly)
-    /cmd_vel_nav      (Nav2 stack via the velocity smoother)
-                -> /cmd_vel (base driver)
-
-Forwarding is event-driven (no re-timing, no added latency). When every source
-goes stale after motion, one zero twist is published so the base stops
-deterministically instead of waiting out its hardware deadman.
+Event-driven (no re-timing). One zero twist is published when every source
+goes stale so the base stops deterministically.
 """
 
 import time
@@ -27,10 +18,8 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 
-# (name, topic, freshness window in seconds) — highest priority first. Windows
-# comfortably exceed each source's publish interval (teleop ~10 Hz, skills'
-# deadman refresh 20 Hz, smoother 40 Hz) so an active source never flickers
-# stale between messages.
+# (name, topic, freshness window s) — highest priority first. Windows exceed
+# each source's publish interval so an active source never flickers stale.
 SOURCES = [
     ("teleop", "/cmd_vel_teleop", 0.5),
     ("skills", "/cmd_vel_skills", 0.5),

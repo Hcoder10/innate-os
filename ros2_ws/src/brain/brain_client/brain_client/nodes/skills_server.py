@@ -79,9 +79,7 @@ def _coerce_numeric_inputs(skill, inputs: dict) -> dict:
 
 
 class SkillsActionServer(Node):
-    # How long a new goal may wait for a cancelling skill to finish tearing
-    # down before it is rejected (covers the ~1.2 s behavior-server cancel
-    # handshake of physical skills, with margin).
+    # Max wait for a cancelling skill's teardown before a new goal is rejected.
     TEARDOWN_GRACE_SEC = 2.0
 
     def __init__(self):
@@ -138,9 +136,6 @@ class SkillsActionServer(Node):
         # The robot runs one skill at a time. Guards execute_callback so a goal
         # that arrives while another skill is still executing is aborted promptly
         # (see execute_callback) instead of contending for the arm/robot state.
-        # The condition variable lets one incoming goal wait briefly for a
-        # cancelling skill to finish tearing down (Stop→Run grace window)
-        # instead of being rejected during the handover.
         self._skill_execution_lock = threading.Lock()
         self._skill_free = threading.Condition(self._skill_execution_lock)
         self._skill_running = False
@@ -299,21 +294,15 @@ class SkillsActionServer(Node):
         # another skill is still executing, abort it here so the app gets a
         # prompt result. Rejecting in goal_callback instead would surface nothing
         # back through the rws bridge, leaving the app hung until its timeout.
-        # Exception: when the running skill is already being cancelled (rapid
-        # Run/Stop toggling — the user pressed Stop then immediately Run), one
-        # goal may wait out the teardown instead of failing; the measured window
-        # is ~60 ms for code skills and ~1.2 s for physical ones. Only one goal
-        # waits — a pile-up still gets the prompt abort.
+        # Exception: one goal may wait out a cancelling skill's teardown (rapid
+        # Stop→Run), instead of failing with "already running".
         # No skill-status broadcast for the rejected goal — it never ran.
         with self._skill_free:
             if self._skill_running and not self._teardown_waiter:
                 self._teardown_waiter = True
                 try:
-                    # A Stop and its follow-up Run arrive back-to-back, and the
-                    # new goal can beat the cancel into the server — give the
-                    # cancel a beat to land, then wait out the teardown it
-                    # triggers. A genuinely-busy robot (no cancel in flight)
-                    # only delays its rejection by the first short wait.
+                    # The Run can beat its preceding Stop into the server; give
+                    # the cancel a beat to land before deciding.
                     self._skill_free.wait_for(
                         lambda: not self._skill_running or self._cancelling_teardown_in_progress(),
                         timeout=0.15,
@@ -474,9 +463,6 @@ class SkillsActionServer(Node):
         state slot suspends/resumes (see RobotStateProvider) and the camera is
         refcounted.
         """
-        # Arm the platform cancel latch for this run (recovers a cancel that
-        # raced goal startup — see Skill._begin_run), then honor it before any
-        # motion starts.
         skill._begin_run(goal_handle)
         if skill._cancelled:
             self.get_logger().info(f"Skill '{skill_type}' cancelled before it started")
@@ -543,11 +529,8 @@ class SkillsActionServer(Node):
         """
         metadata = physical_data["metadata"]
         try:
-            # Physical skills otherwise publish no feedback. Emit one immediately
-            # so the websocket bridge (rws) relays its assigned goal_id to the app
-            # — without it the app has no id to cancel/interrupt with. Sent before
-            # the behavior-server handshake (which takes up to ~1 s): a Stop
-            # pressed during the handshake must be able to bind to this goal.
+            # Emit feedback before the behavior handshake: rws only relays the
+            # goal_id (which an app cancel must bind to) on the first feedback.
             initial_feedback = ExecuteSkill.Feedback()
             initial_feedback.feedback = "running"
             initial_feedback.image_b64 = ""
@@ -625,8 +608,7 @@ class SkillsActionServer(Node):
             return False
 
     def _cancelling_teardown_in_progress(self) -> bool:
-        """True when the currently running skill has a cancel in flight, so an
-        incoming goal should wait out the teardown rather than be rejected."""
+        """True when the running skill has a cancel in flight."""
         return self._active_goal_handle is not None and self._skill_goal_cancel_requested(self._active_goal_handle)
 
     def _register_behavior_goal_handle(self, skill_goal_handle, behavior_goal_handle, skill_type: str) -> None:

@@ -341,9 +341,8 @@ export function createMap(root, opts = {}) {
 
   goalBtn.addEventListener("click", () => setGoalMode(!goalMode));
 
-  // Stop cancels every active navigation goal server-side — including ones this
-  // page didn't start (a skill's, another client's) — then drops the local goal
-  // marker and route. Button text doubles as the outcome indicator.
+  // Stop cancels every active navigation goal server-side, then drops the
+  // local goal marker and route.
   stopBtn.addEventListener("click", async () => {
     stopBtn.disabled = true;
     stopBtn.textContent = "Stopping…";

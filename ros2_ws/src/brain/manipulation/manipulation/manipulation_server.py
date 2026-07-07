@@ -146,8 +146,7 @@ class ManipulationServer(Node):
         self._joint_sub = None
 
         # Publishers
-        # Base motion from wheeled replay/learned skills rides the skills input
-        # of the cmd_vel priority mux, so teleop can always override it.
+        # Skills input of the cmd_vel priority mux (teleop can override).
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel_skills", 10)
         self.arm_state_pub = self.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
         # Head position command (degrees) — only published for head-enabled replay skills.
