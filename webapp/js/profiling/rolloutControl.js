@@ -193,11 +193,15 @@ export function buildRolloutControl(chartWindow, session) {
   async function runRollout(m) {
     mode = m;
     hideError();
+    // Read the picked skill once: the skills-topic handler rebuilds the select
+    // (and can clear its value) at any time, so a second read after the await
+    // below could stamp the episode with one id and run a different skill.
+    const skillId = select.value;
     if (mode === "eval") {
       state = "starting";
       sync();
       // Stamp the episode with the evaluated skill's id as its driving policy.
-      await capture.start(select.value);
+      await capture.start(skillId);
       if (destroyed) {
         // Torn down while start was in flight: destroy()'s discard may have
         // raced the episode-open service call, so discard again now that the
@@ -209,7 +213,7 @@ export function buildRolloutControl(chartWindow, session) {
     chartWindow.begin();
     runStartedAt = performance.now();
     const { promise, cancel } = ros.sendActionGoal(EXECUTE_SKILL_ACTION, EXECUTE_SKILL_ACTION_TYPE, {
-      skill_type: select.value,
+      skill_type: skillId,
       inputs: "{}",
     });
     cancelSkill = cancel;
