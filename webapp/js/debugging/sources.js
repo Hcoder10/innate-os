@@ -47,7 +47,7 @@ function worst(s) { return s.error > 0 ? "error" : s.warn > 0 ? "warn" : "ok"; }
  * @param {ReturnType<import("./consoleSource.js").createConsoleSource>} source
  * @param {import("../rosClient.js").RosClient} ros
  * @param {{ onSelect: (scope: any) => void }} opts
- * @returns {{ destroy: () => void }}
+ * @returns {{ destroy: () => void, selectFromRecord: (rec: any) => void }}
  */
 export function createSources(parent, source, ros, opts) {
   const wrap = document.createElement("div");
@@ -315,6 +315,19 @@ export function createSources(parent, source, ros, opts) {
   /** @param {string} m */
   function setMode(m) { if (m === mode) return; mode = m; render(); }
 
+  /** Select the launch/process/node this record belongs to, expanding the tree to reveal it. */
+  /** @param {any} rec */
+  function selectFromRecord(rec) {
+    const pane = rec && rec.pane;
+    if (!pane || !launches.has(pane)) return;
+    const procKey = procKeyOf(rec);
+    const nodeKey = rec.node || "(process)";
+    mode = "launch";
+    expanded.add(`L:${pane}`);
+    expanded.add(`P:${pane}|${procKey}`);
+    select(`N:${pane}|${procKey}|${nodeKey}`, { kind: "node", pane, procKey, node: nodeKey });
+  }
+
   // ---- roster (node vs logger) -----------------------------------------
   function fetchRoster() {
     ros.callService(NODES_SERVICE, {})
@@ -339,6 +352,7 @@ export function createSources(parent, source, ros, opts) {
   const tick = setInterval(() => { if (dirty) { dirty = false; render(); } }, 1200);
 
   return {
+    selectFromRecord,
     destroy() {
       clearInterval(refresh);
       clearInterval(tick);

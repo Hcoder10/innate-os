@@ -393,7 +393,10 @@ class SkillRepository:
     def create_physical_skill(self, display_name: str, kind: str = "learned") -> tuple[bool, str, str, str]:
         """Create a physical-skill directory with metadata.json. Returns (ok, msg, dir, id).
 
-        ``kind`` is the intended final type ("learned" or "replay")
+        ``kind`` is the intended final type ("learned", "replay", or "eval").
+        An "eval" dataset only collects policy-rollout episodes for review; it is
+        never trained (training selection filters to type=="learned") and never
+        run as a policy, so it gets no execution config.
         """
         try:
             display_name = display_name.strip()
@@ -401,7 +404,7 @@ class SkillRepository:
                 return False, "Skill name cannot be empty.", "", ""
 
             kind = (kind or "learned").strip().lower()
-            if kind not in ("learned", "replay"):
+            if kind not in ("learned", "replay", "eval"):
                 kind = "learned"
 
             dir_name = self._slugify(display_name)
@@ -416,13 +419,19 @@ class SkillRepository:
             os.makedirs(skill_dir, exist_ok=True)
             execution = (
                 {}
-                if kind == "replay"
+                if kind in ("replay", "eval")
                 else {
                     "duration": None,
                     "progress_threshold": None,
                     "start_pose": None,
                     "end_pose": None,
                     "n_action_steps": None,
+                    "auto_stop": None,
+                    "min_duration": None,
+                    "progress_ema_alpha": None,
+                    "engage_below": None,
+                    "stable_min": None,
+                    "stable_seconds": None,
                 }
             )
             metadata = {

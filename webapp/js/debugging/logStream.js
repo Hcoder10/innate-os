@@ -11,6 +11,11 @@ import { recSev, SEV_RANK, clockMs, sourceColor, launchLabel } from "./format.js
 const BUFFER_MAX = 6000;
 const DOM_MAX = 1500;
 
+const ICON_COPY =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_CHECK =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
 /** @param {any} rec */
 function procKeyOf(rec) {
   if (rec.proc == null) return "(other)";
@@ -20,9 +25,10 @@ function procKeyOf(rec) {
 /**
  * @param {HTMLElement} parent
  * @param {ReturnType<import("./consoleSource.js").createConsoleSource>} source
+ * @param {{ onSourceClick?: (rec: any) => void }} [opts]
  * @returns {{ destroy: () => void, setScope: (scope: any) => void }}
  */
-export function createLogStream(parent, source) {
+export function createLogStream(parent, source, opts) {
   /** @type {any[]} */
   let buffer = [];
   let started = false; // becomes true once the backfill batch is applied
@@ -86,7 +92,14 @@ export function createLogStream(parent, source) {
   clearBtn.textContent = "Clear";
   clearBtn.addEventListener("click", () => { buffer = []; list.replaceChildren(); updateCount(); });
 
-  bar.append(crumb, sevSel, search, spacer, count, rawBtn, pauseBtn, clearBtn);
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "debug-btn debug-icon-btn";
+  copyBtn.type = "button";
+  copyBtn.title = "Copy shown logs";
+  copyBtn.innerHTML = ICON_COPY;
+  copyBtn.addEventListener("click", copyLogs);
+
+  bar.append(crumb, sevSel, search, spacer, count, rawBtn, pauseBtn, clearBtn, copyBtn);
 
   // column header
   const cols = document.createElement("div");
@@ -151,7 +164,10 @@ export function createLogStream(parent, source) {
     const source = rec.logger || rec.node || rec.proc || rec.pane;
     src.textContent = source;
     src.style.color = sourceColor(source);
-    src.title = source;
+    src.title = `${source} — click to show all logs from this source`;
+    if (opts && opts.onSourceClick) {
+      src.addEventListener("click", (e) => { e.stopPropagation(); opts.onSourceClick(rec); });
+    }
 
     const msg = document.createElement("span");
     msg.className = "col-msg";
@@ -159,6 +175,27 @@ export function createLogStream(parent, source) {
 
     row.append(time, lvl, src, msg);
     return row;
+  }
+
+  /** @param {any} rec */
+  function lineText(rec) {
+    const sev = recSev(rec);
+    const level = rec.level || sev.toUpperCase();
+    const source = rec.logger || rec.node || rec.proc || rec.pane;
+    const msg = raw ? rec.text : (rec.msg != null ? rec.msg : rec.text);
+    return `${clockMs(rec.t)}  ${level}  ${source}  ${msg}`;
+  }
+
+  function copyLogs() {
+    const text = buffer.filter(passes).map(lineText).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      copyBtn.innerHTML = ICON_CHECK;
+      copyBtn.classList.add("active");
+      setTimeout(() => {
+        copyBtn.innerHTML = ICON_COPY;
+        copyBtn.classList.remove("active");
+      }, 1400);
+    });
   }
 
   function atBottom() {

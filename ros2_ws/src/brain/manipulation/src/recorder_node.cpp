@@ -35,7 +35,7 @@ RecorderNode::RecorderNode()
     this->declare_parameter("velocity_topic", "/cmd_vel");
     this->declare_parameter("odom_topic", "/odom");
     this->declare_parameter("image_size", std::vector<int64_t>{640, 480});
-    this->declare_parameter("max_timesteps", 1800);
+    this->declare_parameter("max_timesteps", 18000);
 
     // Get parameter values
     std::string data_dir_param = this->get_parameter("data_directory").as_string();
@@ -120,7 +120,7 @@ RecorderNode::RecorderNode()
         "brain/recorder/activate_physical_primitive",
         std::bind(&RecorderNode::activate_physical_primitive, this, std::placeholders::_1, std::placeholders::_2));
 
-    new_episode_srv_ = this->create_service<std_srvs::srv::Trigger>(
+    new_episode_srv_ = this->create_service<brain_messages::srv::NewEpisode>(
         "brain/recorder/new_episode",
         std::bind(&RecorderNode::handle_new_episode, this, std::placeholders::_1, std::placeholders::_2));
 
@@ -151,6 +151,10 @@ RecorderNode::RecorderNode()
     delete_episode_srv_ = this->create_service<brain_messages::srv::DeleteEpisode>(
         "brain/recorder/delete_episode",
         std::bind(&RecorderNode::handle_delete_episode, this, std::placeholders::_1, std::placeholders::_2));
+
+    copy_episode_srv_ = this->create_service<brain_messages::srv::CopyEpisode>(
+        "brain/recorder/copy_episode",
+        std::bind(&RecorderNode::handle_copy_episode, this, std::placeholders::_1, std::placeholders::_2));
 
     RCLCPP_DEBUG(this->get_logger(), "Hosting services:");
     RCLCPP_DEBUG(this->get_logger(), "  brain/recorder/activate_physical_primitive");
@@ -306,13 +310,21 @@ void RecorderNode::timer_callback() {
         return;
     }
 
-    // Build action data
-    std::vector<double> action_data;
-    if (latest_leader_command_) {
-        action_data = std::vector<double>(latest_leader_command_->data.begin(), latest_leader_command_->data.end());
-    } else {
-        action_data.resize(10, 0.0);
+    if (!latest_leader_command_) {
+        // No arm command has arrived since the node started. Expected briefly at
+        // the start of a policy-rollout capture (the episode opens before the
+        // policy's first inference step), hence throttled. The old fallback
+        // fabricated 10 zeros here — with cmd_vel and the trailing termination
+        // columns that made a 14-wide /action, and the first row latches the
+        // episode's width, so one such row corrupted the whole file against the
+        // normal 10-wide layout (train-time collate can't stack mixed widths).
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "No leader/policy arm command received yet. Skipping timestep.");
+        return;
     }
+
+    // Build action data
+    std::vector<double> action_data(latest_leader_command_->data.begin(), latest_leader_command_->data.end());
 
     // Add forward speed and yaw rate
     if (latest_cmd_vel_) {
@@ -516,8 +528,8 @@ void RecorderNode::activate_physical_primitive(
     response->success = true;
 }
 
-void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-                                      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+void RecorderNode::handle_new_episode(const std::shared_ptr<brain_messages::srv::NewEpisode::Request> request,
+                                      std::shared_ptr<brain_messages::srv::NewEpisode::Response> response) {
     if (state_ == State::IDLE) {
         RCLCPP_ERROR(this->get_logger(), "Cannot start a new episode unless a task is active.");
         publish_status("failed - no active task");
@@ -551,6 +563,11 @@ void RecorderNode::handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigg
     episode_start_system_time_ = std::chrono::system_clock::now();
     state_ = State::EPISODE_ACTIVE;
     episode_count_++;
+
+    // Capture provenance for this episode; written to metadata by add_episode on
+    // save. Empty source => "teleop", the only pre-provenance recording path.
+    current_episode_source_ = request->source.empty() ? "teleop" : request->source;
+    current_episode_policy_ = request->policy;
 
     std::string episode_str = std::to_string(episode_count_);
     RCLCPP_INFO(this->get_logger(), "=== RECORDING STARTED ===");
@@ -641,7 +658,7 @@ void RecorderNode::handle_save_episode(const std::shared_ptr<std_srvs::srv::Trig
     }
 
     try {
-        task_manager_->add_episode(temp_path, start_ts, end_ts);
+        task_manager_->add_episode(temp_path, start_ts, end_ts, current_episode_source_, current_episode_policy_);
     } catch (const std::exception& e) {
         // The file is already finalized but couldn't be moved into the slot;
         // remove it so we don't leak a stranded file.
@@ -772,8 +789,8 @@ void RecorderNode::handle_set_episode_outcome(
     RCLCPP_INFO(this->get_logger(), "Set outcome '%s' for episode %d in %s", request->outcome.c_str(),
                 request->episode_id, request->task_directory.c_str());
     try {
-        auto [success, message] =
-            task_manager_->set_episode_outcome(request->task_directory, request->episode_id, request->outcome);
+        auto [success, message] = task_manager_->set_episode_outcome(request->task_directory, request->episode_id,
+                                                                     request->outcome, request->tags);
         response->success = success;
         response->message = message;
         if (!success) {
@@ -812,6 +829,29 @@ void RecorderNode::handle_delete_episode(const std::shared_ptr<brain_messages::s
     } catch (const std::exception& e) {
         response->success = false;
         response->message = std::string("Error deleting episode: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
+    }
+}
+
+void RecorderNode::handle_copy_episode(const std::shared_ptr<brain_messages::srv::CopyEpisode::Request> request,
+                                       std::shared_ptr<brain_messages::srv::CopyEpisode::Response> response) {
+    RCLCPP_INFO(this->get_logger(), "Copy episode %d from %s to %s", request->episode_id,
+                request->source_task_directory.c_str(), request->dest_task_directory.c_str());
+    try {
+        auto [success, message, new_id] = task_manager_->copy_episode(
+            request->source_task_directory, request->episode_id, request->dest_task_directory);
+        response->success = success;
+        response->message = message;
+        response->new_episode_id = new_id;
+        if (success) {
+            RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
+        } else {
+            RCLCPP_WARN(this->get_logger(), "copy_episode failed: %s", message.c_str());
+        }
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = std::string("Error copying episode: ") + e.what();
+        response->new_episode_id = -1;
         RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
     }
 }

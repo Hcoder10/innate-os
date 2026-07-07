@@ -139,6 +139,46 @@ void merge_encoder_fields_from_disk(const std::string& path, nlohmann::json& met
         }
     }
 }
+
+// Column count of an episode file's 2-D /action dataset, or -1 when the file
+// or dataset can't be read (caller treats unknown as "don't block the copy").
+int action_width(const std::string& h5_path) {
+    const hid_t file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) {
+        return -1;
+    }
+    int cols = -1;
+    const hid_t dset = H5Dopen2(file, "/action", H5P_DEFAULT);
+    if (dset >= 0) {
+        const hid_t space = H5Dget_space(dset);
+        if (space >= 0) {
+            hsize_t dims[2] = {0, 0};
+            if (H5Sget_simple_extent_ndims(space) == 2 && H5Sget_simple_extent_dims(space, dims, nullptr) == 2) {
+                cols = static_cast<int>(dims[1]);
+            }
+            H5Sclose(space);
+        }
+        H5Dclose(dset);
+    }
+    H5Fclose(file);
+    return cols;
+}
+
+// Path equality that tolerates trailing slashes, dot segments and symlinks.
+// Directory paths here arrive from independent service requests (start_recording,
+// copy_episode), so the same dataset can be spelled two ways; a raw string compare
+// would miss the match. Falls back to the raw compare if canonicalization fails —
+// two failed canonicalizations both return "" and must not read as equal.
+bool same_directory(const std::string& a, const std::string& b) {
+    std::error_code ec_a;
+    std::error_code ec_b;
+    const fs::path canon_a = fs::weakly_canonical(a, ec_a);
+    const fs::path canon_b = fs::weakly_canonical(b, ec_b);
+    if (ec_a || ec_b) {
+        return a == b;
+    }
+    return canon_a == canon_b;
+}
 }  // namespace
 
 namespace manipulation {
@@ -209,7 +249,7 @@ void TaskManager::cleanup_stale_streaming_files() {
 }
 
 void TaskManager::add_episode(const std::string& temp_file_path, const std::string& start_timestamp,
-                              const std::string& end_timestamp) {
+                              const std::string& end_timestamp, const std::string& source, const std::string& policy) {
     std::string data_dir = current_task_dir_ + "/data";
     fs::create_directories(data_dir);
 
@@ -239,10 +279,17 @@ void TaskManager::add_episode(const std::string& temp_file_path, const std::stri
                                  file_path + "': " + ec.message());
     }
 
+    // Provenance: `source` records how the episode was produced; `policy` (only
+    // for rollouts) records which model drove it. `policy` is written only when
+    // present so teleop/replay episodes stay clean.
     nlohmann::json episode_info = {{"episode_id", episode_id},
                                    {"file_name", file_name},
                                    {"start_timestamp", start_timestamp},
-                                   {"end_timestamp", end_timestamp}};
+                                   {"end_timestamp", end_timestamp},
+                                   {"source", source.empty() ? "teleop" : source}};
+    if (!policy.empty()) {
+        episode_info["policy"] = policy;
+    }
     metadata_["episodes"].push_back(episode_info);
     metadata_["number_of_episodes"] = episode_id + 1;
     save_metadata();
@@ -371,7 +418,14 @@ std::optional<nlohmann::json> TaskManager::get_enriched_metadata_for_task(const 
                  {"video_files", episode_info.value("video_files", nlohmann::json::array())},
                  // Curation label ("success"/"failure"/""); absent => unlabeled,
                  // which clients treat as success by default.
-                 {"outcome", episode_info.value("outcome", "")}});
+                 {"outcome", episode_info.value("outcome", "")},
+                 // Provenance: how the episode was produced and, for rollouts,
+                 // which model drove it. Legacy episodes predate `source`, so
+                 // default to "teleop" (the only pre-provenance recording path).
+                 {"source", episode_info.value("source", "teleop")},
+                 {"policy", episode_info.value("policy", "")},
+                 // Free-form failure-mode tags, absent => none.
+                 {"tags", episode_info.value("tags", nlohmann::json::array())}});
         }
     }
 
@@ -401,7 +455,8 @@ std::tuple<bool, std::string, std::string> TaskManager::get_task_metadata_by_dir
 }
 
 std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string& task_directory, int episode_id,
-                                                               const std::string& outcome) {
+                                                               const std::string& outcome,
+                                                               const std::vector<std::string>& tags) {
     if (outcome != "success" && outcome != "failure" && !outcome.empty()) {
         return {false, "Invalid outcome '" + outcome + "' (expected success|failure|\"\")"};
     }
@@ -432,6 +487,12 @@ std::tuple<bool, std::string> TaskManager::set_episode_outcome(const std::string
                 ep.erase("outcome");
             } else {
                 ep["outcome"] = outcome;
+            }
+            // A non-empty `tags` list replaces the stored tags; an empty list
+            // leaves them unchanged. There is no tag-clearing UI, so this keeps
+            // an outcome-only relabel (Datasets page) from wiping review tags.
+            if (!tags.empty()) {
+                ep["tags"] = tags;
             }
             found = true;
             break;
@@ -524,6 +585,184 @@ std::tuple<bool, std::string> TaskManager::delete_episode(const std::string& tas
         metadata_ = meta;
     }
     return {true, "Deleted episode " + std::to_string(episode_id) + " (" + std::to_string(removed) + " files)"};
+}
+
+std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& source_task_directory, int episode_id,
+                                                             const std::string& dest_task_directory) {
+    if (same_directory(source_task_directory, dest_task_directory)) {
+        return {false, "Source and destination datasets are the same", -1};
+    }
+    const std::string src_data = source_task_directory + "/data";
+    const std::string src_meta_path = src_data + "/dataset_metadata.json";
+    if (!fs::exists(src_meta_path)) {
+        return {false, "No dataset metadata at " + src_meta_path, -1};
+    }
+
+    // Snapshot the source entry under the source lock, then release it — the two
+    // locks are never held together, so opposite-direction copies can't deadlock.
+    nlohmann::json src_entry;
+    nlohmann::json src_meta;
+    {
+        MetadataLock lock(src_meta_path);
+        try {
+            std::ifstream in(src_meta_path);
+            in >> src_meta;
+        } catch (const std::exception& e) {
+            return {false, std::string("Failed to parse source metadata: ") + e.what(), -1};
+        }
+        if (!src_meta.is_object() || !src_meta.contains("episodes") || !src_meta["episodes"].is_array()) {
+            return {false, "Source metadata has no episodes array", -1};
+        }
+        for (const auto& ep : src_meta["episodes"]) {
+            if (ep.value("episode_id", -1) == episode_id) {
+                src_entry = ep;
+                break;
+            }
+        }
+    }
+    if (src_entry.is_null()) {
+        return {false, "Episode " + std::to_string(episode_id) + " not found in source dataset", -1};
+    }
+
+    const std::string dest_data = dest_task_directory + "/data";
+    const std::string dest_meta_path = dest_data + "/dataset_metadata.json";
+    fs::create_directories(dest_data);
+
+    MetadataLock lock(dest_meta_path);
+    nlohmann::json dest_meta;
+    if (fs::exists(dest_meta_path) && fs::file_size(dest_meta_path) > 0) {
+        try {
+            std::ifstream in(dest_meta_path);
+            in >> dest_meta;
+        } catch (const std::exception& e) {
+            return {false, std::string("Failed to parse destination metadata: ") + e.what(), -1};
+        }
+    } else {
+        // Fresh destination (skill created but never recorded into): inherit the
+        // source's frequency/type so the copied episode stays self-consistent.
+        dest_meta = {{"data_frequency", src_meta.value("data_frequency", 0.0)},
+                     {"dataset_type", src_meta.value("dataset_type", "h5")},
+                     {"number_of_episodes", 0},
+                     {"episodes", nlohmann::json::array()}};
+    }
+    if (!dest_meta.is_object() || !dest_meta.contains("episodes") || !dest_meta["episodes"].is_array()) {
+        return {false, "Destination metadata has no episodes array", -1};
+    }
+    // Mixed-frequency datasets would silently corrupt training, so refuse.
+    const double src_freq = src_meta.value("data_frequency", 0.0);
+    const double dest_freq = dest_meta.value("data_frequency", 0.0);
+    if (src_freq > 0 && dest_freq > 0 && src_freq != dest_freq) {
+        return {false,
+                "Destination records at " + std::to_string(dest_freq) + " Hz but the episode was recorded at " +
+                    std::to_string(src_freq) + " Hz",
+                -1};
+    }
+
+    const int new_id = dest_meta.value("number_of_episodes", 0);
+    const std::string old_stem = "episode_" + std::to_string(episode_id);
+    const std::string new_stem = "episode_" + std::to_string(new_id);
+
+    // Copy the h5 and every "episode_<id>_*" sibling (mp4s, profile trace) from
+    // data/ and raw_data/, renaming the stem. Track what we copied so a failure
+    // can't leave a half-copied episode behind.
+    std::vector<fs::path> copied;
+    auto rollback = [&copied]() {
+        for (const auto& p : copied) {
+            std::error_code rm_ec;
+            fs::remove(p, rm_ec);
+        }
+    };
+    if (!fs::exists(src_data + "/" + old_stem + ".h5")) {
+        return {false, "Source episode file missing: " + old_stem + ".h5", -1};
+    }
+    // Mixed action layouts break training the same way mixed frequencies do —
+    // collate can't stack a [chunk, 10] episode with a [chunk, 14] one — and
+    // happen in practice when a dataset's episodes span recorder versions.
+    // Compare the incoming /action width against one readable destination
+    // episode; unknown widths (unreadable file) don't block the copy.
+    const int src_width = action_width(src_data + "/" + old_stem + ".h5");
+    if (src_width > 0) {
+        for (const auto& ep : dest_meta["episodes"]) {
+            const std::string dest_file = ep.value("file_name", "");
+            if (dest_file.empty()) {
+                continue;
+            }
+            const int dest_width = action_width(dest_data + "/" + dest_file);
+            if (dest_width <= 0) {
+                continue;
+            }
+            if (src_width != dest_width) {
+                return {false,
+                        "Episode's /action has " + std::to_string(src_width) + " columns but the destination's have " +
+                            std::to_string(dest_width) +
+                            " — mixed layouts can't train (likely recorded by different robot versions)",
+                        -1};
+            }
+            break;
+        }
+    }
+    std::error_code ec;  // scratch for the probes below; copies check their own cp_ec
+    for (const char* sub : {"/data", "/raw_data"}) {
+        fs::path src_dir = fs::path(source_task_directory + sub);
+        if (!fs::is_directory(src_dir, ec)) {
+            continue;
+        }
+        for (const auto& entry : fs::directory_iterator(src_dir, ec)) {
+            const std::string name = entry.path().filename().string();
+            // "episode_3.h5" or "episode_3_*" — the underscore/dot boundary keeps
+            // episode_3 from matching episode_30's files.
+            if (name != old_stem + ".h5" && name.rfind(old_stem + "_", 0) != 0) {
+                continue;
+            }
+            fs::path dest_dir = fs::path(dest_task_directory + sub);
+            fs::create_directories(dest_dir, ec);
+            fs::path dest_path = dest_dir / (new_stem + name.substr(old_stem.size()));
+            std::error_code cp_ec;
+            fs::copy_file(entry.path(), dest_path, fs::copy_options::none, cp_ec);
+            if (cp_ec) {
+                rollback();
+                return {false, "Failed to copy " + name + ": " + cp_ec.message(), -1};
+            }
+            copied.push_back(dest_path);
+        }
+    }
+
+    // Metadata entry: same provenance/labels, new id and file names.
+    nlohmann::json new_entry = src_entry;
+    new_entry["episode_id"] = new_id;
+    new_entry["file_name"] = new_stem + ".h5";
+    if (new_entry.contains("video_files") && new_entry["video_files"].is_array()) {
+        for (auto& vf : new_entry["video_files"]) {
+            std::string name = vf.get<std::string>();
+            if (name.rfind(old_stem + "_", 0) == 0) {
+                vf = new_stem + name.substr(old_stem.size());
+            }
+        }
+    }
+    dest_meta["episodes"].push_back(new_entry);
+    dest_meta["number_of_episodes"] = new_id + 1;
+    if (dest_freq <= 0 && src_freq > 0) {
+        dest_meta["data_frequency"] = src_freq;
+    }
+    try {
+        write_json_atomic(dest_meta_path, dest_meta);
+    } catch (const std::exception& e) {
+        rollback();
+        return {false, std::string("Failed to write destination metadata: ") + e.what(), -1};
+    }
+
+    // If the destination is the actively-recording task, refresh the in-memory
+    // snapshot so the recorder's next add_episode doesn't reuse the id we took.
+    // Canonical compare: the two paths come from different service requests, and
+    // a spelling mismatch here would silently skip the refresh and collide ids.
+    if (!current_task_dir_.empty() && same_directory(dest_task_directory, current_task_dir_)) {
+        metadata_ = dest_meta;
+    }
+    return {true,
+            "Copied episode " + std::to_string(episode_id) + " to " +
+                fs::path(dest_task_directory).filename().string() + " as episode " + std::to_string(new_id) + " (" +
+                std::to_string(copied.size()) + " files)",
+            new_id};
 }
 
 }  // namespace manipulation

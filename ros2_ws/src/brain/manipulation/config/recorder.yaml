@@ -11,4 +11,4 @@
     velocity_topic: "/cmd_vel"             # Topic for velocity data
     odom_topic: "/odom"                    # Topic for odometry data (used to verify robot is alive)
     image_size: [640, 480]
-    max_timesteps: 1800                    # Maximum number of timesteps before automatically stopping episode
+    max_timesteps: 18000                   # Maximum number of timesteps before automatically stopping episode (10 min at 30 Hz)

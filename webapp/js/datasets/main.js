@@ -8,17 +8,16 @@
 // Mirrors the debugging page's connect/view lifecycle.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
+import { AVAILABLE_SKILLS_TOPIC } from "../constants.js";
 import { createSkillList } from "./skillList.js";
 import { createEpisodeList } from "./episodeList.js";
 import { createEpisodePlayer } from "./episodePlayer.js";
 
-initShell("datasets", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "datasets", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "datasets", buildView);
+}
 
 /**
  * @param {HTMLElement} root
@@ -47,6 +46,18 @@ function buildView(root) {
   mainEl.append(listHost, playerHost);
   grid.append(sideEl, mainEl);
   root.append(head, grid);
+
+  // Live roster of datasets an eval run can be copied into ("add to training
+  // dataset"). Learned skills only — eval/replay datasets are never trained.
+  /** @type {Skill[]} */
+  let trainTargets = [];
+  const unsubSkills = ros.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
+    const all = Array.isArray(msg?.skills) ? /** @type {Skill[]} */ (msg.skills) : [];
+    trainTargets = all
+      .filter((s) => s && s.directory && s.type === "learned")
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+  const getTargets = () => trainTargets;
 
   /** @type {{ destroy: () => void } | null} */
   let player = null;
@@ -80,10 +91,11 @@ function buildView(root) {
       },
       onPrev: episodes.neighbor(ep, -1) ? () => go(-1) : null,
       onNext: episodes.neighbor(ep, 1) ? () => go(1) : null,
+      getTargets,
     });
   }
 
-  const episodes = createEpisodeList(listHost, ros, { onOpen: openPlayer });
+  const episodes = createEpisodeList(listHost, ros, { onOpen: openPlayer, getTargets });
   const skills = createSkillList(sideEl, ros, {
     onSelect: (skill) => {
       closePlayer();
@@ -93,6 +105,7 @@ function buildView(root) {
 
   return {
     destroy() {
+      unsubSkills();
       skills.destroy();
       episodes.destroy();
       if (player) player.destroy();

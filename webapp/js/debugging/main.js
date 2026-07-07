@@ -7,17 +7,15 @@
 // card as teleop. Mirrors teleop's connect/cockpit lifecycle.
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { createConsoleSource } from "./consoleSource.js";
 import { createLogStream } from "./logStream.js";
 import { createSources } from "./sources.js";
 
-initShell("debugging", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "debug", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "debug", buildView);
+}
 
 /**
  * @param {HTMLElement} root
@@ -42,8 +40,10 @@ function buildView(root) {
 
   // One subscription, fanned out to both the log view and the sources panel.
   const source = createConsoleSource(ros);
-  const log = createLogStream(mainEl, source);
-  const sources = createSources(sideEl, source, ros, { onSelect: (scope) => log.setScope(scope) });
+  /** @type {ReturnType<typeof createSources>} */
+  let sources;
+  const log = createLogStream(mainEl, source, { onSourceClick: (rec) => sources.selectFromRecord(rec) });
+  sources = createSources(sideEl, source, ros, { onSelect: (scope) => log.setScope(scope) });
 
   return {
     destroy() {

@@ -23,6 +23,7 @@ Persist:    launched on boot in the `console-webapp` tmux window
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import mimetypes
@@ -38,6 +39,7 @@ from media_routes import (
     _plain,
     episode_response,
     joints_response,
+    profile_response,
     run_info_response,
     run_log_response,
     thumb_response,
@@ -156,22 +158,38 @@ CONTENT_TYPES = {
 }
 
 
-def static_response(path: str) -> Response:
+def static_response(path: str, if_none_match: str = "") -> Response:
     clean = path.split("?", 1)[0].split("#", 1)[0]
     target = (ROOT / clean.lstrip("/")).resolve()
     if target.is_dir():
         target = target / "index.html"
     body_path = target if target.is_file() else None
+    # SPA fallback: an extensionless route that maps to no file (e.g. /profiling,
+    # /settings, or a deep link/refresh on any client-side route) is served the
+    # app shell so the router can render it. Asset requests carry a suffix
+    # (.js/.css/...), so a genuinely missing asset still 404s below. The
+    # in-root guard keeps a traversal like /../secrets a 404, not the shell.
+    if body_path is None and target.is_relative_to(ROOT) and "." not in clean.rsplit("/", 1)[-1]:
+        body_path = ROOT / "index.html"
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
     body = body_path.read_bytes()
+    # Content-hash ETag: the first load (and any hard refresh) requests all ~27
+    # modules, but unchanged ones come back as a bodyless 304 instead of a full
+    # re-download. Cache-Control stays no-cache so a redeploy is always picked up
+    # — the browser still revalidates every load, but revalidation is now a tiny
+    # conditional request, not a transfer of the whole file.
+    etag = f'"{hashlib.sha1(body).hexdigest()}"'
+    if if_none_match == etag:
+        return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
     headers = Headers(
         {
             "Content-Type": ctype,
             "Content-Length": str(len(body)),
             "Cache-Control": "no-cache",
+            "ETag": etag,
         }
     )
     return Response(200, "OK", headers, body)
@@ -243,6 +261,8 @@ async def _dispatch_request(connection, request):
         return await asyncio.to_thread(episode_response, request, qs)
     if split.path == "/episode/joints":
         return await asyncio.to_thread(joints_response, qs)
+    if split.path == "/episode/profile":
+        return await asyncio.to_thread(profile_response, qs)
     if split.path == "/episode/thumb":
         return await thumb_response(qs)
     if split.path == "/run/info":
@@ -259,7 +279,7 @@ async def _dispatch_request(connection, request):
         if request.headers.get("X-Requested-By", "") != "innate-webapp":
             return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
-    return await asyncio.to_thread(static_response, request.path)
+    return await asyncio.to_thread(static_response, request.path, request.headers.get("If-None-Match", ""))
 
 
 async def relay(source, sink):

@@ -89,6 +89,10 @@ class SkillLoader(DynamicLoader):
             is_valid, is_in_training = self._validate_learned_skill(skill_dir, execution)
             episode_count = self._get_episode_count(skill_dir)
             return (is_valid, is_in_training, episode_count)
+        elif skill_type == "eval":
+            # A rollout-capture dataset: always valid, never "in training" (it has
+            # no checkpoint and is never trained), episodes counted like a dataset.
+            return (True, False, self._get_episode_count(skill_dir))
         elif skill_type == "replay":
             # A replay draft (created up front, still being recorded into data/) has no
             # replay_file yet — treat it as in_training rather than invalid so it loads

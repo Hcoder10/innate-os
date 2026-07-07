@@ -9,6 +9,7 @@ import { initTtsAudio } from "./ttsAudio.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
 import { maybeShowAppPromo } from "./appPromo.js";
+import { installPressActivate } from "./pressActivate.js";
 
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
@@ -65,18 +66,39 @@ const SECTIONS = [
   },
 ];
 
+/** Path for a section key: teleop is the site root, the rest are /<key>. */
+function pathForKey(key) {
+  return key === "teleop" ? "/" : `/${key}`;
+}
+
+/** True when focus is in a text field, so global key shortcuts must stand down. */
+function isTypingContext() {
+  const el = document.activeElement;
+  return (
+    el instanceof HTMLElement &&
+    (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+  );
+}
+
 /**
- * Render the icon rail into the page (prepended to <body>, before #stage).
- * @param {string} activeKey Section key of the current page.
- * @param {string} root Relative prefix to the site root ("" or "../").
+ * Build the persistent app chrome once — the icon rail + connection badge, robot
+ * speech playback, and the "agent running" indicator — and return a controller
+ * the router uses to reflect the active section on each navigation. Called once
+ * by the router, not per page (navigation is client-side now).
+ * @param {(path: string) => void} navigate Router navigation, for key shortcuts.
+ * @returns {{ setActive: (key: string) => void }}
  */
-export function initShell(activeKey, root) {
+export function initShell(navigate) {
+  // Buttons fire on press-down instead of release, app-wide. Installed here
+  // because the router builds the shell exactly once per page load. Idempotent.
+  installPressActivate();
+
   const rail = document.createElement("aside");
   rail.className = "rail";
 
   const mark = document.createElement("a");
   mark.className = "rail-mark";
-  mark.href = root + "index.html";
+  mark.href = "/";
   mark.title = "Innate";
   // The Innate wordmark, scaled to the 38px rail width.
   mark.innerHTML =
@@ -87,20 +109,35 @@ export function initShell(activeKey, root) {
   const nav = document.createElement("nav");
   nav.className = "rail-nav";
   nav.setAttribute("aria-label", "Sections");
-  for (const section of SECTIONS) {
+  SECTIONS.forEach((section, i) => {
+    const shortcut = i + 1; // 1..N, the number-key shortcut for this section
     const a = document.createElement("a");
-    a.className = "rail-link" + (section.key === activeKey ? " active" : "");
+    a.className = "rail-link";
     a.dataset.section = section.key;
-    a.href = root + (section.key === "teleop" ? "index.html" : `${section.key}/index.html`);
-    a.title = section.label;
+    a.href = pathForKey(section.key);
+    a.title = `${section.label} (${shortcut})`;
     a.setAttribute("aria-label", section.label);
-    if (section.key === activeKey) a.setAttribute("aria-current", "page");
+    a.setAttribute("aria-keyshortcuts", String(shortcut));
     a.innerHTML =
       `<span class="rail-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${section.icon}</svg></span>` +
-      `<span class="rail-label">${section.label}</span>`;
+      `<span class="rail-label">${section.label}</span>` +
+      `<span class="rail-key" aria-hidden="true">${shortcut}</span>`;
     nav.appendChild(a);
-  }
+  });
   rail.appendChild(nav);
+
+  // Number keys 1..N jump between sections (the number shows in each tooltip).
+  // Guarded so it never fires while typing in a field or as part of a
+  // browser/OS combo like Cmd+1 (tab switch). A removed link (sim-mode filter)
+  // simply has no match, so its number is inert.
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTypingContext()) return;
+    const section = SECTIONS[Number(e.key) - 1];
+    if (!section) return;
+    // A removed link (sim-mode filter) has no match, so its number stays inert.
+    const link = nav.querySelector(`.rail-link[data-section="${section.key}"]`);
+    if (link) navigate(pathForKey(section.key));
+  });
 
   rail.appendChild(createBadge());
   document.body.prepend(rail);
@@ -109,30 +146,36 @@ export function initShell(activeKey, root) {
   // from the rail once the (env-driven) config says we're in sim mode.
   void applySimSectionFilter(nav);
 
-  // A running agent shows a top-center "running" pill on every other page,
-  // linking back here to take control. The Agent page has its own Start/Stop,
-  // so it's excluded.
-  if (activeKey !== "agent") {
-    // Pages like Settings never open a rosbridge socket of their own; ensure one
-    // so the indicator can read brain state. Idempotent with pageMount's connect.
-    ensureConnected();
-    createAgentIndicator(createAgentState(ros), root + "agent/index.html");
-  }
-
-  // Play robot speech (/tts/audio) regardless of which page is open.
+  // Play robot speech (/tts/audio) regardless of which page is open; idempotent.
   initTtsAudio();
 
-  // On a phone/tablet, nudge toward the native app (shown once, then remembered).
-  maybeShowAppPromo(root);
-}
+  // A running agent shows a top-center "running" pill, linking back to the Agent
+  // page to take control. It's persistent (built once); setActive hides it while
+  // the Agent page — which has its own Start/Stop — is open.
+  const agentIndicator = createAgentIndicator(createAgentState(ros), "/agent");
 
-/** Connect to the host that served the page (the robot in prod), preferring a
- *  remembered address on laptop dev. Mirrors pageMount; safe to call twice. */
-function ensureConnected() {
-  const servedHost = location.hostname;
-  const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
-  const target = robotServed ? servedHost : (ros.lastIp ?? servedHost);
-  if (target) ros.connect(target);
+  // On a phone/tablet, nudge toward the native app (shown once, then remembered).
+  maybeShowAppPromo("/");
+
+  /**
+   * Reflect the active section: highlight its rail link, hide the agent pill on
+   * the Agent route, and title the tab.
+   * @param {string} key
+   */
+  function setActive(key) {
+    for (const link of nav.querySelectorAll(".rail-link")) {
+      const el = /** @type {HTMLElement} */ (link);
+      const active = el.dataset.section === key;
+      el.classList.toggle("active", active);
+      if (active) el.setAttribute("aria-current", "page");
+      else el.removeAttribute("aria-current");
+    }
+    agentIndicator.el.style.display = key === "agent" ? "none" : "";
+    const section = SECTIONS.find((s) => s.key === key);
+    document.title = section ? `Innate · ${section.label}` : "Innate";
+  }
+
+  return { setActive };
 }
 
 /**
@@ -188,30 +231,4 @@ function createBadge() {
     if (ros.state === "connected") ros.disconnect();
   });
   return badge;
-}
-
-/**
- * Placeholder body for future sections: section name + one-liner, centered.
- * @param {HTMLElement | null} stage
- * @param {{ title: string, blurb: string }} opts
- */
-export function renderPlaceholder(stage, opts) {
-  if (!stage) return;
-  const wrap = document.createElement("div");
-  wrap.className = "placeholder";
-
-  const title = document.createElement("h1");
-  title.className = "placeholder-title";
-  title.textContent = opts.title;
-
-  const blurb = document.createElement("p");
-  blurb.className = "placeholder-blurb";
-  blurb.textContent = opts.blurb;
-
-  const soon = document.createElement("p");
-  soon.className = "microlabel";
-  soon.textContent = "coming soon";
-
-  wrap.append(title, blurb, soon);
-  stage.appendChild(wrap);
 }

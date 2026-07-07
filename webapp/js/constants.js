@@ -164,6 +164,11 @@ export const ENCODE_STATUS_TOPIC = "/datasets/encode_status";
 // ("success"/"failure"/"" to clear); delete is a hard delete of files+metadata.
 export const SET_EPISODE_OUTCOME_SERVICE = "/brain/recorder/set_episode_outcome";
 export const DELETE_EPISODE_SERVICE = "/brain/recorder/delete_episode";
+// Copy an episode into another dataset — promotes an eval rollout into a
+// training dataset. Files (h5, MP4s, profile trace) and provenance travel with
+// it: {source_task_directory, episode_id, dest_task_directory} →
+// {success, message, new_episode_id}. The source episode is left untouched.
+export const COPY_EPISODE_SERVICE = "/brain/recorder/copy_episode";
 
 // ---- Collect page ---------------------------------------------------------
 // Live recording, mirroring the mobile app's RecordEpisodeScreen flow. The

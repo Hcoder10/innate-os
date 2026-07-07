@@ -18,6 +18,9 @@
   --type-learned: #5fb8a3;      /* skill-type dot: trained ACT policy */
   --type-replay: #6b93d6;       /* skill-type dot: recorded trajectory */
   --type-digital: #a389d4;      /* skill-type dot: code/SDK skill */
+  --eval: #b58ce6;              /* evaluation identity — policy rollouts, never training data */
+  --eval-dim: rgb(181 140 230 / 40%);
+  --eval-faint: rgb(181 140 230 / 12%);
   --glass: rgb(0 0 0 / 40%);
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -160,6 +163,20 @@ button {
 }
 .rail:hover .rail-label {
   opacity: 1;
+}
+
+/* Keycap hint: the number key that jumps to this section. A small digit pinned
+   to the top-right corner of the icon, always visible even when collapsed. */
+.rail-key {
+  position: absolute;
+  top: 3px;
+  left: 33px;              /* top-right corner of the 48px icon box */
+  font-size: 9px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
 .rail-link.active::before {
@@ -1504,37 +1521,6 @@ button {
   color: inherit;
 }
 
-/* ---- placeholder pages ------------------------------------------------------ */
-
-.placeholder {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 12px;
-  text-align: center;
-}
-
-.placeholder-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-}
-
-.placeholder-blurb {
-  margin: 0;
-  max-width: 360px;
-  color: var(--muted);
-}
-
-.placeholder .microlabel {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--hairline);
-}
 
 /* ---- debugging page ------------------------------------------------------- */
 
@@ -1699,6 +1685,10 @@ button {
   border-color: rgb(86 194 140 / 50%);
 }
 
+.debug-btn.debug-icon-btn {
+  line-height: 0;
+}
+
 /* log list */
 /* columns shared by the header and each log row */
 .debug-cols,
@@ -1757,6 +1747,11 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.col-source:hover {
+  text-decoration: underline;
 }
 
 .col-msg {
@@ -2032,6 +2027,48 @@ button {
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Section headers: "Training data" (operator demos) vs "Evaluation runs"
+   (policy rollouts). Two different kinds of episodes — the icons + the eval
+   tint keep them from ever reading as one flat list. */
+.skillpanel-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 16px 6px;
+  color: var(--muted);
+}
+.skillpanel-group svg {
+  flex: none;
+  opacity: 0.8;
+}
+.skillpanel-group.eval {
+  margin-top: 8px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 14px;
+  color: var(--eval);
+}
+
+.skillpanel-hint {
+  margin: 0;
+  padding: 4px 16px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Evaluation dataset rows carry the eval accent instead of signal amber. */
+.skill-row.eval .skill-count {
+  color: var(--eval);
+  opacity: 0.85;
+}
+.skill-row.eval.active {
+  background: var(--eval-faint);
+  box-shadow: inset 2px 0 0 var(--eval);
+}
+.skill-row.eval.active .skill-name {
+  color: var(--eval);
 }
 
 .skill-row {
@@ -2354,6 +2391,254 @@ button {
   cursor: progress;
 }
 
+/* ---- evaluation view (skill.type == "eval") --------------------------------
+   Judged policy rollouts, not training data: a sixth Policy column, a Result
+   column with an explicit Unlabeled state + failure tags, per-policy filter
+   chips, and the eval violet replacing signal amber throughout. */
+.episodes--eval {
+  --ep-grid: minmax(0, 1.35fr) minmax(0, 0.9fr) 0.95fr 0.6fr 1.15fr 84px;
+}
+
+.episodes-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.episodes-kind {
+  padding: 3px 8px;
+  border: 1px solid var(--eval-dim);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--eval);
+  background: var(--eval-faint);
+}
+
+.episodes-fail {
+  color: var(--danger);
+}
+
+.episodes--eval .episode-row.clickable:hover {
+  background: var(--eval-faint);
+  box-shadow: inset 2px 0 0 var(--eval);
+}
+
+.episodes--eval .episodes-collect {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+}
+.episodes--eval .episodes-collect:hover {
+  background: var(--eval-faint);
+}
+
+/* per-policy filter chips (shown once ≥2 policies have runs here) */
+.policy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 20px 12px;
+}
+
+.policy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.policy-chip:hover {
+  color: var(--text);
+  border-color: var(--eval-dim);
+}
+.policy-chip.active {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+  background: var(--eval-faint);
+}
+.policy-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.policy-chip-tally {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.ep-policy {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* provenance badge on training episodes that weren't teleop demonstrations */
+.ep-src {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ep-src-rollout {
+  color: var(--eval);
+  background: var(--eval-faint);
+  border: 1px solid var(--eval-dim);
+}
+.ep-src-replay {
+  color: var(--type-replay);
+  background: rgb(107 147 214 / 12%);
+  border: 1px solid rgb(107 147 214 / 40%);
+}
+
+/* result cell: outcome select + failure-mode tags */
+.ep-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ep-label-select.is-unlabeled {
+  color: var(--muted);
+}
+
+.ep-tags {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ep-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ep-tag.more {
+  border-style: dashed;
+}
+
+/* ---- episode context menu + promote flow ---------------------------------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+}
+
+.ctx-head {
+  padding: 7px 10px 3px;
+  color: var(--eval);
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-item:hover {
+  background: rgb(255 255 255 / 6%);
+}
+.ctx-item.danger:hover {
+  color: var(--danger);
+}
+
+.ctx-sep {
+  margin: 5px 6px;
+  border-top: 1px solid var(--hairline);
+}
+
+.ctx-empty {
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ep-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  max-width: 360px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 55%);
+  font-size: 12px;
+  color: var(--text);
+}
+.ep-toast.ok {
+  border-color: var(--ok);
+}
+.ep-toast.fail {
+  border-color: var(--danger);
+}
+
+/* provenance chips in the player header */
+.prov-chip {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.prov-chip.rollout {
+  color: var(--eval);
+  border-color: var(--eval-dim);
+  background: var(--eval-faint);
+}
+.prov-chip.policy {
+  text-transform: none;
+  letter-spacing: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-add {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--eval-dim);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--eval);
+}
+.player-add:hover {
+  background: var(--eval-faint);
+}
+
 /* episode player (MP4 replay) */
 .datasets-pane {
   display: flex;
@@ -2400,7 +2685,8 @@ button {
 .player-subrow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap; /* provenance chips (policy rollout · policy · tags) may overflow */
+  gap: 8px 10px;
 }
 
 .player-nav {
@@ -2718,6 +3004,17 @@ button {
 
 .telemetry-tip.flip {
   transform: translateX(calc(-100% - 10px));
+}
+
+/* y-axis tick labels for an absolutely-scaled trace series (profile chart) */
+.trace-ytick {
+  position: absolute;
+  left: 4px;
+  transform: translateY(-50%);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.8;
+  pointer-events: none;
 }
 
 .tip-time {
@@ -3062,6 +3359,19 @@ button {
 
 .logs-filesel {
   max-width: 360px;
+}
+
+.logs-copy-btn {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.logs-copy-btn:hover {
+  color: var(--text);
+}
+
+.logs-copy-btn.copied {
+  color: var(--ok);
 }
 
 .logs-live-badge {
@@ -3513,6 +3823,18 @@ button {
   border-color: var(--danger);
   color: var(--danger);
 }
+.prof-select {
+  background: transparent;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+.prof-select:disabled {
+  opacity: 0.4;
+}
 
 .prof-body {
   flex: 1;
@@ -3591,6 +3913,30 @@ button {
   display: block;
   border-bottom: 1px solid var(--hairline);
 }
+/* Plot area: a fixed-width y-axis tick column beside the stretched svg. */
+.prof-plot {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.prof-plot-svg {
+  position: relative; /* hover guide + value tip overlay anchor */
+  flex: 1;
+  min-width: 0;
+}
+.prof-yaxis {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
 .prof-axis {
   display: flex;
   justify-content: space-between;
@@ -3655,6 +4001,110 @@ button {
 }
 .prof-hint {
   text-align: center;
+}
+
+/* Unified rollout control: skill picker + Run rollout / Profile only. */
+.prof-rollout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.prof-btn-quiet {
+  color: var(--muted);
+}
+/* Arm recovery — an accent outline sets it apart from the run/utility buttons. */
+.prof-btn-reboot {
+  border-color: var(--accent-dim);
+}
+.prof-btn-reboot:disabled {
+  opacity: 0.4;
+}
+.prof-btn-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.prof-btn-fail {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.prof-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Rollout failure line: the actual error message, kept up until the next run. */
+.prof-error {
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  padding: 8px 14px;
+  background: var(--panel);
+  color: var(--danger);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+/* Review bar: shown between run end and ✓/✗/Discard. */
+.prof-review {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+}
+.prof-review-text {
+  font-size: 12px;
+}
+.prof-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.prof-tag {
+  padding: 3px 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prof-tag.active {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Eval-session tally + per-rollout ribbon. */
+.prof-session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.prof-session-ribbon {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prof-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prof-chip.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.prof-chip.fail {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 @media (max-width: 720px) {

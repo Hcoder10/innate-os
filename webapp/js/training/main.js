@@ -7,7 +7,6 @@
 // setting hyperparameters and starting a run (which auto-syncs first).
 
 import { ros } from "../rosClient.js";
-import { initShell } from "../shell.js";
 import { mountPage } from "../pageMount.js";
 import { JOB_STATUSES_TOPIC, AVAILABLE_SKILLS_TOPIC, START_TRAINING_SERVICE } from "../constants.js";
 import { createRunDashboard } from "./runDashboard.js";
@@ -17,11 +16,10 @@ import { createLogsModal } from "./logsModal.js";
 
 const STATUS_RUNNING = 5;
 
-initShell("training", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "training", buildView);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "training", buildView);
+}
 
 /**
  * Small shared store: the latest job list + skill roster, with an update

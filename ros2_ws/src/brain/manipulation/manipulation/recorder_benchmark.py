@@ -33,7 +33,7 @@ except ImportError:
     sys.exit(1)
 
 import rclpy
-from brain_messages.srv import ActivateManipulationTask, CreatePhysicalSkill
+from brain_messages.srv import ActivateManipulationTask, CreatePhysicalSkill, NewEpisode
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -133,7 +133,7 @@ class RecorderBenchClient(Node):
             ActivateManipulationTask,
             "/brain/recorder/activate_physical_primitive",
         )
-        self.new_episode_cli = self.create_client(Trigger, "/brain/recorder/new_episode")
+        self.new_episode_cli = self.create_client(NewEpisode, "/brain/recorder/new_episode")
         self.stop_episode_cli = self.create_client(Trigger, "/brain/recorder/stop_episode")
         self.save_episode_cli = self.create_client(Trigger, "/brain/recorder/save_episode")
         self.cancel_episode_cli = self.create_client(Trigger, "/brain/recorder/cancel_episode")
@@ -182,7 +182,8 @@ class RecorderBenchClient(Node):
         self._call(self.activate_cli, req, "activate_physical_primitive")
 
     def new_episode(self):
-        self._call(self.new_episode_cli, Trigger.Request(), "new_episode")
+        # source defaults to "teleop" server-side; policy is n/a for the benchmark.
+        self._call(self.new_episode_cli, NewEpisode.Request(), "new_episode")
 
     def stop_episode(self):
         self._call(self.stop_episode_cli, Trigger.Request(), "stop_episode")
