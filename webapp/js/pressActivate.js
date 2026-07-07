@@ -18,7 +18,9 @@
 //   - A small KEEP_ON_RELEASE set stays on release — the few actions where an
 //     accidental press is costly (see the list below). Any button can opt out
 //     with `data-activate="release"` or the `on-release` class.
-//   - Keyboard activation (Enter/Space) has no pointerdown, so it is untouched.
+//   - Keyboard activation (Enter/Space) has no pointerdown, so it is untouched —
+//     and its clicks carry detail === 0, so the release swallow lets them pass
+//     even while a pointer press is being held on the same button.
 
 // Buttons that must NOT press-activate. Kept deliberately short — most
 // destructive actions (delete, reboot, restart, cancel-run, discard) already
@@ -39,8 +41,8 @@ const KEEP_ON_RELEASE = [
 
 /** Install the press-to-activate handler once for the page. */
 export function installPressActivate() {
-  if (window.__pressActivateInstalled) return;
-  window.__pressActivateInstalled = true;
+  if (/** @type {any} */ (window).__pressActivateInstalled) return;
+  /** @type {any} */ (window).__pressActivateInstalled = true;
   document.addEventListener("pointerdown", onPointerDown, true);
 }
 
@@ -79,19 +81,33 @@ function onPointerDown(e) {
 }
 
 /**
- * Suppress the one click the browser still delivers on release, so the handler
- * that already ran on press doesn't run a second time. `once` fires it at most
- * once; if the pointer is released elsewhere no click arrives and the timeout
- * removes it.
+ * Suppress the click the browser will deliver if this press is released over
+ * the button, so the handler that already ran on press doesn't run twice.
+ *
+ * Keyboard-generated clicks (Enter/Space) carry detail === 0 while pointer
+ * clicks carry detail >= 1, so a keyboard activation landing inside the
+ * swallow window (pointer still held) passes through untouched. Disarming
+ * follows the actual release rather than a fixed timer: the native click (if
+ * any) fires between pointerup and the macrotask queued from it, so a press
+ * held for any duration still swallows exactly its own release click, and a
+ * release elsewhere (or a cancelled pointer) cleans up without eating anything.
  * @param {HTMLButtonElement} btn
  */
 function swallowNextClick(btn) {
   /** @param {Event} ev */
   const onClick = (ev) => {
+    if (/** @type {MouseEvent} */ (ev).detail === 0) return; // keyboard — not ours to swallow
     ev.stopImmediatePropagation();
     ev.preventDefault();
-    clearTimeout(timer);
+    cleanup();
   };
-  btn.addEventListener("click", onClick, { capture: true, once: true });
-  const timer = setTimeout(() => btn.removeEventListener("click", onClick, true), 1000);
+  const onRelease = () => setTimeout(cleanup, 0);
+  function cleanup() {
+    btn.removeEventListener("click", onClick, true);
+    document.removeEventListener("pointerup", onRelease, true);
+    document.removeEventListener("pointercancel", onRelease, true);
+  }
+  btn.addEventListener("click", onClick, true);
+  document.addEventListener("pointerup", onRelease, { capture: true, once: true });
+  document.addEventListener("pointercancel", onRelease, { capture: true, once: true });
 }
