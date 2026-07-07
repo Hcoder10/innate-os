@@ -40,8 +40,6 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
                                          "/mars/main_camera/left/image_rect_color/compressed");
     this->declare_parameter<std::string>("frame_id", "camera_optical_frame");
     this->declare_parameter<int>("jpeg_quality", 80);
-    this->declare_parameter<int>("image_width", 640);
-    this->declare_parameter<int>("image_height", 480);
     this->declare_parameter<double>("max_fps", 10.0);
     this->declare_parameter<std::string>("pointcloud_topic", "/mars/main_camera/points");
     this->declare_parameter<std::string>("pointcloud_color_topic", "/mars/main_camera/points_color");
@@ -77,8 +75,6 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     left_rectified_compressed_topic_ = this->get_parameter("left_rectified_compressed_topic").as_string();
     frame_id_ = this->get_parameter("frame_id").as_string();
     jpeg_quality_ = this->get_parameter("jpeg_quality").as_int();
-    image_width_ = this->get_parameter("image_width").as_int();
-    image_height_ = this->get_parameter("image_height").as_int();
     max_fps_ = this->get_parameter("max_fps").as_double();
     if (max_fps_ < 0.0)
         max_fps_ = 0.0;
@@ -123,7 +119,6 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
     RCLCPP_DEBUG(this->get_logger(), "Left topic: %s", left_topic_.c_str());
     RCLCPP_DEBUG(this->get_logger(), "Right topic: %s", right_topic_.c_str());
     RCLCPP_DEBUG(this->get_logger(), "Depth topic: %s", depth_topic_.c_str());
-    RCLCPP_DEBUG(this->get_logger(), "Input image dimensions: %dx%d", image_width_, image_height_);
     RCLCPP_DEBUG(this->get_logger(), "Max disparity: %d", max_disparity_);
     RCLCPP_DEBUG(this->get_logger(), "SGM params: diagonals=%d, p1=%d, p2=%d, confThreshold=%d, uniqueness=%.2f",
                  include_diagonals_, p1_, p2_, confidence_threshold_, uniqueness_);
@@ -194,8 +189,8 @@ StereoDepthEstimator::StereoDepthEstimator(const rclcpp::NodeOptions& options)
         std::bind(&StereoDepthEstimator::syncCallback, this, std::placeholders::_1, std::placeholders::_2));
 
     last_stats_time_ = this->now();
-    RCLCPP_INFO(this->get_logger(), "Stereo depth estimator running — depth topic: %s (%dx%d, max_disparity=%d)",
-                depth_topic_.c_str(), image_width_, image_height_, max_disparity_);
+    RCLCPP_INFO(this->get_logger(), "Stereo depth estimator running — depth topic: %s (max_disparity=%d)",
+                depth_topic_.c_str(), max_disparity_);
 }
 
 // =============================================================================
@@ -241,18 +236,19 @@ void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstShar
     }
     input_frame_count_++;
 
-    // Validate dimensions
-    if (static_cast<int>(left_msg->width) != image_width_ || static_cast<int>(left_msg->height) != image_height_) {
+    // Adopt the incoming resolution (the camera's publish size is a settings.yaml knob). SGM itself
+    // always runs at calibration resolution; the input size only sets the output size and scale.
+    if (left_msg->width != right_msg->width || left_msg->height != right_msg->height) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "Left image size mismatch: got %dx%d, expected %dx%d", left_msg->width, left_msg->height,
-                             image_width_, image_height_);
+                             "Left/right image size mismatch: %ux%u vs %ux%u", left_msg->width, left_msg->height,
+                             right_msg->width, right_msg->height);
         return;
     }
-    if (static_cast<int>(right_msg->width) != image_width_ || static_cast<int>(right_msg->height) != image_height_) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "Right image size mismatch: got %dx%d, expected %dx%d", right_msg->width,
-                             right_msg->height, image_width_, image_height_);
-        return;
+    if (static_cast<int>(left_msg->width) != image_width_ || static_cast<int>(left_msg->height) != image_height_) {
+        image_width_ = static_cast<int>(left_msg->width);
+        image_height_ = static_cast<int>(left_msg->height);
+        RCLCPP_INFO(this->get_logger(), "Input resolution: %dx%d (SGM runs at calibration %dx%d)", image_width_,
+                    image_height_, calib_width_, calib_height_);
     }
 
     // Decode left image

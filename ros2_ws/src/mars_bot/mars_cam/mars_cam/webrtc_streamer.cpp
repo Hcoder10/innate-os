@@ -165,7 +165,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
 
 void WebRTCStreamer::configure_cameras() {
     // `cameras` lists the camera names (m-line order). Each gets per-camera params:
-    //   live_<name>_camera_topic, replay_<name>_camera_topic, <name>_fps
+    //   live_<name>_camera_topic, replay_<name>_camera_topic, <name>_fps, <name>_width, <name>_height
     // The built-in `main`/`arm` keep their existing topic/fps defaults (so existing launches are
     // unchanged); any other name must supply its own topics. PT + SSRC are assigned by index.
     static const std::map<std::string, std::tuple<std::string, std::string, int>> kDefaults = {
@@ -184,6 +184,8 @@ void WebRTCStreamer::configure_cameras() {
         cam->live_topic = this->declare_parameter<std::string>("live_" + name + "_camera_topic", def_live);
         cam->replay_topic = this->declare_parameter<std::string>("replay_" + name + "_camera_topic", def_replay);
         cam->fps = static_cast<int>(this->declare_parameter<int>(name + "_fps", def_fps));
+        cam->width = static_cast<int>(this->declare_parameter<int>(name + "_width", 640));
+        cam->height = static_cast<int>(this->declare_parameter<int>(name + "_height", 480));
         cam->pt = cam_pt_for_index(cameras_.size());
         cam->ssrc = cam_ssrc_for_index(cameras_.size());
         cam->owner = this;
@@ -191,8 +193,8 @@ void WebRTCStreamer::configure_cameras() {
             RCLCPP_WARN(this->get_logger(), "Camera '%s' has no live topic configured; skipping it", name.c_str());
             continue;
         }
-        RCLCPP_INFO(this->get_logger(), "  Camera[%zu] '%s': pt=%d ssrc=0x%08X fps=%d live=%s", cameras_.size(),
-                    name.c_str(), cam->pt, cam->ssrc, cam->fps, cam->live_topic.c_str());
+        RCLCPP_INFO(this->get_logger(), "  Camera[%zu] '%s': pt=%d ssrc=0x%08X %dx%d@%dfps live=%s", cameras_.size(),
+                    name.c_str(), cam->pt, cam->ssrc, cam->width, cam->height, cam->fps, cam->live_topic.c_str());
         cameras_.push_back(std::move(cam));
     }
     if (cameras_.empty()) {
