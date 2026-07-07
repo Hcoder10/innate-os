@@ -198,12 +198,92 @@ def _validate_settings_param_types(data: dict) -> None:
     )
 
 
+# Camera resolution knobs from the template's "Camera" stanzas. A zero/negative or fractional
+# size sails into the GStreamer caps and fails the pipeline build with a cryptic gst error, and
+# a downstream stage set larger than its source silently upscales (no extra detail), so both are
+# rejected up front. Values are the node defaults, used when a key isn't overridden so the
+# cross-stage checks still see both sides of a pair — keep in sync with main_camera_driver.cpp,
+# arm_camera_driver.cpp and webrtc_streamer.cpp declare_parameter defaults.
+_CAMERA_RESOLUTION_DEFAULTS = {
+    "main_camera_driver": {
+        "width": 1280,
+        "height": 480,
+        "publish_stereo_width": 1280,
+        "publish_stereo_height": 480,
+        "publish_left_width": 640,
+        "publish_left_height": 480,
+    },
+    "arm_camera_driver": {"width": 640, "height": 480},
+    "webrtc_streamer": {"main_width": 640, "main_height": 480, "arm_width": 640, "arm_height": 480},
+}
+
+
+def _node_settings_params(data: dict, node_name: str) -> dict:
+    """Flatten one node section of settings.yaml to dotted keys; ``{}`` when absent."""
+    section = data.get(node_name)
+    params = section.get("ros__parameters") if isinstance(section, dict) else None
+    return _flatten_params(params, "") if isinstance(params, dict) else {}
+
+
+def _validate_settings_camera_resolutions(data: dict) -> None:
+    """Fail fast on camera sizes GStreamer would reject or silently upscale.
+
+    Checks each size is a positive whole number, then the main-camera resolution ladder
+    (capture -> publish_stereo -> publish_left): each stage must fit inside the one above,
+    with unset keys resolved from the node defaults so e.g. ``publish_left_width`` raised
+    past the default ``publish_stereo_width / 2`` is still caught."""
+    problems: list[str] = []
+    resolved: dict[str, int] = {}  # main_camera_driver values, for the ladder checks
+    for node_name, defaults in _CAMERA_RESOLUTION_DEFAULTS.items():
+        params = _node_settings_params(data, node_name)
+        for key, default in defaults.items():
+            value = params.get(key, default)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                problems.append(f"  {node_name}: {key}: {value}  ->  must be a positive whole number of pixels")
+                value = default  # keep the ladder checks below from piling on
+            if node_name == "main_camera_driver":
+                resolved[key] = value
+
+    if resolved["publish_stereo_width"] % 2:
+        problems.append(
+            f"  main_camera_driver: publish_stereo_width: {resolved['publish_stereo_width']}  ->  must be even "
+            "(the stereo frame is split into left/right eyes)"
+        )
+    for axis in ("width", "height"):
+        if resolved[f"publish_stereo_{axis}"] > resolved[axis]:
+            problems.append(
+                f"  main_camera_driver: publish_stereo_{axis}: {resolved[f'publish_stereo_{axis}']} is larger than "
+                f"the capture {axis} ({axis}: {resolved[axis]}) — raise {axis} too"
+            )
+    eye_width = resolved["publish_stereo_width"] // 2
+    if resolved["publish_left_width"] > eye_width:
+        problems.append(
+            f"  main_camera_driver: publish_left_width: {resolved['publish_left_width']} is larger than one eye of "
+            f"the stereo frame (publish_stereo_width / 2 = {eye_width}) — that only upscales (no extra detail); "
+            "raise width and publish_stereo_width together instead"
+        )
+    if resolved["publish_left_height"] > resolved["publish_stereo_height"]:
+        problems.append(
+            f"  main_camera_driver: publish_left_height: {resolved['publish_left_height']} is larger than "
+            f"publish_stereo_height ({resolved['publish_stereo_height']}) — that only upscales (no extra detail); "
+            "raise height and publish_stereo_height together instead"
+        )
+
+    if not problems:
+        return
+    raise ValueError(
+        f"{_settings_yaml_path()}: invalid camera resolution settings "
+        f"(values not set in the file are the node defaults):\n" + "\n".join(problems)
+    )
+
+
 def _load_settings_yaml(validate: bool = True) -> dict:
     """Parse config/settings.yaml. Returns ``{}`` when missing, empty, or unreadable
     (unreadable is warned via :func:`_warn_settings_unreadable`, never silent).
 
     With ``validate=True`` an int written for a double-typed key raises (see
-    :func:`_validate_settings_param_types`). Runtime callers that only read the non-ROS
+    :func:`_validate_settings_param_types`), as does a bad camera resolution (see
+    :func:`_validate_settings_camera_resolutions`). Runtime callers that only read the non-ROS
     ``script_paths`` block pass ``validate=False`` so the launch-time guard can't crash a reload."""
     path = _settings_yaml_path()
     if not path.exists():
@@ -217,6 +297,7 @@ def _load_settings_yaml(validate: bool = True) -> dict:
         return {}
     if validate:
         _validate_settings_param_types(data)
+        _validate_settings_camera_resolutions(data)
     return data
 
 
