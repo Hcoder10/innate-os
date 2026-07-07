@@ -33,7 +33,9 @@ ASSETS = SIM / "assets"
 VIEWER = SIM / "viewer"
 LOCK_FILE = SIM / "sim-assets.lock"
 MARKER = ASSETS / ".assets-tag"
-REPO = "innate-inc/innate-os"
+REPO = (
+    "innate-inc/innate-sim-assets"  # dedicated repo: keeps asset tags out of innate-os (robots version-check its tags)
+)
 
 WORK_DIRS = ["apartment_split", "apartment_split_v2", "apartment_visual", "sdf_shells", "map"]
 VIEWER_CARRYOVER = ["public/models", "public/robot", "assets/apartment_obj"]
@@ -53,7 +55,12 @@ def stage(root: Path) -> None:
         shutil.copy2(obj, hulls_dir / obj.name)
         names.append(obj.name)
     (hulls_dir / "manifest.json").write_text(json.dumps(names, indent=1) + "\n")
-    print(f"  apartment_collisions_v2: {len(names)} hulls")
+    # One binary triangle soup of ALL hulls (float32 xyz per vertex, 3 verts
+    # per tri): the browser overlay loads this in one fetch + zero parsing,
+    # vs ~30s for 1300 individual OBJ fetches through the TLS proxy.
+    soup = _hull_soup(hulls_dir, names)
+    (hulls_dir / "hulls.f32").write_bytes(soup.tobytes())
+    print(f"  apartment_collisions_v2: {len(names)} hulls, soup {soup.shape[0] // 3} tris")
 
     sdf_dir = root / "viewer" / "public" / "physics" / "apartment_sdf"
     sdf_dir.mkdir(parents=True)
@@ -65,6 +72,23 @@ def stage(root: Path) -> None:
         if not src.is_dir():
             sys.exit(f"missing {src} -- need a full asset checkout to publish")
         shutil.copytree(src, root / "viewer" / rel, ignore=shutil.ignore_patterns(".DS_Store"))
+
+
+def _hull_soup(hulls_dir: Path, names: list[str]):
+    """Concatenate every hull OBJ into one (N*3, 3) float32 triangle soup."""
+    import numpy as np
+
+    chunks = []
+    for name in names:
+        verts, faces = [], []
+        for line in (hulls_dir / name).read_text().splitlines():
+            if line.startswith("v "):
+                verts.append([float(v) for v in line.split()[1:4]])
+            elif line.startswith("f "):
+                faces.append([int(t.split("/")[0]) - 1 for t in line.split()[1:4]])
+        v = np.asarray(verts, dtype=np.float32)
+        chunks.append(v[np.asarray(faces, dtype=np.int32)].reshape(-1, 3))
+    return np.concatenate(chunks)
 
 
 def deterministic_targz(root: Path, out: Path) -> str:

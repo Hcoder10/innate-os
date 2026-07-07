@@ -178,7 +178,14 @@ export class SimScene {
    */
   setCollisionHullsVisible(visible: boolean): void {
     this.hullsVisible = visible;
-    if (visible && !this.hullsPromise) this.hullsPromise = this.loadCollisionHulls();
+    if (visible && !this.hullsPromise) {
+      // ~1300 OBJ fetches; takes seconds on first show. A failure resets the
+      // promise so toggling again retries instead of staying dead forever.
+      this.hullsPromise = this.loadCollisionHulls().catch((err) => {
+        console.error("[sim-viewer] collision hulls failed to load:", err);
+        this.hullsPromise = undefined;
+      });
+    }
     if (this.hullsGroup) this.hullsGroup.visible = visible;
   }
 
@@ -186,18 +193,30 @@ export class SimScene {
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
     const baseUrl = "/physics/apartment_collisions_v2/";
-    const manifest: string[] = await (await fetch(`${baseUrl}manifest.json`)).json();
-    const loader = new OBJLoader();
     const material = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
-    await Promise.all(
-      manifest.map(async (filename) => {
-        const obj = await loader.loadAsync(`${baseUrl}${filename}`);
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = material;
-        });
-        group.add(obj);
-      }),
-    );
+
+    // Fast path: one binary triangle soup (float32 xyz), one fetch, no
+    // parsing -- publish_assets writes it next to the per-hull OBJs.
+    const bin = await fetch(`${baseUrl}hulls.f32`);
+    if (bin.ok) {
+      const positions = new Float32Array(await bin.arrayBuffer());
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      group.add(new THREE.Mesh(geometry, material));
+    } else {
+      // Older bundles: fetch + parse every hull OBJ individually (slow).
+      const manifest: string[] = await (await fetch(`${baseUrl}manifest.json`)).json();
+      const loader = new OBJLoader();
+      await Promise.all(
+        manifest.map(async (filename) => {
+          const obj = await loader.loadAsync(`${baseUrl}${filename}`);
+          obj.traverse((child) => {
+            if (child instanceof THREE.Mesh) child.material = material;
+          });
+          group.add(obj);
+        }),
+      );
+    }
     group.visible = this.hullsVisible; // honor toggles made while loading
     this.hullsGroup = group;
     this.scene.add(group);
