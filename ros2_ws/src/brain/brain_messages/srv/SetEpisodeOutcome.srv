@@ -4,6 +4,8 @@
 string task_directory   # Absolute path to the skill directory
 int32 episode_id        # Episode to label (e.g. 0, 1, 2…)
 string outcome          # "success" | "failure" | "" to clear the label
+string[] tags           # Free-form failure-mode tags (e.g. "dropped", "timeout");
+                        # a non-empty list replaces stored tags, [] leaves them unchanged
 ---
 # Response
 bool success

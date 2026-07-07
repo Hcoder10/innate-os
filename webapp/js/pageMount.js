@@ -29,7 +29,7 @@ export function mountPage(stage, viewClass, buildView) {
   viewLayer.className = viewClass;
   stage.append(connectLayer, viewLayer);
 
-  createConnectPanel(connectLayer, ros);
+  const connectPanel = createConnectPanel(connectLayer, ros);
 
   // Build now — don't wait for the socket. Panels subscribe right away and fill
   // in once connected.
@@ -39,6 +39,8 @@ export function mountPage(stage, viewClass, buildView) {
   // always wins. On localhost (laptop dev) the serving host is the local stack,
   // but a remembered address (e.g. a remote robot reached earlier) is the more
   // likely target there, so prefer lastIp and fall back to localhost itself.
+  // Idempotent: the router already connects once at boot, so on later mounts the
+  // socket is up and this is a no-op.
   const servedHost = location.hostname;
   const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
   const target = robotServed ? servedHost : (ros.lastIp ?? servedHost);
@@ -49,11 +51,21 @@ export function mountPage(stage, viewClass, buildView) {
   // Keep the view up through connecting / connected / reconnecting — the header
   // badge carries the link status. Only a fail-fast "disconnected" (a first
   // connect that never opened, or the idle laptop-dev state) shows the card.
-  ros.onStateChange((state) => {
+  const unsubState = ros.onStateChange((state) => {
     const failed = state === "disconnected";
     connectLayer.hidden = !failed;
     viewLayer.hidden = failed;
   });
 
-  return view;
+  // Fully tear down on navigation (client-side routing): stop the page's panels,
+  // drop the state listener, and clear the stage so the next mount starts clean.
+  return {
+    destroy() {
+      unsubState();
+      view.destroy();
+      connectPanel.destroy();
+      connectLayer.remove();
+      viewLayer.remove();
+    },
+  };
 }

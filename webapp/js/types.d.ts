@@ -83,7 +83,7 @@ interface TrainingParams {
 interface Skill {
   id: string;
   name: string;
-  type: "code" | "learned" | "replay" | "poses";
+  type: "code" | "learned" | "replay" | "poses" | "eval";
   episode_count: number;
   /** Dataset directory on the robot; absent for code-only skills. */
   directory?: string;
@@ -103,6 +103,13 @@ interface EpisodeSummary {
   video_files?: string[];
   /** Curation label; "" / absent = unlabeled (treated as success by default). */
   outcome?: "success" | "failure" | "";
+  /** Provenance: how the episode was produced. Legacy episodes default to
+   * "teleop" (the only pre-provenance recording path). */
+  source?: "teleop" | "rollout" | "replay";
+  /** For rollouts, the id of the policy/skill that drove the run; "" if n/a. */
+  policy?: string;
+  /** Failure-mode tags set at eval review time (e.g. "dropped", "timeout"). */
+  tags?: string[];
 }
 
 /** Decoded payload of get_task_metadata's json_metadata field. */

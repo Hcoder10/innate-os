@@ -21,5 +21,11 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[{"skills_root": skills_root}],
             ),
+            Node(
+                package="dataset_encoder",
+                executable="profile_recorder_node",
+                name="profile_recorder",
+                output="screen",
+            ),
         ]
     )

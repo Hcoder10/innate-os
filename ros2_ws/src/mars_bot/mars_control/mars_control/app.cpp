@@ -139,12 +139,38 @@ std::string get_hostname() {
     return result;
 }
 
+static const std::regex RELEASE_VERSION_TAG_REGEX(R"(^(\d+)\.(\d+)\.(\d+)(-rc\d+)?$)");
+
+static bool is_release_version_tag(const std::string& tag) {
+    return std::regex_match(tag, RELEASE_VERSION_TAG_REGEX);
+}
+
+/**
+ * Get the latest OS release tag (x.y.z or x.y.z-rcN). Skips unrelated tags
+ * such as sim-assets-<sha> used for simulator asset bundles.
+ */
+std::string get_latest_release_tag(const std::string& mars_root) {
+    std::string tags_cmd = "cd \"" + mars_root + "\" && git tag --list --sort=-version:refname 2>/dev/null";
+    std::string tags_output = exec_command(tags_cmd);
+    if (tags_output.empty()) {
+        return "";
+    }
+
+    std::istringstream iss(tags_output);
+    std::string tag;
+    while (std::getline(iss, tag)) {
+        if (is_release_version_tag(tag)) {
+            return tag;
+        }
+    }
+    return "";
+}
+
 /**
  * Get the latest tag by version. Returns empty string if the repo has no tags.
  */
 std::string get_latest_tag(const std::string& mars_root) {
-    std::string tags_cmd = "cd \"" + mars_root + "\" && git tag --list --sort=-version:refname 2>/dev/null | head -1";
-    return exec_command(tags_cmd);
+    return get_latest_release_tag(mars_root);
 }
 
 /**
@@ -192,44 +218,27 @@ std::string get_robot_version(const std::string& mars_root) {
     std::string exact_cmd = "cd \"" + mars_root + "\" && git describe --exact-match --tags HEAD 2>/dev/null";
     std::string exact_tag = exec_command(exact_cmd);
 
-    // If on a tag (detached HEAD from tag checkout), return that tag
-    if (!exact_tag.empty()) {
+    // If on a release tag (detached HEAD from tag checkout), return that tag.
+    // Non-release tags (e.g. sim-assets-*) are ignored for OS version reporting.
+    if (!exact_tag.empty() && is_release_version_tag(exact_tag)) {
         return exact_tag;
     }
 
-    // Detached HEAD not exactly on a tag (e.g. interrupted update or manual
-    // checkout) is treated like any development state: fall through to the
-    // latest-tag "-dev" fallback instead of failing the version check.
+    // Detached HEAD not exactly on a release tag (e.g. interrupted update, manual
+    // checkout, or a feature branch) is treated like development: fall back to
+    // the latest release tag + "-dev" instead of failing the version check.
 
-    // Get all tags sorted by version
-    std::string tags_cmd = "cd \"" + mars_root + "\" && git tag --list --sort=-version:refname 2>/dev/null";
-    std::string tags_output = exec_command(tags_cmd);
+    std::string latest_tag = get_latest_release_tag(mars_root);
 
-    // No tags, or not a git checkout at all (the sim container mounts the source
-    // without .git, so git errors and 2>/dev/null leaves this empty). Report a
+    // No release tags, or not a git checkout at all (the sim container mounts the
+    // source without .git, so git errors and 2>/dev/null leaves this empty). Report a
     // development version instead of failing every publish cycle. A real robot
     // is always on a tag, so this only happens in dev/sim.
-    if (tags_output.empty()) {
-        return "0.0.0-dev";
-    }
-
-    // Get first tag (latest)
-    std::string latest_tag;
-    std::istringstream iss(tags_output);
-    std::getline(iss, latest_tag);
-
     if (latest_tag.empty()) {
         return "0.0.0-dev";
     }
 
-    // Validate tag format (x.y.z, optionally with -rc<N> suffix)
-    std::regex version_regex("^(\\d+)\\.(\\d+)\\.(\\d+)(-rc\\d+)?$");
-    std::smatch match;
-    if (std::regex_match(latest_tag, match, version_regex)) {
-        return latest_tag + "-dev";
-    } else {
-        throw std::runtime_error("Invalid tag format: " + latest_tag + ". Expected format: x.y.z or x.y.z-rcN");
-    }
+    return latest_tag + "-dev";
 }
 
 /**
