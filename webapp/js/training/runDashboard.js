@@ -124,6 +124,10 @@ export function createRunDashboard(parent, ros, store, opts) {
 
   // Reload-the-brain-on-download: only when a run transitions to DOWNLOADED
   // *this session* (existing downloads seen on first render don't trigger it).
+  // Keyed by training_skill_id, NOT skill_dir: every skill without a local dir
+  // shares skill_dir "", so their runs collided on one key and a mix of
+  // statuses read as a fresh DOWNLOADED transition on every tick — hammering
+  // /brain/reload once per second for as long as the page stayed open.
   /** @type {Map<string, number>} run key → last status */
   const prevStatus = new Map();
   let primed = false;
@@ -131,8 +135,9 @@ export function createRunDashboard(parent, ros, store, opts) {
   function reloadOnDownloads() {
     const skills = store.jobList?.skills || [];
     for (const sk of skills) {
+      if (!sk.skill_dir) continue; // not on this robot: nothing downloads here
       for (const run of sk.runs || []) {
-        const key = `${sk.skill_dir}#${run.run_id}`;
+        const key = `${sk.training_skill_id}#${run.run_id}`;
         const was = prevStatus.get(key);
         if (primed && was !== undefined && was !== STATUS.DOWNLOADED && run.status === STATUS.DOWNLOADED) {
           ros.callService(BRAIN_RELOAD_SERVICE, {}).catch((e) => console.error("[training] reload failed:", e));
