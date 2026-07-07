@@ -41,11 +41,11 @@ export function createEpisodeCapture() {
       // "eval" kind: a rollout-capture dataset that can never be selected for
       // training (training filters to type=="learned").
       const created = await ros.callService(CREATE_PHYSICAL_SKILL_SERVICE, { name: EVAL_SKILL_NAME, kind: "eval" });
-      if (!created?.success || !created?.skill_directory) throw new Error(created?.message || "create failed");
+      if (!created?.success || !created?.skill_directory) throw new Error(created?.message || "create_physical_skill failed");
       taskDir = created.skill_directory;
     }
     const activated = await ros.callService(ACTIVATE_PHYSICAL_PRIMITIVE_SERVICE, { task_directory: taskDir });
-    if (!activated?.success) throw new Error("activate failed");
+    if (!activated?.success) throw new Error(activated?.message || "activate_physical_primitive failed");
   }
 
   return {

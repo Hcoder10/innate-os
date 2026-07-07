@@ -94,6 +94,25 @@ export function buildRolloutControl(chartWindow, session) {
 
   reviewEl.append(reviewText, tagRow, okBtn, failBtn, discardBtn);
 
+  // ---- error line -------------------------------------------------------------
+  // Failures surface here, not just in the devtools console: at the robot the
+  // operator sees the actual message (a service-call timeout names the backend
+  // node to look at), and it stays up until the next run instead of flashing.
+  const errorEl = document.createElement("div");
+  errorEl.className = "prof-error";
+  errorEl.hidden = true;
+
+  /** @param {any} err */
+  function showError(err) {
+    const msg = err?.message || String(err);
+    errorEl.textContent = autoBox.checked ? `${msg} — auto-continue paused` : msg;
+    errorEl.hidden = false;
+  }
+
+  function hideError() {
+    errorEl.hidden = true;
+  }
+
   // ---- state ------------------------------------------------------------------
   /** @type {"ready"|"starting"|"running"|"review"|"saving"} */
   let state = "ready";
@@ -141,7 +160,9 @@ export function buildRolloutControl(chartWindow, session) {
     if (flash) setTimeout(() => sync(), 1600);
   }
 
-  /** One failure funnel: whatever step died, don't leave a half-open episode. */
+  /** One failure funnel: whatever step died, don't leave a half-open episode.
+   * Auto-continue never re-arms after a failure — the countdown is only armed
+   * from a successful save — so an error stops the loop by construction. */
   function onError(err) {
     console.error("[profiling] rollout:", err);
     if (cancelSkill) {
@@ -150,7 +171,9 @@ export function buildRolloutControl(chartWindow, session) {
     }
     chartWindow.end();
     if (mode === "eval") capture.discard();
-    toReady("Failed — see console");
+    if (destroyed) return; // page gone — cleanup done, skip the UI
+    showError(err);
+    toReady("Failed");
   }
 
   /** @param {(() => Promise<void>) | (() => void)} fn */
@@ -169,11 +192,19 @@ export function buildRolloutControl(chartWindow, session) {
   /** @param {"eval"|"profile"} m */
   async function runRollout(m) {
     mode = m;
+    hideError();
     if (mode === "eval") {
       state = "starting";
       sync();
       // Stamp the episode with the evaluated skill's id as its driving policy.
       await capture.start(select.value);
+      if (destroyed) {
+        // Torn down while start was in flight: destroy()'s discard may have
+        // raced the episode-open service call, so discard again now that the
+        // episode actually exists — and never send the goal.
+        capture.discard();
+        return;
+      }
     }
     chartWindow.begin();
     runStartedAt = performance.now();
@@ -282,6 +313,7 @@ export function buildRolloutControl(chartWindow, session) {
   return {
     el,
     reviewEl,
+    errorEl,
     destroy() {
       destroyed = true;
       unsubSkills();
