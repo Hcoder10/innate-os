@@ -1,0 +1,10 @@
+# Request — open a new recording episode, stamping provenance onto it.
+# Replaces the bare std_srvs/Trigger so the caller records HOW the episode was
+# produced. The recorder carries these onto add_episode(), which writes them as
+# the per-episode `source`/`policy` fields in dataset_metadata.json.
+string source    # "teleop" | "rollout" | "replay"; "" is treated as "teleop"
+string policy    # checkpoint/version id of the model driving a rollout ("" if n/a)
+---
+# Response
+bool success
+string message

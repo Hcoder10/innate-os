@@ -67,7 +67,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
 
   const link = document.createElement("a");
   link.className = "record-link";
-  link.href = "../datasets/index.html";
+  link.href = "/datasets";
   link.textContent = "Review →";
   link.title = "Browse, label and delete episodes on the Datasets page";
 
@@ -476,7 +476,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
     if (!canRecord()) return;
     busy = true;
     render();
-    ros.callService(RECORDER_NEW_EPISODE_SERVICE, {})
+    ros.callService(RECORDER_NEW_EPISODE_SERVICE, { source: "teleop", policy: "" })
       .then((res) => {
         if (res && res.success === false) throw new Error(res.message || "couldn't start");
         recState = "recording";
@@ -631,8 +631,8 @@ export function createRecordPanel(parent, ros, opts = {}) {
 
     // Review deep-links to the selected skill on the Datasets page.
     link.href = selectedDir
-      ? `../datasets/index.html?dir=${encodeURIComponent(selectedDir)}`
-      : "../datasets/index.html";
+      ? `/datasets?dir=${encodeURIComponent(selectedDir)}`
+      : "/datasets";
 
     count.textContent = `${savedCount} episode${savedCount === 1 ? "" : "s"}`;
 

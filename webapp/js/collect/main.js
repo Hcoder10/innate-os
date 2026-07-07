@@ -11,7 +11,6 @@
 
 import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
-import { initShell } from "../shell.js";
 import { WebRtcSession } from "../webrtcSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
@@ -23,11 +22,10 @@ import { createTelemetry } from "../teleop/telemetry.js";
 import { createArmPanel } from "../teleop/armPanel.js";
 import { createRecordPanel } from "./recordPanel.js";
 
-initShell("collect", "../");
-
-const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
-
-mountPage(stage, "cockpit", buildCockpit);
+/** @param {HTMLElement} stage */
+export function mount(stage) {
+  return mountPage(stage, "cockpit", buildCockpit);
+}
 
 /**
  * @param {HTMLElement} root

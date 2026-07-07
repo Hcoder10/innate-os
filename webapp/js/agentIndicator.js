@@ -5,8 +5,8 @@
 
 /**
  * @param {ReturnType<import("./teleop/agentState.js").createAgentState>} agentState
- * @param {string} agentHref Link to the Agent page (root-relative per page depth).
- * @returns {{ destroy: () => void }}
+ * @param {string} agentHref Link to the Agent page.
+ * @returns {{ el: HTMLElement, destroy: () => void }}
  */
 export function createAgentIndicator(agentState, agentHref) {
   const pill = document.createElement("a");
@@ -44,6 +44,7 @@ export function createAgentIndicator(agentState, agentHref) {
   });
 
   return {
+    el: pill,
     destroy() {
       unsub();
       pill.remove();

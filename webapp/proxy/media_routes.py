@@ -230,6 +230,32 @@ def joints_response(qs: dict) -> Response:
     )
 
 
+def profile_response(qs: dict) -> Response:
+    """GET /episode/profile?dir=<skill_dir>&id=<n> → the episode's persisted
+    inference-profile trace (JSONL written by profile_recorder next to the
+    HDF5): one context line, then one per-step sample per line. 404 when the
+    episode predates profile recording or wasn't a learned-skill rollout."""
+    base = _resolve_under_root((qs.get("dir") or [""])[0])
+    eid = (qs.get("id") or [""])[0]
+    if base is None or not eid:
+        return _plain(404, "Not Found", "not found")
+    jsonl = _safe_resolve(base / "data" / f"episode_{eid}_profile.jsonl")
+    if jsonl is None or not _under_skills_root(jsonl) or jsonl.suffix != ".jsonl" or not jsonl.is_file():
+        return _plain(404, "Not Found", "no profile for this episode")
+    try:
+        data = jsonl.read_bytes()
+    except OSError as err:
+        return _plain(500, "Internal Server Error", f"failed to read profile: {err}")
+    return Response(
+        200,
+        "OK",
+        Headers(
+            {"Content-Type": "application/x-ndjson", "Content-Length": str(len(data)), "Cache-Control": "no-cache"}
+        ),
+        data,
+    )
+
+
 def run_info_response(qs: dict) -> Response:
     """GET /run/info?dir=<skill_dir>&id=<run_id> → downloaded?/has_checkpoint?/files.
     A run is 'successful' if its downloaded results contain a *_step_*.pth — the

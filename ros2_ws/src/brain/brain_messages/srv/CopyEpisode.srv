@@ -1,0 +1,13 @@
+# Request — copy one episode into another dataset (e.g. promote a policy-rollout
+# episode from an eval dataset into a training dataset). Copies the h5, the
+# per-camera MP4s, the inference-profile trace, and the raw_data original, and
+# appends a metadata entry that keeps the episode's provenance (source/policy),
+# outcome and tags. The source episode is left untouched.
+string source_task_directory   # Absolute path to the dataset the episode lives in
+int32 episode_id               # Episode to copy (e.g. 0, 1, 2…)
+string dest_task_directory     # Absolute path to the dataset to copy it into
+---
+# Response
+bool success
+string message
+int32 new_episode_id           # Id the copy received in the destination (-1 on failure)

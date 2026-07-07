@@ -26,8 +26,10 @@
 #include "brain_messages/srv/activate_manipulation_task.hpp"
 #include "brain_messages/srv/get_task_metadata.hpp"
 #include "brain_messages/srv/load_episode.hpp"
+#include "brain_messages/srv/new_episode.hpp"
 #include "brain_messages/srv/set_episode_outcome.hpp"
 #include "brain_messages/srv/delete_episode.hpp"
+#include "brain_messages/srv/copy_episode.hpp"
 
 #include "manipulation/episode_data.hpp"
 #include "manipulation/task_manager.hpp"
@@ -59,8 +61,8 @@ class RecorderNode : public rclcpp::Node {
     void activate_physical_primitive(
         const std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Request> request,
         std::shared_ptr<brain_messages::srv::ActivateManipulationTask::Response> response);
-    void handle_new_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-                            std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void handle_new_episode(const std::shared_ptr<brain_messages::srv::NewEpisode::Request> request,
+                            std::shared_ptr<brain_messages::srv::NewEpisode::Response> response);
     void handle_save_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void handle_cancel_episode(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -75,6 +77,8 @@ class RecorderNode : public rclcpp::Node {
                                     std::shared_ptr<brain_messages::srv::SetEpisodeOutcome::Response> response);
     void handle_delete_episode(const std::shared_ptr<brain_messages::srv::DeleteEpisode::Request> request,
                                std::shared_ptr<brain_messages::srv::DeleteEpisode::Response> response);
+    void handle_copy_episode(const std::shared_ptr<brain_messages::srv::CopyEpisode::Request> request,
+                             std::shared_ptr<brain_messages::srv::CopyEpisode::Response> response);
 
     // Replay service handlers
     void handle_load_episode(const std::shared_ptr<brain_messages::srv::LoadEpisode::Request> request,
@@ -120,6 +124,10 @@ class RecorderNode : public rclcpp::Node {
     std::string current_task_name_;
     std::string current_task_dir_;
     int episode_count_;
+    // Provenance for the open episode, captured at new_episode and written to
+    // dataset_metadata.json when the episode is saved (see add_episode).
+    std::string current_episode_source_;
+    std::string current_episode_policy_;
 
     // Sensor data
     std::map<std::string, sensor_msgs::msg::Image::SharedPtr> latest_images_;
@@ -149,7 +157,7 @@ class RecorderNode : public rclcpp::Node {
 
     // Services
     rclcpp::Service<brain_messages::srv::ActivateManipulationTask>::SharedPtr activate_physical_primitive_srv_;
-    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr new_episode_srv_;
+    rclcpp::Service<brain_messages::srv::NewEpisode>::SharedPtr new_episode_srv_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_episode_srv_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_episode_srv_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_episode_srv_;
@@ -157,6 +165,7 @@ class RecorderNode : public rclcpp::Node {
     rclcpp::Service<brain_messages::srv::GetTaskMetadata>::SharedPtr get_task_metadata_srv_;
     rclcpp::Service<brain_messages::srv::SetEpisodeOutcome>::SharedPtr set_episode_outcome_srv_;
     rclcpp::Service<brain_messages::srv::DeleteEpisode>::SharedPtr delete_episode_srv_;
+    rclcpp::Service<brain_messages::srv::CopyEpisode>::SharedPtr copy_episode_srv_;
 
     // Service clients
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr head_ai_position_client_;
