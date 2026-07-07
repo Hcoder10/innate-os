@@ -1,8 +1,8 @@
 #!/bin/zsh
-# Shared helper for printing the webapp URL as the robot's mDNS hostname
-# (e.g. https://mars-the-27th.local), falling back to the Wi-Fi IP when no
-# hostname is available. Wi-Fi connectivity is still required either way so
-# the URL is only shown when the webapp is actually reachable.
+# Shared helper for printing the webapp URL as the robot's advertised mDNS
+# name (e.g. https://mars-the-27th.local), falling back to the Wi-Fi IP when
+# the name can't be reverse-resolved. Wi-Fi connectivity is still required
+# either way so the URL is only shown when the webapp is actually reachable.
 
 innate_current_wifi_ip() {
     local iface ip
@@ -26,23 +26,15 @@ innate_current_wifi_ip() {
 
 # Resolve the mDNS name actually advertised for the given IP (avahi can
 # publish e.g. mars-the-27th-2.local on a name conflict, diverging from the
-# system hostname). Mirrors mars_control's get_hostname() in app.cpp.
+# system hostname). Only the reverse-resolved name is guaranteed reachable,
+# so on failure return nothing and let the caller fall back to the IP.
 innate_mdns_name() {
-    local ip="$1" name
-
-    name="$(avahi-resolve -a "$ip" 2>/dev/null | awk '{ print $2; exit }')"
-    if [[ -n "$name" ]]; then
-        print -r -- "$name"
-        return 0
+    local name
+    name="$(avahi-resolve -a "$1" 2>/dev/null | awk '{ print $2; exit }')"
+    if [[ -z "$name" ]]; then
+        return 1
     fi
-
-    name="$(hostname -s 2>/dev/null)"
-    if [[ -n "$name" ]]; then
-        print -r -- "${name}.local"
-        return 0
-    fi
-
-    return 1
+    print -r -- "$name"
 }
 
 innate_webapp_uri() {
