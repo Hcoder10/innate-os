@@ -310,13 +310,21 @@ void RecorderNode::timer_callback() {
         return;
     }
 
-    // Build action data
-    std::vector<double> action_data;
-    if (latest_leader_command_) {
-        action_data = std::vector<double>(latest_leader_command_->data.begin(), latest_leader_command_->data.end());
-    } else {
-        action_data.resize(10, 0.0);
+    if (!latest_leader_command_) {
+        // No arm command has arrived since the node started. Expected briefly at
+        // the start of a policy-rollout capture (the episode opens before the
+        // policy's first inference step), hence throttled. The old fallback
+        // fabricated 10 zeros here — with cmd_vel and the trailing termination
+        // columns that made a 14-wide /action, and the first row latches the
+        // episode's width, so one such row corrupted the whole file against the
+        // normal 10-wide layout (train-time collate can't stack mixed widths).
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "No leader/policy arm command received yet. Skipping timestep.");
+        return;
     }
+
+    // Build action data
+    std::vector<double> action_data(latest_leader_command_->data.begin(), latest_leader_command_->data.end());
 
     // Add forward speed and yaw rate
     if (latest_cmd_vel_) {
