@@ -90,6 +90,11 @@ class WorldServer:
     def __init__(self, sim: VirtualMars):
         self.sim = sim
         self.lock = threading.Lock()
+        # Advertised in ping replies once the observer stream is listening,
+        # so the launcher can tell a current server from a stale one (a
+        # pre-stream process would otherwise be reused and the 3D view
+        # starves with no diagnosis).
+        self.state_port: int | None = None
         # Latest rendered frame per product + when it was last requested.
         # RPCs return the freshest frame instead of triggering a render:
         # sporadic offscreen GL from a background process can stall for
@@ -223,7 +228,7 @@ class WorldServer:
     def handle(self, req: dict) -> tuple[dict, bytes | None]:
         op = req.get("op")
         if op == "ping":
-            return {"ok": True}, None
+            return {"ok": True, "state_port": self.state_port}, None
         if op == "state":
             with self.lock:
                 x, y, yaw = self.sim.pose()
@@ -326,6 +331,7 @@ def main() -> None:
     else:
         state_server = ws_serve(server.serve_state, "127.0.0.1", args.state_port)
         threading.Thread(target=state_server.serve_forever, daemon=True).start()
+        server.state_port = args.state_port
         print(f"[world-server] observer state stream on ws://127.0.0.1:{args.state_port}", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()

@@ -979,18 +979,43 @@ def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False
     )
 
 
-def _world_server_ping(port: int, timeout: float = 2.0) -> bool:
+def _world_server_ping_reply(port: int, timeout: float = 2.0) -> dict | None:
+    """The server's ping reply, or None when nothing healthy answers. The
+    reply advertises capabilities (state_port) -- how ensure_world_server
+    tells a current server from a stale pre-update process."""
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout) as conn:
             payload = json.dumps({"op": "ping"}).encode()
             conn.sendall(len(payload).to_bytes(4, "big") + payload)
             header = conn.recv(4)
             if len(header) < 4:
-                return False
-            reply = conn.recv(int.from_bytes(header, "big"))
-            return json.loads(reply).get("ok") is True
-    except OSError:
-        return False
+                return None
+            reply = json.loads(conn.recv(int.from_bytes(header, "big")))
+            return reply if reply.get("ok") is True else None
+    except (OSError, ValueError):
+        return None
+
+
+def _world_server_ping(port: int, timeout: float = 2.0) -> bool:
+    return _world_server_ping_reply(port, timeout) is not None
+
+
+def _stop_stale_world_server() -> None:
+    """SIGTERM whatever owns the RPC port. The PID file only covers servers
+    THIS checkout started; a stale server may belong to another checkout or
+    an older build, so fall back to the port's listener."""
+    stop_world_server()
+    out = subprocess.run(
+        ["lsof", "-ti", f"tcp:{WORLD_SERVER_PORT}", "-sTCP:LISTEN"], capture_output=True, text=True, check=False
+    )
+    for pid in out.stdout.split():
+        with contextlib.suppress(ProcessLookupError, OSError, ValueError):
+            os.kill(int(pid), signal.SIGTERM)
+    for _ in range(20):
+        if not _world_server_ping(WORLD_SERVER_PORT, timeout=0.5):
+            return
+        time.sleep(0.25)
+    warn("A previous world server is still holding the port; the new one may fail to bind.")
 
 
 def ensure_world_server(config: dict[str, object]) -> str:
@@ -1014,9 +1039,15 @@ def ensure_world_server(config: dict[str, object]) -> str:
 
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
     endpoint = f"host.docker.internal:{WORLD_SERVER_PORT}"
-    if _world_server_ping(WORLD_SERVER_PORT):
-        log("Host world server already running.")
-        return endpoint
+    reply = _world_server_ping_reply(WORLD_SERVER_PORT)
+    if reply is not None:
+        if reply.get("state_port"):
+            log("Host world server already running.")
+            return endpoint
+        # Alive but from before the observer state stream: reusing it would
+        # leave the webapp's 3D view with no state and no diagnosis.
+        log("Host world server is outdated (no observer state stream) -- restarting it...")
+        _stop_stale_world_server()
 
     log("Starting host world server (native GL rendering)...")
     ensure_state_dir()

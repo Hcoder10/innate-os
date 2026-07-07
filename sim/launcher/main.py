@@ -109,6 +109,10 @@ def cmd_up(
         print_banner()
         report_configured_keys(config)
         if runtime_already_running(config):
+            # Still verify the host world server: after a code update the
+            # running runtime may be talking to a stale server (no observer
+            # state stream -> frozen 3D view), and only a restart fixes it.
+            ensure_world_server(config)
             log("Innate sim runtime is already running. Opening dashboard...")
             show_runtime_dashboard(config, watch=watch)
             return

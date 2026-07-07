@@ -57,6 +57,9 @@ export class SimScene {
 
   followCamera = true;
 
+  // Hidden until the first real pose (spawnAt): a robot at the world origin
+  // before state arrives reads as "spawned in the wrong place" when the true
+  // failure is "no state yet".
   private robotRoot = new THREE.Group();
   private robot?: URDFRobot;
   private followPrevXY: [number, number] = [0, 0];
@@ -102,6 +105,7 @@ export class SimScene {
 
     this.addLights();
     this.addGround();
+    this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
     if (!this.fixedSize) window.addEventListener("resize", () => this.onResize());
@@ -378,6 +382,7 @@ export class SimScene {
    * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
+    this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
 
