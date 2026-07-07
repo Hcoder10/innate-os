@@ -83,6 +83,10 @@ class MobilityInterface:
 
         if duration is not None and duration > 0.0:
             self._schedule_stop(duration)
+        elif self._stop_timer is not None:
+            # Continuous motion requested: disarm any stop still pending from
+            # an earlier timed command so it doesn't cut this one short.
+            self._stop_timer.cancel()
 
     def rotate_in_place(self, angular_speed: float, duration: float) -> None:
         """Rotate in place with specified angular speed for a duration (non-blocking).
