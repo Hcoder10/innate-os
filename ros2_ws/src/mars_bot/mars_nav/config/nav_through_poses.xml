@@ -1,7 +1,53 @@
+<!-- Real navigate-through-poses tree mirroring nav_to_pose.xml. This used to be
+     an <AlwaysSuccess/> stub, which made every NavigateThroughPoses goal report
+     instant success without moving the robot (on Humble the through-poses
+     navigator cannot be disabled — there is no `navigators` param). -->
 <root main_tree_to_execute="MainTree">
-  <BehaviorTree ID="MainTree">
-    <Fallback name="dummy_fallback">
-      <AlwaysSuccess/>
-    </Fallback>
-  </BehaviorTree>
+    <BehaviorTree ID="MainTree">
+        <RecoveryNode number_of_retries="2" name="NavigateRecovery">
+            <PipelineSequence name="NavigateWithReplanning">
+                <PlannerSelector selected_planner="{selected_planner}" default_planner="mapfree" topic_name="/nav/current_planner"/>
+                <GoalCheckerSelector selected_goal_checker="{selected_goal_checker}" default_goal_checker="general_goal_checker" topic_name="/nav/current_goal_checker"/>
+                <RateController hz="1.0">
+                    <Sequence>
+                        <!-- Set head to look down for better obstacle detection during navigation (runs at 1Hz) -->
+                        <SetHeadPosition position="-15" topic="/mars/head/set_position"/>
+                        <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+                        <Switch variable="{selected_planner}">
+                            <ComputePathThroughPoses name="mapfree" goals="{goals}" path="{path}" planner_id="GridBased" server_name="mapfree/compute_path_through_poses"/>
+                            <ComputePathThroughPoses name="navigation" goals="{goals}" path="{path}" planner_id="GridBased" server_name="navigation/compute_path_through_poses"/>
+                        </Switch>
+                        <ReactiveFallback name="ComputePathThroughPosesRecoveryFallback">
+                            <GoalUpdated/>
+                            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="navigation/global_costmap/clear_entirely_global_costmap"/>
+                        </ReactiveFallback>
+                    </RecoveryNode>
+                    </Sequence>
+                </RateController>
+                <RecoveryNode number_of_retries="1" name="FollowPath">
+                    <FollowPath path="{path}" controller_id="InnateFollowPath" goal_checker_id="{selected_goal_checker}"/>
+                    <ReactiveFallback name="FollowPathRecoveryFallback">
+                        <GoalUpdated/>
+                        <BackUp backup_dist="0.15" backup_speed="0.3"/>
+                        <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+                    </ReactiveFallback>
+                </RecoveryNode>
+            </PipelineSequence>
+            <ReactiveFallback name="RecoveryFallback">
+                <GoalUpdated/>
+                <RoundRobin name="RecoveryActions">
+                    <Sequence name="ClearingActions">
+                        <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+                        <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="navigation/global_costmap/clear_entirely_global_costmap"/>
+                    </Sequence>
+                    <!-- Costmap clears can't fix a bad AMCL pose (the static layer
+                         repaints map speckle immediately); a spin feeds AMCL fresh
+                         scan matches so localization can reconverge. -->
+                    <Spin spin_dist="1.57"/>
+                    <BackUp backup_dist="0.15" backup_speed="0.3"/>
+                    <Wait wait_duration="2"/>
+                </RoundRobin>
+            </ReactiveFallback>
+        </RecoveryNode>
+    </BehaviorTree>
 </root>

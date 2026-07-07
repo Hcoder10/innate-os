@@ -24,7 +24,10 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mars_nav.service_utils import call_service, get_node_state, transition_node
 
@@ -158,6 +161,23 @@ class ModeManager(Node):
 
         # Timer to publish current mode and maps
         self.timer = self.create_timer(1, self.publish_status)
+
+        # Client to re-trigger grid_localizer after map switches (a switch
+        # otherwise carries the previous map's AMCL pose along silently).
+        # Reentrant group: change_map_callback blocks the default group while
+        # it waits, so a default-group client could never receive its response.
+        self._localize_client = self.create_client(
+            Trigger, "/localize", callback_group=self._internal_callbacks_group
+        )
+
+        # One-shot check: the costmaps' camera voxel layer is silently inert
+        # when /mars/main_camera/points never publishes (e.g. missing stereo
+        # calibration). Warn once so lidar-only operation is visible.
+        self._camera_points_seen = False
+        self._camera_points_sub = self.create_subscription(
+            PointCloud2, "/mars/main_camera/points", self._camera_points_cb, qos_profile_sensor_data
+        )
+        self._camera_check_timer = self.create_timer(30.0, self._check_camera_obstacle_source)
 
         # --- TF2: Mapping pose publisher ---
         self.tf_buffer = tf2_ros.Buffer()
@@ -638,6 +658,38 @@ class ModeManager(Node):
         else:
             return True, f"Map switched successfully to {self.current_map}"
 
+    def _trigger_relocalization(self):
+        """Ask grid_localizer for a fresh pose estimate after a map switch.
+
+        Without this the switch keeps AMCL's pose from the previous map. Waits
+        briefly so grid_localizer has received/processed the newly latched map
+        before searching. Failure is logged but never fails the map switch.
+        """
+        time.sleep(1.0)
+        result = call_service(
+            {"/localize": self._localize_client}, self.get_logger(), "/localize", Trigger.Request(), timeout_sec=8.0
+        )
+        if result is not None and result.success:
+            self.get_logger().info(f"Re-localized on new map: {result.message}")
+        else:
+            self.get_logger().warning(
+                "Re-localization after map switch failed or timed out; AMCL may still hold the previous map's pose"
+            )
+
+    def _camera_points_cb(self, _msg):
+        self._camera_points_seen = True
+        if self._camera_points_sub is not None:
+            self.destroy_subscription(self._camera_points_sub)
+            self._camera_points_sub = None
+
+    def _check_camera_obstacle_source(self):
+        self._camera_check_timer.cancel()
+        if not self._camera_points_seen:
+            self.get_logger().warning(
+                "No camera pointcloud on /mars/main_camera/points 30s after start: the costmaps' camera "
+                "obstacle layer is inert (missing stereo calibration?) — navigating with lidar obstacles only"
+            )
+
     def change_map_callback(self, request, response):
         """
         Service callback to change the map for navigation mode
@@ -666,6 +718,7 @@ class ModeManager(Node):
                 success, message = self._efficient_map_switch()
 
                 if success:
+                    self._trigger_relocalization()
                     response.success = True
                     response.message = f"Successfully changed map to '{requested_map}'"
                     self.get_logger().info(response.message)

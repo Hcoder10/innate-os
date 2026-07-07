@@ -33,6 +33,7 @@ import cupy as cp
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav2_msgs.srv import SetInitialPose
 from nav_msgs.msg import OccupancyGrid
 from rclpy.executors import ExternalShutdownException
 from rclpy.lifecycle import Node, Publisher, State, TransitionCallbackReturn
@@ -144,6 +145,14 @@ class GridLocalizer(Node):
         # Service (manual trigger)
         self.srv = self.create_service(Trigger, "localize", self._localize_cb)
 
+        # AMCL's /set_initial_pose service: the latched /initialpose topic is
+        # NOT enough — AMCL subscribes VOLATILE, so a pose published before its
+        # subscription activates is lost forever. The service call is retried
+        # until AMCL is up.
+        self._amcl_seed_client = self.create_client(SetInitialPose, "/set_initial_pose")
+        self._seed_retry_timer = None
+        self._pending_seed = None
+
         # Store auto_localize setting for use in on_activate
         self._auto_localize_enabled = auto_localize
 
@@ -197,6 +206,9 @@ class GridLocalizer(Node):
         if self._map_check_timer:
             self.destroy_timer(self._map_check_timer)
             self._map_check_timer = None
+        if self._seed_retry_timer:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
 
         # Destroy service
         if self.srv:
@@ -501,6 +513,48 @@ class GridLocalizer(Node):
         msg.pose.covariance[35] = 0.05
         self.pose_pub.publish(msg)
         self.get_logger().info(f"Published initial pose: ({x:.2f}, {y:.2f})")
+        self._seed_amcl(msg)
+
+    def _seed_amcl(self, pose_msg: PoseWithCovarianceStamped, retries_left: int = 15):
+        """Deliver the pose to AMCL via its /set_initial_pose service.
+
+        Retries every 2 s while AMCL isn't up yet (boot/mode-switch races);
+        a newer pose always supersedes a pending retry.
+        """
+        self._pending_seed = (pose_msg, retries_left)
+        if self._seed_retry_timer is not None:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+
+        if not self._amcl_seed_client.service_is_ready():
+            if retries_left <= 0:
+                self.get_logger().warning("AMCL /set_initial_pose never became available; seed delivered by topic only")
+                self._pending_seed = None
+                return
+            self._seed_retry_timer = self.create_timer(2.0, self._retry_seed_amcl)
+            return
+
+        request = SetInitialPose.Request()
+        request.pose = pose_msg
+        future = self._amcl_seed_client.call_async(request)
+        future.add_done_callback(self._seed_amcl_done)
+
+    def _retry_seed_amcl(self):
+        if self._seed_retry_timer is not None:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+        if self._pending_seed is None:
+            return
+        pose_msg, retries_left = self._pending_seed
+        self._seed_amcl(pose_msg, retries_left - 1)
+
+    def _seed_amcl_done(self, future):
+        self._pending_seed = None
+        try:
+            future.result()
+            self.get_logger().info("Seeded AMCL via /set_initial_pose")
+        except Exception as e:
+            self.get_logger().warning(f"AMCL /set_initial_pose call failed: {e}")
 
     def _localize_cb(self, request, response):
         """Service callback to trigger localization."""
