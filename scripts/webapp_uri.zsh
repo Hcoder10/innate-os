@@ -24,6 +24,27 @@ innate_current_wifi_ip() {
     done
 }
 
+# Resolve the mDNS name actually advertised for the given IP (avahi can
+# publish e.g. mars-the-27th-2.local on a name conflict, diverging from the
+# system hostname). Mirrors mars_control's get_hostname() in app.cpp.
+innate_mdns_name() {
+    local ip="$1" name
+
+    name="$(avahi-resolve -a "$ip" 2>/dev/null | awk '{ print $2; exit }')"
+    if [[ -n "$name" ]]; then
+        print -r -- "$name"
+        return 0
+    fi
+
+    name="$(hostname -s 2>/dev/null)"
+    if [[ -n "$name" ]]; then
+        print -r -- "${name}.local"
+        return 0
+    fi
+
+    return 1
+}
+
 innate_webapp_uri() {
     local ip host
     ip="$(innate_current_wifi_ip)"
@@ -31,9 +52,9 @@ innate_webapp_uri() {
         return 1
     fi
 
-    host="$(hostname -s 2>/dev/null)"
+    host="$(innate_mdns_name "$ip")"
     if [[ -n "$host" ]]; then
-        print -r -- "https://${host}.local"
+        print -r -- "https://$host"
     else
         print -r -- "https://$ip"
     fi
