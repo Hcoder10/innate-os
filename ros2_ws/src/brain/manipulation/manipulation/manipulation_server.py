@@ -387,23 +387,28 @@ class ManipulationServer(Node):
             early_termination = False
             stop_reason = None
 
-            stop_detector = LearnedStopDetector(
-                min_duration=params.min_duration,
-                progress_threshold=progress_threshold,
-                progress_ema_alpha=params.progress_ema_alpha,
-                idle_seconds=params.idle_seconds,
-                idle_arm_eps=params.idle_arm_eps,
-                idle_base_eps=params.idle_base_eps,
-                progress_gate=params.progress_gate,
-                engage_below=params.engage_below,
-                stable_min=params.stable_min,
-                stable_seconds=params.stable_seconds,
-            )
+            # Auto-stop is opt-in per skill. When off, the loop runs to the
+            # ``duration`` hard cap and the detector is never consulted.
+            stop_detector = None
+            if params.auto_stop:
+                stop_detector = LearnedStopDetector(
+                    min_duration=params.min_duration,
+                    progress_threshold=progress_threshold,
+                    progress_ema_alpha=params.progress_ema_alpha,
+                    idle_seconds=params.idle_seconds,
+                    idle_arm_eps=params.idle_arm_eps,
+                    idle_base_eps=params.idle_base_eps,
+                    progress_gate=params.progress_gate,
+                    engage_below=params.engage_below,
+                    stable_min=params.stable_min,
+                    stable_seconds=params.stable_seconds,
+                )
 
             iteration_count = 0
 
+            auto_stop_note = f"progress threshold: {progress_threshold}" if params.auto_stop else "auto-stop off"
             self.get_logger().info(
-                f"Starting policy inference for {duration} seconds at {inference_hz} Hz (progress threshold: {progress_threshold})"
+                f"Starting policy inference for {duration} seconds at {inference_hz} Hz ({auto_stop_note})"
             )
 
             while rclpy.ok():
@@ -436,8 +441,9 @@ class ManipulationServer(Node):
                         return "FAILURE", "Required sensors became unavailable during execution"
                     # The detector saw nothing this step; discount one loop period from
                     # its dwells so the failure window isn't counted as observed stillness.
-                    stop_detector.note_gap(period)
-                else:
+                    if stop_detector is not None:
+                        stop_detector.note_gap(period)
+                elif stop_detector is not None:
                     stop, reason = stop_detector.update(signals, elapsed_time, loop_start)
                     if stop:
                         early_termination = True

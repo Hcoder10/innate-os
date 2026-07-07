@@ -63,6 +63,19 @@ DEFAULT_ACTION_DIM = 10
 
 KNOWN_BEHAVIOR_TYPES = ("learned", "poses", "replay")
 
+# Recommended engage-then-settle auto-stop config, applied to any knob a skill
+# leaves unset once ``auto_stop`` is enabled (so flipping the one switch yields a
+# working stop). Tuned on phase-0 pick-sock profiler data: smoothed progress must
+# first dip below ``engage_below`` (the policy engaged), then hold >= ``stable_min``
+# for ``stable_seconds``. See ``manipulation.auto_stop.LearnedStopDetector``.
+_AUTO_STOP_DEFAULTS = {
+    "min_duration": 5.0,
+    "progress_ema_alpha": 0.3,
+    "engage_below": 0.75,
+    "stable_min": 0.93,
+    "stable_seconds": 3.0,
+}
+
 
 def _reject_bool_and_str(value: Any) -> Any:
     """Reject bool and str inputs on numeric fields.
@@ -152,10 +165,13 @@ class LearnedExecCfg(_BaseExecCfg):
     n_action_steps: int | None = Field(None, ge=1)
 
     # --- Auto-stop tuning ---------------------------------------------------
-    # The learned loop ends early when one of these fires, otherwise at ``duration``
-    # (the always-on hard cap). Every field below defaults to a no-op, so a skill
-    # behaves exactly as before until it opts in. See
-    # ``manipulation.auto_stop.LearnedStopDetector`` for how they combine.
+    # Master switch: a learned skill only ends early when ``auto_stop`` is on.
+    # Off by default -- the skill runs to the ``duration`` hard cap, and the tuning
+    # knobs below are ignored. When on, any knob left unset falls back to the
+    # recommended engage-then-settle config (``_AUTO_STOP_DEFAULTS``); set a knob
+    # explicitly to override it. See ``manipulation.auto_stop.LearnedStopDetector``
+    # for how the individual stops combine.
+    auto_stop: bool = Field(False)
     #
     # Floor (s) before any early stop may fire (the idle dwell also only starts
     # counting after it); 0 = no floor.
@@ -215,6 +231,22 @@ class LearnedExecCfg(_BaseExecCfg):
         if value is None:
             return value
         return _finite_number(value)
+
+    @model_validator(mode="after")
+    def _apply_auto_stop_defaults(self) -> LearnedExecCfg:
+        """Fill unset tuning knobs with the recommended config once ``auto_stop``
+        is on, so enabling the switch alone gives a working stop. Knobs the skill
+        set explicitly win (``model_fields_set``). A no-op when ``auto_stop`` is off.
+
+        Runs before ``_progress_features_need_progress_head`` so the filled
+        ``stable_seconds`` is subject to the progress-head requirement.
+        """
+        if not self.auto_stop:
+            return self
+        for knob, value in _AUTO_STOP_DEFAULTS.items():
+            if knob not in self.model_fields_set:
+                setattr(self, knob, value)
+        return self
 
     @model_validator(mode="after")
     def _progress_features_need_progress_head(self) -> LearnedExecCfg:

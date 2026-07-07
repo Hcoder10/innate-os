@@ -426,6 +426,7 @@ class SkillRepository:
                     "start_pose": None,
                     "end_pose": None,
                     "n_action_steps": None,
+                    "auto_stop": None,
                     "min_duration": None,
                     "progress_ema_alpha": None,
                     "idle_seconds": None,
