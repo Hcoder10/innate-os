@@ -2,13 +2,16 @@
 # Copyright (c) 2026 Innate Inc
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -37,6 +40,9 @@ from config import (
     TMUX_SESSION_NAME,
     VIEWER_BUILD_LOG_PATH,
     WORKSPACE_ROOT,
+    WORLD_SERVER_LOG_PATH,
+    WORLD_SERVER_PID_PATH,
+    WORLD_SERVER_PORT,
     StackError,
     compute_ros_install_validation_hash,
     ensure_state_dir,
@@ -302,6 +308,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
         if os_image:
             compose_values["INNATE_OS_IMAGE"] = os_image
+        compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
         run_logged_with_heartbeat(
@@ -318,6 +325,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
+    compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
     host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[:16]
 
@@ -969,6 +977,92 @@ def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False
         log_path=VIEWER_BUILD_LOG_PATH,
         failure_message="Sim viewer bundle build failed (npm run build:lib).",
     )
+
+
+def _world_server_ping(port: int, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as conn:
+            payload = json.dumps({"op": "ping"}).encode()
+            conn.sendall(len(payload).to_bytes(4, "big") + payload)
+            header = conn.recv(4)
+            if len(header) < 4:
+                return False
+            reply = conn.recv(int.from_bytes(header, "big"))
+            return json.loads(reply).get("ok") is True
+    except OSError:
+        return False
+
+
+def ensure_world_server(config: dict[str, object]) -> str:
+    """Start the host world server (physics + native-GL rendering outside
+    Docker -- see mars_sim_driver/world_server.py) and return the endpoint
+    the container should use, or "" for in-container rendering.
+
+    Docker has no GPU on macOS/Windows, so in-container renders run on
+    software GL at ~105ms/frame; the host renders the same frame in ~15ms.
+    Default: on for macOS, off elsewhere; INNATE_SIM_HOST_WORLD=1/0 overrides.
+    Requires uv on the host (for the mujoco environment); falls back to
+    in-container rendering with a warning when unavailable.
+    """
+    override = os.environ.get("INNATE_SIM_HOST_WORLD", "").strip()
+    enabled = override == "1" if override else sys.platform == "darwin"
+    if not enabled:
+        return ""
+    if shutil.which("uv") is None:
+        warn("uv not found -- running the sim world in-container (software GL). Install uv for native-speed rendering.")
+        return ""
+
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    endpoint = f"host.docker.internal:{WORLD_SERVER_PORT}"
+    if _world_server_ping(WORLD_SERVER_PORT):
+        log("Host world server already running.")
+        return endpoint
+
+    log("Starting host world server (native GL rendering)...")
+    ensure_state_dir()
+    bootstrap = (
+        "import sys; sys.path.insert(0, 'ros2_ws/src/mars_bot/mars_sim_driver'); "
+        "from mars_sim_driver.world_server import main; main()"
+    )
+    env = os.environ.copy()
+    env["VIRTUAL_MARS_ASSETS"] = str(sim_repo / "assets")
+    with WORLD_SERVER_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            ["uv", "run", "--project", str(sim_repo), "python", "-c", bootstrap],
+            cwd=sim_repo.parent,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    WORLD_SERVER_PID_PATH.write_text(f"{proc.pid}\n", encoding="utf-8")
+    for _ in range(60):  # model build takes a few seconds
+        if _world_server_ping(WORLD_SERVER_PORT):
+            log("Host world server ready.")
+            return endpoint
+        if proc.poll() is not None:
+            break
+        time.sleep(0.5)
+    warn(
+        "Host world server failed to start -- running the sim world in-container instead. "
+        f"Details: {WORLD_SERVER_LOG_PATH}"
+    )
+    with contextlib.suppress(ProcessLookupError, OSError):
+        proc.kill()
+    WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
+    return ""
+
+
+def stop_world_server() -> None:
+    if not WORLD_SERVER_PID_PATH.exists():
+        return
+    try:
+        pid = int(WORLD_SERVER_PID_PATH.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        log("Stopped host world server.")
+    except (ValueError, ProcessLookupError, PermissionError):
+        pass
+    WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
 
 
 def ensure_skill_assets(config: dict[str, object]) -> None:

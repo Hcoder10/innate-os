@@ -25,17 +25,20 @@ The URDF's static frames (base_footprint, base_laser, camera_optical_frame,
 arm links) come from robot_state_publisher fed by /joint_states -- launch it
 alongside this node with the same mars.urdf. AMCL owns map->odom.
 
-Needs a ROS 2 environment (rclpy comes from the distro, not pip):
-  source /opt/ros/<distro>/setup.bash   # plus ros2_ws for mars_msgs services
-  python3 virtual_mars_node.py
-The mujoco/trimesh/pillow deps must be importable from that python.
+The world itself (physics + rendering) runs in the world server (see
+world_server.py) -- this node is a thin RPC client publishing the topic
+surface. Needs a ROS 2 environment; VIRTUAL_MARS_REMOTE picks the server
+endpoint (default 127.0.0.1:8799, started by sim_driver.launch.py).
 """
 
 import contextlib
+import io
 import json
 import math
+import os
 import threading
 import time
+from functools import lru_cache
 from types import SimpleNamespace
 
 import numpy as np
@@ -52,7 +55,8 @@ from std_msgs.msg import Empty, Float64MultiArray, Int32, String
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
-from .core import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg
+from .core import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH
+from .remote_world import RemoteWorld
 
 try:
     from mars_msgs.srv import GotoJS, GotoJSTrajectory
@@ -67,7 +71,6 @@ SCAN_HZ = 6.0  # lidar.launch.py throttle
 JOINT_STATE_HZ = 30.0
 ARM_STATE_HZ = 20.0
 HEAD_POSITION_HZ = 10.0
-PHYSICS_CHUNK_S = 0.01
 
 LIDAR_N_RAYS = 360
 LIDAR_RANGE_MIN = 0.15  # rplidar A-series
@@ -87,38 +90,50 @@ ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 FOCAL = CAMERA_HEIGHT / (2 * math.tan(math.radians(CAMERA_FOVY) / 2))
 CX, CY = CAMERA_WIDTH / 2, CAMERA_HEIGHT / 2
 
-# Software-GL render cost scales with fill rate, and one thread does every
-# render: at 640x480 a single OSMesa frame costs ~105ms and the camera/depth
-# rates collapse far below their targets (measured 2 / 0.85 Hz vs 7.5 / 8 Hz
-# in the container). Render RGB at half res, and depth at the pointcloud's
-# native res (the cloud was a 4x subsample anyway, so nothing is lost), then
-# upscale at the wire: published topics keep the hardware contract (640x480,
-# camera_info intrinsics unchanged).
-RENDER_SCALE = 2
-RENDER_WH = (CAMERA_WIDTH // RENDER_SCALE, CAMERA_HEIGHT // RENDER_SCALE)
-DEPTH_SCALE = POINTS_SUBSAMPLE  # depth render == pointcloud grid, 1:1
-DEPTH_WH = (CAMERA_WIDTH // DEPTH_SCALE, CAMERA_HEIGHT // DEPTH_SCALE)
-# Pointcloud pixel grid, precomputed once, 1:1 with the depth render.
-POINTS_VS, POINTS_US = np.mgrid[0 : DEPTH_WH[1], 0 : DEPTH_WH[0]].astype(np.float32)
-DFOCAL, DCX, DCY = FOCAL / DEPTH_SCALE, CX / DEPTH_SCALE, CY / DEPTH_SCALE
+# In-container rendering is software GL (no GPU in Docker on macOS/Windows):
+# The world (physics + rendering) always runs in the world server (see
+# world_server.py); this node is a thin RPC client. VIRTUAL_MARS_REMOTE
+# selects the endpoint: the launcher points it at the host world server
+# (native GL, full-res renders), and when unset the launch file starts a
+# server next to this node in the container (software GL, scaled renders).
+# Either way the wire contract is identical: 640x480 topics, camera_info
+# intrinsics unchanged, ~160x120 pointcloud.
+WORLD_DEFAULT_ENDPOINT = "127.0.0.1:8799"
+
+
+@lru_cache(maxsize=4)
+def _points_grid(h: int, w: int, step: int) -> tuple[np.ndarray, np.ndarray]:
+    vs, us = np.mgrid[0:h:step, 0:w:step]
+    return vs.astype(np.float32), us.astype(np.float32)
 
 
 class VirtualMarsNode(Node):
     def __init__(self) -> None:
         super().__init__("virtual_mars")
-        self.sim = VirtualMars(render_wh=RENDER_WH, depth_render_wh=DEPTH_WH)
+        endpoint = os.environ.get("VIRTUAL_MARS_REMOTE", "").strip() or WORLD_DEFAULT_ENDPOINT
+        host, _, port = endpoint.partition(":")
+        self.sim = RemoteWorld(host, int(port or "8799"))
+        self.get_logger().info(f"waiting for the world server at {endpoint}...")
+        self.sim.wait_ready(timeout=180.0)
+        self.get_logger().info(f"world server connected at {endpoint}")
         self._lock = threading.Lock()
         # Active joint-space trajectory: list of (from, to, duration) dicts
-        # consumed by the physics loop. _traj_req is the waiting goto_js*
+        # consumed by the trajectory loop. _traj_req is the waiting goto_js*
         # call's completion token (done event + ok flag) -- per-request, not
         # shared state, so concurrent service calls can't race each other's
         # preemption result (the services run in a reentrant group).
         self._segments: list[tuple[dict, dict, float]] = []
         self._segment_started: float | None = None
         self._traj_req: SimpleNamespace | None = None
+        self._last_stream_at = 0.0  # /mars/arm/commands ramp pacing
 
         self._tf = TransformBroadcaster(self)
-        self._odom_pub = self.create_publisher(Odometry, "/odom", 10)
+        # State topics publish with history depth 1 (latest-wins): pose is
+        # state, not a stream, and any hop that buffers more than the newest
+        # sample converts a slow consumer (rws under container CPU pressure)
+        # into permanent, accumulating display lag. With KEEP_LAST(1) a slow
+        # subscriber just skips to the newest sample instead.
+        self._odom_pub = self.create_publisher(Odometry, "/odom", 1)
         self._scan_pub = self.create_publisher(LaserScan, "/scan", qos_profile_sensor_data)
         self._main_pub = self.create_publisher(
             CompressedImage, "/mars/main_camera/left/image_raw/compressed", qos_profile_sensor_data
@@ -134,9 +149,9 @@ class VirtualMarsNode(Node):
         )
         self._points_pub = self.create_publisher(PointCloud2, "/mars/main_camera/points", qos_profile_sensor_data)
         self._caminfo_pub = self.create_publisher(CameraInfo, "/mars/main_camera/left/camera_info", 10)
-        self._arm_state_pub = self.create_publisher(JointState, "/mars/arm/state", 10)
-        self._joint_states_pub = self.create_publisher(JointState, "/joint_states", 10)
-        self._head_pub = self.create_publisher(String, "/mars/head/current_position", 10)
+        self._arm_state_pub = self.create_publisher(JointState, "/mars/arm/state", 1)
+        self._joint_states_pub = self.create_publisher(JointState, "/joint_states", 1)
+        self._head_pub = self.create_publisher(String, "/mars/head/current_position", 1)
 
         # Latched robot identity: clients (webapp) pick their camera view
         # implementation from this -- rendered view for sim, WebRTC for real.
@@ -153,7 +168,9 @@ class VirtualMarsNode(Node):
         self._streams_pub = self.create_publisher(String, "/webrtc/active_streams", 10)
         self.create_timer(2.0, self._publish_active_streams)
 
-        self.create_subscription(Twist, "/cmd_vel", self._on_cmd_vel, 10)
+        # Depth 1: a stale Twist is worthless, and a deep queue here turns an
+        # executor hiccup into seconds of the base replaying old commands.
+        self.create_subscription(Twist, "/cmd_vel", self._on_cmd_vel, 1)
         self.create_subscription(
             Float64MultiArray, "/mars/arm/commands", self._on_arm_commands, qos_profile_sensor_data
         )
@@ -182,7 +199,9 @@ class VirtualMarsNode(Node):
         self.create_timer(1.0 / ARM_STATE_HZ, self._publish_arm_state)
         self.create_timer(1.0 / HEAD_POSITION_HZ, self._publish_head)
 
-        threading.Thread(target=self._physics_loop, daemon=True).start()
+        # The server steps physics; this node only drives the goto_js
+        # trajectory interpolation on the server's clock.
+        threading.Thread(target=self._trajectory_loop, daemon=True).start()
         # Rendering runs on its own thread, NOT executor timers: a software-GL
         # render takes ~100ms+, and doing it under the physics lock (or on the
         # mutually-exclusive callback group) starves physics and /cmd_vel.
@@ -192,9 +211,18 @@ class VirtualMarsNode(Node):
 
     # --- inputs ---
 
+    def _rpc_safe(self, what: str, fn) -> None:
+        """Run an RPC-backed command, tolerating a briefly-away world server
+        (restart window): the command is dropped with a throttled warning
+        instead of the callback exception killing the executor."""
+        try:
+            fn()
+        except (OSError, RuntimeError) as exc:
+            self.get_logger().warning(f"{what} dropped: world server unavailable ({exc})", throttle_duration_sec=5.0)
+
     def _on_cmd_vel(self, msg: Twist) -> None:
         with self._lock:
-            self.sim.set_cmd_vel(msg.linear.x, msg.angular.z)
+            self._rpc_safe("cmd_vel", lambda: self.sim.set_cmd_vel(msg.linear.x, msg.angular.z))
 
     def _fail_active_traj(self) -> None:
         """Preempt the queued trajectory: wake its waiting goto_js* call with
@@ -208,10 +236,23 @@ class VirtualMarsNode(Node):
 
     def _on_arm_commands(self, msg: Float64MultiArray) -> None:
         values = list(msg.data)[: len(ARM_JOINTS)]
+        now = time.monotonic()
         with self._lock:
             self._fail_active_traj()  # streaming preempts trajectories
+            # Ramp to each streamed target over the stream interval instead of
+            # stepping: replay skills stream at ~12Hz, and a stiff PD snapping
+            # to each point reads as a staircase. Real Dynamixels velocity-
+            # profile between points; the 50Hz trajectory interpolator is our
+            # equivalent. Interval is measured (clamped) so any stream rate
+            # plays back smoothly.
+            interval = 0.1 if self._last_stream_at == 0.0 else min(0.25, max(0.05, now - self._last_stream_at))
+            self._last_stream_at = now
+            current = self.sim.joint_targets()
+            start = {k: current[k] for k in ARM_JOINTS}
+            target = dict(start)
             for name, value in zip(ARM_JOINTS, values, strict=False):
-                self.sim.set_joint_target(name, float(value))
+                target[name] = float(value)
+            self._segments.append((start, target, interval))
 
     def _on_reset(self, _msg: Empty) -> None:
         with self._lock:
@@ -278,37 +319,35 @@ class VirtualMarsNode(Node):
         response.success = True
         return response
 
-    # --- physics ---
+    # --- trajectory servo (physics itself runs in the world server) ---
 
-    def _physics_loop(self) -> None:
-        start_wall = time.perf_counter()
-        start_sim = self.sim.data.time
+    def _trajectory_loop(self) -> None:
+        """Interpolate queued goto segments at ~50Hz on the server's clock."""
         while rclpy.ok():
-            target = start_sim + (time.perf_counter() - start_wall)
             try:
                 with self._lock:
                     self._advance_trajectory()
-                    behind = target - self.sim.data.time
-                    if behind > 0:
-                        self.sim.step(min(behind, 0.1))  # cap catch-up after stalls
             except Exception as exc:  # noqa: BLE001 -- this thread must never die
-                self.get_logger().error(f"physics step failed ({exc!r}); dropping active trajectory")
+                self.get_logger().error(f"trajectory tick failed ({exc!r}); dropping active trajectory")
                 with self._lock:
                     self._fail_active_traj()
-            time.sleep(PHYSICS_CHUNK_S)
+            time.sleep(0.02)
+
+    def _sim_now(self) -> float:
+        return self.sim.time
 
     def _advance_trajectory(self) -> None:
         """Linear joint-space interpolation of the queued goto segments
         (called with the lock held, sim time as the clock)."""
         if not self._segments:
             return
-        now = self.sim.data.time
+        now = self._sim_now()
         if self._segment_started is None:
             self._segment_started = now
         start, end, duration = self._segments[0]
         alpha = min(1.0, (now - self._segment_started) / duration)
-        for name in ARM_JOINTS:
-            self.sim.set_joint_target(name, start[name] + alpha * (end[name] - start[name]))
+        # One batched RPC per tick, not one per joint (7x fewer round-trips).
+        self.sim.set_joint_targets({name: start[name] + alpha * (end[name] - start[name]) for name in ARM_JOINTS})
         if alpha >= 1.0:
             self._segments.pop(0)
             self._segment_started = None
@@ -349,8 +388,11 @@ class VirtualMarsNode(Node):
         self._tf.sendTransform(tf)
 
     def _publish_scan(self) -> None:
-        with self._lock:
-            ranges = self.sim.lidar_scan(LIDAR_N_RAYS, LIDAR_RANGE_MAX)
+        try:
+            with self._lock:
+                ranges = self.sim.lidar_scan(LIDAR_N_RAYS, LIDAR_RANGE_MAX)
+        except (OSError, RuntimeError):
+            return  # server briefly away; skip this scan
         msg = LaserScan()
         msg.header.stamp = self._stamp()
         msg.header.frame_id = "base_laser"
@@ -408,9 +450,11 @@ class VirtualMarsNode(Node):
                 last["depth"] = now
                 rendered = True
                 t0 = time.perf_counter()
-                with self._lock:
-                    self.sim.update_depth("main")
-                depth = self.sim.read_depth()
+                try:
+                    depth = self.sim.render_depth("main")
+                except (OSError, RuntimeError) as exc:
+                    self.get_logger().warning(f"depth render unavailable ({exc}); skipping frame")
+                    continue
                 cost["depth"] = 0.8 * cost["depth"] + 0.2 * (time.perf_counter() - t0)
                 self._publish_depth_and_points(depth)
             for camera, pub, raw_pub in (
@@ -422,29 +466,31 @@ class VirtualMarsNode(Node):
                 last[camera] = now
                 rendered = True
                 t0 = time.perf_counter()
-                with self._lock:
-                    self.sim.update_camera(camera)
-                rgb = self.sim.read_rgb()
+                try:
+                    jpeg = self.sim.render_jpeg(camera)
+                except (OSError, RuntimeError) as exc:
+                    self.get_logger().warning(f"{camera} render unavailable ({exc}); skipping frame")
+                    continue
                 cost[camera] = 0.8 * cost[camera] + 0.2 * (time.perf_counter() - t0)
-                self._publish_camera_frames(pub, raw_pub, camera, rgb)
+                self._publish_camera_frames(pub, raw_pub, camera, jpeg)
             if not rendered:
                 time.sleep(0.02)
 
-    def _publish_camera_frames(self, pub, raw_pub, camera: str, rgb) -> None:
+    def _publish_camera_frames(self, pub, raw_pub, camera: str, jpeg: bytes) -> None:
+        """Publish one camera frame; the server hands us a wire-res JPEG."""
         stamp = self._stamp()
         frame_id = "camera_optical_frame" if camera == "main" else "arm_camera_link"
-        # Upscale the half-res render to the wire resolution (bilinear).
-        rgb = np.asarray(PILImage.fromarray(rgb).resize((CAMERA_WIDTH, CAMERA_HEIGHT), PILImage.BILINEAR))
 
         if pub.get_subscription_count() > 0:
             msg = CompressedImage()
             msg.header.stamp = stamp
             msg.header.frame_id = frame_id
             msg.format = "jpeg"
-            msg.data = encode_jpeg(rgb)
+            msg.data = jpeg
             pub.publish(msg)
 
         if raw_pub.get_subscription_count() > 0:
+            rgb = np.asarray(PILImage.open(io.BytesIO(jpeg)).convert("RGB"))
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = frame_id
@@ -456,18 +502,23 @@ class VirtualMarsNode(Node):
             raw_pub.publish(msg)
 
     def _publish_depth_and_points(self, depth) -> None:
+        """Works at any render scale: full-res 640x480 from the host world
+        server, or the pointcloud-native 160x120 of the local renderer. The
+        wire depth image is always 640x480; the cloud always ~160x120."""
         want_depth = self._depth_pub.get_subscription_count() > 0
         want_points = self._points_pub.get_subscription_count() > 0
         stamp = self._stamp()
         invalid = (depth < DEPTH_MIN_M) | (depth > DEPTH_MAX_M)
+        img_scale = CAMERA_HEIGHT // depth.shape[0]
 
         if want_depth:
             # 16SC1 millimeters, invalid = 0 -- publishing.cpp's convention.
-            # Nearest-neighbor upscale of the half-res render to the wire
-            # resolution (depth must not be interpolated across edges).
+            # Nearest-neighbor upscale to the wire resolution when the render
+            # is smaller (depth must not be interpolated across edges).
             mm = np.where(invalid, 0, depth * 1000.0)
             mm = np.clip(mm, 0, np.iinfo(np.int16).max).astype(np.int16)
-            mm = np.repeat(np.repeat(mm, DEPTH_SCALE, axis=0), DEPTH_SCALE, axis=1)
+            if img_scale > 1:
+                mm = np.repeat(np.repeat(mm, img_scale, axis=0), img_scale, axis=1)
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = "camera_optical_frame"
@@ -479,9 +530,12 @@ class VirtualMarsNode(Node):
             self._depth_pub.publish(msg)
 
         if want_points:
-            z = np.where(invalid, np.nan, depth).astype(np.float32)
-            x = (POINTS_US - DCX) / DFOCAL * z
-            y = (POINTS_VS - DCY) / DFOCAL * z
+            step = max(1, POINTS_SUBSAMPLE // img_scale)
+            vs, us = _points_grid(depth.shape[0], depth.shape[1], step)
+            f, cx, cy = FOCAL / img_scale, CX / img_scale, CY / img_scale
+            z = np.where(invalid, np.nan, depth)[::step, ::step].astype(np.float32)
+            x = (us - cx) / f * z
+            y = (vs - cy) / f * z
             cloud = np.stack([x, y, z], axis=-1)
 
             msg = PointCloud2()

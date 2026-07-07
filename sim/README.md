@@ -124,6 +124,16 @@ walks through them.
 ./innate-sim down        # stop
 ```
 
+The world itself (physics + sensor rendering) always runs in the **world
+server** (`mars_sim_driver/world_server.py`); the driver node is a thin RPC
+client, so there is exactly one render path. Only the server's *placement*
+varies: on macOS `up` runs it natively on the host (Docker has no GPU there
+-- host GL renders ~7x faster, full resolution), elsewhere/in CI the launch
+file starts the same server inside the container (software GL, scaled
+renders, identical wire contract). `INNATE_SIM_HOST_WORLD=1/0` forces host
+placement on/off; without `uv` on the host it falls back to in-container
+with a warning. `./innate-sim logs world-server` shows the host server log.
+
 The generated geometry (driver meshes in `sim/assets/`, the viewer's hulls,
 GLB, and robot meshes) is not in git: `./innate-sim up` downloads the bundle
 pinned by `sim/sim-assets.lock` from a GitHub release and extracts it in

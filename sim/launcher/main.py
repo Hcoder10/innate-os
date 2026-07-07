@@ -52,10 +52,12 @@ from runtime import (
     ensure_sim_assets,
     ensure_sim_viewer_bundle,
     ensure_skill_assets,
+    ensure_world_server,
     open_os_container_shell,
     print_startup_checks,
     runtime_already_running,
     start_cloud_agent,
+    stop_world_server,
     tail_file,
     wait_for_os_runtime_ready,
     wait_for_virtual_mars,
@@ -126,6 +128,7 @@ def cmd_up(
                     f"`{CLI_SIM} up --offline` to start with whatever is already downloaded."
                 ) from exc
         ensure_sim_viewer_bundle(config, offline=offline)
+        config["world_endpoint"] = ensure_world_server(config)
 
         started = True
         try:
@@ -187,6 +190,7 @@ def cmd_up(
 def cmd_down(config: dict[str, object]) -> None:
     down_cloud_agent()
     down_os(config)
+    stop_world_server()
     log("Innate sim runtime is down.")
 
 
@@ -206,6 +210,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
         warn("Aborted. Nothing was deleted.")
         return
 
+    stop_world_server()
     clean_runtime(config)
     success("Innate sim runtime cleaned (containers and volumes removed).")
 
