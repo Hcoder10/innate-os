@@ -19,6 +19,7 @@ import os
 import queue
 import threading
 import time
+import traceback
 import uuid
 from typing import get_args
 
@@ -28,7 +29,7 @@ from brain_messages.srv import CreatePhysicalSkill, DeleteSkill, ReloadSkillsAge
 from innate.skills import SkillCancelled, SkillFailed, use_invoker
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -719,8 +720,15 @@ def main(args=None):
     executor.add_node(action_server)
     try:
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:
+        # An exception escaping spin() (e.g. InvalidHandle from an entity
+        # destroyed while the executor was using it) must not unwind past the
+        # teardown below: exiting with live zenoh entities panics rmw_zenoh's
+        # Rust runtime (SIGABRT). Log it and exit through the ordered teardown;
+        # launch respawns us either way, but from a clean exit.
+        action_server.get_logger().fatal(f"Executor spin crashed:\n{traceback.format_exc()}")
     action_server.destroy()
     # Guard against double-shutdown: avoids a teardown RCLError that exits 1.
     if rclpy.ok():

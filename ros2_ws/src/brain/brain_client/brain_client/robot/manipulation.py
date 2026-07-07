@@ -58,7 +58,11 @@ class ManipulationInterface:
         self._arm_state = None
         self._torque_enabled = None
 
-        # Subscription handles (created in start(), destroyed in stop())
+        # Subscription handles (created once in start(); kept for the node's
+        # lifetime — destroying one while the private executor thread spins
+        # races _take_subscription and crashes the process with InvalidHandle).
+        # stop() instead gates the callbacks via _active.
+        self._active = False
         self._ik_solution_sub = None
         self._ik_solution_fk_sub = None
         self._fk_pose_sub = None
@@ -87,7 +91,8 @@ class ManipulationInterface:
             self.logger.error(f"[ManipulationInterface] Executor stopped unexpectedly: {e}")
 
     def start(self):
-        """Create all subscriptions. Safe to call multiple times."""
+        """Enable arm-state feeds (subscriptions are created once). Safe to call multiple times."""
+        self._active = True
         if self._arm_state_sub is not None:
             return
         self._ik_solution_sub = self.node.create_subscription(
@@ -100,14 +105,12 @@ class ManipulationInterface:
         self._arm_state_sub = self.node.create_subscription(JointState, "/mars/arm/state", self._arm_state_callback, 10)
 
     def stop(self):
-        """Destroy all subscriptions and clear cached state."""
-        for sub in (self._ik_solution_sub, self._ik_solution_fk_sub, self._fk_pose_sub, self._arm_state_sub):
-            if sub is not None:
-                self.node.destroy_subscription(sub)
-        self._ik_solution_sub = None
-        self._ik_solution_fk_sub = None
-        self._fk_pose_sub = None
-        self._arm_state_sub = None
+        """Deactivate arm-state feeds and clear cached state.
+
+        Subscriptions are deliberately kept alive (see __init__); the callbacks
+        early-return while inactive.
+        """
+        self._active = False
         self._ik_solution = None
         self._ik_solution_fk = None
         self._fk_pose = None
