@@ -40,30 +40,23 @@ class MobilityInterface:
         self.logger.info(f"MobilityInterface initialized with cmd_vel topic: {self.cmd_vel_topic}")
 
     def _schedule_stop(self, duration: float):
+        # One timer, created once and retargeted per command. Destroying a
+        # timer on a node a live executor is spinning races the executor's
+        # wait set (InvalidHandle -> crash), and creating a fresh one per
+        # deadman refresh (10-20/s) would leak cancelled timers in the node's
+        # timer list — reset/cancel on a single timer avoids both.
         if duration is None or duration <= 0.0:
             return
+        if self._stop_timer is None:
+            self._stop_timer = self.node.create_timer(duration, self._on_stop_timer)
+            return
+        self._stop_timer.timer_period_ns = int(duration * 1e9)
+        self._stop_timer.reset()
 
-        self._destroy_stop_timer()
-
-        def _stop_callback():
-            try:
-                stop_cmd = Twist()
-                self._cmd_vel_pub.publish(stop_cmd)
-                self.logger.debug("MobilityInterface: stop command published")
-            finally:
-                self._destroy_stop_timer()
-
-        self._stop_timer = self.node.create_timer(duration, _stop_callback)
-
-    def _destroy_stop_timer(self):
-        # destroy, don't just cancel: a cancelled timer stays in the node's
-        # timer list forever, which leaks at deadman rates (10-20 timers/s)
-        timer, self._stop_timer = self._stop_timer, None
-        if timer is not None:
-            try:
-                self.node.destroy_timer(timer)
-            except Exception:
-                pass
+    def _on_stop_timer(self):
+        self._stop_timer.cancel()  # one-shot: stays cancelled until the next _schedule_stop
+        self._cmd_vel_pub.publish(Twist())
+        self.logger.debug("MobilityInterface: stop command published")
 
     def send_cmd_vel(
         self,
@@ -90,6 +83,10 @@ class MobilityInterface:
 
         if duration is not None and duration > 0.0:
             self._schedule_stop(duration)
+        elif self._stop_timer is not None:
+            # Continuous motion requested: disarm any stop still pending from
+            # an earlier timed command so it doesn't cut this one short.
+            self._stop_timer.cancel()
 
     def rotate_in_place(self, angular_speed: float, duration: float) -> None:
         """Rotate in place with specified angular speed for a duration (non-blocking).

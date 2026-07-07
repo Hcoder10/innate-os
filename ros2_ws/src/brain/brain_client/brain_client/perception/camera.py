@@ -61,6 +61,11 @@ class CameraCapture:
         self._head_sub = self._node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
 
     def stop(self) -> None:
+        # Destroying here is safe only because brain_client_node is spun
+        # single-threaded and stop() runs on that spin thread (between
+        # callbacks). On a multi-threaded executor this would race the wait
+        # set (InvalidHandle) — flag-gate the callbacks instead, like
+        # skills/robot_state.py.
         for sub in (self._image_sub, self._depth_sub, self._arm_sub, self._head_sub):
             if sub is not None:
                 self._node.destroy_subscription(sub)

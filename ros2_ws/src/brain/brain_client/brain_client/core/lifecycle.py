@@ -160,6 +160,8 @@ class BrainLifecycle:
         # Re-register after a short delay (lets the server process
         # READY_FOR_CONNECTION) via a one-shot timer, so we don't block the
         # executor thread with a sleep.
+        # Destroying is safe only because brain_client_node is spun
+        # single-threaded, so this runs on the spin thread between callbacks.
         if self._reactivate_timer is not None:
             self._node.destroy_timer(self._reactivate_timer)
         self._reactivate_timer = self._node.create_timer(0.5, self._finish_reactivation)

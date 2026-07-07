@@ -68,6 +68,11 @@ class PoseTracker:
         self._transform_timer = self._node.create_timer(1.0 / 30.0, self._fetch_transform)
 
     def stop(self) -> None:
+        # Destroying here is safe only because brain_client_node is spun
+        # single-threaded and stop() runs on that spin thread (between
+        # callbacks). On a multi-threaded executor this would race the wait
+        # set (InvalidHandle) — flag-gate the callbacks instead, like
+        # skills/robot_state.py.
         for sub in (self._odom_sub, self._nav_mode_sub):
             if sub is not None:
                 self._node.destroy_subscription(sub)

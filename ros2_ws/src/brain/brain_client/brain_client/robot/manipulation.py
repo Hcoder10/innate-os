@@ -42,10 +42,14 @@ class ManipulationInterface:
         """
         self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
-        self._executor = rclpy.executors.SingleThreadedExecutor()
-        self._executor.add_node(self.node)
-        self._executor_thread = threading.Thread(target=self._spin_executor, daemon=True)
-        self._executor_thread.start()
+        # The private executor spins only while a skill is active
+        # (start()..stop()). While parked, messages arriving on the
+        # always-alive subscriptions just rotate in the bounded rmw queues at
+        # no Python cost — dispatching them through an executor costs ~half a
+        # Jetson core at the ~600 msgs/s these feeds add up to.
+        self._executor = None
+        self._executor_thread = None
+        self._lifecycle_lock = threading.Lock()
         self._ik_lock = threading.Lock()
 
         # Publishers
@@ -58,7 +62,12 @@ class ManipulationInterface:
         self._arm_state = None
         self._torque_enabled = None
 
-        # Subscription handles (created in start(), destroyed in stop())
+        # Subscription handles (created once in start(); kept for the node's
+        # lifetime — destroying one while the private executor thread spins
+        # races _take_subscription and crashes the process with InvalidHandle).
+        # stop() instead gates the callbacks via _active and parks the
+        # executor.
+        self._active = False
         self._ik_solution_sub = None
         self._ik_solution_fk_sub = None
         self._fk_pose_sub = None
@@ -80,34 +89,51 @@ class ManipulationInterface:
 
         self.logger.info("ManipulationInterface initialized")
 
-    def _spin_executor(self):
+    def _spin_executor(self, executor):
         try:
-            self._executor.spin()
+            executor.spin()
         except Exception as e:
             self.logger.error(f"[ManipulationInterface] Executor stopped unexpectedly: {e}")
 
     def start(self):
-        """Create all subscriptions. Safe to call multiple times."""
-        if self._arm_state_sub is not None:
-            return
-        self._ik_solution_sub = self.node.create_subscription(
-            JointState, "/ik_solution", self._ik_solution_callback, 10
-        )
-        self._ik_solution_fk_sub = self.node.create_subscription(
-            PoseStamped, "/ik_solution_fk", self._ik_solution_fk_callback, 10
-        )
-        self._fk_pose_sub = self.node.create_subscription(PoseStamped, "/fk_pose", self._fk_pose_callback, 10)
-        self._arm_state_sub = self.node.create_subscription(JointState, "/mars/arm/state", self._arm_state_callback, 10)
+        """Enable arm-state feeds: spin up the private executor and create the
+        subscriptions once. Safe to call multiple times."""
+        with self._lifecycle_lock:
+            self._active = True
+            if self._executor is None:
+                self._executor = rclpy.executors.SingleThreadedExecutor()
+                self._executor.add_node(self.node)
+                self._executor_thread = threading.Thread(
+                    target=self._spin_executor, args=(self._executor,), daemon=True
+                )
+                self._executor_thread.start()
+            if self._arm_state_sub is not None:
+                return
+            self._ik_solution_sub = self.node.create_subscription(
+                JointState, "/ik_solution", self._ik_solution_callback, 10
+            )
+            self._ik_solution_fk_sub = self.node.create_subscription(
+                PoseStamped, "/ik_solution_fk", self._ik_solution_fk_callback, 10
+            )
+            self._fk_pose_sub = self.node.create_subscription(PoseStamped, "/fk_pose", self._fk_pose_callback, 10)
+            self._arm_state_sub = self.node.create_subscription(
+                JointState, "/mars/arm/state", self._arm_state_callback, 10
+            )
 
     def stop(self):
-        """Destroy all subscriptions and clear cached state."""
-        for sub in (self._ik_solution_sub, self._ik_solution_fk_sub, self._fk_pose_sub, self._arm_state_sub):
-            if sub is not None:
-                self.node.destroy_subscription(sub)
-        self._ik_solution_sub = None
-        self._ik_solution_fk_sub = None
-        self._fk_pose_sub = None
-        self._arm_state_sub = None
+        """Deactivate arm-state feeds, park the private executor and clear cached state.
+
+        Subscriptions are deliberately kept alive (see __init__); the callbacks
+        early-return while inactive, and with the executor parked they are not
+        invoked at all between skills.
+        """
+        with self._lifecycle_lock:
+            self._active = False
+            if self._executor is not None:
+                self._executor.shutdown()
+                self._executor_thread.join(timeout=2.0)
+                self._executor = None
+                self._executor_thread = None
         self._ik_solution = None
         self._ik_solution_fk = None
         self._fk_pose = None
@@ -116,8 +142,6 @@ class ManipulationInterface:
     def shutdown(self):
         """Stop the manipulation helper node and its private executor."""
         self.stop()
-        self._executor.shutdown()
-        self._executor_thread.join(timeout=2.0)
         self.node.destroy_node()
 
     def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
@@ -136,20 +160,24 @@ class ManipulationInterface:
 
     def _ik_solution_callback(self, msg: JointState):
         """Store the latest IK solution."""
-        self.logger.debug(f"IK solution received: {msg}")
-        self._ik_solution = msg
+        if self._active:
+            self.logger.debug(f"IK solution received: {msg}")
+            self._ik_solution = msg
 
     def _ik_solution_fk_callback(self, msg: PoseStamped):
         """Store the FK of the latest IK solution (what commanded joints map to)."""
-        self._ik_solution_fk = msg
+        if self._active:
+            self._ik_solution_fk = msg
 
     def _fk_pose_callback(self, msg: PoseStamped):
         """Store the latest FK pose."""
-        self._fk_pose = msg
+        if self._active:
+            self._fk_pose = msg
 
     def _arm_state_callback(self, msg: JointState):
         """Store the latest arm state (includes effort/load)."""
-        self._arm_state = msg
+        if self._active:
+            self._arm_state = msg
 
     def get_current_end_effector_pose(self) -> dict | None:
         """
