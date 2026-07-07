@@ -70,7 +70,9 @@
 # Resolution is staged: the sensor captures the full side-by-side stereo frame at
 # width x height (must be a mode the sensor supports), the GPU downscales it to
 # publish_stereo_*, and each eye (half the stereo width) is resized to
-# publish_left_* — the size every ROS topic carries. Downstream consumers (depth,
+# publish_left_* — the size every ROS topic carries. publish_left_* above half the
+# publish_stereo size only upscales (no extra detail): for a sharper image, raise
+# width x height and publish_stereo_* together. Downstream consumers (depth,
 # brain, manipulation) follow the published size automatically; the teleop stream
 # size is separate (see webrtc_streamer below).
 # main_camera_driver:
