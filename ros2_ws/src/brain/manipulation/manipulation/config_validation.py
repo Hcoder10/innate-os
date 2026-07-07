@@ -170,7 +170,8 @@ class LearnedExecCfg(_BaseExecCfg):
     # knobs below are ignored. When on, any knob left unset falls back to the
     # recommended engage-then-settle config (``_AUTO_STOP_DEFAULTS``); set a knob
     # explicitly to override it. See ``manipulation.auto_stop.LearnedStopDetector``
-    # for how the individual stops combine.
+    # for how the individual stops combine, and the package README's auto-stop
+    # section for the per-skill tuning workflow and known limitations.
     auto_stop: bool = Field(False)
     #
     # Floor (s) before any early stop may fire; 0 = no floor.
