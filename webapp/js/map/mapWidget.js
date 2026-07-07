@@ -7,7 +7,7 @@
 // is all a 2D map needs.
 
 import { ros } from "../rosClient.js";
-import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPIC, GOAL_POSE_TOPIC } from "../constants.js";
+import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPIC, GOAL_POSE_TOPIC, CANCEL_NAVIGATION_SERVICE } from "../constants.js";
 
 // Wheel-zoom bounds (metres of real-world width shown).
 const MIN_ZOOM_M = 1;
@@ -31,9 +31,13 @@ export function createMap(root, opts = {}) {
   const goalBtn = document.createElement("button");
   goalBtn.className = "map-goal-btn sim-button";
   goalBtn.textContent = "Set Goal";
+  const stopBtn = document.createElement("button");
+  stopBtn.className = "map-stop-btn sim-button";
+  stopBtn.textContent = "Stop";
   const controls = document.createElement("div");
   controls.className = "map-controls";
   controls.appendChild(goalBtn);
+  controls.appendChild(stopBtn);
   root.appendChild(controls);
 
   // Offscreen 1px-per-cell buffer; scaled to the canvas on draw (crisp + cheap).
@@ -336,6 +340,30 @@ export function createMap(root, opts = {}) {
   }
 
   goalBtn.addEventListener("click", () => setGoalMode(!goalMode));
+
+  // Stop cancels every active navigation goal server-side — including ones this
+  // page didn't start (a skill's, another client's) — then drops the local goal
+  // marker and route. Button text doubles as the outcome indicator.
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    stopBtn.textContent = "Stopping…";
+    try {
+      await ros.callService(CANCEL_NAVIGATION_SERVICE, {});
+      goalMarker = null;
+      plan = null;
+      setGoalMode(false);
+      draw();
+      stopBtn.textContent = "Stopped";
+    } catch (err) {
+      console.error("[map] cancel navigation failed:", err);
+      stopBtn.textContent = "Stop failed";
+    } finally {
+      stopBtn.disabled = false;
+      setTimeout(() => {
+        stopBtn.textContent = "Stop";
+      }, 1500);
+    }
+  });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);

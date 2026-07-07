@@ -61,6 +61,10 @@ export const PLAN_TOPIC = "/plan"; // nav_msgs/Path — the planner's route to t
 // planning; the resulting route streams back on PLAN_TOPIC. Same topic the sim
 // console's map view publishes to.
 export const GOAL_POSE_TOPIC = "/goal_pose";
+// Stop all active navigation (std_srvs/Trigger, served by mode_manager).
+// Cancels every NavigateToPose goal — click-to-navigate ones and skill-driven
+// ones alike — so the map page's Stop works no matter who started the motion.
+export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
