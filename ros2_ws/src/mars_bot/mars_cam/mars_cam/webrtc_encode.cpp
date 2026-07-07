@@ -179,7 +179,11 @@ void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement
             GST_BUFFER_PTS(out) = GST_CLOCK_TIME_NONE;
             GST_BUFFER_DTS(out) = GST_CLOCK_TIME_NONE;
             GstFlowReturn ret;
-            g_signal_emit_by_name(target.src, "push-buffer", out, &ret);  // takes ownership of the copy
+            // The "push-buffer" action signal does NOT take ownership (transfer-none),
+            // unlike gst_app_src_push_buffer(); the copy must be unreffed or it leaks
+            // one RTP packet per push (~1 GB/h per viewing peer at 2 Mbps).
+            g_signal_emit_by_name(target.src, "push-buffer", out, &ret);
+            gst_buffer_unref(out);
             {
                 std::lock_guard<std::mutex> lock(peers_mutex_);
                 auto it = peers_.find(target.client_id);
