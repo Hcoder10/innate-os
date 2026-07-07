@@ -140,6 +140,30 @@ void merge_encoder_fields_from_disk(const std::string& path, nlohmann::json& met
     }
 }
 
+// Column count of an episode file's 2-D /action dataset, or -1 when the file
+// or dataset can't be read (caller treats unknown as "don't block the copy").
+int action_width(const std::string& h5_path) {
+    const hid_t file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) {
+        return -1;
+    }
+    int cols = -1;
+    const hid_t dset = H5Dopen2(file, "/action", H5P_DEFAULT);
+    if (dset >= 0) {
+        const hid_t space = H5Dget_space(dset);
+        if (space >= 0) {
+            hsize_t dims[2] = {0, 0};
+            if (H5Sget_simple_extent_ndims(space) == 2 && H5Sget_simple_extent_dims(space, dims, nullptr) == 2) {
+                cols = static_cast<int>(dims[1]);
+            }
+            H5Sclose(space);
+        }
+        H5Dclose(dset);
+    }
+    H5Fclose(file);
+    return cols;
+}
+
 // Path equality that tolerates trailing slashes, dot segments and symlinks.
 // Directory paths here arrive from independent service requests (start_recording,
 // copy_episode), so the same dataset can be spelled two ways; a raw string compare
@@ -650,6 +674,32 @@ std::tuple<bool, std::string, int> TaskManager::copy_episode(const std::string& 
     };
     if (!fs::exists(src_data + "/" + old_stem + ".h5")) {
         return {false, "Source episode file missing: " + old_stem + ".h5", -1};
+    }
+    // Mixed action layouts break training the same way mixed frequencies do —
+    // collate can't stack a [chunk, 10] episode with a [chunk, 14] one — and
+    // happen in practice when a dataset's episodes span recorder versions.
+    // Compare the incoming /action width against one readable destination
+    // episode; unknown widths (unreadable file) don't block the copy.
+    const int src_width = action_width(src_data + "/" + old_stem + ".h5");
+    if (src_width > 0) {
+        for (const auto& ep : dest_meta["episodes"]) {
+            const std::string dest_file = ep.value("file_name", "");
+            if (dest_file.empty()) {
+                continue;
+            }
+            const int dest_width = action_width(dest_data + "/" + dest_file);
+            if (dest_width <= 0) {
+                continue;
+            }
+            if (src_width != dest_width) {
+                return {false,
+                        "Episode's /action has " + std::to_string(src_width) + " columns but the destination's have " +
+                            std::to_string(dest_width) +
+                            " — mixed layouts can't train (likely recorded by different robot versions)",
+                        -1};
+            }
+            break;
+        }
     }
     std::error_code ec;  // scratch for the probes below; copies check their own cp_ec
     for (const char* sub : {"/data", "/raw_data"}) {
