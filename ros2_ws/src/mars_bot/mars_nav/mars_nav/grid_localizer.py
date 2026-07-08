@@ -215,6 +215,10 @@ class GridLocalizer(Node):
         if self._seed_retry_timer:
             self.destroy_timer(self._seed_retry_timer)
             self._seed_retry_timer = None
+        # Clear the pending seed too: an in-flight /set_initial_pose failing
+        # after cleanup would otherwise see it as current and re-arm a retry
+        # timer on a cleaned-up node.
+        self._pending_seed = None
 
         # Destroy service
         if self.srv:

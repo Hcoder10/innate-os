@@ -1,7 +1,9 @@
 # NOTE: the AMCL node is renamed to `navigation_amcl` in navigation.launch.py.
 # Param files match by NODE NAME, so this file MUST be keyed `navigation_amcl`
-# (a previous top-level `amcl:` key matched nothing and every value below was
-# silently ignored — AMCL ran on Nav2 defaults).
+# (commit cfdf21d4 renamed the node without re-keying this file, which
+# silently un-applied every value below for months — AMCL ran on Nav2
+# defaults). The values themselves are the long-serving hand-tuned set and
+# are intentionally unchanged by the re-key.
 /**:
   navigation_amcl:
     ros__parameters:
@@ -19,30 +21,25 @@
       global_frame_id: "map"
       lambda_short: 0.1
       laser_likelihood_max_dist: 2.0
-      laser_max_range: 12.0   # RPLidar max usable range
+      laser_max_range: 10.0
       laser_min_range: 0.2
       laser_model_type: "likelihood_field"
       max_beams: 60
-      # 3000 particles is plenty for rooms this size and roughly halves the
-      # filter CPU vs the old 6000 on an already saturated box.
-      max_particles: 3000
-      min_particles: 500
+      max_particles: 6000
+      min_particles: 1000
       odom_frame_id: "odom"
       pf_err: 0.05
       pf_z: 0.99
       recovery_alpha_fast: 0.2
       recovery_alpha_slow: 0.005
-      # Only update/resample after real motion. 0.0/0.0 with resample_interval 1
-      # would update AND resample on every scan -> particle depletion +
-      # overconvergence (and needless CPU) while standing still.
-      resample_interval: 2
-      update_min_a: 0.2
-      update_min_d: 0.15
+      resample_interval: 1
       robot_model_type: "nav2_amcl::DifferentialMotionModel"
       save_pose_rate: 0.5
       sigma_hit: 0.2
       tf_broadcast: true
       transform_tolerance: 1.0
+      update_min_a: 0.0
+      update_min_d: 0.0
       z_hit: 0.5
       z_max: 0.05
       z_rand: 0.5
