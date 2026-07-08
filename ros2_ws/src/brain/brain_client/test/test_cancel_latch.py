@@ -85,7 +85,8 @@ class NoSuperInitSkill(Skill):
     """Some fleet skills (navigate_to_position, send_email, …) define __init__
     without calling super().__init__() — the latch must self-create."""
 
-    def __init__(self):  # noqa: intentionally no super().__init__()
+    def __init__(self):
+        # intentionally no super().__init__() — the latch must self-create
         self._cancelled = False
 
     @property

@@ -15,6 +15,7 @@ import rclpy
 
 # TF2 imports for transform lookup
 import tf2_ros
+from action_msgs.msg import GoalStatus, GoalStatusArray
 from action_msgs.srv import CancelGoal
 from brain_messages.srv import ChangeMap, ChangeNavigationMode, DeleteMap, SaveMap
 from geometry_msgs.msg import TransformStamped
@@ -26,6 +27,7 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -117,6 +119,24 @@ class ModeManager(Node):
             CancelGoal,
             "/internal_navigate_to_pose/_action/cancel_goal",
             callback_group=self._calls_going_outside_group,
+        )
+        # Track how many bt_navigator goals are non-terminal, so cancellation
+        # can tell whether nav is active independent of service availability
+        # and can wait for goals to actually finish before Nav2 is torn down.
+        self._nav_active_goals = 0
+        self._nav_status_lock = threading.Lock()
+        action_status_qos = QoSProfile(
+            depth=1,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._nav_status_sub = self.create_subscription(
+            GoalStatusArray,
+            "/internal_navigate_to_pose/_action/status",
+            self._nav_status_callback,
+            action_status_qos,
+            callback_group=self._internal_callbacks_group,
         )
         self.cancel_navigation_service = self.create_service(
             Trigger,
@@ -908,24 +928,57 @@ class ModeManager(Node):
         except Exception as e:
             self.get_logger().warn(f"Cleanup warning: {e}")
 
-    def _cancel_active_navigation(self, timeout_sec=3.0):
-        """Cancel all active NavigateToPose goals (zeroed CancelGoal = cancel
-        all). Returns (success, message)."""
-        if not self._nav_cancel_client.service_is_ready():
-            return True, "Navigation is not running; nothing to cancel"
+    # bt_navigator goal states that are not yet terminal.
+    _NAV_ACTIVE_STATUSES = (
+        GoalStatus.STATUS_ACCEPTED,
+        GoalStatus.STATUS_EXECUTING,
+        GoalStatus.STATUS_CANCELING,
+    )
+
+    def _nav_status_callback(self, msg):
+        active = sum(1 for s in msg.status_list if s.status in self._NAV_ACTIVE_STATUSES)
+        with self._nav_status_lock:
+            self._nav_active_goals = active
+
+    def _active_nav_goal_count(self):
+        with self._nav_status_lock:
+            return self._nav_active_goals
+
+    def _cancel_active_navigation(self, timeout_sec=5.0):
+        """Cancel all active NavigateToPose goals and wait for them to reach a
+        terminal state. Returns (success, message).
+
+        Waits for terminal (not just cancel-acknowledged) so the caller can
+        tear Nav2 down without deactivating bt_navigator before it has
+        delivered the cancelled goal's result — which would strand the router
+        or skill waiting forever.
+        """
+        if self._active_nav_goal_count() == 0:
+            return True, "No active navigation goals"
+
+        # A goal is active, so the cancel service must be reachable — even if a
+        # lifecycle transition briefly hid it. Never report success on timeout:
+        # skipping the cancel would strand the goal once Nav2 is torn down.
+        if not self._nav_cancel_client.wait_for_service(timeout_sec=1.0):
+            return False, "Navigation active but cancel service is unavailable"
+
+        deadline = time.time() + timeout_sec
         done = threading.Event()
         future = self._nav_cancel_client.call_async(CancelGoal.Request())
         future.add_done_callback(lambda _f: done.set())
         if not done.wait(timeout_sec):
             future.cancel()
-            return False, f"Timed out after {timeout_sec}s waiting for navigation cancel"
+            return False, "Timed out waiting for cancel acknowledgement"
         try:
             cancelling = len(future.result().goals_canceling)
         except Exception as e:
             return False, f"Navigation cancel failed: {e}"
-        if cancelling:
-            return True, f"Cancelling {cancelling} active navigation goal(s)"
-        return True, "No active navigation goals"
+
+        while self._active_nav_goal_count() > 0 and time.time() < deadline:
+            time.sleep(0.05)
+        if self._active_nav_goal_count() > 0:
+            return False, "Cancelled goals did not reach a terminal state in time"
+        return True, f"Cancelled {cancelling} navigation goal(s)"
 
     def cancel_navigation_callback(self, request, response):
         """Trigger service: stop all active navigation (app Stop button)."""
