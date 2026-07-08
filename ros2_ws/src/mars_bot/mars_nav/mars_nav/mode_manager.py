@@ -175,9 +175,7 @@ class ModeManager(Node):
         # otherwise carries the previous map's AMCL pose along silently).
         # Reentrant group: change_map_callback blocks the default group while
         # it waits, so a default-group client could never receive its response.
-        self._localize_client = self.create_client(
-            Trigger, "/localize", callback_group=self._internal_callbacks_group
-        )
+        self._localize_client = self.create_client(Trigger, "/localize", callback_group=self._internal_callbacks_group)
 
         # One-shot check: the costmaps' camera voxel layer is silently inert
         # when /mars/main_camera/points never publishes (e.g. missing stereo
