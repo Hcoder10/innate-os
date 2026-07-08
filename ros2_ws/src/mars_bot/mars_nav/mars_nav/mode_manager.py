@@ -27,7 +27,8 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -137,14 +138,26 @@ class ModeManager(Node):
             callback_group=self._internal_callbacks_group,
         )
 
-        # Service to change maps in navigation mode
-        self.map_service = self.create_service(ChangeMap, "/nav/change_navigation_map", self.change_map_callback)
+        # Service to change maps in navigation mode. Same reentrant group as
+        # the mode service: both drive lifecycle transitions on the same nodes
+        # and are serialized by _mode_change_lock (in the default group the
+        # long-blocking callback would also starve the status timer and the
+        # relocalization client's response).
+        self.map_service = self.create_service(
+            ChangeMap,
+            "/nav/change_navigation_map",
+            self.change_map_callback,
+            callback_group=self._internal_callbacks_group,
+        )
 
         # Service to save current map in mapping mode
         self.save_map_service = self.create_service(SaveMap, "/nav/save_map", self.save_map_callback)
 
-        # Service to delete a map
-        self.delete_map_service = self.create_service(DeleteMap, "/nav/delete_map", self.delete_map_callback)
+        # Service to delete a map (same group + lock as mode/map changes: it
+        # reads current_mode and can reassign current_map).
+        self.delete_map_service = self.create_service(
+            DeleteMap, "/nav/delete_map", self.delete_map_callback, callback_group=self._internal_callbacks_group
+        )
 
         # Publisher to announce current mode
         self.mode_publisher = self.create_publisher(String, "/nav/current_mode", 10)
@@ -187,6 +200,36 @@ class ModeManager(Node):
 
         # Timer to publish current mode and maps
         self.timer = self.create_timer(1, self.publish_status)
+
+        # Client to re-trigger grid_localizer after map switches (a switch
+        # otherwise carries the previous map's AMCL pose along silently).
+        # Reentrant group: change_map_callback blocks the default group while
+        # it waits, so a default-group client could never receive its response.
+        self._localize_client = self.create_client(Trigger, "/localize", callback_group=self._internal_callbacks_group)
+        # grid_localizer's status feed: lets the post-switch relocalization
+        # wait for confirmation instead of guessing when the new map landed.
+        self._last_localization_status = ("", 0.0)
+        # Bumped (under _mode_change_lock) by every mode/map/current_map
+        # mutation; a relocalization waiter holding an older generation knows
+        # it has been superseded even if the newer switch already released
+        # the lock between the waiter's polls.
+        self._switch_generation = 0
+        self._localization_status_sub = self.create_subscription(
+            String,
+            "/localization/status",
+            self._localization_status_cb,
+            10,
+            callback_group=self._internal_callbacks_group,
+        )
+
+        # One-shot check: the costmaps' camera voxel layer is silently inert
+        # when /mars/main_camera/points never publishes (e.g. missing stereo
+        # calibration). Warn once so lidar-only operation is visible.
+        self._camera_points_seen = False
+        self._camera_points_sub = self.create_subscription(
+            PointCloud2, "/mars/main_camera/points", self._camera_points_cb, qos_profile_sensor_data
+        )
+        self._camera_check_timer = self.create_timer(30.0, self._check_camera_obstacle_source)
 
         # --- TF2: Mapping pose publisher ---
         self.tf_buffer = tf2_ros.Buffer()
@@ -667,6 +710,65 @@ class ModeManager(Node):
         else:
             return True, f"Map switched successfully to {self.current_map}"
 
+    def _localization_status_cb(self, msg):
+        self._last_localization_status = (msg.data, time.monotonic())
+
+    def _trigger_relocalization(self, since: float, generation: int):
+        """Confirm grid_localizer re-localized after a map switch.
+
+        grid_localizer restarts auto-localization itself whenever a new map
+        arrives on the latched /map topic (load_map always republishes), so
+        the primary path is to watch /localization/status for a result newer
+        than `since` — a fixed sleep + blind /localize call could race the map
+        handoff and search against the previous map. The explicit /localize
+        Trigger is only a fallback when no status update ever arrives.
+        Failure is logged but never fails the map switch.
+        """
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            # A newer mode/map/current_map change supersedes this one: the
+            # status feed is map-agnostic, so a stale waiter must not claim a
+            # newer switch's "localized" as its own confirmation. The
+            # generation check catches this even when the newer switch
+            # acquired AND released the lock between our polls.
+            if self._switch_generation != generation:
+                self.get_logger().info("Another mode/map change superseded this one; leaving relocalization to it")
+                return
+            status, stamp = self._last_localization_status
+            if stamp >= since and status.startswith("localized"):
+                self.get_logger().info(f"Grid localizer re-localized on the new map (status: {status})")
+                return
+            if stamp >= since and status in ("error", "timeout"):
+                break  # auto path gave up; fall through to the explicit trigger
+            time.sleep(0.2)
+
+        if self._switch_generation != generation:
+            self.get_logger().info("Another mode/map change superseded this one; leaving relocalization to it")
+            return
+        result = call_service(
+            {"/localize": self._localize_client}, self.get_logger(), "/localize", Trigger.Request(), timeout_sec=6.0
+        )
+        if result is not None and result.success:
+            self.get_logger().info(f"Re-localized on new map: {result.message}")
+        else:
+            self.get_logger().warning(
+                "Re-localization after map switch failed or timed out; AMCL may still hold the previous map's pose"
+            )
+
+    def _camera_points_cb(self, _msg):
+        self._camera_points_seen = True
+        if self._camera_points_sub is not None:
+            self.destroy_subscription(self._camera_points_sub)
+            self._camera_points_sub = None
+
+    def _check_camera_obstacle_source(self):
+        self._camera_check_timer.cancel()
+        if not self._camera_points_seen:
+            self.get_logger().warning(
+                "No camera pointcloud on /mars/main_camera/points 30s after start: the costmaps' camera "
+                "obstacle layer is inert (missing stereo calibration?) — navigating with lidar obstacles only"
+            )
+
     def change_map_callback(self, request, response):
         """
         Service callback to change the map for navigation mode
@@ -682,31 +784,63 @@ class ModeManager(Node):
                 self.get_logger().error(response.message)
                 return response
 
-            # Update the current map
-            self.current_map = requested_map
+            # Serialize against mode changes: both callbacks drive lifecycle
+            # transitions on the same nodes, and interleaving them leaves a
+            # half-active stack (e.g. one thread deactivating bt_navigator
+            # while the other activates it). Non-blocking like change_mode:
+            # queued blocking acquires would each pin an executor thread.
+            if not self._mode_change_lock.acquire(blocking=False):
+                response.success = False
+                response.message = "Another mode or map change is already in progress; try again"
+                self.get_logger().warning(response.message)
+                return response
 
-            # Save the new map choice for persistence
-            self.save_last_map(requested_map)
+            relocalize_after_switch = False
+            switch_started = time.monotonic()
+            self._switch_generation += 1
+            my_generation = self._switch_generation
+            previous_map = self.current_map
+            try:
+                # _efficient_map_switch loads self.current_map, so set it for
+                # the attempt but only persist (and keep) it on success.
+                self.current_map = requested_map
 
-            # If we're in navigation mode, use efficient map switch
-            if self.current_mode == "navigation":
-                self.get_logger().info(f"Efficiently switching to new map: {requested_map}")
+                # If we're in navigation mode, use efficient map switch
+                if self.current_mode == "navigation":
+                    self.get_logger().info(f"Efficiently switching to new map: {requested_map}")
 
-                success, message = self._efficient_map_switch()
+                    success, message = self._efficient_map_switch()
 
-                if success:
-                    response.success = True
-                    response.message = f"Successfully changed map to '{requested_map}'"
-                    self.get_logger().info(response.message)
+                    if success:
+                        self.save_last_map(requested_map)
+                        relocalize_after_switch = True
+                        response.success = True
+                        response.message = f"Successfully changed map to '{requested_map}'"
+                        self.get_logger().info(response.message)
+                    else:
+                        self.current_map = previous_map
+                        response.success = False
+                        response.message = f"Failed to switch to map '{requested_map}': {message}"
+                        self.get_logger().error(response.message)
                 else:
-                    response.success = False
-                    response.message = f"Failed to switch to map '{requested_map}': {message}"
-                    self.get_logger().error(response.message)
-            else:
-                # If not in navigation mode, just update the map for next time navigation starts
-                response.success = True
-                response.message = f"Map set to '{requested_map}' for next navigation session"
-                self.get_logger().info(response.message)
+                    # If not in navigation mode, just update the map for next time navigation starts
+                    self.save_last_map(requested_map)
+                    response.success = True
+                    response.message = f"Map set to '{requested_map}' for next navigation session"
+                    self.get_logger().info(response.message)
+            except Exception:
+                # An exception mid-switch must not leave current_map pointing
+                # at a map that never loaded.
+                self.current_map = previous_map
+                raise
+            finally:
+                self._mode_change_lock.release()
+
+            # Outside the lock: relocalization waits up to ~12 s on the grid
+            # localizer and must not block concurrent mode/map service calls —
+            # the lifecycle switch itself is already complete.
+            if relocalize_after_switch:
+                self._trigger_relocalization(since=switch_started, generation=my_generation)
 
         except Exception as e:
             response.success = False
@@ -720,6 +854,15 @@ class ModeManager(Node):
         Service callback to delete a saved map (.yaml and associated image)
         Accepts either the map base name (e.g., "home") or filename (e.g., "home.yaml")
         """
+        # Same lock as mode/map changes: this callback reads current_mode and
+        # can reassign current_map — unserialized, it could observe (or mutate)
+        # state mid-switch, e.g. deleting the map a locked change_map is
+        # loading right now.
+        if not self._mode_change_lock.acquire(blocking=False):
+            response.success = False
+            response.message = "A mode or map change is in progress; try again"
+            self.get_logger().warning(response.message)
+            return response
         try:
             requested_name = request.map_name.strip()
             if not requested_name:
@@ -757,6 +900,7 @@ class ModeManager(Node):
                     # No maps left, default to home.yaml placeholder
                     fallback = "home.yaml"
 
+                self._switch_generation += 1  # supersede any in-flight relocalization waiter
                 self.current_map = fallback
                 self.save_last_map(fallback)
                 self.get_logger().info(f"Current map changed to '{fallback}' prior to deletion of '{map_yaml_name}'")
@@ -793,6 +937,8 @@ class ModeManager(Node):
             response.success = False
             response.message = f"Error deleting map: {str(e)}"
             self.get_logger().error(response.message)
+        finally:
+            self._mode_change_lock.release()
 
         return response
 
@@ -977,6 +1123,7 @@ class ModeManager(Node):
             response.message = "Mode change already in progress, ignoring duplicate request"
             self.get_logger().warning(response.message)
             return response
+        self._switch_generation += 1  # supersede any in-flight relocalization waiter
 
         try:
             target_mode = request.mode.strip().lower()

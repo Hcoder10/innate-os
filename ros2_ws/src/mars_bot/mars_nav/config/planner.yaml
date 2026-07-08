@@ -2,11 +2,9 @@
   planner_server:
     ros__parameters:
       expected_planner_frequency: 20.0
-      costmap_update_timeout: 1.0
-      service_introspection_mode: "disabled"
       planner_plugins: ['GridBased']
       use_sim_time: false
-  
+
       GridBased:
         # pure grid search + spin-on-spot
         plugin: "nav2_smac_planner/SmacPlanner2D"
@@ -26,4 +24,3 @@
           w_data: 0.2
           tolerance: 1e-10
         allow_parameter_qos_overrides: true
-  

@@ -1,7 +1,10 @@
+<!-- NavigateThroughPoses is not supported on this robot: nothing in the stack
+     sends these goals and no real tree has been tested. On Humble this
+     navigator cannot be disabled (there is no `navigators` param), so fail
+     loudly instead of the previous <AlwaysSuccess/> stub, which made every
+     through-poses goal report instant success without moving the robot. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <Fallback name="dummy_fallback">
-      <AlwaysSuccess/>
-    </Fallback>
+    <AlwaysFailure/>
   </BehaviorTree>
 </root>

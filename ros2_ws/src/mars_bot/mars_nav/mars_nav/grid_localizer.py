@@ -33,6 +33,7 @@ import cupy as cp
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav2_msgs.srv import SetInitialPose
 from nav_msgs.msg import OccupancyGrid
 from rclpy.executors import ExternalShutdownException
 from rclpy.lifecycle import Node, Publisher, State, TransitionCallbackReturn
@@ -144,6 +145,14 @@ class GridLocalizer(Node):
         # Service (manual trigger)
         self.srv = self.create_service(Trigger, "localize", self._localize_cb)
 
+        # AMCL's /set_initial_pose service: the latched /initialpose topic is
+        # NOT enough — AMCL subscribes VOLATILE, so a pose published before its
+        # subscription activates is lost forever. The service call is retried
+        # until AMCL is up.
+        self._amcl_seed_client = self.create_client(SetInitialPose, "/set_initial_pose")
+        self._seed_retry_timer = None
+        self._pending_seed = None
+
         # Store auto_localize setting for use in on_activate
         self._auto_localize_enabled = auto_localize
 
@@ -182,6 +191,12 @@ class GridLocalizer(Node):
             self._auto_timer.cancel()
         if self._map_check_timer:
             self._map_check_timer.cancel()
+        # Drop any pending AMCL seed: across a deactivate/reactivate (e.g. a
+        # map switch) a surviving retry would deliver the PREVIOUS map's pose.
+        if self._seed_retry_timer:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+        self._pending_seed = None
 
         self.get_logger().info("Grid localizer deactivated.")
         # This call automatically deactivates lifecycle publishers (pose_pub and status_pub)
@@ -197,6 +212,13 @@ class GridLocalizer(Node):
         if self._map_check_timer:
             self.destroy_timer(self._map_check_timer)
             self._map_check_timer = None
+        if self._seed_retry_timer:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+        # Clear the pending seed too: an in-flight /set_initial_pose failing
+        # after cleanup would otherwise see it as current and re-arm a retry
+        # timer on a cleaned-up node.
+        self._pending_seed = None
 
         # Destroy service
         if self.srv:
@@ -501,6 +523,73 @@ class GridLocalizer(Node):
         msg.pose.covariance[35] = 0.05
         self.pose_pub.publish(msg)
         self.get_logger().info(f"Published initial pose: ({x:.2f}, {y:.2f})")
+        self._seed_amcl(msg)
+
+    def _seed_amcl(self, pose_msg: PoseWithCovarianceStamped, retries_left: int = 15):
+        """Deliver the pose to AMCL via its /set_initial_pose service.
+
+        Retries every 2 s while AMCL isn't up yet AND when a call fails
+        (boot/mode-switch races, transient service errors); a newer pose
+        always supersedes a pending retry, and a stale in-flight call's
+        completion never touches the newer pose's pending state.
+        """
+        self._pending_seed = (pose_msg, retries_left)
+        if self._seed_retry_timer is not None:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+
+        if retries_left <= 0:
+            self.get_logger().warning("Giving up on AMCL /set_initial_pose; seed delivered by latched topic only")
+            self._pending_seed = None
+            return
+
+        if not self._amcl_seed_client.service_is_ready():
+            self._seed_retry_timer = self.create_timer(2.0, self._retry_seed_amcl)
+            return
+
+        request = SetInitialPose.Request()
+        request.pose = pose_msg
+        future = self._amcl_seed_client.call_async(request)
+
+        def _on_done(completed):
+            # A newer pose may have been queued while this call was in flight;
+            # its retry state is not ours to clear or reschedule.
+            superseded = self._pending_seed is None or self._pending_seed[0] is not pose_msg
+            if not superseded and self._seed_retry_timer is not None:
+                # Disarm the in-flight watchdog: the call did complete.
+                self.destroy_timer(self._seed_retry_timer)
+                self._seed_retry_timer = None
+            try:
+                completed.result()
+                self.get_logger().info("Seeded AMCL via /set_initial_pose")
+                if not superseded:
+                    self._pending_seed = None
+            except Exception as e:
+                self.get_logger().warning(f"AMCL /set_initial_pose call failed: {e}")
+                if not superseded and self._seed_retry_timer is None:
+                    self._seed_retry_timer = self.create_timer(2.0, self._retry_seed_amcl)
+
+        def _watchdog():
+            # call_async futures never time out on their own, and AMCL dying
+            # after accepting the request would otherwise strand the seed with
+            # no retry (service_is_ready() was true when we sent it).
+            self.get_logger().warning("AMCL /set_initial_pose reply overdue; retrying")
+            self._amcl_seed_client.remove_pending_request(future)
+            self._retry_seed_amcl()
+
+        # Arm the watchdog before the done-callback so an immediately-completed
+        # future disarms it rather than racing it.
+        self._seed_retry_timer = self.create_timer(5.0, _watchdog)
+        future.add_done_callback(_on_done)
+
+    def _retry_seed_amcl(self):
+        if self._seed_retry_timer is not None:
+            self.destroy_timer(self._seed_retry_timer)
+            self._seed_retry_timer = None
+        if self._pending_seed is None:
+            return
+        pose_msg, retries_left = self._pending_seed
+        self._seed_amcl(pose_msg, retries_left - 1)
 
     def _localize_cb(self, request, response):
         """Service callback to trigger localization."""

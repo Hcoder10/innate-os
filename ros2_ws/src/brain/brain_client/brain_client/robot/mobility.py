@@ -11,6 +11,7 @@ This interface allows skills to:
 """
 
 import math
+import time
 
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
@@ -129,7 +130,7 @@ class MobilityInterface:
         self._navigator.goToPose(goal_pose, behavior_tree="mapfree")
 
         while not self._navigator.isTaskComplete():
-            pass  # Block until done
+            time.sleep(0.1)  # block until done; a bare pass busy-spins a full core
 
         result = self._navigator.getResult()
         if result == TaskResult.SUCCEEDED:
