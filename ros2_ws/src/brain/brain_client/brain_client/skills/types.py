@@ -238,6 +238,18 @@ class Skill(ABC):
             return self.skills.cancel()
         return "Nothing to cancel"
 
+    def shutdown(self):  # noqa: B027
+        """Release resources this instance owns. Called when the server retires
+        it — reloads replace instances, and a retired one is never used again.
+
+        Override to destroy ROS nodes/entities the skill itself created (e.g.
+        Nav2 BasicNavigator nodes): a dropped instance is cyclic garbage whose
+        graph entities otherwise linger until an eventual gen-2 GC pass, so
+        every reload leaks subscriptions and memory. Leave entities created on
+        the shared server node alone — destroying entities under a spinning
+        executor is unsafe (see #497).
+        """
+
     @property
     def storage(self) -> SkillStorage:
         """Persistent per-skill key-value store (survives restarts), backed by
