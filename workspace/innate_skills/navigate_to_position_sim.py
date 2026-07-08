@@ -142,6 +142,9 @@ class SimPathPlanningController:
             # Humble's BasicNavigator.destroy_node() misses this client; its
             # live handle would keep the rcl node and graph entities alive.
             self.navigator.assisted_teleop_client.destroy()
+        except Exception as e:
+            self.logger.warning(f"Error destroying assisted_teleop client: {e}")
+        try:
             self.navigator.destroy_node()
         except Exception as e:
             self.logger.warning(f"Error destroying navigator node: {e}")
