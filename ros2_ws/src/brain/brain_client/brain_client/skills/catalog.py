@@ -39,11 +39,15 @@ from brain_client.skills.types import Skill
 
 
 class SkillRepository:
-    def __init__(self, node, *, interface_injector, simulator_mode: bool):
+    def __init__(self, node, *, interface_injector, simulator_mode: bool, retire_instances=None):
         self._node = node
         self._logger = node.get_logger()
         self._inject = interface_injector
         self.simulator_mode = simulator_mode
+        # Called with the skill instances a reload replaced. The skills server
+        # passes a gate that defers disposal while a skill is executing; without
+        # a callback they are disposed inline.
+        self._retire_instances = retire_instances
 
         self.skill_loader = SkillLoader(self._logger)
         self._skills_directories = self._resolve_skills_directories()
@@ -99,6 +103,30 @@ class SkillRepository:
     def all_code_skills(self) -> list[tuple[str, tuple[str, Skill]]]:
         with self._skills_lock:
             return list(self._code_skills.items())
+
+    # --- retired-instance disposal ---
+    @staticmethod
+    def dispose_instances(instances: list[Skill], logger) -> None:
+        """shutdown() retired skill instances, logging (never raising) failures."""
+        for instance in instances:
+            try:
+                instance.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down retired {type(instance).__name__} instance: {e}")
+
+    def _retire(self, instances: list[Skill]) -> None:
+        """Dispose instances a reload replaced (or hand them to the server's gate).
+
+        A replaced instance still holds live ROS entities (e.g. BasicNavigator
+        nodes). Left to the GC it is cyclic garbage: its graph entities persist
+        until an eventual gen-2 pass, so reloads leak subscriptions and memory.
+        """
+        if not instances:
+            return
+        if self._retire_instances is not None:
+            self._retire_instances(instances)
+        else:
+            self.dispose_instances(instances, self._logger)
 
     # --- watcher ---
     def start_watcher(self) -> None:
@@ -261,9 +289,11 @@ class SkillRepository:
         new_code_skills = self._load_code_skills(self._skills_directories)
         new_physical, new_in_training = self._load_physical_skills(self._skills_directories)
         with self._skills_lock:
+            old_code_skills = self._code_skills
             self._code_skills = new_code_skills
             self._physical_skills = new_physical
             self._in_training_skills = new_in_training
+        self._retire([instance for _name, instance in old_code_skills.values()])
         self._logger.info(f"Reloaded {len(new_code_skills)} code + {len(new_physical)} physical skills")
         self.publish_skills_list()
 
@@ -291,7 +321,10 @@ class SkillRepository:
                     try:
                         instance = self._instantiate(cls, src_path)
                         with self._skills_lock:
+                            replaced = self._code_skills.get(skill_id)
                             self._code_skills[skill_id] = (display_name, instance)
+                        if replaced is not None:
+                            self._retire([replaced[1]])
                         reloaded.append(skill_id)
                         self._logger.info(f"Reloaded code skill: {skill_id}")
                     except Exception as e:
@@ -310,16 +343,18 @@ class SkillRepository:
     def _prune_stale_skills(self) -> list[str]:
         """Drop catalog entries whose source file/directory is gone; returns removed ids."""
         removed = []
+        pruned_instances = []
         with self._skills_lock:
             for skill_id in list(self._code_skills):
                 if not self._code_source_exists(skill_id):
-                    del self._code_skills[skill_id]
+                    pruned_instances.append(self._code_skills.pop(skill_id)[1])
                     removed.append(skill_id)
             for skills in (self._physical_skills, self._in_training_skills):
                 for skill_id, data in list(skills.items()):
                     if not os.path.exists(os.path.join(data.get("directory", ""), "metadata.json")):
                         del skills[skill_id]
                         removed.append(skill_id)
+        self._retire(pruned_instances)
         if removed:
             self._logger.info(f"Pruned stale skills (source removed): {removed}")
         return removed

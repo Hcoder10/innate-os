@@ -204,6 +204,19 @@ StereoDepthEstimator::~StereoDepthEstimator() {
 }
 
 // =============================================================================
+// Lazy gate — true if any of the node's outputs currently has a subscriber
+// =============================================================================
+bool StereoDepthEstimator::anyOutputSubscribed() const {
+    return left_rectified_pub_->get_subscription_count() > 0 || right_rectified_pub_->get_subscription_count() > 0 ||
+           left_rectified_color_pub_->get_subscription_count() > 0 ||
+           left_rectified_compressed_pub_->get_subscription_count() > 0 ||
+           pointcloud_pub_->get_subscription_count() > 0 || pointcloud_color_pub_->get_subscription_count() > 0 ||
+           disparity_unfiltered_pub_->get_subscription_count() > 0 || disparity_pub_->get_subscription_count() > 0 ||
+           depth_pub_->get_subscription_count() > 0 || footprint_overlay_pub_->get_subscription_count() > 0 ||
+           footprint_mask_pub_->get_subscription_count() > 0 || footprint_cutout_pub_->get_subscription_count() > 0;
+}
+
+// =============================================================================
 // Synchronized callback — decode ROS images, gate frame rate, call pipeline
 // =============================================================================
 void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstSharedPtr& left_msg,
@@ -222,6 +235,21 @@ void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstShar
     // state is always distinguishable (disabled-once vs. enabled-once), rather
     // than going silent after the first boot warning.
     RCLCPP_INFO_ONCE(this->get_logger(), "Depth enabled: stereo calibration loaded, publishing depth");
+
+    // Lazy pipeline: with no subscriber on any output, skip decode and compute
+    // entirely. (In normal nav operation the costmaps' pointcloud subscription
+    // keeps the pipeline on; this gate matters when nav is down or idle.)
+    if (!anyOutputSubscribed()) {
+        if (pipeline_active_) {
+            pipeline_active_ = false;
+            RCLCPP_INFO(this->get_logger(), "Depth pipeline idle: no output has subscribers");
+        }
+        return;
+    }
+    if (!pipeline_active_) {
+        pipeline_active_ = true;
+        RCLCPP_INFO(this->get_logger(), "Depth pipeline resumed: output subscribed");
+    }
 
     // Frame rate control — advance deadline by interval (not snap to now)
     // so leftover time carries forward for accurate average rate.
@@ -332,19 +360,27 @@ void StereoDepthEstimator::processFrame(const cv::Mat& left_input, const cv::Mat
     const bool has_color = left_input.channels() == 3;
     const bool need_color_rect = has_color && (pub_left_color || pub_left_compressed || pub_pointcloud_color ||
                                                pub_footprint_overlay || pub_footprint_cutout);
+    // Which compute stages the subscribed outputs actually need. SGM (and the
+    // filter chain downstream) only for disparity/depth/pointcloud consumers;
+    // mono rectification also feeds SGM and the color publishers' mono fallback.
+    const bool need_sgm = pub_pointcloud || pub_pointcloud_color || pub_unfiltered || pub_disparity || pub_depth;
+    const bool need_mono_rect = need_sgm || pub_left_rect || pub_right_rect || pub_left_color || pub_left_compressed;
+    const bool need_mask = need_sgm || pub_footprint_overlay || pub_footprint_mask || pub_footprint_cutout;
 
     // ── Scale to calibration resolution ────────────────────────────────────
     cv::Mat left_scaled, right_scaled;
-    scaleToCalibRes(left_input, right_input, left_scaled, right_scaled);
+    if (need_mono_rect || need_color_rect)
+        scaleToCalibRes(left_input, right_input, left_scaled, right_scaled);
     const auto t_scale = clock::now();
 
     // ── Rectify mono (gray + remap) ────────────────────────────────────────
     cv::Mat left_rect, right_rect;
-    rectifyMono(left_scaled, right_scaled, left_rect, right_rect);
+    if (need_mono_rect)
+        rectifyMono(left_scaled, right_scaled, left_rect, right_rect);
     const auto t_rect = clock::now();
 
     // ── Submit SGM to GPU (async) ──────────────────────────────────────────
-    if (!submitSGM(left_rect, right_rect))
+    if (need_sgm && !submitSGM(left_rect, right_rect))
         return;
     const auto t_submit = clock::now();
 
@@ -362,8 +398,9 @@ void StereoDepthEstimator::processFrame(const cv::Mat& left_input, const cv::Mat
         publishColorRectified(left_color_rect, left_rect, has_color, timestamp, pub_left_color, pub_left_compressed);
     const auto t_color_pub = clock::now();
 
-    // ── Footprint mask (always computed — filter chain needs it) ───────
-    computeFootprintMaskCalib();
+    // ── Footprint mask (needed by the filter chain and the mask topics) ──
+    if (need_mask)
+        computeFootprintMaskCalib();
     if (pub_footprint_overlay)
         publishFootprintOverlay(left_color_rect, timestamp);
     if (pub_footprint_mask)
@@ -373,14 +410,18 @@ void StereoDepthEstimator::processFrame(const cv::Mat& left_input, const cv::Mat
     const auto t_footprint = clock::now();
 
     // ── Sync GPU ───────────────────────────────────────────────────────────
-    syncSGM();
+    if (need_sgm)
+        syncSGM();
     const auto t_sgm = clock::now();
 
     // ── Extract disparity from VPI ─────────────────────────────────────────
-    cv::Mat disparity_float = extractDisparity();
-    if (disparity_float.empty()) {
-        cleanupSGMWraps();
-        return;
+    cv::Mat disparity_float;
+    if (need_sgm) {
+        disparity_float = extractDisparity();
+        if (disparity_float.empty()) {
+            cleanupSGMWraps();
+            return;
+        }
     }
     const auto t_extract = clock::now();
 
@@ -389,18 +430,18 @@ void StereoDepthEstimator::processFrame(const cv::Mat& left_input, const cv::Mat
         publishDisparityMsg(disparity_float, timestamp, disparity_unfiltered_pub_);
     const auto t_unfilt = clock::now();
 
-    // ── Footprint mask on disparity (always, before filter chain) ────────
+    // ── Footprint mask on disparity + filter chain (SGM consumers only) ──
     cv::Mat disparity_lowres;
     FilterTimings ft;
-    {
-        const auto t_fp0 = clock::now();
-        applyFootprintMask(disparity_float);
-        ft.footprint_mask_ms = std::chrono::duration<double, std::milli>(clock::now() - t_fp0).count();
+    if (need_sgm) {
+        {
+            const auto t_fp0 = clock::now();
+            applyFootprintMask(disparity_float);
+            ft.footprint_mask_ms = std::chrono::duration<double, std::milli>(clock::now() - t_fp0).count();
+        }
+        applyFilterChain(disparity_float, disparity_lowres, ft, static_cast<float>(focal_length_),
+                         static_cast<float>(baseline_));
     }
-
-    // ── Filter chain ───────────────────────────────────────────────────────
-    applyFilterChain(disparity_float, disparity_lowres, ft, static_cast<float>(focal_length_),
-                     static_cast<float>(baseline_));
     const auto t_filter = clock::now();
 
     // ── Publish filtered disparity ─────────────────────────────────────────
