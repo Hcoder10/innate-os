@@ -238,7 +238,7 @@ class Skill(ABC):
             return self.skills.cancel()
         return "Nothing to cancel"
 
-    def shutdown(self):
+    def shutdown(self):  # noqa: B027
         """Release resources this instance owns. Called when the server retires
         it — reloads replace instances, and a retired one is never used again.
 
