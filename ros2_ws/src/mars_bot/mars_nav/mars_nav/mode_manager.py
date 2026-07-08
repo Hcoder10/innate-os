@@ -210,7 +210,11 @@ class ModeManager(Node):
         # wait for confirmation instead of guessing when the new map landed.
         self._last_localization_status = ("", 0.0)
         self._localization_status_sub = self.create_subscription(
-            String, "/localization/status", self._localization_status_cb, 10, callback_group=self._internal_callbacks_group
+            String,
+            "/localization/status",
+            self._localization_status_cb,
+            10,
+            callback_group=self._internal_callbacks_group,
         )
 
         # One-shot check: the costmaps' camera voxel layer is silently inert
