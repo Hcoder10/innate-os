@@ -312,38 +312,16 @@ class SkillsActionServer(Node):
 
         skill_type = goal_handle.request.skill_type
 
-        # Serialize: the robot runs one skill at a time. If a goal arrives while
-        # another skill is still executing, abort it here so the app gets a
-        # prompt result. Rejecting in goal_callback instead would surface nothing
-        # back through the rws bridge, leaving the app hung until its timeout.
-        # Exception: one goal may wait out a cancelling skill's teardown (rapid
-        # Stop→Run), instead of failing with "already running".
-        # No skill-status broadcast for the rejected goal — it never ran.
-        with self._skill_free:
-            if self._skill_running and not self._teardown_waiter:
-                self._teardown_waiter = True
-                try:
-                    # The Run can beat its preceding Stop into the server; give
-                    # the cancel a beat to land before deciding.
-                    self._skill_free.wait_for(
-                        lambda: not self._skill_running or self._cancelling_teardown_in_progress(),
-                        timeout=0.15,
-                    )
-                    if self._skill_running and self._cancelling_teardown_in_progress():
-                        self._skill_free.wait_for(lambda: not self._skill_running, timeout=self.TEARDOWN_GRACE_SEC)
-                finally:
-                    self._teardown_waiter = False
-            if self._skill_running:
-                self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
-                goal_handle.abort()
-                return ExecuteSkill.Result(
-                    success=False,
-                    message="Another skill is already running",
-                    skill_type=skill_type,
-                    success_type=SkillResult.FAILURE.value,
-                )
-            self._skill_running = True
-            self._active_goal_handle = goal_handle
+        # No skill-status broadcast for a refused goal — it never ran.
+        if not self._claim_skill_slot(goal_handle):
+            self.get_logger().warn(f"Skill '{skill_type}' requested but another skill is already running")
+            goal_handle.abort()
+            return ExecuteSkill.Result(
+                success=False,
+                message="Another skill is already running",
+                skill_type=skill_type,
+                success_type=SkillResult.FAILURE.value,
+            )
 
         name = self._skill_display_name(skill_type)
         run_id = uuid.uuid4().hex
@@ -369,15 +347,20 @@ class SkillsActionServer(Node):
             self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error")
             raise
         finally:
-            with self._skill_free:
-                self._skill_running = False
-                self._active_goal_handle = None
-                retired, self._pending_retired_skills = self._pending_retired_skills, []
-                self._skill_free.notify_all()
-            SkillRepository.dispose_instances(retired, self.get_logger())
+            self._release_skill_slot()
         status, reason = self._terminal_skill_status(result)
         self._publish_skill_status(run_id, skill_type, name, status, reason)
         return result
+
+    @staticmethod
+    def _publish_initial_feedback(goal_handle):
+        """Emit one "running" feedback the moment execution starts: rws only
+        relays its assigned goal_id — which an app cancel must bind to — on the
+        first feedback, and skills may produce none of their own for a while."""
+        feedback = ExecuteSkill.Feedback()
+        feedback.feedback = "running"
+        feedback.image_b64 = ""
+        goal_handle.publish_feedback(feedback)
 
     def _skill_display_name(self, skill_type: str) -> str:
         code_entry = self.catalog.get_code_skill(skill_type)
@@ -436,15 +419,7 @@ class SkillsActionServer(Node):
         skill.skills = SkillInvoker(self, goal_handle, _publish_feedback)
 
         try:
-            # Code skills otherwise publish no feedback until they call their own
-            # feedback callback. Emit one so the websocket bridge (rws) relays its
-            # assigned goal_id to the app — without it the app has no id to
-            # cancel/interrupt the running skill with.
-            initial_feedback = ExecuteSkill.Feedback()
-            initial_feedback.feedback = "running"
-            initial_feedback.image_b64 = ""
-            goal_handle.publish_feedback(initial_feedback)
-
+            self._publish_initial_feedback(goal_handle)
             self.robot_state.start_subscriptions()
             result_message, result_status = self._run_code_skill_body(skill, skill_type, inputs, goal_handle)
 
@@ -553,13 +528,7 @@ class SkillsActionServer(Node):
         """
         metadata = physical_data["metadata"]
         try:
-            # Emit feedback before the behavior handshake: rws only relays the
-            # goal_id (which an app cancel must bind to) on the first feedback.
-            initial_feedback = ExecuteSkill.Feedback()
-            initial_feedback.feedback = "running"
-            initial_feedback.image_b64 = ""
-            goal_handle.publish_feedback(initial_feedback)
-
+            self._publish_initial_feedback(goal_handle)
             if not self._behavior_client.wait_for_server(timeout_sec=5.0):
                 self.get_logger().error("Behavior server not available!")
                 return False, "Behavior server not available", SkillResult.FAILURE.value, "abort"
@@ -634,6 +603,52 @@ class SkillsActionServer(Node):
     def _cancelling_teardown_in_progress(self) -> bool:
         """True when the running skill has a cancel in flight."""
         return self._active_goal_handle is not None and self._skill_goal_cancel_requested(self._active_goal_handle)
+
+    def _claim_skill_slot(self, goal_handle) -> bool:
+        """Claim the one-skill-at-a-time slot; False means another skill kept it.
+
+        A goal that arrives while another skill is executing is refused — the
+        caller aborts it so the app gets a prompt result (rejecting in
+        goal_callback instead would surface nothing back through the rws
+        bridge). One exception: rapid Stop→Run, where the previous skill is
+        mid-teardown from a cancel — that goal waits the teardown out instead
+        of failing with "already running".
+        """
+        with self._skill_free:
+            if self._skill_running:
+                self._await_cancelling_teardown()
+            if self._skill_running:
+                return False
+            self._skill_running = True
+            self._active_goal_handle = goal_handle
+            return True
+
+    def _await_cancelling_teardown(self):
+        """Wait for a cancelling skill to release the slot. Call holding _skill_free.
+
+        Only one goal waits; a pile-up keeps the prompt rejection. The first
+        short wait covers a Run that beat its preceding Stop into the server.
+        """
+        if self._teardown_waiter:
+            return
+        self._teardown_waiter = True
+        try:
+            self._skill_free.wait_for(
+                lambda: not self._skill_running or self._cancelling_teardown_in_progress(),
+                timeout=0.15,
+            )
+            if self._cancelling_teardown_in_progress():
+                self._skill_free.wait_for(lambda: not self._skill_running, timeout=self.TEARDOWN_GRACE_SEC)
+        finally:
+            self._teardown_waiter = False
+
+    def _release_skill_slot(self):
+        with self._skill_free:
+            self._skill_running = False
+            self._active_goal_handle = None
+            retired, self._pending_retired_skills = self._pending_retired_skills, []
+            self._skill_free.notify_all()
+        SkillRepository.dispose_instances(retired, self.get_logger())
 
     def _register_behavior_goal_handle(self, skill_goal_handle, behavior_goal_handle, skill_type: str) -> None:
         key = self._skill_goal_key(skill_goal_handle)

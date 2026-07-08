@@ -13,6 +13,7 @@ goes stale so the base stops deterministically.
 """
 
 import time
+from functools import partial
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -33,28 +34,27 @@ class CmdVelMux(Node):
         self._pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self._last_rx = {name: 0.0 for name, _topic, _window in SOURCES}
         self._forwarding = False  # motion since the last all-stale zero-stop
-        for index, (_name, topic, _window) in enumerate(SOURCES):
-            self.create_subscription(Twist, topic, self._make_callback(index), 10)
+        for priority, (name, topic, _window) in enumerate(SOURCES):
+            self.create_subscription(Twist, topic, partial(self._on_twist, priority, name), 10)
         self.create_timer(0.1, self._stop_when_all_stale)
         self.get_logger().info("cmd_vel mux up: " + " > ".join(f"{name} ({topic})" for name, topic, _w in SOURCES))
 
-    def _make_callback(self, index):
-        name = SOURCES[index][0]
+    def _on_twist(self, priority, name, msg):
+        now = time.monotonic()
+        self._last_rx[name] = now
+        override = self._fresh_source_above(priority, now)
+        if override:
+            self.get_logger().info(f"'{override}' overriding '{name}' on /cmd_vel", throttle_duration_sec=2.0)
+            return
+        self._pub.publish(msg)
+        self._forwarding = True
 
-        def _on_twist(msg):
-            now = time.monotonic()
-            self._last_rx[name] = now
-            for higher_name, _topic, window in SOURCES[:index]:
-                if now - self._last_rx[higher_name] < window:
-                    self.get_logger().info(
-                        f"'{higher_name}' overriding '{name}' on /cmd_vel",
-                        throttle_duration_sec=2.0,
-                    )
-                    return
-            self._pub.publish(msg)
-            self._forwarding = True
-
-        return _on_twist
+    def _fresh_source_above(self, priority, now):
+        """Name of a higher-priority source still inside its freshness window."""
+        for name, _topic, window in SOURCES[:priority]:
+            if now - self._last_rx[name] < window:
+                return name
+        return None
 
     def _stop_when_all_stale(self):
         """One deterministic zero after the last active source goes quiet."""
