@@ -2,10 +2,8 @@ navigation:
   global_costmap:
     global_costmap:
       ros__parameters:
-        # 2 Hz is plenty for a static-map costmap: the BT replans at 1 Hz and
-        # the only dynamic input (/scan) arrives at 4 Hz. Was 5 Hz of pure CPU.
-        update_frequency: 2.0
-        publish_frequency: 2.0
+        update_frequency: 5.0
+        publish_frequency: 5.0
         global_frame: map
         robot_base_frame: base_link
         use_sim_time: false
@@ -137,12 +135,8 @@ mapfree:
   global_costmap:
     global_costmap:
       ros__parameters:
-        # 2 Hz: the planner replans at 1 Hz and /scan arrives at 4 Hz; this
-        # rolling costmap only feeds path planning (the controller avoids
-        # obstacles via the 5 Hz local costmap). This stack runs even while in
-        # navigation mode (local_frame goals use it), so its idle cost matters.
-        update_frequency: 2.0
-        publish_frequency: 2.0
+        update_frequency: 5.0
+        publish_frequency: 5.0
         global_frame: odom
         robot_base_frame: base_link
         use_sim_time: false
