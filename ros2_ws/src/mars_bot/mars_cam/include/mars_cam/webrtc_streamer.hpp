@@ -71,9 +71,8 @@ struct CameraEncoder {
 struct Peer {
     std::string client_id;
     GstElement* pipeline = nullptr;                // transport pipeline (owns webrtcbin + rtp appsrcs)
-    GstElement* webrtc = nullptr;                  // ref'd from pipeline
-    GstWebRTCDataChannel* diag_channel = nullptr;  // robot-created SCTP probe channel
-    std::map<std::string, GstElement*> rtp;        // camera name -> ref'd transport appsrc (the negotiated set)
+    GstElement* webrtc = nullptr;            // ref'd from pipeline
+    std::map<std::string, GstElement*> rtp;  // camera name -> ref'd transport appsrc (the negotiated set)
     std::vector<std::string> videos;               // NEGOTIATED video streams (transceivers), in m-line order
     std::vector<std::string> active;               // currently PUSHED streams (subset of videos); toggled live on a
                                                    // stream switch without renegotiating, so switches are instant
@@ -114,12 +113,8 @@ struct Peer {
     ~Peer() {
         if (pipeline)
             gst_element_set_state(pipeline, GST_STATE_NULL);
-        if (diag_channel)
-            gst_webrtc_data_channel_close(diag_channel);
         for (auto& kv : rtp)
             gst_object_unref(kv.second);
-        if (diag_channel)
-            gst_object_unref(diag_channel);
         if (webrtc)
             gst_object_unref(webrtc);
         if (pipeline)
@@ -151,9 +146,6 @@ class WebRTCStreamer : public rclcpp::Node {
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
-    static void on_diag_channel_open(GstWebRTCDataChannel* channel, gpointer user_data);
-    static void on_diag_channel_message(GstWebRTCDataChannel* channel, gchar* data, gpointer user_data);
-    static void on_diag_channel_close(GstWebRTCDataChannel* channel, gpointer user_data);
     // appsink new-sample (user_data = the CameraEncoder*): pull the encoded RTP buffer and fan it out to
     // every peer with this camera active.
     static GstFlowReturn on_sample(GstElement* appsink, gpointer user_data);

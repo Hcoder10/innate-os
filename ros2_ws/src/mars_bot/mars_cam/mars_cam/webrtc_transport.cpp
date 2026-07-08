@@ -158,10 +158,9 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_videos",
                       GUINT_TO_POINTER(static_cast<guint>(negotiated.size())));
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_audio", GINT_TO_POINTER(peer->with_audio ? 1 : 0));
-    g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_data", GINT_TO_POINTER(1));
     // Offer-once latch: CAS'd 0->1 by whichever of the racing negotiation-needed callers wins (the explicit
     // one below on the executor thread vs. webrtcbin's queued signal on the GLib thread). A second create-offer
-    // on a webrtcbin that holds a data channel asserts in _add_data_channel_offer; the atomic prevents it.
+    // would renegotiate and disrupt the live connection; the atomic prevents it.
     g_object_set_data_full(G_OBJECT(peer->webrtc), "mars_offer_latch", new std::atomic<int>(0),
                            [](gpointer p) { delete static_cast<std::atomic<int>*>(p); });
     g_signal_connect(peer->webrtc, "on-ice-candidate", G_CALLBACK(on_ice_candidate), this);
@@ -189,19 +188,8 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         return nullptr;  // ~Peer() tears down the pipeline
     }
 
-    // Diagnostic SCTP data channel. GStreamer 1.20 may return null if this is created before the transport
-    // pipeline reaches PLAYING, so create it here and then trigger the initial offer deterministically below.
-    g_signal_emit_by_name(peer->webrtc, "create-data-channel", "mars-diagnostics", nullptr, &peer->diag_channel);
-    if (peer->diag_channel) {
-        g_object_set_data_full(G_OBJECT(peer->diag_channel), "client_id", g_strdup(client_id.c_str()), g_free);
-        g_signal_connect(peer->diag_channel, "on-open", G_CALLBACK(on_diag_channel_open), this);
-        g_signal_connect(peer->diag_channel, "on-message-string", G_CALLBACK(on_diag_channel_message), this);
-        g_signal_connect(peer->diag_channel, "on-close", G_CALLBACK(on_diag_channel_close), this);
-    } else {
-        RCLCPP_WARN(this->get_logger(), "Failed to create diagnostics data channel for '%s'", client_id.c_str());
-    }
     // Keep listening for future negotiation-needed signals, but create the first offer explicitly after all
-    // media/data transceivers are in place so the SDP includes the diagnostics m=application section.
+    // media transceivers are in place.
     g_signal_connect(peer->webrtc, "on-negotiation-needed", G_CALLBACK(on_negotiation_needed), this);
 
     Peer* raw = peer.get();
@@ -302,8 +290,7 @@ void WebRTCStreamer::on_negotiation_needed(GstElement* webrtc, gpointer user_dat
         (*genp)->load(),
         client_id,
         static_cast<guint>(GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_videos"))),
-        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_audio"))),
-        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_data")))};
+        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_audio")))};
     GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, ctx, offer_context_free);
     g_signal_emit_by_name(webrtc, "create-offer", nullptr, promise);
     RCLCPP_INFO(self->get_logger(), "Negotiation needed for '%s'; offering...", client_id.c_str());
