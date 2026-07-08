@@ -45,9 +45,9 @@ class GoToSleep(Skill):
         self.say("Going to sleep. Boop my head or use the app to wake me up.", wait=True)
 
         future = self._sleep_client.call_async(Trigger.Request())
-        deadline = time.time() + 10.0
+        deadline = time.monotonic() + 10.0
         while not future.done():
-            if time.time() > deadline:
+            if time.monotonic() > deadline:
                 return "Power manager did not answer in time", SkillResult.FAILURE
             time.sleep(0.05)
 

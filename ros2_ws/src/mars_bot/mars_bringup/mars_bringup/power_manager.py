@@ -65,6 +65,8 @@ class PowerManager(Node):
 
         self._last_activity = time.monotonic()
         self._skill_in_flight = False
+        self._ssh_active = False  # cached; refreshed off-executor by _idle_tick
+        self._ssh_check_inflight = False
         self._nav_mode = "none"  # live value from /nav/current_mode
         self._nav_mode_before_sleep = "none"
         self._brain_active = False  # live value from /brain/agent_status
@@ -206,13 +208,17 @@ class PowerManager(Node):
         except json.JSONDecodeError:
             pass
 
-    def _ssh_session_active(self) -> bool:
+    def _refresh_ssh_activity(self) -> None:
+        """Runs on a short-lived thread — `ss` can stall for seconds under load,
+        and _idle_tick is an executor callback that must never block."""
         try:
             out = subprocess.run(_SS_ESTABLISHED_SSH, capture_output=True, text=True, timeout=5)
-            return bool(out.stdout.strip())
+            self._ssh_active = bool(out.stdout.strip())
         except (OSError, subprocess.SubprocessError) as e:
             self.get_logger().warning(f"SSH activity check failed: {e}")
-            return False
+            self._ssh_active = False
+        finally:
+            self._ssh_check_inflight = False
 
     def _idle_tick(self) -> None:
         if self.state != STATE_AWAKE:
@@ -223,7 +229,12 @@ class PowerManager(Node):
         if self._skill_in_flight or self._nav_mode in ("mapping", "switching"):
             self._touch_activity()
             return
-        if self._ssh_session_active():
+        if not self._ssh_check_inflight:
+            self._ssh_check_inflight = True
+            threading.Thread(target=self._refresh_ssh_activity, daemon=True).start()
+        # Reads the previous tick's result — one 10 s tick of lag is nothing
+        # against an idle window measured in minutes.
+        if self._ssh_active:
             self._touch_activity()
             return
         if time.monotonic() - self._last_activity >= idle_minutes * 60:
@@ -301,6 +312,9 @@ class PowerManager(Node):
 
     def _wake_sequence(self) -> None:
         # Compute first so the robot feels responsive from the very first second.
+        # jetson-perf pins nvpmodel -m 2 + jetson_clocks in its loop; the explicit
+        # nvpmodel call restores the power budget even if the service is absent.
+        self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
         self._start_camera_container()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
