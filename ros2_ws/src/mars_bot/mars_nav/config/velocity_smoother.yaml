@@ -1,13 +1,15 @@
 velocity_smoother:
   ros__parameters:
     # General settings
-    smoothing_frequency: 40.0       # Hz, Match controller_frequency from controller.yaml
+    smoothing_frequency: 20.0       # Hz, 2x controller_frequency (10 Hz) from controller.yaml
     scale_velocities: false         # Clamp velocities instead of scaling
     feedback: "OPEN_LOOP"           # Options: OPEN_LOOP, CLOSED_LOOP (requires odometry)
-    velocity_timeout: 0.2           # Seconds. If no commands received for this duration, output zero velocity.
+    # 0.5s: with a 10 Hz controller on a loaded CPU, a 0.2s timeout zeroed
+    # cmd_vel on every missed control cycle -> visible stop-start stutter.
+    velocity_timeout: 0.5
 
     # Limits using flat list structure [x, y, theta]
-    max_velocity: [0.45, 0.0, 0.6]   # Based on controller max_vel_x, max_vel_y, max_vel_theta
+    max_velocity: [0.4, 0.0, 0.6]    # x capped at bringup's hardware clamp (safety.max_speed 0.4)
     min_velocity: [-0.2, 0.0, -0.6]  # Based on controller min_vel_x, min_vel_y, symmetric min_vel_theta
     
     max_accel: [0.3, 0.0, 0.5]

@@ -111,8 +111,17 @@ class ModeManager(Node):
             callback_group=self._internal_callbacks_group,
         )
 
-        # Service to change maps in navigation mode
-        self.map_service = self.create_service(ChangeMap, "/nav/change_navigation_map", self.change_map_callback)
+        # Service to change maps in navigation mode. Same reentrant group as
+        # the mode service: both drive lifecycle transitions on the same nodes
+        # and are serialized by _mode_change_lock (in the default group the
+        # long-blocking callback would also starve the status timer and the
+        # relocalization client's response).
+        self.map_service = self.create_service(
+            ChangeMap,
+            "/nav/change_navigation_map",
+            self.change_map_callback,
+            callback_group=self._internal_callbacks_group,
+        )
 
         # Service to save current map in mapping mode
         self.save_map_service = self.create_service(SaveMap, "/nav/save_map", self.save_map_callback)
@@ -705,32 +714,39 @@ class ModeManager(Node):
                 self.get_logger().error(response.message)
                 return response
 
-            # Update the current map
-            self.current_map = requested_map
+            # Serialize against mode changes: both callbacks drive lifecycle
+            # transitions on the same nodes, and interleaving them leaves a
+            # half-active stack (e.g. one thread deactivating bt_navigator
+            # while the other activates it).
+            with self._mode_change_lock:
+                previous_map = self.current_map
+                # _efficient_map_switch loads self.current_map, so set it for
+                # the attempt but only persist (and keep) it on success.
+                self.current_map = requested_map
 
-            # Save the new map choice for persistence
-            self.save_last_map(requested_map)
+                # If we're in navigation mode, use efficient map switch
+                if self.current_mode == "navigation":
+                    self.get_logger().info(f"Efficiently switching to new map: {requested_map}")
 
-            # If we're in navigation mode, use efficient map switch
-            if self.current_mode == "navigation":
-                self.get_logger().info(f"Efficiently switching to new map: {requested_map}")
+                    success, message = self._efficient_map_switch()
 
-                success, message = self._efficient_map_switch()
-
-                if success:
-                    self._trigger_relocalization()
-                    response.success = True
-                    response.message = f"Successfully changed map to '{requested_map}'"
-                    self.get_logger().info(response.message)
+                    if success:
+                        self.save_last_map(requested_map)
+                        self._trigger_relocalization()
+                        response.success = True
+                        response.message = f"Successfully changed map to '{requested_map}'"
+                        self.get_logger().info(response.message)
+                    else:
+                        self.current_map = previous_map
+                        response.success = False
+                        response.message = f"Failed to switch to map '{requested_map}': {message}"
+                        self.get_logger().error(response.message)
                 else:
-                    response.success = False
-                    response.message = f"Failed to switch to map '{requested_map}': {message}"
-                    self.get_logger().error(response.message)
-            else:
-                # If not in navigation mode, just update the map for next time navigation starts
-                response.success = True
-                response.message = f"Map set to '{requested_map}' for next navigation session"
-                self.get_logger().info(response.message)
+                    # If not in navigation mode, just update the map for next time navigation starts
+                    self.save_last_map(requested_map)
+                    response.success = True
+                    response.message = f"Map set to '{requested_map}' for next navigation session"
+                    self.get_logger().info(response.message)
 
         except Exception as e:
             response.success = False

@@ -1,7 +1,13 @@
 /**:
   ros__parameters:
     use_sim_time: false
-    controller_frequency: 20.0
+    # 10 Hz: 20 Hz MPPI was not achievable on this CPU (constant "Control loop
+    # missed its desired rate" spam), and every overrun past the velocity
+    # smoother's timeout zeroed cmd_vel -> stop-start stutter.
+    controller_frequency: 10.0
+    # Tolerate brief controller hiccups instead of aborting the whole goal on
+    # the first missed cycle (seconds; 0.0 = abort immediately).
+    failure_tolerance: 1.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5         # Differential drive: no lateral motion
     min_theta_velocity_threshold: 0.001
@@ -32,14 +38,15 @@
       
       # Motion model and basic parameters
       motion_model: "DiffDrive"
-      time_steps: 50                    # 50 steps * 0.05s = 2.5s prediction horizon (matches old sim_time)
-      model_dt: 0.05                    # 1/controller_frequency = 1/20 = 0.05s
-      batch_size: 2000                  # Number of trajectory samples
+      time_steps: 25                    # 25 steps * 0.1s = same 2.5s prediction horizon at half the compute
+      model_dt: 0.1                     # 1/controller_frequency = 1/10 = 0.1s
+      batch_size: 1500                  # Number of trajectory samples
       iteration_count: 1
-      
+
       # Velocity limits (from existing DWB config)
       vx_min: -0.2                      # matches min_vel_x
-      vx_max: 0.45                       # matches max_vel_x
+      vx_max: 0.4                       # bringup hard-clamps at safety.max_speed 0.4 — commanding above it
+                                        # makes MPPI's model assume speed the motors never deliver
       vy_max: 0.0                       # differential drive - no lateral motion
       wz_max: 0.6                       # matches velocity_smoother max
       

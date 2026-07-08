@@ -87,7 +87,13 @@ class NavigateToPoseRouter(Node):
         return GoalResponse.ACCEPT
 
     def _cancel_callback(self, goal_handle):
-        """Handle cancel requests by forwarding to internal action."""
+        """Handle cancel requests by forwarding to internal action.
+
+        If the internal goal hasn't been accepted yet (its handle isn't in the
+        map), the cancel is NOT lost: accepting here flips the server goal to
+        CANCELING, and _execute_callback re-checks is_cancel_requested right
+        after internal acceptance and forwards the cancel then.
+        """
         self.get_logger().info("Received cancel request")
 
         # Try to cancel the corresponding internal goal
@@ -96,9 +102,23 @@ class NavigateToPoseRouter(Node):
             client_goal_handle = self._goal_handle_map[goal_id]
             if client_goal_handle is not None:
                 self.get_logger().info("Forwarding cancel to internal action")
-                client_goal_handle.cancel_goal_async()
+                self._forward_cancel(client_goal_handle)
 
         return CancelResponse.ACCEPT
+
+    def _forward_cancel(self, client_goal_handle):
+        """Cancel the internal goal and log the outcome (a rejected cancel
+        would otherwise be invisible and the robot would keep driving)."""
+
+        def _on_cancel_response(future):
+            try:
+                response = future.result()
+                if not response.goals_canceling:
+                    self.get_logger().warn("Internal action rejected the cancel request")
+            except Exception as e:
+                self.get_logger().error(f"Cancel forwarding failed: {e}")
+
+        client_goal_handle.cancel_goal_async().add_done_callback(_on_cancel_response)
 
     async def _execute_callback(self, goal_handle):
         """Execute callback that forwards the goal to internal action."""
@@ -175,6 +195,14 @@ class NavigateToPoseRouter(Node):
         # Store mapping for cancel handling
         goal_id = bytes(goal_handle.goal_id.uuid)
         self._goal_handle_map[goal_id] = client_goal_handle
+
+        # A cancel may have arrived while we were waiting for internal
+        # acceptance (before the map entry above existed). _cancel_callback
+        # already ACCEPTed it — without this check the cancel would be dropped
+        # and the robot would drive to a goal the caller believes is canceled.
+        if goal_handle.is_cancel_requested:
+            self.get_logger().info("Cancel arrived during goal handoff; forwarding to internal action")
+            self._forward_cancel(client_goal_handle)
 
         # Wait for the result
         try:
