@@ -5,7 +5,14 @@
 // sensor_msgs/BatteryState at 0.2 Hz; name/version ride /robot/info's
 // JSON-in-String payload.
 
-import { BATTERY_STATE_TOPIC, ROBOT_INFO_TOPIC, WEBSOCKET_STATUS_TOPIC } from "../constants.js";
+import {
+  BATTERY_STATE_TOPIC,
+  POWER_SLEEP_SERVICE,
+  POWER_STATE_TOPIC,
+  POWER_WAKE_SERVICE,
+  ROBOT_INFO_TOPIC,
+  WEBSOCKET_STATUS_TOPIC,
+} from "../constants.js";
 
 /**
  * @param {HTMLElement} parent
@@ -21,12 +28,28 @@ export function createTelemetry(parent, rosClient, opts = {}) {
 
   const name = item("robot", "—");
   const battery = showBattery ? item("batt", "—") : null;
+  // Sleep/wake state; click toggles it (sleep when awake, wake when asleep).
+  const power = item("power", "—");
   const link = item("link", "—");
   // Cloud/local agent backend connection (the brain's websocket to its agent
   // backend) — distinct from the rosbridge LINK above.
   const agent = item("agent", "—");
-  wrap.append(name.el, ...(battery ? [battery.el] : []), link.el, agent.el);
+  wrap.append(name.el, ...(battery ? [battery.el] : []), power.el, link.el, agent.el);
   parent.appendChild(wrap);
+
+  let powerState = "";
+  power.el.style.cursor = "pointer";
+  power.el.title = "Click to put the robot to sleep / wake it up";
+  power.el.addEventListener("click", async () => {
+    // Ignore clicks mid-transition; the state heartbeat will flip the label.
+    if (powerState !== "awake" && powerState !== "sleeping") return;
+    const service = powerState === "sleeping" ? POWER_WAKE_SERVICE : POWER_SLEEP_SERVICE;
+    try {
+      await rosClient.callService(service, {});
+    } catch (e) {
+      console.warn("power toggle failed", e);
+    }
+  });
 
   /**
    * @param {string} labelText
@@ -46,6 +69,19 @@ export function createTelemetry(parent, rosClient, opts = {}) {
   }
 
   const unsubs = [
+    rosClient.subscribe(POWER_STATE_TOPIC, (payload) => {
+      if (typeof payload?.data !== "string") return;
+      powerState = payload.data;
+      const labels = {
+        awake: "awake",
+        going_to_sleep: "sleeping…",
+        sleeping: "asleep",
+        waking: "waking…",
+      };
+      power.value.textContent = labels[powerState] ?? powerState;
+      power.el.classList.toggle("live", powerState === "awake");
+      power.el.classList.toggle("warn", powerState === "sleeping");
+    }),
     rosClient.subscribe(ROBOT_INFO_TOPIC, (payload) => {
       if (typeof payload?.data !== "string") return;
       /** @type {RobotInfo} */

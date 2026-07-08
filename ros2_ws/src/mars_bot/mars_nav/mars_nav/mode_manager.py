@@ -909,13 +909,28 @@ class ModeManager(Node):
 
         try:
             target_mode = request.mode.strip().lower()
+
+            # "off" tears the whole nav stack down (used by the power manager's
+            # sleep mode). Deliberately not persisted: .last_mode keeps the
+            # pre-sleep mode so boot and wake restore it.
+            if target_mode == "off":
+                self.current_mode = "switching"
+                self.publish_status()
+                for mode in NavigationMode:
+                    self.shutdown_mode(mode.value)
+                self.current_mode = "none"
+                response.success = True
+                response.message = "Navigation stack off"
+                self.get_logger().info(response.message)
+                return response
+
             if self.current_map is None:
                 target_mode = "mapping"
 
             # Validate mode
             if target_mode not in ["navigation", "mapping", "mapfree"]:
                 response.success = False
-                response.message = f"Invalid mode '{target_mode}'. Use 'navigation', 'mapping', or 'mapfree'"
+                response.message = f"Invalid mode '{target_mode}'. Use 'navigation', 'mapping', 'mapfree', or 'off'"
                 self.get_logger().error(response.message)
                 return response
 

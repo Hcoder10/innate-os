@@ -23,11 +23,21 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Sleep/wake orchestration (light sleep) — see mars_bringup/power_manager.py
+    power_manager_node = Node(
+        package="mars_bringup",
+        executable="power_manager.py",
+        name="power_manager",
+        parameters=[*settings_params()],
+        output="screen",
+    )
+
     # base_link -> base_footprint static TF is now published by
     # robot_state_publisher via the URDF (base_footprint_joint).
 
     return LaunchDescription(
         [
             bringup_node,
+            power_manager_node,
         ]
     )

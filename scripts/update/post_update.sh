@@ -842,6 +842,13 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: /bin/nmcli
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ros-app.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ros-app.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ros-app.service
+
+# Sleep mode (called by the power_manager node)
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start jetson-perf.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop jetson-perf.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start speaker-keepalive.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop speaker-keepalive.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/nvpmodel -m 0, /usr/sbin/nvpmodel -m 1, /usr/sbin/nvpmodel -m 2, /usr/sbin/nvpmodel -m 3
 EOF
 chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"

@@ -60,6 +60,16 @@
 #       max_speed: 0.4              # m/s, hard /cmd_vel linear ceiling at the motors
 #       max_angular_speed: 2.5      # rad/s, hard /cmd_vel angular ceiling at the motors
 
+# ── Sleep mode (power_manager) ────────────────────────────────────────
+# Light sleep powers down lidar, cameras, nav and arm torque after the robot
+# has been idle for N minutes. Active SSH sessions, teleop, skills and camera
+# viewers all count as activity. Wake via the app, a chat message, joystick
+# input, or a boop on the head.
+# power_manager:
+#   ros__parameters:
+#     sleep_after_idle_minutes: 0     # auto-sleep after N idle minutes (0 = never)
+#     boop_wake_threshold_degrees: 4  # head movement that counts as a wake-up boop
+
 # ── Arm ───────────────────────────────────────────────────────────────
 # mars_arm:
 #   ros__parameters:

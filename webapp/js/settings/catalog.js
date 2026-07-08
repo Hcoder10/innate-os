@@ -90,6 +90,14 @@ export const CATALOG = [
     ],
   },
   {
+    section: "Sleep mode",
+    note: "Light sleep powers down lidar, cameras, nav and arm torque. SSH sessions, teleop, skills and camera viewers count as activity. Wake from the app or boop the head.",
+    knobs: [
+      { path: ["power_manager", P, "sleep_after_idle_minutes"], label: "Auto-sleep after idle", default: 0, type: "int", unit: "min", doc: "Enter sleep after this many idle minutes (0 = never)", min: 0, max: 1440 },
+      { path: ["power_manager", P, "boop_wake_threshold_degrees"], label: "Boop sensitivity", default: 4, type: "int", unit: "°", doc: "Head movement that counts as a wake-up boop", min: 2, max: 20 },
+    ],
+  },
+  {
     section: "Arm",
     knobs: [
       { path: ["mars_arm", P, "max_jerk"], label: "Max jerk", default: 150.0, type: "float", unit: "rad/s³", doc: "Trajectory jerk limit (0 disables)" },

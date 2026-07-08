@@ -81,6 +81,13 @@ export const ROBOT_INFO_TOPIC = "/robot/info";
 // mobile app's volume slider calls; current value rides on /robot/info.
 export const SET_VOLUME_SERVICE = "/set_volume";
 
+// Light sleep (power_manager). State is a plain std_msgs/String:
+// "awake" | "going_to_sleep" | "sleeping" | "waking" (latched + 1 Hz heartbeat).
+// Sleep/wake are std_srvs/Trigger. Same services the mobile app should call.
+export const POWER_STATE_TOPIC = "/power/state";
+export const POWER_SLEEP_SERVICE = "/power/sleep";
+export const POWER_WAKE_SERVICE = "/power/wake";
+
 // WebRTC signaling over rosbridge. START is a std_msgs/String JSON payload that
 // carries our client_id: {"source":"live","audio":bool,"client_id":"...","video":[...]}.
 // The robot routes offer/answer/ICE on the *_id topics, each enveloped as {client_id, ...}
