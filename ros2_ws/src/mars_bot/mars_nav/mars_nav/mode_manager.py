@@ -721,6 +721,15 @@ class ModeManager(Node):
         """
         deadline = time.monotonic() + 6.0
         while time.monotonic() < deadline:
+            # A newer mode/map change supersedes this one: its localization
+            # (against the newest map) is the one that matters, and both the
+            # status feed and a fallback /localize would now refer to that
+            # newer map — stop confirming on behalf of a stale switch.
+            if self._mode_change_lock.locked():
+                self.get_logger().info(
+                    "Another mode/map change started; leaving relocalization to the newer switch"
+                )
+                return
             status, stamp = self._last_localization_status
             if stamp >= since and status.startswith("localized"):
                 self.get_logger().info(f"Grid localizer re-localized on the new map (status: {status})")
@@ -729,6 +738,9 @@ class ModeManager(Node):
                 break  # auto path gave up; fall through to the explicit trigger
             time.sleep(0.2)
 
+        if self._mode_change_lock.locked():
+            self.get_logger().info("Another mode/map change started; leaving relocalization to the newer switch")
+            return
         result = call_service(
             {"/localize": self._localize_client}, self.get_logger(), "/localize", Trigger.Request(), timeout_sec=6.0
         )
