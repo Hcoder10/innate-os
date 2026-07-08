@@ -209,6 +209,11 @@ class ModeManager(Node):
         # grid_localizer's status feed: lets the post-switch relocalization
         # wait for confirmation instead of guessing when the new map landed.
         self._last_localization_status = ("", 0.0)
+        # Bumped (under _mode_change_lock) by every mode/map/current_map
+        # mutation; a relocalization waiter holding an older generation knows
+        # it has been superseded even if the newer switch already released
+        # the lock between the waiter's polls.
+        self._switch_generation = 0
         self._localization_status_sub = self.create_subscription(
             String,
             "/localization/status",
@@ -708,7 +713,7 @@ class ModeManager(Node):
     def _localization_status_cb(self, msg):
         self._last_localization_status = (msg.data, time.monotonic())
 
-    def _trigger_relocalization(self, since: float):
+    def _trigger_relocalization(self, since: float, generation: int):
         """Confirm grid_localizer re-localized after a map switch.
 
         grid_localizer restarts auto-localization itself whenever a new map
@@ -721,12 +726,13 @@ class ModeManager(Node):
         """
         deadline = time.monotonic() + 6.0
         while time.monotonic() < deadline:
-            # A newer mode/map change supersedes this one: its localization
-            # (against the newest map) is the one that matters, and both the
-            # status feed and a fallback /localize would now refer to that
-            # newer map — stop confirming on behalf of a stale switch.
-            if self._mode_change_lock.locked():
-                self.get_logger().info("Another mode/map change started; leaving relocalization to the newer switch")
+            # A newer mode/map/current_map change supersedes this one: the
+            # status feed is map-agnostic, so a stale waiter must not claim a
+            # newer switch's "localized" as its own confirmation. The
+            # generation check catches this even when the newer switch
+            # acquired AND released the lock between our polls.
+            if self._switch_generation != generation:
+                self.get_logger().info("Another mode/map change superseded this one; leaving relocalization to it")
                 return
             status, stamp = self._last_localization_status
             if stamp >= since and status.startswith("localized"):
@@ -736,8 +742,8 @@ class ModeManager(Node):
                 break  # auto path gave up; fall through to the explicit trigger
             time.sleep(0.2)
 
-        if self._mode_change_lock.locked():
-            self.get_logger().info("Another mode/map change started; leaving relocalization to the newer switch")
+        if self._switch_generation != generation:
+            self.get_logger().info("Another mode/map change superseded this one; leaving relocalization to it")
             return
         result = call_service(
             {"/localize": self._localize_client}, self.get_logger(), "/localize", Trigger.Request(), timeout_sec=6.0
@@ -791,6 +797,8 @@ class ModeManager(Node):
 
             relocalize_after_switch = False
             switch_started = time.monotonic()
+            self._switch_generation += 1
+            my_generation = self._switch_generation
             previous_map = self.current_map
             try:
                 # _efficient_map_switch loads self.current_map, so set it for
@@ -832,7 +840,7 @@ class ModeManager(Node):
             # localizer and must not block concurrent mode/map service calls —
             # the lifecycle switch itself is already complete.
             if relocalize_after_switch:
-                self._trigger_relocalization(since=switch_started)
+                self._trigger_relocalization(since=switch_started, generation=my_generation)
 
         except Exception as e:
             response.success = False
@@ -892,6 +900,7 @@ class ModeManager(Node):
                     # No maps left, default to home.yaml placeholder
                     fallback = "home.yaml"
 
+                self._switch_generation += 1  # supersede any in-flight relocalization waiter
                 self.current_map = fallback
                 self.save_last_map(fallback)
                 self.get_logger().info(f"Current map changed to '{fallback}' prior to deletion of '{map_yaml_name}'")
@@ -1114,6 +1123,7 @@ class ModeManager(Node):
             response.message = "Mode change already in progress, ignoring duplicate request"
             self.get_logger().warning(response.message)
             return response
+        self._switch_generation += 1  # supersede any in-flight relocalization waiter
 
         try:
             target_mode = request.mode.strip().lower()
