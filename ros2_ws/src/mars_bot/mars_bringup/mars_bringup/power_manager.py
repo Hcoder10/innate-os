@@ -133,37 +133,45 @@ class PowerManager(Node):
 
     def _on_sleep_request(self, request, response):
         del request
-        started = self._start_transition(self._sleep_sequence, from_state=STATE_AWAKE)
+        started = self._start_transition(
+            self._sleep_sequence, from_state=STATE_AWAKE, during_state=STATE_GOING_TO_SLEEP
+        )
         response.success = started
         response.message = "Going to sleep" if started else f"Cannot sleep from state '{self.state}'"
         return response
 
     def _on_wake_request(self, request, response):
         del request
-        started = self._start_transition(self._wake_sequence, from_state=STATE_SLEEPING, reason="wake service")
+        started = self._start_transition(
+            self._wake_sequence, from_state=STATE_SLEEPING, during_state=STATE_WAKING, reason="wake service"
+        )
         response.success = started
         response.message = "Waking up" if started else f"Cannot wake from state '{self.state}'"
         return response
 
-    def _start_transition(self, sequence, from_state: str, reason: str = "") -> bool:
+    def _start_transition(self, sequence, from_state: str, during_state: str, reason: str = "") -> bool:
         """Kick off a sleep/wake sequence in a worker thread (service callbacks
-        must not block the executor — the sequences themselves call services)."""
+        must not block the executor — the sequences themselves call services).
+
+        `during_state` is passed explicitly rather than derived from `sequence`:
+        bound methods are recreated per attribute access, so identity checks
+        like `sequence is self._sleep_sequence` are always False."""
         with self._state_lock:
             if self._state != from_state:
                 return False
-            self._state = STATE_GOING_TO_SLEEP if sequence is self._sleep_sequence else STATE_WAKING
+            self._state = during_state
         self._state_pub.publish(String(data=self.state))
         self.get_logger().info(f"Power state: {self.state}" + (f" ({reason})" if reason else ""))
-        threading.Thread(target=self._run_transition, args=(sequence,), daemon=True).start()
+        threading.Thread(target=self._run_transition, args=(sequence, during_state), daemon=True).start()
         return True
 
-    def _run_transition(self, sequence) -> None:
+    def _run_transition(self, sequence, during_state: str) -> None:
         with self._transition_lock:
             try:
                 sequence()
             except Exception as e:  # a half-finished transition is recoverable via the other service
                 self.get_logger().error(f"Power transition failed: {e}")
-                self._set_state(STATE_AWAKE if sequence is self._wake_sequence else STATE_SLEEPING)
+                self._set_state(STATE_SLEEPING if during_state == STATE_GOING_TO_SLEEP else STATE_AWAKE)
 
     # ------------------------------------------------------------- activity
 
@@ -239,7 +247,12 @@ class PowerManager(Node):
             return
         if time.monotonic() - self._last_activity >= idle_minutes * 60:
             self.get_logger().info(f"Idle for {idle_minutes} minutes — going to sleep")
-            self._start_transition(self._sleep_sequence, from_state=STATE_AWAKE, reason="idle timeout")
+            self._start_transition(
+                self._sleep_sequence,
+                from_state=STATE_AWAKE,
+                during_state=STATE_GOING_TO_SLEEP,
+                reason="idle timeout",
+            )
 
     # ------------------------------------------------------------- head boop
 
@@ -274,7 +287,9 @@ class PowerManager(Node):
 
     def _wake_if_sleeping(self, reason: str) -> None:
         if self.state == STATE_SLEEPING:
-            self._start_transition(self._wake_sequence, from_state=STATE_SLEEPING, reason=reason)
+            self._start_transition(
+                self._wake_sequence, from_state=STATE_SLEEPING, during_state=STATE_WAKING, reason=reason
+            )
 
     # ------------------------------------------------------------- sequences
 
@@ -300,7 +315,10 @@ class PowerManager(Node):
         self._stop_camera_container()
         self._run_privileged(["systemctl", "stop", "speaker-keepalive.service"])
         self._run_privileged(["systemctl", "stop", "jetson-perf.service"])
-        self._run_privileged(["/usr/sbin/nvpmodel", "-m", "3"])  # 7W profile
+        # 15W profile — the lowest reachable live: 7W (-m 3) takes CPU cores
+        # offline, which nvpmodel only does across a reboot (it prompts and
+        # aborts, rc=234 "Golden image context is already created").
+        self._run_privileged(["/usr/sbin/nvpmodel", "-m", "0"])
 
         # Arm the boop detector: give the torque-less head a moment to settle,
         # then take the first reading after that as the baseline.
