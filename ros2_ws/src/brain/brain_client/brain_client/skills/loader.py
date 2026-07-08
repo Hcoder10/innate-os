@@ -45,10 +45,22 @@ class SkillLoader(DynamicLoader):
     def _get_name(self, skill_class: type[Skill]) -> str:
         try:
             temp_logger = logging.getLogger(f"temp_{skill_class.__name__}")
-            return skill_class(temp_logger).name
+            instance = skill_class(temp_logger)
+            try:
+                return instance.name
+            finally:
+                # The throwaway instance may own ROS entities (e.g. BasicNavigator
+                # nodes); shut them down or every discovery pass leaks them.
+                self._shutdown_quietly(instance)
         except Exception as e:
             self.logger.debug(f"Could not get name from skill {skill_class.__name__}: {e}")
             return self._fallback_name(skill_class)
+
+    def _shutdown_quietly(self, instance: Skill) -> None:
+        try:
+            instance.shutdown()
+        except Exception as e:
+            self.logger.debug(f"Error shutting down temp {type(instance).__name__} instance: {e}")
 
     def reload_skill_by_file_stem(self, file_stem: str, directories: list[str]) -> tuple[type[Skill], Path] | None:
         """

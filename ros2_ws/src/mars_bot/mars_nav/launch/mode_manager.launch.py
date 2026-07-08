@@ -102,8 +102,18 @@ def generate_launch_description():
         name="velocity_smoother",
         output="screen",
         parameters=[smoother_params_file, smoother_limit_overrides],
-        remappings=[("cmd_vel", "/cmd_vel_scaled"), ("cmd_vel_smoothed", "/cmd_vel")],
+        # Nav2 output feeds the priority mux, not the base directly.
+        remappings=[("cmd_vel", "/cmd_vel_scaled"), ("cmd_vel_smoothed", "/cmd_vel_nav")],
         arguments=["--ros-args", "--log-level", "warn"],
+    )
+
+    # Single writer to /cmd_vel: teleop > skills > nav. Lives here (always up)
+    # so teleop keeps working when the nav stack is down.
+    cmd_vel_mux_node = Node(
+        package="mars_nav",
+        executable="cmd_vel_mux.py",
+        name="cmd_vel_mux",
+        output="screen",
     )
 
     # Shared BT navigator node
@@ -175,6 +185,7 @@ def generate_launch_description():
             dynamic_footprint_node,
             goal_approach_scaler_node,
             velocity_smoother_node,
+            cmd_vel_mux_node,
             bt_navigator_node,
             mapfree_planner_node,
             behavior_server_node,
