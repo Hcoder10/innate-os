@@ -33,7 +33,9 @@ def generate_launch_description():
         description="Image topic",
     )
     cmd_vel_topic_arg = DeclareLaunchArgument(
-        "cmd_vel_topic", default_value="/cmd_vel", description="Command velocity topic"
+        "cmd_vel_topic",
+        default_value="/cmd_vel_skills",
+        description="Command velocity topic — skills-priority input of the cmd_vel mux",
     )
     depth_image_topic_arg = DeclareLaunchArgument(
         "depth_image_topic",
@@ -203,6 +205,7 @@ def generate_launch_description():
                     {
                         "image_topic": LaunchConfiguration("image_topic"),
                         "map_topic": LaunchConfiguration("map_topic"),
+                        "cmd_vel_topic": LaunchConfiguration("cmd_vel_topic"),
                         "simulator_mode": LaunchConfiguration("simulator_mode"),
                     }
                 ],

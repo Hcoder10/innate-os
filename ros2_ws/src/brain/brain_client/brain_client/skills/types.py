@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Innate Inc
 import json
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -196,6 +197,7 @@ class Skill(ABC):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
+        self._cancel_latch()
         # SkillInvoker for running other skills from execute(); injected by the
         # skills server before each run (see invoker.py and innate/skills.py).
         self.skills = None
@@ -225,18 +227,52 @@ class Skill(ABC):
         """
         pass
 
+    def _cancel_latch(self) -> threading.Event:
+        """The cancel event, created lazily — some skills skip super().__init__()."""
+        latch = self.__dict__.get("_cancel_event")
+        if latch is None:
+            latch = self.__dict__.setdefault("_cancel_event", threading.Event())
+        return latch
+
+    @property
+    def _cancelled(self) -> bool:
+        """Whether cancellation was requested for the current run.
+
+        Latches True and ignores False: skills reset the flag at execute()
+        entry, which would wipe a cancel that raced goal startup. Only the
+        server re-arms it between runs (_begin_run).
+        """
+        return self._cancel_latch().is_set()
+
+    @_cancelled.setter
+    def _cancelled(self, value: bool):
+        if value:
+            self._cancel_latch().set()
+
+    def _begin_run(self, goal_handle=None):
+        """Server hook: re-arm the latch for a fresh run, recovering a cancel
+        that already landed from the goal's persistent cancel status."""
+        latch = self._cancel_latch()
+        latch.clear()
+        try:
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                latch.set()
+        except Exception:
+            pass  # duck-typed handles without cancel status
+
     def cancel(self):
         """
         Cancel the execution of the skill. Safe to call at any time; returns
         a message describing the result.
 
-        The default stops the child skill currently running via self.skills.
-        Override it to stop work of your own (motion, loops, timers) — and if
-        you also chain children, call self.skills.cancel() too.
+        The default latches self._cancelled and stops the child skill running
+        via self.skills. Override it to stop work of your own — and if you
+        also chain children, call self.skills.cancel() too.
         """
-        if self.skills is not None:
+        self._cancel_latch().set()
+        if getattr(self, "skills", None) is not None:
             return self.skills.cancel()
-        return "Nothing to cancel"
+        return "Cancellation requested"
 
     def shutdown(self):  # noqa: B027
         """Release resources this instance owns. Called when the server retires

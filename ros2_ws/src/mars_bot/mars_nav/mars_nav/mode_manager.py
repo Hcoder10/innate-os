@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import subprocess
+import threading
 import time
 import traceback
 from enum import Enum
@@ -14,6 +15,8 @@ import rclpy
 
 # TF2 imports for transform lookup
 import tf2_ros
+from action_msgs.msg import GoalStatus, GoalStatusArray
+from action_msgs.srv import CancelGoal
 from brain_messages.srv import ChangeMap, ChangeNavigationMode, DeleteMap, SaveMap
 from geometry_msgs.msg import TransformStamped
 from lifecycle_msgs.msg import State
@@ -24,13 +27,17 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mars_nav.service_utils import call_service, get_node_state, transition_node
 
 # TODO: move this into launch file?
 map_server_node = "navigation_map_server"
 bt_node = "bt_navigator"
+
+NAV_CANCEL_SERVICE = "/internal_navigate_to_pose/_action/cancel_goal"
 
 # Nodes that should only be configured (not activated) in specific modes
 configure_only_nodes = {
@@ -93,7 +100,6 @@ class ModeManager(Node):
         self._executor = None
 
         # Lock to prevent concurrent mode changes
-        import threading
 
         self._mode_change_lock = threading.Lock()
 
@@ -105,6 +111,29 @@ class ModeManager(Node):
             ChangeNavigationMode,
             "/nav/change_mode",
             self.change_mode_callback,
+            callback_group=self._internal_callbacks_group,
+        )
+
+        # Cancel-all for NavigateToPose goals (skill nav and /goal_pose alike
+        # both terminate at the internal bt_navigator action). Goal activity is
+        # tracked from the action's status topic, not service availability.
+        self._nav_active_goals = 0
+        self._service_clients[NAV_CANCEL_SERVICE] = self.create_client(
+            CancelGoal, NAV_CANCEL_SERVICE, callback_group=self._calls_going_outside_group
+        )
+        self._nav_status_sub = self.create_subscription(
+            GoalStatusArray,
+            "/internal_navigate_to_pose/_action/status",
+            self._nav_status_callback,
+            QoSProfile(
+                depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
+            ),
+            callback_group=self._internal_callbacks_group,
+        )
+        self.cancel_navigation_service = self.create_service(
+            Trigger,
+            "/nav/cancel_navigation",
+            self.cancel_navigation_callback,
             callback_group=self._internal_callbacks_group,
         )
 
@@ -891,6 +920,48 @@ class ModeManager(Node):
         except Exception as e:
             self.get_logger().warn(f"Cleanup warning: {e}")
 
+    # bt_navigator goal states that are not yet terminal.
+    _NAV_ACTIVE_STATUSES = (
+        GoalStatus.STATUS_ACCEPTED,
+        GoalStatus.STATUS_EXECUTING,
+        GoalStatus.STATUS_CANCELING,
+    )
+
+    def _nav_status_callback(self, msg):
+        self._nav_active_goals = sum(1 for s in msg.status_list if s.status in self._NAV_ACTIVE_STATUSES)
+
+    def _cancel_active_navigation(self, timeout_sec=5.0):
+        """Cancel all active NavigateToPose goals and wait for them to reach a
+        terminal state. Returns (success, message).
+
+        Waits for terminal (not just cancel-acknowledged) so the caller can
+        tear Nav2 down without deactivating bt_navigator before it has
+        delivered the cancelled goal's result — which would strand the router
+        or skill waiting forever. Never reports success while a goal is still
+        live: skipping the cancel would strand it once Nav2 is torn down.
+        """
+        if self._nav_active_goals == 0:
+            return True, "No active navigation goals"
+
+        deadline = time.time() + timeout_sec
+        response = call_service(
+            self._service_clients, self.get_logger(), NAV_CANCEL_SERVICE, CancelGoal.Request(), timeout_sec
+        )
+        if response is None:
+            return False, "Navigation is active but its cancel service did not respond"
+
+        while self._nav_active_goals > 0 and time.time() < deadline:
+            time.sleep(0.05)
+        if self._nav_active_goals > 0:
+            return False, "Cancelled goals did not reach a terminal state in time"
+        return True, f"Cancelled {len(response.goals_canceling)} navigation goal(s)"
+
+    def cancel_navigation_callback(self, request, response):
+        """Trigger service: stop all active navigation (app Stop button)."""
+        response.success, response.message = self._cancel_active_navigation()
+        self.get_logger().info(f"/nav/cancel_navigation: {response.message}")
+        return response
+
     def change_mode_callback(self, request, response, first_start=False):
         """
         Service callback to switch between modes
@@ -933,6 +1004,18 @@ class ModeManager(Node):
                 response.success = True
                 response.message = f"Already in {target_mode} mode"
                 self.get_logger().info(response.message)
+                return response
+
+            # Cancel active nav goals before tearing down their lifecycle nodes.
+            # If cancellation can't be confirmed (service unreachable, or goals
+            # not terminal in time), abort rather than tear Nav2 down under a
+            # pending goal — that would strand the router/skill forever. Nav is
+            # left running; the caller can Stop explicitly and retry.
+            cancelled_ok, cancel_message = self._cancel_active_navigation()
+            if not cancelled_ok:
+                response.success = False
+                response.message = f"Mode switch aborted: could not stop active navigation ({cancel_message})"
+                self.get_logger().error(response.message)
                 return response
 
             # Set mode to switching

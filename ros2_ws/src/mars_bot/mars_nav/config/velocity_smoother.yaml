@@ -11,7 +11,9 @@ velocity_smoother:
     min_velocity: [-0.2, 0.0, -0.6]  # Based on controller min_vel_x, min_vel_y, symmetric min_vel_theta
     
     max_accel: [0.3, 0.0, 0.5]
-    max_decel: [-0.3, 0.0, -0.5]
+    # Decel harder than accel so cancels stop fast; goal approaches still use
+    # the controller's gentler ax_min. Validate on a powered base.
+    max_decel: [-1.0, 0.0, -2.0]
 
     deadband_velocity: [0.01, 0.0, 0.02] # Deadband for x, y, theta based on previous 'min_velocity_deadband'
 

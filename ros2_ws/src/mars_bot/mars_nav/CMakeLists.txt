@@ -135,6 +135,7 @@ install(PROGRAMS
   mars_nav/mode_manager.py
   mars_nav/grid_localizer.py
   mars_nav/odom_to_tf_node.py
+  mars_nav/cmd_vel_mux.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
