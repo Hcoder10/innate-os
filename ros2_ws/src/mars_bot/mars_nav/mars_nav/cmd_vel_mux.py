@@ -33,12 +33,10 @@ class CmdVelMux(Node):
         self._pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self._last_rx = {name: 0.0 for name, _topic, _window in SOURCES}
         self._forwarding = False  # motion since the last all-stale zero-stop
-        for index, (name, topic, _window) in enumerate(SOURCES):
+        for index, (_name, topic, _window) in enumerate(SOURCES):
             self.create_subscription(Twist, topic, self._make_callback(index), 10)
         self.create_timer(0.1, self._stop_when_all_stale)
-        self.get_logger().info(
-            "cmd_vel mux up: " + " > ".join(f"{name} ({topic})" for name, topic, _w in SOURCES)
-        )
+        self.get_logger().info("cmd_vel mux up: " + " > ".join(f"{name} ({topic})" for name, topic, _w in SOURCES))
 
     def _make_callback(self, index):
         name = SOURCES[index][0]
