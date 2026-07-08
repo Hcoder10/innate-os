@@ -60,8 +60,11 @@ struct CameraEncoder {
     uint64_t prev_input_frames = 0;    // publish_status fps sampling
     uint64_t prev_encoded_frames = 0;  // publish_status fps sampling
     std::atomic<int> input_flow_code{GST_FLOW_OK};
-    rclcpp::SubscriptionBase::SharedPtr sub;  // lazy raw|compressed image subscription
-    WebRTCStreamer* owner = nullptr;          // for the static appsink new-sample callback
+    GstClockTime pts_base_ns = GST_CLOCK_TIME_NONE;  // capture-stamp anchor; PTS = frame stamp - this
+    GstClockTime last_pts_ns = 0;                    // last emitted PTS (monotonic guard / unstamped tick)
+    GstClockTime last_stamp_ns = 0;                  // last capture stamp seen (0 = none); backward step re-anchors
+    rclcpp::SubscriptionBase::SharedPtr sub;         // lazy raw|compressed image subscription
+    WebRTCStreamer* owner = nullptr;                 // for the static appsink new-sample callback
 };
 
 // One connected WebRTC peer. The cameras are encoded ONCE in a persistent pipeline; each peer owns a
@@ -70,14 +73,14 @@ struct CameraEncoder {
 // can't take the cameras down with it.
 struct Peer {
     std::string client_id;
-    GstElement* pipeline = nullptr;                // transport pipeline (owns webrtcbin + rtp appsrcs)
+    GstElement* pipeline = nullptr;          // transport pipeline (owns webrtcbin + rtp appsrcs)
     GstElement* webrtc = nullptr;            // ref'd from pipeline
     std::map<std::string, GstElement*> rtp;  // camera name -> ref'd transport appsrc (the negotiated set)
-    std::vector<std::string> videos;               // NEGOTIATED video streams (transceivers), in m-line order
-    std::vector<std::string> active;               // currently PUSHED streams (subset of videos); toggled live on a
-                                                   // stream switch without renegotiating, so switches are instant
-    bool with_audio = false;                       // audio m-line NEGOTIATED (an opus transceiver exists)
-    bool audio_active = false;  // audio currently being SENT — toggled live like the cameras (no reneg)
+    std::vector<std::string> videos;         // NEGOTIATED video streams (transceivers), in m-line order
+    std::vector<std::string> active;         // currently PUSHED streams (subset of videos); toggled live on a
+                                             // stream switch without renegotiating, so switches are instant
+    bool with_audio = false;                 // audio m-line NEGOTIATED (an opus transceiver exists)
+    bool audio_active = false;               // audio currently being SENT — toggled live like the cameras (no reneg)
     // True only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin. Shared + atomic because it
     // is written from webrtcbin's PC thread (the connection-state callback, via a copy tagged on the
     // element) — that callback must NOT take peers_mutex_: ~Peer runs set_state(NULL) under the mutex,
@@ -171,7 +174,7 @@ class WebRTCStreamer : public rclcpp::Node {
     void attach_playout_delay_extension(const std::string& cam);  // adds the ext to one payloader
     cv::Mat process_raw_image(const sensor_msgs::msg::Image::SharedPtr& msg, int w, int h);
     cv::Mat process_compressed_image(const sensor_msgs::msg::CompressedImage::SharedPtr& msg, int w, int h);
-    void push_frame(CameraEncoder* cam, const cv::Mat& frame);
+    void push_frame(CameraEncoder* cam, const cv::Mat& frame, const rclcpp::Time& stamp);
     GstBufferPool* create_frame_pool(int width, int height, int channels);
     void force_keyframe(const std::string& cam);          // request an IDR so a fresh/resumed peer can decode
     CameraEncoder* find_camera(const std::string& name);  // configured camera by name, or nullptr
