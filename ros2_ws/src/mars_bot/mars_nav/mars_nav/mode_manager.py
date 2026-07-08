@@ -1030,11 +1030,17 @@ class ModeManager(Node):
                 self.get_logger().info(response.message)
                 return response
 
-            # Cancel active nav goals before tearing down their lifecycle nodes,
-            # or they never deliver a result and the navigating skill hangs.
+            # Cancel active nav goals before tearing down their lifecycle nodes.
+            # If cancellation can't be confirmed (service unreachable, or goals
+            # not terminal in time), abort rather than tear Nav2 down under a
+            # pending goal — that would strand the router/skill forever. Nav is
+            # left running; the caller can Stop explicitly and retry.
             cancelled_ok, cancel_message = self._cancel_active_navigation()
             if not cancelled_ok:
-                self.get_logger().warning(f"Proceeding with mode switch despite: {cancel_message}")
+                response.success = False
+                response.message = f"Mode switch aborted: could not stop active navigation ({cancel_message})"
+                self.get_logger().error(response.message)
+                return response
 
             # Set mode to switching
             self.current_mode = "switching"
