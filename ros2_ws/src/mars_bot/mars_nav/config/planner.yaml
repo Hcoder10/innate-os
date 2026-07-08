@@ -6,14 +6,21 @@
       use_sim_time: false
 
       GridBased:
-        # NavFn instead of SmacPlanner2D: NavFn clears the robot's start cell
-        # before planning, so an AMCL pose that drifts into an inflated
-        # obstacle degrades gracefully instead of aborting instantly with
-        # "Starting point in lethal space" (Smac2D has no start tolerance).
-        plugin: "nav2_navfn_planner/NavfnPlanner"
-        tolerance: 0.25
-        # Unknown cells are traversable at high cost; with speckled or partial
-        # maps a hard 'false' rejects plans through perfectly driveable space.
-        allow_unknown: true
-        use_astar: false
+        # pure grid search + spin-on-spot
+        plugin: "nav2_smac_planner/SmacPlanner2D"
+        tolerance: 0.1
+        downsample_costmap: false
+        downsampling_factor: 1
+        allow_unknown: false
+        max_iterations: 1000000
+        max_on_approach_iterations: 1000
+        terminal_checking_interval: 5000
+        max_planning_time: 2.0
+        cost_travel_multiplier: 2.0
         use_final_approach_orientation: false
+        smoother:
+          max_iterations: 1000
+          w_smooth: 0.3
+          w_data: 0.2
+          tolerance: 1e-10
+        allow_parameter_qos_overrides: true
