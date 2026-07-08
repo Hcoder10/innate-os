@@ -726,9 +726,7 @@ class ModeManager(Node):
             # status feed and a fallback /localize would now refer to that
             # newer map — stop confirming on behalf of a stale switch.
             if self._mode_change_lock.locked():
-                self.get_logger().info(
-                    "Another mode/map change started; leaving relocalization to the newer switch"
-                )
+                self.get_logger().info("Another mode/map change started; leaving relocalization to the newer switch")
                 return
             status, stamp = self._last_localization_status
             if stamp >= since and status.startswith("localized"):
