@@ -38,9 +38,6 @@ navigation:
           cost_scaling_factor: 10.0
           inflation_radius: 0.3
         always_send_full_costmap: False
-        # (A full voxel_layer block used to sit here unused — it was never in
-        # the plugins list above. The camera voxel layer lives in the local
-        # and mapfree costmaps.)
 
 
 local_costmap:
