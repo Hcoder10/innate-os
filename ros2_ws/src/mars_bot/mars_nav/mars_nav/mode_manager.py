@@ -718,6 +718,7 @@ class ModeManager(Node):
             # transitions on the same nodes, and interleaving them leaves a
             # half-active stack (e.g. one thread deactivating bt_navigator
             # while the other activates it).
+            relocalize_after_switch = False
             with self._mode_change_lock:
                 previous_map = self.current_map
                 # _efficient_map_switch loads self.current_map, so set it for
@@ -732,7 +733,7 @@ class ModeManager(Node):
 
                     if success:
                         self.save_last_map(requested_map)
-                        self._trigger_relocalization()
+                        relocalize_after_switch = True
                         response.success = True
                         response.message = f"Successfully changed map to '{requested_map}'"
                         self.get_logger().info(response.message)
@@ -747,6 +748,12 @@ class ModeManager(Node):
                     response.success = True
                     response.message = f"Map set to '{requested_map}' for next navigation session"
                     self.get_logger().info(response.message)
+
+            # Outside the lock: relocalization waits up to ~9 s on the grid
+            # localizer and must not block concurrent mode/map service calls —
+            # the lifecycle switch itself is already complete.
+            if relocalize_after_switch:
+                self._trigger_relocalization()
 
         except Exception as e:
             response.success = False

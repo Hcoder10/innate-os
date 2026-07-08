@@ -518,26 +518,43 @@ class GridLocalizer(Node):
     def _seed_amcl(self, pose_msg: PoseWithCovarianceStamped, retries_left: int = 15):
         """Deliver the pose to AMCL via its /set_initial_pose service.
 
-        Retries every 2 s while AMCL isn't up yet (boot/mode-switch races);
-        a newer pose always supersedes a pending retry.
+        Retries every 2 s while AMCL isn't up yet AND when a call fails
+        (boot/mode-switch races, transient service errors); a newer pose
+        always supersedes a pending retry, and a stale in-flight call's
+        completion never touches the newer pose's pending state.
         """
         self._pending_seed = (pose_msg, retries_left)
         if self._seed_retry_timer is not None:
             self.destroy_timer(self._seed_retry_timer)
             self._seed_retry_timer = None
 
+        if retries_left <= 0:
+            self.get_logger().warning("Giving up on AMCL /set_initial_pose; seed delivered by latched topic only")
+            self._pending_seed = None
+            return
+
         if not self._amcl_seed_client.service_is_ready():
-            if retries_left <= 0:
-                self.get_logger().warning("AMCL /set_initial_pose never became available; seed delivered by topic only")
-                self._pending_seed = None
-                return
             self._seed_retry_timer = self.create_timer(2.0, self._retry_seed_amcl)
             return
 
         request = SetInitialPose.Request()
         request.pose = pose_msg
-        future = self._amcl_seed_client.call_async(request)
-        future.add_done_callback(self._seed_amcl_done)
+
+        def _on_done(future):
+            # A newer pose may have been queued while this call was in flight;
+            # its retry state is not ours to clear or reschedule.
+            superseded = self._pending_seed is None or self._pending_seed[0] is not pose_msg
+            try:
+                future.result()
+                self.get_logger().info("Seeded AMCL via /set_initial_pose")
+                if not superseded:
+                    self._pending_seed = None
+            except Exception as e:
+                self.get_logger().warning(f"AMCL /set_initial_pose call failed: {e}")
+                if not superseded and self._seed_retry_timer is None:
+                    self._seed_retry_timer = self.create_timer(2.0, self._retry_seed_amcl)
+
+        self._amcl_seed_client.call_async(request).add_done_callback(_on_done)
 
     def _retry_seed_amcl(self):
         if self._seed_retry_timer is not None:
@@ -547,14 +564,6 @@ class GridLocalizer(Node):
             return
         pose_msg, retries_left = self._pending_seed
         self._seed_amcl(pose_msg, retries_left - 1)
-
-    def _seed_amcl_done(self, future):
-        self._pending_seed = None
-        try:
-            future.result()
-            self.get_logger().info("Seeded AMCL via /set_initial_pose")
-        except Exception as e:
-            self.get_logger().warning(f"AMCL /set_initial_pose call failed: {e}")
 
     def _localize_cb(self, request, response):
         """Service callback to trigger localization."""
