@@ -1,0 +1,12 @@
+[Unit]
+Description=Innate deep-sleep network wake listener (POST /wake on :4022)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/sbin/innate-deepsleep-wake-listener.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
