@@ -82,6 +82,8 @@ class MarsArmNode : public rclcpp::Node {
                                  std::shared_ptr<std_srvs::srv::SetBool::Response> response);
     void lowPowerModeCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                               std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+    void busSuspendCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                            std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
     // ── Trajectory planning & execution (arm_trajectory.cpp) ────────────
     std::vector<std::vector<double>> computeCubicSplineTrajectory(const std::vector<double>& start,
@@ -146,6 +148,12 @@ class MarsArmNode : public rclcpp::Node {
     std::atomic<bool> low_power_mode_{false};
     int low_power_divider_{20};
     unsigned low_power_tick_{0};  // only touched from the control-loop timer
+
+    // Bus suspend (HSSW-gated robot sleep): the Dynamixel rail is cut, so the
+    // control loop and health monitor must stop touching the (dead) bus
+    // entirely; resume re-initializes the power-cycled servos.
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr bus_suspend_service_;
+    std::atomic<bool> bus_suspended_{false};
     int latest_head_command_{0};
     std::mutex head_command_mutex_;
     std::atomic<bool> has_head_command_{false};

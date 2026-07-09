@@ -71,6 +71,12 @@ class PowerManager(Node):
 
         self.declare_parameter("sleep_after_idle_minutes", 0)
         self.declare_parameter("boop_wake_threshold_degrees", 4)
+        # Cut the HSSW rail (arm/head Dynamixels + wheel drivers) during sleep.
+        # Shared with bringup via a /** setting so the two stay in lockstep:
+        # when set, the arm bus is fully suspended (not just decimated) and the
+        # servos are re-initialized on wake. Physical wake is then the PCB's IMU
+        # motion latch, not the servo-polling boop (the bus is dead).
+        self.declare_parameter("gate_hssw_on_sleep", True)
 
         self._state = STATE_AWAKE
         self._state_lock = threading.Lock()
@@ -112,6 +118,7 @@ class PowerManager(Node):
         self._arm_torque_on_client = self.create_client(Trigger, "/mars/arm/torque_on")
         self._head_servo_client = self.create_client(SetBool, "/mars/head/enable_servo")
         self._arm_low_power_client = self.create_client(SetBool, "/mars/arm/low_power_mode")
+        self._arm_bus_suspend_client = self.create_client(SetBool, "/mars/arm/bus_suspend")
         self._pcb_power_client = self.create_client(SetBool, "/pcb/power_mode")
 
         # Activity signals
@@ -338,10 +345,15 @@ class PowerManager(Node):
         self._call(self._lidar_stop_client, Empty.Request(), "lidar motor off")
         self._call(self._arm_torque_off_client, Trigger.Request(), "arm torque off")
         self._call(self._head_servo_client, SetBool.Request(data=False), "head torque off")
-        # ~10 Hz is plenty for the boop detector, and the 200 Hz stream is the
-        # main CPU load during sleep (it fans out through /joint_states -> /tf
-        # into every Python subscriber and TF listener).
-        self._call(self._arm_low_power_client, SetBool.Request(data=True), "arm loop 10Hz")
+        gate = self.get_parameter("gate_hssw_on_sleep").value
+        if gate:
+            # Rail about to be cut: fully stop the arm bus (the servos go dead).
+            # Must precede the PCB gate below so the loop never polls a dead bus.
+            self._call(self._arm_bus_suspend_client, SetBool.Request(data=True), "arm bus suspend")
+        else:
+            # Soft sleep: keep the bus alive but slow (~10 Hz is plenty for the
+            # boop detector; the 200 Hz stream is the main CPU load asleep).
+            self._call(self._arm_low_power_client, SetBool.Request(data=True), "arm loop 10Hz")
         self._stop_sleep_panes()
         self._run_privileged(["systemctl", "stop", "speaker-keepalive.service"])
         self._run_privileged(["systemctl", "stop", "jetson-perf.service"])
@@ -355,7 +367,8 @@ class PowerManager(Node):
 
         # PCB sleep last, once the mechanics have settled: torque-off slump
         # and the head droop would otherwise latch a phantom motion event the
-        # moment wake-on-motion arms. (Soft sleep — HSSW gating comes later.)
+        # moment wake-on-motion arms. Gates the HSSW rail when gate_hssw_on_sleep
+        # is set (bringup reads the same /** setting).
         self._call(self._pcb_power_client, SetBool.Request(data=True), "PCB sleep")
 
         # Arm the boop detector: give the torque-less head a moment to settle
@@ -373,12 +386,21 @@ class PowerManager(Node):
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "wake"])
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
-        # PCB wake early: once HSSW gating lands, the rail needs its ~550 ms
-        # re-init done before any Dynamixel traffic (torque-on below).
+        # PCB wake early: the gated HSSW rail needs its ~550 ms re-init done
+        # before any Dynamixel traffic (bus resume / torque-on below).
         self._call(self._pcb_power_client, SetBool.Request(data=False), "PCB wake")
         self._start_sleep_panes()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
-        self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")
+        gate = self.get_parameter("gate_hssw_on_sleep").value
+        if gate:
+            # Let the rail settle after the MCU's ~550 ms wheel-driver re-init,
+            # then re-initialize the power-cycled servos (torque still off).
+            time.sleep(1.0)
+            self._call(
+                self._arm_bus_suspend_client, SetBool.Request(data=False), "arm bus resume", timeout=25.0
+            )
+        else:
+            self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")
         self._call(self._head_servo_client, SetBool.Request(data=True), "head torque on")
         self._call(self._arm_torque_on_client, Trigger.Request(), "arm torque on")
         self._run_privileged(["systemctl", "start", "speaker-keepalive.service"])

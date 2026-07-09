@@ -6,6 +6,12 @@
 namespace mars_arm {
 
 void MarsArmNode::controlTimerCallback() {
+    // Bus suspended (HSSW rail gated during deep sleep): the servos are
+    // unpowered, so do not touch the bus at all until resume re-inits them.
+    if (bus_suspended_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
     // Low-power mode (robot sleep): run 1-in-N ticks (~10 Hz). The timer keeps
     // firing — recreating it at a lower rate would mean destroying a timer
     // under a spinning executor.

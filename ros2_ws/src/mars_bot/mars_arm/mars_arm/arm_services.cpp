@@ -169,6 +169,11 @@ void MarsArmNode::syncTargetToMotorPositions() {
 // ========== HEALTH MONITORING ==========
 
 void MarsArmNode::healthMonitorCallback() {
+    // The bus is dead while the rail is gated — skip the health poll entirely.
+    if (bus_suspended_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
     mars_msgs::msg::ArmStatus status_msg;
     status_msg.is_ok = true;
     status_msg.error = "All servos nominal";
@@ -549,6 +554,37 @@ void MarsArmNode::lowPowerModeCallback(const std::shared_ptr<std_srvs::srv::SetB
     response->message = request->data ? "Control loop decimated to ~10 Hz" : "Control loop at full rate";
     RCLCPP_INFO(this->get_logger(), "Low-power mode %s (loop at %s)", request->data ? "on" : "off",
                 request->data ? "~10 Hz" : "full rate");
+}
+
+void MarsArmNode::busSuspendCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+    if (request->data) {
+        // Suspend: quiesce the bus before the rail is gated. Taking the mutex
+        // waits for any in-flight control/health transaction; setting the flag
+        // under it means the next tick early-returns before touching the bus.
+        std::lock_guard<std::mutex> lock(dynamixel_mutex_);
+        bus_suspended_.store(true);
+        response->success = true;
+        response->message = "Bus polling suspended";
+        RCLCPP_INFO(this->get_logger(), "Dynamixel bus suspended (rail may now be gated)");
+        return;
+    }
+
+    // Resume: the servos power-cycled while gated, so re-apply their full
+    // configuration (torque left off — the wake sequence re-enables it) before
+    // letting the control loop resume.
+    try {
+        std::lock_guard<std::mutex> lock(dynamixel_mutex_);
+        configureServosLocked(/*enable_torque=*/false);
+        response->message = "Bus resumed, servos re-initialized";
+        RCLCPP_INFO(this->get_logger(), "Dynamixel bus resumed, servos re-initialized");
+    } catch (const std::exception& e) {
+        // Clear the flag anyway so the system isn't wedged; torque-on will retry.
+        response->message = std::string("Bus resumed with re-init errors: ") + e.what();
+        RCLCPP_ERROR(this->get_logger(), "Servo re-init on resume failed: %s", e.what());
+    }
+    bus_suspended_.store(false);
+    response->success = true;
 }
 
 }  // namespace mars_arm

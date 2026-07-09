@@ -59,6 +59,10 @@ class Bringup(Node):
                 ("battery.num_cells", 6),
                 ("battery.warning_percentage", 20),
                 ("battery.critical_percentage", 10),
+                # Cut the HSSW rail (arm/head Dynamixels + wheel drivers) during
+                # PCB sleep. Shared with power_manager via a /** setting so the
+                # two agree; power_manager suspends the arm bus in lockstep.
+                ("gate_hssw_on_sleep", True),
                 ("ros_topics.odom_frequency", 30.0),
                 ("ros_topics.battery_state_frequency", 0.2),
             ],
@@ -235,10 +239,11 @@ class Bringup(Node):
 
     def _handle_pcb_power_mode(self, request, response):
         """PCB sleep/wake. Sleep arms wake-on-motion as the physical wake path
-        (it survives HSSW gating, unlike servo-polling boop detection). HSSW
-        gating stays off until the arm node can stop bus polling during a
-        gated sleep and re-init the Dynamixels on wake (rollout stage c)."""
-        self.i2c_manager.set_power_mode(sleep=request.data, wake_on_motion=request.data)
+        (it survives HSSW gating, unlike servo-polling boop detection) and,
+        when gate_hssw_on_sleep is set, cuts the HSSW rail to drop the idle
+        Dynamixels. power_manager suspends the arm bus in lockstep."""
+        gate = bool(self.get_parameter("gate_hssw_on_sleep").value) if request.data else False
+        self.i2c_manager.set_power_mode(sleep=request.data, gate_hssw=gate, wake_on_motion=request.data)
         response.success = True
         response.message = "PCB sleep requested" if request.data else "PCB wake requested"
         return response
