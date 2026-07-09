@@ -17,10 +17,40 @@ experiment: waking is a benign action, and the port is LAN-only.
 
 import json
 import subprocess
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 4022
 DEEP_SLEEP = "/usr/local/sbin/innate-deep-sleep"
+
+# USB hubs whose VBUS we cut during deep sleep (~0.06 A / ~0.7 W at the
+# battery, measured): 1-2.3 carries the lidar board + 3D camera, its parent
+# 1-2 carries the Arducam and the child hub itself. Both are ppps-capable
+# (verified with uhubctl); WiFi/BT and the arm's serial are on root ports,
+# untouched. Child before parent — the child is unreachable once the parent
+# port is off. Hub power state resets on reboot, so this must run at
+# deep-sleep boot (here) and the wake reboot restores it for free.
+USB_HUBS_TO_CUT = ("1-2.3", "1-2")
+
+
+def _cut_usb_peripherals() -> None:
+    """Best-effort: a missing uhubctl or a failed cut must not break waking."""
+    for hub in USB_HUBS_TO_CUT:
+        for attempt in range(3):  # USB may still be enumerating right after boot
+            try:
+                result = subprocess.run(
+                    ["uhubctl", "-l", hub, "-a", "off"], capture_output=True, text=True, timeout=15
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"WARN: uhubctl {hub} failed: {e}")
+                break
+            if result.returncode == 0:
+                print(f"USB hub {hub}: ports powered off")
+                break
+            if attempt < 2:
+                time.sleep(3.0)
+            else:
+                print(f"WARN: uhubctl {hub} off failed: {result.stderr.strip()}")
 
 
 class WakeHandler(BaseHTTPRequestHandler):
@@ -48,4 +78,5 @@ class WakeHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    _cut_usb_peripherals()
     HTTPServer(("0.0.0.0", PORT), WakeHandler).serve_forever()

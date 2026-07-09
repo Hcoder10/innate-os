@@ -28,6 +28,9 @@ else
     echo "Added SLEEPNET (ID=4) to $CONF (backup: $CONF.innate-bak)"
 fi
 
+# uhubctl cuts camera/lidar USB VBUS during deep sleep (~0.7 W measured)
+command -v uhubctl >/dev/null || apt-get install -y uhubctl
+
 install -o root -g root -m 755 "$SRC_DIR/deep-sleep.sh" /usr/local/sbin/innate-deep-sleep
 install -o root -g root -m 755 "$SRC_DIR/pcb-power.py" /usr/local/sbin/innate-deepsleep-pcb-power
 install -o root -g root -m 644 "$SRC_DIR/wake-listener.py" /usr/local/sbin/innate-deepsleep-wake-listener.py

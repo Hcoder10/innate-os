@@ -55,6 +55,33 @@ Two ordering rules make this safe, both handled by `deep-sleep.sh`:
 - **`wake` restores the rail *before* the reboot** — so when `mars_arm` boots
   it finds powered servos to initialize (it inits once at startup, no retry).
 
+## USB peripheral cut (lidar board + cameras)
+
+All four onboard hubs are genuinely ppps-capable (verified: `uhubctl` port-off
+really cuts VBUS). Measured at the battery: hub `1-2.3` (lidar CP2102 board +
+3D camera) is worth **0.05 A**, the Arducam port another 0.01 A — **~0.7 W
+total**. The wake listener cuts both hubs at startup (WiFi/BT and the arm
+serial are on root ports, unaffected). Hub power state resets on reboot, which
+is why the cut runs at deep-sleep *boot* — and why the wake reboot restores
+port power with no code at all. Not applied to light sleep: there the lidar
+node holds the serial port open and cameras must re-enumerate on wake — real
+fragility for 0.7 W.
+
+## Measured results (jetson1, 2026-07-09)
+
+| State | Battery | Jetson VDD_IN |
+|---|---|---|
+| Awake (MAXN_SUPER, stack up) | ~1.5 A / ~18 W | 8.9 W |
+| Light sleep (PR #512) | ~1.13 A | 6.3 W |
+| Deep sleep (SLEEPNET + HSSW rail gated) | **0.75 A / 8.9 W** | 4.1 W |
+| + USB peripherals cut (projected) | **~0.69 A / ~8.2 W** | 4.1 W |
+
+Network wake (`POST :4022/wake`) verified end-to-end: full reboot back to
+MAXN_SUPER with the stack running. Remaining draw is the Jetson floor (~4 W —
+VDD_SOC's EMC-bound 1.2 W included), WiFi (the wake path — must stay), the
+PCB, and DC-DC losses: ~0.5-0.6 A is about the floor for a network-wakeable
+robot without new hardware.
+
 ## Flow
 
 ```
