@@ -387,7 +387,9 @@ def main() -> int:
             ensure_docker_available(command_hint=f"{CLI_SIM} clean")
             cmd_clean(config, assume_yes=args.yes)
         elif args.sim_command == "sh":
-            ensure_docker_available(command_hint=f"{CLI_SIM} sh")
+            # Opens the running container with `docker exec`, so a missing
+            # Compose plugin must not block it.
+            ensure_docker_available(command_hint=f"{CLI_SIM} sh", require_compose=False)
             return open_os_container_shell()
         elif args.sim_command == "status":
             ensure_docker_available(command_hint=f"{CLI_SIM} status")

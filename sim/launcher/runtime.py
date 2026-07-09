@@ -134,7 +134,12 @@ def run_logged_with_heartbeat(
         raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
-def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
+def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: bool = True) -> None:
+    """Check Docker (and, unless opted out, the Compose v2 plugin).
+
+    `require_compose=False` is for commands that only touch an already-running
+    container via plain `docker` (e.g. `sh` -> `docker exec`).
+    """
     if shutil.which("docker") is None:
         raise StackError(
             "Docker is not installed or is not available on PATH.\n"
@@ -166,6 +171,9 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
             f"Start Docker Desktop or your Docker daemon, wait until it finishes starting, then rerun `{command_hint}`.\n"
             f"Install/start guide: {DOCKER_INSTALL_URL}"
         )
+
+    if not require_compose:
+        return
 
     # Compose v2 is a separate CLI plugin. On native-Linux/WSL engine installs
     # `docker` can work while `docker compose` is missing -- the whole startup
