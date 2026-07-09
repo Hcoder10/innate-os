@@ -1,2 +1,4 @@
+.adamo_key
 .venv/
 results.jsonl
+results_robot.jsonl

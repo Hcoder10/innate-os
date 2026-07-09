@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARS teleop transport comparison</title>
+<style>
+:root {
+  --surface: #fcfcfb; --surface-2: #f1f1ee; --border: #e0dfda;
+  --text: #0b0b0b; --text-2: #52514e; --text-3: #8a8983;
+  --blue: #2a78d6; --blue-soft: #9ec5f4; --blue-faint: #cde2fb;
+  --good: #008300; --warn: #eda100; --bad: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --surface-2: #242423; --border: #3a3937;
+    --text: #ffffff; --text-2: #c3c2b7; --text-3: #8a8983;
+    --blue: #3987e5; --blue-soft: #1c5cab; --blue-faint: #184f95;
+    --good: #35a835; --warn: #c98500; --bad: #e66767;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface); color: var(--text);
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 24px 20px 80px; }
+h1 { font-size: 20px; margin: 0 0 2px; }
+h2 { font-size: 15px; margin: 34px 0 10px; }
+.sub { color: var(--text-2); margin: 0 0 18px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(225px,1fr)); gap: 10px; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  cursor: pointer; background: var(--surface-2); transition: border-color .15s; }
+.card:hover { border-color: var(--blue); }
+.card.active { border-color: var(--blue); outline: 2px solid var(--blue); }
+.card.disabled { opacity: .45; cursor: not-allowed; }
+.card b { display: block; margin-bottom: 3px; font-size: 13.5px; }
+.card span { color: var(--text-3); font-size: 12px; }
+.controls { display: flex; gap: 18px; align-items: center; margin: 14px 0 6px; flex-wrap: wrap; }
+.controls label { color: var(--text-2); display: flex; gap: 6px; align-items: center; }
+button { background: var(--blue); border: 0; color: #fff; border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; cursor: pointer; }
+button.secondary { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
+.livebox { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 14px; }
+.status { color: var(--text-2); min-height: 20px; margin-bottom: 10px; }
+.tiles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 16px; min-width: 108px; }
+.tile .v { font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+.tile .v small { font-size: 12px; font-weight: 400; color: var(--text-3); }
+.tile .k { color: var(--text-3); font-size: 11.5px; margin-top: 1px; }
+canvas { width: 100%; height: 140px; display: block; }
+.hist { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.chip { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  font-size: 12px; color: var(--text-2); background: var(--surface-2); }
+.chip b { color: var(--text); }
+.group { margin: 8px 0 22px; }
+.row { display: grid; grid-template-columns: 300px 1fr 150px; gap: 10px;
+  align-items: center; padding: 5px 0; }
+.row .name { font-size: 12.5px; color: var(--text-2); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.bartrack { position: relative; height: 14px; }
+.bar { position: absolute; top: 0; height: 14px; border-radius: 0 4px 4px 0;
+  background: var(--blue); min-width: 2px; }
+.bar.ext { background: var(--blue-faint); }
+.row .val { font-size: 12px; color: var(--text-2); text-align: left; white-space: nowrap; }
+.val b { color: var(--text); }
+.loss-bad { color: var(--bad); font-weight: 600; }
+.axisnote { color: var(--text-3); font-size: 11.5px; margin: 2px 0 0 310px; }
+#tip { position: fixed; pointer-events: none; background: var(--text); color: var(--surface);
+  border-radius: 6px; padding: 6px 9px; font-size: 12px; display: none; z-index: 10; max-width: 320px; }
+.warncard { border-left: 3px solid var(--warn); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 6px; color: var(--text-2); font-size: 12.5px; margin-top: 10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MARS teleop transport comparison</h1>
+  <p class="sub">Live drive over each candidate transport + recorded benchmarks. 200&nbsp;Hz control packets, real robot path.</p>
+
+  <h2>Live drive</h2>
+  <div class="cards" id="cards"></div>
+  <div class="controls">
+    <label><input type="radio" name="src" value="sine" checked> sine (safe demo motion)</label>
+    <label><input type="radio" name="src" value="arm"> leader arm (USB)</label>
+    <label><input type="checkbox" id="livearm"> <b>move the real arm</b> (forward to :9999 — torque on, area clear!)</label>
+    <button class="secondary" id="stopbtn">Stop</button>
+  </div>
+  <div class="livebox">
+    <div class="status" id="status">idle — pick a transport above</div>
+    <div class="tiles">
+      <div class="tile"><div class="v" id="t_p50">–</div><div class="k">RTT p50 (5s)</div></div>
+      <div class="tile"><div class="v" id="t_p95">–</div><div class="k">RTT p95 (5s)</div></div>
+      <div class="tile"><div class="v" id="t_stale">–</div><div class="k">&gt;60 ms</div></div>
+      <div class="tile"><div class="v" id="t_hz">–</div><div class="k">echoes /s</div></div>
+    </div>
+    <canvas id="spark" height="140"></canvas>
+    <div class="hist" id="hist"></div>
+  </div>
+  <div class="warncard">Sessions start in <b>dry-run</b>: packets flow end-to-end and RTT is real, but the robot bridge
+    forwards to a dead port. Tick “move the real arm” to drive the arm for real.</div>
+
+  <h2>Recorded benchmarks (RTT, 200 Hz × 38-byte control packets)</h2>
+  <p class="sub" style="margin-bottom:6px">Bar = median RTT, faint extension → p99. Hover for details.</p>
+  <div id="results"></div>
+</div>
+<div id="tip"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let activeKey = null, history = [];
+
+async function jget(u){ return (await fetch(u)).json(); }
+async function jpost(u,b){ return (await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})})).json(); }
+
+// ---------- transport cards ----------
+async function initCards(){
+  const list = await jget("/api/transports");
+  const box = $("cards");
+  for (const t of list){
+    const d = document.createElement("div");
+    d.className = "card" + (t.enabled ? "" : " disabled");
+    d.innerHTML = `<b>${t.title}</b><span>${t.note}</span>`;
+    if (t.enabled) d.onclick = () => startSession(t.key, d);
+    box.appendChild(d);
+  }
+}
+async function startSession(key, cardEl){
+  snapshotHistory();
+  document.querySelectorAll(".card").forEach(c=>c.classList.remove("active"));
+  cardEl.classList.add("active");
+  activeKey = key;
+  const source = document.querySelector("input[name=src]:checked").value;
+  const live = $("livearm").checked;
+  if (live && !confirm("The REAL ARM will move. Torque on, area clear?")) { $("livearm").checked=false; return; }
+  $("status").textContent = "starting " + key + (live ? "  (LIVE ARM)" : "  (dry-run)") + "…";
+  await jpost("/api/start", {transport:key, live, source});
+}
+$("stopbtn").onclick = async () => {
+  snapshotHistory();
+  await jpost("/api/stop");
+  document.querySelectorAll(".card").forEach(c=>c.classList.remove("active"));
+  activeKey = null;
+};
+function snapshotHistory(){
+  if (lastStats && lastStats.p50 !== undefined && activeKey){
+    history.unshift({key:activeKey, p50:lastStats.p50, p95:lastStats.p95, stale:lastStats.stale_pct});
+    history = history.slice(0,8);
+    $("hist").innerHTML = history.map(h =>
+      `<div class="chip"><b>${h.key}</b> · p50 ${h.p50} ms · p95 ${h.p95} ms · &gt;60ms ${h.stale}%</div>`).join("");
+  }
+}
+
+// ---------- live stats ----------
+let lastStats = null;
+function fmt(v, unit){ return v===undefined ? "–" : `${v}<small> ${unit}</small>`; }
+async function poll(){
+  try {
+    const s = await jget("/api/stats");
+    lastStats = s;
+    $("status").textContent = s.status === "idle" ? "idle — pick a transport above"
+      : `${s.transport || ""} · ${s.status}` + (s.live ? " · LIVE ARM" : " · dry-run")
+        + (s.sent ? ` · ${s.sent} pkts sent` : "");
+    $("t_p50").innerHTML  = fmt(s.p50, "ms");
+    $("t_p95").innerHTML  = fmt(s.p95, "ms");
+    $("t_stale").innerHTML= fmt(s.stale_pct, "%");
+    $("t_hz").innerHTML   = fmt(s.echo_hz, "");
+    drawSpark(s.samples || []);
+  } catch(e){ /* server restarting */ }
+  setTimeout(poll, 500);
+}
+function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function drawSpark(samples){
+  const c = $("spark"), dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth, H = 140;
+  c.width = W*dpr; c.height = H*dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0,0,W,H);
+  const ymax = Math.max(120, ...samples) * 1.15;
+  // 60ms staleness guide
+  const yOf = v => H - 18 - (v/ymax)*(H-30);
+  g.strokeStyle = cssVar("--border"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, yOf(60)); g.lineTo(W, yOf(60)); g.stroke();
+  g.fillStyle = cssVar("--text-3"); g.font = "10.5px sans-serif";
+  g.fillText("60 ms", 4, yOf(60)-4);
+  if (!samples.length) return;
+  g.strokeStyle = cssVar("--blue"); g.lineWidth = 2; g.lineJoin = "round";
+  g.beginPath();
+  samples.forEach((v,i)=>{ const x = i/(Math.max(samples.length-1,1))*W;
+    i ? g.lineTo(x,yOf(v)) : g.moveTo(x,yOf(v)); });
+  g.stroke();
+}
+
+// ---------- recorded results ----------
+const GROUPS = [
+  ["LAN (same WiFi — the baseline feel)", r => r.transport.startsWith("LAN")],
+  ["Cross-network (real internet via GCP us-west1 / Adamo)", r => r.transport.startsWith("WAN") && !r.transport.includes("floor")],
+  ["RTT floors (one leg to the relay VM)", r => r.transport.includes("floor")],
+  ["Degraded network (+40 ms ±8 ms jitter, 1% loss each way)", r => r.transport.startsWith("DEGRADED")],
+];
+async function initResults(){
+  const rows = (await jget("/api/results")).filter(r => r.rtt_ms);
+  const box = $("results"), tip = $("tip");
+  for (const [title, match] of GROUPS){
+    const rs = rows.filter(match).sort((a,b)=>a.rtt_ms.p50-b.rtt_ms.p50);
+    if (!rs.length) continue;
+    const h = document.createElement("h2"); h.textContent = title; box.appendChild(h);
+    const g = document.createElement("div"); g.className = "group"; box.appendChild(g);
+    const max = Math.max(...rs.map(r=>r.rtt_ms.p99));
+    for (const r of rs){
+      const row = document.createElement("div"); row.className = "row";
+      const p50w = Math.max(1.5, r.rtt_ms.p50/max*100), p99w = r.rtt_ms.p99/max*100;
+      const lossBad = r.loss_pct > 5;
+      row.innerHTML =
+        `<div class="name">${r.transport.replace(/^(LAN|WAN|DEGRADED(\(.*?\))?) /, "")}</div>
+         <div class="bartrack">
+           <div class="bar ext" style="width:${p99w}%"></div>
+           <div class="bar" style="width:${p50w}%"></div>
+         </div>
+         <div class="val"><b>${r.rtt_ms.p50}</b> / ${r.rtt_ms.p99} ms
+           ${r.loss_pct!=null ? `· <span class="${lossBad?'loss-bad':''}">${r.loss_pct}% loss</span>`:""}</div>`;
+      row.querySelector(".bartrack").onmousemove = (e)=>{
+        tip.style.display="block"; tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+10)+"px";
+        tip.innerHTML = `<b>${r.transport}</b><br>p50 ${r.rtt_ms.p50} · p90 ${r.rtt_ms.p90} · p99 ${r.rtt_ms.p99} · max ${r.rtt_ms.max} ms<br>`+
+          `loss ${r.loss_pct}% · jitter ${r.jitter_ms} ms · &gt;60ms ${r.stale_pct}%`;
+      };
+      row.querySelector(".bartrack").onmouseleave = ()=> tip.style.display="none";
+      g.appendChild(row);
+    }
+    const note = document.createElement("div"); note.className="axisnote";
+    note.textContent = `scale: 0 – ${Math.round(max)} ms`;
+    g.appendChild(note);
+  }
+}
+initCards(); initResults(); poll();
+</script>
+</body>
+</html>

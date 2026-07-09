@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "teleop-compare",
+      "runtimeExecutable": "tools/teleop_bench/.venv/bin/python",
+      "runtimeArgs": ["tools/teleop_bench/compare_server.py"],
+      "port": 8399
+    }
+  ]
+}
