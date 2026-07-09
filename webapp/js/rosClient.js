@@ -208,12 +208,14 @@ export class RosClient {
    * @param {(msg: any) => void} handler Receives the message payload
    *   (`frame.msg`, falling back to the whole frame for rws variants).
    * @param {number} [throttleRate] Server-side throttle in ms.
+   * @param {string} [type] Message type (e.g. "nav_msgs/msg/Path") -- required
+   *   for topics that may not be published yet, or rws errors on every retry.
    * @returns {() => void} unsubscribe
    */
-  subscribe(topic, handler, throttleRate) {
+  subscribe(topic, handler, throttleRate, type) {
     let sub = this.#subs.get(topic);
     if (!sub) {
-      sub = { handlers: new Set(), throttleRate, retryCount: 0, retryTimer: null };
+      sub = { handlers: new Set(), throttleRate, type, retryCount: 0, retryTimer: null };
       this.#subs.set(topic, sub);
       if (this.#state === "connected") this.#sendSubscribe(topic, sub);
     }
@@ -461,6 +463,7 @@ export class RosClient {
       op: "subscribe",
       topic,
       ...(sub.throttleRate ? { throttle_rate: sub.throttleRate } : {}),
+      ...(sub.type ? { type: sub.type } : {}),
     });
   }
 

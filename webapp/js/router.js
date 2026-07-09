@@ -60,6 +60,14 @@ function routeFor(pathname) {
 
 const shell = initShell(navigate);
 
+// Sim deployments hide robot-data workflows from the rail (shell.js's
+// SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
+// a page whose services have no sim backing.
+const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "debugging", "settings"]);
+const configPromise = fetch("/config.json", { cache: "no-store" })
+  .then((r) => (r.ok ? r.json() : {}))
+  .catch(() => ({}));
+
 /**
  * Tear down the current page and mount `route`. Pages read their own query
  * string (e.g. collect's ?dir=) from location, so history is updated before
@@ -68,6 +76,8 @@ const shell = initShell(navigate);
  */
 async function render(route) {
   const seq = ++navSeq;
+  if ((await configPromise)?.simControls && !SIM_ROUTE_KEYS.has(route.key)) route = ROUTES[0];
+  if (seq !== navSeq) return; // superseded while awaiting config
   // Destroy BEFORE building the next page: the outgoing destroy() stops running
   // skills/drive and frees socket-bound panels, and clears the stage.
   if (currentView) {

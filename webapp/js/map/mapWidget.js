@@ -376,7 +376,7 @@ export function createMap(root, opts = {}) {
 
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
-  const unsubPlan = ros.subscribe(PLAN_TOPIC, onPlan, 250);
+  const unsubPlan = ros.subscribe(PLAN_TOPIC, onPlan, 250, "nav_msgs/msg/Path");
 
   return {
     /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */

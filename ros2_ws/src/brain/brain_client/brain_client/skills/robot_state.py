@@ -14,6 +14,7 @@ import base64
 import json
 import math
 import threading
+import time
 
 import numpy as np
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -179,6 +180,30 @@ class RobotStateProvider:
                     except Exception as e:
                         self._logger.error(f"Error in continuous state update: {e}")
             self._state_update_stop_event.wait(0.02)
+
+    def wait_for_camera_states(self, skill, required_states, timeout_s: float = 3.0) -> None:
+        """Block briefly until required camera frames exist, then re-inject.
+
+        The camera subscription is created at skill start, so the first frame
+        is always one publish period away (more in sim, where cameras render
+        on demand) -- without this, a skill reading its image in the first
+        lines of execute() fails cold and only succeeds on retry. Bounded:
+        on timeout the skill still sees the missing state and handles it."""
+        wanted = []
+        if RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states:
+            wanted.append(lambda: self._camera.last_main_camera_b64)
+        if RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states:
+            wanted.append(lambda: self._camera.last_wrist_camera_b64)
+        if not wanted:
+            return
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if all(get() is not None for get in wanted):
+                break
+            time.sleep(0.05)
+        else:
+            self._logger.warn(f"Camera frames still missing after {timeout_s:.0f}s; the skill sees no image.")
+        self.update_skill_robot_state(skill)
 
     # --- state injection ---
     def update_skill_robot_state(self, skill) -> None:

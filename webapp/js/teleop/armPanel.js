@@ -31,9 +31,11 @@ const REBOOT_TIMEOUT_MS = 20_000;
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {{ onState?: (s: { engaged: boolean, reading: boolean, rate: number }) => void }} [opts]
+ * @param {{ onState?: (s: { engaged: boolean, reading: boolean, rate: number }) => void, hideServices?: boolean }} [opts]
  *   onState reports the leader-arm link on every change — used by the Collect
  *   page to gate recording the way the mobile app gates on arm publishing + rate.
+ *   hideServices drops the reboot/torque row (sim: the services are no-ops and
+ *   /mars/arm/status never publishes).
  * @returns {{ destroy: () => void }}
  */
 export function createArmPanel(parent, rosClient, opts = {}) {
@@ -71,7 +73,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
 
   // Robot-arm services (reboot + torque toggle) — rosbridge calls independent
   // of the leader-arm USB link, so they're available even where WebSerial is not.
-  const armSvc = buildArmServices(rosClient);
+  const armSvc = opts.hideServices ? null : buildArmServices(rosClient);
 
   const serial = navigator.serial;
   if (!serial) {
@@ -99,12 +101,12 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     } else {
       hint.textContent = "Needs Chrome or Edge (WebSerial).";
     }
-    wrap.append(hint, ...extras, divider(), armSvc.el);
+    wrap.append(hint, ...extras, ...(armSvc ? [divider(), armSvc.el] : []));
     // No leader-arm link possible here — tell the gate it will never be ready.
     opts.onState?.({ engaged: false, reading: false, rate: 0 });
     return {
       destroy() {
-        armSvc.destroy();
+        armSvc?.destroy();
         wrap.remove();
       },
     };
@@ -141,7 +143,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   const note = document.createElement("p");
   note.className = "arm-note microlabel";
 
-  wrap.append(status, joints, connectBtn, engageBtn, note, divider(), armSvc.el);
+  wrap.append(status, joints, connectBtn, engageBtn, note, ...(armSvc ? [divider(), armSvc.el] : []));
 
   // ---- state ------------------------------------------------------------
 
@@ -276,7 +278,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
       unsubRos();
       document.removeEventListener("visibilitychange", onVisibility);
       serial.removeEventListener("connect", onSerialConnect);
-      armSvc.destroy();
+      armSvc?.destroy();
       void leader.close();
       wrap.remove();
     },
@@ -425,7 +427,8 @@ function buildArmServices(rosClient) {
       torqueOn = m.is_torque_enabled;
       if (!toggling && !rebooting) render();
     }
-  });
+  }, undefined, "mars_msgs/msg/ArmStatus");
+
   const unsubState = rosClient.onStateChange(render);
   render();
 

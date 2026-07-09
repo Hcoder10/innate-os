@@ -20,8 +20,7 @@ sys.path.insert(0, str(_REPO_ROOT / "ros2_ws/src/mars_bot/mars_bringup"))
 from mars_bringup import config_loader  # noqa: E402
 
 _NAV_CONFIG = _REPO_ROOT / "ros2_ws/src/mars_bot/mars_nav/config"
-_CONTROLLER_YAML = _NAV_CONFIG / "controller.yaml"  # mppi (real robot)
-_SIM_PARAMS_YAML = _NAV_CONFIG / "nav2_navigation_params_sim.yaml"  # dwb (sim)
+_CONTROLLER_YAML = _NAV_CONFIG / "controller.yaml"  # mppi (robot and sim)
 _SMOOTHER_YAML = _NAV_CONFIG / "velocity_smoother.yaml"  # smoother
 
 _LIN = 0.25  # looser than the package reverse magnitude (|vx_min| = 0.2): reverse preserved
@@ -67,15 +66,6 @@ def test_mppi_emits_expected(override):
     }
 
 
-def test_dwb_emits_expected(override):
-    assert config_loader.load_motion_limit_overrides("dwb") == {
-        "FollowPath.max_vel_x": _LIN,
-        "FollowPath.max_speed_xy": _LIN,
-        "FollowPath.max_vel_theta": _ANG,
-        "FollowPath.min_vel_theta": -_ANG,  # symmetric reverse rotation
-    }
-
-
 def test_smoother_overrides_forward_and_theta_preserving_the_rest(override):
     defaults = config_loader.load_yaml_param_defaults(_SMOOTHER_YAML)
     out = config_loader.load_motion_limit_overrides("smoother", defaults=defaults)
@@ -107,13 +97,6 @@ def test_mppi_reverse_not_loosened_above_default(override):
     assert out["InnateFollowPath.vx_min"] == defaults["InnateFollowPath.vx_min"]
 
 
-def test_dwb_reverse_stays_forward_only(tight_override):
-    """The sim controller is forward-only (min_vel_x = 0.0); capping must not enable reverse."""
-    defaults = config_loader.load_yaml_param_defaults(_SIM_PARAMS_YAML)
-    out = config_loader.load_motion_limit_overrides("dwb", defaults=defaults)
-    assert out["FollowPath.min_vel_x"] == 0.0
-
-
 def test_smoother_caps_reverse_when_nav_below_default(tight_override):
     """The smoother's reverse-x limit is reduced to match a low nav cap."""
     defaults = config_loader.load_yaml_param_defaults(_SMOOTHER_YAML)
@@ -131,7 +114,7 @@ def test_reverse_not_capped_without_defaults(tight_override):
 # --- the key guard: emitted names must exist in the real nav2 config -------
 
 
-@pytest.mark.parametrize("schema,config", [("mppi", _CONTROLLER_YAML), ("dwb", _SIM_PARAMS_YAML)])
+@pytest.mark.parametrize("schema,config", [("mppi", _CONTROLLER_YAML)])
 def test_remap_targets_exist_in_config(override, schema, config):
     valid = config_loader.load_yaml_param_defaults(config)
     # Pass defaults so the reverse-linear targets (vx_min / min_vel_x) are emitted and checked too.
@@ -155,6 +138,6 @@ def test_smoother_targets_exist_in_config(override):
 # --- no-override no-op -----------------------------------------------------
 
 
-@pytest.mark.parametrize("schema", ["mppi", "dwb", "smoother"])
+@pytest.mark.parametrize("schema", ["mppi", "smoother"])
 def test_no_override_is_noop(no_override, schema):
     assert config_loader.load_motion_limit_overrides(schema) == {}

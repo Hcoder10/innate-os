@@ -11,7 +11,7 @@
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
-import { WebRtcSession } from "../webrtcSession.js";
+import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
 import { createTelemetry } from "../teleop/telemetry.js";
 import { createCameraSwitch } from "../teleop/cameraSwitch.js";
@@ -27,6 +27,11 @@ const config = await fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));
 
+// Resolved once at import time (the router's dynamic import awaits it):
+// WebRTC for real robots, the Three.js SimSession in simulation (see
+// robotSession.js).
+const { createSession, createStage } = await robotSessionFactory();
+
 /** @param {HTMLElement} stage */
 export function mount(stage) {
   return mountPage(stage, "cockpit agent-cockpit", buildAgentView);
@@ -37,9 +42,9 @@ export function mount(stage) {
  * @returns {{ destroy: () => void }}
  */
 function buildAgentView(root) {
-  const session = new WebRtcSession(ros);
+  const session = createSession();
 
-  const videoStage = createVideoStage(root, session);
+  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
   const telemetryOverlay = overlay("overlay-top-left");
   root.append(telemetryOverlay);
@@ -50,7 +55,7 @@ function buildAgentView(root) {
     videoStage,
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
-    createCameraSwitch(root, session, ros, { alwaysOn: true, storeKey: "innate.cameras.agent" }),
+    createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" }),
     createAgentPanel(root, ros, agentState),
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },

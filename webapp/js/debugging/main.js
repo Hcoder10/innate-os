@@ -29,21 +29,38 @@ function buildView(root) {
   heading.textContent = "Logs";
   head.appendChild(heading);
 
+  // Phones: the sources pane doesn't fit next to the log -- a header button
+  // toggles it as a slide-over drawer (CSS shows the button <= 700px).
+  const sourcesToggle = document.createElement("button");
+  sourcesToggle.type = "button";
+  sourcesToggle.className = "sources-toggle";
+  sourcesToggle.textContent = "Sources";
+  head.appendChild(sourcesToggle);
+
   const grid = document.createElement("div");
   grid.className = "debug-grid";
   const mainEl = document.createElement("div");
   mainEl.className = "debug-main";
   const sideEl = document.createElement("aside");
   sideEl.className = "debug-side";
-  grid.append(mainEl, sideEl);
+  const backdrop = document.createElement("div");
+  backdrop.className = "sources-backdrop";
+  grid.append(mainEl, backdrop, sideEl);
   root.append(head, grid);
+  sourcesToggle.onclick = () => grid.classList.toggle("sources-open");
+  backdrop.onclick = () => grid.classList.remove("sources-open");
 
   // One subscription, fanned out to both the log view and the sources panel.
   const source = createConsoleSource(ros);
   /** @type {ReturnType<typeof createSources>} */
   let sources;
   const log = createLogStream(mainEl, source, { onSourceClick: (rec) => sources.selectFromRecord(rec) });
-  sources = createSources(sideEl, source, ros, { onSelect: (scope) => log.setScope(scope) });
+  sources = createSources(sideEl, source, ros, {
+    onSelect: (scope) => {
+      log.setScope(scope);
+      grid.classList.remove("sources-open"); // picking a source returns to the logs (phone drawer)
+    },
+  });
 
   return {
     destroy() {

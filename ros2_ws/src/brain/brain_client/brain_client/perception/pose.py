@@ -60,7 +60,11 @@ def adjust_local_nav_command(inputs: dict, delta: Delta) -> dict:
 
     orig_x = inputs.get("x", 0.0)
     orig_y = inputs.get("y", 0.0)
-    orig_theta = inputs.get("theta", 0.0)
+    # The agent may speak either `theta` (radians) or the skill schema's
+    # `theta_degrees`; read whichever is present and write back the SAME key,
+    # so the adjusted dict never grows a second, conflicting spelling.
+    use_degrees = "theta" not in inputs and "theta_degrees" in inputs
+    orig_theta = math.radians(inputs["theta_degrees"]) if use_degrees else inputs.get("theta", 0.0)
 
     # Translate by the robot's displacement, then rotate into the new frame.
     translated_x = orig_x - delta_forward
@@ -76,5 +80,8 @@ def adjust_local_nav_command(inputs: dict, delta: Delta) -> dict:
     adjusted = inputs.copy()
     adjusted["x"] = new_x
     adjusted["y"] = new_y
-    adjusted["theta"] = new_theta
+    if use_degrees:
+        adjusted["theta_degrees"] = math.degrees(new_theta)
+    else:
+        adjusted["theta"] = new_theta
     return adjusted

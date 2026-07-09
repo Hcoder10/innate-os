@@ -39,11 +39,10 @@ from brain_client.skills.types import Skill
 
 
 class SkillRepository:
-    def __init__(self, node, *, interface_injector, simulator_mode: bool, retire_instances=None):
+    def __init__(self, node, *, interface_injector, retire_instances=None):
         self._node = node
         self._logger = node.get_logger()
         self._inject = interface_injector
-        self.simulator_mode = simulator_mode
         # Called with the skill instances a reload replaced. The skills server
         # passes a gate that defers disposal while a skill is executing; without
         # a callback they are disposed inline.
@@ -182,7 +181,6 @@ class SkillRepository:
         id_keyed: dict[str, tuple[str, type, Path]] = {}
         for display_name, (cls, src_path) in discovered_skills.items():
             id_keyed[self._compute_skill_id(src_path)] = (display_name, cls, src_path)
-        self._apply_sim_swap(id_keyed)
 
         code_skills: dict[str, tuple[str, Skill]] = {}
         for skill_id, (display_name, skill_class, src_path) in id_keyed.items():
@@ -263,18 +261,6 @@ class SkillRepository:
         for directory in directories:
             self._logger.debug(f"Scanning skills directory: {directory}")
         return directories
-
-    def _apply_sim_swap(self, id_keyed: dict[str, tuple[str, type, Path]]) -> None:
-        """Swap navigate_to_position_sim -> navigate_to_position in sim mode, or remove it."""
-        sim_id = "innate-os/navigate_to_position_sim"
-        real_id = "innate-os/navigate_to_position"
-        if self.simulator_mode and sim_id in id_keyed:
-            self._logger.info("Simulator mode: using NavigateToPositionSim for navigate_to_position")
-            _name, cls, src = id_keyed.pop(sim_id)
-            id_keyed[real_id] = ("navigate_to_position", cls, src)
-        elif sim_id in id_keyed:
-            self._logger.info("Real robot mode: removing sim navigation skill")
-            del id_keyed[sim_id]
 
     def _compute_skill_id(self, path: str | Path) -> str:
         path_str = str(Path(path))
@@ -869,6 +855,8 @@ class SkillRepository:
         for param_name, param in signature.parameters.items():
             if param_name == "self":
                 continue
+            if param.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL):
+                continue  # *args/**kwargs are compat plumbing, not inputs
             param_type = "any"
             enum_values = None
             try:

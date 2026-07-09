@@ -88,6 +88,13 @@ function isTypingContext() {
  * @param {(path: string) => void} navigate Router navigation, for key shortcuts.
  * @returns {{ setActive: (key: string) => void }}
  */
+// iOS ignores user-scalable=no; Safari fires proprietary gesture events for
+// pinch -- cancel them so the app UI never zooms (the 3D canvas keeps its own
+// pinch-to-dolly via pointer events).
+document.addEventListener("gesturestart", (e) => {
+  if (!(e.target instanceof HTMLCanvasElement)) e.preventDefault();
+});
+
 export function initShell(navigate) {
   // Buttons fire on press-down instead of release, app-wide. Installed here
   // because the router builds the shell exactly once per page load. Idempotent.

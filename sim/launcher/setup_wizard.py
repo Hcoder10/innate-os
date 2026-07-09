@@ -21,6 +21,11 @@ from config import (
     warn,
 )
 from dashboard import BOLD, CYAN, DIM, GREEN, NC, YELLOW
+from runtime import (
+    cloud_agent_checkout_pinned,
+    cloud_agent_git_status,
+    cloud_agent_lock,
+)
 
 INNATE_SERVICE_KEY = "INNATE_SERVICE_KEY"
 
@@ -263,28 +268,67 @@ def _configure_service_key(config: dict[str, object]) -> None:
 
 
 def ensure_cloud_agent_repo(config: dict[str, object]) -> None:
-    """Clone the cloud-agent source next to the repo if it isn't there yet."""
+    """Make the local cloud-agent source match sim/cloud-agent.lock -- the
+    revision this innate-os is tested against. A fresh clone lands on the
+    pin; an existing checkout on any other commit gets a warning and an
+    offer to align (never forced: forks and deliberate experiments answer
+    "no" and are left alone)."""
+    lock = cloud_agent_lock(config)
+
+    path: Path | None = None
     existing = config.get("cloud_repo")
     if existing and Path(str(existing)).exists():
-        success(f"Cloud-agent source present at {existing}.")
+        path = Path(str(existing))
+    elif (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).exists():
+        path = WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME
+
+    if path is not None:
+        status = cloud_agent_git_status(path)
+        if status is None or lock is None:
+            success(f"Cloud-agent source present at {path}.")
+            return
+        if not status["official"]:
+            log(f"Using custom cloud-agent source at {path} ({status['short']}).")
+            return
+        if status["sha"] == lock["commit"]:
+            success(f"Cloud-agent source present at {path} (tested revision {status['short']}).")
+            return
+        warn(
+            f"Cloud-agent at {path} is at {status['short']}; this innate-os is tested "
+            f"against {lock['commit'][:9]}. Other revisions may crash the agent."
+        )
+        if status["dirty"]:
+            warn(
+                f"Checkout has local changes -- align manually: git -C {path} stash && git -C {path} checkout {lock['commit'][:9]}"
+            )
+            return
+        if is_interactive_terminal() and _prompt_yes_no("Check out the tested revision now?", default=True):
+            if cloud_agent_checkout_pinned(path, lock["commit"]):
+                success(f"Cloud-agent aligned to {lock['commit'][:9]}.")
+            else:
+                warn(
+                    f"Could not check out {lock['commit'][:9]} -- align manually with git -C {path} fetch && git -C {path} checkout {lock['commit'][:9]}."
+                )
+        else:
+            warn("Keeping the current revision.")
         return
+
     target = WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME
-    if target.exists():
-        success(f"Cloud-agent source present at {target}.")
-        return
     log(f"Cloning innate-cloud-agent into {target}...")
     result = subprocess.run(
         ["git", "clone", CLOUD_AGENT_GIT_URL, str(target)],
         stdin=subprocess.DEVNULL,
         check=False,
     )
-    if result.returncode == 0:
-        success(f"Cloned innate-cloud-agent to {target}.")
-    else:
+    if result.returncode != 0:
         warn(
             f"Could not clone {CLOUD_AGENT_GIT_URL}. Clone it manually to {target} "
             "(needs GitHub SSH access to innate-inc)."
         )
+        return
+    if lock is not None and not cloud_agent_checkout_pinned(target, lock["commit"]):
+        warn(f"Cloned, but could not check out the tested revision {lock['commit'][:9]}; using the default branch.")
+    success(f"Cloned innate-cloud-agent to {target}" + (f" (tested revision {lock['commit'][:9]})." if lock else "."))
 
 
 def _disable_keys(config: dict[str, object], keys: list[str]) -> None:

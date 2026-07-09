@@ -15,11 +15,22 @@ const TTS_AUDIO_TOPIC = "/tts/audio";
 
 let started = false;
 
+// One speaker across tabs: rosbridge fans /tts/audio out to every client, so
+// N open tabs played N overlapping copies. A held Web Lock elects exactly one
+// playing tab; when that tab closes, the browser passes the lock (and the
+// voice) to the next one. Browsers without Web Locks keep the old behavior.
+let speaker = !("locks" in navigator);
+navigator.locks?.request("innate-tts-speaker", () => {
+  speaker = true;
+  return new Promise(() => {}); // hold until this tab closes
+});
+
 export function initTtsAudio() {
   if (started) return;
   started = true;
 
   ros.subscribe(TTS_AUDIO_TOPIC, (msg) => {
+    if (!speaker) return; // another tab is the elected speaker
     const b64 = msg?.data;
     if (typeof b64 !== "string" || !b64) return;
     // Defensive: if a clip does arrive while the operator has the robot mic

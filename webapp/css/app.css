@@ -2,6 +2,13 @@
    Instrument-panel restraint: hairlines, typography, and a single signal
    amber doing all the work. No gradients-as-decoration, no drop shadows. */
 
+html,
+body {
+  /* App UI, not a document: no pinch/double-tap zoom (iOS ignores the
+     viewport flag; canvas elements set their own touch-action). */
+  touch-action: pan-x pan-y;
+}
+
 :root {
   --bg: #0a0a0c;
   --panel: #111114;
@@ -1321,8 +1328,13 @@ button {
 }
 
 .tts-hint {
+  font: inherit;
   font-size: 11px;
   color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 4px 8px;
+  cursor: pointer;
 }
 
 .tts-bar.sent .tts-hint {
@@ -1568,6 +1580,92 @@ button {
   border-left: 1px solid var(--hairline);
   overflow-y: auto;
   min-height: 0;
+}
+
+/* Phones: sources pane as a toggleable slide-over (button lives in .page-head). */
+.sources-toggle {
+  display: none;
+  margin-left: auto;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.sources-backdrop {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .debug-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sources-toggle {
+    display: inline-flex;
+  }
+
+  .debug-side {
+    display: none;
+  }
+
+  .debug-grid.sources-open .debug-side {
+    display: block;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60; /* above the rail (40) */
+    width: min(85vw, 360px);
+    background: var(--bg);
+    box-shadow: -16px 0 48px rgb(0 0 0 / 55%);
+  }
+
+  /* Tap anywhere off the drawer to close it. */
+  .debug-grid.sources-open .sources-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgb(0 0 0 / 45%);
+  }
+
+  /* Fixed columns leave the message a few characters wide on a phone:
+     meta on one line, the message full-width beneath it. */
+  .debug-cols {
+    display: none;
+  }
+
+  .debug-row {
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      "time level source"
+      "msg msg msg";
+    align-items: center;
+    row-gap: 0;
+    column-gap: 10px;
+    padding: 3px 16px;
+  }
+
+  .debug-row .col-time {
+    grid-area: time;
+  }
+
+  .debug-row .col-level {
+    grid-area: level;
+  }
+
+  .debug-row .col-source {
+    grid-area: source;
+  }
+
+  .debug-row .col-msg {
+    grid-area: msg;
+  }
 }
 
 /* "LOGS" headline above the toolbar */
@@ -4691,16 +4789,27 @@ button {
   opacity: 0.6;
 }
 
+/* Two states by construction: collapsed shows only the latest thought (the
+   list's last item, clamped), open shows them all. One element owns the
+   content, so no class combination can hide everything. */
 .chat-thoughts-list {
-  max-height: 0;
+  margin-top: 6px;
+}
+
+.chat-thoughts:not(.open) .chat-thought-item:not(:last-child) {
+  display: none;
+}
+
+.chat-thoughts:not(.open) .chat-thought-item:last-child {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  transition: max-height 0.25s ease, margin-top 0.25s ease;
 }
 
 .chat-thoughts.open .chat-thoughts-list {
   max-height: 360px;
   overflow-y: auto;
-  margin-top: 6px;
 }
 
 .chat-thought-item {
@@ -4922,6 +5031,54 @@ button {
   gap: 8px;
 }
 
+/* Expand/collapse chevron for the phone bottom sheet; hidden on desktop. */
+.agent-expand {
+  display: none;
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  font: inherit;
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  /* The 360px right dock doesn't fit a phone: dock as a bottom sheet
+     instead, expandable to full height via the header chevron. */
+  .agent-panel {
+    top: auto;
+    left: 14px;
+    right: 14px;
+    width: auto;
+    height: 44vh;
+  }
+
+  .agent-panel.expanded {
+    top: 14px;
+    height: auto;
+  }
+
+  .agent-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* No right dock to clear on phones. */
+  .agent-cockpit .cam-strip {
+    right: 14px;
+  }
+
+  /* The agent bottom sheet owns the lower half; the sim debug chips would
+     float over it (they live on Teleop/Collect anyway). */
+  .agent-cockpit .sim-debug-stack {
+    display: none !important; /* the stage sets display inline */
+  }
+}
+
 .agent-title {
   flex: 1;
   font-size: 11px;
@@ -5080,9 +5237,6 @@ button {
    to a near-white. Scoped to .agent-panel so teleop's chat is untouched. */
 .agent-panel .chat-thought-item,
 .agent-panel .chat-thoughts-status,
-.agent-panel .agent-thought-preview {
-  color: rgb(231 231 234 / 82%);
-}
 
 .agent-panel .chat-thoughts-label,
 .agent-panel .agent-stream-label,
@@ -5104,20 +5258,7 @@ button {
 }
 
 /* Latest thought, shown while the Thoughts block is collapsed (its default). */
-.agent-thought-preview {
-  margin-top: 6px;
-  padding: 0 2px;
-  font-size: 12px;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
-.chat-thoughts.open .agent-thought-preview {
-  display: none;
-}
 
 .agent-stream {
   flex: 1 1 auto;
@@ -5303,28 +5444,67 @@ button {
     display: none;
   }
 
-  /* Dock the arm panel top-left (clear of the centered joystick), below the
-     telemetry strip. */
+  /* Phones can't drive the leader arm (no WebSerial) -- drop the panel. */
   .overlay-arm {
-    inset: 70px auto auto 14px; /* top right bottom left */
-  }
-
-  .arm-panel {
-    width: 150px;
-  }
-
-  /* Phones can't drive the leader arm (no WebSerial), so the panel collapses to
-     a single tap-to-open header by default, freeing the feed. */
-  .arm-header {
-    display: flex;
-  }
-
-  .arm-panel.collapsed {
-    width: auto;
-  }
-
-  .arm-panel.collapsed > *:not(.arm-header) {
     display: none;
+  }
+
+  /* The Robot/Link/Agent telemetry card costs too much of a small feed. */
+  .overlay-top-left {
+    display: none;
+  }
+
+  /* Speak bar above the Skills launcher instead of side by side: the bar
+     spans the width, the Skills pill centers beneath it. */
+  .overlay-tts {
+    left: 14px;
+    right: 14px;
+    transform: none;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .overlay-tts .tts-bar {
+    align-self: center;
+    width: min(440px, 100%);
+  }
+
+  /* Full-size joystick swallows half a phone screen. */
+  .overlay-joystick svg {
+    width: 150px;
+    height: 150px;
+  }
+
+  /* The panel already shows the running state; the chip collides with it. */
+  .agent-active-chip {
+    display: none;
+  }
+
+  .skills-menu-btn {
+    min-width: 0;
+  }
+
+  /* Camera tiles shrink to share the width (3 tiles + gaps + insets), and
+     no page keeps a top-right toggle on phones -- use the full width. */
+  .cam-strip,
+  .cockpit:not(.agent-cockpit) .cam-strip {
+    --pip-w: min(120px, 24vw);
+    --pip-h: min(120px, 24vw);
+    right: 14px;
+  }
+
+  /* The joystick sits above the stacked speak bar + Skills launcher. */
+  .overlay-joystick {
+    bottom: 150px;
+  }
+
+  /* Sim debug chips: the bottom belongs to the joystick/sheet on phones --
+     tuck them under the camera tiles (inline styles carry the desktop
+     position, hence the overrides). */
+  .sim-debug-stack {
+    bottom: auto !important;
+    top: calc(24px + min(120px, 24vw)) !important;
+    left: 14px !important;
   }
 }
 
