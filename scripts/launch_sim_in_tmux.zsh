@@ -5,8 +5,13 @@
 # Usage: ./scripts/launch-sim-in-tmux.zsh [--detach] [--brain-websocket-uri URI] [--brain-client-version VERSION]
 
 ATTACH=1
-BRAIN_WEBSOCKET_URI=""
-BRAIN_CLIENT_VERSION=""
+# Precedence: CLI flag > inherited env (compose bakes it) > derived from .env
+# below. An argless in-container `innate restart` must keep the brain wiring
+# rather than fall back to hosted -- and .env is the always-mounted source of
+# truth, so deriving from it is robust even on containers created before the
+# env was baked in.
+BRAIN_WEBSOCKET_URI="${BRAIN_WEBSOCKET_URI:-}"
+BRAIN_CLIENT_VERSION="${BRAIN_CLIENT_VERSION:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --detach)
@@ -43,6 +48,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Derive the brain backend from the mounted .env when nothing set it (mirrors
+# the launcher's resolve_brain_websocket_uri): a local Gemini brain -- key set,
+# no hosted service key -- talks to the cloud-agent container; hosted/none
+# leave it empty so brain_client uses its own default.
+if [[ -z "$BRAIN_WEBSOCKET_URI" ]]; then
+  _env_file="${INNATE_OS_ROOT:-$HOME/innate-os}/.env"
+  if [[ -f "$_env_file" ]] \
+    && grep -qE '^GEMINI_API_KEY=.+' "$_env_file" \
+    && ! grep -qE '^INNATE_SERVICE_KEY=.+' "$_env_file"; then
+    BRAIN_WEBSOCKET_URI="ws://cloud-agent:8765"
+  fi
+fi
 
 SESSION_NAME="${INNATE_SIM_TMUX_SESSION:-innate}"
 # Use braces in tmux targets so zsh does not interpret ":foo" as a parameter modifier.

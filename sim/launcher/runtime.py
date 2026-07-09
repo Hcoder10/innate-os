@@ -332,6 +332,11 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         if os_image:
             compose_values["INNATE_OS_IMAGE"] = os_image
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
+        # Bake the brain wiring into the CONTAINER env, not just the tmux
+        # launch args: an in-container `innate restart` relaunches the session
+        # argless and must inherit the same backend (compose's own default
+        # only fires when COMPOSE_PROFILES is set, which it isn't here).
+        compose_values["BRAIN_WEBSOCKET_URI"] = str(config.get("brain_websocket_uri", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
         run_logged_with_heartbeat(

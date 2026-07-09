@@ -476,6 +476,10 @@ class SkillsActionServer(Node):
             # skill never mistakes a stale value for fresh sensor data
             skill.clear_robot_state()
             self.robot_state.update_skill_robot_state(skill)
+            if needs_camera:
+                # The camera subscription above is brand new; wait (bounded)
+                # for first frames so execute() doesn't race them and fail.
+                self.robot_state.wait_for_camera_states(skill, required_states)
             if required_states:
                 self.robot_state.begin_continuous_updates(skill)
                 self.get_logger().info(f"Started continuous state updates for '{skill_type}' at 50Hz")
