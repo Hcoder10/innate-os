@@ -14,8 +14,19 @@
 
 set -u
 
-SLEEP_MAX_FREQ=422400
+# Cores idle at the 115 MHz floor either way; the max only caps bursts. 268 MHz
+# keeps zenoh/rosbridge/SSH usable — don't go to 115: wake itself starts at
+# these clocks.
+SLEEP_MAX_FREQ=268800
 WAKE_MIN_FREQ=729600  # matches every nvpmodel profile's min
+
+# EMC (memory) cap — VDD_SOC (~2.6 W) tracks EMC and is the largest fixed
+# Jetson draw during sleep. 665.6 MHz is a standard Orin OPP; nothing needs
+# bandwidth while asleep. The wake value matches MAXN_SUPER, and the wake
+# sequence runs nvpmodel -m 2 right after, which rewrites the cap anyway.
+EMC_CAP=/sys/kernel/nvpmodel_clk_cap/emc
+SLEEP_EMC_FREQ=665600000
+WAKE_EMC_FREQ=3199000000
 
 case "${1:-}" in
     sleep)
@@ -27,8 +38,10 @@ case "${1:-}" in
             cat "$policy/cpuinfo_min_freq" > "$policy/scaling_min_freq"
             echo "$SLEEP_MAX_FREQ" > "$policy/scaling_max_freq"
         done
+        [ -w "$EMC_CAP" ] && echo "$SLEEP_EMC_FREQ" > "$EMC_CAP"
         ;;
     wake)
+        [ -w "$EMC_CAP" ] && echo "$WAKE_EMC_FREQ" > "$EMC_CAP"
         for cpu in 4 5; do
             echo 1 > "/sys/devices/system/cpu/cpu$cpu/online"
         done
