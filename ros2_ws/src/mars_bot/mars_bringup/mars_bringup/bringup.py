@@ -10,7 +10,8 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import BatteryState
-from std_srvs.srv import Trigger
+from std_msgs.msg import Bool
+from std_srvs.srv import SetBool, Trigger
 from tf2_ros import TransformBroadcaster
 
 from mars_bringup.battery import BatteryManager
@@ -119,6 +120,12 @@ class Bringup(Node):
         # Add the calibrate service
         self.calibrate_srv = self.create_service(Trigger, "/calibrate", self._handle_calibrate_request)
 
+        # PCB sleep/wake (called by power_manager during its sleep/wake
+        # sequences), plus fast surfacing of the MCU's motion-wake latch.
+        self.pcb_power_srv = self.create_service(SetBool, "/pcb/power_mode", self._handle_pcb_power_mode)
+        self.motion_wake_pub = self.create_publisher(Bool, "/pcb/motion_wake_pending", 10)
+        self.power_poll_timer = self.create_timer(2.0, self._poll_pcb_power)
+
         # Create odometry publisher
         self.odom_pub = self.create_publisher(
             Odometry,
@@ -225,6 +232,26 @@ class Bringup(Node):
                 self.get_logger().debug(f"Calibration response: {response.success}, {response.message}")
 
         return response
+
+    def _handle_pcb_power_mode(self, request, response):
+        """PCB sleep/wake. Sleep arms wake-on-motion as the physical wake path
+        (it survives HSSW gating, unlike servo-polling boop detection). HSSW
+        gating stays off until the arm node can stop bus polling during a
+        gated sleep and re-init the Dynamixels on wake (rollout stage c)."""
+        self.i2c_manager.set_power_mode(sleep=request.data, wake_on_motion=request.data)
+        response.success = True
+        response.message = "PCB sleep requested" if request.data else "PCB wake requested"
+        return response
+
+    def _poll_pcb_power(self):
+        """While the PCB sleeps, poll status at 2 s (vs the routine 60 s health
+        cadence) so a physical-disturbance wake surfaces promptly, and publish
+        the MCU's motion-wake latch for power_manager."""
+        if self.i2c_manager.current_power_mode != 1:
+            return
+        self.i2c_manager.request_health()
+        if self.i2c_manager.motion_wake_pending:
+            self.motion_wake_pub.publish(Bool(data=True))
 
     def _publish_odometry(self):
         """Publish odometry data, transform, and battery state from I2C readings."""

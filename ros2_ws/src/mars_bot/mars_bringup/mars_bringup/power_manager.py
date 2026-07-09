@@ -32,7 +32,7 @@ from mars_bringup.config_loader import innate_os_root
 from geometry_msgs.msg import Vector3
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
-from std_msgs.msg import Int32, String
+from std_msgs.msg import Bool, Int32, String
 from std_srvs.srv import Empty, SetBool, Trigger
 
 STATE_AWAKE = "awake"
@@ -112,6 +112,7 @@ class PowerManager(Node):
         self._arm_torque_on_client = self.create_client(Trigger, "/mars/arm/torque_on")
         self._head_servo_client = self.create_client(SetBool, "/mars/head/enable_servo")
         self._arm_low_power_client = self.create_client(SetBool, "/mars/arm/low_power_mode")
+        self._pcb_power_client = self.create_client(SetBool, "/pcb/power_mode")
 
         # Activity signals
         self.create_subscription(Vector3, "/joystick", self._on_joystick, 10)
@@ -121,6 +122,7 @@ class PowerManager(Node):
         self.create_subscription(String, "/nav/current_mode", self._on_nav_mode, 10)
         self.create_subscription(String, "/brain/agent_status", self._on_agent_status, latched)
         self.create_subscription(String, "/mars/head/current_position", self._on_head_position, 10)
+        self.create_subscription(Bool, "/pcb/motion_wake_pending", self._on_pcb_motion_wake, 10)
 
         self.create_timer(1.0, self._publish_state)
         self.create_timer(10.0, self._idle_tick)
@@ -303,6 +305,12 @@ class PowerManager(Node):
         else:
             self._boop_hits = 0
 
+    def _on_pcb_motion_wake(self, msg: Bool) -> None:
+        # The PCB's IMU latched a physical disturbance (tap/nudge/pickup)
+        # during sleep — the wake path that survives HSSW rail gating.
+        if msg.data:
+            self._wake_if_sleeping("PCB motion wake")
+
     def _wake_if_sleeping(self, reason: str) -> None:
         if self.state == STATE_SLEEPING:
             self._start_transition(
@@ -345,6 +353,11 @@ class PowerManager(Node):
         # (must run after nvpmodel, which rewrites the cpufreq limits).
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "sleep"])
 
+        # PCB sleep last, once the mechanics have settled: torque-off slump
+        # and the head droop would otherwise latch a phantom motion event the
+        # moment wake-on-motion arms. (Soft sleep — HSSW gating comes later.)
+        self._call(self._pcb_power_client, SetBool.Request(data=True), "PCB sleep")
+
         # Arm the boop detector: give the torque-less head a moment to settle
         # before the rolling window starts filling.
         self._head_history.clear()
@@ -360,6 +373,9 @@ class PowerManager(Node):
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "wake"])
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
+        # PCB wake early: once HSSW gating lands, the rail needs its ~550 ms
+        # re-init done before any Dynamixel traffic (torque-on below).
+        self._call(self._pcb_power_client, SetBool.Request(data=False), "PCB wake")
         self._start_sleep_panes()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
         self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")

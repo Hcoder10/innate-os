@@ -25,11 +25,18 @@ class I2CManager:
     CMD_MOVE = 0x01
     CMD_STATUS = 0x03
     CMD_CALIBRATE = 0x04
+    CMD_POWER = 0x06
 
     # Response definitions (MCU → Jetson)
     RESP_MOVE = 0x81  # Position feedback
     RESP_STATUS = 0x83  # Health data
     RESP_CALIBRATE = 0x84  # Calibration status
+    RESP_POWER = 0x86  # Power mode state
+
+    # CMD_POWER sleep flags (firmware README §4.5)
+    POWER_FLAG_GATE_HSSW = 0x01  # hold the arm/head/wheel-driver rail off
+    POWER_FLAG_WAKE_ON_MOTION = 0x02  # IMU watches for tap/nudge/pickup
+    POWER_FLAG_MOTION_AUTO_WAKE = 0x04  # MCU self-wakes on motion (needs bit 1)
 
     def __init__(
         self,
@@ -67,6 +74,8 @@ class I2CManager:
         self.last_speed_command_time = 0.0
         self.status_requested = False
         self.calibration_requested = False
+        self.power_mode_requested = False
+        self._pending_power_payload = bytes(6)
 
         # -------------------------
         # Stored responses
@@ -77,6 +86,9 @@ class I2CManager:
         self.motor_temperature = 0.0
         self.fault_code = 0
         self.calibration_status = None
+        self.current_power_mode = 0  # as reported by the MCU: 0 = active, 1 = sleep
+        self.power_flags = 0  # effective sleep flags (MCU clears unsupported bits)
+        self.motion_wake_pending = False  # MCU motion latch; cleared by every power command
 
         # Communication thread control
         self.running = True
@@ -203,12 +215,18 @@ class I2CManager:
             if self.debug:
                 self.logger.debug(f"Position Update - X: {x / 100.0}, Y: {y / 100.0}, θ: {theta_rad} rad")
         elif resp_id == self.RESP_STATUS:
-            # Health status: battery voltage, motor temp, fault code
+            # Health status: battery voltage, motor temp, fault code, power/wake flags
             try:
-                battery, temp, fault, _ = struct.unpack(">HHBB", bytes(data))
+                battery, temp, fault, power_wake_flags = struct.unpack(">HHBB", bytes(data))
                 self.battery_voltage = battery / 100.0  # Convert to volts
                 self.motor_temperature = temp  # Temperature in Celsius
                 self.fault_code = fault
+                # Power/wake flags bitfield: bit 0 = sleep mode active,
+                # bit 1 = motion wake pending (physical disturbance during sleep).
+                # The MCU latch is authoritative (cleared only by a power
+                # command), so mirror it rather than OR-ing.
+                self.current_power_mode = power_wake_flags & 0x01
+                self.motion_wake_pending = bool(power_wake_flags & 0x02)
                 if self.debug:
                     self.logger.debug(
                         f"Status - Battery: {self.battery_voltage:.2f}V, Motor Temp: {temp}°C, Fault: {fault}"
@@ -227,6 +245,18 @@ class I2CManager:
                 self.logger.info(f"Calibration Status: {status_str} ({status})")
             except Exception as e:
                 self.logger.error(f"Failed to unpack calibration response: {e}")
+        elif resp_id == self.RESP_POWER:
+            # Power mode state (post-command): mode, effective flags,
+            # wheel-driver reinit marker, motion wake latch.
+            self.current_power_mode = data[0]
+            self.power_flags = data[1]
+            self.motion_wake_pending = bool(data[3])
+            if data[2]:
+                self.logger.info("MCU re-initialized wheel drivers on wake")
+            self.logger.info(
+                f"MCU power mode: {'sleep' if data[0] else 'active'} "
+                f"(flags=0x{data[1]:02X}, motion pending={bool(data[3])})"
+            )
         else:
             self.logger.warning(f"Unknown Response ID: {resp_id}")
 
@@ -275,6 +305,16 @@ class I2CManager:
             self.calibration_requested = False  # Clear after sending
         return success
 
+    def _send_power_command(self):
+        """Send power mode command if pending"""
+        if not self.power_mode_requested:
+            return False
+
+        success = self._send_command(self.CMD_POWER, self._pending_power_payload)
+        if success:
+            self.power_mode_requested = False  # Clear after sending
+        return success
+
     def _communication_loop(self):
         """Main communication loop running at fixed frequency"""
         while self.running:
@@ -291,6 +331,10 @@ class I2CManager:
 
             if self.calibration_requested:
                 self._send_calibrate_command()
+                self._read_response()
+
+            if self.power_mode_requested:
+                self._send_power_command()
                 self._read_response()
 
             # Maintain fixed update rate
@@ -330,6 +374,35 @@ class I2CManager:
         Triggers a calibration command.
         """
         self.calibration_requested = True
+
+    def set_power_mode(
+        self,
+        sleep: bool,
+        gate_hssw: bool = False,
+        wake_on_motion: bool = False,
+        auto_wake: bool = False,
+        motion_threshold_mg: int = 0,
+    ):
+        """
+        Queues a power mode command (firmware README §4.5).
+          sleep: True to enter sleep, False to wake to active mode.
+          gate_hssw: hold the HSSW rail (arm/head Dynamixels + wheel drivers)
+            off during sleep. The Dynamixel bus is dead while gated.
+          wake_on_motion: keep the IMU accelerometer watching for a
+            tap/nudge/pickup during sleep (survives HSSW gating).
+          auto_wake: MCU self-wakes on motion instead of only latching the
+            event (firmware ignores it without wake_on_motion).
+          motion_threshold_mg: detection threshold (4–1020 mg, coded in 4 mg
+            steps); 0 = firmware default (120 mg).
+        """
+        flags = 0
+        if sleep:
+            flags |= self.POWER_FLAG_GATE_HSSW if gate_hssw else 0
+            flags |= self.POWER_FLAG_WAKE_ON_MOTION if wake_on_motion else 0
+            flags |= self.POWER_FLAG_MOTION_AUTO_WAKE if auto_wake else 0
+        threshold_code = 0 if motion_threshold_mg <= 0 else max(1, min(255, round(motion_threshold_mg / 4)))
+        self._pending_power_payload = bytes([0x01 if sleep else 0x00, flags, threshold_code, 0x00, 0x00, 0x00])
+        self.power_mode_requested = True
 
     # --- Destructor ---
     def __del__(self):
