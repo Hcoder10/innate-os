@@ -98,11 +98,16 @@ sustains control without starvation.
 
 ## Degraded-network runs
 
-`netem_scoped.sh` impairs **only traffic toward one peer IP** on the robot
-(SSH/ROS unaffected):
+`netem_scoped.sh` impairs **only traffic toward one peer IP** (other traffic
+untouched). Note: **MARS's Tegra kernel (5.15.148-tegra) ships without
+sch_netem/sch_prio, so it cannot run on the robot.** Run it on the GCP relay
+VM instead — impairing the relay's egress on both legs is the right place to
+emulate a bad WAN for every relayed transport:
 
 ```bash
-sudo ./netem_scoped.sh apply <operator-or-vm-ip> 40 8 1   # 40ms +/-8ms, 1% loss
+# on the VM (standard Ubuntu kernel):
+sudo ./netem_scoped.sh apply <robot-public-ip> 40 8 1   # 40ms +/-8ms, 1% loss
+sudo ./netem_scoped.sh apply <operator-public-ip> 40 8 1 
 sudo ./netem_scoped.sh clear
 ```
 
