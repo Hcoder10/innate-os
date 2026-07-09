@@ -39,12 +39,21 @@ STATE_GOING_TO_SLEEP = "going_to_sleep"
 STATE_SLEEPING = "sleeping"
 STATE_WAKING = "waking"
 
-# tmux layout from scripts/launch_ros_in_tmux.sh — the camera container runs in
-# the first pane of this window, and its shell keeps the sourced ROS env, so we
-# can Ctrl-C the launch to sleep and re-send the command to wake.
+# tmux layout from scripts/launch_ros_in_tmux.sh. These panes run the camera
+# container and heavy nodes with no role in sleeping or waking; their shells
+# keep the sourced ROS env, so we can Ctrl-C the launch to sleep and re-send
+# the command to wake. Deliberately kept alive: app-bringup (rosbridge + this
+# node + PCB/battery i2c), the arm node (head-boop source), mode_manager (nav
+# restore service), input_manager, and console/webapp (the app surface).
 TMUX_SESSION = "ros_nodes"
-CAMERA_WINDOW = "cam-leader"
-CAMERA_LAUNCH_CMD = "ros2 launch mars_cam camera_composable.launch.py"
+# (window, fallback pane index, process match, relaunch command)
+_SLEEP_PANES = [
+    ("cam-leader", 0, "camera_composable", "ros2 launch mars_cam camera_composable.launch.py"),
+    ("brain-nav", 0, "brain_client.launch.py", "ros2 launch brain_client brain_client.launch.py"),
+    ("behaviors-inputs", 0, "behavior.launch.py", "ros2 launch manipulation behavior.launch.py"),
+    ("arm-recorder", 1, "recorder.launch.py", "ros2 launch manipulation recorder.launch.py"),
+    ("ik-logger", 0, "ik.launch.py", "ros2 launch mars_arm ik.launch.py"),
+]
 
 # Terminal statuses from skills_server._publish_skill_status; anything else
 # (i.e. "running") means a skill is in flight.
@@ -76,7 +85,7 @@ class PowerManager(Node):
         self._nav_mode_before_sleep = "none"
         self._brain_active = False  # live value from /brain/agent_status
         self._brain_active_before_sleep = False
-        self._camera_pane_id: str | None = None
+        self._pane_ids: dict[str, str] = {}  # process match -> tmux pane id, saved at stop
 
         # Head-boop detection (armed while sleeping)
         self._head_baseline_deg: float | None = None
@@ -322,7 +331,7 @@ class PowerManager(Node):
         # main CPU load during sleep (it fans out through /joint_states -> /tf
         # into every Python subscriber and TF listener).
         self._call(self._arm_low_power_client, SetBool.Request(data=True), "arm loop 10Hz")
-        self._stop_camera_container()
+        self._stop_sleep_panes()
         self._run_privileged(["systemctl", "stop", "speaker-keepalive.service"])
         self._run_privileged(["systemctl", "stop", "jetson-perf.service"])
         # 15W profile — the lowest reachable live: 7W (-m 3) takes CPU cores
@@ -348,7 +357,9 @@ class PowerManager(Node):
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "wake"])
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
-        self._start_camera_container()
+        # Relaunch the stopped panes first — brain/MoveIt startup overlaps the
+        # rest of the wake sequence.
+        self._start_sleep_panes()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
         self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")
         self._call(self._head_servo_client, SetBool.Request(data=True), "head torque on")
@@ -363,7 +374,8 @@ class PowerManager(Node):
                 timeout=60.0,
             )
         if self._brain_active_before_sleep:
-            self._call(self._brain_active_client, SetBool.Request(data=True), "brain on")
+            # brain_client is still booting from the pane relaunch above.
+            self._call(self._brain_active_client, SetBool.Request(data=True), "brain on", wait=30.0)
 
         self._head_position_pub.publish(Int32(data=0))
         self._touch_activity()
@@ -377,12 +389,12 @@ class PowerManager(Node):
 
     # -------------------------------------------------------------- helpers
 
-    def _call(self, client, request, label: str, timeout: float = 10.0) -> None:
+    def _call(self, client, request, label: str, timeout: float = 10.0, wait: float = 3.0) -> None:
         """Fire a service call from the transition thread and wait for it.
 
         Failures are logged and skipped: a missing subsystem (e.g. lidar
         unplugged on a dev bench) must not abort the whole transition."""
-        if not client.wait_for_service(timeout_sec=3.0):
+        if not client.wait_for_service(timeout_sec=wait):
             self.get_logger().warning(f"[{label}] service {client.srv_name} unavailable, skipping")
             return
         future = client.call_async(request)
@@ -421,10 +433,10 @@ class PowerManager(Node):
             self.get_logger().warning(f"tmux {' '.join(args)} failed: {e}")
             return None
 
-    def _find_camera_pane(self) -> str | None:
-        """The pane in cam-leader whose shell has the camera launch as a child."""
+    def _find_pane(self, window: str, match: str) -> str | None:
+        """The pane in `window` whose shell has `match` in a child process's args."""
         listing = self._tmux(
-            "list-panes", "-t", f"{TMUX_SESSION}:{CAMERA_WINDOW}", "-F", "#{pane_id} #{pane_pid}"
+            "list-panes", "-t", f"{TMUX_SESSION}:{window}", "-F", "#{pane_id} #{pane_pid}"
         )
         if listing is None or listing.returncode != 0:
             return None
@@ -439,29 +451,33 @@ class PowerManager(Node):
                 ).stdout
             except (OSError, subprocess.SubprocessError):
                 continue
-            if "camera_composable" in children:
+            if match in children:
                 return pane_id
         return None
 
-    def _stop_camera_container(self) -> None:
-        pane = self._find_camera_pane()
-        if pane is None:
-            self.get_logger().warning("Camera launch pane not found — cameras may already be down")
-            return
-        self._camera_pane_id = pane
-        self._tmux("send-keys", "-t", pane, "C-c")
-        time.sleep(5.0)  # ros2 launch tears the container down gracefully on SIGINT
-        self.get_logger().info("[cameras off] done")
+    def _stop_sleep_panes(self) -> None:
+        stopped = []
+        for window, _, match, _ in _SLEEP_PANES:
+            pane = self._find_pane(window, match)
+            if pane is None:
+                self.get_logger().warning(f"[{match}] pane not found — may already be down")
+                continue
+            self._pane_ids[match] = pane
+            self._tmux("send-keys", "-t", pane, "C-c")
+            stopped.append(match)
+        time.sleep(5.0)  # ros2 launch tears everything down gracefully on SIGINT
+        self.get_logger().info(f"[panes off] {', '.join(stopped) if stopped else 'none found'}")
 
-    def _start_camera_container(self) -> None:
-        # Fall back to the window's first pane — the launcher always puts the
-        # camera command there (see scripts/launch_ros_in_tmux.sh).
-        pane = self._camera_pane_id or f"{TMUX_SESSION}:{CAMERA_WINDOW}.0"
-        if self._find_camera_pane() is not None:
-            self.get_logger().info("[cameras on] already running")
-            return
-        self._tmux("send-keys", "-t", pane, CAMERA_LAUNCH_CMD, "Enter")
-        self.get_logger().info("[cameras on] launch sent")
+    def _start_sleep_panes(self) -> None:
+        for window, fallback_index, match, command in _SLEEP_PANES:
+            if self._find_pane(window, match) is not None:
+                self.get_logger().info(f"[{match}] already running")
+                continue
+            # Fall back to the launcher's fixed pane layout if we never saw
+            # the pane (e.g. woke after a power_manager restart).
+            pane = self._pane_ids.get(match) or f"{TMUX_SESSION}:{window}.{fallback_index}"
+            self._tmux("send-keys", "-t", pane, command, "Enter")
+        self.get_logger().info("[panes on] launches sent")
 
 
 def main(args=None):
