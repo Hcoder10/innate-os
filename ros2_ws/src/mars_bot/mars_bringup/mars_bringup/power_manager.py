@@ -21,7 +21,6 @@ State is broadcast on /power/state ("awake" / "going_to_sleep" / "sleeping" /
 """
 
 import json
-import os
 import subprocess
 import threading
 import time
@@ -41,20 +40,18 @@ STATE_GOING_TO_SLEEP = "going_to_sleep"
 STATE_SLEEPING = "sleeping"
 STATE_WAKING = "waking"
 
-# tmux layout from scripts/launch_ros_in_tmux.sh. These panes run the camera
-# container and heavy nodes with no role in sleeping or waking; their shells
-# keep the sourced ROS env, so we can Ctrl-C the launch to sleep and re-send
-# the command to wake. Deliberately kept alive: app-bringup (rosbridge + this
-# node + PCB/battery i2c), the arm node (head-boop source), mode_manager (nav
-# restore service), input_manager, and console/webapp (the app surface).
+# tmux layout from scripts/launch_ros_in_tmux.sh. Light sleep stops only the
+# camera container (real USB/encode power) and the data recorder (useless while
+# asleep, cheap to relaunch); their pane shells keep the sourced ROS env, so we
+# Ctrl-C the launch to sleep and re-send the command to wake. The rest of the
+# graph stays up so wake is instant — killing brain/MoveIt/ik saved ~30 mA for
+# a 10-20 s slower wake, not worth it for a light sleep. Neither pane here owns
+# a move_group, so no orphan cleanup is needed.
 TMUX_SESSION = "ros_nodes"
 # (window, fallback pane index, process match, relaunch command)
 _SLEEP_PANES = [
     ("cam-leader", 0, "camera_composable", "ros2 launch mars_cam camera_composable.launch.py"),
-    ("brain-nav", 0, "brain_client.launch.py", "ros2 launch brain_client brain_client.launch.py"),
-    ("behaviors-inputs", 0, "behavior.launch.py", "ros2 launch manipulation behavior.launch.py"),
     ("arm-recorder", 1, "recorder.launch.py", "ros2 launch manipulation recorder.launch.py"),
-    ("ik-logger", 0, "ik.launch.py", "ros2 launch mars_arm ik.launch.py"),
 ]
 
 # Terminal statuses from skills_server._publish_skill_status; anything else
@@ -363,8 +360,6 @@ class PowerManager(Node):
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "wake"])
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
-        # Relaunch the stopped panes first — brain/MoveIt startup overlaps the
-        # rest of the wake sequence.
         self._start_sleep_panes()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
         self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")
@@ -380,8 +375,7 @@ class PowerManager(Node):
                 timeout=60.0,
             )
         if self._brain_active_before_sleep:
-            # brain_client is still booting from the pane relaunch above.
-            self._call(self._brain_active_client, SetBool.Request(data=True), "brain on", wait=30.0)
+            self._call(self._brain_active_client, SetBool.Request(data=True), "brain on")
 
         self._head_position_pub.publish(Int32(data=0))
         self._touch_activity()
@@ -395,12 +389,12 @@ class PowerManager(Node):
 
     # -------------------------------------------------------------- helpers
 
-    def _call(self, client, request, label: str, timeout: float = 10.0, wait: float = 3.0) -> None:
+    def _call(self, client, request, label: str, timeout: float = 10.0) -> None:
         """Fire a service call from the transition thread and wait for it.
 
         Failures are logged and skipped: a missing subsystem (e.g. lidar
         unplugged on a dev bench) must not abort the whole transition."""
-        if not client.wait_for_service(timeout_sec=wait):
+        if not client.wait_for_service(timeout_sec=3.0):
             self.get_logger().warning(f"[{label}] service {client.srv_name} unavailable, skipping")
             return
         future = client.call_async(request)
@@ -461,58 +455,17 @@ class PowerManager(Node):
                 return pane_id
         return None
 
-    def _pane_move_group_pids(self, pane: str) -> list[str]:
-        """move_group PIDs spawned under this pane (a grandchild of the pane
-        shell via `ros2 launch`), captured *before* the pane is stopped —
-        move_group hangs on SIGINT and orphans to init, and killing by name
-        later would also hit the arm's move_group, whose pane we keep running."""
-        listing = self._tmux("list-panes", "-t", pane, "-F", "#{pane_id} #{pane_pid}")
-        if listing is None or listing.returncode != 0:
-            return []
-        shell_pid = None
-        for line in listing.stdout.splitlines():
-            pid_field, _, ppid_field = line.partition(" ")
-            if pid_field == pane:
-                shell_pid = ppid_field.strip()
-                break
-        if not shell_pid:
-            return []
-        pids, frontier = [], [shell_pid]
-        while frontier:
-            try:
-                out = subprocess.run(
-                    ["ps", "-o", "pid=,args=", "--ppid", frontier.pop()],
-                    capture_output=True, text=True, timeout=5,
-                ).stdout
-            except (OSError, subprocess.SubprocessError):
-                continue
-            for entry in out.splitlines():
-                child_pid, _, child_args = entry.strip().partition(" ")
-                if not child_pid:
-                    continue
-                frontier.append(child_pid)
-                if "moveit_ros_move_group/move_group" in child_args:
-                    pids.append(child_pid)
-        return pids
-
     def _stop_sleep_panes(self) -> None:
         stopped = []
-        move_group_pids: set[str] = set()
         for window, _, match, _ in _SLEEP_PANES:
             pane = self._find_pane(window, match)
             if pane is None:
                 self.get_logger().warning(f"[{match}] pane not found — may already be down")
                 continue
             self._pane_ids[match] = pane
-            move_group_pids.update(self._pane_move_group_pids(pane))
             self._tmux("send-keys", "-t", pane, "C-c")
             stopped.append(match)
-        time.sleep(5.0)  # ros2 launch escalates SIGINT -> SIGTERM for its children
-        # Force-kill only the move_group copies these panes owned (they hang on
-        # SIGINT). The arm's move_group is a different PID we never captured.
-        for pid in move_group_pids:
-            if os.path.exists(f"/proc/{pid}"):
-                subprocess.run(["kill", "-9", pid], check=False)
+        time.sleep(5.0)  # ros2 launch tears the launch down gracefully on SIGINT
         self.get_logger().info(f"[panes off] {', '.join(stopped) if stopped else 'none found'}")
 
     def _start_sleep_panes(self) -> None:
