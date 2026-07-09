@@ -59,6 +59,9 @@ export const PLAN_TOPICS = ["/navigation/plan", "/mapfree/plan"];
 export const AMCL_POSE_TOPIC = "/amcl_pose";
 // The exact goal navigate_to_position commanded (geometry_msgs/PoseStamped, latched).
 export const COMMANDED_GOAL_TOPIC = "/nav/commanded_goal";
+// The MPPI controller's raw commanded velocity (geometry_msgs/Twist), before
+// smoothing and the mux — drawn as a velocity arrow under ?navdebug.
+export const CMD_VEL_RAW_TOPIC = "/cmd_vel_raw";
 // Stop all active navigation (std_srvs/Trigger), no matter which client started it.
 export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
 // Auto-localization (std_srvs/Trigger on grid_localizer). Can take tens of seconds.
