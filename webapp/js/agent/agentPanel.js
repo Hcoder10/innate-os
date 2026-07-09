@@ -314,13 +314,14 @@ export function createAgentPanel(root, rosClient, agentState) {
     if (run.hasDetail) run.wrap.classList.add("has-detail");
     run.status.textContent = cls;
 
-    // A failed run carries the failure reason / error — make it expandable in-place.
+    // A failed run carries the failure reason / error — show it expanded
+    // in-place (collapsible so a long trace can be tucked away).
     if (cls === "failed" && reason && !run.hasDetail) {
       run.hasDetail = true;
-      run.wrap.classList.add("has-detail");
+      run.wrap.classList.add("has-detail", "open");
       const chevron = document.createElement("span");
       chevron.className = "chat-skill-chevron mono";
-      chevron.textContent = "▾";
+      chevron.textContent = "▴";
       run.head.appendChild(chevron);
       const detail = document.createElement("div");
       detail.className = "chat-skill-detail";
