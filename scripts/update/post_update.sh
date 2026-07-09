@@ -849,6 +849,7 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop jetson-perf.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start speaker-keepalive.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop speaker-keepalive.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/nvpmodel -m 0, /usr/sbin/nvpmodel -m 1, /usr/sbin/nvpmodel -m 2, /usr/sbin/nvpmodel -m 3
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/power/sleep-clocks.sh
 EOF
 chmod 440 "$SUDOERS_FILE"
 log "  Sudoers configured for $ACTUAL_USER"

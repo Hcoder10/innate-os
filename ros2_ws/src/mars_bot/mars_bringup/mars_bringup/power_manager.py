@@ -27,6 +27,7 @@ import time
 
 import rclpy
 from brain_messages.srv import ChangeNavigationMode
+from mars_bringup.config_loader import innate_os_root
 from geometry_msgs.msg import Vector3
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -50,6 +51,10 @@ CAMERA_LAUNCH_CMD = "ros2 launch mars_cam camera_composable.launch.py"
 _SKILL_TERMINAL_STATUSES = {"completed", "interrupted", "failed"}
 
 _SS_ESTABLISHED_SSH = ["ss", "-tnH", "state", "established", "( sport = :22 )"]
+
+# Offlines CPU cores 4-5 and caps clocks during sleep — the part of the 7W
+# profile nvpmodel refuses to apply without a reboot (see the script header).
+_SLEEP_CLOCKS_SCRIPT = str(innate_os_root() / "scripts" / "power" / "sleep-clocks.sh")
 
 
 class PowerManager(Node):
@@ -324,6 +329,9 @@ class PowerManager(Node):
         # offline, which nvpmodel only does across a reboot (it prompts and
         # aborts, rc=234 "Golden image context is already created").
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "0"])
+        # ...then do the core-offline + clock-cap part ourselves via sysfs
+        # (must run after nvpmodel, which rewrites the cpufreq limits).
+        self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "sleep"])
 
         # Arm the boop detector: give the torque-less head a moment to settle,
         # then take the first reading after that as the baseline.
@@ -337,6 +345,7 @@ class PowerManager(Node):
         # Compute first so the robot feels responsive from the very first second.
         # jetson-perf pins nvpmodel -m 2 + jetson_clocks in its loop; the explicit
         # nvpmodel call restores the power budget even if the service is absent.
+        self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "wake"])
         self._run_privileged(["/usr/sbin/nvpmodel", "-m", "2"])
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
         self._start_camera_container()
