@@ -1,0 +1,16 @@
+# Core (all roles)
+websockets>=12
+
+# WebRTC DataChannel transport (operator + reflector)
+aiortc>=1.9
+
+# QUIC datagram transport (Kyber-class)
+aioquic>=1.2
+cryptography>=42
+
+# LiveKit transport
+livekit>=1.0
+livekit-api>=1.0
+
+# Zenoh transport (Adamo-class; robot already runs rmw_zenoh)
+eclipse-zenoh>=1.0
