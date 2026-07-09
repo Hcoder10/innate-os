@@ -24,6 +24,7 @@ import json
 import subprocess
 import threading
 import time
+from collections import deque
 
 import rclpy
 from brain_messages.srv import ChangeNavigationMode
@@ -88,7 +89,7 @@ class PowerManager(Node):
         self._pane_ids: dict[str, str] = {}  # process match -> tmux pane id, saved at stop
 
         # Head-boop detection (armed while sleeping)
-        self._head_baseline_deg: float | None = None
+        self._head_history: deque[tuple[float, float]] = deque()  # (monotonic, degrees)
         self._boop_arm_time = 0.0
         self._boop_hits = 0
         self._last_boop_sample = 0.0
@@ -271,23 +272,31 @@ class PowerManager(Node):
 
     # ------------------------------------------------------------- head boop
 
+    # A boop is a *fast* push: >threshold within this window. Gravity sag on a
+    # torque-less head is slow (≲1°/s → ≲0.6° per window) and can never trip
+    # it, no matter how long the robot sleeps.
+    _BOOP_WINDOW_SEC = 0.6
+
     def _on_head_position(self, msg: String) -> None:
         if self.state != STATE_SLEEPING or time.monotonic() < self._boop_arm_time:
             return
-        # The arm node streams this at its control-loop rate; sample at 10 Hz.
-        if time.monotonic() - self._last_boop_sample < 0.1:
+        # The arm node streams this at ~10 Hz while sleeping (200 Hz awake);
+        # sample at most at 10 Hz either way.
+        now = time.monotonic()
+        if now - self._last_boop_sample < 0.1:
             return
-        self._last_boop_sample = time.monotonic()
+        self._last_boop_sample = now
         try:
             position = float(json.loads(msg.data).get("current_position"))
         except (json.JSONDecodeError, TypeError, ValueError):
             return
-        if self._head_baseline_deg is None:
-            self._head_baseline_deg = position
+        self._head_history.append((now, position))
+        while self._head_history and now - self._head_history[0][0] > self._BOOP_WINDOW_SEC:
+            self._head_history.popleft()
+        if len(self._head_history) < 3:  # need a real window span first
             return
         threshold = self.get_parameter("boop_wake_threshold_degrees").value
-        delta = position - self._head_baseline_deg
-        if abs(delta) >= threshold:
+        if abs(position - self._head_history[0][1]) >= threshold:
             self._boop_hits += 1
             # two consecutive readings past the threshold, so a single glitched
             # sample or a floor vibration doesn't wake the robot
@@ -295,10 +304,6 @@ class PowerManager(Node):
                 self._wake_if_sleeping("head boop")
         else:
             self._boop_hits = 0
-            # Creep-track the baseline (≤0.5°/s): a torque-less head can sag
-            # slowly under gravity, and untracked sag would eventually read as
-            # a boop. A real boop is a fast >threshold push the creep can't absorb.
-            self._head_baseline_deg += max(-0.05, min(0.05, delta))
 
     def _wake_if_sleeping(self, reason: str) -> None:
         if self.state == STATE_SLEEPING:
@@ -342,9 +347,9 @@ class PowerManager(Node):
         # (must run after nvpmodel, which rewrites the cpufreq limits).
         self._run_privileged([_SLEEP_CLOCKS_SCRIPT, "sleep"])
 
-        # Arm the boop detector: give the torque-less head a moment to settle,
-        # then take the first reading after that as the baseline.
-        self._head_baseline_deg = None
+        # Arm the boop detector: give the torque-less head a moment to settle
+        # before the rolling window starts filling.
+        self._head_history.clear()
         self._boop_hits = 0
         self._boop_arm_time = time.monotonic() + 2.0
 
@@ -466,6 +471,15 @@ class PowerManager(Node):
             self._tmux("send-keys", "-t", pane, "C-c")
             stopped.append(match)
         time.sleep(5.0)  # ros2 launch tears everything down gracefully on SIGINT
+        # Second Ctrl-C for launches still up (ros2 launch escalates to SIGTERM).
+        for window, _, match, _ in _SLEEP_PANES:
+            if match in self._pane_ids and self._find_pane(window, match) is not None:
+                self._tmux("send-keys", "-t", self._pane_ids[match], "C-c")
+                time.sleep(3.0)
+        # move_group regularly hangs on SIGINT and outlives its dying launch;
+        # an orphan would be duplicated by the wake relaunch. Both launches
+        # that own one are stopped here, so any survivor is fair game.
+        subprocess.run(["pkill", "-f", "moveit_ros_move_group/move_group"], check=False)
         self.get_logger().info(f"[panes off] {', '.join(stopped) if stopped else 'none found'}")
 
     def _start_sleep_panes(self) -> None:
