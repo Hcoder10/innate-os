@@ -78,7 +78,15 @@ cd ~/teleop_bench
 .venv/bin/python teleop_operator.py --transport zenoh --connect tcp/$VM:7447
 
 # add to any run: --duration 30 --json-out results.jsonl --label "my run"
+
+# Adamo (their hosted routers; needs ADAMO_API_KEY env on both sides)
+# robot:  ADAMO_API_KEY=ak_... .venv/bin/python adamo_bench.py reflect
+# mac:    ADAMO_API_KEY=ak_... .venv/bin/python adamo_bench.py drive
 ```
+
+Currently deployed VM (2026-07-09): `teleop-bench-1`, us-west1-b,
+**35.233.134.107** (`$VM` above). Delete when done:
+`gcloud compute instances delete teleop-bench-1 --zone=us-west1-b`.
 
 ## Remote-inference simulation (robot → cloud → robot)
 

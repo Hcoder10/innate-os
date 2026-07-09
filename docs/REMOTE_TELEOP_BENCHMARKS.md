@@ -111,17 +111,87 @@ compute, action chunk back; LAN server): p50 cycle 119ms ≈ compute + ~19ms
 network share. Action-chunk check: 50 steps @ 50Hz = 1000ms budget → **cloud
 inference sustains control with 8× headroom even before WAN RTT is added.**
 
-### WAN results — pending
+### WAN results (GCP VM `teleop-bench-1`, us-west1, 35.233.134.107)
 
-GCP auth expired mid-session (`gcloud auth login` needed). Once re-authed:
-`tools/teleop_bench/deploy/provision_gcp.sh` stands up the full cloud side
-(coturn, LiveKit, zenoh router, WS relay + inference sim) in one command, and
-the WAN matrix (direct vs forced-TURN vs SFU vs zenoh-router vs WS-relay,
-plus robot→cloud inference cycles) reruns with `--relay ws://$VM:8765 ...`.
-Robot → Google edge TCP RTT measured at ~19ms, so expect ~20–30ms floors for
-in-region relayed paths.
+RTT floors from the home network (Comcast): Mac→VM **36ms p50**, robot→VM
+**34ms p50** — so any both-legs-relayed path has a ~70ms floor from this
+network to us-west1. Measured (200Hz, 20s runs; "stale" still the 60ms LAN
+threshold — a WAN deadman would use 150–300ms):
+
+| Path (real internet) | p50 | p90 | p99 | loss |
+| --- | --- | --- | --- | --- |
+| **Adamo cloud router (their QUIC/Zenoh net)** | **40.2ms** | 55.7ms | 136.4ms | 0.1% |
+| WebRTC DC forced-TURN via GCP (RFC worst case) | 72.0ms | 80.6ms | 269.3ms | 0% |
+| WS relay via GCP (innate-cloud proxy pattern) | 73.0ms | 79.3ms | **85.6ms** | 0% |
+| LiveKit SFU on GCP | 76.8ms | 127.7ms | 379.2ms | 0.3% |
+| Zenoh via GCP router (tcp, client mode) | 100.2ms | 150.5ms | 168.6ms | 1.1% |
+| WebRTC DC ice=all (ICE finds the LAN path) | 7.6ms | 76.3ms | 100.2ms | 0% |
+
+With the VM impairing both legs (**netem +40ms ±8ms, 1% loss each way** —
+a plausible bad-cellular day):
+
+| Path | p50 | p90 | p99 | loss |
+| --- | --- | --- | --- | --- |
+| WS relay (TCP) | 165ms | 241ms | 343ms | 0% (retransmits) |
+| WebRTC DC forced-TURN (unreliable) | 187ms | 283ms | 452ms | 2.3% |
+| Zenoh router (tcp) | 211ms | 271ms | 332ms | 0.6% |
+| **LiveKit SFU lossy data** | 155ms | 221ms | 250ms | **30–46%** (!) |
+
+Key takeaways:
+
+1. **Relay placement is the whole game.** Adamo wins the clean-network test
+   (p50 40ms) purely because their router is ~17ms from this Comcast link
+   (SDK-reported relay RTT 16–19ms from both peers), vs ~35ms to GCP
+   us-west1. Their QUIC/Zenoh transport itself adds only ~6ms over 2× relay
+   RTT — and our WS relay and coturn *also* land within ~3ms of their
+   respective floor (2×36 ≈ 72ms). Same physics, different real estate.
+   GCP has no SF-metro region; matching Adamo's number would need an edge
+   POP (Cloudflare/Fly/hetzner-SV or the future gcloud edge) — or P2P.
+2. **ICE is worth it**: `ice=all` found the direct path automatically and ran
+   at LAN latency (7.6ms) while the same code, network and signaling forced
+   through TURN costs 72ms. P2P-when-possible + TURN-fallback (the RFC
+   design) is strictly better than any always-relay architecture.
+3. **LiveKit's lossy data channel sheds catastrophically under loss at
+   200Hz**: 30–46% delivery loss on a 1%-loss link (reproduced twice; SFU
+   self-hosted, Python SDK `publish_data(reliable=False)`). Until
+   investigated (data tracks may behave differently), LiveKit is not
+   suitable for the 200Hz control stream on imperfect networks — its
+   sweet spot here is video + data *collection*, not the control loop.
+4. **TCP relays degrade more gracefully than expected** for control-size
+   packets (0% app loss, p99 343ms via retransmits) but head-of-line
+   latency makes unreliable-datagram paths (WebRTC DC) preferable for
+   control: stale-and-dropped beats late-and-ordered for servo targets.
+5. **Zenoh client-through-router underperformed** its pedigree here
+   (p50 100ms vs 73ms floor, 1% drops from DROP congestion control at
+   200Hz express). Needs tuning (QUIC links, batching off) before judging —
+   Adamo proves the protocol family can do better.
+
+### Remote inference over real WAN (robot → GCP us-west1)
+
+60KB frame up + action chunk back, closed-loop:
+
+- 100ms simulated compute: **cycle p50 142ms / p99 153ms** (network share
+  ~42ms). A 50-step chunk at 50Hz (1s) leaves **6.5× headroom** — cloud
+  policy serving from us-west1 is comfortably feasible, matching the
+  Physical Intelligence numbers (their production: ~108–139ms/chunk).
+- Pipelined 30fps × 60KB (≈14Mbps uplink): p50 43ms but p90 220ms —
+  **the Comcast uplink queues (bufferbloat)**. Observation streams must be
+  paced/compressed below the uplink's undulating capacity; adaptive-bitrate
+  video (WebRTC) or resolution-capped JPEG (openpi resizes to 224²) both
+  solve this.
 
 ---
+
+### Adamo hands-on notes
+
+Tested with a free-tier API key via `tools/teleop_bench/adamo_bench.py`
+(`pip install adamo` worked out-of-the-box on the Jetson). The SDK is openly
+Zenoh: `connect(protocol="quic", mode="client"|"peer", relay=...)`, plus
+useful built-ins (`relay_rtt()`, `measure_rtt()`, `watch_latency()`).
+Verdict: excellent router placement and a polished SDK, but the transport
+result is reproducible with self-hosted infrastructure placed equally well;
+the closed core + metered relay is what you'd be paying for (plus their
+operator workforce product).
 
 ## 3. Read on the RFC (what changes, what stands)
 
@@ -132,7 +202,11 @@ WebRTC DC within ~2ms of raw UDP.
 
 **Adjustments suggested by research + measurements:**
 1. **Plan for TURN-as-default, not fallback** (CGNAT both sides is the common
-   consumer case). Place coturn in-region; budget +25–40ms.
+   consumer case; this home router doesn't even hairpin). Measured cost of a
+   us-west1 relay from a Bay-Area Comcast link: ~72ms RTT (vs 40ms via
+   Adamo's SF-metro router). **Relay placement is the single biggest
+   latency lever** — worth an edge POP (Fly/Cloudflare/metal) over a GCP
+   region for the TURN tier if sub-50ms relayed RTT matters.
 2. **Don't use aiortc-class userspace SCTP in production** — put the control
    DataChannel in the existing GStreamer `webrtcbin` (it supports
    `ordered=false, max-retransmits=0`), as the RFC already planned.
