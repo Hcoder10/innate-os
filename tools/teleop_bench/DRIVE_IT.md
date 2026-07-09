@@ -13,8 +13,10 @@ leader arm ──USB──> leader_link.py ──[transport]──> follower_bri
 ## 0. Safety checklist (once)
 
 1. Clear space around the arm; be ready to Ctrl-C (robot then holds pose).
-2. Arm torque must be ON for it to follow:
-   `ros2 service call /mars/arm/torque_on std_srvs/srv/Trigger` (or via app).
+2. Arm torque must be ON for it to follow — use the **arm torque toggle in
+   the comparison dashboard** (localhost:8399; live state via rosbridge
+   :9090, same as the webapp), or
+   `ros2 service call /mars/arm/torque_on std_srvs/srv/Trigger`.
    If a servo faults from a collision: `/mars/arm/fix_error`.
 3. The bridge only ever forwards the **newest** packet (backlogs are
    collapsed, never replayed) and stops forwarding after a 300ms stall.

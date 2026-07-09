@@ -287,6 +287,15 @@ async def h_results(request):
     return web.json_response(load_results())
 
 
+async def h_config(request):
+    import socket
+    try:  # browsers don't reliably resolve .local for WebSockets
+        robot_ip = socket.gethostbyname(ROBOT)
+    except OSError:
+        robot_ip = ROBOT
+    return web.json_response({"robot": robot_ip})
+
+
 async def h_transports(request):
     have_key = bool(os.environ.get("ADAMO_API_KEY"))
     out = []
@@ -319,6 +328,7 @@ async def h_stats(request):
 def main():
     app = web.Application()
     app.router.add_get("/", h_index)
+    app.router.add_get("/api/config", h_config)
     app.router.add_get("/api/results", h_results)
     app.router.add_get("/api/transports", h_transports)
     app.router.add_get("/api/stats", h_stats)

@@ -39,6 +39,8 @@ h2 { font-size: 15px; margin: 34px 0 10px; }
 button { background: var(--blue); border: 0; color: #fff; border-radius: 8px;
   padding: 8px 16px; font-size: 13px; cursor: pointer; }
 button.secondary { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
+#torquebtn.on  { border-color: var(--good); color: var(--good); }
+#torquebtn.off { border-color: var(--bad);  color: var(--bad); }
 .livebox { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 14px; }
 .status { color: var(--text-2); min-height: 20px; margin-bottom: 10px; }
 .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -81,7 +83,8 @@ canvas { width: 100%; height: 140px; display: block; }
   <div class="controls">
     <label><input type="radio" name="src" value="sine" checked> sine (safe demo motion)</label>
     <label><input type="radio" name="src" value="arm"> leader arm (USB)</label>
-    <label><input type="checkbox" id="livearm"> <b>move the real arm</b> (forward to :9999 — torque on, area clear!)</label>
+    <label><input type="checkbox" id="livearm"> <b>move the real arm</b> (forward to :9999 — area clear!)</label>
+    <button class="secondary" id="torquebtn" title="via rosbridge :9090, same as the webapp">arm torque: …</button>
     <button class="secondary" id="stopbtn">Stop</button>
   </div>
   <div class="livebox">
@@ -130,7 +133,8 @@ async function startSession(key, cardEl){
   activeKey = key;
   const source = document.querySelector("input[name=src]:checked").value;
   const live = $("livearm").checked;
-  if (live && !confirm("The REAL ARM will move. Torque on, area clear?")) { $("livearm").checked=false; return; }
+  if (live && !confirm("The REAL ARM will move. Area clear?")) { $("livearm").checked=false; return; }
+  if (live && torqueOn === false && confirm("Arm torque is OFF — turn it on now?")) callTorque(true);
   $("status").textContent = "starting " + key + (live ? "  (LIVE ARM)" : "  (dry-run)") + "…";
   await jpost("/api/start", {transport:key, live, source});
 }
@@ -229,6 +233,38 @@ async function initResults(){
     g.appendChild(note);
   }
 }
+// ---------- rosbridge (same pattern as webapp/js/rosClient.js) ----------
+let rosWs = null, torqueOn = null, torquePending = false;
+function setTorqueUi(){
+  const b = $("torquebtn");
+  if (torqueOn === null){ b.className = "secondary"; b.textContent = "arm torque: ?"; b.title = "rosbridge :9090 not reachable"; return; }
+  b.className = "secondary " + (torqueOn ? "on" : "off");
+  b.textContent = torquePending ? "arm torque: …" : ("arm torque: " + (torqueOn ? "ON" : "off"));
+}
+function connectRos(host){
+  let ws;
+  try { ws = new WebSocket(`ws://${host}:9090`); } catch(e){ setTorqueUi(); return; }
+  rosWs = ws;
+  ws.onopen = () => ws.send(JSON.stringify({op:"subscribe", topic:"/mars/arm/status", throttle_rate:1000}));
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.op === "publish" && m.topic === "/mars/arm/status"){
+      torqueOn = !!m.msg.is_torque_enabled; torquePending = false; setTorqueUi();
+    }
+  };
+  ws.onclose = () => { torqueOn = null; setTorqueUi(); setTimeout(()=>connectRos(host), 5000); };
+  ws.onerror = () => {};
+}
+function callTorque(on){
+  if (!rosWs || rosWs.readyState !== 1){ alert("rosbridge (robot :9090) not reachable"); return false; }
+  torquePending = true; setTorqueUi();
+  rosWs.send(JSON.stringify({op:"call_service", id:"torq"+Date.now(),
+    service: on ? "/mars/arm/torque_on" : "/mars/arm/torque_off", args:{}}));
+  return true;
+}
+$("torquebtn").onclick = () => { if (torqueOn !== null) callTorque(!torqueOn); };
+(async ()=>{ const cfg = await jget("/api/config"); connectRos(cfg.robot); setTorqueUi(); })();
+
 initCards(); initResults(); poll();
 </script>
 </body>
