@@ -77,8 +77,6 @@ class Nav2Controller:
     def go_to_position(self, x: float, y: float, theta: float, local_frame: bool):
         """
         Sends a navigation goal to the navigator and waits until navigation ends.
-        The method returns the TaskResult indicating whether the goal
-        succeeded, was canceled, or failed/timed out.
 
         Args:
             x (float): x-coordinate of the target position.
@@ -86,7 +84,8 @@ class Nav2Controller:
             theta (float): The orientation angle in radians.
 
         Returns:
-            TaskResult: The result status from the navigator.
+            (TaskResult, str | None): the navigator's result status, plus a
+            human-readable detail explaining a failure (None on success/cancel).
         """
         navigator = self.navigator
         # Reset cancellation flag
@@ -104,7 +103,10 @@ class Nav2Controller:
                 self.logger.error(
                     f"No fresh base_link->{LOCAL_GOAL_FIXED_FRAME} transform available; cannot resolve local goal"
                 )
-                return TaskResult.FAILED
+                return TaskResult.FAILED, (
+                    "could not determine the robot's current pose "
+                    f"(no fresh {LOCAL_GOAL_FIXED_FRAME} transform), so the local goal could not be resolved"
+                )
             base = base_tf.transform
             goal_x, goal_y, goal_yaw = resolve_local_goal(
                 base.translation.x, base.translation.y, quaternion_to_yaw(base.rotation), x, y, theta
@@ -138,7 +140,10 @@ class Nav2Controller:
         # If the path is None, we can't navigate to the goal
         if path is None:
             self.logger.error("Failed to get path to goal")
-            return TaskResult.FAILED
+            return TaskResult.FAILED, (
+                f"the planner found no path to ({goal_x:.2f}, {goal_y:.2f}) in the {goal_frame} frame "
+                "— the goal may be unreachable, blocked, or outside the map"
+            )
 
         navigator.goToPose(goal_pose, behavior_tree=behavior_tree)
 
@@ -148,6 +153,9 @@ class Nav2Controller:
         initial_distance_remaining = -1.0  # Not set until the first valid feedback
         feedback_sent_close_to_goal = False  # Flag to track if feedback has been sent
         last_progress_log = 0.0
+        # Last feedback snapshot, so a failure can say how far the robot got.
+        last_distance_remaining = -1.0
+        last_recoveries = 0
 
         # Modified loop to check for cancellation
         while not navigator.isTaskComplete():
@@ -169,6 +177,9 @@ class Nav2Controller:
             # in the navigator's global frame while our goal may be in
             # another, so computing distances ourselves would be wrong.
             distance_remaining = feedback.distance_remaining
+            last_recoveries = feedback.number_of_recoveries
+            if distance_remaining > 0.0:
+                last_distance_remaining = distance_remaining
 
             if initial_distance_remaining < 0.0 and distance_remaining > 0.0:
                 initial_distance_remaining = distance_remaining
@@ -193,6 +204,7 @@ class Nav2Controller:
                 feedback_sent_close_to_goal = True
 
         result = navigator.getResult()
+        detail = None
 
         if was_canceled:
             self.logger.debug("Goal was canceled!")
@@ -202,6 +214,12 @@ class Nav2Controller:
             self.logger.debug("Goal succeeded!")
         else:
             self.logger.debug(f"Goal failed or timed out. result: {result}")
+            detail = f"Nav2 reported {getattr(result, 'name', result)}"
+            if last_distance_remaining >= 0.0:
+                detail += f" with {last_distance_remaining:.2f}m still to go"
+            if last_recoveries > 0:
+                detail += f" after {last_recoveries} recovery attempt{'s' if last_recoveries != 1 else ''}"
+            detail += " — the route may be blocked or the robot may be stuck"
 
         # Stop the robot by publishing a stop command.
         stop_cmd = Twist()
@@ -209,7 +227,7 @@ class Nav2Controller:
         stop_cmd.angular.z = 0.0
         # self.cmd_vel_pub.publish(stop_cmd)
 
-        return result
+        return result, detail
 
     def cancel_navigation(self):
         """
@@ -267,7 +285,7 @@ class NavigateToPosition(Skill):
             f"Initiating navigation to position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
         )
 
-        result = self.nav2_controller.go_to_position(x, y, theta, local_frame)
+        result, detail = self.nav2_controller.go_to_position(x, y, theta, local_frame)
 
         # Check if the navigation was canceled
         if result == TaskResult.CANCELED:
@@ -279,8 +297,10 @@ class NavigateToPosition(Skill):
             )
             return f"Reached position ({x}, {y}, {theta_degrees} deg)", SkillResult.SUCCESS
         else:
-            self.logger.info(f"Navigation failed with result: {result}")
-            return f"Navigation failed with result: {result}", SkillResult.FAILURE
+            goal_desc = f"({x}, {y}, {theta_degrees} deg, {'local' if local_frame else 'map'} frame)"
+            message = f"Navigation to {goal_desc} failed: {detail}"
+            self.logger.info(message)
+            return message, SkillResult.FAILURE
 
     def cancel(self):
         """
