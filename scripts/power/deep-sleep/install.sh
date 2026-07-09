@@ -29,6 +29,7 @@ else
 fi
 
 install -o root -g root -m 755 "$SRC_DIR/deep-sleep.sh" /usr/local/sbin/innate-deep-sleep
+install -o root -g root -m 755 "$SRC_DIR/pcb-power.py" /usr/local/sbin/innate-deepsleep-pcb-power
 install -o root -g root -m 644 "$SRC_DIR/wake-listener.py" /usr/local/sbin/innate-deepsleep-wake-listener.py
 install -o root -g root -m 644 "$SRC_DIR/innate-deepsleep-wake.service" /etc/systemd/system/innate-deepsleep-wake.service
 systemctl daemon-reload

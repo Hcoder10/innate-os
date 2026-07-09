@@ -40,33 +40,59 @@ Floors taken from this board's live tables (r36.4, Orin Nano Super):
 Further headroom if needed: try EMC below 665.6 MHz (bpmp clamps caps to its
 rate table; the floor is untested here), and single-core operation.
 
+## Rail gating too (the peripheral half)
+
+The Jetson is only ~half the idle draw; the arm/head Dynamixels on the PCB's
+HSSW rail are ~3-4 W of the rest. Because the whole ROS stack is down in deep
+sleep, `bringup` isn't there to drive the PCB — so `pcb-power.py` talks to the
+MCU (0x42) directly with the same `CMD_POWER` frame (firmware README §4.5) to
+gate the rail on `enter` and restore it on `wake`. No wake-on-motion is armed
+(the IMU sleeps too): deep sleep wakes over the network, so it doesn't need it.
+
+Two ordering rules make this safe, both handled by `deep-sleep.sh`:
+- **`enter` gates with the stack already stopped** — nothing else touches the
+  I2C bus. The MCU holds the gate low across the Jetson reboot (firmware §4.5).
+- **`wake` restores the rail *before* the reboot** — so when `mars_arm` boots
+  it finds powered servos to initialize (it inits once at startup, no retry).
+
 ## Flow
 
 ```
 sudo ./install.sh                       # add mode 4, install scripts + unit
-sudo innate-deep-sleep enter            # disable ros-app/jetson-perf/speaker,
-                                        # arm wake listener, reboot into SLEEPNET
-                                        # → only network + sshd + listener run
+sudo innate-deep-sleep enter            # stop ros-app, gate HSSW rail, arm wake
+                                        # listener, reboot into SLEEPNET
+                                        # → only network + sshd + listener run,
+                                        #   arm/head/wheels unpowered
 curl -X POST http://<robot>:4022/wake   # (or: sudo innate-deep-sleep wake)
-                                        # re-enable stack, reboot into MAXN_SUPER
+                                        # restore rail, re-enable stack,
+                                        # reboot into MAXN_SUPER
 ```
 
 Mode persistence across the reboots is `/var/lib/nvpmodel/status`; which stack
-comes up is plain systemd enablement. Wake latency ≈ one full boot (~90 s).
-The listener is deliberately unauthenticated for the experiment (waking is
-benign, LAN-only); add a token before any wider rollout.
+comes up is plain systemd enablement; the rail gate is the MCU's own latched
+state. Wake latency ≈ one full boot (~90 s). The listener is deliberately
+unauthenticated for the experiment (waking is benign, LAN-only); add a token
+before any wider rollout.
+
+Recovery: if the rail doesn't come back after a wake, SSH in and
+`sudo innate-deepsleep-pcb-power wake` (stack must be down), or restart the arm
+node once the rail is up. Gating is best-effort — an I2C error on `enter` still
+lets the Jetson deep-sleep (just without the rail cut).
 
 ## Validation checklist
 
 - [ ] `sudo nvpmodel -p --verbose | grep -A16 SLEEPNET` parses with the values above
 - [ ] `enter` reboots; after boot: `nproc` = 2, `nvpmodel -q` = SLEEPNET,
       policy0 max 422400, tegrastats VDD_SOC well under 2.5 W, VDD_IN recorded
+- [ ] after `enter`: arm/head go limp and servo LEDs go dark (rail actually cut)
 - [ ] `GET :4022/` answers; `POST :4022/wake` reboots to a fully working robot
-- [ ] battery ammeter reading in SLEEPNET vs light sleep vs awake
+      with the arm re-initialized and holding torque
+- [ ] battery ammeter: SLEEPNET+gated vs SLEEPNET-only vs light sleep vs awake
 
 ## Follow-ups (out of scope)
 
 - Wire `enter` into power_manager as a `/power/deep_sleep` service + app button
   (the app must then wake via `:4022/wake`, not rosbridge — the stack is down).
 - Auth token on the listener; mDNS advertisement so the app can find the robot.
-- Combine with the PCB's HSSW rail gating for the peripheral ~7 W.
+- Let the wake listener also poll the MCU motion latch (0x83 status byte) so a
+  physical nudge can wake deep sleep too, not only the network.
