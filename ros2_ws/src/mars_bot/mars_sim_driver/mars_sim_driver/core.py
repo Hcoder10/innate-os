@@ -347,6 +347,105 @@ class VirtualMars:
         mujoco.mj_forward(self.model, self.data)
         return grid, float(xmin), float(ymin)
 
+    def lidar_occupancy_grid(
+        self,
+        resolution: float = 0.05,
+        origin_stride_m: float = 0.4,
+        n_rays: int = 720,
+        max_range: float = 12.0,
+    ) -> tuple[np.ndarray, float, float]:
+        """Rasterize the world the way the robot's own lidar would map it --
+        a virtual SLAM pass with perfect poses. Horizontal rays are cast at
+        the laser mount height against the same visual surfaces lidar_scan()
+        hits, from a grid of reachable floor positions; beams clear free
+        space, endpoints mark obstacles, everything unseen stays unknown.
+
+        This is the nav map that keeps AMCL consistent: a real robot
+        localizes against a map made BY its lidar, so at shin height a couch
+        is legs and a gap, not the solid footprint occupancy_grid() rasterizes
+        from collision geometry. Returns (grid, origin_x, origin_y) like
+        occupancy_grid()."""
+        # Reachable-floor candidates for scan origins (also fixes the bounds).
+        base_grid, xmin, ymin = self.occupancy_grid(resolution)
+        height, width = base_grid.shape
+
+        # True laser height above the floor, from the model itself.
+        mujoco.mj_forward(self.model, self.data)
+        laser_z = float(self.data.xpos[self.model.body("robot_base_laser").id][2])
+
+        # Park the robot far away so rays never hit it.
+        saved = self.data.qpos.copy()
+        self.data.qpos[self._base["x"][0]] += 100.0
+        mujoco.mj_forward(self.model, self.data)
+
+        try:
+            stride = max(1, int(round(origin_stride_m / resolution)))
+            rows, cols = np.nonzero(base_grid == 0)
+            pick = (rows % stride == 0) & (cols % stride == 0)
+            origin_xy = np.column_stack(
+                [xmin + (cols[pick] + 0.5) * resolution, ymin + (rows[pick] + 0.5) * resolution]
+            )
+
+            angles = np.arange(n_rays) * (2.0 * math.pi / n_rays)
+            vecs = np.zeros((n_rays, 3))
+            vecs[:, 0] = np.cos(angles)
+            vecs[:, 1] = np.sin(angles)
+            step = resolution * 0.9
+            ts = (np.arange(int(max_range / step)) + 0.5) * step  # sample offsets along a beam
+
+            def cells(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+                c = ((x - xmin) / resolution).astype(np.int64)
+                r = ((y - ymin) / resolution).astype(np.int64)
+                ok = (c >= 0) & (c < width) & (r >= 0) & (r < height)
+                return r[ok], c[ok]
+
+            seen_free = np.zeros((height, width), dtype=bool)
+            seen_occ = np.zeros((height, width), dtype=bool)
+            geomids = np.full(n_rays, -1, dtype=np.int32)
+            dists = np.full(n_rays, -1.0)
+            for ox, oy in origin_xy:
+                origin = np.array([ox, oy, laser_z])
+                geomids.fill(-1)
+                dists.fill(-1.0)
+                mujoco.mj_multiRay(
+                    self.model,
+                    self.data,
+                    origin,
+                    vecs.flatten(),
+                    self._lidar_groups,
+                    1,
+                    self._base_id,
+                    geomids,
+                    dists,
+                    None,
+                    n_rays,
+                    max_range,
+                )
+                hit = (geomids != -1) & (dists >= 0)
+                if not hit.any():
+                    continue
+                d = dists[hit]
+                dirs = vecs[hit, :2]
+                # Clear along each beam, stopping one cell short of the surface.
+                mask = ts[None, :] < (d - resolution)[:, None]
+                px = ox + (dirs[:, 0:1] * ts[None, :])[mask]
+                py = oy + (dirs[:, 1:2] * ts[None, :])[mask]
+                r, c = cells(px, py)
+                seen_free[r, c] = True
+                # Endpoints are the surfaces the lidar actually returns from.
+                r, c = cells(ox + dirs[:, 0] * d, oy + dirs[:, 1] * d)
+                seen_occ[r, c] = True
+        finally:
+            # Restore even if a ray call raises: a leaked parked pose would
+            # corrupt every later scan/step on this instance.
+            self.data.qpos[:] = saved
+            mujoco.mj_forward(self.model, self.data)
+
+        grid = np.full((height, width), -1, dtype=np.int8)
+        grid[seen_free] = 0
+        grid[seen_occ] = 100  # occupied wins over any grazing clear
+        return grid, float(xmin), float(ymin)
+
     def _rasterize_static_slab(
         self, zlo: float, zhi: float, xmin: float, ymin: float, width: int, height: int, resolution: float
     ) -> np.ndarray:

@@ -21,7 +21,12 @@ RESOLUTION = 0.05
 
 def main() -> None:
     sim = VirtualMars()
-    grid, ox, oy = sim.occupancy_grid(RESOLUTION)
+    # Lidar-consistent map (virtual SLAM at the laser's true height): AMCL
+    # localizes against what the lidar actually returns, exactly like a real
+    # robot localizing against its own SLAM map. occupancy_grid() (collision
+    # slab) systematically disagrees with the lidar around furniture and
+    # walks AMCL off the map.
+    grid, ox, oy = sim.lidar_occupancy_grid(RESOLUTION)
     # map_server PGM: 254 free, 0 occupied, 205 unknown; row 0 at the TOP.
     img = np.where(grid == 100, 0, np.where(grid == 0, 254, 205)).astype(np.uint8)[::-1]
     out = Path(__file__).resolve().parents[1] / "assets" / "map"
