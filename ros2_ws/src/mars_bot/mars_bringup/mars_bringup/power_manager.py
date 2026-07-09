@@ -21,6 +21,7 @@ State is broadcast on /power/state ("awake" / "going_to_sleep" / "sleeping" /
 """
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -460,26 +461,58 @@ class PowerManager(Node):
                 return pane_id
         return None
 
+    def _pane_move_group_pids(self, pane: str) -> list[str]:
+        """move_group PIDs spawned under this pane (a grandchild of the pane
+        shell via `ros2 launch`), captured *before* the pane is stopped —
+        move_group hangs on SIGINT and orphans to init, and killing by name
+        later would also hit the arm's move_group, whose pane we keep running."""
+        listing = self._tmux("list-panes", "-t", pane, "-F", "#{pane_id} #{pane_pid}")
+        if listing is None or listing.returncode != 0:
+            return []
+        shell_pid = None
+        for line in listing.stdout.splitlines():
+            pid_field, _, ppid_field = line.partition(" ")
+            if pid_field == pane:
+                shell_pid = ppid_field.strip()
+                break
+        if not shell_pid:
+            return []
+        pids, frontier = [], [shell_pid]
+        while frontier:
+            try:
+                out = subprocess.run(
+                    ["ps", "-o", "pid=,args=", "--ppid", frontier.pop()],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue
+            for entry in out.splitlines():
+                child_pid, _, child_args = entry.strip().partition(" ")
+                if not child_pid:
+                    continue
+                frontier.append(child_pid)
+                if "moveit_ros_move_group/move_group" in child_args:
+                    pids.append(child_pid)
+        return pids
+
     def _stop_sleep_panes(self) -> None:
         stopped = []
+        move_group_pids: set[str] = set()
         for window, _, match, _ in _SLEEP_PANES:
             pane = self._find_pane(window, match)
             if pane is None:
                 self.get_logger().warning(f"[{match}] pane not found — may already be down")
                 continue
             self._pane_ids[match] = pane
+            move_group_pids.update(self._pane_move_group_pids(pane))
             self._tmux("send-keys", "-t", pane, "C-c")
             stopped.append(match)
-        time.sleep(5.0)  # ros2 launch tears everything down gracefully on SIGINT
-        # Second Ctrl-C for launches still up (ros2 launch escalates to SIGTERM).
-        for window, _, match, _ in _SLEEP_PANES:
-            if match in self._pane_ids and self._find_pane(window, match) is not None:
-                self._tmux("send-keys", "-t", self._pane_ids[match], "C-c")
-                time.sleep(3.0)
-        # move_group regularly hangs on SIGINT and outlives its dying launch;
-        # an orphan would be duplicated by the wake relaunch. Both launches
-        # that own one are stopped here, so any survivor is fair game.
-        subprocess.run(["pkill", "-f", "moveit_ros_move_group/move_group"], check=False)
+        time.sleep(5.0)  # ros2 launch escalates SIGINT -> SIGTERM for its children
+        # Force-kill only the move_group copies these panes owned (they hang on
+        # SIGINT). The arm's move_group is a different PID we never captured.
+        for pid in move_group_pids:
+            if os.path.exists(f"/proc/{pid}"):
+                subprocess.run(["kill", "-9", pid], check=False)
         self.get_logger().info(f"[panes off] {', '.join(stopped) if stopped else 'none found'}")
 
     def _start_sleep_panes(self) -> None:
