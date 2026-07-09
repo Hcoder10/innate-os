@@ -542,4 +542,13 @@ void MarsArmNode::headEnableServoCallback(const std::shared_ptr<std_srvs::srv::S
     }
 }
 
+void MarsArmNode::lowPowerModeCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                       std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+    low_power_mode_.store(request->data);
+    response->success = true;
+    response->message = request->data ? "Control loop decimated to ~10 Hz" : "Control loop at full rate";
+    RCLCPP_INFO(this->get_logger(), "Low-power mode %s (loop at %s)", request->data ? "on" : "off",
+                request->data ? "~10 Hz" : "full rate");
+}
+
 }  // namespace mars_arm

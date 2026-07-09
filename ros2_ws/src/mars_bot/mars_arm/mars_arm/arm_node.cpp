@@ -180,6 +180,12 @@ MarsArmNode::MarsArmNode() : Node("mars_arm") {
         std::bind(&MarsArmNode::headEnableServoCallback, this, std::placeholders::_1, std::placeholders::_2),
         rmw_qos_profile_services_default, service_callback_group_);
 
+    low_power_divider_ = std::max(1, static_cast<int>(std::lround(control_frequency_ / 10.0)));
+    low_power_service_ = this->create_service<std_srvs::srv::SetBool>(
+        "/mars/arm/low_power_mode",
+        std::bind(&MarsArmNode::lowPowerModeCallback, this, std::placeholders::_1, std::placeholders::_2),
+        rmw_qos_profile_services_default, service_callback_group_);
+
     // ── Initialize messages ──
     RCLCPP_DEBUG(this->get_logger(), "Initializing joint state message with 6 joint names");
     arm_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};

@@ -6,6 +6,17 @@
 namespace mars_arm {
 
 void MarsArmNode::controlTimerCallback() {
+    // Low-power mode (robot sleep): run 1-in-N ticks (~10 Hz). The timer keeps
+    // firing — recreating it at a lower rate would mean destroying a timer
+    // under a spinning executor.
+    if (low_power_mode_.load(std::memory_order_relaxed)) {
+        if (low_power_tick_++ % low_power_divider_ != 0) {
+            return;
+        }
+    } else {
+        low_power_tick_ = 0;
+    }
+
     // ts[0..8]: loop_start, lock_acquired, read_done, effort_done,
     //           pub_arm_done, pub_head_js_done, gain_sched_done, cmd_write_done, loop_end
     std::array<std::chrono::steady_clock::time_point, 9> ts;

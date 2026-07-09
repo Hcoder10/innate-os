@@ -80,6 +80,8 @@ class MarsArmNode : public rclcpp::Node {
                                 std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void headEnableServoCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                                  std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+    void lowPowerModeCallback(const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                              std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
     // ── Trajectory planning & execution (arm_trajectory.cpp) ────────────
     std::vector<std::vector<double>> computeCubicSplineTrajectory(const std::vector<double>& start,
@@ -137,6 +139,13 @@ class MarsArmNode : public rclcpp::Node {
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr head_ai_position_service_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr head_enable_service_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
+
+    // Low-power mode (robot sleep): the control loop runs 1-in-N ticks so the
+    // dynamixel bus and downstream subscribers drop to ~10 Hz.
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr low_power_service_;
+    std::atomic<bool> low_power_mode_{false};
+    int low_power_divider_{20};
+    unsigned low_power_tick_{0};  // only touched from the control-loop timer
     int latest_head_command_{0};
     std::mutex head_command_mutex_;
     std::atomic<bool> has_head_command_{false};

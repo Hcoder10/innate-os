@@ -98,6 +98,7 @@ class PowerManager(Node):
         self._arm_torque_off_client = self.create_client(Trigger, "/mars/arm/torque_off")
         self._arm_torque_on_client = self.create_client(Trigger, "/mars/arm/torque_on")
         self._head_servo_client = self.create_client(SetBool, "/mars/head/enable_servo")
+        self._arm_low_power_client = self.create_client(SetBool, "/mars/arm/low_power_mode")
 
         # Activity signals
         self.create_subscription(Vector3, "/joystick", self._on_joystick, 10)
@@ -312,6 +313,10 @@ class PowerManager(Node):
         self._call(self._lidar_stop_client, Empty.Request(), "lidar motor off")
         self._call(self._arm_torque_off_client, Trigger.Request(), "arm torque off")
         self._call(self._head_servo_client, SetBool.Request(data=False), "head torque off")
+        # ~10 Hz is plenty for the boop detector, and the 200 Hz stream is the
+        # main CPU load during sleep (it fans out through /joint_states -> /tf
+        # into every Python subscriber and TF listener).
+        self._call(self._arm_low_power_client, SetBool.Request(data=True), "arm loop 10Hz")
         self._stop_camera_container()
         self._run_privileged(["systemctl", "stop", "speaker-keepalive.service"])
         self._run_privileged(["systemctl", "stop", "jetson-perf.service"])
@@ -336,6 +341,7 @@ class PowerManager(Node):
         self._run_privileged(["systemctl", "start", "jetson-perf.service"])
         self._start_camera_container()
         self._call(self._lidar_start_client, Empty.Request(), "lidar motor on")
+        self._call(self._arm_low_power_client, SetBool.Request(data=False), "arm loop full rate")
         self._call(self._head_servo_client, SetBool.Request(data=True), "head torque on")
         self._call(self._arm_torque_on_client, Trigger.Request(), "arm torque on")
         self._run_privileged(["systemctl", "start", "speaker-keepalive.service"])
