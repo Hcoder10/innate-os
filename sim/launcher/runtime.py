@@ -54,6 +54,7 @@ from config import (
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
 
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
+COMPOSE_INSTALL_URL = "https://docs.docker.com/compose/install/linux/"
 
 
 def run_logged(
@@ -149,24 +150,44 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM) -> None:
         stderr=subprocess.PIPE,
         check=False,
     )
-    if result.returncode == 0:
-        return
+    if result.returncode != 0:
+        detail = " ".join((result.stderr or result.stdout or "").split())
+        detail_lower = detail.lower()
+        daemon_unreachable = (
+            "daemon" in detail_lower or "docker desktop" in detail_lower or "failed to connect" in detail_lower
+        )
+        message = (
+            "Docker is installed, but the Docker daemon is not running or not reachable."
+            if daemon_unreachable
+            else "Docker is installed, but the Docker daemon check failed."
+        )
+        raise StackError(
+            f"{message}\n"
+            f"Start Docker Desktop or your Docker daemon, wait until it finishes starting, then rerun `{command_hint}`.\n"
+            f"Install/start guide: {DOCKER_INSTALL_URL}"
+        )
 
-    detail = " ".join((result.stderr or result.stdout or "").split())
-    detail_lower = detail.lower()
-    daemon_unreachable = (
-        "daemon" in detail_lower or "docker desktop" in detail_lower or "failed to connect" in detail_lower
+    # Compose v2 is a separate CLI plugin. On native-Linux/WSL engine installs
+    # `docker` can work while `docker compose` is missing -- the whole startup
+    # runs through `docker compose`, so without this it dies deep in with a
+    # cryptic bare-`docker` usage error instead of a clear diagnosis.
+    compose = subprocess.run(
+        ["docker", "compose", "version"],
+        text=True,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
     )
-    message = (
-        "Docker is installed, but the Docker daemon is not running or not reachable."
-        if daemon_unreachable
-        else "Docker is installed, but the Docker daemon check failed."
-    )
-    raise StackError(
-        f"{message}\n"
-        f"Start Docker Desktop or your Docker daemon, wait until it finishes starting, then rerun `{command_hint}`.\n"
-        f"Install/start guide: {DOCKER_INSTALL_URL}"
-    )
+    if compose.returncode != 0:
+        # The package name follows the Docker install, not the distro version.
+        raise StackError(
+            "Docker is running, but Docker Compose v2 is not available (`docker compose` failed).\n"
+            "Install the Compose plugin matching your Docker:\n"
+            "  distro engine (docker.io): `sudo apt install docker-compose-v2` (Debian: `docker-compose`)\n"
+            "  Docker's own repo (docker-ce): `sudo apt install docker-compose-plugin` (dnf/yum: same name)\n"
+            "  Docker Desktop already bundles it.\n"
+            f"Then rerun `{command_hint}`. Guide: {COMPOSE_INSTALL_URL}"
+        )
 
 
 def docker_compose_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
