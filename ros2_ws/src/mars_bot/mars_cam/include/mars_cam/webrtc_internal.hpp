@@ -107,7 +107,6 @@ struct OfferContext {
     std::string client_id;
     guint expected_videos = 0;
     bool expected_audio = false;
-    bool expected_data = false;
 };
 
 inline void offer_context_free(gpointer data) {

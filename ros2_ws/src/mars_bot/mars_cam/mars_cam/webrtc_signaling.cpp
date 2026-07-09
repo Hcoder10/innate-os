@@ -242,16 +242,14 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
     const SdpMediaCounts counts = count_sdp_media(offer->sdp);
     const bool missing_video = counts.video < ctx->expected_videos;
     const bool missing_audio = ctx->expected_audio && counts.audio == 0;
-    const bool missing_data = ctx->expected_data && counts.application == 0;
-    if (missing_video || missing_audio || missing_data) {
-        RCLCPP_WARN(self->get_logger(), "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s data=%u%s)",
+    if (missing_video || missing_audio) {
+        RCLCPP_WARN(self->get_logger(), "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s)",
                     peer_label(ctx->client_id), counts.video, ctx->expected_videos, counts.audio,
-                    ctx->expected_audio ? " required" : "", counts.application, ctx->expected_data ? " required" : "");
-        // Do not retry create-offer on this same webrtcbin. GStreamer 1.20 can assert in
-        // _add_data_channel_offer() if an incomplete offer is followed by an immediate second offer on the
-        // same element. The client offer watchdog will send a renegotiate START, which creates a fresh
-        // transport; until then the connect timeout releases this peer. The offer-once latch (set when this
-        // offer was kicked off) stays latched, so this webrtcbin never re-offers.
+                    ctx->expected_audio ? " required" : "");
+        // Do not retry create-offer on this same webrtcbin; an immediate second offer can disrupt it. The
+        // client offer watchdog will send a renegotiate START, which creates a fresh transport; until then
+        // the connect timeout releases this peer. The offer-once latch (set when this offer was kicked off)
+        // stays latched, so this webrtcbin never re-offers.
         gst_webrtc_session_description_free(offer);
         gst_promise_unref(promise);
         return;
@@ -283,11 +281,10 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
     const SdpMediaCounts counts = count_sdp_media(sdp_msg);
     const bool missing_video = counts.video < peer->videos.size();
     const bool missing_audio = peer->with_audio && counts.audio == 0;
-    const bool missing_data = counts.application == 0;
-    if (missing_video || missing_audio || missing_data) {
-        RCLCPP_WARN(this->get_logger(), "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u%s data=%u)",
+    if (missing_video || missing_audio) {
+        RCLCPP_WARN(this->get_logger(), "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u%s)",
                     peer_label(peer->client_id), counts.video, peer->videos.size(), counts.audio,
-                    peer->with_audio ? " required" : "", counts.application);
+                    peer->with_audio ? " required" : "");
         gst_sdp_message_free(sdp_msg);
         return;
     }
@@ -342,8 +339,7 @@ void WebRTCStreamer::deliver_ice(const std::string& client_id, const std::string
     auto it = peers_.find(client_id);
     if (it != peers_.end()) {
         Peer* peer = it->second.get();
-        const int max_mline =
-            static_cast<int>(peer->videos.size()) + (peer->with_audio ? 1 : 0) + 1;  // + diagnostics data channel
+        const int max_mline = static_cast<int>(peer->videos.size()) + (peer->with_audio ? 1 : 0);
         if (mline >= max_mline) {
             RCLCPP_WARN(this->get_logger(), "Ignoring ICE for '%s': m-line %d outside negotiated range [0,%d)",
                         client_id.c_str(), mline, max_mline - 1);
@@ -468,40 +464,6 @@ void WebRTCStreamer::on_connection_state_changed(GstElement* webrtc, GParamSpec*
     }
     RCLCPP_INFO(self->get_logger(), "Peer '%s' connection state: %s", (cid && *cid) ? cid : "(default)",
                 conn_state_name(state));
-}
-
-void WebRTCStreamer::on_diag_channel_open(GstWebRTCDataChannel* channel, gpointer user_data) {
-    auto* self = static_cast<WebRTCStreamer*>(user_data);
-    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
-    const char* label = nullptr;
-    g_object_get(channel, "label", &label, nullptr);
-    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel '%s' open", (cid && *cid) ? cid : "(default)",
-                label ? label : "?");
-
-    nlohmann::json hello;
-    hello["type"] = "robot-hello";
-    hello["client_id"] = cid ? cid : "";
-    hello["steady_ns"] = std::chrono::steady_clock::now().time_since_epoch().count();
-    gst_webrtc_data_channel_send_string(channel, hello.dump().c_str());
-    if (label)
-        g_free(const_cast<char*>(label));
-}
-
-void WebRTCStreamer::on_diag_channel_message(GstWebRTCDataChannel* channel, gchar* data, gpointer user_data) {
-    auto* self = static_cast<WebRTCStreamer*>(user_data);
-    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
-    if (data && std::string(data).find("\"type\":\"browser-ping\"") != std::string::npos) {
-        RCLCPP_DEBUG(self->get_logger(), "Peer '%s' data channel browser-ping", (cid && *cid) ? cid : "(default)");
-        return;
-    }
-    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel <- %s", (cid && *cid) ? cid : "(default)",
-                data ? data : "(null)");
-}
-
-void WebRTCStreamer::on_diag_channel_close(GstWebRTCDataChannel* channel, gpointer user_data) {
-    auto* self = static_cast<WebRTCStreamer*>(user_data);
-    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(channel), "client_id"));
-    RCLCPP_INFO(self->get_logger(), "Peer '%s' data channel closed", (cid && *cid) ? cid : "(default)");
 }
 
 }  // namespace mars_cam

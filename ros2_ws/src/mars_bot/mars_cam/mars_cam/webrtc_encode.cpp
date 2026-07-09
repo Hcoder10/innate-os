@@ -85,7 +85,9 @@ bool WebRTCStreamer::build_encode_pipeline() {
             RCLCPP_ERROR(this->get_logger(), "Encode pipeline missing elements for camera '%s'", cam->name.c_str());
             return false;
         }
-        g_object_set(cam->appsrc, "format", GST_FORMAT_TIME, "do-timestamp", TRUE, "is-live", TRUE, "block", FALSE,
+        // do-timestamp=FALSE: push_frame stamps each buffer's PTS explicitly from a monotonic clock. Left to
+        // do-timestamp, rtpvp8pay was emitting RTP header timestamps stuck at 0, which iOS/Safari WebRTC drops.
+        g_object_set(cam->appsrc, "format", GST_FORMAT_TIME, "do-timestamp", FALSE, "is-live", TRUE, "block", FALSE,
                      "max-bytes", 2 * cam->width * cam->height * 3, nullptr);
         cam->pool = create_frame_pool(cam->width, cam->height, 3);
         attach_playout_delay_extension(cam->name);
@@ -434,7 +436,7 @@ GstBufferPool* WebRTCStreamer::create_frame_pool(int width, int height, int chan
     return pool;
 }
 
-void WebRTCStreamer::push_frame(CameraEncoder* cam, const cv::Mat& frame) {
+void WebRTCStreamer::push_frame(CameraEncoder* cam, const cv::Mat& frame, const rclcpp::Time& stamp) {
     if (!cam->appsrc || frame.empty() || !cam->pool) {
         return;
     }
@@ -446,6 +448,29 @@ void WebRTCStreamer::push_frame(CameraEncoder* cam, const cv::Mat& frame) {
     gst_buffer_map(buffer, &map, GST_MAP_WRITE);
     memcpy(map.data, frame.data, frame.total() * frame.elemSize());
     gst_buffer_unmap(buffer, &map);
+
+    // PTS from the frame's capture stamp, so inter-frame timing reflects true capture cadence. rtpvp8pay
+    // turns this into the 90kHz RTP timestamp; a non-advancing one makes iOS/Safari drop the stream. The
+    // stamp is untrusted: anchor on the first frame and re-anchor on any backward step (NTP correction,
+    // replay loop) so PTS stays monotonic, and synthesize an fps-paced tick for an unstamped frame.
+    const int64_t stamp_ns = stamp.nanoseconds();
+    const GstClockTime tick = GST_SECOND / static_cast<GstClockTime>(std::max(cam->fps, 1));  // nominal frame step
+    GstClockTime pts;
+    if (stamp_ns > 0) {
+        const GstClockTime s = static_cast<GstClockTime>(stamp_ns);
+        if (cam->pts_base_ns == GST_CLOCK_TIME_NONE || s < cam->last_stamp_ns) {
+            // Anchor one tick PAST the last PTS, not on it: s - (last_pts + tick) makes this frame's PTS
+            // resume at last_pts + tick, so a re-anchor never repeats the previous frame's RTP timestamp.
+            cam->pts_base_ns = s - (cam->last_pts_ns + tick);
+        }
+        cam->last_stamp_ns = s;
+        pts = s - cam->pts_base_ns;
+    } else {
+        pts = cam->last_pts_ns + tick;
+    }
+    cam->last_pts_ns = pts;
+    GST_BUFFER_PTS(buffer) = pts;
+    GST_BUFFER_DTS(buffer) = pts;
 
     GstFlowReturn ret;
     g_signal_emit_by_name(cam->appsrc, "push-buffer", buffer, &ret);
@@ -466,7 +491,7 @@ void WebRTCStreamer::on_image_raw(CameraEncoder* cam, const sensor_msgs::msg::Im
     }
     cv::Mat img = process_raw_image(msg, cam->width, cam->height);
     if (!img.empty()) {
-        push_frame(cam, img);
+        push_frame(cam, img, rclcpp::Time(msg->header.stamp));
     }
 }
 
@@ -476,7 +501,7 @@ void WebRTCStreamer::on_image_compressed(CameraEncoder* cam, const sensor_msgs::
     }
     cv::Mat img = process_compressed_image(msg, cam->width, cam->height);
     if (!img.empty()) {
-        push_frame(cam, img);
+        push_frame(cam, img, rclcpp::Time(msg->header.stamp));
     }
 }
 
