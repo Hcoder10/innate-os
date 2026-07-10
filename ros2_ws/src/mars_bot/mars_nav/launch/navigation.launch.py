@@ -138,6 +138,14 @@ def generate_launch_description():
         executable="controller_server",
         name="controller_server",
         output="screen",
+        # The Humble binaries have known memory bugs in teardown/abort paths
+        # (see mode_manager's skip_cleanup_nodes; observed live: repeated
+        # "Failed to make progress" aborts end in a double-free SIGABRT).
+        # Respawn brings the process back; mode_manager's lifecycle watchdog
+        # re-configures and re-activates it, so a controller crash costs
+        # seconds of navigation instead of the rest of the session.
+        respawn=True,
+        respawn_delay=2.0,
         parameters=[
             controller_params_file,
             costmap_params_file,

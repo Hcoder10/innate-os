@@ -261,6 +261,17 @@ class ModeManager(Node):
         # Auto-start in the saved mode after a short delay
         self.startup_timer = self.create_timer(3.0, self.auto_start_mode, callback_group=self._internal_callbacks_group)
 
+        # Lifecycle watchdog: launch respawns crashed nav2 nodes (see
+        # controller_server in navigation.launch.py), but a respawned
+        # lifecycle node comes back UNCONFIGURED and useless. Re-drive it for
+        # the current mode. Armed after the first successful mode startup so
+        # it never races the initial bringup.
+        self._lifecycle_watchdog_armed = False
+        self._watchdog_busy = False
+        self._lifecycle_watchdog_timer = self.create_timer(
+            5.0, self._lifecycle_watchdog, callback_group=self._internal_callbacks_group
+        )
+
     def odom_callback(self, msg):
         # Only publish mapping_pose in mapping mode
         if getattr(self, "current_mode", None) != "mapping":
@@ -624,12 +635,53 @@ class ModeManager(Node):
                 message = f"{mode.value} mode started successfully (map: {map_status})"
                 self.get_logger().info(message)
 
+            self._lifecycle_watchdog_armed = True
             return len(failures) == 0, message
 
         except Exception as e:
             error_msg = f"Error requesting {mode.value} startup: {str(e)}"
             self.get_logger().error(error_msg)
             return False, error_msg
+
+    def _lifecycle_watchdog(self):
+        """Restore nodes that crashed and respawned mid-session.
+
+        Observed live: controller_server dies with a double-free SIGABRT after
+        repeated "Failed to make progress" aborts (a sibling of the known
+        teardown crashes listed in skip_cleanup_nodes). launch respawns it,
+        and this watchdog notices the UNCONFIGURED state and re-drives it to
+        where the current mode needs it -- turning a crash into a few seconds
+        of downtime instead of a dead nav stack.
+        """
+        if not self._lifecycle_watchdog_armed or self._watchdog_busy:
+            return
+        mode = getattr(self, "current_mode", None)
+        if mode not in modes_nodes:
+            return
+        # A mode/map operation owns the transitions while it holds the lock.
+        if not self._mode_change_lock.acquire(blocking=False):
+            return
+        self._watchdog_busy = True
+        try:
+            for node_name in modes_nodes[mode]:
+                state = get_node_state(self._service_clients, self.get_logger(), node_name)
+                if state != State.PRIMARY_STATE_UNCONFIGURED:
+                    continue  # healthy, mid-transition, or still respawning (unreachable)
+                expect_active = node_name not in configure_only_nodes.get(mode, set())
+                target = State.PRIMARY_STATE_ACTIVE if expect_active else State.PRIMARY_STATE_INACTIVE
+                self.get_logger().warning(
+                    f"{node_name} is UNCONFIGURED while {mode} mode is active -- "
+                    "it likely crashed and respawned; re-driving its lifecycle"
+                )
+                if transition_node(self._service_clients, self.get_logger(), node_name, target):
+                    self.get_logger().info(
+                        f"{node_name} restored to {'ACTIVE' if expect_active else 'INACTIVE'} after respawn"
+                    )
+                else:
+                    self.get_logger().error(f"Failed to restore {node_name}; retrying on the next watchdog tick")
+        finally:
+            self._watchdog_busy = False
+            self._mode_change_lock.release()
 
     def _load_map_on_server(self, node_name: str, max_retries: int = 20) -> bool:
         """
