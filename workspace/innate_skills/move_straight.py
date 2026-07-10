@@ -94,11 +94,7 @@ class MoveStraight(Skill):
 
     def _position(self):
         """Current (x, y) from the odometry robot state, or None if absent."""
-        try:
-            p = self.odom["pose"]["pose"]["position"]
-            return (p["x"], p["y"])
-        except (TypeError, KeyError):
-            return None
+        return self.odom.position if self.odom is not None else None
 
     def _wait_for_position(self):
         """(x, y) once odometry arrives, or None after ODOM_WAIT_SEC."""
