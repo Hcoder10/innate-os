@@ -30,7 +30,7 @@ class Odometry:
     y: float
     """Position along Y in meters, odom frame."""
     theta: float
-    """Yaw in radians, counter-clockwise positive, wrapped to (-pi, pi]."""
+    """Yaw in radians, counter-clockwise positive, wrapped to [-pi, pi]."""
     linear_velocity: float = 0.0
     """Forward speed in m/s (negative when driving backward)."""
     angular_velocity: float = 0.0
@@ -46,6 +46,14 @@ class Odometry:
     nav_msgs/Odometry-like message (converted lazily on first access).
     Excluded from ==/hash — it is provenance, not part of the 2D snapshot;
     including it would also make production instances unhashable (dicts)."""
+
+    def __post_init__(self):
+        # theta's docstring is a contract (turn_in_place does heading math on
+        # it), so enforce it for hand-built instances too. The injected path
+        # already gets atan2 output; the guard keeps it trig-free at 50 Hz.
+        if not -math.pi <= self.theta <= math.pi:
+            # frozen dataclass: object.__setattr__ bypasses the immutability guard
+            object.__setattr__(self, "theta", math.atan2(math.sin(self.theta), math.cos(self.theta)))
 
     @cached_property
     def raw(self) -> dict | None:
