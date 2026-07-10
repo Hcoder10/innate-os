@@ -261,6 +261,17 @@ class ModeManager(Node):
         # Auto-start in the saved mode after a short delay
         self.startup_timer = self.create_timer(3.0, self.auto_start_mode, callback_group=self._internal_callbacks_group)
 
+        # Lifecycle watchdog: launch respawns crashed nav2 nodes (see
+        # controller_server in navigation.launch.py), but a respawned
+        # lifecycle node comes back UNCONFIGURED and useless. Re-drive it for
+        # the current mode. Armed after the first successful mode startup so
+        # it never races the initial bringup.
+        self._lifecycle_watchdog_armed = False
+        self._watchdog_busy = False
+        self._lifecycle_watchdog_timer = self.create_timer(
+            5.0, self._lifecycle_watchdog, callback_group=self._internal_callbacks_group
+        )
+
     def odom_callback(self, msg):
         # Only publish mapping_pose in mapping mode
         if getattr(self, "current_mode", None) != "mapping":
@@ -624,12 +635,73 @@ class ModeManager(Node):
                 message = f"{mode.value} mode started successfully (map: {map_status})"
                 self.get_logger().info(message)
 
+            self._lifecycle_watchdog_armed = True
             return len(failures) == 0, message
 
         except Exception as e:
             error_msg = f"Error requesting {mode.value} startup: {str(e)}"
             self.get_logger().error(error_msg)
             return False, error_msg
+
+    def _lifecycle_watchdog(self):
+        """Restore nodes that crashed and respawned mid-session.
+
+        Observed live: controller_server dies with a double-free SIGABRT after
+        repeated "Failed to make progress" aborts (a sibling of the known
+        teardown crashes listed in skip_cleanup_nodes). launch respawns it,
+        and this watchdog notices and re-drives it to where the current mode
+        needs it -- turning a crash into a few seconds of downtime instead of
+        a dead nav stack.
+
+        Restores nodes found UNCONFIGURED (fresh respawn) or stuck INACTIVE
+        when the mode expects ACTIVE (a previous restore's activate failed).
+        States are probed WITHOUT the mode lock on a short timeout, so a slow
+        or dead node never blocks user mode/map operations; the lock is taken
+        only to perform an actual repair, with the state re-checked under it.
+        """
+        if not self._lifecycle_watchdog_armed or self._watchdog_busy:
+            return
+        mode = getattr(self, "current_mode", None)
+        if mode not in modes_nodes:
+            return
+        self._watchdog_busy = True
+        try:
+
+            def restore_target(node_name):
+                """(needs_restore, target_state) for a current-mode node."""
+                state = get_node_state(self._service_clients, self.get_logger(), node_name, timeout_sec=2.0)
+                expect_active = node_name not in configure_only_nodes.get(mode, set())
+                target = State.PRIMARY_STATE_ACTIVE if expect_active else State.PRIMARY_STATE_INACTIVE
+                wrong = state == State.PRIMARY_STATE_UNCONFIGURED or (
+                    state == State.PRIMARY_STATE_INACTIVE and expect_active
+                )
+                return wrong, target
+
+            needs_restore = [n for n in modes_nodes[mode] if restore_target(n)[0]]
+            if not needs_restore:
+                return
+            # A mode/map operation owns the transitions while it holds the lock.
+            if not self._mode_change_lock.acquire(blocking=False):
+                return
+            try:
+                for node_name in needs_restore:
+                    # Re-check under the lock: a mode operation may have just moved it.
+                    wrong, target = restore_target(node_name)
+                    if not wrong:
+                        continue
+                    self.get_logger().warning(
+                        f"{node_name} is below its expected lifecycle state while {mode} mode is active -- "
+                        "it likely crashed and respawned; re-driving its lifecycle"
+                    )
+                    # only_up: the watchdog may raise a node, never lower one.
+                    if transition_node(self._service_clients, self.get_logger(), node_name, target, only_up=True):
+                        self.get_logger().info(f"{node_name} restored after respawn")
+                    else:
+                        self.get_logger().error(f"Failed to restore {node_name}; retrying on the next watchdog tick")
+            finally:
+                self._mode_change_lock.release()
+        finally:
+            self._watchdog_busy = False
 
     def _load_map_on_server(self, node_name: str, max_retries: int = 20) -> bool:
         """
