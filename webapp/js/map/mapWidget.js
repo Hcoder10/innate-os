@@ -1,13 +1,13 @@
 // @ts-check
 // Reusable nav-map widget — a plain 2D <canvas> rendering the occupancy grid
 // (/map), robot pose (/odom), planner route (/plan), and click-to-navigate
-// (publishes /goal_pose). Sizes itself to its container via a ResizeObserver, so
+// (sends a NavigateToPose goal via the router). Sizes itself to its container via a ResizeObserver, so
 // it can be the standalone Map page OR a teleop PiP tile that reparents between
 // a small thumbnail and the full stage. No three.js — a canvas + putImageData
 // is all a 2D map needs.
 
 import { ros } from "../rosClient.js";
-import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPIC, GOAL_POSE_TOPIC, CANCEL_NAVIGATION_SERVICE } from "../constants.js";
+import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPICS, COMMANDED_GOAL_TOPIC, CANCEL_NAVIGATION_SERVICE } from "../constants.js";
 
 // Wheel-zoom bounds (metres of real-world width shown).
 const MIN_ZOOM_M = 1;
@@ -34,11 +34,36 @@ export function createMap(root, opts = {}) {
   const stopBtn = document.createElement("button");
   stopBtn.className = "map-stop-btn sim-button";
   stopBtn.textContent = "Stop";
+  const controlsRow = document.createElement("div");
+  controlsRow.className = "map-controls-row";
+  controlsRow.appendChild(goalBtn);
+  controlsRow.appendChild(stopBtn);
+  // Outcome of the widget's own navigation goals: live progress while
+  // driving, then success or a specific failure line (not just "failed").
+  const statusEl = document.createElement("div");
+  statusEl.className = "map-status mono";
+  statusEl.hidden = true;
   const controls = document.createElement("div");
   controls.className = "map-controls";
-  controls.appendChild(goalBtn);
-  controls.appendChild(stopBtn);
+  controls.appendChild(controlsRow);
+  controls.appendChild(statusEl);
   root.appendChild(controls);
+
+  let goalGen = 0; // ignore settlements of superseded goals
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let statusClearTimer;
+  /** @param {"navigating" | "ok" | "fail" | "muted"} kind @param {string} text @param {boolean} [autoclear] */
+  function setStatus(kind, text, autoclear = false) {
+    clearTimeout(statusClearTimer);
+    statusEl.hidden = false;
+    statusEl.dataset.kind = kind;
+    statusEl.textContent = text;
+    if (autoclear) {
+      statusClearTimer = setTimeout(() => {
+        statusEl.hidden = true;
+      }, 8000);
+    }
+  }
 
   // Offscreen 1px-per-cell buffer; scaled to the canvas on draw (crisp + cheap).
   const off = document.createElement("canvas");
@@ -61,6 +86,9 @@ export function createMap(root, opts = {}) {
   let goalDrag = null;
   /** @type {{ x: number, y: number, yaw: number } | null} the active goal */
   let goalMarker = null;
+  // True once /nav/commanded_goal set the marker for this navigation: the
+  // skill's exact target then wins over the per-replan plan endpoint.
+  let goalIsCommanded = false;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let navStaleTimer;
 
@@ -163,9 +191,25 @@ export function createMap(root, opts = {}) {
     clearTimeout(navStaleTimer);
     navStaleTimer = setTimeout(() => {
       goalMarker = null;
+      goalIsCommanded = false;
       plan = null;
       draw();
     }, NAV_STALE_MS);
+  }
+
+  /** @param {any} msg geometry_msgs/PoseStamped — the skill's exact target */
+  function onCommandedGoal(msg) {
+    // Only trust map-frame targets: odom-frame (local) goals would drift
+    // against the map canvas; for those the plan-endpoint fallback at least
+    // matches the frame the route itself is drawn in.
+    if (msg?.header?.frame_id !== "map") return;
+    const pos = msg?.pose?.position;
+    const q = msg?.pose?.orientation;
+    if (typeof pos?.x !== "number" || typeof pos?.y !== "number" || !q) return;
+    goalMarker = { x: pos.x, y: pos.y, yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)) };
+    goalIsCommanded = true;
+    armNavStale(); // the goal marks an active navigation; expire it like the route
+    draw();
   }
 
   /** @param {any} msg nav_msgs/Path */
@@ -179,10 +223,24 @@ export function createMap(root, opts = {}) {
     }
     if (pts.length) {
       plan = pts;
+      // Fallback goal marker: the route's end. Only used until the skill's
+      // exact target arrives on /nav/commanded_goal (goalIsCommanded) — the
+      // endpoint wiggles with every replan, the commanded goal doesn't. Still
+      // needed for navigations that bypass the skill (e.g. map clicks routed
+      // straight to bt_navigator).
+      if (!goalIsCommanded) {
+        const end = poses[poses.length - 1]?.pose;
+        const q = end?.orientation;
+        if (q) {
+          const yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+          goalMarker = { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y, yaw };
+        }
+      }
       armNavStale(); // route still streaming → keep the goal visible
     } else {
       plan = null; // empty path = navigation finished/aborted
       goalMarker = null;
+      goalIsCommanded = false;
       clearTimeout(navStaleTimer);
     }
     draw();
@@ -285,13 +343,58 @@ export function createMap(root, opts = {}) {
   function publishGoal(x, y, yaw) {
     const qz = Math.sin(yaw / 2);
     const qw = Math.cos(yaw / 2);
-    const now = Date.now();
-    ros.publish(GOAL_POSE_TOPIC, {
-      header: { stamp: { sec: Math.floor(now / 1000), nanosec: (now % 1000) * 1_000_000 }, frame_id: "map" },
-      pose: { position: { x, y, z: 0 }, orientation: { x: 0, y: 0, z: qz, w: qw } },
-    });
+    // A NavigateToPose ACTION goal through the router, pinned to the map
+    // planner ("navigation"): a map click is a map-frame gesture, so it must
+    // never run on whatever planner the previous navigation left latched
+    // (the /goal_pose topic bypasses the router and does exactly that).
+    // Zero stamp = "latest" to TF. Never wall time: the sim runs on ROS sim
+    // time, where a Date.now() stamp is decades in the future.
+    const gen = ++goalGen;
+    /** @type {{ distance_remaining?: number, number_of_recoveries?: number } | null} */
+    let lastFb = null;
+    setStatus("navigating", "Navigating…");
+    ros
+      .sendActionGoal(
+        "/navigate_to_pose",
+        "nav2_msgs/action/NavigateToPose",
+        {
+          pose: {
+            header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "map" },
+            pose: { position: { x, y, z: 0 }, orientation: { x: 0, y: 0, z: qz, w: qw } },
+          },
+          behavior_tree: "navigation",
+        },
+        {
+          onFeedback: (v) => {
+            if (gen !== goalGen || typeof v?.distance_remaining !== "number") return;
+            lastFb = v;
+            const rec = v.number_of_recoveries ? `, ${v.number_of_recoveries} recover${v.number_of_recoveries === 1 ? "y" : "ies"}` : "";
+            setStatus("navigating", `Navigating — ${v.distance_remaining.toFixed(1)} m left${rec}`);
+          },
+        },
+      )
+      .promise.then(() => {
+        if (gen === goalGen) setStatus("ok", "Reached the goal", true);
+      })
+      .catch(() => {
+        if (gen !== goalGen) return;
+        if (stopRequested === gen) {
+          setStatus("muted", "Stopped", true);
+          return;
+        }
+        // NavigateToPose's result message is empty, so the reason must come
+        // from the last feedback: how far it got and how hard it tried.
+        const d = lastFb?.distance_remaining;
+        const n = lastFb?.number_of_recoveries ?? 0;
+        const detail =
+          typeof d === "number"
+            ? ` ${d.toFixed(1)} m from the goal${n ? ` after ${n} recover${n === 1 ? "y" : "ies"}` : ""} — route blocked or robot stuck?`
+            : " — no path (goal unreachable or outside the map?)";
+        setStatus("fail", `Failed${detail}`);
+      });
     plan = null; // drop the stale route; the new one streams in on /plan
     goalMarker = { x, y, yaw };
+    goalIsCommanded = false; // a fresh click supersedes any previous skill goal
     armNavStale(); // hold the goal until the route starts, then while it runs
   }
 
@@ -343,12 +446,15 @@ export function createMap(root, opts = {}) {
 
   // Stop cancels every active navigation goal server-side, then drops the
   // local goal marker and route.
+  let stopRequested = 0; // goal generation the user stopped, for status wording
   stopBtn.addEventListener("click", async () => {
     stopBtn.disabled = true;
     stopBtn.textContent = "Stopping…";
+    stopRequested = goalGen;
     try {
       await ros.callService(CANCEL_NAVIGATION_SERVICE, {});
       goalMarker = null;
+      goalIsCommanded = false;
       plan = null;
       setGoalMode(false);
       draw();
@@ -376,7 +482,9 @@ export function createMap(root, opts = {}) {
 
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
-  const unsubPlan = ros.subscribe(PLAN_TOPIC, onPlan, 250, "nav_msgs/msg/Path");
+  // Only the active planner publishes, so both feeds can share one handler.
+  const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, onPlan, 250, "nav_msgs/msg/Path"));
+  const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");
 
   return {
     /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */
@@ -388,10 +496,12 @@ export function createMap(root, opts = {}) {
     },
     destroy() {
       clearTimeout(navStaleTimer);
+      clearTimeout(statusClearTimer);
       ro.disconnect();
       unsubMap();
       unsubOdom();
-      unsubPlan();
+      for (const unsub of unsubPlans) unsub();
+      unsubGoal();
       canvas.remove();
       controls.remove();
     },
