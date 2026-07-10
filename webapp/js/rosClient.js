@@ -21,6 +21,20 @@ const RECONNECT_CAP_MS = 10_000;
 const SUB_RETRY_CAP_MS = 30_000;
 
 /**
+ * True when a value carries no actual data: null/undefined, or an object/array
+ * whose leaves are all empty. Catches action results built from empty
+ * sub-messages (e.g. NavigateToPose's {result: {}}), while {success: false} or
+ * {message: ""} still count as data.
+ * @param {any} v
+ * @returns {boolean}
+ */
+function isEmptyDeep(v) {
+  if (v == null) return true;
+  if (typeof v !== "object") return false;
+  return Object.values(v).every(isEmptyDeep);
+}
+
+/**
  * @typedef {Object} Subscription
  * @property {Set<(msg: any) => void>} handlers
  * @property {number | undefined} throttleRate
@@ -390,16 +404,13 @@ export class RosClient {
       const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
       if (!pending) return;
       this.#pendingActions.delete(data.id);
-      // rws sets `result: false` for any non-SUCCEEDED goal (aborted/canceled/
-      // rejected). A goal that actually terminated still carries its result
-      // message (e.g. {success, message, success_type}), so resolve with the
-      // payload and let the caller read the skill-level outcome. Reject only when
-      // it didn't succeed AND no usable result came back (rejected outright):
-      // otherwise a non-null-but-empty {} would masquerade as success, unlike the
-      // service_response path which rejects any result === false.
+      // rws sets `result: false` for any non-SUCCEEDED goal, but the payload may
+      // still carry the skill-level outcome ({success, message, ...}) — resolve
+      // with it and let the caller judge. Reject only when nothing usable came
+      // back, checked deeply: NavigateToPose's aborted result is {result: {}},
+      // which would otherwise resolve and read as "reached".
       const values = data.values;
-      const emptyResult = values == null || (typeof values === "object" && Object.keys(values).length === 0);
-      if (data.result === false && emptyResult) {
+      if (data.result === false && isEmptyDeep(values)) {
         pending.reject(new Error(`Action ${pending.action} was rejected`));
       } else {
         pending.resolve(values);
