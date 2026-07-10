@@ -649,39 +649,59 @@ class ModeManager(Node):
         Observed live: controller_server dies with a double-free SIGABRT after
         repeated "Failed to make progress" aborts (a sibling of the known
         teardown crashes listed in skip_cleanup_nodes). launch respawns it,
-        and this watchdog notices the UNCONFIGURED state and re-drives it to
-        where the current mode needs it -- turning a crash into a few seconds
-        of downtime instead of a dead nav stack.
+        and this watchdog notices and re-drives it to where the current mode
+        needs it -- turning a crash into a few seconds of downtime instead of
+        a dead nav stack.
+
+        Restores nodes found UNCONFIGURED (fresh respawn) or stuck INACTIVE
+        when the mode expects ACTIVE (a previous restore's activate failed).
+        States are probed WITHOUT the mode lock on a short timeout, so a slow
+        or dead node never blocks user mode/map operations; the lock is taken
+        only to perform an actual repair, with the state re-checked under it.
         """
         if not self._lifecycle_watchdog_armed or self._watchdog_busy:
             return
         mode = getattr(self, "current_mode", None)
         if mode not in modes_nodes:
             return
-        # A mode/map operation owns the transitions while it holds the lock.
-        if not self._mode_change_lock.acquire(blocking=False):
-            return
         self._watchdog_busy = True
         try:
-            for node_name in modes_nodes[mode]:
-                state = get_node_state(self._service_clients, self.get_logger(), node_name)
-                if state != State.PRIMARY_STATE_UNCONFIGURED:
-                    continue  # healthy, mid-transition, or still respawning (unreachable)
+
+            def restore_target(node_name):
+                """(needs_restore, target_state) for a current-mode node."""
+                state = get_node_state(self._service_clients, self.get_logger(), node_name, timeout_sec=2.0)
                 expect_active = node_name not in configure_only_nodes.get(mode, set())
                 target = State.PRIMARY_STATE_ACTIVE if expect_active else State.PRIMARY_STATE_INACTIVE
-                self.get_logger().warning(
-                    f"{node_name} is UNCONFIGURED while {mode} mode is active -- "
-                    "it likely crashed and respawned; re-driving its lifecycle"
+                wrong = state == State.PRIMARY_STATE_UNCONFIGURED or (
+                    state == State.PRIMARY_STATE_INACTIVE and expect_active
                 )
-                if transition_node(self._service_clients, self.get_logger(), node_name, target):
-                    self.get_logger().info(
-                        f"{node_name} restored to {'ACTIVE' if expect_active else 'INACTIVE'} after respawn"
+                return wrong, target
+
+            needs_restore = [n for n in modes_nodes[mode] if restore_target(n)[0]]
+            if not needs_restore:
+                return
+            # A mode/map operation owns the transitions while it holds the lock.
+            if not self._mode_change_lock.acquire(blocking=False):
+                return
+            try:
+                for node_name in needs_restore:
+                    # Re-check under the lock: a mode operation may have just moved it.
+                    wrong, target = restore_target(node_name)
+                    if not wrong:
+                        continue
+                    self.get_logger().warning(
+                        f"{node_name} is below its expected lifecycle state while {mode} mode is active -- "
+                        "it likely crashed and respawned; re-driving its lifecycle"
                     )
-                else:
-                    self.get_logger().error(f"Failed to restore {node_name}; retrying on the next watchdog tick")
+                    # only_up: the watchdog may raise a node, never lower one.
+                    if transition_node(self._service_clients, self.get_logger(), node_name, target, only_up=True):
+                        self.get_logger().info(f"{node_name} restored after respawn")
+                    else:
+                        self.get_logger().error(f"Failed to restore {node_name}; retrying on the next watchdog tick")
+            finally:
+                self._mode_change_lock.release()
         finally:
             self._watchdog_busy = False
-            self._mode_change_lock.release()
 
     def _load_map_on_server(self, node_name: str, max_retries: int = 20) -> bool:
         """

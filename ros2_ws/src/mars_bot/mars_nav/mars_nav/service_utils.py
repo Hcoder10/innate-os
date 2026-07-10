@@ -55,11 +55,11 @@ def call_service(service_clients: dict, logger, service_name: str, request, time
         return None
 
 
-def get_node_state(service_clients: dict, logger, node_name: str) -> int:
+def get_node_state(service_clients: dict, logger, node_name: str, timeout_sec: float = 10.0) -> int:
     """Helper to get the current state of a node. Returns state ID or None if failed."""
     get_state_request = GetState.Request()
     get_state_result = call_service(
-        service_clients, logger, f"/{node_name}/get_state", get_state_request, timeout_sec=10.0
+        service_clients, logger, f"/{node_name}/get_state", get_state_request, timeout_sec=timeout_sec
     )
 
     if get_state_result is None:
