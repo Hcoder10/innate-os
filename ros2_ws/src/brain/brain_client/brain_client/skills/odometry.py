@@ -5,9 +5,9 @@
 MARS is a differential-drive base on flat ground, so its pose is fully
 described by (x, y, yaw) — skills get that directly instead of the raw ROS
 Odometry message with its quaternion orientation. This module is ROS-free on
-purpose so the no-ROS test bucket can exercise it; contexts without rclpy
-should import it from here directly (the `innate` namespace, where it is also
-exported, pulls in ROS-dependent skill types).
+purpose; contexts without rclpy should import it from here directly (the
+`innate` namespace, where it is also exported, pulls in ROS-dependent skill
+types).
 """
 
 import math
