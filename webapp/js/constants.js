@@ -67,6 +67,11 @@ export const COMMANDED_GOAL_TOPIC = "/nav/commanded_goal";
 // Stop all active navigation (std_srvs/Trigger) — cancels every NavigateToPose
 // goal, no matter which client started it.
 export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
+// Auto-localization (std_srvs/Trigger on grid_localizer): scan-match the lidar
+// against the map and seed AMCL with the best pose. Can take tens of seconds.
+export const LOCALIZE_SERVICE = "/localize";
+// AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
+export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published

@@ -269,6 +269,8 @@ button {
   display: block;
   width: 100%;
   height: 100%;
+  /* Drags pan the map (or place goals); never scroll the page. */
+  touch-action: none;
 }
 
 .map-controls {
@@ -286,7 +288,80 @@ button {
 
 .map-controls-row {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
+  min-width: 210px;
+}
+
+/* Icon + label cards with a hint slot, mobile-app style but in this design
+   system's vocabulary: hairlines and signal amber, no glow. */
+.map-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: rgb(10 10 12 / 78%);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.map-btn:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+}
+
+.map-btn:disabled {
+  color: var(--muted);
+  cursor: progress;
+}
+
+.map-btn.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-faint);
+}
+
+.map-btn-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+}
+
+.map-btn-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.map-btn-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.map-btn-hint {
+  margin-left: auto;
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+  max-width: 120px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.map-btn-hint:empty {
+  display: none;
+}
+
+/* Icon-only (Back): don't stretch to the card width. */
+.map-btn-compact {
+  align-self: flex-start;
 }
 
 /* Outcome line for the widget's own navigation goals. */
@@ -308,15 +383,6 @@ button {
   color: var(--danger);
 }
 
-.map-goal-btn,
-.map-stop-btn {
-  background: rgba(10, 10, 12, 0.7);
-}
-
-.map-goal-btn.is-active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 
 .connect-layer {
   display: grid;
@@ -720,7 +786,7 @@ button {
   display: block;
 }
 
-/* The map's Set Goal control only makes sense at full size. */
+/* The map's Locate / Go To controls only make sense at full size. */
 .cam-map-host:not(.big) .map-controls {
   display: none;
 }
@@ -5534,6 +5600,14 @@ button {
     bottom: auto !important;
     top: calc(24px + min(120px, 24vw)) !important;
     left: 14px !important;
+  }
+
+  /* Map controls: the camera strip spans the whole top on phones (the
+     desktop position tucked them under the telemetry card, which is hidden
+     here) -- start below the tiles instead. */
+  .map-controls {
+    top: calc(26px + min(120px, 24vw));
+    left: 14px;
   }
 }
 

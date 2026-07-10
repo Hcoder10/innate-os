@@ -14,7 +14,12 @@ import {
   PLAN_TOPICS,
   COMMANDED_GOAL_TOPIC,
   CANCEL_NAVIGATION_SERVICE,
+  LOCALIZE_SERVICE,
+  SET_INITIAL_POSE_SERVICE,
 } from "../constants.js";
+
+// /localize scan-matches for up to ~30 s before answering.
+const LOCALIZE_TIMEOUT_MS = 40_000;
 
 // Wheel-zoom bounds (metres of real-world width shown).
 const MIN_ZOOM_M = 1;
@@ -35,16 +40,49 @@ export function createMap(root, opts = {}) {
   root.appendChild(canvas);
   const ctx = canvas.getContext("2d");
 
-  const goalBtn = document.createElement("button");
-  goalBtn.className = "map-goal-btn sim-button";
-  goalBtn.textContent = "Set Goal";
-  const stopBtn = document.createElement("button");
-  stopBtn.className = "map-stop-btn sim-button";
-  stopBtn.textContent = "Stop";
+  // Controls mirror the mobile app's map: Locate expands to Auto (grid-localizer
+  // scan match) / Manual (place the robot by drag), Go To arms drag-to-navigate,
+  // and Stop takes Go To's place while a navigation is running. Each button is
+  // an icon + label card with a hint slot that render() keeps current.
+  const ICONS = {
+    back: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>',
+    locate:
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="4.5"/><path d="M8 .8v2.4M8 12.8v2.4M.8 8h2.4M12.8 8h2.4"/></svg>',
+    auto: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none"/></svg>',
+    manual:
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1-3.5L11.5 2 14 4.5 6.5 12 3 13z"/></svg>',
+    go: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 1.5L1.5 7l5 2 2 5 6-12.5z"/></svg>',
+    stop: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="4" y="4" width="8" height="8" rx="1"/></svg>',
+    center:
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M8 .8v2.4M8 12.8v2.4M.8 8h2.4M12.8 8h2.4"/></svg>',
+  };
+  /** @param {string} icon @param {string} label @param {string} [hint] */
+  function makeButton(icon, label, hint = "") {
+    const btn = document.createElement("button");
+    btn.className = "map-btn";
+    btn.innerHTML =
+      `<span class="map-btn-icon">${icon}</span>` +
+      (label ? `<span class="map-btn-label">${label}</span>` : "") +
+      `<span class="map-btn-hint">${hint}</span>`;
+    return btn;
+  }
+  /** @param {HTMLButtonElement} btn @param {string} text */
+  function setHint(btn, text) {
+    const el = btn.querySelector(".map-btn-hint");
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+  const backBtn = makeButton(ICONS.back, "");
+  backBtn.classList.add("map-btn-compact");
+  backBtn.title = "Back";
+  const locateBtn = makeButton(ICONS.locate, "Locate", "auto or manual");
+  const autoBtn = makeButton(ICONS.auto, "Auto", "match lidar to the map");
+  const manualBtn = makeButton(ICONS.manual, "Manual", "drag where the robot is");
+  const goBtn = makeButton(ICONS.go, "Go To", "tap a point to navigate");
+  const stopBtn = makeButton(ICONS.stop, "Stop", "cancel navigation");
+  const centerBtn = makeButton(ICONS.center, "Recenter", "follow the robot");
   const controlsRow = document.createElement("div");
   controlsRow.className = "map-controls-row";
-  controlsRow.appendChild(goalBtn);
-  controlsRow.appendChild(stopBtn);
+  for (const btn of [backBtn, locateBtn, autoBtn, manualBtn, goBtn, stopBtn, centerBtn]) controlsRow.appendChild(btn);
   // Outcome of the widget's own navigation goals: live progress while
   // driving, then success or a specific failure line (not just "failed").
   const statusEl = document.createElement("div");
@@ -59,7 +97,7 @@ export function createMap(root, opts = {}) {
   let goalGen = 0; // ignore settlements of superseded goals
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let statusClearTimer;
-  /** @param {"navigating" | "ok" | "fail" | "muted"} kind @param {string} text @param {boolean} [autoclear] */
+  /** @param {"navigating" | "ok" | "fail" | "muted" | "hint"} kind @param {string} text @param {boolean} [autoclear] */
   function setStatus(kind, text, autoclear = false) {
     clearTimeout(statusClearTimer);
     statusEl.hidden = false;
@@ -116,10 +154,21 @@ export function createMap(root, opts = {}) {
   /** @type {{ ox: number, oy: number, scale: number } | null} */
   let view = null;
 
-  // Goal-setting: click sets the position, drag sets the heading.
-  let goalMode = false;
+  // Control state: "locate" shows the Auto/Manual choice; "manual" and "goto"
+  // arm the map for a press-drag (click sets the position, drag the heading) —
+  // manual seeds AMCL where the user pointed, goto navigates there.
+  /** @type {"idle" | "locate" | "manual" | "goto"} */
+  let ui = "idle";
+  let locating = false; // auto-locate service call in flight
+  let navigating = false; // a goal sent from this widget is in flight
   /** @type {{ start: { x: number, y: number }, cur: { x: number, y: number } } | null} */
   let goalDrag = null;
+  // Grab-to-pan: while set, the view centres here instead of following the
+  // robot; Recenter clears it.
+  /** @type {{ x: number, y: number } | null} */
+  let panCenter = null;
+  /** @type {{ px: number, py: number, center: { x: number, y: number }, moved: boolean } | null} */
+  let panDrag = null;
   /** @type {{ x: number, y: number, yaw: number } | null} the active goal */
   let goalMarker = null;
   // True once /nav/commanded_goal set the marker for this navigation: the
@@ -246,6 +295,7 @@ export function createMap(root, opts = {}) {
       goalMarker = null;
       goalIsCommanded = false;
       plan = null;
+      render();
       draw();
     }, NAV_STALE_MS);
   }
@@ -262,6 +312,7 @@ export function createMap(root, opts = {}) {
     goalMarker = { x: pos.x, y: pos.y, yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)) };
     goalIsCommanded = true;
     armNavStale(); // the goal marks an active navigation; expire it like the route
+    render();
     draw();
   }
 
@@ -296,6 +347,7 @@ export function createMap(root, opts = {}) {
       goalIsCommanded = false;
       clearTimeout(navStaleTimer);
     }
+    render();
     draw();
   }
 
@@ -312,21 +364,26 @@ export function createMap(root, opts = {}) {
       return;
     }
 
+    // The view centres on the pan point if the user grabbed the map, else it
+    // follows the robot (zoom mode). Zoom mode shows a fixed real-world window
+    // (zoomMeters across) so the map stays legible at thumbnail size; anything
+    // outside is clipped by the canvas bounds.
     let scale, ox, oy;
-    if (zoomMeters && pose) {
-      // Robot-centred zoom: show a fixed real-world window (zoomMeters across) centred on the pose, so the
-      // map stays legible at thumbnail size instead of fitting the whole world into a few pixels. Anything
-      // outside the window is simply clipped by the canvas bounds.
+    const center = panCenter ?? (zoomMeters && pose ? pose : null);
+    if (zoomMeters && center) {
       const cellsAcross = zoomMeters / grid.resolution;
       scale = Math.min(canvas.width, canvas.height) / cellsAcross;
-      const poseCol = (pose.x - grid.originX) / grid.resolution;
-      const poseRowFromBottom = (pose.y - grid.originY) / grid.resolution;
-      ox = canvas.width / 2 - poseCol * scale;
-      oy = canvas.height / 2 - (grid.height - poseRowFromBottom) * scale;
     } else {
-      // Fit the whole grid (standalone page, or before the first pose arrives).
+      // Fit-the-whole-grid scale (no zoom set, or before the first pose).
       const pad = 16 * dpr();
       scale = Math.min((canvas.width - 2 * pad) / grid.width, (canvas.height - 2 * pad) / grid.height);
+    }
+    if (center) {
+      const col = (center.x - grid.originX) / grid.resolution;
+      const rowFromBottom = (center.y - grid.originY) / grid.resolution;
+      ox = canvas.width / 2 - col * scale;
+      oy = canvas.height / 2 - (grid.height - rowFromBottom) * scale;
+    } else {
       ox = (canvas.width - grid.width * scale) / 2;
       oy = (canvas.height - grid.height * scale) / 2;
     }
@@ -347,18 +404,20 @@ export function createMap(root, opts = {}) {
       ctx.stroke();
     }
 
-    // Goal: a green dot, plus a heading arrow while dragging.
+    // Goal: a green dot, plus a heading arrow while dragging. A manual-locate
+    // drag places the robot, not a goal — draw it in the robot's orange.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
     if (goalAt) {
+      const color = goalDrag && ui === "manual" ? "#e8a33d" : "#00ff88";
       const { px, py } = worldToCanvas(goalAt.x, goalAt.y);
       const r = Math.max(4, 6 * dpr());
-      ctx.fillStyle = "#00ff88";
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fill();
       const yaw = goalDrag ? Math.atan2(goalDrag.cur.y - goalDrag.start.y, goalDrag.cur.x - goalDrag.start.x) : goalMarker?.yaw;
       if (typeof yaw === "number") {
-        ctx.strokeStyle = "#00ff88";
+        ctx.strokeStyle = color;
         ctx.lineWidth = 2 * dpr();
         ctx.beginPath();
         ctx.moveTo(px, py);
@@ -383,13 +442,78 @@ export function createMap(root, opts = {}) {
     }
   }
 
-  /** @param {boolean} on */
-  function setGoalMode(on) {
-    goalMode = on;
-    goalBtn.classList.toggle("is-active", on);
-    goalBtn.textContent = on ? "Click map…" : "Set Goal";
-    canvas.style.cursor = on ? "crosshair" : "";
-    if (!on) goalDrag = null;
+  function render() {
+    const navActive = navigating || goalMarker !== null;
+    backBtn.hidden = ui === "idle";
+    locateBtn.hidden = ui !== "idle";
+    locateBtn.disabled = locating || navActive;
+    locateBtn.classList.toggle("is-active", locating);
+    setHint(locateBtn, locating ? "locating…" : "auto or manual");
+    autoBtn.hidden = ui !== "locate";
+    autoBtn.disabled = locating;
+    manualBtn.hidden = ui !== "locate" && ui !== "manual";
+    manualBtn.classList.toggle("is-active", ui === "manual");
+    setHint(manualBtn, ui === "manual" ? "click & drag on the map" : "drag where the robot is");
+    goBtn.hidden = (ui !== "idle" && ui !== "goto") || (ui === "idle" && navActive);
+    goBtn.classList.toggle("is-active", ui === "goto");
+    setHint(goBtn, ui === "goto" ? "click & drag on the map" : "tap a point to navigate");
+    stopBtn.hidden = !(ui === "idle" && navActive);
+    centerBtn.hidden = panCenter === null;
+    canvas.style.cursor = ui === "manual" || ui === "goto" ? "crosshair" : "grab";
+  }
+
+  /** @param {typeof ui} next */
+  function setUi(next) {
+    ui = next;
+    if (ui !== "manual" && ui !== "goto") goalDrag = null;
+    render();
+  }
+
+  // Drag instructions live in the status line; only wipe them, never a result.
+  function clearHint() {
+    if (statusEl.dataset.kind === "hint") statusEl.hidden = true;
+  }
+
+  async function autoLocate() {
+    if (locating) return;
+    locating = true;
+    setUi("idle");
+    setStatus("hint", "Locating — matching the lidar scan against the map…");
+    try {
+      const res = await ros.callService(LOCALIZE_SERVICE, {}, LOCALIZE_TIMEOUT_MS);
+      if (res?.success) setStatus("ok", res.message || "Localized", true);
+      else setStatus("fail", res?.message || "Could not localize — try Manual");
+    } catch (err) {
+      setStatus("fail", `Locate failed — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      locating = false;
+      render();
+    }
+  }
+
+  /** @param {number} x @param {number} y @param {number} yaw seed AMCL at the hand-placed pose */
+  async function sendInitialPose(x, y, yaw) {
+    setStatus("hint", "Setting position…");
+    // Hand placement is approximate — give AMCL room to converge (same
+    // covariance the mobile app uses).
+    const covariance = new Array(36).fill(0);
+    covariance[0] = 0.25;
+    covariance[7] = 0.25;
+    covariance[35] = 0.068;
+    try {
+      await ros.callService(SET_INITIAL_POSE_SERVICE, {
+        pose: {
+          header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "map" },
+          pose: {
+            pose: { position: { x, y, z: 0 }, orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) } },
+            covariance,
+          },
+        },
+      });
+      setStatus("ok", "Position set", true);
+    } catch (err) {
+      setStatus("fail", `Set position failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** @param {number} x @param {number} y @param {number} yaw */
@@ -405,6 +529,7 @@ export function createMap(root, opts = {}) {
     const gen = ++goalGen;
     /** @type {{ distance_remaining?: number, number_of_recoveries?: number } | null} */
     let lastFb = null;
+    navigating = true;
     setStatus("navigating", "Navigating…");
     ros
       .sendActionGoal(
@@ -444,34 +569,67 @@ export function createMap(root, opts = {}) {
             ? ` ${d.toFixed(1)} m from the goal${n ? ` after ${n} recover${n === 1 ? "y" : "ies"}` : ""} — route blocked or robot stuck?`
             : " — no path (goal unreachable or outside the map?)";
         setStatus("fail", `Failed${detail}`);
+      })
+      .finally(() => {
+        if (gen !== goalGen) return; // a newer goal took over the flag
+        navigating = false;
+        render();
       });
     plan = null; // drop the stale route; the new one streams in on /plan
     goalMarker = { x, y, yaw };
     goalIsCommanded = false; // a fresh click supersedes any previous skill goal
     armNavStale(); // hold the goal until the route starts, then while it runs
+    render();
   }
 
   /** @param {PointerEvent} e */
   function onPointerDown(e) {
-    if (!goalMode || !grid || !view) return;
+    if (!grid || !view) return;
     e.preventDefault();
     const { px, py } = eventToCanvas(e);
-    const w = canvasToWorld(px, py);
-    goalDrag = { start: w, cur: w };
     canvas.setPointerCapture(e.pointerId);
-    draw();
+    if (ui === "manual" || ui === "goto") {
+      const w = canvasToWorld(px, py);
+      goalDrag = { start: w, cur: w };
+      draw();
+      return;
+    }
+    // Otherwise grab-to-pan; it only becomes a pan after a few px of movement,
+    // so plain clicks don't nudge the view.
+    panDrag = { px, py, center: canvasToWorld(canvas.width / 2, canvas.height / 2), moved: false };
   }
 
   /** @param {PointerEvent} e */
   function onPointerMove(e) {
-    if (!goalDrag) return;
+    if (goalDrag) {
+      const { px, py } = eventToCanvas(e);
+      goalDrag.cur = canvasToWorld(px, py);
+      draw();
+      return;
+    }
+    if (!panDrag || !grid || !view) return;
     const { px, py } = eventToCanvas(e);
-    goalDrag.cur = canvasToWorld(px, py);
+    const dx = px - panDrag.px;
+    const dy = py - panDrag.py;
+    if (!panDrag.moved) {
+      if (Math.hypot(dx, dy) < 4 * dpr()) return;
+      panDrag.moved = true;
+      canvas.style.cursor = "grabbing";
+    }
+    // The world point under the cursor follows the cursor: shift the centre
+    // opposite the drag (canvas y grows downward, world y upward).
+    const mPerPx = grid.resolution / view.scale;
+    panCenter = { x: panDrag.center.x - dx * mPerPx, y: panDrag.center.y + dy * mPerPx };
     draw();
   }
 
   /** @param {PointerEvent} e */
   function onPointerUp(e) {
+    if (panDrag) {
+      panDrag = null;
+      render(); // restore the cursor, surface Recenter
+      return;
+    }
     if (!goalDrag) return;
     const { start, cur } = goalDrag;
     goalDrag = null;
@@ -479,8 +637,9 @@ export function createMap(root, opts = {}) {
     const dy = cur.y - start.y;
     // Short drag → no meaningful heading, just face "east".
     const yaw = Math.hypot(dx, dy) > 0.1 ? Math.atan2(dy, dx) : 0;
-    publishGoal(start.x, start.y, yaw);
-    setGoalMode(false);
+    if (ui === "manual") sendInitialPose(start.x, start.y, yaw);
+    else publishGoal(start.x, start.y, yaw);
+    setUi("idle");
     draw();
   }
 
@@ -495,30 +654,58 @@ export function createMap(root, opts = {}) {
     opts.onZoomChange?.(zoomMeters);
   }
 
-  goalBtn.addEventListener("click", () => setGoalMode(!goalMode));
+  backBtn.addEventListener("click", () => {
+    clearHint();
+    setUi("idle");
+  });
+  centerBtn.addEventListener("click", () => {
+    panCenter = null; // back to following the robot
+    render();
+    draw();
+  });
+  locateBtn.addEventListener("click", () => setUi("locate"));
+  autoBtn.addEventListener("click", autoLocate);
+  manualBtn.addEventListener("click", () => {
+    if (ui === "manual") {
+      clearHint();
+      setUi("locate");
+      return;
+    }
+    setStatus("hint", "Click the map where the robot is, drag to set its heading");
+    setUi("manual");
+  });
+  goBtn.addEventListener("click", () => {
+    if (ui === "goto") {
+      clearHint();
+      setUi("idle");
+      return;
+    }
+    setStatus("hint", "Click the destination, drag to set the final heading");
+    setUi("goto");
+  });
 
   // Stop cancels every active navigation goal server-side, then drops the
   // local goal marker and route.
   let stopRequested = 0; // goal generation the user stopped, for status wording
   stopBtn.addEventListener("click", async () => {
     stopBtn.disabled = true;
-    stopBtn.textContent = "Stopping…";
+    setHint(stopBtn, "stopping…");
     stopRequested = goalGen;
     try {
       await ros.callService(CANCEL_NAVIGATION_SERVICE, {});
       goalMarker = null;
       goalIsCommanded = false;
       plan = null;
-      setGoalMode(false);
       draw();
-      stopBtn.textContent = "Stopped";
+      setHint(stopBtn, "stopped");
     } catch (err) {
       console.error("[map] cancel navigation failed:", err);
-      stopBtn.textContent = "Stop failed";
+      setHint(stopBtn, "stop failed");
     } finally {
       stopBtn.disabled = false;
       setTimeout(() => {
-        stopBtn.textContent = "Stop";
+        setHint(stopBtn, "cancel navigation");
+        render();
       }, 1500);
     }
   });
@@ -532,6 +719,7 @@ export function createMap(root, opts = {}) {
   const ro = new ResizeObserver(() => fit());
   ro.observe(root);
   fit();
+  render();
 
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);

@@ -38,6 +38,7 @@ function isEmptyDeep(v) {
  * @typedef {Object} Subscription
  * @property {Set<(msg: any) => void>} handlers
  * @property {number | undefined} throttleRate
+ * @property {string | undefined} type
  * @property {number} retryCount
  * @property {number | null} retryTimer
  */
