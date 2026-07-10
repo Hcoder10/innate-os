@@ -100,6 +100,32 @@ LINK_DEFAULTS = dict(
     room="dash", adamo_mode="client")
 
 
+async def get_arm_pose_ticks():
+    """Current arm pose (6 raw ticks) via rosbridge, so demo motion wiggles
+    around where the arm actually is instead of snapping to neutral."""
+    import math
+    import socket
+    import aiohttp
+    try:
+        ip = socket.gethostbyname(ROBOT)
+    except OSError:
+        ip = ROBOT
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.ws_connect(f"ws://{ip}:9090", timeout=8) as ws:
+                await ws.send_json({"op": "subscribe", "topic": "/joint_states",
+                                    "throttle_rate": 0})
+                async with asyncio.timeout(8):
+                    async for msg in ws:
+                        m = json.loads(msg.data)
+                        if m.get("op") == "publish" and m.get("topic") == "/joint_states":
+                            rad = m["msg"]["position"][:6]
+                            return [int(r / (2 * math.pi / 4096) + 2048) for r in rad]
+    except Exception as e:
+        print(f"[pose] rosbridge read failed ({e}); using neutral")
+    return None
+
+
 async def robot_sh(cmd: str) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         "sshpass", "-p", ROBOT_PASS, "ssh",
@@ -210,12 +236,18 @@ async def start_session(key: str, live: bool, source: str):
             sess.arm = None
             sess.source = "sine"
 
+    center = None
+    if not sess.arm:
+        sess.status = "reading current arm pose"
+        center = await get_arm_pose_ticks()
+
     async def pump():
         import math
         sess.status = "streaming"
         seq = 0
         t0 = time.perf_counter()
         next_t = t0
+        base = center or [2048] * 6
         while True:
             if sess.arm:
                 pos = sess.arm.read_positions()
@@ -223,10 +255,11 @@ async def start_session(key: str, live: bool, source: str):
                     await asyncio.sleep(0.02)
                     continue
             else:
+                # gentle wiggle around the arm's CURRENT pose (wrist + gripper)
                 t = time.perf_counter() - t0
-                pos = [2048] * 6
-                pos[4] = int(2048 + 150 * math.sin(2 * math.pi * 0.25 * t))
-                pos[5] = int(2048 + 150 * math.sin(2 * math.pi * 0.15 * t))
+                pos = list(base)
+                pos[4] = int(base[4] + 120 * math.sin(2 * math.pi * 0.25 * t))
+                pos[5] = int(base[5] + 120 * math.sin(2 * math.pi * 0.4 * t))
             pending[seq] = time.perf_counter_ns()
             try:
                 await sess.link.send(pack_control(seq, pos))

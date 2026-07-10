@@ -43,6 +43,10 @@ button.secondary { background: transparent; color: var(--text-2); border: 1px so
 #torquebtn.off { border-color: var(--bad);  color: var(--bad); }
 .livebox { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 14px; }
 .status { color: var(--text-2); min-height: 20px; margin-bottom: 10px; }
+.badge { display: inline-block; border-radius: 6px; padding: 1px 8px; font-size: 11.5px;
+  font-weight: 700; margin-right: 8px; vertical-align: 1px; }
+.badge.dry  { background: var(--warn); color: #1a1a19; }
+.badge.live { background: var(--bad); color: #fff; }
 .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
   padding: 10px 16px; min-width: 108px; }
@@ -138,6 +142,20 @@ async function startSession(key, cardEl){
   $("status").textContent = "starting " + key + (live ? "  (LIVE ARM)" : "  (dry-run)") + "…";
   await jpost("/api/start", {transport:key, live, source});
 }
+$("livearm").onchange = async () => {
+  // toggling mid-session restarts the same transport with the new mode —
+  // otherwise the tick silently applies only to the NEXT session
+  if (!activeKey || !lastStats || lastStats.status === "idle") return;
+  const live = $("livearm").checked;
+  if (live && !confirm("Restart this session LIVE — the REAL ARM will move. Area clear?")) {
+    $("livearm").checked = false; return;
+  }
+  if (live && torqueOn === false && confirm("Arm torque is OFF — turn it on now?")) callTorque(true);
+  snapshotHistory();
+  const source = document.querySelector("input[name=src]:checked").value;
+  $("status").textContent = `restarting ${activeKey} ${live ? "LIVE" : "dry-run"}…`;
+  await jpost("/api/start", {transport: activeKey, live, source});
+};
 $("stopbtn").onclick = async () => {
   snapshotHistory();
   await jpost("/api/stop");
@@ -160,9 +178,13 @@ async function poll(){
   try {
     const s = await jget("/api/stats");
     lastStats = s;
-    $("status").textContent = s.status === "idle" ? "idle — pick a transport above"
-      : `${s.transport || ""} · ${s.status}` + (s.live ? " · LIVE ARM" : " · dry-run")
-        + (s.sent ? ` · ${s.sent} pkts sent` : "");
+    if (s.status === "idle") {
+      $("status").textContent = "idle — pick a transport above";
+    } else {
+      $("status").innerHTML =
+        `<span class="badge ${s.live ? "live" : "dry"}">${s.live ? "LIVE — ARM MOVES" : "DRY-RUN — arm will NOT move"}</span>`
+        + `${s.transport || ""} · ${s.status}` + (s.sent ? ` · ${s.sent} pkts sent` : "");
+    }
     $("t_p50").innerHTML  = fmt(s.p50, "ms");
     $("t_p95").innerHTML  = fmt(s.p95, "ms");
     $("t_stale").innerHTML= fmt(s.stale_pct, "%");
