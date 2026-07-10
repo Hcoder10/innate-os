@@ -35,6 +35,10 @@ class Odometry:
     """Sensor timestamp in seconds (ROS time)."""
     frame_id: str = "odom"
     child_frame_id: str = "base_link"
+    raw: dict | None = None
+    """Escape hatch: the full nav_msgs/Odometry as plain data (rosbridge-style
+    keys) — real quaternion, z, covariances, full twist — for skills that need
+    more than the flat 2D pose."""
 
     @property
     def theta_degrees(self) -> float:
@@ -51,13 +55,18 @@ class Odometry:
         LAST_ODOM used to inject (releases up to 0.6.x)."""
         warnings.warn(
             "dict-style odometry access is deprecated; use the Odometry "
-            "attributes instead (odom.x, odom.theta_degrees, ...)",
+            "attributes instead (odom.x, odom.theta_degrees, ...) or odom.raw "
+            "for the full message",
             DeprecationWarning,
             stacklevel=2,
         )
-        return self._legacy_dict()[key]
+        if key == "theta_degrees":
+            return self.theta_degrees
+        return (self.raw if self.raw is not None else self._reconstructed_raw())[key]
 
-    def _legacy_dict(self) -> dict:
+    def _reconstructed_raw(self) -> dict:
+        """Legacy-shape fallback for instances built without ``raw``
+        (hand-constructed in tests); the quaternion carries yaw only."""
         sec = int(self.stamp)
         half = self.theta / 2.0
         return {
@@ -72,5 +81,4 @@ class Odometry:
                     "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(half), "w": math.cos(half)},
                 }
             },
-            "theta_degrees": self.theta_degrees,
         }

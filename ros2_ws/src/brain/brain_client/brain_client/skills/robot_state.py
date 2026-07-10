@@ -234,16 +234,38 @@ class RobotStateProvider:
             if self.last_odom is not None:
                 msg = self.last_odom
                 pos = msg.pose.pose.position
+                ori = msg.pose.pose.orientation
                 twist = msg.twist.twist
                 robot_state_to_inject[RobotStateType.LAST_ODOM.value] = Odometry(
                     x=pos.x,
                     y=pos.y,
-                    theta=quaternion_to_yaw(msg.pose.pose.orientation),
+                    theta=quaternion_to_yaw(ori),
                     linear_velocity=twist.linear.x,
                     angular_velocity=twist.angular.z,
                     stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
                     frame_id=msg.header.frame_id,
                     child_frame_id=msg.child_frame_id,
+                    raw={
+                        "header": {
+                            "stamp": {"sec": msg.header.stamp.sec, "nanosec": msg.header.stamp.nanosec},
+                            "frame_id": msg.header.frame_id,
+                        },
+                        "child_frame_id": msg.child_frame_id,
+                        "pose": {
+                            "pose": {
+                                "position": {"x": pos.x, "y": pos.y, "z": pos.z},
+                                "orientation": {"x": ori.x, "y": ori.y, "z": ori.z, "w": ori.w},
+                            },
+                            "covariance": list(msg.pose.covariance),
+                        },
+                        "twist": {
+                            "twist": {
+                                "linear": {"x": twist.linear.x, "y": twist.linear.y, "z": twist.linear.z},
+                                "angular": {"x": twist.angular.x, "y": twist.angular.y, "z": twist.angular.z},
+                            },
+                            "covariance": list(msg.twist.covariance),
+                        },
+                    },
                 )
             else:
                 self._warn_missing("LAST_ODOM")

@@ -44,7 +44,37 @@ def test_immutable():
         ODOM.x = 0.0
 
 
+def test_raw_escape_hatch_is_served_verbatim():
+    raw = {
+        "header": {"stamp": {"sec": 100, "nanosec": 0}, "frame_id": "odom"},
+        "child_frame_id": "base_link",
+        "pose": {
+            "pose": {
+                "position": {"x": 1.5, "y": -2.0, "z": 0.02},
+                "orientation": {"x": 0.01, "y": 0.02, "z": 0.7, "w": 0.71},
+            },
+            "covariance": [0.0] * 36,
+        },
+        "twist": {
+            "twist": {
+                "linear": {"x": 0.15, "y": 0.0, "z": 0.0},
+                "angular": {"x": 0.0, "y": 0.0, "z": -0.3},
+            },
+            "covariance": [0.0] * 36,
+        },
+    }
+    odom = Odometry(x=1.5, y=-2.0, theta=math.pi / 2, raw=raw)
+    # full-fidelity data (z, real quaternion, covariance) is available untouched
+    assert odom.raw is raw
+    # legacy dict access serves the real message, not a reconstruction
+    with pytest.warns(DeprecationWarning):
+        assert odom["pose"]["pose"]["orientation"] == raw["pose"]["pose"]["orientation"]
+    with pytest.warns(DeprecationWarning):
+        assert odom["theta_degrees"] == pytest.approx(90.0)
+
+
 def test_legacy_dict_access_matches_old_injected_shape():
+    # no raw provided (hand-constructed instance) -> reconstructed fallback
     with pytest.warns(DeprecationWarning):
         assert ODOM["theta_degrees"] == pytest.approx(90.0)
     with pytest.warns(DeprecationWarning):
