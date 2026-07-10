@@ -92,6 +92,22 @@ def test_legacy_dict_access_matches_old_injected_shape():
         assert ODOM["child_frame_id"] == "base_link"
 
 
+def test_legacy_defensive_dict_access():
+    """Old skills also used dict methods defensively: .get, `in`, .keys()."""
+    with pytest.warns(DeprecationWarning):
+        assert ODOM.get("theta_degrees") == pytest.approx(90.0)
+    with pytest.warns(DeprecationWarning):
+        assert ODOM.get("twist", "fallback") == "fallback"
+    with pytest.warns(DeprecationWarning):
+        assert "pose" in ODOM
+    with pytest.warns(DeprecationWarning):
+        assert "twist" not in ODOM  # reconstructed fallback has no twist
+    with pytest.warns(DeprecationWarning):
+        assert {"header", "child_frame_id", "pose", "theta_degrees"} <= set(ODOM.keys())
+    with pytest.warns(DeprecationWarning):
+        assert dict(ODOM.items())["child_frame_id"] == "base_link"
+
+
 def test_legacy_dict_access_unknown_key_raises_keyerror():
     with pytest.warns(DeprecationWarning), pytest.raises(KeyError):
         ODOM["twist"]

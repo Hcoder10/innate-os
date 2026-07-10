@@ -4,8 +4,10 @@
 
 MARS is a differential-drive base on flat ground, so its pose is fully
 described by (x, y, yaw) — skills get that directly instead of the raw ROS
-Odometry message with its quaternion orientation. ROS-free on purpose: it is
-part of the public `innate` authoring namespace and of the no-ROS test bucket.
+Odometry message with its quaternion orientation. This module is ROS-free on
+purpose so the no-ROS test bucket can exercise it; contexts without rclpy
+should import it from here directly (the `innate` namespace, where it is also
+exported, pulls in ROS-dependent skill types).
 """
 
 import math
@@ -50,22 +52,44 @@ class Odometry:
         """(x, y) in meters, odom frame."""
         return (self.x, self.y)
 
+    # --- legacy dict compatibility ---------------------------------------
+    # LAST_ODOM injected a raw-message dict from 0.3.0 through 0.6.x, so old
+    # skill files use dict-style access: odom["theta_degrees"], .get(), `in`,
+    # .keys()/.items()/.values(). Soft-deprecated (each call warns to nudge
+    # authors to the attributes) but kept as a permanent compatibility layer
+    # -- there is no scheduled removal, old skills keep working indefinitely.
+    # Do not delete. __iter__ is deliberately NOT provided: an iterable
+    # dataclass invites accidental tuple-unpacking; keys()/items() cover
+    # enumeration.
+
     def __getitem__(self, key):
-        """Dict-style access matching the raw-message dict that LAST_ODOM
-        injected from 0.3.0 through 0.6.x. Soft-deprecated (emits a warning to
-        nudge authors to the attributes) but kept as a permanent compatibility
-        layer -- there is no scheduled removal, so old skill files keep working
-        indefinitely. Do not delete."""
+        return self._legacy_mapping()[key]
+
+    def get(self, key, default=None):
+        return self._legacy_mapping().get(key, default)
+
+    def __contains__(self, key) -> bool:
+        return key in self._legacy_mapping()
+
+    def keys(self):
+        return self._legacy_mapping().keys()
+
+    def items(self):
+        return self._legacy_mapping().items()
+
+    def values(self):
+        return self._legacy_mapping().values()
+
+    def _legacy_mapping(self) -> dict:
         warnings.warn(
             "dict-style odometry access is deprecated; use the Odometry "
             "attributes instead (odom.x, odom.theta_degrees, ...) or odom.raw "
             "for the full message",
             DeprecationWarning,
-            stacklevel=2,
+            stacklevel=3,  # past the dunder/method that called us, at user code
         )
-        if key == "theta_degrees":
-            return self.theta_degrees
-        return (self.raw if self.raw is not None else self._reconstructed_raw())[key]
+        base = self.raw if self.raw is not None else self._reconstructed_raw()
+        return {**base, "theta_degrees": self.theta_degrees}
 
     def _reconstructed_raw(self) -> dict:
         """Legacy-shape fallback for instances built without ``raw``
