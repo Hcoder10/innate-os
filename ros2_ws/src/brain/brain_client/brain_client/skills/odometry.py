@@ -12,7 +12,9 @@ types).
 
 import math
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -34,13 +36,27 @@ class Odometry:
     angular_velocity: float = 0.0
     """Turn rate in rad/s, counter-clockwise positive."""
     stamp: float = 0.0
-    """Sensor timestamp in seconds (ROS time)."""
+    """Sensor timestamp in seconds (ROS time). float64: sub-microsecond
+    precision at present-day epochs; the exact integer sec/nanosec are in
+    ``raw``."""
     frame_id: str = "odom"
     child_frame_id: str = "base_link"
-    raw: dict | None = None
-    """Escape hatch: the full nav_msgs/Odometry as plain data (rosbridge-style
-    keys) — real quaternion, z, covariances, full twist — for skills that need
-    more than the flat 2D pose."""
+    raw_source: Any = field(default=None, repr=False, compare=False)
+    """Source for ``raw``: a rosbridge-style dict (served as-is) or a
+    nav_msgs/Odometry-like message (converted lazily on first access).
+    Excluded from ==/hash — it is provenance, not part of the 2D snapshot;
+    including it would also make production instances unhashable (dicts)."""
+
+    @cached_property
+    def raw(self) -> dict | None:
+        """Escape hatch: the full nav_msgs/Odometry as plain data
+        (rosbridge-style keys) — real quaternion, z, covariances, full twist —
+        for skills that need more than the flat 2D pose. Built lazily so the
+        50 Hz injection path pays nothing for it until a skill asks."""
+        source = self.raw_source
+        if source is None or isinstance(source, dict):
+            return source
+        return _msg_to_raw(source)
 
     @property
     def theta_degrees(self) -> float:
@@ -98,12 +114,26 @@ class Odometry:
             DeprecationWarning,
             stacklevel=3,  # past the dunder/method that called us, at user code
         )
+        return self._legacy_dict
+
+    @cached_property
+    def _legacy_dict(self) -> dict:
+        """Exactly the 0.3.0-0.6.x injected shape — {header, child_frame_id,
+        pose.pose, theta_degrees}, no twist, no covariance — whichever way the
+        instance was built, so legacy access is path-independent. The extra
+        data ``raw`` carries stays on ``raw``. Memoized: enumeration protocols
+        (dict(odom), {**odom}) hit the mapping once per key."""
         base = self.raw if self.raw is not None else self._reconstructed_raw()
-        return {**base, "theta_degrees": self.theta_degrees}
+        return {
+            "header": base["header"],
+            "child_frame_id": base["child_frame_id"],
+            "pose": {"pose": base["pose"]["pose"]},
+            "theta_degrees": self.theta_degrees,
+        }
 
     def _reconstructed_raw(self) -> dict:
-        """Legacy-shape fallback for instances built without ``raw``
-        (hand-constructed in tests); the quaternion carries yaw only."""
+        """Legacy-shape fallback for instances built without ``raw_source``
+        (hand-constructed); the quaternion carries yaw only."""
         sec = int(self.stamp)
         half = self.theta / 2.0
         return {
@@ -119,3 +149,32 @@ class Odometry:
                 }
             },
         }
+
+
+def _msg_to_raw(msg) -> dict:
+    """nav_msgs/Odometry message -> plain rosbridge-style dict. Duck-typed
+    (attribute access only) so this module stays ROS-free."""
+    pos = msg.pose.pose.position
+    ori = msg.pose.pose.orientation
+    twist = msg.twist.twist
+    return {
+        "header": {
+            "stamp": {"sec": msg.header.stamp.sec, "nanosec": msg.header.stamp.nanosec},
+            "frame_id": msg.header.frame_id,
+        },
+        "child_frame_id": msg.child_frame_id,
+        "pose": {
+            "pose": {
+                "position": {"x": pos.x, "y": pos.y, "z": pos.z},
+                "orientation": {"x": ori.x, "y": ori.y, "z": ori.z, "w": ori.w},
+            },
+            "covariance": list(msg.pose.covariance),
+        },
+        "twist": {
+            "twist": {
+                "linear": {"x": twist.linear.x, "y": twist.linear.y, "z": twist.linear.z},
+                "angular": {"x": twist.angular.x, "y": twist.angular.y, "z": twist.angular.z},
+            },
+            "covariance": list(msg.twist.covariance),
+        },
+    }
