@@ -17,11 +17,13 @@ import threading
 import time
 
 import numpy as np
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Odometry as OdometryMsg
 from sensor_msgs.msg import BatteryState, JointState
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
+from brain_client.skills.odometry import Odometry
 from brain_client.skills.types import InterfaceType, RobotStateType
 
 
@@ -89,7 +91,7 @@ class RobotStateProvider:
         if self._odom_sub is not None:
             return
         feed_node = self._manipulation.node
-        self._odom_sub = feed_node.create_subscription(Odometry, "/odom", self._on_odom, 10)
+        self._odom_sub = feed_node.create_subscription(OdometryMsg, "/odom", self._on_odom, 10)
         self._map_sub = feed_node.create_subscription(OccupancyGrid, "/map", self._on_map, 1)
         self._head_position_sub = feed_node.create_subscription(
             String, self._head_current_position_topic, self._on_head_position, 10
@@ -112,7 +114,7 @@ class RobotStateProvider:
         self.last_joint_states = None
         self.last_battery = None
 
-    def _on_odom(self, msg: Odometry) -> None:
+    def _on_odom(self, msg: OdometryMsg) -> None:
         if self._active:
             self.last_odom = msg
 
@@ -230,26 +232,19 @@ class RobotStateProvider:
 
         if RobotStateType.LAST_ODOM in required_states:
             if self.last_odom is not None:
-                pos = self.last_odom.pose.pose.position
-                ori = self.last_odom.pose.pose.orientation
-                theta = quaternion_to_yaw(ori)
-                robot_state_to_inject[RobotStateType.LAST_ODOM.value] = {
-                    "header": {
-                        "stamp": {
-                            "sec": self.last_odom.header.stamp.sec,
-                            "nanosec": self.last_odom.header.stamp.nanosec,
-                        },
-                        "frame_id": self.last_odom.header.frame_id,
-                    },
-                    "child_frame_id": self.last_odom.child_frame_id,
-                    "pose": {
-                        "pose": {
-                            "position": {"x": pos.x, "y": pos.y, "z": pos.z},
-                            "orientation": {"x": ori.x, "y": ori.y, "z": ori.z, "w": ori.w},
-                        }
-                    },
-                    "theta_degrees": math.degrees(theta),
-                }
+                msg = self.last_odom
+                pos = msg.pose.pose.position
+                twist = msg.twist.twist
+                robot_state_to_inject[RobotStateType.LAST_ODOM.value] = Odometry(
+                    x=pos.x,
+                    y=pos.y,
+                    theta=quaternion_to_yaw(msg.pose.pose.orientation),
+                    linear_velocity=twist.linear.x,
+                    angular_velocity=twist.angular.z,
+                    stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+                    frame_id=msg.header.frame_id,
+                    child_frame_id=msg.child_frame_id,
+                )
             else:
                 self._warn_missing("LAST_ODOM")
 

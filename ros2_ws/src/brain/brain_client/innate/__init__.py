@@ -8,6 +8,7 @@ Everything a skill file needs, under one import:
     from innate.skills import head_emotion, navigate_to_position
 """
 
+from brain_client.skills.odometry import Odometry
 from brain_client.skills.types import (
     Interface,
     InterfaceType,
@@ -22,6 +23,7 @@ from innate.skills import SkillCancelled, SkillFailed
 __all__ = [
     "Interface",
     "InterfaceType",
+    "Odometry",
     "RobotState",
     "RobotStateType",
     "Skill",

@@ -102,10 +102,7 @@ class TurnInPlace(Skill):
 
     def _yaw(self):
         """Current heading in degrees from the odometry state, or None."""
-        try:
-            return float(self.odom["theta_degrees"])
-        except (TypeError, KeyError):
-            return None
+        return self.odom.theta_degrees if self.odom is not None else None
 
     def _wait_for_yaw(self):
         """Heading once odometry arrives, or None after ODOM_WAIT_SEC."""
