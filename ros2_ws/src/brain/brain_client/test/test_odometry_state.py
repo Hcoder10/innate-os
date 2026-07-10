@@ -44,6 +44,16 @@ def test_immutable():
         ODOM.x = 0.0
 
 
+def test_truthiness_does_not_warn():
+    """`if self.odom:` is the documented None-check; it must stay warning-free
+    (and not build the legacy mapping) despite __len__ being defined."""
+    import warnings as warnings_mod
+
+    with warnings_mod.catch_warnings():
+        warnings_mod.simplefilter("error")
+        assert bool(ODOM) is True
+
+
 def test_raw_escape_hatch_is_served_verbatim():
     raw = {
         "header": {"stamp": {"sec": 100, "nanosec": 0}, "frame_id": "odom"},
@@ -106,6 +116,12 @@ def test_legacy_defensive_dict_access():
         assert {"header", "child_frame_id", "pose", "theta_degrees"} <= set(ODOM.keys())
     with pytest.warns(DeprecationWarning):
         assert dict(ODOM.items())["child_frame_id"] == "base_link"
+    with pytest.warns(DeprecationWarning):
+        assert set(ODOM) == set(ODOM.keys())  # direct iteration yields keys
+    with pytest.warns(DeprecationWarning):
+        assert dict(ODOM)["theta_degrees"] == pytest.approx(90.0)
+    with pytest.warns(DeprecationWarning):
+        assert len(ODOM) == len(ODOM.keys())
 
 
 def test_legacy_dict_access_unknown_key_raises_keyerror():

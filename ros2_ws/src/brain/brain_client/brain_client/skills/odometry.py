@@ -55,15 +55,25 @@ class Odometry:
     # --- legacy dict compatibility ---------------------------------------
     # LAST_ODOM injected a raw-message dict from 0.3.0 through 0.6.x, so old
     # skill files use dict-style access: odom["theta_degrees"], .get(), `in`,
-    # .keys()/.items()/.values(). Soft-deprecated (each call warns to nudge
-    # authors to the attributes) but kept as a permanent compatibility layer
-    # -- there is no scheduled removal, old skills keep working indefinitely.
-    # Do not delete. __iter__ is deliberately NOT provided: an iterable
-    # dataclass invites accidental tuple-unpacking; keys()/items() cover
-    # enumeration.
+    # iteration, .keys()/.items()/.values(). The full read-only mapping
+    # protocol is provided so that code behaves exactly as it did on the real
+    # dict. Soft-deprecated (each call warns to nudge authors to the
+    # attributes) but kept as a permanent compatibility layer -- there is no
+    # scheduled removal, old skills keep working indefinitely. Do not delete.
 
     def __getitem__(self, key):
         return self._legacy_mapping()[key]
+
+    def __iter__(self):
+        return iter(self._legacy_mapping())
+
+    def __len__(self) -> int:
+        return len(self._legacy_mapping())
+
+    def __bool__(self) -> bool:
+        # without this, __len__ would define truthiness -- making the
+        # documented `if self.odom:` None-check fire the deprecation warning
+        return True
 
     def get(self, key, default=None):
         return self._legacy_mapping().get(key, default)
