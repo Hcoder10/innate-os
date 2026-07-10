@@ -166,6 +166,7 @@ class Session:
             "status": self.status, "sent": self.sent,
             "uptime_s": round(time.time() - self.started, 1),
             "samples": [round(r, 1) for _, r in recent[-240:]],
+            "leader_pos": getattr(self, "last_pos", None),
         }
         if vals:
             out.update(
@@ -236,16 +237,26 @@ async def start_session(key: str, live: bool, source: str):
         return
 
     if source == "arm":
+        # no silent sine fallback: if the operator asked for the arm and it
+        # is not fully readable, fail loudly with a per-servo diagnosis
         try:
             from leader_link import LeaderArm, autodetect_device
             dev = autodetect_device()
+            if not dev:
+                raise RuntimeError("no USB serial device found")
             sess.arm = LeaderArm(dev, 1000000, [1, 2, 3, 4, 5, 6])
             if sess.arm.read_positions() is None:
-                raise RuntimeError("leader arm not responding")
+                missing = sess.arm.missing_servos()
+                if missing:
+                    raise RuntimeError(
+                        f"leader servo(s) {missing} not responding — "
+                        "check that segment's cable/connector and power")
+                raise RuntimeError("leader bus not responding")
         except Exception as e:
-            sess.status = f"leader arm error: {e} (falling back to sine)"
+            sess.status = f"LEADER ARM FAULT: {e}"
             sess.arm = None
-            sess.source = "sine"
+            await stop_session_keep_note(sess.status)
+            return
 
     center = None
     if not sess.arm:
@@ -260,12 +271,26 @@ async def start_session(key: str, live: bool, source: str):
         next_t = t0
         base = center or [2048] * 6
         idle_ref, idle_since = None, None
+        none_since = None
         while True:
             if sess.arm:
                 pos = sess.arm.read_positions()
                 if pos is None:
+                    now = time.monotonic()
+                    if none_since is None:
+                        none_since = now
+                    elif now - none_since > 2.0:
+                        missing = sess.arm.missing_servos()
+                        current["note"] = (
+                            f"LEADER ARM FAULT mid-session: servo(s) "
+                            f"{missing or 'bus'} stopped responding — check cabling")
+                        print(f"[session] {current['note']}")
+                        asyncio.get_running_loop().create_task(stop_session())
+                        return
                     await asyncio.sleep(0.02)
                     continue
+                none_since = None
+                sess.last_pos = pos
                 # auto-stop when the leader sits untouched — a forgotten live
                 # session must not keep feeding :9999 while someone teleops
                 # from the app (two commanders make the arm fight itself)
@@ -302,6 +327,11 @@ async def start_session(key: str, live: bool, source: str):
                 next_t = time.perf_counter()
 
     sess.task = asyncio.create_task(pump())
+
+
+async def stop_session_keep_note(note: str):
+    await stop_session()
+    current["note"] = note
 
 
 async def stop_session():

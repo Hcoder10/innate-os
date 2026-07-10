@@ -98,6 +98,7 @@ canvas { width: 100%; height: 140px; display: block; }
       <div class="tile"><div class="v" id="t_p95">–</div><div class="k">RTT p95 (5s)</div></div>
       <div class="tile"><div class="v" id="t_stale">–</div><div class="k">&gt;60 ms</div></div>
       <div class="tile"><div class="v" id="t_hz">–</div><div class="k">echoes /s</div></div>
+      <div class="tile" style="min-width:230px"><div class="v" id="t_leader" style="font-size:14px;font-weight:500;line-height:2">–</div><div class="k">leader arm ticks (move it — these must change)</div></div>
     </div>
     <canvas id="spark" height="140"></canvas>
     <div class="hist" id="hist"></div>
@@ -189,6 +190,8 @@ async function poll(){
     $("t_p95").innerHTML  = fmt(s.p95, "ms");
     $("t_stale").innerHTML= fmt(s.stale_pct, "%");
     $("t_hz").innerHTML   = fmt(s.echo_hz, "");
+    $("t_leader").textContent = s.leader_pos ? s.leader_pos.join("  ") :
+      (s.source === "sine" ? "(sine mode — no leader)" : "–");
     drawSpark(s.samples || []);
   } catch(e){ /* server restarting */ }
   setTimeout(poll, 500);

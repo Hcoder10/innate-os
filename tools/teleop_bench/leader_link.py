@@ -53,6 +53,15 @@ class LeaderArm:
             self.reader.addParam(i)
         self._comm_success = COMM_SUCCESS
 
+    def missing_servos(self):
+        """Ping each servo; returns the list of ids that don't answer."""
+        missing = []
+        for i in self.ids:
+            _, rc, _ = self.packet.ping(self.port, i)
+            if rc != self._comm_success:
+                missing.append(i)
+        return missing
+
     def read_positions(self):
         if self.reader.txRxPacket() != self._comm_success:
             return None
