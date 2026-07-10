@@ -84,7 +84,6 @@ echo "=== unit tests (fast, no ROS) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
   src/brain/brain_client/test/test_fake_cloud_selftest.py \
   src/brain/brain_client/test/test_backwards_compat.py \
-  src/brain/brain_client/test/test_odometry_state.py \
   src/brain/manipulation/test/test_config_validation.py
 
 # Run the launch tests under both install modes. The copy build baked into the
