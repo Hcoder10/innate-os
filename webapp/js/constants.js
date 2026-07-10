@@ -56,6 +56,10 @@ export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
 // are namespaced (mars_nav launch), so the route arrives on one of these
 // depending on the active planner; there is no root /plan publisher.
 export const PLAN_TOPICS = ["/navigation/plan", "/mapfree/plan"];
+// AMCL's map-frame pose estimate (geometry_msgs/PoseWithCovarianceStamped).
+// The robot marker anchors here: /odom is the odom frame, and drawing it on
+// the map canvas is off by the whole map->odom correction on a real robot.
+export const AMCL_POSE_TOPIC = "/amcl_pose";
 // The exact goal navigate_to_position commanded (geometry_msgs/PoseStamped,
 // latched; frame_id is "map", or "odom" for local goals) — the true target,
 // unlike the plan endpoint which wiggles with every replan.

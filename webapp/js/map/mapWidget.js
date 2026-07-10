@@ -7,7 +7,14 @@
 // is all a 2D map needs.
 
 import { ros } from "../rosClient.js";
-import { MAP_TOPIC, ODOM_TOPIC, PLAN_TOPICS, COMMANDED_GOAL_TOPIC, CANCEL_NAVIGATION_SERVICE } from "../constants.js";
+import {
+  AMCL_POSE_TOPIC,
+  MAP_TOPIC,
+  ODOM_TOPIC,
+  PLAN_TOPICS,
+  COMMANDED_GOAL_TOPIC,
+  CANCEL_NAVIGATION_SERVICE,
+} from "../constants.js";
 
 // Wheel-zoom bounds (metres of real-world width shown).
 const MIN_ZOOM_M = 1;
@@ -71,8 +78,37 @@ export function createMap(root, opts = {}) {
 
   /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
   let grid = null;
-  /** @type {{ x: number, y: number, yaw: number } | null} */
+  /** @type {{ x: number, y: number, yaw: number } | null} displayed robot pose (map frame) */
   let pose = null;
+  // The robot marker must live in the MAP frame like everything else drawn
+  // here. /odom alone is the odom frame -- on a real robot that's off by the
+  // whole map->odom correction (meters after drift). So: anchor at the last
+  // /amcl_pose fix and compose the odometry delta accumulated since, which
+  // stays smooth between AMCL updates. With no AMCL (mapfree mode), raw odom
+  // IS the global frame and is used directly.
+  /** @type {{ x: number, y: number, yaw: number } | null} */
+  let amclPose = null;
+  /** @type {{ x: number, y: number, yaw: number } | null} odom pose at the AMCL fix */
+  let odomAtAmcl = null;
+  /** @type {{ x: number, y: number, yaw: number } | null} latest raw odom */
+  let odomPose = null;
+
+  function composedPose() {
+    if (!amclPose) return odomPose;
+    if (!odomAtAmcl || !odomPose) return amclPose;
+    // Base motion since the fix, expressed in the base frame at fix time...
+    const ca = Math.cos(-odomAtAmcl.yaw);
+    const sa = Math.sin(-odomAtAmcl.yaw);
+    const dxo = odomPose.x - odomAtAmcl.x;
+    const dyo = odomPose.y - odomAtAmcl.y;
+    const dx = dxo * ca - dyo * sa;
+    const dy = dxo * sa + dyo * ca;
+    const dyaw = odomPose.yaw - odomAtAmcl.yaw;
+    // ...then re-applied at the AMCL fix in the map frame.
+    const c = Math.cos(amclPose.yaw);
+    const s = Math.sin(amclPose.yaw);
+    return { x: amclPose.x + dx * c - dy * s, y: amclPose.y + dx * s + dy * c, yaw: amclPose.yaw + dyaw };
+  }
   /** @type {Array<{ x: number, y: number }> | null} world-frame plan points */
   let plan = null;
 
@@ -170,15 +206,32 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
-  /** @param {any} msg nav_msgs/Odometry */
-  function onOdom(msg) {
+  /** @param {any} msg pose-carrying message → {x, y, yaw} or null */
+  function poseOf(msg) {
     const p = msg?.pose?.pose;
     const x = p?.position?.x;
     const y = p?.position?.y;
     const q = p?.orientation;
-    if (typeof x !== "number" || typeof y !== "number" || !q) return;
-    const yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
-    pose = { x, y, yaw };
+    if (typeof x !== "number" || typeof y !== "number" || !q) return null;
+    return { x, y, yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)) };
+  }
+
+  /** @param {any} msg nav_msgs/Odometry */
+  function onOdom(msg) {
+    const p = poseOf(msg);
+    if (!p) return;
+    odomPose = p;
+    pose = composedPose();
+    draw();
+  }
+
+  /** @param {any} msg geometry_msgs/PoseWithCovarianceStamped (map frame) */
+  function onAmcl(msg) {
+    const p = poseOf(msg);
+    if (!p) return;
+    amclPose = p;
+    odomAtAmcl = odomPose;
+    pose = composedPose();
     draw();
   }
 
@@ -482,6 +535,7 @@ export function createMap(root, opts = {}) {
 
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
+  const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   // Only the active planner publishes, so both feeds can share one handler.
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, onPlan, 250, "nav_msgs/msg/Path"));
   const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");
@@ -500,6 +554,7 @@ export function createMap(root, opts = {}) {
       ro.disconnect();
       unsubMap();
       unsubOdom();
+      unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
       canvas.remove();
