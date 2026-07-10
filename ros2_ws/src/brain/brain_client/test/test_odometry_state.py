@@ -6,7 +6,7 @@ Pins two contracts:
 
 1. **Attribute API** — the flat 2D pose (x, y, theta) plus velocities that
    skills and the docs rely on.
-2. **Legacy dict access** — skills written against releases up to 0.6.x read
+2. **Legacy dict access** — skills written against 0.3.0 through 0.6.x read
    the injected state as a raw-message dict (``odom["theta_degrees"]``,
    ``odom["pose"]["pose"]["position"]``); that shape must keep working.
 

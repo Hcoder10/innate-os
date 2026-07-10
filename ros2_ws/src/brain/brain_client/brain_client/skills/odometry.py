@@ -52,7 +52,7 @@ class Odometry:
 
     def __getitem__(self, key):
         """Deprecated dict-style access matching the raw-message dict that
-        LAST_ODOM used to inject (releases up to 0.6.x)."""
+        LAST_ODOM injected from 0.3.0 through 0.6.x."""
         warnings.warn(
             "dict-style odometry access is deprecated; use the Odometry "
             "attributes instead (odom.x, odom.theta_degrees, ...) or odom.raw "
