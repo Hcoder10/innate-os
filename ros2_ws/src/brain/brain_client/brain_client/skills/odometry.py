@@ -51,8 +51,11 @@ class Odometry:
         return (self.x, self.y)
 
     def __getitem__(self, key):
-        """Deprecated dict-style access matching the raw-message dict that
-        LAST_ODOM injected from 0.3.0 through 0.6.x."""
+        """Dict-style access matching the raw-message dict that LAST_ODOM
+        injected from 0.3.0 through 0.6.x. Soft-deprecated (emits a warning to
+        nudge authors to the attributes) but kept as a permanent compatibility
+        layer -- there is no scheduled removal, so old skill files keep working
+        indefinitely. Do not delete."""
         warnings.warn(
             "dict-style odometry access is deprecated; use the Odometry "
             "attributes instead (odom.x, odom.theta_degrees, ...) or odom.raw "
