@@ -17,6 +17,7 @@ Usage:
 import asyncio
 import json
 import os
+import struct
 import time
 import types
 
@@ -25,7 +26,8 @@ from aiohttp import web
 sys_dir = os.path.dirname(os.path.abspath(__file__))
 import sys  # noqa: E402
 sys.path.insert(0, sys_dir)
-from common import pack_control, unpack_control, PACKET_SIZE  # noqa: E402
+from common import (pack_control, unpack_control, unpack_video_chunk,  # noqa: E402
+                    ECHO_TS_SIZE, PACKET_SIZE, VIDEO_HDR_SIZE, VIDEO_MAGIC)
 from transports import make_link  # noqa: E402
 
 VM = os.environ.get("TELEOP_VM", "35.233.134.107")
@@ -37,6 +39,9 @@ ROBOT = os.environ.get("TELEOP_ROBOT", "mars-the-27th.local")
 ROBOT_USER = "jetson1"
 ROBOT_PASS = os.environ.get("TELEOP_ROBOT_PASS", "goodbot27")
 PORT = 8399
+VIDEO_TOPIC = os.environ.get(
+    "TELEOP_VIDEO_TOPIC", "/mars/main_camera/left/image_raw/compressed")
+VIDEO_MS = float(os.environ.get("TELEOP_VIDEO_MS", "150"))
 
 TRANSPORTS = {
     "udp": {
@@ -156,6 +161,50 @@ class Session:
         self.started = time.time()
         self.status = "starting"
         self.arm = None
+        # NTP-style clock sync from timestamped control echoes:
+        # (t_mono, rtt_wall_ms, offset_ms) — the min-RTT sample wins
+        self.sync = []
+        # video: chunk reassembly + one-way latency of completed frames
+        self.vassy = {}           # frame_seq -> {t_mono, ts_ms, total, chunks}
+        self.vlat = []            # (t_recv_mono, latency_ms)
+        self.vframes = 0
+        self.vdropped = 0
+        self.jpeg = None
+        self.jpeg_seq = 0
+
+    def clock_offset(self):
+        """robot_clock - operator_clock (ms), from the best recent echo."""
+        now = time.monotonic()
+        recent = [s for s in self.sync[-2000:] if now - s[0] < 10.0]
+        if not recent:
+            return None
+        return min(recent, key=lambda s: s[1])[2]
+
+    def on_video_chunk(self, data: bytes):
+        try:
+            frame_seq, ts_ms, total, idx, payload = unpack_video_chunk(data)
+        except (ValueError, struct.error):
+            return
+        now = time.monotonic()
+        entry = self.vassy.setdefault(
+            frame_seq, {"t": now, "ts_ms": ts_ms, "total": total, "chunks": {}})
+        entry["chunks"][idx] = payload
+        if len(entry["chunks"]) == entry["total"]:
+            del self.vassy[frame_seq]
+            if frame_seq <= self.jpeg_seq:
+                return  # stale frame overtaken by a newer one
+            self.jpeg = b"".join(entry["chunks"][i] for i in range(entry["total"]))
+            self.jpeg_seq = frame_seq
+            self.vframes += 1
+            offset = self.clock_offset()
+            if offset is not None:
+                self.vlat.append((now, time.time() * 1000.0 - (ts_ms - offset)))
+                if len(self.vlat) > 2000:
+                    del self.vlat[:1000]
+        # frames with chunks missing for >2s are lost, not late
+        for k in [k for k, v in self.vassy.items() if now - v["t"] > 2.0]:
+            del self.vassy[k]
+            self.vdropped += 1
 
     def stats(self):
         now = time.monotonic()
@@ -175,6 +224,17 @@ class Session:
                 maxx=round(vals[-1], 1),
                 stale_pct=round(100 * sum(1 for v in vals if v > 60) / len(vals), 1),
                 echo_hz=round(len(recent) / 5.0, 1),
+            )
+        vrecent = sorted(l for t, l in self.vlat[-200:] if now - t < 5.0)
+        if vrecent:
+            done = self.vframes + self.vdropped
+            out.update(
+                video_p50=round(vrecent[len(vrecent) // 2], 1),
+                video_p95=round(vrecent[max(0, int(len(vrecent) * 0.95) - 1)], 1),
+                video_fps=round(len(vrecent) / 5.0, 1),
+                video_seq=self.jpeg_seq,
+                video_kb=round(len(self.jpeg) / 1024, 1) if self.jpeg else None,
+                video_drop_pct=round(100 * self.vdropped / done, 1) if done else 0,
             )
         return out
 
@@ -196,6 +256,7 @@ async def start_session(key: str, live: bool, source: str):
     bridge_cmd = (
         f"cd ~/teleop_bench && ({env}PYTHONUNBUFFERED=1 nohup .venv/bin/python "
         f"follower_bridge.py {spec['bridge']} --forward-port {fwd} "
+        f"--video-topic {VIDEO_TOPIC} --video-ms {VIDEO_MS:.0f} "
         f"> /tmp/bridge_dash.log 2>&1 </dev/null &); echo started")
     sess.status = "starting robot bridge"
     rc, out = await robot_sh(bridge_cmd)
@@ -217,10 +278,14 @@ async def start_session(key: str, live: bool, source: str):
         sess.link = make_link(args, role="operator")
 
         def on_packet(data: bytes):
+            if (len(data) >= VIDEO_HDR_SIZE
+                    and struct.unpack_from("<H", data)[0] == VIDEO_MAGIC):
+                sess.on_video_chunk(data)
+                return
             if len(data) < PACKET_SIZE:
                 return
             try:
-                seq, _, _ = unpack_control(data)
+                seq, t_send_ms, _ = unpack_control(data)
             except ValueError:
                 return
             t0 = pending.pop(seq, None)
@@ -229,6 +294,14 @@ async def start_session(key: str, live: bool, source: str):
                                   (time.perf_counter_ns() - t0) / 1e6))
                 if len(sess.rtts) > 5000:
                     del sess.rtts[:2500]
+            if len(data) >= PACKET_SIZE + ECHO_TS_SIZE:
+                # bridge appended its wall clock: NTP-style offset sample
+                (t_robot_ms,) = struct.unpack_from("<d", data, PACKET_SIZE)
+                t_now_ms = time.time() * 1000.0
+                sess.sync.append((time.monotonic(), t_now_ms - t_send_ms,
+                                  t_robot_ms - (t_send_ms + t_now_ms) / 2))
+                if len(sess.sync) > 5000:
+                    del sess.sync[:2500]
 
         pending: dict[int, int] = {}
         await asyncio.wait_for(sess.link.start(on_packet), timeout=45)
@@ -406,6 +479,14 @@ async def h_stop(request):
     return web.json_response({"ok": True})
 
 
+async def h_frame(request):
+    sess = current.get("session")
+    if not sess or not sess.jpeg:
+        return web.Response(status=204)
+    return web.Response(body=sess.jpeg, content_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
+
+
 async def h_stats(request):
     sess = current.get("session")
     if sess:
@@ -422,6 +503,7 @@ def main():
     app.router.add_get("/api/results", h_results)
     app.router.add_get("/api/transports", h_transports)
     app.router.add_get("/api/stats", h_stats)
+    app.router.add_get("/api/frame", h_frame)
     app.router.add_post("/api/start", h_start)
     app.router.add_post("/api/stop", h_stop)
 

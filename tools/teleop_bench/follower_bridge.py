@@ -27,10 +27,50 @@ import time
 import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
-from common import MAGIC, PACKET_SIZE, unpack_control  # noqa: E402
+from common import MAGIC, PACKET_SIZE, pack_video_chunks, unpack_control  # noqa: E402
 from transports import add_link_args, make_link  # noqa: E402
 
 RESET_MAGIC = 0xAA56
+
+
+async def stream_video(link, topic: str, interval_ms: float, rosbridge: str):
+    """Pull compressed camera frames from the robot's local rosbridge and
+    ship them over the teleop link, stamped with the robot's wall clock.
+    Video must never take the control bridge down: reconnect forever."""
+    import base64
+    import json
+
+    import websockets
+
+    frame_seq = 0
+    sent_bytes = 0
+    last_report = time.monotonic()
+    while True:
+        try:
+            async with websockets.connect(rosbridge, max_size=30_000_000) as ws:
+                await ws.send(json.dumps({
+                    "op": "subscribe", "topic": topic,
+                    "type": "sensor_msgs/msg/CompressedImage",
+                    "throttle_rate": int(interval_ms), "queue_length": 1}))
+                print(f"[video] streaming {topic} every {interval_ms:.0f}ms")
+                async for raw in ws:
+                    msg = json.loads(raw)
+                    if msg.get("op") != "publish":
+                        continue
+                    jpeg = base64.b64decode(msg["msg"]["data"])
+                    frame_seq += 1
+                    for chunk in pack_video_chunks(frame_seq, jpeg):
+                        await link.send(chunk)
+                        await asyncio.sleep(0)  # don't starve the echo path
+                    sent_bytes += len(jpeg)
+                    now = time.monotonic()
+                    if now - last_report > 5.0:
+                        print(f"[video] {frame_seq} frames, "
+                              f"{sent_bytes / 1024:.0f}KB sent")
+                        last_report = now
+        except Exception as e:
+            print(f"[video] {type(e).__name__}: {e} — retrying in 3s")
+            await asyncio.sleep(3.0)
 
 
 async def main():
@@ -39,6 +79,12 @@ async def main():
     ap.add_argument("--forward-host", default="127.0.0.1")
     ap.add_argument("--forward-port", type=int, default=9999)
     ap.add_argument("--stall-ms", type=float, default=300.0)
+    ap.add_argument("--video-topic", default=None,
+                    help="compressed image topic to stream back over the "
+                         "link for video-latency measurement (off if unset)")
+    ap.add_argument("--video-ms", type=float, default=150.0,
+                    help="frame interval (rosbridge throttle_rate)")
+    ap.add_argument("--rosbridge", default="ws://127.0.0.1:9090")
     args = ap.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,8 +97,13 @@ async def main():
     link = make_link(args, role="robot")
 
     def on_packet(data: bytes):
-        # echo everything back for operator-side RTT display
-        asyncio.ensure_future(link.send(data))
+        # echo everything back for operator-side RTT display; control packets
+        # gain the robot's wall clock so the operator can estimate the clock
+        # offset (NTP-style) and turn video timestamps into one-way latency
+        echo = data
+        if len(data) >= PACKET_SIZE:
+            echo = data[:PACKET_SIZE] + struct.pack("<d", time.time() * 1000.0)
+        asyncio.ensure_future(link.send(echo))
         if len(data) < PACKET_SIZE:
             if len(data) >= 6 and struct.unpack_from("<H", data)[0] == RESET_MAGIC:
                 sock.sendto(data, dest)
@@ -68,6 +119,10 @@ async def main():
     await link.start(on_packet)
     print(f"[bridge] link up ({args.transport}); forwarding newest packets "
           f"to {dest}, stall gate {args.stall_ms}ms")
+
+    if args.video_topic:
+        asyncio.ensure_future(stream_video(
+            link, args.video_topic, args.video_ms, args.rosbridge))
 
     forwarded_seq = -1
     stalled = False

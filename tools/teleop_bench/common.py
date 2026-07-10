@@ -33,6 +33,39 @@ def unpack_control(data: bytes):
     return seq, ts_ms, pos
 
 
+# Video frames ride the SAME link as the control stream (robot -> operator),
+# chunked so every transport can carry them (UDP datagrams, LiveKit lossy
+# data and WebRTC no-retransmit DataChannels all top out near one MTU).
+# A lost chunk drops that frame only — exactly how a lossy video channel
+# degrades.
+VIDEO_MAGIC = 0xAA57
+VIDEO_HDR_FMT = "<HIdHH"  # magic, frame seq, robot wall-clock ms, n chunks, chunk idx
+VIDEO_HDR_SIZE = struct.calcsize(VIDEO_HDR_FMT)  # 18 bytes
+VIDEO_CHUNK_PAYLOAD = 1100
+
+# Control echoes come back as the 38-byte packet + the robot's wall clock
+# (ms) — enough for an NTP-style offset estimate, which turns robot frame
+# timestamps into one-way video latency on the operator side.
+ECHO_TS_FMT = "<d"
+ECHO_TS_SIZE = struct.calcsize(ECHO_TS_FMT)
+
+
+def pack_video_chunks(frame_seq: int, jpeg: bytes) -> list[bytes]:
+    total = max(1, (len(jpeg) + VIDEO_CHUNK_PAYLOAD - 1) // VIDEO_CHUNK_PAYLOAD)
+    now_ms = time.time() * 1000.0
+    return [struct.pack(VIDEO_HDR_FMT, VIDEO_MAGIC, frame_seq & 0xFFFFFFFF,
+                        now_ms, total, i)
+            + jpeg[i * VIDEO_CHUNK_PAYLOAD:(i + 1) * VIDEO_CHUNK_PAYLOAD]
+            for i in range(total)]
+
+
+def unpack_video_chunk(data: bytes):
+    magic, frame_seq, ts_ms, total, idx = struct.unpack_from(VIDEO_HDR_FMT, data)
+    if magic != VIDEO_MAGIC:
+        raise ValueError(f"bad video magic 0x{magic:04X}")
+    return frame_seq, ts_ms, total, idx, data[VIDEO_HDR_SIZE:]
+
+
 class RttStats:
     """Collects per-packet RTTs and produces a summary dict."""
 

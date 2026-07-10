@@ -54,6 +54,10 @@ button.secondary { background: transparent; color: var(--text-2); border: 1px so
 .tile .v small { font-size: 12px; font-weight: 400; color: var(--text-3); }
 .tile .k { color: var(--text-3); font-size: 11.5px; margin-top: 1px; }
 canvas { width: 100%; height: 140px; display: block; }
+.videobox { display: none; gap: 12px; margin-bottom: 12px; align-items: stretch; flex-wrap: wrap; }
+.videobox img { width: 400px; max-width: 100%; border-radius: 10px;
+  border: 1px solid var(--border); background: #000; object-fit: contain; }
+.videobox .vtiles { display: flex; flex-direction: column; gap: 10px; }
 .hist { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .chip { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
   font-size: 12px; color: var(--text-2); background: var(--surface-2); }
@@ -100,11 +104,22 @@ canvas { width: 100%; height: 140px; display: block; }
       <div class="tile"><div class="v" id="t_hz">–</div><div class="k">echoes /s</div></div>
       <div class="tile" style="min-width:230px"><div class="v" id="t_leader" style="font-size:14px;font-weight:500;line-height:2">–</div><div class="k">leader arm ticks (move it — these must change)</div></div>
     </div>
+    <div class="videobox" id="videobox">
+      <img id="vframe" alt="robot camera (over the tested transport)">
+      <div class="vtiles">
+        <div class="tile"><div class="v" id="v_lat">–</div><div class="k">video latency p50 (robot→here)</div></div>
+        <div class="tile"><div class="v" id="v_p95">–</div><div class="k">video latency p95</div></div>
+        <div class="tile"><div class="v" id="v_fps">–</div><div class="k">frames /s · <span id="v_kb">–</span> KB · <span id="v_drop">–</span>% dropped</div></div>
+      </div>
+    </div>
     <canvas id="spark" height="140"></canvas>
     <div class="hist" id="hist"></div>
   </div>
   <div class="warncard">Sessions start in <b>dry-run</b>: packets flow end-to-end and RTT is real, but the robot bridge
-    forwards to a dead port. Tick “move the real arm” to drive the arm for real.</div>
+    forwards to a dead port. Tick “move the real arm” to drive the arm for real.<br>
+    Video rides the <b>same transport</b> as the control stream (chunked JPEG, robot→you), so its latency is
+    directly comparable — and its bandwidth is included in the control RTT you see. Latency is one-way,
+    clock-synced off the control echoes; it excludes camera capture/encode and browser render.</div>
 
   <h2>Recorded benchmarks (RTT, 200 Hz × 38-byte control packets)</h2>
   <p class="sub" style="margin-bottom:6px">Bar = median RTT, faint extension → p99. Hover for details.</p>
@@ -165,10 +180,12 @@ $("stopbtn").onclick = async () => {
 };
 function snapshotHistory(){
   if (lastStats && lastStats.p50 !== undefined && activeKey){
-    history.unshift({key:activeKey, p50:lastStats.p50, p95:lastStats.p95, stale:lastStats.stale_pct});
+    history.unshift({key:activeKey, p50:lastStats.p50, p95:lastStats.p95,
+                     stale:lastStats.stale_pct, vp50:lastStats.video_p50});
     history = history.slice(0,8);
     $("hist").innerHTML = history.map(h =>
-      `<div class="chip"><b>${h.key}</b> · p50 ${h.p50} ms · p95 ${h.p95} ms · &gt;60ms ${h.stale}%</div>`).join("");
+      `<div class="chip"><b>${h.key}</b> · p50 ${h.p50} ms · p95 ${h.p95} ms · &gt;60ms ${h.stale}%`
+      + (h.vp50 !== undefined ? ` · video ${h.vp50} ms` : "") + `</div>`).join("");
   }
 }
 
@@ -192,9 +209,34 @@ async function poll(){
     $("t_hz").innerHTML   = fmt(s.echo_hz, "");
     $("t_leader").textContent = s.leader_pos ? s.leader_pos.join("  ") :
       (s.source === "sine" ? "(sine mode — no leader)" : "–");
+    $("videobox").style.display = s.video_seq !== undefined ? "flex" : "none";
+    $("v_lat").innerHTML = fmt(s.video_p50, "ms");
+    $("v_p95").innerHTML = fmt(s.video_p95, "ms");
+    $("v_fps").innerHTML = fmt(s.video_fps, "");
+    $("v_kb").textContent = s.video_kb ?? "–";
+    $("v_drop").textContent = s.video_drop_pct ?? "–";
     drawSpark(s.samples || []);
   } catch(e){ /* server restarting */ }
   setTimeout(poll, 500);
+}
+// live video: refetch the newest reassembled frame; a session with video
+// updates every --video-ms, everything else 204s and stays hidden
+let frameBusy = false;
+async function frameLoop(){
+  if (!frameBusy && lastStats && lastStats.video_seq !== undefined){
+    frameBusy = true;
+    try {
+      const r = await fetch("/api/frame");
+      if (r.status === 200){
+        const url = URL.createObjectURL(await r.blob());
+        const img = $("vframe"), old = img.src;
+        img.src = url;
+        if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+      }
+    } catch(e){ /* server restarting */ }
+    frameBusy = false;
+  }
+  setTimeout(frameLoop, 130);
 }
 function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 function drawSpark(samples){
@@ -290,7 +332,7 @@ function callTorque(on){
 $("torquebtn").onclick = () => { if (torqueOn !== null) callTorque(!torqueOn); };
 (async ()=>{ const cfg = await jget("/api/config"); connectRos(cfg.robot); setTorqueUi(); })();
 
-initCards(); initResults(); poll();
+initCards(); initResults(); poll(); frameLoop();
 </script>
 </body>
 </html>
