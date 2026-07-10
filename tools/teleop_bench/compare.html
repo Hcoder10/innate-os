@@ -178,8 +178,8 @@ async function poll(){
   try {
     const s = await jget("/api/stats");
     lastStats = s;
-    if (s.status === "idle") {
-      $("status").textContent = "idle — pick a transport above";
+    if (String(s.status).startsWith("idle")) {
+      $("status").textContent = s.status === "idle" ? "idle — pick a transport above" : s.status;
     } else {
       $("status").innerHTML =
         `<span class="badge ${s.live ? "live" : "dry"}">${s.live ? "LIVE — ARM MOVES" : "DRY-RUN — arm will NOT move"}</span>`

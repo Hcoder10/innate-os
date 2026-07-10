@@ -12,6 +12,12 @@ leader arm ──USB──> leader_link.py ──[transport]──> follower_bri
 
 ## 0. Safety checklist (once)
 
+0. **One commander at a time.** A live dashboard/bridge session and the
+   phone app both feed the same `:9999` input — running both makes the arm
+   fight between two targets ("moves weird"). Click **Stop** in the
+   dashboard before driving from the app. Live leader-arm sessions now
+   auto-stop after 90s of an untouched leader for this reason.
+
 1. Clear space around the arm; be ready to Ctrl-C (robot then holds pose).
 2. Arm torque must be ON for it to follow — use the **arm torque toggle in
    the comparison dashboard** (localhost:8399; live state via rosbridge

@@ -173,6 +173,7 @@ current: dict = {"session": None}
 
 async def start_session(key: str, live: bool, source: str):
     await stop_session()
+    current["note"] = None
     spec = TRANSPORTS[key]
     sess = Session(key, live, source)
     current["session"] = sess
@@ -248,12 +249,24 @@ async def start_session(key: str, live: bool, source: str):
         t0 = time.perf_counter()
         next_t = t0
         base = center or [2048] * 6
+        idle_ref, idle_since = None, None
         while True:
             if sess.arm:
                 pos = sess.arm.read_positions()
                 if pos is None:
                     await asyncio.sleep(0.02)
                     continue
+                # auto-stop when the leader sits untouched — a forgotten live
+                # session must not keep feeding :9999 while someone teleops
+                # from the app (two commanders make the arm fight itself)
+                now = time.monotonic()
+                if idle_ref is None or any(abs(a - b) > 4 for a, b in zip(pos, idle_ref)):
+                    idle_ref, idle_since = pos, now
+                elif now - idle_since > 90:
+                    current["note"] = "auto-stopped: leader arm idle for 90s"
+                    print(f"[session] {current['note']}")
+                    asyncio.get_running_loop().create_task(stop_session())
+                    return
             else:
                 # gentle wiggle around the arm's CURRENT pose (wrist + gripper)
                 t = time.perf_counter() - t0
@@ -355,7 +368,11 @@ async def h_stop(request):
 
 async def h_stats(request):
     sess = current.get("session")
-    return web.json_response(sess.stats() if sess else {"status": "idle"})
+    if sess:
+        return web.json_response(sess.stats())
+    note = current.get("note")
+    return web.json_response(
+        {"status": f"idle ({note})" if note else "idle"})
 
 
 def main():
