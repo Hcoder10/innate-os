@@ -40,10 +40,8 @@ export function createMap(root, opts = {}) {
   root.appendChild(canvas);
   const ctx = canvas.getContext("2d");
 
-  // Controls mirror the mobile app's map: Locate expands to Auto (grid-localizer
-  // scan match) / Manual (place the robot by drag), Go To arms drag-to-navigate,
-  // and Stop takes Go To's place while a navigation is running. Each button is
-  // an icon + label card with a hint slot that render() keeps current.
+  // Controls mirror the mobile app's map: Locate expands to Auto/Manual,
+  // Go To arms drag-to-navigate, Stop takes Go To's place while navigating.
   const ICONS = {
     back: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>',
     locate:
@@ -83,8 +81,7 @@ export function createMap(root, opts = {}) {
   const controlsRow = document.createElement("div");
   controlsRow.className = "map-controls-row";
   for (const btn of [backBtn, locateBtn, autoBtn, manualBtn, goBtn, stopBtn, centerBtn]) controlsRow.appendChild(btn);
-  // Outcome of the widget's own navigation goals: live progress while
-  // driving, then success or a specific failure line (not just "failed").
+  // Live progress / outcome of the widget's own goals and locate calls.
   const statusEl = document.createElement("div");
   statusEl.className = "map-status mono";
   statusEl.hidden = true;
@@ -118,12 +115,9 @@ export function createMap(root, opts = {}) {
   let grid = null;
   /** @type {{ x: number, y: number, yaw: number } | null} displayed robot pose (map frame) */
   let pose = null;
-  // The robot marker must live in the MAP frame like everything else drawn
-  // here. /odom alone is the odom frame -- on a real robot that's off by the
-  // whole map->odom correction (meters after drift). So: anchor at the last
-  // /amcl_pose fix and compose the odometry delta accumulated since, which
-  // stays smooth between AMCL updates. With no AMCL (mapfree mode), raw odom
-  // IS the global frame and is used directly.
+  // Robot marker in the MAP frame: anchor at the last /amcl_pose fix and add
+  // the odometry delta since (raw /odom is off by the whole map->odom
+  // correction on a real robot). No AMCL yet -> raw odom is the global frame.
   /** @type {{ x: number, y: number, yaw: number } | null} */
   let amclPose = null;
   /** @type {{ x: number, y: number, yaw: number } | null} odom pose at the AMCL fix */
@@ -134,7 +128,7 @@ export function createMap(root, opts = {}) {
   function composedPose() {
     if (!amclPose) return odomPose;
     if (!odomAtAmcl || !odomPose) return amclPose;
-    // Base motion since the fix, expressed in the base frame at fix time...
+    // Motion since the fix in the base frame, re-applied at the AMCL fix.
     const ca = Math.cos(-odomAtAmcl.yaw);
     const sa = Math.sin(-odomAtAmcl.yaw);
     const dxo = odomPose.x - odomAtAmcl.x;
@@ -142,7 +136,6 @@ export function createMap(root, opts = {}) {
     const dx = dxo * ca - dyo * sa;
     const dy = dxo * sa + dyo * ca;
     const dyaw = odomPose.yaw - odomAtAmcl.yaw;
-    // ...then re-applied at the AMCL fix in the map frame.
     const c = Math.cos(amclPose.yaw);
     const s = Math.sin(amclPose.yaw);
     return { x: amclPose.x + dx * c - dy * s, y: amclPose.y + dx * s + dy * c, yaw: amclPose.yaw + dyaw };
@@ -154,25 +147,23 @@ export function createMap(root, opts = {}) {
   /** @type {{ ox: number, oy: number, scale: number } | null} */
   let view = null;
 
-  // Control state: "locate" shows the Auto/Manual choice; "manual" and "goto"
-  // arm the map for a press-drag (click sets the position, drag the heading) —
-  // manual seeds AMCL where the user pointed, goto navigates there.
+  // "manual"/"goto" arm the map for a press-drag: click sets the position,
+  // drag sets the heading.
   /** @type {"idle" | "locate" | "manual" | "goto"} */
   let ui = "idle";
   let locating = false; // auto-locate service call in flight
   let navigating = false; // a goal sent from this widget is in flight
   /** @type {{ start: { x: number, y: number }, cur: { x: number, y: number } } | null} */
   let goalDrag = null;
-  // Grab-to-pan: while set, the view centres here instead of following the
-  // robot; Recenter clears it.
+  // Grab-to-pan: while set, the view centres here instead of on the robot.
   /** @type {{ x: number, y: number } | null} */
   let panCenter = null;
   /** @type {{ px: number, py: number, center: { x: number, y: number }, moved: boolean } | null} */
   let panDrag = null;
   /** @type {{ x: number, y: number, yaw: number } | null} the active goal */
   let goalMarker = null;
-  // True once /nav/commanded_goal set the marker for this navigation: the
-  // skill's exact target then wins over the per-replan plan endpoint.
+  // True once /nav/commanded_goal set the marker: the skill's exact target
+  // wins over the per-replan plan endpoint.
   let goalIsCommanded = false;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let navStaleTimer;
@@ -284,9 +275,8 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
-  // The planner republishes /plan (~1 Hz) the whole time it's driving to a goal,
-  // and stops once it arrives. So a lull in /plan means navigation has ended —
-  // that's when we drop the goal marker and the route, rather than on a timer.
+  // The planner republishes the route (~1 Hz) while driving and stops on
+  // arrival, so a lull means navigation ended — drop the route and goal then.
   const NAV_STALE_MS = 4000;
 
   function armNavStale() {
@@ -295,6 +285,7 @@ export function createMap(root, opts = {}) {
       goalMarker = null;
       goalIsCommanded = false;
       plan = null;
+      activePlanTopic = null;
       render();
       draw();
     }, NAV_STALE_MS);
@@ -302,9 +293,7 @@ export function createMap(root, opts = {}) {
 
   /** @param {any} msg geometry_msgs/PoseStamped — the skill's exact target */
   function onCommandedGoal(msg) {
-    // Only trust map-frame targets: odom-frame (local) goals would drift
-    // against the map canvas; for those the plan-endpoint fallback at least
-    // matches the frame the route itself is drawn in.
+    // Map-frame targets only: odom-frame goals would drift against the map canvas.
     if (msg?.header?.frame_id !== "map") return;
     const pos = msg?.pose?.position;
     const q = msg?.pose?.orientation;
@@ -316,8 +305,12 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
-  /** @param {any} msg nav_msgs/Path */
-  function onPlan(msg) {
+  // The topic whose route is currently displayed; only it may clear the route.
+  /** @type {string | null} */
+  let activePlanTopic = null;
+
+  /** @param {string} topic @param {any} msg nav_msgs/Path */
+  function onPlan(topic, msg) {
     const poses = msg?.poses;
     if (!Array.isArray(poses)) return;
     const pts = [];
@@ -326,12 +319,11 @@ export function createMap(root, opts = {}) {
       if (typeof pos?.x === "number" && typeof pos?.y === "number") pts.push({ x: pos.x, y: pos.y });
     }
     if (pts.length) {
+      activePlanTopic = topic;
       plan = pts;
-      // Fallback goal marker: the route's end. Only used until the skill's
-      // exact target arrives on /nav/commanded_goal (goalIsCommanded) — the
-      // endpoint wiggles with every replan, the commanded goal doesn't. Still
-      // needed for navigations that bypass the skill (e.g. map clicks routed
-      // straight to bt_navigator).
+      // Fallback goal marker until the exact commanded goal arrives (the plan
+      // endpoint wiggles with every replan); also covers navigations that
+      // bypass the skill.
       if (!goalIsCommanded) {
         const end = poses[poses.length - 1]?.pose;
         const q = end?.orientation;
@@ -340,9 +332,12 @@ export function createMap(root, opts = {}) {
           goalMarker = { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y, yaw };
         }
       }
-      armNavStale(); // route still streaming → keep the goal visible
+      armNavStale();
     } else {
-      plan = null; // empty path = navigation finished/aborted
+      // Empty path = navigation finished/aborted — but only from the planner
+      // that owns the displayed route; the inactive one must not clear it.
+      if (activePlanTopic && topic !== activePlanTopic) return;
+      plan = null;
       goalMarker = null;
       goalIsCommanded = false;
       clearTimeout(navStaleTimer);
@@ -364,10 +359,8 @@ export function createMap(root, opts = {}) {
       return;
     }
 
-    // The view centres on the pan point if the user grabbed the map, else it
-    // follows the robot (zoom mode). Zoom mode shows a fixed real-world window
-    // (zoomMeters across) so the map stays legible at thumbnail size; anything
-    // outside is clipped by the canvas bounds.
+    // Centre on the pan point if the user grabbed the map, else follow the
+    // robot; zoom mode shows a fixed real-world window (zoomMeters across).
     let scale, ox, oy;
     const center = panCenter ?? (zoomMeters && pose ? pose : null);
     if (zoomMeters && center) {
@@ -404,8 +397,8 @@ export function createMap(root, opts = {}) {
       ctx.stroke();
     }
 
-    // Goal: a green dot, plus a heading arrow while dragging. A manual-locate
-    // drag places the robot, not a goal — draw it in the robot's orange.
+    // Goal dot + heading arrow; a manual-locate drag places the robot, not a
+    // goal — draw it in the robot's orange.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
     if (goalAt) {
       const color = goalDrag && ui === "manual" ? "#e8a33d" : "#00ff88";
@@ -494,8 +487,7 @@ export function createMap(root, opts = {}) {
   /** @param {number} x @param {number} y @param {number} yaw seed AMCL at the hand-placed pose */
   async function sendInitialPose(x, y, yaw) {
     setStatus("hint", "Setting position…");
-    // Hand placement is approximate — give AMCL room to converge (same
-    // covariance the mobile app uses).
+    // Hand placement is approximate — same convergence room the mobile app gives AMCL.
     const covariance = new Array(36).fill(0);
     covariance[0] = 0.25;
     covariance[7] = 0.25;
@@ -520,12 +512,9 @@ export function createMap(root, opts = {}) {
   function publishGoal(x, y, yaw) {
     const qz = Math.sin(yaw / 2);
     const qw = Math.cos(yaw / 2);
-    // A NavigateToPose ACTION goal through the router, pinned to the map
-    // planner ("navigation"): a map click is a map-frame gesture, so it must
-    // never run on whatever planner the previous navigation left latched
-    // (the /goal_pose topic bypasses the router and does exactly that).
-    // Zero stamp = "latest" to TF. Never wall time: the sim runs on ROS sim
-    // time, where a Date.now() stamp is decades in the future.
+    // Action goal through the router, pinned to the map planner — /goal_pose
+    // would bypass it and run on whatever planner was last latched. Zero stamp
+    // = "latest" to TF; wall stamps break under ROS sim time.
     const gen = ++goalGen;
     /** @type {{ distance_remaining?: number, number_of_recoveries?: number } | null} */
     let lastFb = null;
@@ -560,8 +549,8 @@ export function createMap(root, opts = {}) {
           setStatus("muted", "Stopped", true);
           return;
         }
-        // NavigateToPose's result message is empty, so the reason must come
-        // from the last feedback: how far it got and how hard it tried.
+        // NavigateToPose's result message is empty on Humble — reconstruct
+        // the reason from the last feedback.
         const d = lastFb?.distance_remaining;
         const n = lastFb?.number_of_recoveries ?? 0;
         const detail =
@@ -594,8 +583,7 @@ export function createMap(root, opts = {}) {
       draw();
       return;
     }
-    // Otherwise grab-to-pan; it only becomes a pan after a few px of movement,
-    // so plain clicks don't nudge the view.
+    // Otherwise grab-to-pan.
     panDrag = { px, py, center: canvasToWorld(canvas.width / 2, canvas.height / 2), moved: false };
   }
 
@@ -612,12 +600,12 @@ export function createMap(root, opts = {}) {
     const dx = px - panDrag.px;
     const dy = py - panDrag.py;
     if (!panDrag.moved) {
+      // A few px of dead zone so plain clicks don't nudge the view.
       if (Math.hypot(dx, dy) < 4 * dpr()) return;
       panDrag.moved = true;
       canvas.style.cursor = "grabbing";
     }
-    // The world point under the cursor follows the cursor: shift the centre
-    // opposite the drag (canvas y grows downward, world y upward).
+    // Shift the centre opposite the drag (canvas y down, world y up).
     const mPerPx = grid.resolution / view.scale;
     panCenter = { x: panDrag.center.x - dx * mPerPx, y: panDrag.center.y + dy * mPerPx };
     draw();
@@ -724,8 +712,7 @@ export function createMap(root, opts = {}) {
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
-  // Only the active planner publishes, so both feeds can share one handler.
-  const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, onPlan, 250, "nav_msgs/msg/Path"));
+  const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
   const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");
 
   return {

@@ -53,10 +53,8 @@ class Nav2Controller:
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.navigator)
 
-        # The exact goal this skill commands, resolved to its fixed frame
-        # (map, or odom for local goals) -- lets UIs render the true target
-        # rather than inferring it from the replanned path's endpoint.
-        # Latched so a viewer that connects mid-navigation still sees it.
+        # The exact goal this skill commands, latched so UIs can render the
+        # true target (the replanned path's endpoint wiggles).
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._commanded_goal_pub = self.navigator.create_publisher(PoseStamped, "/nav/commanded_goal", latched)
 

@@ -52,23 +52,16 @@ export const WEBSOCKET_STATUS_TOPIC = "/brain/websocket_status";
 // Navigation map + odometry for the 2D map page.
 export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
 export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
-// nav_msgs/Path — the planner's route to the goal. Both Nav2 planner servers
-// are namespaced (mars_nav launch), so the route arrives on one of these
-// depending on the active planner; there is no root /plan publisher.
+// nav_msgs/Path — the planner's route. Both planner servers are namespaced;
+// there is no root /plan publisher.
 export const PLAN_TOPICS = ["/navigation/plan", "/mapfree/plan"];
 // AMCL's map-frame pose estimate (geometry_msgs/PoseWithCovarianceStamped).
-// The robot marker anchors here: /odom is the odom frame, and drawing it on
-// the map canvas is off by the whole map->odom correction on a real robot.
 export const AMCL_POSE_TOPIC = "/amcl_pose";
-// The exact goal navigate_to_position commanded (geometry_msgs/PoseStamped,
-// latched; frame_id is "map", or "odom" for local goals) — the true target,
-// unlike the plan endpoint which wiggles with every replan.
+// The exact goal navigate_to_position commanded (geometry_msgs/PoseStamped, latched).
 export const COMMANDED_GOAL_TOPIC = "/nav/commanded_goal";
-// Stop all active navigation (std_srvs/Trigger) — cancels every NavigateToPose
-// goal, no matter which client started it.
+// Stop all active navigation (std_srvs/Trigger), no matter which client started it.
 export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
-// Auto-localization (std_srvs/Trigger on grid_localizer): scan-match the lidar
-// against the map and seed AMCL with the best pose. Can take tens of seconds.
+// Auto-localization (std_srvs/Trigger on grid_localizer). Can take tens of seconds.
 export const LOCALIZE_SERVICE = "/localize";
 // AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
 export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";

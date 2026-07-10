@@ -22,9 +22,7 @@ const SUB_RETRY_CAP_MS = 30_000;
 
 /**
  * True when a value carries no actual data: null/undefined, or an object/array
- * whose leaves are all empty. Catches action results built from empty
- * sub-messages (e.g. NavigateToPose's {result: {}}), while {success: false} or
- * {message: ""} still count as data.
+ * whose leaves are all empty ({success: false} still counts as data).
  * @param {any} v
  * @returns {boolean}
  */
@@ -405,11 +403,10 @@ export class RosClient {
       const pending = data.id ? this.#pendingActions.get(data.id) : undefined;
       if (!pending) return;
       this.#pendingActions.delete(data.id);
-      // rws sets `result: false` for any non-SUCCEEDED goal, but the payload may
-      // still carry the skill-level outcome ({success, message, ...}) — resolve
-      // with it and let the caller judge. Reject only when nothing usable came
-      // back, checked deeply: NavigateToPose's aborted result is {result: {}},
-      // which would otherwise resolve and read as "reached".
+      // rws sets `result: false` for any non-SUCCEEDED goal but the payload may
+      // still carry the skill-level outcome — resolve with it. Reject only when
+      // nothing came back, checked deeply: NavigateToPose's aborted result is
+      // just {result: {}}.
       const values = data.values;
       if (data.result === false && isEmptyDeep(values)) {
         pending.reject(new Error(`Action ${pending.action} was rejected`));

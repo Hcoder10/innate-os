@@ -275,9 +275,7 @@ button {
 
 .map-controls {
   position: absolute;
-  /* Top-left under the robot info card: the top-right corner belongs to the
-     camera tile strip when the map is the primary stage view, which used to
-     cover these buttons entirely. */
+  /* Top-left under the robot info card; top-right belongs to the camera strip. */
   top: 96px;
   left: 16px;
   display: flex;
@@ -294,8 +292,7 @@ button {
   min-width: 210px;
 }
 
-/* Icon + label cards with a hint slot, mobile-app style but in this design
-   system's vocabulary: hairlines and signal amber, no glow. */
+/* Icon + label cards with a hint slot (mobile-app style). */
 .map-btn {
   display: flex;
   align-items: center;
@@ -5602,9 +5599,7 @@ button {
     left: 14px !important;
   }
 
-  /* Map controls: the camera strip spans the whole top on phones (the
-     desktop position tucked them under the telemetry card, which is hidden
-     here) -- start below the tiles instead. */
+  /* The camera strip spans the whole top on phones -- start below the tiles. */
   .map-controls {
     top: calc(26px + min(120px, 24vw));
     left: 14px;
