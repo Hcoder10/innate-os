@@ -52,7 +52,8 @@ async def stream_video(link, topic: str, interval_ms: float, rosbridge: str):
                     "op": "subscribe", "topic": topic,
                     "type": "sensor_msgs/msg/CompressedImage",
                     "throttle_rate": int(interval_ms), "queue_length": 1}))
-                print(f"[video] streaming {topic} every {interval_ms:.0f}ms")
+                print(f"[video] streaming {topic} "
+                      + (f"every {interval_ms:.0f}ms" if interval_ms else "at camera rate"))
                 async for raw in ws:
                     msg = json.loads(raw)
                     if msg.get("op") != "publish":
@@ -82,8 +83,11 @@ async def main():
     ap.add_argument("--video-topic", default=None,
                     help="compressed image topic to stream back over the "
                          "link for video-latency measurement (off if unset)")
-    ap.add_argument("--video-ms", type=float, default=150.0,
-                    help="frame interval (rosbridge throttle_rate)")
+    ap.add_argument("--video-ms", type=float, default=0.0,
+                    help="min frame interval (rosbridge throttle_rate); "
+                         "0 = every frame. Beware: a value near the camera's "
+                         "own frame interval aliases the rate down (e.g. "
+                         "150ms throttle on a 7fps/143ms camera halves it)")
     ap.add_argument("--rosbridge", default="ws://127.0.0.1:9090")
     args = ap.parse_args()
 

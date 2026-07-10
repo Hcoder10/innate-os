@@ -41,7 +41,10 @@ ROBOT_PASS = os.environ.get("TELEOP_ROBOT_PASS", "goodbot27")
 PORT = 8399
 VIDEO_TOPIC = os.environ.get(
     "TELEOP_VIDEO_TOPIC", "/mars/main_camera/left/image_raw/compressed")
-VIDEO_MS = float(os.environ.get("TELEOP_VIDEO_MS", "150"))
+# 0 = ship every camera frame (~7fps / 39KB on MARS = ~2.2Mbps). A nonzero
+# throttle near the camera's frame interval ALIASES the rate down — that is
+# how the original 150ms default turned 7fps into 3.6.
+VIDEO_MS = float(os.environ.get("TELEOP_VIDEO_MS", "0"))
 
 TRANSPORTS = {
     "udp": {
@@ -129,6 +132,56 @@ async def get_arm_pose_ticks():
     except Exception as e:
         print(f"[pose] rosbridge read failed ({e}); using neutral")
     return None
+
+
+TICK = 2 * 3.141592653589793 / 4096  # rad per servo tick
+
+# Mirror of the robot's "intelligent joint limits" (arm_control.cpp): joint2's
+# low range shrinks when joint1 is over the chassis. The parked/rest pose sits
+# BELOW this envelope (gravity-settled past the config limit), so the first
+# streamed packet used to make the robot-side clamp yank joint2 up as a step —
+# a current-limit hit on every live start. We pre-lift along a planned
+# goto_js trajectory instead, then stream from an in-envelope pose.
+JOINT2_ABS_MIN = -1.221
+JOINT2_MARGIN = 0.05
+
+
+def joint2_floor(j1: float) -> float:
+    lo, hi = JOINT2_ABS_MIN, -0.5
+    if j1 <= -1.35 or j1 >= 1.25:
+        f = lo
+    elif j1 < -1.0:
+        f = hi + (-(j1 + 1.0) / 0.35) * (lo - hi)
+    elif j1 < 1.0:
+        f = hi
+    else:
+        f = hi + ((j1 - 1.0) / 0.25) * (lo - hi)
+    return f + JOINT2_MARGIN
+
+
+async def goto_js(target_rad: list, secs: float) -> bool:
+    """Smooth planned move via the robot's /mars/arm/goto_js (rosbridge)."""
+    import socket
+    import aiohttp
+    try:
+        ip = socket.gethostbyname(ROBOT)
+    except OSError:
+        ip = ROBOT
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.ws_connect(f"ws://{ip}:9090", timeout=8) as ws:
+                await ws.send_json({
+                    "op": "call_service", "service": "/mars/arm/goto_js",
+                    "type": "mars_msgs/srv/GotoJS", "id": "prelift",
+                    "args": {"data": {"data": target_rad}, "time": secs}})
+                async with asyncio.timeout(secs + 10):
+                    async for msg in ws:
+                        m = json.loads(msg.data)
+                        if m.get("op") == "service_response" and m.get("id") == "prelift":
+                            return bool(m.get("values", {}).get("success"))
+    except Exception as e:
+        print(f"[prelift] goto_js failed: {e}")
+    return False
 
 
 async def robot_sh(cmd: str) -> tuple[int, str]:
@@ -335,6 +388,45 @@ async def start_session(key: str, live: bool, source: str):
     if not sess.arm:
         sess.status = "reading current arm pose"
         center = await get_arm_pose_ticks()
+
+    if live:
+        # Streaming starts as a step to the first commanded pose. If that
+        # differs from where the arm is (rest pose below the envelope, or a
+        # leader arm held elsewhere), the robot-side clamp/gains yank it —
+        # the current-limit hit on session start. Pre-move there smoothly
+        # with a planned goto_js first, then stream from a matched pose.
+        target = None
+        if sess.arm:
+            pos0 = sess.arm.read_positions()
+            if pos0:
+                target = [(t - 2048) * TICK for t in pos0]
+        elif center:
+            target = [(t - 2048) * TICK for t in center]
+        present = await get_arm_pose_ticks()
+        if target and present:
+            target[1] = max(target[1], joint2_floor(target[0]))
+            present_rad = [(t - 2048) * TICK for t in present]
+            if max(abs(a - b) for a, b in zip(target, present_rad)) > 0.02:
+                sess.status = "pre-positioning arm (smooth 3s move to start pose)"
+                if not await goto_js(target, 3.0):
+                    await stop_session_keep_note(
+                        "pre-move failed — is arm torque ON? (toggle above)")
+                    return
+                # goto_js reports success even when a servo latched overload
+                # mid-move — verify the arm actually got there before we
+                # start streaming at it
+                check = await get_arm_pose_ticks()
+                if check:
+                    got = [(t - 2048) * TICK for t in check]
+                    err = max(abs(a - b) for a, b in zip(got, target))
+                    if err > 0.15:
+                        await stop_session_keep_note(
+                            f"arm could not reach the start pose (off by {err:.2f} rad) — "
+                            "a servo is likely overloaded holding this configuration. "
+                            "Torque off, move the arm to a compact pose by hand, then retry")
+                        return
+                    if not sess.arm:
+                        center = check
 
     async def pump():
         import math
