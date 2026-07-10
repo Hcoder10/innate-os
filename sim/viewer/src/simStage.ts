@@ -194,6 +194,19 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     lines.push(
       `           ${n(s.distanceRemaining, 2, " m")} away   recoveries ${s.recoveries ?? "—"}   t ${n(s.navTimeS, 0, "s")}`,
     );
+    if (s.lastResult) {
+      const r = s.lastResult;
+      const took = r.navTimeS !== null ? ` (t ${r.navTimeS.toFixed(0)}s)` : "";
+      if (r.ok) {
+        lines.push(`LAST RESULT  ✓ reached the goal${took}`);
+      } else if (r.canceled) {
+        lines.push(`LAST RESULT  ■ canceled${took}`);
+      } else {
+        const short = r.distanceRemaining !== null ? ` ${r.distanceRemaining.toFixed(2)} m short` : "";
+        const rec = r.recoveries ? ` after ${r.recoveries} recover${r.recoveries === 1 ? "y" : "ies"}` : "";
+        lines.push(`LAST RESULT  ✗ aborted${short}${rec}${took}`);
+      }
+    }
     lines.push(
       `BLOCKING   under robot: ${s.costUnderRobot}   0.5m ahead: ${s.maxCostAhead}` +
         (s.pathOccupancy === null ? "" : `\n           path blocked ${(s.pathOccupancy * 100).toFixed(0)}%`) +

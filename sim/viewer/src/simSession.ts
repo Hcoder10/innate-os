@@ -6,7 +6,7 @@
 // Architecture: sim/README.md.
 
 import type { SimScene } from "./scene";
-import { RosbridgePhysicsController, type RawCostmap } from "./physics/rosbridgeController";
+import { GOAL_CANCELED, GOAL_SUCCEEDED, RosbridgePhysicsController, type RawCostmap } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
 import {
   OscillationDetector,
@@ -44,6 +44,14 @@ export interface NavDebugSnapshot {
   pathOccupancy: number | null;
   headingErrDeg: number | null;
   critics: CriticState[];
+  /** Terminal outcome of the most recent navigation, held until the next one ends. */
+  lastResult: {
+    ok: boolean;
+    canceled: boolean;
+    distanceRemaining: number | null;
+    recoveries: number | null;
+    navTimeS: number | null;
+  } | null;
 }
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
@@ -160,6 +168,9 @@ export class SimSession {
   #oscillation = new OscillationDetector();
   #lastPose: { x: number; y: number; yaw: number } | null = null;
 
+  // Outcome of the last finished navigation (from the action status topic).
+  #lastResult: NavDebugSnapshot["lastResult"] = null;
+
   // Freeze chip: pauses the simulated world in place. The robot stack (Nav2,
   // MPPI) keeps running against a world that stops advancing, so the planner
   // and controller keep publishing and the overlays stay live -- just static.
@@ -261,6 +272,17 @@ export class SimSession {
     };
     feed.onCostmap = (cm) => {
       this.#costmap = cm;
+    };
+    feed.onNavTerminal = (status) => {
+      // Snapshot the feedback as it stood when the goal ended -- it stops
+      // updating now, so this is "how far it got".
+      this.#lastResult = {
+        ok: status === GOAL_SUCCEEDED,
+        canceled: status === GOAL_CANCELED,
+        distanceRemaining: this.#navFeedback?.distanceRemaining ?? null,
+        recoveries: this.#navFeedback?.recoveries ?? null,
+        navTimeS: this.#navFeedback?.navTimeS ?? null,
+      };
     };
     feed.init().catch((err) => console.warn("[sim-session] rosbridge overlays unavailable:", err));
     return feed;
@@ -569,6 +591,7 @@ export class SimSession {
       pathOccupancy: occupancy,
       headingErrDeg: headingErr === null ? null : (headingErr * 180) / Math.PI,
       critics: criticStates(distance, headingErr, occupancy),
+      lastResult: this.#lastResult,
     };
   }
 

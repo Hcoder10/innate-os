@@ -22,6 +22,7 @@ import { createHeadTilt } from "./headTilt.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
+import { createSimReset } from "./simReset.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
@@ -90,6 +91,9 @@ function buildCockpit(root) {
     createTtsBar(ttsOverlay, ros),
     // Collapsible skill launcher pinned next to the speak bar.
     createSkillsMenu(ttsOverlay, ros),
+    // Sim-only: mounted before the arm panel so it renders as the arm box's
+    // top row, visible in every teleop view.
+    ...(config.simControls ? [createSimReset(armOverlay, ros)] : []),
     createArmPanel(armOverlay, ros, { hideServices: !!config.simControls }),
     ...(config.simControls ? [] : [createProfilingPanel(root, session)]),
     createCameraSwitch(root, session, ros),

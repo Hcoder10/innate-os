@@ -23,6 +23,12 @@ const PLAN_TOPICS = ["/navigation/plan", "/mapfree/plan"];
 // The router forwards goals to an internal action server; whichever of the two
 // relays feedback, we take it. Same only-one-publishes trick as PLAN_TOPICS.
 const NAV_FEEDBACK_TOPICS = ["/navigate_to_pose/_action/feedback", "/internal_navigate_to_pose/_action/feedback"];
+const NAV_STATUS_TOPICS = ["/navigate_to_pose/_action/status", "/internal_navigate_to_pose/_action/status"];
+
+// action_msgs/msg/GoalStatus terminal states.
+export const GOAL_SUCCEEDED = 4;
+export const GOAL_CANCELED = 5;
+export const GOAL_ABORTED = 6;
 
 /** nav2_msgs/Costmap payload, flattened for the debug HUD. */
 export interface RawCostmap {
@@ -66,8 +72,13 @@ export class RosbridgePhysicsController {
   onCommandedGoal?: (goal: { x: number; y: number; yaw: number; frame: string }) => void;
   /** The controller's local costmap (raw 0-255 costs). */
   onCostmap?: (cm: RawCostmap) => void;
+  /** A navigation goal reached a terminal state (GOAL_SUCCEEDED/CANCELED/ABORTED). */
+  onNavTerminal?: (status: number) => void;
+  // goal uuid -> last seen status, to emit each terminal transition once.
+  #goalStatus = new Map<string, number>();
   #scanEnabled = false;
   #navDebugEnabled = false;
+  #goalSeq = 0;
   // AMCL's map->odom: in sim, odom == the ground-truth world frame, so this is
   // the world<->map bridge. Identity until the first TF arrives. Without it,
   // map-frame plans/goals drawn as world coordinates shift by however far
@@ -181,6 +192,9 @@ export class RosbridgePhysicsController {
     for (const topic of NAV_FEEDBACK_TOPICS) {
       this.#send({ op: "subscribe", topic, throttle_rate: 200, queue_length: 1 });
     }
+    for (const topic of NAV_STATUS_TOPICS) {
+      this.#send({ op: "subscribe", topic, type: "action_msgs/msg/GoalStatusArray", queue_length: 2 });
+    }
     this.#send({ op: "subscribe", topic: "/nav/commanded_goal", type: "geometry_msgs/msg/PoseStamped", queue_length: 1 });
     // map->odom from AMCL rides /tf among the 30Hz odom transforms; no
     // throttle (tiny messages) so we never starve on the rarer map->odom.
@@ -272,6 +286,18 @@ export class RosbridgePhysicsController {
         yaw: inMap ? this.#yawMapToWorld(rawYaw) : rawYaw,
         frame: ps.header.frame_id,
       });
+    } else if (msg.topic !== undefined && NAV_STATUS_TOPICS.includes(msg.topic)) {
+      const arr = msg.msg as {
+        status_list?: Array<{ goal_info: { goal_id: { uuid: number[] | string } }; status: number }>;
+      };
+      for (const st of arr.status_list ?? []) {
+        const key = String(st.goal_info.goal_id.uuid);
+        if (this.#goalStatus.get(key) === st.status) continue;
+        this.#goalStatus.set(key, st.status);
+        if (st.status >= GOAL_SUCCEEDED) this.onNavTerminal?.(st.status);
+      }
+      // The array carries every historical goal; keep the map from growing.
+      if (this.#goalStatus.size > 64) this.#goalStatus.clear();
     } else if (msg.topic !== undefined && NAV_FEEDBACK_TOPICS.includes(msg.topic) && this.onNavFeedback) {
       const wrapper = msg.msg as {
         feedback?: {
@@ -330,9 +356,11 @@ export class RosbridgePhysicsController {
   }
 
   /** Send a navigation goal picked in WORLD coordinates (?navdebug set-goal
-   * chip) -- converted into AMCL's map frame before publishing on /goal_pose,
-   * the same route the webapp map's Set Goal uses. Zero stamp = "latest" to
-   * TF; never wall time, the sim runs on ROS sim time. */
+   * chip) -- converted into AMCL's map frame, then sent as a NavigateToPose
+   * ACTION goal through the router pinned to the map planner ("navigation"),
+   * exactly like the webapp map's Set Goal. Not the /goal_pose topic: that
+   * bypasses the router and runs on whatever planner was last latched.
+   * Zero stamp = "latest" to TF; never wall time (the sim runs on sim time). */
   publishGoalPose(worldX: number, worldY: number, worldYaw: number): void {
     // P_map = R(yaw)·P_world + t (world == odom in sim).
     const t = this.#mapToOdom;
@@ -341,15 +369,25 @@ export class RosbridgePhysicsController {
     const x = t ? worldX * c - worldY * s + t.x : worldX;
     const y = t ? worldX * s + worldY * c + t.y : worldY;
     const yaw = t ? worldYaw + t.yaw : worldYaw;
+    // rws action protocol (see webapp rosClient.sendActionGoal); result and
+    // feedback are ignored -- the outcome shows up in the overlays.
+    const id = `simviewer_goal_${this.#goalSeq++}`;
     this.#send({
-      op: "publish",
-      topic: "/goal_pose",
-      msg: {
-        header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "map" },
+      op: "send_action_goal",
+      id,
+      action: "/navigate_to_pose",
+      action_type: "nav2_msgs/action/NavigateToPose",
+      feedback: false,
+      goal_id: id,
+      args: {
         pose: {
-          position: { x, y, z: 0 },
-          orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+          header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "map" },
+          pose: {
+            position: { x, y, z: 0 },
+            orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) },
+          },
         },
+        behavior_tree: "navigation",
       },
     });
   }

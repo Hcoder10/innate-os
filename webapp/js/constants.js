@@ -68,6 +68,8 @@ export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
 export const LOCALIZE_SERVICE = "/localize";
 // AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
 export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
+// Sim-only (mars_sim_driver): respawn the virtual robot at its spawn pose.
+export const VIRTUAL_MARS_RESET_TOPIC = "/virtual_mars/reset";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published

@@ -1445,6 +1445,14 @@ button {
   -webkit-backdrop-filter: blur(20px);
 }
 
+/* Sim-only Reset Position: the top row of the arm box. */
+.sim-reset-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .arm-panel {
   display: flex;
   flex-direction: column;
