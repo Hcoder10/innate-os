@@ -39,12 +39,21 @@ ROBOT = os.environ.get("TELEOP_ROBOT", "mars-the-27th.local")
 ROBOT_USER = "jetson1"
 ROBOT_PASS = os.environ.get("TELEOP_ROBOT_PASS", "goodbot27")
 PORT = 8399
+# The RAW topic — same source the webapp's H.264 streamer uses. The bridge
+# subscribes with rclpy and JPEG-encodes at the full camera rate (~14fps on
+# MARS); the /compressed republisher only runs at half that.
 VIDEO_TOPIC = os.environ.get(
-    "TELEOP_VIDEO_TOPIC", "/mars/main_camera/left/image_raw/compressed")
-# 0 = ship every camera frame (~7fps / 39KB on MARS = ~2.2Mbps). A nonzero
+    "TELEOP_VIDEO_TOPIC", "/mars/main_camera/left/image_raw")
+# 0 = ship every camera frame (~14fps × ~25KB jpeg-q80 ≈ 3Mbps). A nonzero
 # throttle near the camera's frame interval ALIASES the rate down — that is
-# how the original 150ms default turned 7fps into 3.6.
+# how an early 150ms default turned the 7fps compressed topic into 3.6.
 VIDEO_MS = float(os.environ.get("TELEOP_VIDEO_MS", "0"))
+# Sourced before the bridge starts so rclpy (raw video path) works; harmless
+# if absent — the bridge falls back to the rosbridge /compressed path.
+ROBOT_ROS_ENV = ("export INNATE_OS_ROOT=$HOME/innate-os; "
+                 "[ -f ~/innate-os/ros2_ws/install/setup.zsh ] && { "
+                 "source ~/innate-os/config/dds/setup_dds.zsh 2>/dev/null; "
+                 "source ~/innate-os/ros2_ws/install/setup.zsh; }; ")
 
 TRANSPORTS = {
     "udp": {
@@ -307,6 +316,7 @@ async def start_session(key: str, live: bool, source: str):
     if spec.get("needs_key"):
         env = f"ADAMO_API_KEY={os.environ.get('ADAMO_API_KEY', '')} "
     bridge_cmd = (
+        f"{ROBOT_ROS_ENV}"
         f"cd ~/teleop_bench && ({env}PYTHONUNBUFFERED=1 nohup .venv/bin/python "
         f"follower_bridge.py {spec['bridge']} --forward-port {fwd} "
         f"--video-topic {VIDEO_TOPIC} --video-ms {VIDEO_MS:.0f} "
@@ -511,7 +521,8 @@ async def stop_session():
             await sess.link.close()
         except Exception:
             pass
-    await robot_sh("pkill -f 'follower_bridg[e]'; true")
+    await robot_sh("pkill -f 'follower_bridg[e]'; sleep 0.7; "
+                   "pkill -9 -f 'follower_bridg[e]'; true")
 
 
 def load_results():

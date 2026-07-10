@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import socket
 import struct
+import threading
 import time
 
 import sys
@@ -31,6 +32,74 @@ from common import MAGIC, PACKET_SIZE, pack_video_chunks, unpack_control  # noqa
 from transports import add_link_args, make_link  # noqa: E402
 
 RESET_MAGIC = 0xAA56
+
+
+def stream_video_ros(link, topic: str, interval_ms: float, quality: int, loop):
+    """Full-rate video: subscribe to the RAW image topic with rclpy (the same
+    source the webapp's H.264 streamer uses — the /compressed republisher only
+    runs at half the camera rate) and JPEG-encode here. Runs in a worker
+    thread; frame sends hop onto the asyncio loop. Newest frame wins: while a
+    frame's chunks are still in flight the next ones are dropped, never queued.
+
+    Needs the ROS env (rclpy on PYTHONPATH + the robot's RMW config) — source
+    ros2_ws/install/setup.zsh before launching the bridge."""
+    import io
+
+    import rclpy
+    from PIL import Image as PilImage
+    from rclpy.qos import qos_profile_sensor_data
+    from sensor_msgs.msg import Image
+
+    # rclpy's own signal handlers would swallow SIGTERM (shutting down the
+    # ROS context but leaving the process alive) — the dashboard stops
+    # bridges with pkill, so keep default signal behavior
+    try:
+        from rclpy.signals import SignalHandlerOptions
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    except ImportError:
+        rclpy.init()
+    node = rclpy.create_node("teleop_bench_video")
+    state = {"seq": 0, "last": 0.0, "busy": False, "sent_kb": 0.0,
+             "report": time.monotonic()}
+
+    def on_frame(msg):
+        now = time.monotonic()
+        if state["busy"]:
+            return
+        if interval_ms and (now - state["last"]) * 1000.0 < interval_ms * 0.9:
+            return
+        if msg.encoding == "bgr8":
+            im = PilImage.frombytes("RGB", (msg.width, msg.height),
+                                    bytes(msg.data), "raw", "BGR")
+        elif msg.encoding == "rgb8":
+            im = PilImage.frombytes("RGB", (msg.width, msg.height), bytes(msg.data))
+        elif msg.encoding == "mono8":
+            im = PilImage.frombytes("L", (msg.width, msg.height), bytes(msg.data))
+        else:
+            return
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=quality)
+        state["last"] = now
+        state["seq"] += 1
+        state["sent_kb"] += buf.tell() / 1024
+        chunks = pack_video_chunks(state["seq"], buf.getvalue())
+        state["busy"] = True
+
+        async def push():
+            try:
+                for c in chunks:
+                    await link.send(c)
+            finally:
+                state["busy"] = False
+
+        asyncio.run_coroutine_threadsafe(push(), loop)
+        if now - state["report"] > 5.0:
+            print(f"[video] {state['seq']} frames, {state['sent_kb']:.0f}KB sent")
+            state["report"] = now
+
+    node.create_subscription(Image, topic, on_frame, qos_profile_sensor_data)
+    print(f"[video] rclpy streaming {topic} (raw -> jpeg q{quality})")
+    rclpy.spin(node)
 
 
 async def stream_video(link, topic: str, interval_ms: float, rosbridge: str):
@@ -81,8 +150,12 @@ async def main():
     ap.add_argument("--forward-port", type=int, default=9999)
     ap.add_argument("--stall-ms", type=float, default=300.0)
     ap.add_argument("--video-topic", default=None,
-                    help="compressed image topic to stream back over the "
-                         "link for video-latency measurement (off if unset)")
+                    help="image topic to stream back over the link for "
+                         "video-latency measurement (off if unset). A raw "
+                         "Image topic uses rclpy at full camera rate; a "
+                         "*/compressed topic uses rosbridge (half rate)")
+    ap.add_argument("--video-quality", type=int, default=80,
+                    help="JPEG quality for the raw->jpeg path")
     ap.add_argument("--video-ms", type=float, default=0.0,
                     help="min frame interval (rosbridge throttle_rate); "
                          "0 = every frame. Beware: a value near the camera's "
@@ -125,8 +198,25 @@ async def main():
           f"to {dest}, stall gate {args.stall_ms}ms")
 
     if args.video_topic:
-        asyncio.ensure_future(stream_video(
-            link, args.video_topic, args.video_ms, args.rosbridge))
+        if args.video_topic.endswith("/compressed"):
+            asyncio.ensure_future(stream_video(
+                link, args.video_topic, args.video_ms, args.rosbridge))
+        else:
+            try:
+                import rclpy  # noqa: F401
+                import PIL  # noqa: F401
+                threading.Thread(
+                    target=stream_video_ros,
+                    args=(link, args.video_topic, args.video_ms,
+                          args.video_quality, asyncio.get_running_loop()),
+                    daemon=True).start()
+            except ImportError as e:
+                fallback = args.video_topic + "/compressed"
+                print(f"[video] raw path unavailable ({e}) — falling back to "
+                      f"rosbridge {fallback} (half rate); source the ROS env "
+                      "and pip install pillow for full-rate video")
+                asyncio.ensure_future(stream_video(
+                    link, fallback, args.video_ms, args.rosbridge))
 
     forwarded_seq = -1
     stalled = False

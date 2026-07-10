@@ -236,7 +236,7 @@ async function frameLoop(){
     } catch(e){ /* server restarting */ }
     frameBusy = false;
   }
-  setTimeout(frameLoop, 130);
+  setTimeout(frameLoop, 60);  // keep up with the ~14fps camera
 }
 function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 function drawSpark(samples){
