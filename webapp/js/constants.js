@@ -52,14 +52,19 @@ export const WEBSOCKET_STATUS_TOPIC = "/brain/websocket_status";
 // Navigation map + odometry for the 2D map page.
 export const MAP_TOPIC = "/map"; // nav_msgs/OccupancyGrid
 export const ODOM_TOPIC = "/odom"; // nav_msgs/Odometry
-export const PLAN_TOPIC = "/plan"; // nav_msgs/Path — the planner's route to the goal
-// Click-to-navigate goal. Publishing a geometry_msgs/PoseStamped here kicks off
-// planning; the resulting route streams back on PLAN_TOPIC. Same topic the sim
-// console's map view publishes to.
-export const GOAL_POSE_TOPIC = "/goal_pose";
-// Stop all active navigation (std_srvs/Trigger) — cancels every NavigateToPose
-// goal, no matter which client started it.
+// nav_msgs/Path — the planner's route. Both planner servers are namespaced;
+// there is no root /plan publisher.
+export const PLAN_TOPICS = ["/navigation/plan", "/mapfree/plan"];
+// AMCL's map-frame pose estimate (geometry_msgs/PoseWithCovarianceStamped).
+export const AMCL_POSE_TOPIC = "/amcl_pose";
+// The exact goal navigate_to_position commanded (geometry_msgs/PoseStamped, latched).
+export const COMMANDED_GOAL_TOPIC = "/nav/commanded_goal";
+// Stop all active navigation (std_srvs/Trigger), no matter which client started it.
 export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
+// Auto-localization (std_srvs/Trigger on grid_localizer). Can take tens of seconds.
+export const LOCALIZE_SERVICE = "/localize";
+// AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
+export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
