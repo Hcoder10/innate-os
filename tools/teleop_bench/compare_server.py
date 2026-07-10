@@ -127,13 +127,23 @@ async def get_arm_pose_ticks():
 
 
 async def robot_sh(cmd: str) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        "sshpass", "-p", ROBOT_PASS, "ssh",
-        "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
-        f"{ROBOT_USER}@{ROBOT}", cmd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await proc.communicate()
-    return proc.returncode, out.decode(errors="replace")
+    # ssh exits 255 on connection/auth-level failures — those are transient
+    # here (WiFi blips, sshd churn), so retry them; remote-command exit
+    # codes pass through untouched.
+    out = ""
+    for attempt in range(3):
+        proc = await asyncio.create_subprocess_exec(
+            "sshpass", "-p", ROBOT_PASS, "ssh",
+            "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
+            f"{ROBOT_USER}@{ROBOT}", cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        raw, _ = await proc.communicate()
+        out = raw.decode(errors="replace")
+        if proc.returncode != 255:
+            return proc.returncode, out
+        print(f"[ssh] attempt {attempt + 1} failed (rc=255): {out.strip()[-120:]}")
+        await asyncio.sleep(1.5 * (attempt + 1))
+    return 255, out
 
 
 class Session:
