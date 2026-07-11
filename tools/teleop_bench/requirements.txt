@@ -14,3 +14,6 @@ livekit-api>=1.0
 
 # Zenoh transport (Adamo-class; robot already runs rmw_zenoh)
 eclipse-zenoh>=1.0
+
+# Robot-side JPEG encoding for the full-rate raw video path (follower_bridge)
+pillow>=10
