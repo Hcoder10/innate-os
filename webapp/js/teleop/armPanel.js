@@ -20,6 +20,7 @@ import {
   ARM_TORQUE_OFF_SERVICE,
   ARM_STATUS_TOPIC,
 } from "../constants.js";
+import { CONTROL_PATHS, bridgeParams, createControlLink } from "./controlLink.js";
 
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
@@ -143,7 +144,24 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   const note = document.createElement("p");
   note.className = "arm-note microlabel";
 
-  wrap.append(status, joints, connectBtn, engageBtn, note, ...(armSvc ? [divider(), armSvc.el] : []));
+  // Control path: how leader positions reach the robot while engaged.
+  // rosbridge is the existing same-network default; the others go through
+  // tools/teleop_bench's follower bridge (started via the proxy's
+  // /teleop-bridge) into the same production UDP :9999 input — pick one to
+  // feel the cross-network transports the REMOTE_TELEOP_BENCHMARKS compare.
+  const pathRow = document.createElement("label");
+  pathRow.className = "arm-path microlabel";
+  pathRow.textContent = "control path ";
+  const pathSel = document.createElement("select");
+  for (const p of CONTROL_PATHS) {
+    const o = document.createElement("option");
+    o.value = p.key;
+    o.textContent = p.label;
+    pathSel.appendChild(o);
+  }
+  pathRow.appendChild(pathSel);
+
+  wrap.append(status, joints, connectBtn, engageBtn, pathRow, note, ...(armSvc ? [divider(), armSvc.el] : []));
 
   // ---- state ------------------------------------------------------------
 
@@ -152,10 +170,65 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   let destroyed = false;
   const leader = new DynamixelLeader();
 
+  // ---- control path (rosbridge, or a teleop_bench link) -------------------
+  /** @type {import("./controlLink.js").ControlLink | null} */
+  let link = null;
+  let linkStarting = false;
+  /** @type {string | null} */
+  let linkError = null;
+  /** @type {Promise<{ teleopRelayHost?: string }> | null} */
+  let configPromise = null;
+  const getConfig = () =>
+    (configPromise ??= fetch("/config.json").then((r) => r.json()).catch(() => ({})));
+
+  function teardownLink() {
+    if (!link) return;
+    link.close();
+    link = null;
+    void fetch("/teleop-bridge?action=stop", {
+      headers: { "X-Requested-By": "innate-webapp" },
+    }).catch(() => {});
+  }
+
+  /** Engage over a non-rosbridge path: start the robot-side bridge, open the
+   * link, only then go live — a failed link must never leave "Live" showing. */
+  async function engageLive() {
+    const path = pathSel.value;
+    if (path === "rosbridge") {
+      setEngaged(true);
+      return;
+    }
+    linkStarting = true;
+    linkError = null;
+    render(leader.state);
+    try {
+      const cfg = await getConfig();
+      const params = bridgeParams(path);
+      if (!params) throw new Error(`unknown path ${path}`);
+      const session = "wa" + Math.random().toString(36).slice(2, 8);
+      const res = await fetch(
+        `/teleop-bridge?action=start&transport=${params.transport}&ice=${params.ice}&session=${session}`,
+        { headers: { "X-Requested-By": "innate-webapp" } },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const candidate = createControlLink(path, session, cfg.teleopRelayHost || location.hostname);
+      await candidate.start();
+      link = candidate;
+      setEngaged(true);
+    } catch (err) {
+      linkError = err instanceof Error ? err.message : "control link failed";
+      teardownLink();
+    } finally {
+      linkStarting = false;
+      render(leader.state);
+    }
+  }
+
   /** @param {boolean} on */
   function setEngaged(on) {
     if (engaged === on) return;
     engaged = on;
+    if (!on) teardownLink();
     render(leader.state);
   }
 
@@ -164,6 +237,10 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     const now = performance.now();
     if (now - lastPublishAt < PUBLISH_MIN_GAP_MS) return;
     lastPublishAt = now;
+    if (link) {
+      link.send(positions);
+      return;
+    }
     rosClient.publish(LEADER_POSITIONS_TOPIC, {
       layout: { dim: [], data_offset: 0 },
       data: positions,
@@ -181,7 +258,10 @@ export function createArmPanel(parent, rosClient, opts = {}) {
       status.textContent = "no arm connected";
       status.classList.remove("warn");
     } else {
-      status.textContent = reading ? `${state.rate} Hz` : "listening…";
+      const rtt = engaged && link ? link.rttP50() : null;
+      status.textContent = reading
+        ? `${state.rate} Hz${rtt !== null ? ` · rtt ${rtt.toFixed(0)} ms` : ""}`
+        : "listening…";
       status.classList.remove("warn");
     }
 
@@ -198,11 +278,20 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     connectBtn.textContent = state.error ? "Reconnect arm" : "Connect arm";
 
     engageBtn.hidden = !reading;
-    engageBtn.textContent = engaged ? "Live — click to stop" : "Engage follow";
+    engageBtn.disabled = linkStarting;
+    engageBtn.textContent = linkStarting
+      ? "Connecting…"
+      : engaged
+        ? "Live — click to stop"
+        : "Engage follow";
     engageBtn.classList.toggle("active", engaged);
 
-    note.hidden = !reading || engaged;
-    note.textContent = "follower snaps to leader pose";
+    pathRow.hidden = !reading;
+    pathSel.disabled = engaged || linkStarting;
+
+    note.hidden = !reading || (engaged && !linkError);
+    note.textContent = linkError ?? "follower snaps to leader pose";
+    note.classList.toggle("warn", !!linkError);
 
     // The Collect gate mirrors the mobile app's isArmPublishing && rate > 0.
     opts.onState?.({ engaged, reading, rate: state.rate });
@@ -237,20 +326,30 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     }
   });
 
-  engageBtn.addEventListener("click", () => setEngaged(!engaged));
+  engageBtn.addEventListener("click", () => {
+    if (engaged) setEngaged(false);
+    else void engageLive();
+  });
+  pathSel.addEventListener("change", () => {
+    linkError = null;
+    render(leader.state);
+  });
 
   const unsubLeader = leader.onChange((state) => {
     if (destroyed) return;
     if (engaged && (!state.connected || state.error)) {
       engaged = false;
-    } else if (engaged && state.positions && rosClient.state === "connected") {
+      teardownLink();
+    } else if (engaged && state.positions && (link || rosClient.state === "connected")) {
       publish(state.positions);
     }
     render(state);
   });
 
   const unsubRos = rosClient.onStateChange((rosState) => {
-    if (rosState !== "connected") setEngaged(false);
+    // the cross-network links don't ride rosbridge — only drop rosbridge-path
+    // sessions when the socket goes away
+    if (rosState !== "connected" && !link) setEngaged(false);
   });
 
   const onVisibility = () => {

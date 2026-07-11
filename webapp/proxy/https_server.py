@@ -75,6 +75,14 @@ ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 _WORLD_HOST = os.environ.get("VIRTUAL_MARS_REMOTE", "").strip().partition(":")[0] or "127.0.0.1"
 WORLD_STATE_URL = f"ws://{_WORLD_HOST}:8800"
 
+# Cross-network control links (arm panel "control path" selector): the
+# tools/teleop_bench relay/TURN VM. The app runs on HTTPS, so its WebRTC
+# signaling and the ws-relay transport ride this server as a same-origin wss
+# proxy (/teleoprelay/*); /teleop-bridge starts the robot-side bridge that
+# terminates those links into the production UDP :9999 teleop input.
+TELEOP_RELAY_HOST = os.environ.get("TELEOP_RELAY_HOST", "35.233.134.107").strip()
+TELEOP_RELAY_URL = f"ws://{TELEOP_RELAY_HOST}:8765"
+
 
 def _quiet_benign_disconnects() -> None:
     """Stop the websockets library from logging a full traceback every time a
@@ -250,6 +258,7 @@ def config_response() -> Response:
         cfg = {}
     if WEBAPP_SIM_CONTROLS:
         cfg["simControls"] = True
+    cfg["teleopRelayHost"] = TELEOP_RELAY_HOST
     body = json.dumps(cfg).encode()
     return Response(
         200,
@@ -292,8 +301,87 @@ def restart_response() -> Response:
     )
 
 
+_bridge_proc: "subprocess.Popen | None" = None
+
+
+def _bench_dir() -> "Path | None":
+    """tools/teleop_bench with a ready venv — repo checkout first, then the
+    standalone deploy location used on bench robots."""
+    for p in (ROOT.parent / "tools" / "teleop_bench", Path.home() / "teleop_bench"):
+        if (p / "follower_bridge.py").exists() and (p / ".venv" / "bin" / "python").exists():
+            return p
+    return None
+
+
+def _bridge_kill() -> None:
+    global _bridge_proc
+    if _bridge_proc is None:
+        return
+    with contextlib.suppress(OSError):
+        _bridge_proc.terminate()
+        try:
+            _bridge_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            _bridge_proc.kill()
+    _bridge_proc = None
+
+
+def teleop_bridge_response(qs) -> Response:
+    """GET /teleop-bridge?action=start|stop&transport=webrtc|ws&session=X
+    [&ice=relay][&port=9999|9995]
+
+    Start/stop the tools/teleop_bench follower bridge: the robot-side
+    terminator for the arm panel's cross-network control links (browser
+    WebRTC DataChannel or relay WS -> production UDP :9999 teleop input).
+    port=9995 is a dead-end sink for dry runs. One bridge at a time; start
+    replaces any running one."""
+    global _bridge_proc
+    action = (qs.get("action") or [""])[0]
+    if action == "stop":
+        _bridge_kill()
+        body = json.dumps({"ok": True}).encode()
+    elif action == "start":
+        bench = _bench_dir()
+        if bench is None:
+            return _plain(500, "Internal Server Error",
+                          "teleop_bench not found (tools/teleop_bench needs a .venv "
+                          "— see its README)")
+        transport = (qs.get("transport") or [""])[0]
+        session = (qs.get("session") or [""])[0]
+        ice = (qs.get("ice") or ["all"])[0]
+        port = (qs.get("port") or ["9999"])[0]
+        if transport not in ("webrtc", "ws") or ice not in ("all", "relay") \
+                or port not in ("9999", "9995") \
+                or not session or not session.replace("-", "").isalnum():
+            return _plain(400, "Bad Request", "bad teleop-bridge parameters")
+        args = [str(bench / ".venv" / "bin" / "python"), "follower_bridge.py",
+                "--transport", transport, "--relay", TELEOP_RELAY_URL,
+                "--session", session, "--forward-port", port]
+        if transport == "webrtc":
+            args += ["--turn", f"turn:{TELEOP_RELAY_HOST}:3478"]
+            if ice == "relay":
+                args += ["--ice-mode", "relay"]
+        _bridge_kill()
+        try:
+            with open("/tmp/webapp_teleop_bridge.log", "wb") as log:
+                _bridge_proc = subprocess.Popen(
+                    args, cwd=bench, stdout=log, stderr=subprocess.STDOUT,
+                    start_new_session=True)
+        except OSError as err:
+            return _plain(500, "Internal Server Error", f"bridge start failed: {err}")
+        body = json.dumps({"ok": True, "pid": _bridge_proc.pid}).encode()
+    else:
+        return _plain(400, "Bad Request", "action must be start or stop")
+    return Response(
+        200,
+        "OK",
+        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
+        body,
+    )
+
+
 async def _dispatch_request(connection, request):
-    if request.path in ("/ws", "/worldstate"):
+    if request.path in ("/ws", "/worldstate") or request.path.startswith("/teleoprelay/"):
         return None  # proceed with the WebSocket handshake
     if request.path.split("?", 1)[0] == "/config.json":
         return await asyncio.to_thread(config_response)
@@ -327,6 +415,10 @@ async def _dispatch_request(connection, request):
         if request.headers.get("X-Requested-By", "") != "innate-webapp":
             return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
+    if split.path == "/teleop-bridge":
+        if request.headers.get("X-Requested-By", "") != "innate-webapp":
+            return _plain(403, "Forbidden", "missing X-Requested-By header")
+        return await asyncio.to_thread(teleop_bridge_response, qs)
     return await asyncio.to_thread(static_response, request.path, request.headers.get("If-None-Match", ""))
 
 
@@ -344,7 +436,13 @@ async def ws_handler(connection):
     if connection.request.path == "/settings":
         await settings_ws(connection)
         return
-    upstream_url = WORLD_STATE_URL if connection.request.path == "/worldstate" else ROSBRIDGE_URL
+    if connection.request.path.startswith("/teleoprelay/"):
+        # same-origin front for the teleop relay VM (signaling + ws transport)
+        upstream_url = TELEOP_RELAY_URL + connection.request.path[len("/teleoprelay"):]
+    elif connection.request.path == "/worldstate":
+        upstream_url = WORLD_STATE_URL
+    else:
+        upstream_url = ROSBRIDGE_URL
     try:
         async with ws_connect(upstream_url, max_size=None) as upstream:
             done, pending = await asyncio.wait(
