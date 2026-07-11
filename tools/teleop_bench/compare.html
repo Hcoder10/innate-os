@@ -94,6 +94,7 @@ canvas { width: 100%; height: 140px; display: block; }
     <label><input type="checkbox" id="livearm"> <b>move the real arm</b> (forward to :9999 — area clear!)</label>
     <button class="secondary" id="torquebtn" title="via rosbridge :9090, same as the webapp">arm torque: …</button>
     <button class="secondary" id="stopbtn">Stop</button>
+    <span id="armerr" style="color:var(--bad);font-size:12px"></span>
   </div>
   <div class="livebox">
     <div class="status" id="status">idle — pick a transport above</div>
@@ -201,7 +202,8 @@ async function poll(){
     } else {
       $("status").innerHTML =
         `<span class="badge ${s.live ? "live" : "dry"}">${s.live ? "LIVE — ARM MOVES" : "DRY-RUN — arm will NOT move"}</span>`
-        + `${s.transport || ""} · ${s.status}` + (s.sent ? ` · ${s.sent} pkts sent` : "");
+        + `${s.transport || ""} · ${s.status}` + (s.sent ? ` · ${s.sent} pkts sent` : "")
+        + (s.arm_note ? ` · <i>${s.arm_note}</i>` : "");
     }
     $("t_p50").innerHTML  = fmt(s.p50, "ms");
     $("t_p95").innerHTML  = fmt(s.p95, "ms");
@@ -317,6 +319,7 @@ function connectRos(host){
     const m = JSON.parse(ev.data);
     if (m.op === "publish" && m.topic === "/mars/arm/status"){
       torqueOn = !!m.msg.is_torque_enabled; torquePending = false; setTorqueUi();
+      $("armerr").textContent = m.msg.is_ok ? "" : `⚠ ${m.msg.error}`;
     }
   };
   ws.onclose = () => { torqueOn = null; setTorqueUi(); setTimeout(()=>connectRos(host), 5000); };

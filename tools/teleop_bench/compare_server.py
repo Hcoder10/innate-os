@@ -145,52 +145,111 @@ async def get_arm_pose_ticks():
 
 TICK = 2 * 3.141592653589793 / 4096  # rad per servo tick
 
-# Mirror of the robot's "intelligent joint limits" (arm_control.cpp): joint2's
-# low range shrinks when joint1 is over the chassis. The parked/rest pose sits
-# BELOW this envelope (gravity-settled past the config limit), so the first
-# streamed packet used to make the robot-side clamp yank joint2 up as a step —
-# a current-limit hit on every live start. We pre-lift along a planned
-# goto_js trajectory instead, then stream from an in-envelope pose.
-JOINT2_ABS_MIN = -1.221
-JOINT2_MARGIN = 0.05
 
-
-def joint2_floor(j1: float) -> float:
-    lo, hi = JOINT2_ABS_MIN, -0.5
-    if j1 <= -1.35 or j1 >= 1.25:
-        f = lo
-    elif j1 < -1.0:
-        f = hi + (-(j1 + 1.0) / 0.35) * (lo - hi)
-    elif j1 < 1.0:
-        f = hi
-    else:
-        f = hi + ((j1 - 1.0) / 0.25) * (lo - hi)
-    return f + JOINT2_MARGIN
-
-
-async def goto_js(target_rad: list, secs: float) -> bool:
-    """Smooth planned move via the robot's /mars/arm/goto_js (rosbridge)."""
+async def _rosbridge_ws():
     import socket
     import aiohttp
     try:
         ip = socket.gethostbyname(ROBOT)
     except OSError:
         ip = ROBOT
+    http = aiohttp.ClientSession()
     try:
-        async with aiohttp.ClientSession() as http:
-            async with http.ws_connect(f"ws://{ip}:9090", timeout=8) as ws:
-                await ws.send_json({
-                    "op": "call_service", "service": "/mars/arm/goto_js",
-                    "type": "mars_msgs/srv/GotoJS", "id": "prelift",
-                    "args": {"data": {"data": target_rad}, "time": secs}})
-                async with asyncio.timeout(secs + 10):
-                    async for msg in ws:
-                        m = json.loads(msg.data)
-                        if m.get("op") == "service_response" and m.get("id") == "prelift":
-                            return bool(m.get("values", {}).get("success"))
+        ws = await http.ws_connect(f"ws://{ip}:9090", timeout=8)
+    except Exception:
+        await http.close()
+        raise
+    return http, ws
+
+
+async def call_ros_service(service: str, srv_type: str, args: dict | None,
+                           timeout_s: float = 12.0):
+    """One-shot rosbridge service call; returns the `values` dict or None.
+    Only existing robot services are used — recovery and motion planning stay
+    the robot's job (same services the webapp/mobile app buttons call)."""
+    try:
+        http, ws = await _rosbridge_ws()
     except Exception as e:
-        print(f"[prelift] goto_js failed: {e}")
-    return False
+        print(f"[ros] connect failed: {e}")
+        return None
+    try:
+        req = {"op": "call_service", "service": service, "id": "dash",
+               "type": srv_type}
+        if args:
+            req["args"] = args
+        await ws.send_json(req)
+        async with asyncio.timeout(timeout_s):
+            async for msg in ws:
+                m = json.loads(msg.data)
+                if m.get("op") == "service_response" and m.get("id") == "dash":
+                    return m.get("values", {})
+    except Exception as e:
+        print(f"[ros] {service} failed: {e}")
+        return None
+    finally:
+        await ws.close()
+        await http.close()
+
+
+async def get_arm_status():
+    """Latest /mars/arm/status (is_ok, error, is_torque_enabled) or None."""
+    try:
+        http, ws = await _rosbridge_ws()
+    except Exception:
+        return None
+    try:
+        await ws.send_json({"op": "subscribe", "topic": "/mars/arm/status",
+                            "queue_length": 1})
+        async with asyncio.timeout(8):
+            async for msg in ws:
+                m = json.loads(msg.data)
+                if m.get("op") == "publish":
+                    return m["msg"]
+    except Exception:
+        return None
+    finally:
+        await ws.close()
+        await http.close()
+
+
+async def goto_js(target_rad: list, secs: float) -> bool:
+    """Planned move via the robot's own /mars/arm/goto_js. The robot applies
+    its joint limits itself and ramps there — call it with ANY target (even
+    the arm's current out-of-envelope pose) and it lands smoothly on the
+    nearest commandable pose. No limit math on our side."""
+    v = await call_ros_service(
+        "/mars/arm/goto_js", "mars_msgs/srv/GotoJS",
+        {"data": {"data": target_rad}, "time": secs}, timeout_s=secs + 10)
+    return bool(v and v.get("success"))
+
+
+async def prepare_arm(sess) -> bool:
+    """Get the arm streamable using the robot's existing recovery services —
+    the same ones behind the webapp buttons: fix_error clears latched servo
+    overloads, torque_on syncs goals to the current pose (holds, no snap)."""
+    st = await get_arm_status()
+    if st is None:
+        sess.arm_note = "rosbridge (:9090) unreachable — arm state unknown"
+        return True  # stream anyway; dry-run etc. still useful
+    actions = []
+    if not st.get("is_ok"):
+        actions.append(f"fixing '{st.get('error')}'")
+        sess.status = f"arm recovery: {st.get('error')} — calling fix_error"
+        await call_ros_service("/mars/arm/fix_error", "std_srvs/srv/Trigger", None)
+        await asyncio.sleep(2.0)
+        st = await get_arm_status() or {}
+    if not st.get("is_torque_enabled"):
+        actions.append("torque on")
+        sess.status = "arm recovery: enabling torque (holds current pose)"
+        await call_ros_service("/mars/arm/torque_on", "std_srvs/srv/Trigger", None)
+        await asyncio.sleep(1.0)
+        st = await get_arm_status() or {}
+    if not st.get("is_ok"):
+        sess.arm_note = (f"arm error persists: {st.get('error')} — "
+                         "it may be stuck under load; reposition it by hand")
+        return False
+    sess.arm_note = "; ".join(actions) if actions else None
+    return True
 
 
 async def robot_sh(cmd: str) -> tuple[int, str]:
@@ -223,6 +282,7 @@ class Session:
         self.started = time.time()
         self.status = "starting"
         self.arm = None
+        self.arm_note = None
         # NTP-style clock sync from timestamped control echoes:
         # (t_mono, rtt_wall_ms, offset_ms) — the min-RTT sample wins
         self.sync = []
@@ -278,6 +338,7 @@ class Session:
             "uptime_s": round(time.time() - self.started, 1),
             "samples": [round(r, 1) for _, r in recent[-240:]],
             "leader_pos": getattr(self, "last_pos", None),
+            "arm_note": self.arm_note,
         }
         if vals:
             out.update(
@@ -399,12 +460,15 @@ async def start_session(key: str, live: bool, source: str):
         sess.status = "reading current arm pose"
         center = await get_arm_pose_ticks()
 
+    blend_from = None
     if live:
-        # Streaming starts as a step to the first commanded pose. If that
-        # differs from where the arm is (rest pose below the envelope, or a
-        # leader arm held elsewhere), the robot-side clamp/gains yank it —
-        # the current-limit hit on session start. Pre-move there smoothly
-        # with a planned goto_js first, then stream from a matched pose.
+        # Bring the arm to a streamable state and to the start pose using the
+        # robot's OWN machinery (webapp-button services + its trajectory
+        # planner with its own joint limits) — never a raw command step:
+        # streaming a pose far from the arm is the current-limit yank.
+        if not await prepare_arm(sess):
+            await stop_session_keep_note(sess.arm_note)
+            return
         target = None
         if sess.arm:
             pos0 = sess.arm.read_positions()
@@ -412,31 +476,16 @@ async def start_session(key: str, live: bool, source: str):
                 target = [(t - 2048) * TICK for t in pos0]
         elif center:
             target = [(t - 2048) * TICK for t in center]
-        present = await get_arm_pose_ticks()
-        if target and present:
-            target[1] = max(target[1], joint2_floor(target[0]))
-            present_rad = [(t - 2048) * TICK for t in present]
-            if max(abs(a - b) for a, b in zip(target, present_rad)) > 0.02:
-                sess.status = "pre-positioning arm (smooth 3s move to start pose)"
-                if not await goto_js(target, 3.0):
-                    await stop_session_keep_note(
-                        "pre-move failed — is arm torque ON? (toggle above)")
-                    return
-                # goto_js reports success even when a servo latched overload
-                # mid-move — verify the arm actually got there before we
-                # start streaming at it
-                check = await get_arm_pose_ticks()
-                if check:
-                    got = [(t - 2048) * TICK for t in check]
-                    err = max(abs(a - b) for a, b in zip(got, target))
-                    if err > 0.15:
-                        await stop_session_keep_note(
-                            f"arm could not reach the start pose (off by {err:.2f} rad) — "
-                            "a servo is likely overloaded holding this configuration. "
-                            "Torque off, move the arm to a compact pose by hand, then retry")
-                        return
-                    if not sess.arm:
-                        center = check
+        if target:
+            sess.status = "moving arm to start pose (robot-planned, 3s)"
+            await goto_js(target, 3.0)
+            # wherever the robot's limits actually put it is the start pose
+            check = await get_arm_pose_ticks()
+            if check:
+                if sess.arm:
+                    blend_from = check
+                else:
+                    center = check
 
     async def pump():
         import math
@@ -445,6 +494,12 @@ async def start_session(key: str, live: bool, source: str):
         t0 = time.perf_counter()
         next_t = t0
         base = center or [2048] * 6
+        # leader mode: even after the robot-planned move to the leader's
+        # pose, the residual gap (robot-side limits) is taken over smoothly —
+        # first 1.5s lerps our reference from the arm's actual pose to the
+        # live leader stream instead of stepping (the production app snaps
+        # here; blending costs nothing and spares the shoulder)
+        BLEND_S = 1.5
         idle_ref, idle_since = None, None
         none_since = None
         while True:
@@ -477,6 +532,11 @@ async def start_session(key: str, live: bool, source: str):
                     print(f"[session] {current['note']}")
                     asyncio.get_running_loop().create_task(stop_session())
                     return
+                t = time.perf_counter() - t0
+                if blend_from and t < BLEND_S:
+                    k = t / BLEND_S
+                    pos = [int(b + (p - b) * k)
+                           for b, p in zip(blend_from, pos)]
             else:
                 # gentle wiggle around the arm's CURRENT pose (wrist + gripper)
                 t = time.perf_counter() - t0
