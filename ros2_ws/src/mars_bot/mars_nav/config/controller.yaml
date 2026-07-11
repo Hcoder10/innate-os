@@ -53,7 +53,7 @@
       # Sampling standard deviations
       vx_std: 0.2                       # Forward velocity sampling std
       vy_std: 0.0                       # No lateral sampling for diff drive
-      wz_std: 0.2                       # Angular velocity sampling std (matched to vx_std)
+      wz_std: 0.8                       # Angular velocity sampling std (raised high to explore assertive turns)
       
       # Path handling
       transform_tolerance: 0.2          # matches existing transform_tolerance
