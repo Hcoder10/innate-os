@@ -17,6 +17,10 @@ import { LoadQueue, queuedGLB } from "./loadQueue";
 const APARTMENT_URL = "/models/appartement.glb";
 const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
+const HUMAN_URL = "/models/human.glb";
+// The driver's OBJ is 172.7cm tall scaled by 0.01 in MJCF; normalize the GLB
+// to match regardless of what unit scale its exporter baked in.
+const HUMAN_HEIGHT_M = 1.727;
 
 /** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
  * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
@@ -115,6 +119,12 @@ export class SimScene {
   // Set by the first spawnAt: after that the camera belongs to the robot, and
   // the layout overview framing must not yank it away.
   private spawned = false;
+  private humanRoot?: THREE.Group;
+  private humanPromise?: Promise<void>;
+
+  /** While true the orbit controls stay off even in the orbit view -- a
+   * placement drag (drop-human chip) owns the pointer. */
+  placementMode = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -531,12 +541,68 @@ export class SimScene {
    * Falls back to orbit if the requested view's frame wasn't in the URDF. */
   setView(view: CameraView): void {
     this.activeView = view === "orbit" || this.robotCameras.has(view) ? view : "orbit";
-    this.controls.enabled = this.activeView === "orbit";
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
   }
 
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
   setJointAngles(joints: Record<string, number>): void {
     this.robot?.setJointValues(joints);
+  }
+
+  /** Mirror the scenario human from ground truth ([x, y, z, qw, qx, qy, qz],
+   * the same quat MuJoCo applies to the raw Y-up scan); null hides it. The
+   * GLB loads lazily on the first real pose. */
+  setHumanPose(pose: number[] | null): void {
+    if (!pose) {
+      if (this.humanRoot) this.humanRoot.visible = false;
+      return;
+    }
+    if (!this.humanPromise) {
+      this.humanPromise = this.loadHuman().catch((err) => {
+        console.error("[sim-viewer] human model failed to load:", err);
+      });
+    }
+    if (!this.humanRoot) return; // still loading; the next state places it
+    this.humanRoot.visible = true;
+    this.humanRoot.position.set(pose[0], pose[1], pose[2]);
+    this.humanRoot.quaternion.set(pose[4], pose[5], pose[6], pose[3]);
+  }
+
+  private async loadHuman(): Promise<void> {
+    const gltf = await new GLTFLoader().loadAsync(HUMAN_URL);
+    // Normalize to the driver's OBJ convention (see HUMAN_HEIGHT_M): feet at
+    // the origin, centered in x/z, 1.727m tall -- GLB exports bake arbitrary
+    // origins and unit scales.
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const s = HUMAN_HEIGHT_M / (box.max.y - box.min.y);
+    gltf.scene.scale.multiplyScalar(s);
+    gltf.scene.position.set(-((box.min.x + box.max.x) / 2) * s, -box.min.y * s, -((box.min.z + box.max.z) / 2) * s);
+    gltf.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+    const root = new THREE.Group();
+    root.visible = false;
+    root.add(gltf.scene);
+    this.humanRoot = root;
+    this.scene.add(root);
+  }
+
+  /** Intersect a canvas pointer position with the floor plane (z=0) through
+   * the active view's camera; null when it points above the horizon. */
+  screenToFloor(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const cam = (this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined) ?? this.camera;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, cam);
+    const hit = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
   }
 
   // Orange accent for the arm links (see ORANGE_LINKS). Cached so every mesh
