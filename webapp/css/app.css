@@ -1465,6 +1465,28 @@ button {
   color: var(--danger);
 }
 
+.arm-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.arm-path select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 10px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 3px 4px;
+}
+
+.arm-path select:disabled {
+  color: var(--muted);
+}
+
 .arm-divider {
   height: 1px;
   background: var(--hairline);
