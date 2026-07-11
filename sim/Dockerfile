@@ -112,6 +112,17 @@ RUN cat >> /root/.zshrc <<'EOF'
 export INNATE_OS_ROOT=/root/innate-os
 export CCACHE_DIR=/root/.cache/ccache
 export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on PATH
+
+# Tab completions for the `innate` CLI (mirrors scripts/update/post_update.sh).
+# scripts/ is bind-mounted at runtime, so generate on first login rather than at
+# build time. This block runs after oh-my-zsh's compinit, so re-run it to pick up
+# the completions dir added to fpath.
+fpath=("/root/innate-os/scripts/build/completions" $fpath)
+if [ -f /root/innate-os/scripts/innate ] && [ ! -f /root/innate-os/scripts/build/completions/_innate ]; then
+    mkdir -p /root/innate-os/scripts/build/completions
+    /root/innate-os/scripts/innate completions > /root/innate-os/scripts/build/completions/_innate 2>/dev/null
+fi
+autoload -Uz compinit && compinit
 EOF
 
 WORKDIR /root/innate-os
