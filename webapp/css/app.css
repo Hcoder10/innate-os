@@ -1467,8 +1467,9 @@ button {
 
 .arm-path {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
 }
 
 .arm-path select {

@@ -277,8 +277,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     connectBtn.disabled = false;
     connectBtn.textContent = state.error ? "Reconnect arm" : "Connect arm";
 
-    engageBtn.hidden = !reading;
-    engageBtn.disabled = linkStarting;
+    engageBtn.disabled = linkStarting || !reading;
     engageBtn.textContent = linkStarting
       ? "Connecting…"
       : engaged
@@ -286,11 +285,11 @@ export function createArmPanel(parent, rosClient, opts = {}) {
         : "Engage follow";
     engageBtn.classList.toggle("active", engaged);
 
-    pathRow.hidden = !reading;
     pathSel.disabled = engaged || linkStarting;
 
-    note.hidden = !reading || (engaged && !linkError);
-    note.textContent = linkError ?? "follower snaps to leader pose";
+    note.hidden = engaged && !linkError;
+    note.textContent =
+      linkError ?? (reading ? "follower snaps to leader pose" : "connect the leader arm to engage");
     note.classList.toggle("warn", !!linkError);
 
     // The Collect gate mirrors the mobile app's isArmPublishing && rate > 0.
