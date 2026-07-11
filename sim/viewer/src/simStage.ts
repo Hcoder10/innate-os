@@ -4,6 +4,7 @@
 // full-res every frame, PiP thumbnails scissor-rendered from the same GL
 // context and blitted out.
 
+import * as THREE from "three";
 import { SimScene, type CameraView } from "./scene";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
@@ -40,7 +41,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   chips.style.cssText = "display:flex;gap:6px;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+  const addChip = (label: string, onToggle: (on: boolean) => void): ((on: boolean) => void) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
@@ -49,16 +50,21 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
       "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
     let on = false;
-    b.onclick = () => {
-      on = !on;
+    const set = (next: boolean) => {
+      on = next;
       b.style.background = on ? ON_BG : OFF_BG;
       b.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+    };
+    b.onclick = () => {
+      set(!on);
       onToggle(on);
     };
     chips.appendChild(b);
+    return set;
   };
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
+  const setDropChip = addChip("drop human", (on) => armDrop(on));
   debugStack.appendChild(chips);
 
   // Loading overlay: spinner + staged label instead of a black canvas until
@@ -129,6 +135,54 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
+
+  // "drop human" placement: while armed the orbit controls are paused --
+  // press marks the spot on the floor, drag points the head (arrow preview),
+  // release drops the body there and physics settles it.
+  let dropArmed = false;
+  let dropStart: THREE.Vector3 | null = null;
+  let dropArrow: THREE.ArrowHelper | null = null;
+  const clearDropDrag = () => {
+    dropStart = null;
+    if (dropArrow) {
+      scene.scene.remove(dropArrow);
+      dropArrow.dispose();
+      dropArrow = null;
+    }
+  };
+  const armDrop = (on: boolean) => {
+    dropArmed = on;
+    scene.placementMode = on;
+    canvas.style.cursor = on ? "crosshair" : "";
+    setDropChip(on);
+    if (!on) clearDropDrag();
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!dropArmed || e.button !== 0) return;
+    dropStart = scene.screenToFloor(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dropStart) return;
+    const cur = scene.screenToFloor(e.clientX, e.clientY);
+    if (!cur) return;
+    const drag = cur.sub(dropStart).setZ(0);
+    if (drag.length() < 0.05) return;
+    if (!dropArrow) {
+      dropArrow = new THREE.ArrowHelper(drag.clone().normalize(), dropStart.clone().setZ(0.05), 1, 0xff8800, 0.25, 0.15);
+      scene.scene.add(dropArrow);
+    }
+    dropArrow.setDirection(drag.clone().normalize());
+    dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (!dropArmed || !dropStart) return;
+    const end = scene.screenToFloor(e.clientX, e.clientY);
+    const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
+    // An identity drop lies head toward +y; the drag vector is the head direction.
+    const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
+    session.dropHuman(dropStart.x, dropStart.y, yaw);
+    armDrop(false);
+  });
 
   const resize = () => {
     const w = wrap.clientWidth;

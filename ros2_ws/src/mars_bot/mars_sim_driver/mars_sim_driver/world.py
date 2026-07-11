@@ -34,6 +34,15 @@ MAX_YAW = 1.0
 MAX_BASE_LINEAR_SPEED = 2.0
 MAX_BASE_ANGULAR_SPEED = 6.0
 
+# Scenario prop: a posed human scan (centimeter units, Y-up, feet at the
+# origin -- identity quat lies it on its back, head toward +y). Parked
+# outside the apartment until a drop_human command places it.
+HUMAN_MESH = "humans/casual_man.obj"
+HUMAN_PARK_XY = (15.0, 15.0)
+# High enough that the lying hull (bottom ~0.24m below the body origin)
+# starts clear of sofas/beds/tables instead of spawning inside them.
+HUMAN_DROP_Z = 1.5
+
 DRIVEN_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"]
 MIMIC_JOINT = ("joint6M", "joint6", -1.0)  # (name, source, multiplier)
 
@@ -161,9 +170,11 @@ def build_world_xml(
     include_placeholder_robot: bool = True,
     visual_rooms: dict[str, Path] | None = None,
     texture_max: int | None = None,
+    human_obj: Path | None = None,
 ) -> str:
     """The apartment environment MJCF (floor plane + decomposed room hulls,
-    optionally the textured visual rooms in their own geom group).
+    optionally the textured visual rooms in their own geom group, optionally
+    the scenario human parked at HUMAN_PARK_XY).
     texture_max caps the visual textures' resolution (see capped_texture_path)."""
     collision_group = COLLISION_GROUP if visual_rooms else 0
 
@@ -196,6 +207,25 @@ def build_world_xml(
             f'contype="0" conaffinity="0" group="{VISUAL_GROUP}"/>'
         )
 
+    human_asset = ""
+    human_body = ""
+    if human_obj is not None:
+        png = human_obj.with_name(f"{human_obj.stem}_basecolor.png")
+        human_asset = f"""
+    <mesh name="human" file="{human_obj.resolve()}" scale="0.01 0.01 0.01"/>
+    <texture name="tex_human" type="2d" file="{png.resolve()}"/>
+    <material name="mat_human" texture="tex_human" specular="0.1" shininess="0.1"/>"""
+        # Visual mesh carries no mass/contacts; the auto convex hull collides
+        # (density gives ~70kg) so a dropped body settles on floor/furniture.
+        human_body = f"""
+    <body name="human" pos="{HUMAN_PARK_XY[0]} {HUMAN_PARK_XY[1]} 0.3">
+      <freejoint name="human_free"/>
+      <geom name="human_visual" mesh="human" type="mesh" material="mat_human"
+            contype="0" conaffinity="0" group="{VISUAL_GROUP}" density="0"/>
+      <geom name="human_collision" mesh="human" type="mesh" friction="0.9 0.01 0.001"
+            condim="3" margin="0.007" solref="0.02 1" density="500" group="{COLLISION_GROUP}"/>
+    </body>"""
+
     robot_body = (
         """
     <body name="robot_base" pos="0 0 0">
@@ -221,7 +251,7 @@ def build_world_xml(
   <statistic center="{lx} {ly} {lz}" extent="{extent}"/>
   <asset>
 {chr(10).join(mesh_lines)}
-{chr(10).join(visual_mesh_lines)}
+{chr(10).join(visual_mesh_lines)}{human_asset}
   </asset>
   <worldbody>
     <light pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
@@ -231,7 +261,7 @@ def build_world_xml(
     <body name="apartment" quat="0.7071068 0.7071068 0 0">
 {chr(10).join(geom_lines)}
 {chr(10).join(visual_geom_lines)}
-    </body>{robot_body}
+    </body>{human_body}{robot_body}
   </worldbody>
 </mujoco>
 """

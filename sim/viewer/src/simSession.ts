@@ -67,7 +67,14 @@ export class SimSession {
   #stageReady = false;
 
   // Ground-truth snapshots on the sim clock.
-  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  #samples: {
+    t: number;
+    x: number;
+    y: number;
+    yaw: number;
+    joints: Record<string, number>;
+    human: number[] | null;
+  }[] = [];
   #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
   #lastArrival = 0;
   // Playback position on the sim clock (see tick).
@@ -157,11 +164,11 @@ export class SimSession {
 
       const last = this.#samples[this.#samples.length - 1];
       if (last === undefined || s.t > last.t) {
-        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, human: s.human });
         if (this.#samples.length > 60) this.#samples.shift();
       } else if (s.t < last.t - 0.5) {
         // Sim clock jumped backwards (world-server restart): restart playback.
-        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, human: s.human }];
         this.#playT = null;
       }
       this.#live = true;
@@ -217,6 +224,12 @@ export class SimSession {
   setCollisionHullsVisible(on: boolean): void {
     this.#hullsOn = on;
     this.#overlaysDirty = true;
+  }
+
+  /** Drop the scenario human above (x, y), lying flat, head pointing along
+   * yaw; the world server's physics settles it (stage "drop human" chip). */
+  dropHuman(x: number, y: number, yaw: number): void {
+    this.#controller?.send({ op: "drop_human", x, y, yaw });
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.
@@ -293,6 +306,9 @@ export class SimSession {
       joints[name] = va + (vb - va) * u;
     }
     scene.setJointAngles(joints);
+    // No interpolation for the human: 75Hz raw samples are smooth enough
+    // even during the fall, and it's static almost all the time.
+    scene.setHumanPose(b.human);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;
