@@ -7,6 +7,7 @@ on:
       - .github/workflows/publish-sim-images.yml
       - .gcloudignore
       - ci/cloudbuild.sim-images.yaml
+      - ci/build_sim_images.sh
       - sim/Dockerfile
       - sim/Dockerfile.ros-prebuilt
       - sim/Dockerfile.ros-prebuilt.dockerignore
@@ -17,27 +18,23 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: publish-sim-images-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  publish:
+  tags:
     runs-on: ubuntu-latest
-
+    outputs:
+      image_tag: ${{ steps.image_tags.outputs.image_tag }}
+      image_inputs_hash: ${{ steps.image_tags.outputs.image_inputs_hash }}
+      push_main_tags: ${{ steps.image_tags.outputs.push_main_tags }}
+      short_sha: ${{ steps.image_tags.outputs.short_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
 
       - name: Compute image tags
         id: image_tags
@@ -92,8 +89,25 @@ jobs:
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
           echo "image_inputs_hash=${image_inputs_hash}" >> "$GITHUB_OUTPUT"
           echo "push_main_tags=${push_main_tags}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Submit Cloud Build
+  amd64:
+    needs: tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Submit Cloud Build (amd64)
         shell: bash
         run: |
           set -euo pipefail
@@ -104,11 +118,82 @@ jobs:
             --gcs-source-staging-dir="${{ vars.GCP_CLOUD_BUILD_SOURCE_STAGING_DIR }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}" \
             --config=ci/cloudbuild.sim-images.yaml \
-            --substitutions="_IMAGE_PREFIX=${{ vars.SIM_IMAGE_PREFIX }},_IMAGE_TAG=${{ steps.image_tags.outputs.image_tag }},_IMAGE_INPUTS_HASH=${{ steps.image_tags.outputs.image_inputs_hash }},_PUSH_MAIN_TAGS=${{ steps.image_tags.outputs.push_main_tags }},_GHCR_USERNAME_SECRET=${{ vars.GHCR_USERNAME_SECRET }},_GHCR_TOKEN_SECRET=${{ vars.GHCR_TOKEN_SECRET }},_COMMIT_SHA=${GITHUB_SHA},_SHORT_SHA=${GITHUB_SHA::12}"
+            --substitutions="_IMAGE_PREFIX=${{ vars.SIM_IMAGE_PREFIX }},_IMAGE_TAG=${{ needs.tags.outputs.image_tag }},_IMAGE_INPUTS_HASH=${{ needs.tags.outputs.image_inputs_hash }},_PUSH_MAIN_TAGS=${{ needs.tags.outputs.push_main_tags }},_GHCR_USERNAME_SECRET=${{ vars.GHCR_USERNAME_SECRET }},_GHCR_TOKEN_SECRET=${{ vars.GHCR_TOKEN_SECRET }},_COMMIT_SHA=${GITHUB_SHA},_SHORT_SHA=${{ needs.tags.outputs.short_sha }}"
+
+  arm64:
+    needs: tags
+    # Native arm64 runner: QEMU emulation would turn the ros2_ws colcon
+    # build into a multi-hour crawl.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Free runner disk (the two images need ~20 GB)
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet || true
+          docker system prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (arm64)
+        shell: bash
+        env:
+          ARCH: arm64
+          IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
+          IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
+          IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.image_inputs_hash }}
+          PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
+          COMMIT_SHA: ${{ github.sha }}
+          SHORT_SHA: ${{ needs.tags.outputs.short_sha }}
+        run: bash ci/build_sim_images.sh
+
+  manifest:
+    needs: [tags, amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stitch multi-arch manifests
+        shell: bash
+        env:
+          IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
+          IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
+          IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.image_inputs_hash }}
+          PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
+          SHORT_SHA: ${{ needs.tags.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+
+          tags=("${IMAGE_TAG}" "sha-${SHORT_SHA}")
+          if [[ -n "${IMAGE_INPUTS_HASH}" && "${IMAGE_INPUTS_HASH}" != "manual" ]]; then
+            tags+=("inputs-${IMAGE_INPUTS_HASH}")
+          fi
+          if [[ "${PUSH_MAIN_TAGS}" == "true" ]]; then
+            tags+=("main")
+          fi
+
+          for image in "${IMAGE_PREFIX}/innate-os-sim-deps" "${IMAGE_PREFIX}/innate-os-sim-ros"; do
+            for tag in "${tags[@]}"; do
+              docker buildx imagetools create \
+                --tag "$image:$tag" \
+                "$image:$tag-amd64" \
+                "$image:$tag-arm64"
+            done
+          done
 
       - name: Published image tags
         run: |
-          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:${{ steps.image_tags.outputs.image_tag }}"
-          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:inputs-${{ steps.image_tags.outputs.image_inputs_hash }}"
-          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-ros:${{ steps.image_tags.outputs.image_tag }}"
-          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-ros:inputs-${{ steps.image_tags.outputs.image_inputs_hash }}"
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-ros:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
