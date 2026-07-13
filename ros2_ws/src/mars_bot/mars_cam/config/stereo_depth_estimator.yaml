@@ -20,6 +20,7 @@ main_camera_driver:
     gain: -1
     default_gain: 110
     auto_exposure_mode: 0  # 0=hardware AE (camera built-in), 1=custom PID AE, 2=manual (no AE)
+    power_line_frequency: 60  # Anti-flicker filter, mains Hz: 0=disabled, 50 (EU), 60 (US)
     target_brightness: 128.0
     ae_kp: 0.8
     auto_exposure_update_interval: 3
@@ -36,6 +37,7 @@ arm_camera_driver:
     pixel_format: "YUYV"
     publish_compressed: true
     compressed_frame_interval: 6
+    power_line_frequency: 60  # Anti-flicker filter, mains Hz: 0=disabled, 50 (EU), 60 (US)
 
 # ============================================================================
 # STEREO DEPTH ESTIMATOR (VPI SGM on CUDA)
