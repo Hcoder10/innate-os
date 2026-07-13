@@ -158,6 +158,9 @@ jobs:
     needs: [tags, amd64, arm64]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Log in to ghcr
         uses: docker/login-action@v3
         with:
@@ -173,25 +176,7 @@ jobs:
           IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.image_inputs_hash }}
           PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
           SHORT_SHA: ${{ needs.tags.outputs.short_sha }}
-        run: |
-          set -euo pipefail
-
-          tags=("${IMAGE_TAG}" "sha-${SHORT_SHA}")
-          if [[ -n "${IMAGE_INPUTS_HASH}" && "${IMAGE_INPUTS_HASH}" != "manual" ]]; then
-            tags+=("inputs-${IMAGE_INPUTS_HASH}")
-          fi
-          if [[ "${PUSH_MAIN_TAGS}" == "true" ]]; then
-            tags+=("main")
-          fi
-
-          for image in "${IMAGE_PREFIX}/innate-os-sim-deps" "${IMAGE_PREFIX}/innate-os-sim-ros"; do
-            for tag in "${tags[@]}"; do
-              docker buildx imagetools create \
-                --tag "$image:$tag" \
-                "$image:$tag-amd64" \
-                "$image:$tag-arm64"
-            done
-          done
+        run: bash ci/stitch_sim_manifests.sh
 
       - name: Published image tags
         run: |
