@@ -300,6 +300,7 @@ class MainCameraDriver : public rclcpp::Node {
     int exposure_setting_{-1};
     int gain_setting_{-1};
     int default_gain_param_{110};
+    int power_line_frequency_{60};  // Anti-flicker filter: 0=disabled, 50 or 60 (Hz)
 
     // Auto exposure control
     AutoExposureController auto_exposure_controller_;

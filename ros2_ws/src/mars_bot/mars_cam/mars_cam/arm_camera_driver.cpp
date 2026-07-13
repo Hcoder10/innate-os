@@ -2,6 +2,12 @@
 // Copyright (c) 2026 Innate Inc
 #include "mars_cam/arm_camera_driver.hpp"
 #include <filesystem>
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstring>
 
 using namespace std::chrono_literals;
 
@@ -18,6 +24,7 @@ ArmCameraDriver::ArmCameraDriver(const rclcpp::NodeOptions& options) : Node("arm
     this->declare_parameter<std::string>("pixel_format", "YUYV");
     this->declare_parameter<bool>("publish_compressed", false);
     this->declare_parameter<int>("compressed_frame_interval", 5);
+    this->declare_parameter<int>("power_line_frequency", 60);  // Anti-flicker filter: 0=disabled, 50 or 60 (Hz)
 
     // Get parameters
     std::string camera_symlink = this->get_parameter("camera_symlink").as_string();
@@ -26,6 +33,7 @@ ArmCameraDriver::ArmCameraDriver(const rclcpp::NodeOptions& options) : Node("arm
     fps_ = this->get_parameter("fps").as_double();
     publish_compressed_ = this->get_parameter("publish_compressed").as_bool();
     compressed_frame_interval_ = this->get_parameter("compressed_frame_interval").as_int();
+    power_line_frequency_ = this->get_parameter("power_line_frequency").as_int();
 
     // Find camera symlink by pattern matching
     std::string camera_pattern = camera_symlink;
@@ -186,7 +194,49 @@ bool ArmCameraDriver::initializeCamera() {
         }
     }
 
+    applyPowerLineFrequency();
+
     return true;
+}
+
+void ArmCameraDriver::applyPowerLineFrequency() {
+    // Anti-flicker filter: match the camera's banding filter to the local mains
+    // frequency so indoor lighting doesn't flicker in auto-exposure mode.
+    int v4l2_value;
+    switch (power_line_frequency_) {
+        case 0:
+            v4l2_value = V4L2_CID_POWER_LINE_FREQUENCY_DISABLED;
+            break;
+        case 50:
+            v4l2_value = V4L2_CID_POWER_LINE_FREQUENCY_50HZ;
+            break;
+        case 60:
+            v4l2_value = V4L2_CID_POWER_LINE_FREQUENCY_60HZ;
+            break;
+        default:
+            RCLCPP_WARN(this->get_logger(),
+                        "Invalid power_line_frequency %d (expected 0, 50 or 60), keeping camera default",
+                        power_line_frequency_);
+            return;
+    }
+
+    int fd = open(device_path_.c_str(), O_RDWR);
+    if (fd == -1) {
+        RCLCPP_WARN(this->get_logger(), "Failed to open %s for V4L2 controls: %s", device_path_.c_str(),
+                    strerror(errno));
+        return;
+    }
+
+    struct v4l2_control ctrl;
+    ctrl.id = V4L2_CID_POWER_LINE_FREQUENCY;
+    ctrl.value = v4l2_value;
+    if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) == -1) {
+        RCLCPP_WARN(this->get_logger(), "Failed to set anti-flicker filter to %d Hz: %s", power_line_frequency_,
+                    strerror(errno));
+    } else {
+        RCLCPP_INFO(this->get_logger(), "Anti-flicker (power line) filter set to %d Hz", power_line_frequency_);
+    }
+    close(fd);
 }
 
 std::string ArmCameraDriver::createGStreamerPipeline() {
