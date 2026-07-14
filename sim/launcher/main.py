@@ -52,6 +52,7 @@ from runtime import (
     ensure_sim_assets,
     ensure_sim_viewer_bundle,
     ensure_skill_assets,
+    ensure_uv_available,
     ensure_workspace_dirs,
     ensure_world_server,
     open_os_container_shell,
@@ -66,6 +67,7 @@ from runtime import (
 from setup_wizard import (
     _prompt_yes_no,
     configure_brain_backend,
+    ensure_uv_prerequisite,
     is_interactive_terminal,
     report_configured_keys,
 )
@@ -106,8 +108,11 @@ def cmd_up(
 ) -> None:
     started = False
     try:
-        ensure_docker_available(command_hint=f"{CLI_SIM} up")
+        # Banner before any probe: a wedged Docker daemon must never leave
+        # the user staring at a blank terminal.
         print_banner()
+        ensure_docker_available(command_hint=f"{CLI_SIM} up")
+        ensure_uv_available()  # the sim world always runs on the host via uv
         report_configured_keys(config)
         # Before anything containerized runs: claims the container-written
         # workspace dirs for the invoking user (root-owned bind-mount dirs on
@@ -163,7 +168,15 @@ def cmd_up(
             )
         log("Waiting for the sim driver (/odom)...")
         sim_driver_ready = wait_for_virtual_mars(config)
-        print_startup_checks(config, sim_driver_ready=sim_driver_ready)
+        world_alive = print_startup_checks(config, sim_driver_ready=sim_driver_ready)
+        if not world_alive:
+            # It passed the startup gate and died during boot -- on small
+            # machines that is almost always the OOM killer's work.
+            warn("The world server died during startup. On low-memory machines this is usually")
+            warn("the OOM killer (check: sudo dmesg | grep -i oom). Free up memory or add swap,")
+            warn(f"then restart: {CLI_SIM} down && {CLI_SIM} up. Log: {CLI_SIM} logs world-server")
+            warn(f"The runtime is left running for inspection; stop it with `{CLI_SIM} down`.")
+            return
         if not sim_driver_ready:
             # Leave the runtime up so the failure can be inspected.
             warn("The sim driver (MuJoCo) never started publishing /odom.")
@@ -188,10 +201,14 @@ def cmd_up(
             cmd_down(config)
         else:
             warn("Interrupted before the Innate runtime finished starting.")
-    except StackError:
+    except StackError as exc:
         if started:
+            # Show the real failure before cleanup: `docker compose down` can
+            # take a while (or misbehave), and the error must not wait on it.
+            print(f"Error: {exc}", file=sys.stderr)
             warn("Startup failed. Stopping the partially-started Innate runtime...")
             cmd_down(config)
+            raise SystemExit(1) from exc
         raise
 
 
@@ -233,7 +250,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
 def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "startup":
         found_logs = False
-        for name in ("bootstrap", "compose", "cloud-agent", "os-build", "viewer-build", "os-session"):
+        for name in ("bootstrap", "world-server", "compose", "cloud-agent", "os-build", "viewer-build", "os-session"):
             path = LOG_TARGETS[name]
             if path.exists():
                 found_logs = True
@@ -261,8 +278,9 @@ def cmd_logs(target: str, lines: int | None = None) -> None:
 
 
 def cmd_setup(config: dict[str, object]) -> None:
-    ensure_docker_available(command_hint=f"{CLI_SIM} setup")
     print_banner()
+    ensure_docker_available(command_hint=f"{CLI_SIM} setup")
+    ensure_uv_prerequisite()
     configure_brain_backend(config)
     success("Simulator setup is ready.")
     print(f"OS secrets: {ENV_PATH}")
@@ -337,17 +355,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     logs_parser.add_argument(
         "target",
-        choices=[
-            "startup",
-            "bootstrap",
-            "compose",
-            "cloud-agent",
-            "os-build",
-            "viewer-build",
-            "os-session",
-            "brain",
-            "down",
-        ],
+        # Derived from LOG_TARGETS so a new log stream can't be forgotten
+        # here again (world-server was documented but missing).
+        choices=["startup", "brain", *sorted(LOG_TARGETS)],
         help="Which log stream to show",
     )
     logs_parser.add_argument(
@@ -405,6 +415,16 @@ def main() -> int:
             parser.error(f"Unknown sim command: {args.sim_command}")
     except StackError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        # e.g. a full disk that flipped the filesystem read-only (seen in a
+        # user test): one actionable line, not a traceback.
+        print(
+            f"Error: {exc}\n"
+            "This is a filesystem problem, not an Innate one -- check free disk space "
+            "(a full disk can leave the filesystem mounted read-only until a reboot).",
+            file=sys.stderr,
+        )
         return 1
     except subprocess.CalledProcessError as exc:
         print(f"Command failed: {' '.join(exc.cmd)}", file=sys.stderr)

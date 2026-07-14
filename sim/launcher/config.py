@@ -109,6 +109,10 @@ class StackError(RuntimeError):
     pass
 
 
+class DockerUnresponsiveError(StackError):
+    """Docker did not answer a probe; availability is unknown, not "no"."""
+
+
 def log(message: str) -> None:
     print(f"{CYAN}[innate]{NC} {message}")
 
@@ -314,14 +318,18 @@ def resolve_cloud_agent_mode(sim_config: dict[str, object], env: dict[str, str])
 
 def resolve_brain_client_version(repo_root: Path) -> str:
     def git_output(*args: str) -> str:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repo_root,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_root,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+                timeout=10.0,
+            )
+        except subprocess.TimeoutExpired:
+            return ""
         if result.returncode != 0:
             return ""
         return result.stdout.strip()
