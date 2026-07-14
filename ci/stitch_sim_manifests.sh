@@ -23,11 +23,23 @@ if [[ "${PUSH_MAIN_TAGS:-false}" == "true" ]]; then
   tags+=("main")
 fi
 
+# Every tag points at the same per-arch image pair, so stitch each image with
+# ONE imagetools call carrying all tags: the index is uploaded once and the
+# tag pointers are written back-to-back, keeping the window where a cancelled
+# run leaves some tags stitched and others stale to near zero.
 for image in "${IMAGE_PREFIX}/innate-os-sim-deps" "${IMAGE_PREFIX}/innate-os-sim-ros"; do
+  tag_args=()
+  seen="|"
   for tag in "${tags[@]}"; do
-    docker buildx imagetools create \
-      --tag "$image:$tag" \
-      "$image:$tag-amd64" \
-      "$image:$tag-arm64"
+    if [[ "$seen" == *"|$tag|"* ]]; then
+      continue
+    fi
+    tag_args+=(--tag "$image:$tag")
+    seen="$seen$tag|"
   done
+
+  docker buildx imagetools create \
+    "${tag_args[@]}" \
+    "$image:${IMAGE_TAG}-amd64" \
+    "$image:${IMAGE_TAG}-arm64"
 done
