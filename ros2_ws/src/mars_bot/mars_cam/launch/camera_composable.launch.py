@@ -166,7 +166,6 @@ def generate_launch_description():
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
                 "interactive": False,
                 "auto_start": False,
-                "playback": False,
             }
         ],
         condition=IfCondition(LaunchConfiguration("start_calibration_manager")),
