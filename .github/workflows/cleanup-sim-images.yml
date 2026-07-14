@@ -87,12 +87,22 @@ jobs:
           jq -r '"Keeping \(.keep) package versions.",
                  "Deleting \(.delete | length) package versions."' <<<"${plan}"
 
+          # Tolerate individual failures (transient 5xx, rate limits,
+          # undeletable versions) so one poison version cannot abandon the
+          # rest of the sweep; fail the job at the end if any were skipped.
+          failures=0
           while IFS=$'\t' read -r version_id tags; do
             [ -n "${version_id}" ] || continue
             if [[ "${DRY_RUN}" == "true" ]]; then
               echo "dry-run delete ${package} version ${version_id}: ${tags}"
-            else
-              echo "delete ${package} version ${version_id}: ${tags}"
-              gh api --method DELETE "/orgs/${ORG}/packages/container/${package}/versions/${version_id}"
+            elif echo "delete ${package} version ${version_id}: ${tags}" \
+              && ! gh api --method DELETE "/orgs/${ORG}/packages/container/${package}/versions/${version_id}"; then
+              echo "::warning::failed to delete ${package} version ${version_id}: ${tags}"
+              failures=$((failures + 1))
             fi
           done < <(jq -r '.delete[] | "\(.id)\t\(.tags)"' <<<"${plan}")
+
+          if [[ "${failures}" -gt 0 ]]; then
+            echo "${failures} deletions failed"
+            exit 1
+          fi
