@@ -51,6 +51,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Always main, even on workflow_dispatch from another branch: the
+          # step below computes MAIN's inputs hash to pin its versions.
+          ref: main
 
       - name: Cleanup old GHCR versions
         shell: bash
