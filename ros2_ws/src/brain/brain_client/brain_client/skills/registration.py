@@ -11,7 +11,6 @@ handles re-registration deferral while a primitive is running.
 from __future__ import annotations
 
 import json
-import time
 
 from brain_messages.msg import AvailableSkills
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -25,14 +24,8 @@ AVAILABLE_SKILLS_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
 )
 
-# Registering tells the cloud it may trigger skills, so hold the registration
-# until the execute_skill action server is discoverable — otherwise an
-# immediate first trigger races graph discovery and the dispatch fails
-# (INN-711's root cause). Retry on a short timer; after the fail-open window
-# register anyway so a wedged skills server degrades to per-trigger "failed"
-# reports instead of a brain that never comes online.
-REGISTRATION_GATE_RETRY_SEC = 0.5
-REGISTRATION_GATE_FAIL_OPEN_SEC = 30.0
+# How often register() re-checks the execute_skill server while waiting for it.
+REGISTRATION_RETRY_SEC = 0.5
 
 
 def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
@@ -64,10 +57,9 @@ class SkillCatalog:
 
         # Callable returning whether the execute_skill action server is
         # discoverable (PrimitiveRunner.action_client.server_is_ready); None
-        # disables the registration gate.
+        # disables the wait.
         self._execute_skill_ready = execute_skill_ready
-        self._gate_timer = None
-        self._gate_started: float | None = None
+        self._register_retry_timer = None
 
         self._last_skills_signature: tuple | None = None
         self._sub = node.create_subscription(
@@ -118,44 +110,34 @@ class SkillCatalog:
                 self._state.pending_reregistration = True
 
     def register(self) -> None:
-        """Collect skill + directive definitions and send the registration message.
+        """Send the skills + directive registration to the cloud.
 
-        Held back (with a retry timer) until the execute_skill action server is
-        reachable: registration is the cloud's licence to trigger skills, and
-        granting it before the server is discoverable makes the very first
-        trigger fail (INN-711's root cause).
+        Registering is the cloud's licence to trigger skills, so it waits for
+        the execute_skill server to be reachable first — otherwise the very
+        first trigger races graph discovery and the dispatch fails (INN-711's
+        root cause). While the server isn't ready, a short timer re-runs this.
         """
         if self._state.current_directive is None:
+            self._stop_waiting_for_server()
             return
-        if not self._gate_passed():
+        if not self._server_ready():
+            self._wait_for_server()
             return
+        self._stop_waiting_for_server()
         self._send_registration()
 
-    def _gate_passed(self) -> bool:
-        """True when registration may be sent now; otherwise schedules a retry."""
-        if self._execute_skill_ready is None or self._execute_skill_ready():
-            self._clear_gate()
-            return True
-        now = time.monotonic()
-        if self._gate_started is None:
-            self._gate_started = now
-            self._logger.info("execute_skill server not ready; deferring registration until it is.")
-        elif now - self._gate_started > REGISTRATION_GATE_FAIL_OPEN_SEC:
-            self._logger.error(
-                f"execute_skill server still not ready after {REGISTRATION_GATE_FAIL_OPEN_SEC:.0f}s — "
-                "registering anyway (skill triggers will fail until it comes up)."
-            )
-            self._clear_gate()
-            return True
-        if self._gate_timer is None:
-            self._gate_timer = self._node.create_timer(REGISTRATION_GATE_RETRY_SEC, self.register)
-        return False
+    def _server_ready(self) -> bool:
+        return self._execute_skill_ready is None or self._execute_skill_ready()
 
-    def _clear_gate(self) -> None:
-        self._gate_started = None
-        if self._gate_timer is not None:
-            self._node.destroy_timer(self._gate_timer)
-            self._gate_timer = None
+    def _wait_for_server(self) -> None:
+        if self._register_retry_timer is None:
+            self._logger.info("execute_skill server not ready; deferring registration until it is.")
+            self._register_retry_timer = self._node.create_timer(REGISTRATION_RETRY_SEC, self.register)
+
+    def _stop_waiting_for_server(self) -> None:
+        if self._register_retry_timer is not None:
+            self._node.destroy_timer(self._register_retry_timer)
+            self._register_retry_timer = None
 
     def _send_registration(self) -> None:
         directive = self._state.current_directive
