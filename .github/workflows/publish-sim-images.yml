@@ -122,18 +122,12 @@ jobs:
 
   arm64:
     needs: tags
-    # Native arm64 runner: QEMU emulation would turn the ros2_ws colcon
-    # build into a multi-hour crawl.
-    runs-on: ubuntu-24.04-arm
+    # Native arm64 larger runner (8 cores / 32 GB / 300 GB SSD): QEMU
+    # emulation would turn the ros2_ws colcon build into a multi-hour crawl.
+    runs-on: my-medium-runner-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Free runner disk (the two images need ~20 GB)
-        run: |
-          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet || true
-          docker system prune -af >/dev/null 2>&1 || true
-          df -h /
 
       - name: Log in to ghcr
         uses: docker/login-action@v3
