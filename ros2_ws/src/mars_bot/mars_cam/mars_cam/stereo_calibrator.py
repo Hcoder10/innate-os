@@ -109,7 +109,7 @@ class StereoCalibrator(Node):
         self.declare_parameter("dictionary_id", cv2.aruco.DICT_4X4_250)
 
         # Calibration parameters
-        self.declare_parameter("num_images", 10)
+        self.declare_parameter("num_images", 20)
         self.declare_parameter(
             "min_corners", 10
         )  # Minimum corners to accept an image (recommend 10+ for calibrateCamera)

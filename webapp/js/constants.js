@@ -251,7 +251,7 @@ export const RUN_STEREO_CALIBRATION_ACTION_TYPE = "mars_msgs/action/RunStereoCal
 // from a browser client (crashes the subscriber node), so this is Bool not Empty.
 export const STEREO_CALIB_CAPTURE_TOPIC = "/mars/main_camera/calib/enter_events";
 // Server-side defaults, mirrored here as the page's number-input defaults.
-export const STEREO_CALIB_DEFAULT_NUM_IMAGES = 10;
+export const STEREO_CALIB_DEFAULT_NUM_IMAGES = 20;
 export const STEREO_CALIB_DEFAULT_MIN_CORNERS = 10;
 // Depth is only published once a valid stereo calibration is loaded (the depth
 // estimator gates on it), so whether a frame ever arrives here is a reliable,

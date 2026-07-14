@@ -214,6 +214,11 @@ def generate_coverage_images(node):
     this is cheap enough to call after every single capture and returns the
     images directly for use as action feedback.
 
+    TODO: alongside these two debug renders, compute and report a coverage
+    percentage metric (e.g. fraction of the image plane, gridded into cells,
+    that has at least one captured corner nearby) so the operator gets a
+    number to target, not just a visual dot map.
+
     Args:
         node: StereoCalibrator node instance (needs ``indiv_corners_left/right``,
               ``image_width``/``image_height``).
@@ -230,15 +235,6 @@ def generate_coverage_images(node):
                 x, y = int(corner[0, 0]), int(corner[0, 1])
                 if 0 <= x < w and 0 <= y < h:
                     cv2.circle(canvas, (x, y), 3, (255, 255, 0), -1)
-        cv2.putText(
-            canvas,
-            f"{node.images_captured}/{node.num_images_required} captured",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            1,
-        )
         return canvas
 
     left_coverage = _coverage_canvas(node.indiv_corners_left)
