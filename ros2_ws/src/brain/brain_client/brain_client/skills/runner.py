@@ -42,12 +42,23 @@ class PrimitiveRunner:
     def start_task(self, skill_id: str, primitive_id: str | None, inputs: dict) -> None:
         """Send a goal for ``skill_id`` and mark it running (announce + status).
 
+        "running" only goes out once the goal is actually dispatched — if the
+        action server is unavailable the cloud gets "failed" instead, so it never
+        believes a primitive is running that was never started.
+
         The local /brain/skill_status_update echo is skills_action_server's job now
         (it publishes for every goal it runs, not just the agent's) — announcing it
         here too would double the "running" entry in the chat.
         """
         skill_name = self._state.registry.name_for(skill_id)
-        self._send_goal(skill_id, inputs)
+        if not self._send_goal(skill_id, inputs):
+            self.report_start_failure(
+                primitive_name=skill_name,
+                primitive_id=primitive_id,
+                skill_id=skill_id,
+                reason="Skill execution server unavailable — the skill never started.",
+            )
+            return
         self._ws.send_message(
             primitive_lifecycle_message(
                 status="running",
@@ -60,6 +71,31 @@ class PrimitiveRunner:
             "primitive_id": primitive_id,
             "skill_id": skill_id,
         }
+
+    def report_start_failure(self, *, primitive_name, primitive_id, reason, skill_id=None) -> None:
+        """Tell the cloud and the app that a task never started (no goal exists).
+
+        The action server never saw the goal, so nobody else will publish a
+        terminal status — without this the cloud would wait on the primitive
+        forever and refuse to re-trigger it.
+        """
+        self._logger.error(f"Primitive '{primitive_name}' failed to start: {reason}")
+        self._ws.send_message(
+            primitive_lifecycle_message(
+                status="failed",
+                primitive_name=primitive_name,
+                primitive_id=primitive_id,
+                reason=reason,
+            )
+        )
+        self._chat.publish_task_status(
+            primitive_name=primitive_name,
+            primitive_id=primitive_id,
+            status="failed",
+            skill_id=skill_id,
+            reason=reason,
+        )
+        self._on_task_finished()
 
     @property
     def has_active_goal(self) -> bool:
@@ -110,16 +146,18 @@ class PrimitiveRunner:
         self._pending_next_task = None
 
     # --- action plumbing ---
-    def _send_goal(self, task_type: str, inputs: dict) -> None:
+    def _send_goal(self, task_type: str, inputs: dict) -> bool:
+        """Dispatch the goal; returns False if the action server is unavailable."""
         goal_msg = ExecuteSkill.Goal()
         goal_msg.skill_type = task_type
         goal_msg.inputs = json.dumps(inputs if inputs is not None else {})
         self._logger.info(f"Sending goal for skill: {task_type} with inputs: {goal_msg.inputs}")
         if not self.action_client.wait_for_server(timeout_sec=1.0):
             self._logger.error("Primitive execution action server not available!")
-            return
+            return False
         future = self.action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
         future.add_done_callback(self._on_goal_response)
+        return True
 
     def _on_feedback(self, feedback_wrapper) -> None:
         try:
@@ -165,6 +203,16 @@ class PrimitiveRunner:
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
             if self._state.primitive_running:
+                # The cloud was told "running" on dispatch; a rejected goal produces
+                # no result, so send the terminal "failed" here or it waits forever.
+                self._ws.send_message(
+                    primitive_lifecycle_message(
+                        status="failed",
+                        primitive_name=self._state.primitive_running["primitive_name"],
+                        primitive_id=self._state.primitive_running["primitive_id"],
+                        reason="Goal rejected by action server",
+                    )
+                )
                 self._chat.publish_task_status(
                     primitive_name=self._state.primitive_running["primitive_name"],
                     primitive_id=self._state.primitive_running["primitive_id"],
@@ -268,7 +316,11 @@ class PrimitiveRunner:
             if skill_id is not None:
                 self.start_task(skill_id, pending.primitive_id, pending.inputs)
             else:
-                self._logger.warn(f"Unknown pending primitive: {pending.type}")
+                self.report_start_failure(
+                    primitive_name=pending.type,
+                    primitive_id=pending.primitive_id,
+                    reason=f"Unknown skill '{pending.type}' — not in the registered skill set.",
+                )
         else:
             self._logger.warn(
                 f"Clearing pending task {self._pending_next_task.type} because previous task "
