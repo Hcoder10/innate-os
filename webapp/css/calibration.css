@@ -154,6 +154,10 @@
   font-weight: 600;
 }
 
+.calib-countdown-warn {
+  color: var(--accent);
+}
+
 .calib-badge {
   align-self: flex-start;
   padding: 4px 10px;

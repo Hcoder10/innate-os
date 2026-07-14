@@ -10,16 +10,18 @@ bool save_calibration
 # Result
 bool success
 string message
+bool timed_out  # true only if the capture-timeout watchdog aborted the run
 int32 images_captured
 float32 left_rms
 float32 right_rms
 float32 stereo_rms
 ---
 # Feedback
-string phase  # CAPTURE | PROCESSING
+string phase  # READY (goal accepted, watchdog armed) | CAPTURE | PROCESSING
 int32 images_captured
 int32 capture_attempts
 bool corners_found
 string[] image_names
 sensor_msgs/CompressedImage[] images
 string message
+float32 capture_timeout_sec  # live watchdog timeout; client re-anchors its countdown to this on every tick

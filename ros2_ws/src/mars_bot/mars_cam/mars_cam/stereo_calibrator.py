@@ -330,6 +330,9 @@ class StereoCalibrator(Node):
         feedback.capture_attempts = int(self.capture_attempts)
         feedback.corners_found = bool(corners_found)
         feedback.message = message
+        # Live value (not the cached attribute) so a mid-run `ros2 param set`
+        # is reflected immediately, same as the watchdog itself.
+        feedback.capture_timeout_sec = float(self.get_parameter("capture_timeout_sec").value)
         for name, img in (images or {}).items():
             ok, buf = cv2.imencode(".jpg", img)
             if not ok:
@@ -425,10 +428,11 @@ class StereoCalibrator(Node):
         with self._active_goal_lock:
             self._active_goal = goal_handle
 
-        def _make_result(success: bool, message: str) -> RunStereoCalibration.Result:
+        def _make_result(success: bool, message: str, timed_out: bool = False) -> RunStereoCalibration.Result:
             result = RunStereoCalibration.Result()
             result.success = success
             result.message = message
+            result.timed_out = timed_out
             result.images_captured = int(self.images_captured)
             result.left_rms = float(self._last_rms["left"])
             result.right_rms = float(self._last_rms["right"])
@@ -459,6 +463,11 @@ class StereoCalibrator(Node):
             self._watchdog_timed_out = False
             self._watchdog_active = True
 
+            # One-shot "goal started" tick so the frontend can anchor a countdown
+            # from goal-acceptance, not just after the first capture — otherwise a
+            # slow first capture gets no warning before an unannounced timeout abort.
+            self._publish_action_feedback(goal_handle, "READY", "Waiting for first capture")
+
             # Wait for capture_trigger events (handled in _enter_event_callback)
             # until enough images are captured, the goal is cancelled, or the
             # capture-timeout watchdog fires. Loop only ever exits via one of the
@@ -488,7 +497,7 @@ class StereoCalibrator(Node):
                     self._capture_enabled = False
                     msg = "Timed out waiting for capture"
                     goal_handle.abort()
-                    return _make_result(False, msg)
+                    return _make_result(False, msg, timed_out=True)
 
                 if self.images_captured >= self.num_images_required:
                     break

@@ -40,10 +40,14 @@ export function mount(stage) {
  * @property {number} captureAttempts
  * @property {boolean | null} cornersFound
  * @property {string} message
+ * @property {number | null} deadlineMs Wall-clock deadline (Date.now()-comparable)
+ *   for the server's capture-timeout watchdog, re-anchored from
+ *   `capture_timeout_sec` on every feedback tick. Display-only — see render().
  *
  * @typedef {Object} ResultState
  * @property {boolean} success
  * @property {string} message
+ * @property {boolean} timedOut
  * @property {number} imagesCaptured
  * @property {number} leftRms
  * @property {number} rightRms
@@ -125,6 +129,7 @@ function buildView(root) {
 
   const progressRow = statRow("Captured");
   const attemptsRow = statRow("Capture attempts");
+  const countdownRow = statRow("Capture window");
 
   const boardBadge = document.createElement("span");
   boardBadge.className = "calib-badge";
@@ -138,7 +143,7 @@ function buildView(root) {
   const rightCoverage = coverageTile("Right");
   coverageRow.append(leftCoverage.tile, rightCoverage.tile);
 
-  feedback.append(progressRow.row, attemptsRow.row, boardBadge, feedbackMessage, coverageRow);
+  feedback.append(progressRow.row, attemptsRow.row, countdownRow.row, boardBadge, feedbackMessage, coverageRow);
 
   // ---- result ---------------------------------------------------------------
   const result = document.createElement("div");
@@ -260,6 +265,13 @@ function buildView(root) {
     if (typeof values?.capture_attempts === "number") fb.captureAttempts = values.capture_attempts;
     if (typeof values?.corners_found === "boolean") fb.cornersFound = values.corners_found;
     if (typeof values?.message === "string") fb.message = values.message;
+    // Re-anchor to the server's live watchdog value on every tick — never let
+    // this drift into an independent client-side clock. If a tick omits the
+    // field (e.g. an older/stale server build), leave the prior deadline alone
+    // rather than guess; render() already hides the row when it's still null.
+    if (typeof values?.capture_timeout_sec === "number" && values.capture_timeout_sec > 0) {
+      fb.deadlineMs = Date.now() + values.capture_timeout_sec * 1000;
+    }
     applyCoverageImages(values);
     render();
   }
@@ -277,7 +289,7 @@ function buildView(root) {
     const saveCalibration = saveCheckbox.checked;
 
     lastResult = null;
-    fb = { imagesCaptured: 0, target: numImages, captureAttempts: 0, cornersFound: null, message: "" };
+    fb = { imagesCaptured: 0, target: numImages, captureAttempts: 0, cornersFound: null, message: "", deadlineMs: null };
 
     const { promise, cancel } = ros.sendActionGoal(
       RUN_STEREO_CALIBRATION_ACTION,
@@ -294,6 +306,7 @@ function buildView(root) {
         lastResult = {
           success: values?.success !== false,
           message: typeof values?.message === "string" ? values.message : "",
+          timedOut: values?.timed_out === true,
           imagesCaptured: typeof values?.images_captured === "number" ? values.images_captured : fb?.imagesCaptured ?? 0,
           leftRms: typeof values?.left_rms === "number" ? values.left_rms : 0,
           rightRms: typeof values?.right_rms === "number" ? values.right_rms : 0,
@@ -306,6 +319,7 @@ function buildView(root) {
         lastResult = {
           success: false,
           rejected: true,
+          timedOut: false,
           message: err?.message || "Calibration goal was rejected",
           imagesCaptured: fb?.imagesCaptured ?? 0,
           leftRms: 0,
@@ -336,7 +350,11 @@ function buildView(root) {
     result.replaceChildren();
     const banner = document.createElement("p");
     banner.className = "calib-result-banner" + (r.success ? " ok" : " bad");
-    banner.textContent = r.success ? "Calibration succeeded" : "Calibration failed";
+    banner.textContent = r.success
+      ? "Calibration succeeded"
+      : r.timedOut
+        ? "Run expired — no capture received in time"
+        : "Calibration failed";
     const msg = document.createElement("p");
     msg.className = "calib-feedback-message";
     msg.textContent = r.message;
@@ -383,6 +401,18 @@ function buildView(root) {
     if (fb) {
       progressRow.value.textContent = `${fb.imagesCaptured} / ${fb.target}`;
       attemptsRow.value.textContent = String(fb.captureAttempts);
+
+      // Display-only countdown to the server's capture-timeout watchdog — never
+      // the source of truth. Hidden once the run isn't active, or if the server
+      // hasn't told us a deadline yet; never shows "expired" itself (only the
+      // real Result, via r.timedOut, gets to say the run actually ended).
+      const remainingMs = fb.deadlineMs !== null ? fb.deadlineMs - Date.now() : null;
+      countdownRow.row.hidden = !activeRun || remainingMs === null;
+      if (!countdownRow.row.hidden) {
+        countdownRow.value.textContent = remainingMs > 0 ? `${Math.ceil(remainingMs / 1000)}s` : "wrapping up…";
+        countdownRow.value.classList.toggle("calib-countdown-warn", remainingMs <= 15000);
+      }
+
       boardBadge.classList.toggle("ok", fb.cornersFound === true);
       boardBadge.classList.toggle("bad", fb.cornersFound === false);
       boardBadge.textContent =
@@ -437,10 +467,16 @@ function buildView(root) {
 
   render();
 
+  // Re-render on a plain 1s tick so the countdown display stays live between
+  // feedback messages — it never recomputes the deadline itself, just repaints
+  // against whatever fb.deadlineMs the last feedback tick set.
+  const countdownTicker = setInterval(render, 1000);
+
   return {
     destroy() {
       unsubState();
       unsubDepthCheck();
+      clearInterval(countdownTicker);
       if (calibCheckTimer !== null) clearTimeout(calibCheckTimer);
       // A run left going while the operator navigates away must not keep
       // capturing with no owner — cancel it, mirroring the skills menu.
