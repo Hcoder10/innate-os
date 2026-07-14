@@ -303,12 +303,29 @@ class StereoCalibrator(Node):
             self.latest_right_frame = None
 
     def _goal_callback(self, goal_request):
-        """Accept only one active calibration goal at a time."""
+        """Accept a new goal, stopping any currently active run first."""
+        del goal_request
         with self._active_goal_lock:
-            if self._active_goal is not None:
-                self.get_logger().warn("Rejecting calibration goal: another run is in progress")
-                return GoalResponse.REJECT
-        return GoalResponse.ACCEPT
+            old_goal = self._active_goal
+        if old_goal is None:
+            return GoalResponse.ACCEPT
+
+        self.get_logger().info("New calibration goal received: stopping the current run first")
+        self._request_stop_active_run("Superseded by a new calibration goal")
+
+        # Wait for the old run's execute callback to actually exit and clear
+        # itself, so its cleanup (_reset_calibration_session, restore_head, ...)
+        # can't race with the new goal's. Bounded so a stuck run can't wedge
+        # every future goal.
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            with self._active_goal_lock:
+                if self._active_goal is None:
+                    return GoalResponse.ACCEPT
+            time.sleep(0.05)
+
+        self.get_logger().warn("Rejecting calibration goal: previous run did not stop in time")
+        return GoalResponse.REJECT
 
     def _cancel_callback(self, goal_handle):
         """Allow cancellation of the current run."""
@@ -530,7 +547,11 @@ class StereoCalibrator(Node):
         finally:
             self._watchdog_active = False
             with self._active_goal_lock:
-                self._active_goal = None
+                # Identity check: _goal_callback waits for the previous run to
+                # fully clear before accepting a new one, but guard anyway so a
+                # slow-to-exit old run can never clobber a newer goal's slot.
+                if self._active_goal is goal_handle:
+                    self._active_goal = None
 
     def image_callback(self, left_msg, right_msg):
         """Store latest left and right frames."""
