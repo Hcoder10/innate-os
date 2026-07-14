@@ -62,9 +62,7 @@ def _make_catalog(ready, gated=True):
         primitives_registered=False,
     )
     flag = {"ready": ready}
-    catalog = SkillCatalog(
-        node, ws, state, execute_skill_ready=(lambda: flag["ready"]) if gated else None
-    )
+    catalog = SkillCatalog(node, ws, state, execute_skill_ready=(lambda: flag["ready"]) if gated else None)
     return catalog, node, messages, flag
 
 

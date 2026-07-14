@@ -142,6 +142,55 @@ def test_rejected_goal_reports_failed_even_after_state_cleared(monkeypatch):
     assert finished == []
 
 
+def test_accepted_goal_after_teardown_is_cancelled_not_adopted(monkeypatch):
+    """An acceptance landing after a deactivate/unregister teardown must not
+    reattach the goal (its result would later fire finish side effects) — it
+    cancels the unwanted goal and tells the cloud 'interrupted'."""
+    runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
+    runner.start_task("local/victory_spin", "prim-1", {})
+    ws_messages.clear()
+    runner._state.primitive_running = None  # the race
+
+    cancels = []
+    accepted = SimpleNamespace(
+        accepted=True,
+        cancel_goal_async=lambda: cancels.append(True),
+        get_result_async=lambda: (_ for _ in ()).throw(AssertionError("must not adopt the goal")),
+    )
+    runner._on_goal_response(
+        SimpleNamespace(result=lambda: accepted),
+        skill_name="victory_spin",
+        primitive_id="prim-1",
+        skill_id="local/victory_spin",
+    )
+
+    assert cancels == [True]
+    assert runner._goal_handle is None
+    assert [m.type for m in ws_messages] == [MessageInType.PRIMITIVE_INTERRUPTED]
+    assert finished == []
+
+
+def test_accepted_goal_adopted_when_task_still_current(monkeypatch):
+    runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
+    runner.start_task("local/victory_spin", "prim-1", {})
+
+    result_callbacks = []
+    accepted = SimpleNamespace(
+        accepted=True,
+        cancel_goal_async=lambda: (_ for _ in ()).throw(AssertionError("must not cancel")),
+        get_result_async=lambda: SimpleNamespace(add_done_callback=result_callbacks.append),
+    )
+    runner._on_goal_response(
+        SimpleNamespace(result=lambda: accepted),
+        skill_name="victory_spin",
+        primitive_id="prim-1",
+        skill_id="local/victory_spin",
+    )
+
+    assert runner._goal_handle is accepted
+    assert len(result_callbacks) == 1
+
+
 def test_rejected_goal_leaves_a_newer_running_task_alone(monkeypatch):
     """If another task started after the race cleared ours, its state and gaze
     pause must survive our late rejection."""

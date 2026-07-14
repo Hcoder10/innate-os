@@ -212,12 +212,21 @@ class PrimitiveRunner:
 
     def _on_goal_response(self, future, *, skill_name, primitive_id, skill_id) -> None:
         goal_handle = future.result()
+        # Whether the dispatched task is still the one the runner tracks. False
+        # only after a deactivate/unregister race tore it down while this
+        # response was in flight (there was no goal handle for them to cancel),
+        # or after a newer task already replaced it.
+        running = self._state.primitive_running
+        is_current = running is not None and (running.get("primitive_id"), running.get("skill_id")) == (
+            primitive_id,
+            skill_id,
+        )
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
             # The cloud was told "running" on dispatch; a rejected goal produces
             # no result, so send the terminal "failed" here or it waits forever.
-            # Uses the identity captured at dispatch, not primitive_running — a
-            # racing deactivate/unregister clears that without telling the cloud.
+            # Uses the identity captured at dispatch, not primitive_running — the
+            # teardown race clears that without telling the cloud.
             self._ws.send_message(
                 primitive_lifecycle_message(
                     status="failed",
@@ -233,19 +242,28 @@ class PrimitiveRunner:
                 skill_id=skill_id,
                 reason="Goal rejected by action server",
             )
-            # Only touch shared state when it is still this task's. running is
-            # None here only after a deactivate/unregister race already tore the
-            # task down — resuming gaze / draining re-registration then would
-            # act on a brain that was just deactivated. A newer running task's
-            # state must survive our late rejection untouched.
-            running = self._state.primitive_running
-            if running is not None and (running.get("primitive_id"), running.get("skill_id")) == (
-                primitive_id,
-                skill_id,
-            ):
+            # Only touch shared state when it is still this task's — resuming
+            # gaze / draining re-registration after a teardown would act on a
+            # brain that was just deactivated, and a newer running task's state
+            # must survive our late rejection untouched.
+            if is_current:
                 self._state.primitive_running = None
                 self._goal_handle = None
                 self._on_task_finished()
+            return
+        if not is_current:
+            # Torn down while the response was in flight: don't adopt the goal —
+            # cancel it so the robot doesn't execute a skill nobody tracks, and
+            # give the cloud the "interrupted" the teardown couldn't send.
+            self._logger.warn("Goal accepted for a torn-down task; cancelling it.")
+            goal_handle.cancel_goal_async()  # fire-and-forget
+            self._ws.send_message(
+                primitive_lifecycle_message(
+                    status="interrupted",
+                    primitive_name=skill_name,
+                    primitive_id=primitive_id,
+                )
+            )
             return
         self._goal_handle = goal_handle
         self._logger.info("Primitive execution goal accepted.")
