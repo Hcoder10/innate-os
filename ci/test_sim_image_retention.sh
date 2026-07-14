@@ -33,10 +33,12 @@ versions="$(
     v 12 400 sha-aaaaaaaaaaaa-arm64                  # orphaned child of kept main index (movable tags stolen) -> keep via commit group
     v 13 40 sha-gggggggggggg                         # dead group: old index, not a head -> DELETE
     v 14 40 sha-gggggggggggg-amd64                   # dead group: its child -> DELETE (group must not resurrect)
+    v 15 40 sha-hhhhhhhhhhhh | jq '.updated_at = null | .created_at = "'"$(iso 40)"'"'  # null updated_at -> created_at, 40d not head -> DELETE
+    v 16 40 sha-iiiiiiiiiiii | jq '.updated_at = null'                                  # no timestamp at all -> fail safe, keep
   } | jq -s .
 )"
 
-expected_deleted="7 9 10 13 14"
+expected_deleted="7 9 10 13 14 15"
 
 deleted="$(
   jq -f sim_image_retention.jq \

@@ -16,7 +16,11 @@
 # Called by .github/workflows/cleanup-sim-images.yml.
 
 def tags: .metadata.container.tags // [];
-def age_days: (now - (.updated_at | fromdateiso8601)) / 86400;
+# Fail safe on a missing timestamp: age 0 keeps the version this run
+# instead of crashing the whole cleanup on one anomalous API object.
+def age_days:
+  (.updated_at // .created_at) as $ts
+  | if $ts == null then 0 else (now - ($ts | fromdateiso8601)) / 86400 end;
 def keep_forever:
   tags | any(
     . == "main" or startswith("main-")
