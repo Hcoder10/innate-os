@@ -236,5 +236,27 @@
 @media (max-width: 900px) {
   .calib-grid {
     grid-template-columns: 1fr;
+    /* .calib-video is `position: absolute; inset: 0` internally (video-stage),
+       so it's entirely dependent on this row having real height. With two
+       auto rows sharing one column, a tall .calib-side (once the feedback
+       panel/coverage images appear after Start) collapses the video row
+       toward zero. `auto` here now sizes to .calib-video's own aspect-ratio
+       below instead of guessing a viewport-relative height (which either
+       collapsed or letterboxed depending on the actual stream's aspect
+       ratio); side scrolls internally (already has overflow-y: auto) within
+       whatever's left. */
+    grid-template-rows: auto 1fr;
+  }
+
+  .calib-video {
+    /* Main camera stream is 640x480 (see /mars/main_camera/left/image_raw) —
+       matching this avoids the black top/bottom letterboxing a taller,
+       aspect-ratio-agnostic box produced. */
+    aspect-ratio: 4 / 3;
+    min-height: 0;
+  }
+
+  .calib-side {
+    min-height: 0;
   }
 }
