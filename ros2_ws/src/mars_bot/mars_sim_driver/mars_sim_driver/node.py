@@ -8,7 +8,7 @@ run unchanged -- see README "Virtual MARS driver".
   pub /scan                                       sensor_msgs/LaserScan @6Hz, frame base_laser
   pub /mars/main_camera/left/image_raw/compressed sensor_msgs/CompressedImage @7.5Hz (lazy)
   pub /mars/arm/image_raw/compressed              sensor_msgs/CompressedImage @5Hz (lazy)
-  pub /mars/main_camera/depth/image_rect_raw      sensor_msgs/Image 16SC1 mm @8Hz (lazy)
+  pub /mars/main_camera/depth/image_rect_raw      sensor_msgs/Image 16UC1 mm @8Hz (lazy)
   pub /mars/main_camera/points                    sensor_msgs/PointCloud2 xyz @8Hz (lazy)
   pub /mars/main_camera/left/camera_info          sensor_msgs/CameraInfo @8Hz
   pub /mars/arm/state                             sensor_msgs/JointState (joint1..6, rad) @20Hz
@@ -517,17 +517,17 @@ class VirtualMarsNode(Node):
         img_scale = CAMERA_HEIGHT // depth.shape[0]
 
         if want_depth:
-            # 16SC1 mm, invalid=0 (publishing.cpp convention); nearest-neighbor
+            # 16UC1 mm, invalid=0 (publishing.cpp convention); nearest-neighbor
             # upscale only -- depth must not interpolate across edges.
             mm = np.where(invalid, 0, depth * 1000.0)
-            mm = np.clip(mm, 0, np.iinfo(np.int16).max).astype(np.int16)
+            mm = np.clip(mm, 0, np.iinfo(np.uint16).max).astype(np.uint16)
             if img_scale > 1:
                 mm = np.repeat(np.repeat(mm, img_scale, axis=0), img_scale, axis=1)
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = "camera_optical_frame"
             msg.height, msg.width = mm.shape
-            msg.encoding = "16SC1"
+            msg.encoding = "16UC1"
             msg.is_bigendian = False
             msg.step = msg.width * 2
             msg.data = mm.tobytes()
