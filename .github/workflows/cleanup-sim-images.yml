@@ -25,6 +25,9 @@ concurrency:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    # SECURITY: deletes ghcr package versions -- schedule/dispatch on this
+    # repo only, never any pull_request trigger.
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     env:
       ORG: innate-inc
       # Retention policy (deps/ros; every branch tip publishes images):

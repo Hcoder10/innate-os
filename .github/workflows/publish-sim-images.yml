@@ -1,5 +1,9 @@
 name: Publish Simulator Images
 
+# SECURITY: this workflow pushes to ghcr and mints GCP credentials. Triggers
+# must stay push + workflow_dispatch ONLY -- never add pull_request or
+# pull_request_target. Every job is additionally guarded on repository and
+# event name as defense in depth against future trigger edits.
 on:
   push:
     paths:
@@ -26,6 +30,7 @@ concurrency:
 jobs:
   tags:
     runs-on: ubuntu-latest
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     outputs:
       image_tag: ${{ steps.image_tags.outputs.image_tag }}
       image_inputs_hash: ${{ steps.image_tags.outputs.image_inputs_hash }}
@@ -62,6 +67,7 @@ jobs:
   amd64:
     needs: tags
     runs-on: ubuntu-latest
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
       id-token: write
@@ -93,6 +99,7 @@ jobs:
 
   arm64:
     needs: tags
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     # Native arm64 larger runner (8 cores / 32 GB / 300 GB SSD): QEMU
     # emulation would turn the ros2_ws colcon build into a multi-hour crawl.
     runs-on: my-medium-runner-arm
@@ -125,6 +132,7 @@ jobs:
   manifest:
     needs: [tags, amd64, arm64]
     runs-on: ubuntu-latest
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
       packages: write
