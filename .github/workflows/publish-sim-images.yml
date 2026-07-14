@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - .github/workflows/publish-sim-images.yml
+      - .dockerignore
       - .gcloudignore
       - ci/cloudbuild.sim-images.yaml
       - ci/build_sim_images.sh
