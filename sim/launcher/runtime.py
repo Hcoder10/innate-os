@@ -1675,6 +1675,11 @@ def _start_world_server(uv: str, sim_repo: Path, *, bind: str, mujoco_gl: str | 
     if mujoco_gl:
         env["MUJOCO_GL"] = mujoco_gl
     with WORLD_SERVER_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        # The log is append-mode across runs; without a dated separator, a
+        # previous run's errors read as current ones (cost two diagnostic
+        # round-trips during the Pi debugging).
+        log_file.write(f"\n----- world-server start {time.strftime('%Y-%m-%d %H:%M:%S')} -----\n")
+        log_file.flush()
         proc = subprocess.Popen(
             [uv, "run", "--project", str(sim_repo), "python", "-c", bootstrap, "--bind", bind] + _render_scale_args(),
             cwd=sim_repo.parent,
