@@ -15,6 +15,7 @@ int32 images_captured
 float32 left_rms
 float32 right_rms
 float32 stereo_rms
+string quality  # EXCELLENT | GOOD | ACCEPTABLE | POOR - consider recalibrating (empty if not computed)
 ---
 # Feedback
 string phase  # READY (goal accepted, watchdog armed) | CAPTURE | PROCESSING

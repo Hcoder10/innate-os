@@ -52,6 +52,8 @@ export function mount(stage) {
  * @property {number} leftRms
  * @property {number} rightRms
  * @property {number} stereoRms
+ * @property {string} quality Server's RMS-threshold label (EXCELLENT/GOOD/ACCEPTABLE/
+ *   POOR), empty if not computed (e.g. cancelled before finishing).
  */
 
 /**
@@ -311,6 +313,7 @@ function buildView(root) {
           leftRms: typeof values?.left_rms === "number" ? values.left_rms : 0,
           rightRms: typeof values?.right_rms === "number" ? values.right_rms : 0,
           stereoRms: typeof values?.stereo_rms === "number" ? values.stereo_rms : 0,
+          quality: typeof values?.quality === "string" ? values.quality : "",
         };
         render();
       },
@@ -325,6 +328,7 @@ function buildView(root) {
           leftRms: 0,
           rightRms: 0,
           stereoRms: 0,
+          quality: "",
         };
         render();
       },
@@ -381,6 +385,22 @@ function buildView(root) {
         stat("Right RMS", r.rightRms.toFixed(4)),
         stat("Stereo RMS", r.stereoRms.toFixed(4)),
       );
+
+      if (r.quality) {
+        const qualityRow = stat("Quality", r.quality);
+        // Same RMS thresholds the server used to pick this label (see
+        // run_calibration in stereo_calibrator.py) — just coloring what it
+        // already decided, not re-deriving it client-side.
+        qualityRow.querySelector(".calib-stat-value")?.classList.add(
+          r.quality.startsWith("EXCELLENT") || r.quality.startsWith("GOOD")
+            ? "calib-quality-ok"
+            : r.quality.startsWith("ACCEPTABLE")
+              ? "calib-quality-warn"
+              : "calib-quality-bad",
+        );
+        stats.append(qualityRow);
+      }
+
       result.append(stats);
     }
   }

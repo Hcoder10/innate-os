@@ -182,6 +182,7 @@ class StereoCalibrator(Node):
         self._active_goal = None
         self._active_goal_lock = threading.Lock()
         self._last_rms = {"left": 0.0, "right": 0.0, "stereo": 0.0}
+        self._last_quality = ""
         # Watchdog: aborts a managed run if no capture_trigger arrives in time
         # (guards against an orphaned goal when the requesting client disconnects).
         self._last_capture_time = 0.0
@@ -298,6 +299,7 @@ class StereoCalibrator(Node):
         self.calibration_done = False
         self.calibration_data = None
         self._last_rms = {"left": 0.0, "right": 0.0, "stereo": 0.0}
+        self._last_quality = ""
         with self.frame_lock:
             self.latest_left_frame = None
             self.latest_right_frame = None
@@ -454,6 +456,7 @@ class StereoCalibrator(Node):
             result.left_rms = float(self._last_rms["left"])
             result.right_rms = float(self._last_rms["right"])
             result.stereo_rms = float(self._last_rms["stereo"])
+            result.quality = self._last_quality
             return result
 
         try:
@@ -1036,6 +1039,7 @@ class StereoCalibrator(Node):
             "right": float(ret_right),
             "stereo": float(ret_stereo),
         }
+        self._last_quality = quality
 
         # Store calibration data for saving (must be before generate_visualizations)
         self.calibration_data = {

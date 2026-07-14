@@ -158,6 +158,18 @@
   color: var(--accent);
 }
 
+.calib-quality-ok {
+  color: var(--ok);
+}
+
+.calib-quality-warn {
+  color: var(--accent);
+}
+
+.calib-quality-bad {
+  color: var(--danger);
+}
+
 .calib-badge {
   align-self: flex-start;
   padding: 4px 10px;
