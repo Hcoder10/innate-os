@@ -2,7 +2,7 @@ name: Cleanup Simulator Images
 
 on:
   schedule:
-    - cron: "17 3 * * 0"
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -15,6 +15,7 @@ on:
           - "false"
 
 permissions:
+  contents: read
   packages: write
 
 concurrency:
@@ -24,12 +25,18 @@ concurrency:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    # SECURITY: deletes ghcr package versions -- schedule/dispatch on this
+    # repo only, never any pull_request trigger.
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     env:
       ORG: innate-inc
-      KEEP_SHA_TAGS: "20"
-      KEEP_INPUTS_TAGS: "20"
+      # Retention policy (deps/ros; every branch tip publishes images):
+      #   - main / buildcache / main's current inputs-<hash>: kept forever
+      #   - head of a live branch: kept 30 days
+      #   - everything else (superseded mid-branch builds): kept 14 days
+      HEAD_OF_BRANCH_DAYS: "30"
+      OTHER_DAYS: "14"
       KEEP_ASSET_TAGS: "20"
-      KEEP_MANUAL_TAGS: "5"
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -42,6 +49,9 @@ jobs:
           - innate-os-sim-assets
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Cleanup old GHCR versions
         shell: bash
         run: |
@@ -51,61 +61,61 @@ jobs:
           keep_file="$(mktemp)"
           versions_file="$(mktemp)"
 
-          gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" > "${versions_file}"
+          gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" \
+            | jq -s 'add' > "${versions_file}"
 
-          jq -r '
-            .[]
-            | select((.metadata.container.tags // []) | any(. == "main" or . == "buildcache"))
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
+          # Tags unique per package: a branch build with main's content hash
+          # steals the inputs-<hash> tag from the main-tagged version, so the
+          # main hash is pinned explicitly (this run checks out main).
+          main_inputs_hash="$(python3 ci/compute_sim_image_inputs_hash.py)"
 
-          jq -r --argjson keep "${KEEP_SHA_TAGS}" '
-            [
+          # 12-hex heads of all live branches, matching the sha-<short_sha>
+          # tags the publish workflow pushes.
+          branch_heads="$(git ls-remote --heads origin | cut -f1 | cut -c1-12 | jq -R . | jq -s .)"
+
+          if [[ "${package}" == "innate-os-sim-assets" ]]; then
+            jq -r '
               .[]
-              | select((.metadata.container.tags // []) | any(startswith("sha-")))
-              | {id, updated_at}
-            ]
-            | sort_by(.updated_at)
-            | reverse
-            | .[:$keep][]
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
+              | select((.metadata.container.tags // []) | any(. == "main" or . == "buildcache"))
+              | .id
+            ' "${versions_file}" >> "${keep_file}"
 
-          jq -r --argjson keep "${KEEP_INPUTS_TAGS}" '
-            [
+            jq -r --argjson keep "${KEEP_ASSET_TAGS}" '
+              [
+                .[]
+                | select((.metadata.container.tags // []) | any(startswith("assets-")))
+                | {id, updated_at}
+              ]
+              | sort_by(.updated_at)
+              | reverse
+              | .[:$keep][]
+              | .id
+            ' "${versions_file}" >> "${keep_file}"
+          else
+            jq -r \
+              --argjson heads "${branch_heads}" \
+              --arg main_hash "${main_inputs_hash}" \
+              --argjson head_days "${HEAD_OF_BRANCH_DAYS}" \
+              --argjson other_days "${OTHER_DAYS}" '
+              def tags: .metadata.container.tags // [];
+              def age_days: (now - (.updated_at | fromdateiso8601)) / 86400;
+              def keep_forever:
+                tags | any(
+                  . == "main" or startswith("main-")
+                  or startswith("buildcache")
+                  or . == "inputs-\($main_hash)" or startswith("inputs-\($main_hash)-")
+                );
+              def head_of_branch:
+                tags | any(startswith("sha-") and (.[4:16] as $s | $heads | index($s)));
               .[]
-              | select((.metadata.container.tags // []) | any(startswith("inputs-")))
-              | {id, updated_at}
-            ]
-            | sort_by(.updated_at)
-            | reverse
-            | .[:$keep][]
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
-
-          jq -r --argjson keep "${KEEP_ASSET_TAGS}" '
-            [
-              .[]
-              | select((.metadata.container.tags // []) | any(startswith("assets-")))
-              | {id, updated_at}
-            ]
-            | sort_by(.updated_at)
-            | reverse
-            | .[:$keep][]
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
-
-          jq -r --argjson keep "${KEEP_MANUAL_TAGS}" '
-            [
-              .[]
-              | select((.metadata.container.tags // []) | any(startswith("manual-")))
-              | {id, updated_at}
-            ]
-            | sort_by(.updated_at)
-            | reverse
-            | .[:$keep][]
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
+              | select(
+                  keep_forever
+                  or (head_of_branch and age_days <= $head_days)
+                  or ((head_of_branch | not) and age_days <= $other_days)
+                )
+              | .id
+            ' "${versions_file}" >> "${keep_file}"
+          fi
 
           sort -u -o "${keep_file}" "${keep_file}"
 
