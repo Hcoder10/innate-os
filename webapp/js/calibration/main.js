@@ -98,6 +98,7 @@ function buildView(root) {
   saveRow.className = "calib-checkbox-row";
   const saveCheckbox = document.createElement("input");
   saveCheckbox.type = "checkbox";
+  saveCheckbox.checked = true;
   const saveText = document.createElement("span");
   saveText.textContent =
     "Save calibration when done (backs up the existing calibration file, then writes the new one)";
