@@ -72,9 +72,9 @@ SIM_IMAGE_INPUT_FILES = (
     "sim/Dockerfile",
     "sim/Dockerfile.ros-prebuilt",
     "sim/Dockerfile.ros-prebuilt.dockerignore",
-    "sim/apt-dependencies.txt",
     "ros2_ws/apt-dependencies.common.txt",
     "ros2_ws/apt-dependencies.hardware.txt",
+    "ros2_ws/apt-dependencies.sim.txt",
 )
 # What the local (deps-only) sim/Dockerfile build actually reads from the repo.
 LOCAL_OS_IMAGE_REPO = "innate-os-sim-clean-innate"
