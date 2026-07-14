@@ -61,10 +61,9 @@ const SECTIONS = [
   },
   {
     key: "calibration",
-    label: "Camera Calibration",
-    // Target/crosshair motif: concentric rings + cross ticks, for aiming the
-    // ChArUco board.
-    icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.5" y2="12"/><line x1="18.5" y1="12" x2="21.5" y2="12"/>',
+    label: "Calibration",
+    // Camera motif: body with a viewfinder bump, and a lens.
+    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.4"/>',
   },
   {
     key: "settings",
