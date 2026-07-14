@@ -17,6 +17,8 @@ import hashlib
 from pathlib import Path
 
 root = Path(".")
+if not (root / "sim" / "Dockerfile").is_file():
+    raise SystemExit("compute_sim_image_inputs_hash.py: run from the repo root (sim/Dockerfile not found)")
 static_paths = (
     ".dockerignore",
     "sim/Dockerfile",
