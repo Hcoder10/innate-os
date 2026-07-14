@@ -23,14 +23,18 @@ def keep_forever:
     or startswith("buildcache")
     or . == "inputs-\($main_hash)" or startswith("inputs-\($main_hash)-")
   );
+# Commit components of this version's sha-<hex>[-<arch>] tags. Prefix-matched
+# against the full-length heads so a publish-side short-sha width change
+# cannot silently break head matching.
+def sha_commits:
+  [tags[] | select(startswith("sha-")) | ltrimstr("sha-") | split("-")[0]
+   | select(length > 0)];
 def head_of_branch:
-  tags | any(startswith("sha-") and (.[4:16] as $s | $heads | index($s)));
+  any(sha_commits[]; . as $c | any($heads[]; startswith($c)));
 def keep_own:
   keep_forever
   or (head_of_branch and age_days <= $head_days)
   or ((head_of_branch | not) and age_days <= $other_days);
-# Commit components of this version's sha-<12hex>[-<arch>] tags.
-def sha_commits: [tags[] | select(startswith("sha-")) | .[4:16]];
 
 # A kept multi-arch index references its per-arch children by DIGEST, but
 # children are protected only by movable tags that the next build steals

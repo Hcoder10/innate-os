@@ -40,7 +40,7 @@ expected_deleted="7 9 10 13 14"
 
 deleted="$(
   jq -f sim_image_retention.jq \
-    --argjson heads '["aaaaaaaaaaaa","bbbbbbbbbbbb","cccccccccccc"]' \
+    --argjson heads '["aaaaaaaaaaaa0000000000000000000000000000","bbbbbbbbbbbb0000000000000000000000000000","cccccccccccc0000000000000000000000000000"]' \
     --arg main_hash "MAINHASH" \
     --argjson head_days 30 \
     --argjson other_days 14 \

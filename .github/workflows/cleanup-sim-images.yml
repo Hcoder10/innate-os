@@ -70,9 +70,9 @@ jobs:
           # main hash is pinned explicitly (this run checks out main).
           main_inputs_hash="$(python3 ci/compute_sim_image_inputs_hash.py)"
 
-          # 12-hex heads of all live branches, matching the sha-<short_sha>
-          # tags the publish workflow pushes.
-          branch_heads="$(git ls-remote --heads origin | cut -f1 | cut -c1-12 | jq -R . | jq -s .)"
+          # Full heads of all live branches; the policy prefix-matches the
+          # sha-<short_sha> tag components against these.
+          branch_heads="$(git ls-remote --heads origin | cut -f1 | jq -R . | jq -s .)"
 
           # Policy lives in ci/sim_image_retention.jq; test with
           # ci/test_sim_image_retention.sh after any change.
