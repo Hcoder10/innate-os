@@ -44,9 +44,7 @@ class FakeActionClient:
 
 
 def _make_runner(monkeypatch, server_available):
-    monkeypatch.setattr(
-        runner_module, "ActionClient", lambda node, action, name: FakeActionClient(server_available)
-    )
+    monkeypatch.setattr(runner_module, "ActionClient", lambda node, action, name: FakeActionClient(server_available))
     node = SimpleNamespace(get_logger=lambda: FakeLogger())
     ws_messages = []
     ws = SimpleNamespace(send_message=ws_messages.append)
