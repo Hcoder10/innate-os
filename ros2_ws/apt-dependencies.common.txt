@@ -108,3 +108,4 @@ ros-humble-robot-state-publisher
 ros-humble-topic-tools
 ros-humble-xacro
 libhdf5-dev
+libopenmpi-dev
