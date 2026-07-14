@@ -52,10 +52,18 @@ jobs:
           versions_file="$(mktemp)"
 
           # A package that has never been published is nothing to clean, not an
-          # error — every scheduled run used to die here on the 404.
-          if ! gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" > "${versions_file}"; then
-            echo "Package ${package} not found on ghcr; nothing to clean up."
-            exit 0
+          # error — every scheduled run used to die here on the 404. Anything
+          # else (permissions, rate limit, transient API failure) still fails
+          # the job rather than silently skipping cleanup.
+          api_error_file="$(mktemp)"
+          if ! gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" \
+              > "${versions_file}" 2> "${api_error_file}"; then
+            if grep -q "HTTP 404" "${api_error_file}"; then
+              echo "Package ${package} not found on ghcr; nothing to clean up."
+              exit 0
+            fi
+            cat "${api_error_file}" >&2
+            exit 1
           fi
 
           jq -r '
