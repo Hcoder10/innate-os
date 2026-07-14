@@ -477,6 +477,7 @@ function buildView(root) {
       render();
     },
     5000,
+    "sensor_msgs/msg/Image",
   );
   calibCheckTimer = setTimeout(() => {
     calibCheckTimer = null;
