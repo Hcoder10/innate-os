@@ -124,22 +124,23 @@ void StereoDepthEstimator::publishDisparityMsg(const cv::Mat& disparity_float, c
 }
 
 // =============================================================================
-// Convert disparity → 16SC1 depth (mm) and publish
+// Convert disparity → 16UC1 depth (mm) and publish (unsigned: depth in mm
+// is never negative, and unlike 16SC1 every standard viewer can decode it)
 // =============================================================================
 void StereoDepthEstimator::publishDepth(const cv::Mat& disparity_float, const rclcpp::Time& ts) {
     const float fb = static_cast<float>(focal_length_) * std::abs(static_cast<float>(baseline_));
     const float MAX_DEPTH_M = 10.0f;
 
-    cv::Mat depth_calib(calib_height_, calib_width_, CV_16SC1);
+    cv::Mat depth_calib(calib_height_, calib_width_, CV_16UC1);
     for (int y = 0; y < calib_height_; y++) {
         const float* disp_row = disparity_float.ptr<float>(y);
-        int16_t* depth_row = depth_calib.ptr<int16_t>(y);
+        uint16_t* depth_row = depth_calib.ptr<uint16_t>(y);
         for (int x = 0; x < calib_width_; x++) {
             const float d = disp_row[x];
             if (d > 0.0f) {
                 float z = fb / d;
                 if (z > 0.0f && z <= MAX_DEPTH_M) {
-                    depth_row[x] = static_cast<int16_t>(std::clamp(z * 1000.0f, -32768.0f, 32767.0f));
+                    depth_row[x] = static_cast<uint16_t>(std::clamp(z * 1000.0f, 0.0f, 65535.0f));
                 } else {
                     depth_row[x] = 0;
                 }
@@ -157,9 +158,9 @@ void StereoDepthEstimator::publishDepth(const cv::Mat& disparity_float, const rc
     msg->header.frame_id = frame_id_;
     msg->height = image_height_;
     msg->width = image_width_;
-    msg->encoding = "16SC1";
+    msg->encoding = "16UC1";
     msg->is_bigendian = false;
-    msg->step = image_width_ * sizeof(int16_t);
+    msg->step = image_width_ * sizeof(uint16_t);
     msg->data.resize(msg->height * msg->step);
     memcpy(msg->data.data(), depth_full.data, msg->data.size());
     depth_pub_->publish(std::move(msg));

@@ -59,7 +59,7 @@ arm_camera_driver:
     # ── Topics ────────────────────────────────────────────────────────────
     left_topic: "/mars/main_camera/left/image_raw"
     right_topic: "/mars/main_camera/right/image_raw"
-    depth_topic: "/mars/main_camera/depth/image_rect_raw"     # 16SC1 mm
+    depth_topic: "/mars/main_camera/depth/image_rect_raw"     # 16UC1 mm
     disparity_topic: "/mars/main_camera/disparity"             # filtered DisparityImage
     disparity_unfiltered_topic: "/mars/main_camera/disparity_unfiltered"  # raw VPI output
     left_rectified_topic: "/mars/main_camera/left/image_rect"  # mono8 rectified
