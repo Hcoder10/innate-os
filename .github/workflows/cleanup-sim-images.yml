@@ -60,7 +60,6 @@ jobs:
           set -euo pipefail
 
           package="${{ matrix.package }}"
-          keep_file="$(mktemp)"
           versions_file="$(mktemp)"
 
           gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" \
@@ -75,50 +74,25 @@ jobs:
           # tags the publish workflow pushes.
           branch_heads="$(git ls-remote --heads origin | cut -f1 | cut -c1-12 | jq -R . | jq -s .)"
 
-          jq -r \
+          # Policy lives in ci/sim_image_retention.jq; test with
+          # ci/test_sim_image_retention.sh after any change.
+          plan="$(jq -f ci/sim_image_retention.jq \
             --argjson heads "${branch_heads}" \
             --arg main_hash "${main_inputs_hash}" \
             --argjson head_days "${HEAD_OF_BRANCH_DAYS}" \
-            --argjson other_days "${OTHER_DAYS}" '
-            def tags: .metadata.container.tags // [];
-            def age_days: (now - (.updated_at | fromdateiso8601)) / 86400;
-            def keep_forever:
-              tags | any(
-                . == "main" or startswith("main-")
-                or startswith("buildcache")
-                or . == "inputs-\($main_hash)" or startswith("inputs-\($main_hash)-")
-              );
-            def head_of_branch:
-              tags | any(startswith("sha-") and (.[4:16] as $s | $heads | index($s)));
-            .[]
-            | select(
-                keep_forever
-                or (head_of_branch and age_days <= $head_days)
-                or ((head_of_branch | not) and age_days <= $other_days)
-              )
-            | .id
-          ' "${versions_file}" >> "${keep_file}"
-
-          sort -u -o "${keep_file}" "${keep_file}"
-
-          delete_file="$(mktemp)"
-          jq -r '.[] | .id' "${versions_file}" \
-            | grep -Fvx -f "${keep_file}" \
-            > "${delete_file}" || true
+            --argjson other_days "${OTHER_DAYS}" \
+            "${versions_file}")"
 
           echo "Package: ${package}"
-          echo "Keeping $(wc -l < "${keep_file}" | xargs) package versions."
-          echo "Deleting $(wc -l < "${delete_file}" | xargs) package versions."
+          jq -r '"Keeping \(.keep) package versions.",
+                 "Deleting \(.delete | length) package versions."' <<<"${plan}"
 
-          while IFS= read -r version_id; do
+          while IFS=$'\t' read -r version_id tags; do
             [ -n "${version_id}" ] || continue
-            tags="$(jq -r --argjson id "${version_id}" '
-              .[] | select(.id == $id) | (.metadata.container.tags // []) | join(",")
-            ' "${versions_file}")"
             if [[ "${DRY_RUN}" == "true" ]]; then
               echo "dry-run delete ${package} version ${version_id}: ${tags}"
             else
               echo "delete ${package} version ${version_id}: ${tags}"
               gh api --method DELETE "/orgs/${ORG}/packages/container/${package}/versions/${version_id}"
             fi
-          done < "${delete_file}"
+          done < <(jq -r '.delete[] | "\(.id)\t\(.tags)"' <<<"${plan}")
