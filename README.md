@@ -53,6 +53,7 @@ _Innate OS is developed for MARS; if you want to port it to your robot, we are h
 - [Skills](#skills)
 - [Agents](#agents)
 - [Simulator](#simulator)
+- [Foxglove](#foxglove)
 - [Additional Inputs](#additional-inputs)
 - [ROS Reference](#ros-reference)
 - [More Docs](#more-docs)
@@ -301,6 +302,22 @@ The first `up` provisions everything automatically (simulation assets, the 3D vi
 ```
 
 See [`sim/README.md`](sim/README.md) for everything else: the day-to-day workflow, the ROS-free VirtualMars Python API (with a walkthrough notebook), and the architecture.
+
+---
+
+## Foxglove
+
+[Foxglove Studio](https://foxglove.dev) gives you a live view of TF, `/scan`, camera images, point clouds, and `/cmd_vel` teleop for debugging. In the [simulator](#simulator) the bridge is always on; on a physical robot it is opt-in:
+
+```bash
+innate foxglove start   # start the bridge (ws://<robot-ip>:8765)
+innate foxglove stop    # stop it
+innate foxglove         # status
+```
+
+Then connect Foxglove Studio to the printed `ws://` URL.
+
+> **Over Wi-Fi, subscribe to the `/mars/main_camera/remote/*` topics, not the raw ones.** The raw camera images (~0.9 MB/frame) and point clouds (`/mars/main_camera/points`, ~10 MB/s) are far more than a Wi-Fi link can carry, so every panel — including `/cmd_vel` — falls seconds behind. The `remote/` namespace carries the same topics throttled to ~2 Hz (and images already compressed), which fits comfortably. Prefer `.../compressed` image topics and mono `remote/points` over `remote/points_color`.
 
 ---
 

@@ -1019,7 +1019,11 @@ def _foxglove_start():
             "send-keys",
             "-t",
             f"{FOXGLOVE_TMUX_SESSION}:foxglove",
-            f"{env_cmd} && ros2 launch foxglove_bridge foxglove_bridge_launch.xml",
+            # Low-latency defaults: shallow queue + small send buffer so the
+            # bridge drops stale frames instead of queuing seconds of lag over
+            # a slow (WiFi) link.
+            f"{env_cmd} && ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
+            " send_buffer_limit:=2000000 max_qos_depth:=1",
             "C-m",
         ]
     )
@@ -2789,7 +2793,8 @@ def foxglove_cli(ctx):
       innate foxglove stop
     """
     if ctx.invoked_subcommand is None:
-        sys.exit(_foxglove_status())
+        click.echo(ctx.get_help())
+        ctx.exit(1)
 
 
 @foxglove_cli.command("start")

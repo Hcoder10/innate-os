@@ -172,7 +172,9 @@ echo "Started webapp (https :443 + http :80)..."
 # side published by sim/docker-compose.dev.yml; SIM_FOXGLOVE_PORT/BIND
 # override, and the launcher shifts it to 8766 when the local brain owns 8765).
 tmux new-window -t "$SESSION_NAME" -n foxglove
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove" "ros2 launch foxglove_bridge foxglove_bridge_launch.xml" C-m
+# Low-latency defaults: shallow queue + small send buffer so the bridge drops
+# stale frames instead of queuing seconds of lag over a slow (WiFi) link.
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove" "ros2 launch foxglove_bridge foxglove_bridge_launch.xml send_buffer_limit:=2000000 max_qos_depth:=1" C-m
 echo "Started Foxglove bridge (ws :${SIM_FOXGLOVE_PORT:-8765})..."
 
 # Select the rosbridge-app window
