@@ -101,18 +101,58 @@ def test_start_task_reports_running_when_goal_dispatched(monkeypatch):
     assert finished == []
 
 
+def _reject_goal(runner):
+    rejected_handle = SimpleNamespace(accepted=False)
+    runner._on_goal_response(
+        SimpleNamespace(result=lambda: rejected_handle),
+        skill_name="victory_spin",
+        primitive_id="prim-1",
+        skill_id="local/victory_spin",
+    )
+
+
 def test_rejected_goal_sends_terminal_failed_to_cloud(monkeypatch):
     runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
     runner.start_task("local/victory_spin", "prim-1", {})
     ws_messages.clear()
 
-    rejected_handle = SimpleNamespace(accepted=False)
-    runner._on_goal_response(SimpleNamespace(result=lambda: rejected_handle))
+    _reject_goal(runner)
 
     types = [m.type for m in ws_messages]
     assert types == [MessageInType.PRIMITIVE_FAILED]
     assert runner._state.primitive_running is None
     assert finished == [True]
+
+
+def test_rejected_goal_reports_failed_even_after_state_cleared(monkeypatch):
+    """A deactivate/unregister racing the goal response clears primitive_running
+    without telling the cloud (no goal handle yet) — the rejection must still
+    send the terminal 'failed'."""
+    runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
+    runner.start_task("local/victory_spin", "prim-1", {})
+    ws_messages.clear()
+    runner._state.primitive_running = None  # the race
+
+    _reject_goal(runner)
+
+    types = [m.type for m in ws_messages]
+    assert types == [MessageInType.PRIMITIVE_FAILED]
+    assert ws_messages[0].payload["primitive_id"] == "prim-1"
+
+
+def test_rejected_goal_leaves_a_newer_running_task_alone(monkeypatch):
+    """If another task started after the race cleared ours, its state and gaze
+    pause must survive our late rejection."""
+    runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
+    runner.start_task("local/victory_spin", "prim-1", {})
+    ws_messages.clear()
+    newer = {"primitive_name": "wave", "primitive_id": "prim-2", "skill_id": "local/wave"}
+    runner._state.primitive_running = dict(newer)
+
+    _reject_goal(runner)
+
+    assert runner._state.primitive_running == newer
+    assert finished == []
 
 
 def test_report_start_failure_used_for_unknown_skill(monkeypatch):
@@ -129,6 +169,25 @@ def test_report_start_failure_used_for_unknown_skill(monkeypatch):
     assert ws_messages[0].payload["primitive_id"] == "prim-2"
     assert runner._state.primitive_running is None
     assert finished == [True]
+
+
+def test_report_start_failure_keeps_active_task_undisturbed(monkeypatch):
+    """An unknown next_task while another primitive runs must tell the cloud
+    'failed' but NOT fire on_task_finished (gaze resume) over the active task."""
+    runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
+    runner.start_task("local/victory_spin", "prim-1", {})
+    ws_messages.clear()
+
+    runner.report_start_failure(
+        primitive_name="does_not_exist",
+        primitive_id="prim-2",
+        reason="Unknown skill 'does_not_exist' — not in the registered skill set.",
+    )
+
+    types = [m.type for m in ws_messages]
+    assert types == [MessageInType.PRIMITIVE_FAILED]
+    assert runner._state.primitive_running["primitive_id"] == "prim-1"
+    assert finished == []
 
 
 if __name__ == "__main__":
