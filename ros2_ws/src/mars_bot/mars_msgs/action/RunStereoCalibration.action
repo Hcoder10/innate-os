@@ -1,7 +1,8 @@
 # Goal
-bool use_playback
-string bag_path
-float32 playback_rate
+uint8 MODE_MANUAL=0
+uint8 MODE_AUTONOMOUS=1
+uint8 mode  # only MODE_MANUAL implemented currently
+
 int32 num_images
 int32 min_corners
 bool save_calibration
@@ -13,10 +14,12 @@ int32 images_captured
 float32 left_rms
 float32 right_rms
 float32 stereo_rms
-string output_path
 ---
 # Feedback
-string phase
+string phase  # CAPTURE | PROCESSING
 int32 images_captured
 int32 capture_attempts
+bool corners_found
+string[] image_names
+sensor_msgs/CompressedImage[] images
 string message

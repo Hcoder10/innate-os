@@ -14,8 +14,9 @@ import { installPressActivate } from "./pressActivate.js";
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
 // In sim mode (config.simControls) only these sections make sense — the rest
-// (Datasets/Collect/Training/Profiling) are robot-data workflows with no sim
-// backing, so they're hidden from the rail.
+// (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
+// with no sim backing — the sim has no real stereo camera or ChArUco board to
+// calibrate against — so they're hidden from the rail.
 const SIM_SECTIONS = new Set(["teleop", "agent", "debugging", "settings"]);
 
 /** @type {Section[]} */
@@ -57,6 +58,13 @@ const SECTIONS = [
     label: "Profiling",
     // Stopwatch motif: dial, crown, and a sweeping hand.
     icon: '<circle cx="12" cy="13" r="7.5"/><line x1="12" y1="13" x2="15" y2="10"/><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="9.5" y1="2.5" x2="14.5" y2="2.5"/>',
+  },
+  {
+    key: "calibration",
+    label: "Camera Calibration",
+    // Target/crosshair motif: concentric rings + cross ticks, for aiming the
+    // ChArUco board.
+    icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.5" y2="12"/><line x1="18.5" y1="12" x2="21.5" y2="12"/>',
   },
   {
     key: "settings",

@@ -234,4 +234,28 @@ export const PANE_LAUNCH_LABELS = {
   "console": ["console.launch.py", "dataset_encoder.launch.py"],
 };
 
+// ---- Camera Calibration page ----------------------------------------------
+// Interactive stereo (ChArUco) calibration, driven by the mars_cam
+// stereo_calibrator node. The action stays open for the whole capture session:
+// goal {mode: MODE_MANUAL(0), num_images, min_corners, save_calibration},
+// feedback streams after each capture attempt ({phase, images_captured,
+// capture_attempts, corners_found, image_names, images: CompressedImage[]}),
+// result lands once enough images are captured / the goal is cancelled / the
+// server's capture watchdog times out ({success, message, images_captured,
+// left_rms, right_rms, stereo_rms}).
+export const RUN_STEREO_CALIBRATION_ACTION = "/mars/main_camera/run_stereo_calibration";
+export const RUN_STEREO_CALIBRATION_ACTION_TYPE = "mars_msgs/action/RunStereoCalibration";
+// Publishing a std_msgs/Bool here (while a goal is running) triggers one
+// capture attempt against the current stereo frame. Must be a non-empty
+// message type — rws cannot deserialize a zero-field std_msgs/Empty published
+// from a browser client (crashes the subscriber node), so this is Bool not Empty.
+export const STEREO_CALIB_CAPTURE_TOPIC = "/mars/main_camera/calib/enter_events";
+// Server-side defaults, mirrored here as the page's number-input defaults.
+export const STEREO_CALIB_DEFAULT_NUM_IMAGES = 10;
+export const STEREO_CALIB_DEFAULT_MIN_CORNERS = 10;
+// Depth is only published once a valid stereo calibration is loaded (the depth
+// estimator gates on it), so whether a frame ever arrives here is a reliable,
+// zero-new-ROS-code proxy for "the robot currently has a calibration file".
+export const MAIN_CAMERA_DEPTH_TOPIC = "/mars/main_camera/depth/image_rect_raw";
+
 export const LAST_IP_KEY = "innate.lastRobotIP";

@@ -22,12 +22,9 @@ Usage:
     ros2 run mars_cam stereo_calibrator --ros-args -p squares_y:=8 -p squares_x:=11 -p square_size:=0.016 -p marker_size:=0.012
 
     Then press Enter to capture images. After 30 images, calibration is computed.
-    ros2 bag record /mars/arm/commands /mars/main_camera/calib/enter_events
+    ros2 bag record /mars/main_camera/calib/enter_events
 """
 
-import json
-import math
-import subprocess
 import sys
 import threading
 import time
@@ -38,39 +35,25 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from mars_msgs.action import RunStereoCalibration
-from mars_msgs.srv import GotoJS
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from sensor_msgs.msg import Image
-from std_msgs.msg import Empty, Float64MultiArray
+from sensor_msgs.msg import CompressedImage, Image
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
-from mars_cam.calibration_debug_vis import generate_debug_mosaic, generate_visualizations
+from mars_cam.calibration_debug_vis import generate_coverage_images, generate_debug_mosaic, generate_visualizations
 from mars_cam.calibration_utils import (
     find_calibration_dir,
     prompt_save,
-    restore_head_and_arm,
+    restore_head,
     save_calibration,
-    setup_head_and_arm,
+    setup_head,
 )
 
-# ---------------------------------------------------------------------------
-# Stereo calibration arm-control constants
-# ---------------------------------------------------------------------------
-
-# "Board handoff" pose:
-# all joints at 0, except joint3 tilted +9 degrees upward, gripper open.
-PREPARE_BOARD_JOINTS_RAD = [0.0, 0.0, math.radians(9.0), 0.0, 0.0, 0.85]
-GRIPPER_OPEN_RAD = 0.85
-GRIPPER_CLOSED_RAD = 0.0
-PREPARE_MOVE_TIME_SEC = 2.5
-GRIPPER_ACTION_TIME_SEC = 1.0
-DEFAULT_PREPARE_SERVICE_NAME = "/mars/main_camera/prepare_stereo_calibration"
 DEFAULT_STOP_SERVICE_NAME = "/mars/main_camera/stop_stereo_calibration"
 DEFAULT_DELETE_SERVICE_NAME = "/mars/main_camera/delete_stereo_calibration"
 
@@ -126,24 +109,20 @@ class StereoCalibrator(Node):
         self.declare_parameter("dictionary_id", cv2.aruco.DICT_4X4_250)
 
         # Calibration parameters
-        self.declare_parameter("num_images", 30)
+        self.declare_parameter("num_images", 10)
         self.declare_parameter(
             "min_corners", 10
         )  # Minimum corners to accept an image (recommend 10+ for calibrateCamera)
         self.declare_parameter("use_legacy_pattern", True)  # Enable for calib.io boards (OpenCV 4.6.0+)
         self.declare_parameter("debug", False)  # Enable debug mosaic after each capture
-        self.declare_parameter("playback", True)  # Playback mode: replay a rosbag
-        _default_bag_path = str(Path(get_package_share_directory("mars_cam")) / "calib")
-        self.declare_parameter("bag_path", _default_bag_path)  # Path to rosbag for playback
-        self.declare_parameter("playback_rate", 2)
         self.declare_parameter("interactive", True)  # CLI mode (stdin prompts)
-        self.declare_parameter("auto_start", True)  # Start capture/playback at boot of this node
+        self.declare_parameter("auto_start", True)  # Start capture at boot of this node (CLI mode only)
         self.declare_parameter("run_action_name", "/mars/main_camera/run_stereo_calibration")
-        self.declare_parameter("prepare_service_name", DEFAULT_PREPARE_SERVICE_NAME)
         self.declare_parameter("stop_service_name", DEFAULT_STOP_SERVICE_NAME)
         self.declare_parameter("delete_service_name", DEFAULT_DELETE_SERVICE_NAME)
-        self.declare_parameter("prepare_move_time_sec", PREPARE_MOVE_TIME_SEC)
-        self.declare_parameter("gripper_action_time_sec", GRIPPER_ACTION_TIME_SEC)
+        # How long to wait for a capture_trigger before timing out a managed run
+        # (guards against an orphaned goal if the requesting client disconnects).
+        self.declare_parameter("capture_timeout_sec", 60.0)
 
         # Get parameters
         self.left_topic = self.get_parameter("left_topic").value
@@ -162,17 +141,11 @@ class StereoCalibrator(Node):
         self.min_corners = self.get_parameter("min_corners").value
         self.use_legacy_pattern = self.get_parameter("use_legacy_pattern").value
         self.debug = self.get_parameter("debug").value
-        self.playback = self.get_parameter("playback").value
-        self.bag_path = self.get_parameter("bag_path").value
-        self.playback_rate = float(self.get_parameter("playback_rate").value)
         self.interactive = bool(self.get_parameter("interactive").value)
         self.auto_start = bool(self.get_parameter("auto_start").value)
         self.run_action_name = str(self.get_parameter("run_action_name").value)
-        self.prepare_service_name = str(self.get_parameter("prepare_service_name").value)
         self.stop_service_name = str(self.get_parameter("stop_service_name").value)
         self.delete_service_name = str(self.get_parameter("delete_service_name").value)
-        self.prepare_move_time_sec = float(self.get_parameter("prepare_move_time_sec").value)
-        self.gripper_action_time_sec = float(self.get_parameter("gripper_action_time_sec").value)
 
         # Create ChArUco board
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(self.dictionary_id)
@@ -208,10 +181,12 @@ class StereoCalibrator(Node):
         self._cancel_requested = False
         self._active_goal = None
         self._active_goal_lock = threading.Lock()
-        self._playback_proc = None
-        self._playback_proc_lock = threading.Lock()
-        self._last_output_path = ""
         self._last_rms = {"left": 0.0, "right": 0.0, "stereo": 0.0}
+        # Watchdog: aborts a managed run if no capture_trigger arrives in time
+        # (guards against an orphaned goal when the requesting client disconnects).
+        self._last_capture_time = 0.0
+        self._watchdog_active = False
+        self._watchdog_timed_out = False
 
         # Re-entrant callback group so services/cancel callbacks can run while
         # the long-running action execute callback is active.
@@ -222,9 +197,9 @@ class StereoCalibrator(Node):
         self.tmp_image_dir.mkdir(parents=True, exist_ok=True)
 
         # Enter-event topic: keyboard thread publishes, callback triggers capture
-        self._enter_pub = self.create_publisher(Empty, "/mars/main_camera/calib/enter_events", 10)
+        self._enter_pub = self.create_publisher(Bool, "/mars/main_camera/calib/enter_events", 10)
         self._enter_sub = self.create_subscription(
-            Empty, "/mars/main_camera/calib/enter_events", self._enter_event_callback, 1
+            Bool, "/mars/main_camera/calib/enter_events", self._enter_event_callback, 1
         )
 
         # Action server for app/API control (single long-running calibration goal)
@@ -238,19 +213,12 @@ class StereoCalibrator(Node):
             callback_group=self._control_cb_group,
         )
 
-        # Arm control client used by prepare/start calibration flows.
-        self._arm_goto_client = self.create_client(
-            GotoJS,
-            "/mars/arm/goto_js",
-            callback_group=self._control_cb_group,
-        )
-
-        # Service for app step 1: move arm to "insert board" pose.
-        self._prepare_service = self.create_service(
-            Trigger,
-            self.prepare_service_name,
-            self._prepare_board_service_callback,
-            callback_group=self._control_cb_group,
+        # Watchdog timer: created once and left running for the node's lifetime,
+        # gated by self._watchdog_active rather than destroyed/recreated per goal
+        # (destroying timers/subscriptions from under a spinning executor has caused
+        # crash-loops elsewhere in this codebase).
+        self._watchdog_timer = self.create_timer(
+            1.0, self._check_capture_timeout, callback_group=self._control_cb_group
         )
 
         # Optional convenience service for stop button in app.
@@ -271,7 +239,7 @@ class StereoCalibrator(Node):
 
         if self.interactive and self.auto_start:
             # Set up head and arm for interactive calibration.
-            setup_head_and_arm(self)
+            setup_head(self)
 
             # Check for existing images and ask user
             self.check_existing_images()
@@ -303,22 +271,16 @@ class StereoCalibrator(Node):
         )
         self.sync.registerCallback(self.image_callback)
 
-        # Start input / playback only in CLI interactive mode.
+        # Start keyboard input only in CLI interactive mode.
         if self.interactive and self.auto_start:
-            if self.playback:
-                self.get_logger().info("Mode: PLAYBACK (replaying rosbag)")
-                self._playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
-                self._playback_thread.start()
-            else:
-                self.get_logger().info("Mode: RECORD (manual capture)")
-                self.input_thread = threading.Thread(target=self.keyboard_input_loop, daemon=True)
-                self.input_thread.start()
-                self.get_logger().info("=" * 60)
-                self.get_logger().warn(">>> Move the board and press ENTER to capture an image <<<")
+            self.get_logger().info("Mode: RECORD (manual capture)")
+            self.input_thread = threading.Thread(target=self.keyboard_input_loop, daemon=True)
+            self.input_thread.start()
+            self.get_logger().info("=" * 60)
+            self.get_logger().warn(">>> Move the board and press ENTER to capture an image <<<")
         else:
             self._capture_enabled = False
             self.get_logger().info(f"Mode: MANAGED (waiting for action goals on '{self.run_action_name}')")
-            self.get_logger().info(f"Prepare service available on '{self.prepare_service_name}'")
             self.get_logger().info(f"Stop service available on '{self.stop_service_name}'")
             self.get_logger().info(f"Delete service available on '{self.delete_service_name}'")
 
@@ -335,7 +297,6 @@ class StereoCalibrator(Node):
         self.capture_attempts = 0
         self.calibration_done = False
         self.calibration_data = None
-        self._last_output_path = ""
         self._last_rms = {"left": 0.0, "right": 0.0, "stereo": 0.0}
         with self.frame_lock:
             self.latest_left_frame = None
@@ -355,117 +316,54 @@ class StereoCalibrator(Node):
         self._request_stop_active_run("Calibration cancel requested")
         return CancelResponse.ACCEPT
 
-    def _publish_action_feedback(self, goal_handle, phase: str, message: str):
+    def _publish_action_feedback(
+        self,
+        goal_handle,
+        phase: str,
+        message: str,
+        corners_found: bool = False,
+        images: dict[str, np.ndarray] | None = None,
+    ):
         feedback = RunStereoCalibration.Feedback()
         feedback.phase = phase
         feedback.images_captured = int(self.images_captured)
         feedback.capture_attempts = int(self.capture_attempts)
-        feedback_payload = {
-            "phase": phase,
-            "images_captured": int(self.images_captured),
-            "capture_attempts": int(self.capture_attempts),
-            "message": message,
-        }
-        feedback.message = json.dumps(feedback_payload, separators=(",", ":"), ensure_ascii=True)
+        feedback.corners_found = bool(corners_found)
+        feedback.message = message
+        for name, img in (images or {}).items():
+            ok, buf = cv2.imencode(".jpg", img)
+            if not ok:
+                continue
+            compressed = CompressedImage()
+            compressed.format = "jpeg"
+            compressed.data = buf.tobytes()
+            feedback.image_names.append(name)
+            feedback.images.append(compressed)
         goal_handle.publish_feedback(feedback)
 
-    def _terminate_playback_process(self) -> bool:
-        """Terminate active rosbag playback process if it is running."""
-        with self._playback_proc_lock:
-            proc = self._playback_proc
-
-        if proc is None or proc.poll() is not None:
-            return False
-
-        try:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5.0)
-            except Exception:
-                proc.kill()
-            return True
-        except Exception as e:
-            self.get_logger().warn(f"Failed to terminate playback process: {e}")
-            return False
-
     def _request_stop_active_run(self, reason: str):
-        """Request stop for active run and terminate playback promptly."""
+        """Request stop for the active run."""
         self._cancel_requested = True
-        terminated = self._terminate_playback_process()
-        if terminated:
-            self.get_logger().info(f"{reason}; playback process terminated")
-        else:
-            self.get_logger().info(f"{reason}; cancellation flag set")
+        self.get_logger().info(f"{reason}; cancellation flag set")
 
-    def _call_arm_goto_js(
-        self,
-        joint_positions: list[float],
-        duration_sec: float,
-    ) -> tuple[bool, str]:
-        """Call /mars/arm/goto_js with a 6-DOF target."""
-        if len(joint_positions) != 6:
-            return False, f"Expected 6 joints, got {len(joint_positions)}"
+    def _check_capture_timeout(self):
+        """Watchdog: abort a stalled managed run if no capture arrives in time.
 
-        if not self._arm_goto_client.wait_for_service(timeout_sec=2.0):
-            return False, "/mars/arm/goto_js service not available"
-
-        req = GotoJS.Request()
-        req.data = Float64MultiArray()
-        req.data.data = [float(v) for v in joint_positions]
-        req.time = float(duration_sec)
-
-        try:
-            future = self._arm_goto_client.call_async(req)
-        except Exception as e:
-            return False, f"Failed to call /mars/arm/goto_js: {e}"
-
-        timeout_sec = max(2.0, float(duration_sec) + 5.0)
-        end_time = time.time() + timeout_sec
-        while rclpy.ok() and not future.done() and time.time() < end_time:
-            time.sleep(0.05)
-
-        if not future.done():
-            return False, f"/mars/arm/goto_js timed out after {timeout_sec:.1f}s"
-
-        try:
-            result = future.result()
-        except Exception as e:
-            return False, f"/mars/arm/goto_js failed: {e}"
-
-        if result is None:
-            return False, "/mars/arm/goto_js returned no result"
-        if not result.success:
-            return False, "/mars/arm/goto_js reported failure"
-        return True, "ok"
-
-    def _move_arm_to_prepare_pose(self, gripper_open: bool) -> tuple[bool, str]:
-        """Move arm to board handoff pose with open/closed gripper."""
-        target = list(PREPARE_BOARD_JOINTS_RAD)
-        target[5] = GRIPPER_OPEN_RAD if gripper_open else GRIPPER_CLOSED_RAD
-        duration = self.prepare_move_time_sec if gripper_open else self.gripper_action_time_sec
-        success, message = self._call_arm_goto_js(target, duration)
-        if success:
-            grip_state = "open" if gripper_open else "closed"
-            self.get_logger().info(f"Arm moved to calibration handoff pose (gripper {grip_state})")
-        return success, message
-
-    def _prepare_board_service_callback(self, request, response):
-        """Service callback to place arm in board insertion pose."""
-        del request
-
-        with self._active_goal_lock:
-            if self._active_goal is not None:
-                response.success = False
-                response.message = "Calibration is running; stop it before prepare."
-                return response
-
-        success, message = self._move_arm_to_prepare_pose(gripper_open=True)
-        response.success = bool(success)
-        if success:
-            response.message = "Arm ready for board insertion (joint3 +9deg, gripper open)."
-        else:
-            response.message = f"Failed to move to board insertion pose: {message}"
-        return response
+        Guards against an orphaned goal when the requesting (rosbridge) client
+        disconnects mid-run — the client stops sending capture_trigger messages,
+        so this timer notices and aborts the goal itself.
+        """
+        if not self._watchdog_active:
+            return
+        # Re-read live so `ros2 param set capture_timeout_sec` takes effect immediately,
+        # instead of only at node startup.
+        timeout_sec = float(self.get_parameter("capture_timeout_sec").value)
+        if time.time() - self._last_capture_time > timeout_sec:
+            self._watchdog_active = False
+            self._watchdog_timed_out = True
+            self.get_logger().warn(
+                f"No capture received in {timeout_sec:.0f}s — aborting calibration run"
+            )
 
     def _stop_calibration_service_callback(self, request, response):
         """Service callback for stop button while action is running."""
@@ -525,15 +423,30 @@ class StereoCalibrator(Node):
         return response
 
     def _execute_run_calibration(self, goal_handle):
-        """Execute a managed stereo calibration run for app/API clients."""
+        """Execute a managed stereo calibration run for app/API clients (manual capture only)."""
         with self._active_goal_lock:
             self._active_goal = goal_handle
+
+        def _make_result(success: bool, message: str) -> RunStereoCalibration.Result:
+            result = RunStereoCalibration.Result()
+            result.success = success
+            result.message = message
+            result.images_captured = int(self.images_captured)
+            result.left_rms = float(self._last_rms["left"])
+            result.right_rms = float(self._last_rms["right"])
+            result.stereo_rms = float(self._last_rms["stereo"])
+            return result
 
         try:
             goal = goal_handle.request
             self._cancel_requested = False
             self._reset_calibration_session()
-            self._capture_enabled = True
+
+            if goal.mode != RunStereoCalibration.Goal.MODE_MANUAL:
+                msg = "Only MODE_MANUAL is currently supported"
+                self.get_logger().error(msg)
+                goal_handle.abort()
+                return _make_result(False, msg)
 
             # Allow per-goal overrides while keeping sane defaults.
             if goal.num_images > 0:
@@ -541,87 +454,61 @@ class StereoCalibrator(Node):
             if goal.min_corners > 0:
                 self.min_corners = int(goal.min_corners)
 
-            if not goal.use_playback:
-                msg = "Manual capture mode is not implemented in managed action yet"
-                self.get_logger().error(msg)
-                self._capture_enabled = False
-                goal_handle.abort()
-                result = RunStereoCalibration.Result()
-                result.success = False
-                result.message = msg
-                return result
+            setup_head(self)
 
-            bag_path = goal.bag_path.strip() if goal.bag_path.strip() else self.bag_path
-            playback_rate = float(goal.playback_rate) if goal.playback_rate > 0.0 else self.playback_rate
+            self._capture_enabled = True
+            self._last_capture_time = time.time()
+            self._watchdog_timed_out = False
+            self._watchdog_active = True
 
+            # Wait for capture_trigger events (handled in _enter_event_callback)
+            # until enough images are captured, the goal is cancelled, or the
+            # capture-timeout watchdog fires. Loop only ever exits via one of the
+            # explicit branches below — a bare `while rclpy.ok():` would fall
+            # through to "enough images captured" on shutdown too, which isn't true.
+            while True:
+                if not rclpy.ok():
+                    self._capture_enabled = False
+                    goal_handle.abort()
+                    return _make_result(False, "Node shutting down")
+
+                if self._cancel_requested or goal_handle.is_cancel_requested:
+                    restore_head(self)
+                    self._capture_enabled = False
+                    # goal_handle.canceled() is only a valid transition after a real
+                    # action-level cancel handshake (is_cancel_requested). The stop
+                    # service sets _cancel_requested directly without that handshake,
+                    # so it must abort instead or rclpy raises an invalid transition.
+                    if goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                    else:
+                        goal_handle.abort()
+                    return _make_result(False, "Calibration stopped")
+
+                if self._watchdog_timed_out:
+                    restore_head(self)
+                    self._capture_enabled = False
+                    msg = "Timed out waiting for capture"
+                    goal_handle.abort()
+                    return _make_result(False, msg)
+
+                if self.images_captured >= self.num_images_required:
+                    break
+
+                time.sleep(0.1)
+
+            self._watchdog_active = False
+            self._capture_enabled = False
             self._publish_action_feedback(
-                goal_handle,
-                "INIT",
-                f"Starting playback from '{bag_path}' at {playback_rate:.2f}x",
-            )
-
-            setup_head_and_arm(self)
-
-            playback_ok = self._playback_loop(
-                bag_path_override=bag_path,
-                playback_rate=playback_rate,
-                auto_finalize=False,
-                goal_handle=goal_handle,
-            )
-
-            if self._cancel_requested or goal_handle.is_cancel_requested:
-                restore_head_and_arm(self)
-                self._capture_enabled = False
-                goal_handle.canceled()
-                result = RunStereoCalibration.Result()
-                result.success = False
-                result.message = "Calibration cancelled"
-                result.images_captured = int(self.images_captured)
-                return result
-
-            if not playback_ok:
-                restore_head_and_arm(self)
-                self._capture_enabled = False
-                msg = "Playback failed"
-                self.get_logger().error(msg)
-                goal_handle.abort()
-                result = RunStereoCalibration.Result()
-                result.success = False
-                result.message = msg
-                result.images_captured = int(self.images_captured)
-                return result
-
-            if self.images_captured <= 0:
-                self._capture_enabled = False
-                msg = "No captures were recorded during playback"
-                self.get_logger().error(msg)
-                goal_handle.abort()
-                result = RunStereoCalibration.Result()
-                result.success = False
-                result.message = msg
-                return result
-
-            self._publish_action_feedback(
-                goal_handle,
-                "CALIBRATING",
-                f"Captured {self.images_captured} image pairs, running calibration",
+                goal_handle, "PROCESSING", f"Captured {self.images_captured} image pairs, running calibration"
             )
 
             success, message = self.run_calibration(
                 save_decision=bool(goal.save_calibration),
                 shutdown_on_complete=False,
             )
-            self._capture_enabled = False
 
-            result = RunStereoCalibration.Result()
-            result.success = bool(success)
-            result.message = message
-            result.images_captured = int(self.images_captured)
-            result.left_rms = float(self._last_rms["left"])
-            result.right_rms = float(self._last_rms["right"])
-            result.stereo_rms = float(self._last_rms["stereo"])
-            result.output_path = self._last_output_path
-
+            result = _make_result(success, message)
             if success:
                 goal_handle.succeed()
             else:
@@ -632,12 +519,9 @@ class StereoCalibrator(Node):
             self._capture_enabled = False
             self.get_logger().error(f"Managed calibration failed: {e}")
             goal_handle.abort()
-            result = RunStereoCalibration.Result()
-            result.success = False
-            result.message = f"Calibration failed: {e}"
-            result.images_captured = int(self.images_captured)
-            return result
+            return _make_result(False, f"Calibration failed: {e}")
         finally:
+            self._watchdog_active = False
             with self._active_goal_lock:
                 self._active_goal = None
 
@@ -686,8 +570,13 @@ class StereoCalibrator(Node):
     #  Enter-event handling
     # ------------------------------------------------------------------ #
 
-    def _enter_event_callback(self, msg: Empty):
-        """Called when an enter event is received — grab latest frames and process."""
+    def _enter_event_callback(self, msg: Bool):
+        """Called on a capture_trigger event — grab latest frames and process.
+
+        Used both by the CLI keyboard-input loop and by managed/action clients
+        (published over rosbridge as a manual "capture now" request).
+        """
+        del msg
         if self.calibration_done or not self._capture_enabled:
             return
 
@@ -699,6 +588,7 @@ class StereoCalibrator(Node):
             right_img = self.latest_right_frame.copy()
 
         self.capture_attempts += 1
+        self._last_capture_time = time.time()
         result = self._process_image_pair(left_img, right_img, label="Capture", save_images=True)
 
         if result.success:
@@ -708,84 +598,22 @@ class StereoCalibrator(Node):
         if self.debug:
             generate_debug_mosaic(self, result)
 
-    # ------------------------------------------------------------------ #
-    #  Rosbag playback
-    # ------------------------------------------------------------------ #
-
-    def _playback_loop(
-        self,
-        bag_path_override: str | None = None,
-        playback_rate: float | None = None,
-        auto_finalize: bool = True,
-        goal_handle=None,
-    ) -> bool:
-        """Play rosbag and optionally finalize calibration when playback finishes."""
-        bag = bag_path_override if bag_path_override else self.bag_path
-        if not bag:
-            bag = str(self.tmp_image_dir / "calibration_bag")
-
-        bag_path = Path(bag)
-        if not bag_path.exists():
-            self.get_logger().error(f"Bag not found: {bag_path}")
-            return False
-
-        rate = playback_rate if playback_rate and playback_rate > 0.0 else self.playback_rate
-        self.get_logger().info(f"Playing rosbag: {bag_path} at {rate:.2f}x")
-
-        # Wait a moment for subscriptions to connect
-        time.sleep(2.0)
-
-        proc = None
-        try:
-            proc = subprocess.Popen(
-                ["ros2", "bag", "play", "-r", str(rate), str(bag_path)],
+        with self._active_goal_lock:
+            goal_handle = self._active_goal
+        if goal_handle is not None:
+            left_coverage, right_coverage = generate_coverage_images(self)
+            feedback_message = (
+                f"Captured {self.images_captured}/{self.num_images_required}"
+                if result.success
+                else "No board detected in this capture"
             )
-            with self._playback_proc_lock:
-                self._playback_proc = proc
-
-            last_feedback_time = 0.0
-            while True:
-                if self._cancel_requested:
-                    self._terminate_playback_process()
-                    self.get_logger().info("Playback terminated due to cancellation")
-                    return False
-
-                if goal_handle is not None:
-                    now = time.time()
-                    if now - last_feedback_time >= 0.5:
-                        self._publish_action_feedback(
-                            goal_handle,
-                            "PLAYBACK",
-                            f"Captures: {self.images_captured}/{self.num_images_required}",
-                        )
-                        last_feedback_time = now
-
-                rc = proc.poll()
-                if rc is not None:
-                    if rc != 0:
-                        self.get_logger().warn(f"ros2 bag play exited with code {rc}")
-                        return False
-                    break
-                time.sleep(0.1)
-
-        except Exception as e:
-            self.get_logger().error(f"Failed to play bag: {e}")
-            return False
-        finally:
-            with self._playback_proc_lock:
-                if proc is not None and self._playback_proc is proc:
-                    self._playback_proc = None
-
-        self.get_logger().info(f"Bag playback finished — captured {self.images_captured} images")
-
-        if auto_finalize:
-            if self.images_captured > 0 and not self.calibration_done:
-                self.get_logger().info("Running calibration with captured images...")
-                self.run_calibration()
-            elif self.images_captured == 0:
-                self.get_logger().error("No images captured during playback. Check your bag.")
-
-        return True
+            self._publish_action_feedback(
+                goal_handle,
+                "CAPTURE",
+                feedback_message,
+                corners_found=result.success,
+                images={"left_coverage": left_coverage, "right_coverage": right_coverage},
+            )
 
     def check_existing_images(self):
         """Check for existing calibration images in /tmp and ask user if they want to use them."""
@@ -886,7 +714,7 @@ class StereoCalibrator(Node):
                     f"[{self.images_captured} captured] Move the board and press Enter (Ctrl+C to finish and calibrate)"
                 )
                 if not self.calibration_done:
-                    self._enter_pub.publish(Empty())
+                    self._enter_pub.publish(Bool(data=True))
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -1213,17 +1041,16 @@ class StereoCalibrator(Node):
         try:
             if save_decision:
                 output_path = save_calibration(self)
-                self._last_output_path = output_path or ""
-                msg = f"Calibration saved to {self._last_output_path}"
+                msg = f"Calibration saved to {output_path or ''}"
             else:
                 msg = "Calibration computed and discarded"
                 self.get_logger().info(msg)
-            restore_head_and_arm(self)
+            restore_head(self)
             if shutdown_on_complete and rclpy.ok():
                 rclpy.shutdown()
             return True, msg
         except Exception as e:
-            restore_head_and_arm(self)
+            restore_head(self)
             return False, f"Failed to finalize calibration: {e}"
 
 

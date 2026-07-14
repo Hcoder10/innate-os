@@ -34,6 +34,7 @@ const ROUTES = [
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
   { path: "/training", key: "training", load: () => import("./training/main.js") },
   { path: "/profiling", key: "profiling", load: () => import("./profiling/main.js") },
+  { path: "/calibration", key: "calibration", load: () => import("./calibration/main.js") },
   { path: "/settings", key: "settings", load: () => import("./settings/main.js") },
 ];
 
