@@ -173,7 +173,7 @@ echo "Started webapp (https :443 + http :80)..."
 # override, and the launcher shifts it to 8766 when the local brain owns 8765).
 tmux new-window -t "$SESSION_NAME" -n foxglove
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove" "ros2 launch foxglove_bridge foxglove_bridge_launch.xml" C-m
-echo "Started Foxglove bridge (ws :8765)..."
+echo "Started Foxglove bridge (ws :${SIM_FOXGLOVE_PORT:-8765})..."
 
 # Select the rosbridge-app window
 tmux select-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app"
