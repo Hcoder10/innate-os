@@ -183,14 +183,22 @@ class BrainClientNode(Node):
         self.map_state = MapState(self, cfg.map_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
         self.gaze = GazeController(self, state)
-        self.catalog = SkillCatalog(self, self.ws_bridge, state)
         self.runner = PrimitiveRunner(
             self,
             self.ws_bridge,
             self.chat,
             state,
             stop_robot=self._stop_robot,
+            # self.catalog binds late — it is created just below.
             on_task_finished=lambda: (self.gaze.resume(), self.catalog.drain_pending_reregistration()),
+        )
+        self.catalog = SkillCatalog(
+            self,
+            self.ws_bridge,
+            state,
+            # Gate registration on the execute_skill server being discoverable:
+            # registering invites the cloud to trigger skills immediately.
+            execute_skill_ready=self.runner.action_client.server_is_ready,
         )
         self.orchestrator = Orchestrator(
             self,

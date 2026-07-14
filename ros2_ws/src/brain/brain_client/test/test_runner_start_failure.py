@@ -127,7 +127,8 @@ def test_rejected_goal_sends_terminal_failed_to_cloud(monkeypatch):
 def test_rejected_goal_reports_failed_even_after_state_cleared(monkeypatch):
     """A deactivate/unregister racing the goal response clears primitive_running
     without telling the cloud (no goal handle yet) — the rejection must still
-    send the terminal 'failed'."""
+    send the terminal 'failed', but must NOT run finish side effects (gaze
+    resume, re-registration drain) for a task the deactivation tore down."""
     runner, ws_messages, chat_statuses, finished = _make_runner(monkeypatch, server_available=True)
     runner.start_task("local/victory_spin", "prim-1", {})
     ws_messages.clear()
@@ -138,6 +139,7 @@ def test_rejected_goal_reports_failed_even_after_state_cleared(monkeypatch):
     types = [m.type for m in ws_messages]
     assert types == [MessageInType.PRIMITIVE_FAILED]
     assert ws_messages[0].payload["primitive_id"] == "prim-1"
+    assert finished == []
 
 
 def test_rejected_goal_leaves_a_newer_running_task_alone(monkeypatch):

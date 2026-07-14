@@ -233,10 +233,16 @@ class PrimitiveRunner:
                 skill_id=skill_id,
                 reason="Goal rejected by action server",
             )
-            # Only touch shared state if it is still this task's: a new task may
-            # already be running after the race that cleared ours.
+            # Only touch shared state when it is still this task's. running is
+            # None here only after a deactivate/unregister race already tore the
+            # task down — resuming gaze / draining re-registration then would
+            # act on a brain that was just deactivated. A newer running task's
+            # state must survive our late rejection untouched.
             running = self._state.primitive_running
-            if running is None or (running.get("primitive_id"), running.get("skill_id")) == (primitive_id, skill_id):
+            if running is not None and (running.get("primitive_id"), running.get("skill_id")) == (
+                primitive_id,
+                skill_id,
+            ):
                 self._state.primitive_running = None
                 self._goal_handle = None
                 self._on_task_finished()
