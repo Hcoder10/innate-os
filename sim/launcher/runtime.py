@@ -519,6 +519,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         # argless and must inherit the same backend (compose's own default
         # only fires when COMPOSE_PROFILES is set, which it isn't here).
         compose_values["BRAIN_WEBSOCKET_URI"] = str(config.get("brain_websocket_uri", "") or "")
+        # Foxglove bridge publishes on host 8765 (Foxglove Studio's default) —
+        # but a local brain's cloud-agent owns that host port, so shift the
+        # bridge to 8766 unless the user pinned a port themselves.
+        if not os.environ.get("SIM_FOXGLOVE_PORT", "").strip() and config["mode"] not in (HOSTED_MODE, NONE_MODE):
+            compose_values["SIM_FOXGLOVE_PORT"] = "8766"
+            log("Local brain owns port 8765; Foxglove bridge published on ws://localhost:8766.")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
         run_logged_with_heartbeat(
@@ -725,6 +731,24 @@ def cloud_agent_checkout_pinned(repo: Path, commit: str) -> bool:
     return True
 
 
+def _os_container_holds_host_8765() -> bool:
+    """True when a running innate-dev publishes its Foxglove port on host 8765
+    (a container created under hosted/no-brain mode, before a local-brain up
+    would have shifted the publish to 8766)."""
+    try:
+        result = subprocess.run(
+            ["docker", "port", "innate-dev", "8765"],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and any(line.strip().endswith(":8765") for line in result.stdout.splitlines())
+
+
 def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
     """Bring up the local brain as the `cloud-agent` service in the OS compose
     project (gated by the local-brain profile). Hosted/none modes run no local
@@ -746,6 +770,15 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
         "COMPOSE_PROFILES": LOCAL_BRAIN_COMPOSE_PROFILE,
         "INNATE_OS_ENV_FILE": str(cloud_env_file),
     }
+    # An OS container that predates this local-brain up may still publish the
+    # Foxglove bridge on host 8765 (this runs before ensure_os_container, and a
+    # running container is not recreated anyway). The cloud-agent host publish
+    # is debug-only — the brain reaches it over the compose network — so shift
+    # it clear rather than failing the bind (8767: 8766 is Foxglove's own
+    # local-brain port, live again as soon as the OS container is recreated).
+    if not os.environ.get("SIM_CLOUD_AGENT_PORT", "").strip() and _os_container_holds_host_8765():
+        base_env["SIM_CLOUD_AGENT_PORT"] = "8767"
+        log("Host port 8765 is held by the running OS container (Foxglove); publishing cloud-agent on 8767.")
     up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
 
     if mode == LOCAL_IMAGE_MODE:

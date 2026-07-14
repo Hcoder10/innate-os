@@ -202,9 +202,32 @@ More dev tooling (physics stress gate, asset pipeline) is documented in
 
 ### ROS access
 
-Prefer Foxglove or your own ROS tooling? Open a Rosbridge connection to
-`ws://localhost:9090` for TF, `/scan`, `/mars/main_camera/points`, camera
-topics and `/cmd_vel` teleop.
+[Foxglove Studio](https://foxglove.dev) is a free app for visualizing what the
+robot sees — camera images, the map and laser scan, coordinate frames, and the
+`/cmd_vel` velocity commands from teleop. It's the easiest way to look inside the
+running sim.
+
+You don't need to start anything: the sim launches a Foxglove bridge for you.
+To connect:
+
+1. Install and open [Foxglove Studio](https://foxglove.dev/download) (desktop or web).
+2. Choose **Open connection → Foxglove WebSocket**.
+3. Enter `ws://localhost:8765` and connect.
+4. Add panels (e.g. Image, 3D, Raw Messages) and pick the topics you want to see.
+
+> **Which port?** If you're running the local brain, the address is
+> `ws://localhost:8766` instead (the cloud agent uses 8765). The sim's startup
+> log always prints the exact address to use. To force a specific port or network
+> interface, set `SIM_FOXGLOVE_PORT` / `SIM_FOXGLOVE_BIND` before starting the sim.
+
+Because the sim runs on your own machine, every topic is fast — feel free to view
+the full-resolution cameras and point clouds. This is different from a **physical
+robot on Wi-Fi**, where those topics are too large to stream smoothly; there you'd
+use the lighter `/mars/main_camera/remote/*` topics instead. See
+[Foxglove](../README.md#foxglove) in the main README for that case.
+
+Prefer your own ROS tooling? A rosbridge server is also available at
+`ws://localhost:9090`.
 
 ### Configuration
 
