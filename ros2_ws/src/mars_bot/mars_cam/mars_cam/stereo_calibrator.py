@@ -361,9 +361,7 @@ class StereoCalibrator(Node):
         if time.time() - self._last_capture_time > timeout_sec:
             self._watchdog_active = False
             self._watchdog_timed_out = True
-            self.get_logger().warn(
-                f"No capture received in {timeout_sec:.0f}s — aborting calibration run"
-            )
+            self.get_logger().warn(f"No capture received in {timeout_sec:.0f}s — aborting calibration run")
 
     def _stop_calibration_service_callback(self, request, response):
         """Service callback for stop button while action is running."""
