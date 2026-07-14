@@ -51,7 +51,12 @@ jobs:
           keep_file="$(mktemp)"
           versions_file="$(mktemp)"
 
-          gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" > "${versions_file}"
+          # A package that has never been published is nothing to clean, not an
+          # error — every scheduled run used to die here on the 404.
+          if ! gh api --paginate "/orgs/${ORG}/packages/container/${package}/versions" > "${versions_file}"; then
+            echo "Package ${package} not found on ghcr; nothing to clean up."
+            exit 0
+          fi
 
           jq -r '
             .[]
@@ -123,6 +128,15 @@ jobs:
             tags="$(jq -r --argjson id "${version_id}" '
               .[] | select(.id == $id) | (.metadata.container.tags // []) | join(",")
             ' "${versions_file}")"
+            # Belt-and-braces (INN-710): whatever the keep-selection above
+            # computed, never delete a version carrying a protected tag —
+            # CI depends on main/buildcache existing.
+            case ",${tags}," in
+              *,main,*|*,buildcache,*)
+                echo "SKIP protected ${package} version ${version_id}: ${tags}"
+                continue
+                ;;
+            esac
             if [[ "${DRY_RUN}" == "true" ]]; then
               echo "dry-run delete ${package} version ${version_id}: ${tags}"
             else
