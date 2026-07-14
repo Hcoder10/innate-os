@@ -51,7 +51,7 @@ class PrimitiveRunner:
         here too would double the "running" entry in the chat.
         """
         skill_name = self._state.registry.name_for(skill_id)
-        if not self._send_goal(skill_id, inputs, primitive_id=primitive_id, skill_name=skill_name):
+        if not self._send_goal(skill_id, inputs):
             self.report_start_failure(
                 primitive_name=skill_name,
                 primitive_id=primitive_id,
@@ -150,14 +150,8 @@ class PrimitiveRunner:
         self._pending_next_task = None
 
     # --- action plumbing ---
-    def _send_goal(self, task_type: str, inputs: dict, *, primitive_id, skill_name) -> bool:
-        """Dispatch the goal; returns False if the action server is unavailable.
-
-        The task identity rides along into the goal-response callback: a
-        deactivate/unregister racing that callback clears primitive_running
-        without telling the cloud (there is no goal handle to cancel yet), so
-        the rejection path must not depend on state to name the task.
-        """
+    def _send_goal(self, task_type: str, inputs: dict) -> bool:
+        """Dispatch the goal; returns False if the action server is unavailable."""
         goal_msg = ExecuteSkill.Goal()
         goal_msg.skill_type = task_type
         goal_msg.inputs = json.dumps(inputs if inputs is not None else {})
@@ -166,9 +160,7 @@ class PrimitiveRunner:
             self._logger.error("Primitive execution action server not available!")
             return False
         future = self.action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
-        future.add_done_callback(
-            lambda f: self._on_goal_response(f, skill_name=skill_name, primitive_id=primitive_id, skill_id=task_type)
-        )
+        future.add_done_callback(self._on_goal_response)
         return True
 
     def _on_feedback(self, feedback_wrapper) -> None:
@@ -210,60 +202,21 @@ class PrimitiveRunner:
         if event == "completed" and output and output.strip():
             self._chat.emit("skill_output", output, speak=False)
 
-    def _on_goal_response(self, future, *, skill_name, primitive_id, skill_id) -> None:
+    def _on_goal_response(self, future) -> None:
         goal_handle = future.result()
-        # Whether the dispatched task is still the one the runner tracks. False
-        # only after a deactivate/unregister race tore it down while this
-        # response was in flight (there was no goal handle for them to cancel),
-        # or after a newer task already replaced it.
-        running = self._state.primitive_running
-        is_current = running is not None and (running.get("primitive_id"), running.get("skill_id")) == (
-            primitive_id,
-            skill_id,
-        )
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
-            # The cloud was told "running" on dispatch; a rejected goal produces
-            # no result, so send the terminal "failed" here or it waits forever.
-            # Uses the identity captured at dispatch, not primitive_running — the
-            # teardown race clears that without telling the cloud.
-            self._ws.send_message(
-                primitive_lifecycle_message(
+            if self._state.primitive_running:
+                self._chat.publish_task_status(
+                    primitive_name=self._state.primitive_running["primitive_name"],
+                    primitive_id=self._state.primitive_running["primitive_id"],
                     status="failed",
-                    primitive_name=skill_name,
-                    primitive_id=primitive_id,
+                    skill_id=self._state.primitive_running.get("skill_id"),
                     reason="Goal rejected by action server",
                 )
-            )
-            self._chat.publish_task_status(
-                primitive_name=skill_name,
-                primitive_id=primitive_id,
-                status="failed",
-                skill_id=skill_id,
-                reason="Goal rejected by action server",
-            )
-            # Only touch shared state when it is still this task's — resuming
-            # gaze / draining re-registration after a teardown would act on a
-            # brain that was just deactivated, and a newer running task's state
-            # must survive our late rejection untouched.
-            if is_current:
-                self._state.primitive_running = None
-                self._goal_handle = None
-                self._on_task_finished()
-            return
-        if not is_current:
-            # Torn down while the response was in flight: don't adopt the goal —
-            # cancel it so the robot doesn't execute a skill nobody tracks, and
-            # give the cloud the "interrupted" the teardown couldn't send.
-            self._logger.warn("Goal accepted for a torn-down task; cancelling it.")
-            goal_handle.cancel_goal_async()  # fire-and-forget
-            self._ws.send_message(
-                primitive_lifecycle_message(
-                    status="interrupted",
-                    primitive_name=skill_name,
-                    primitive_id=primitive_id,
-                )
-            )
+            self._state.primitive_running = None
+            self._goal_handle = None
+            self._on_task_finished()
             return
         self._goal_handle = goal_handle
         self._logger.info("Primitive execution goal accepted.")
