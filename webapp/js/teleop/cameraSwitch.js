@@ -49,8 +49,8 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   /** @type {Set<string>} */ let enabledCams = new Set();
   let mapOn = false;
   /** @type {string} */ let primary = MAP_ID; // a camera name or MAP_ID; reconcile fixes the real default
-  /** @type {Map<string, { tile: HTMLElement, video: HTMLVideoElement, index: number }>} */
-  let tiles = new Map();
+  /** @type {Map<string, { tile: HTMLElement, video: HTMLVideoElement | null, index: number }>} */
+  let tiles = new Map(); // video is null for sim tiles (canvas-backed, no MediaStream)
 
   // The map widget is heavy (subscriptions + canvas), so it exists only while the map is on. Its host div
   // is persistent and reparents between a strip tile (small) and the stage (big) — never rebuilt.
@@ -192,6 +192,21 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   function buildCameraTile(name) {
     const index = roster.indexOf(name);
     const tile = liveTile(name, displayLabel(name), `Make ${name} the main view`);
+    // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
+    // capture pinned page composition to its capture rate); mount those
+    // directly. Real robots keep the <video> + WebRTC stream path. SimSession
+    // reaches here through robotSession.js's runtime import, so tsc only sees
+    // WebRtcSession -- duck-type the sim-only method instead.
+    const maybeSim = /** @type {{ thumbnailCanvas?: (i: number) => HTMLCanvasElement | null }} */ (
+      /** @type {unknown} */ (session)
+    );
+    const thumbCanvas = maybeSim.thumbnailCanvas?.(index) ?? null;
+    if (thumbCanvas) {
+      thumbCanvas.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+      tile.prepend(thumbCanvas);
+      tiles.set(name, { tile, video: null, index });
+      return tile;
+    }
     const video = document.createElement("video");
     video.autoplay = true;
     video.muted = true;

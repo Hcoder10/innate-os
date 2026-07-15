@@ -405,7 +405,7 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 
 - **[mars_control](ros2_ws/src/mars_bot/mars_control)** - top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
 - **[mars_bringup](ros2_ws/src/mars_bot/mars_bringup)** - hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
-- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** - arm and head servo driver, MoveIt `move_group`, and KDL-based IK solver.
+- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** - arm and head servo driver and KDL-based IK solver.
 - **[mars_cam](ros2_ws/src/mars_bot/mars_cam)** - stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
 - **[mars_nav](ros2_ws/src/mars_bot/mars_nav)** - Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree`, `mapping`, and `navigation`.
 - **[brain_client](ros2_ws/src/brain/brain_client)** - bridge to the Innate cloud brain, websocket client, skills action server, and user input manager.

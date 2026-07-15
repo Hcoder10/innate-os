@@ -278,8 +278,10 @@ class BrainClientNode(Node):
             self.get_logger().warn("No primitives received from /brain/available_skills after 60s")
 
         # With an empty registry (skills not published yet), per-agent skill
-        # validation is meaningless noise — pass None to skip it. The catalog
-        # self-heals when the roster lands (SkillCatalog re-registers).
+        # validation is meaningless noise — pass None to skip it. The registry
+        # itself self-heals when the roster lands (SkillCatalog rebuilds it and
+        # re-registers with the cloud); the skipped validation is logging-only
+        # and simply doesn't run this boot.
         self.state.directives, self.state.current_directive = initialize_agents(
             self.get_logger(), self.state.registry.primitives or None
         )
