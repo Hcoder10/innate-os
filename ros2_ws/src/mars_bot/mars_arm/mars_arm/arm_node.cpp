@@ -185,9 +185,6 @@ MarsArmNode::MarsArmNode() : Node("mars_arm") {
     arm_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
     joint_state_msg_.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"};
 
-    home_position_ = {1.445009902188274,   -1.3882526130365052,  1.517106999218899,
-                      0.44638840927472156, -0.08897088569736719, 0.0015339807878856412};
-
     // Initialize command buffers with current positions
     RCLCPP_DEBUG(this->get_logger(), "Initializing command buffers with current positions");
     auto [initial_positions, initial_velocities, initial_loads] = robot_->readState();
@@ -213,13 +210,10 @@ MarsArmNode::MarsArmNode() : Node("mars_arm") {
 
     RCLCPP_INFO(this->get_logger(), "Mars Arm Node ready!");
 
-    // Go to home position on startup
-    RCLCPP_INFO(this->get_logger(), "Moving to home position...");
-    if (planAndExecuteTrajectory(home_position_, 5.0)) {
-        RCLCPP_INFO(this->get_logger(), "Reached home position");
-    } else {
-        RCLCPP_WARN(this->get_logger(), "Failed to reach home position");
-    }
+    // No homing here: trajectories are consumed by the control timer, which
+    // only fires once the executor spins (after this constructor returns), so
+    // a constructor-time home can never execute. Homing stays on-demand (the
+    // reboot/home services).
 }
 
 }  // namespace mars_arm
