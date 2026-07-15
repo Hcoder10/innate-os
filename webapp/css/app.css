@@ -5708,3 +5708,97 @@ button {
 .app-promo-stay:hover {
   color: var(--text);
 }
+
+/* ---- Nav page (Foxglove-style sensor view) ------------------------------- */
+
+.nav-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nav-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 320px; /* scene | telemetry panels */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.nav-scene {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nav-side {
+  border-left: 1px solid var(--hairline);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.nav-panel {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nav-panel .microlabel {
+  margin-bottom: 8px;
+}
+
+.nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.nav-row-label {
+  color: var(--muted);
+}
+
+.nav-row-value {
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Layer toggle chips in the page header. */
+.layer-chips {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.layer-chip {
+  padding: 5px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.layer-chip.is-on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+/* Phones: scene on top, telemetry scrolling beneath it. */
+@media (max-width: 700px) {
+  .nav-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 55vh minmax(0, 1fr);
+  }
+
+  .nav-side {
+    border-left: none;
+    border-top: 1px solid var(--hairline);
+  }
+}

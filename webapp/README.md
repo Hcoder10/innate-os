@@ -5,6 +5,9 @@ same modules:
 
 - **Teleop** (`index.html`) — live video, joystick/keyboard drive, head tilt,
   robot speech, telemetry, and leader-arm USB follow.
+- **Nav** (`js/nav/`) — Foxglove-style live navigation view: the map widget
+  with laser scan / global costmap / odometry-trail overlays, plus telemetry
+  panels (pose, velocity, lidar, nav state, per-topic receive rates).
 - **Collect** (`collect/`) — record episodes (learned skills) and one-shot
   recorded movements; reuses the teleop cockpit with a recording HUD.
 - **Datasets** (`datasets/`) — browse a skill's episodes and replay them
@@ -62,7 +65,7 @@ js/
   dynamixel.js          leader-arm WebSerial reader (Protocol 2.0)
   shell.js              icon rail + connection badge on every page
   teleop/               teleop modules (joystick, keyboard, head tilt, TTS, arm)
-  collect/ datasets/ training/ debugging/      per-page modules
+  nav/ collect/ datasets/ training/ debugging/      per-page modules
 ```
 
 ## Robot interface (rosbridge `ws://<robot>:9090`, rws)

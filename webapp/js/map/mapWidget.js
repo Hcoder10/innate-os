@@ -1,7 +1,9 @@
 // @ts-check
 // Reusable nav-map widget — a plain 2D <canvas> rendering the occupancy grid
 // (/map), robot pose (/odom), planner route (/plan), and click-to-navigate
-// (sends a NavigateToPose goal via the router). Sizes itself to its container via a ResizeObserver, so
+// (sends a NavigateToPose goal via the router), plus opt-in overlay layers
+// (laser scan / global costmap / odometry trail) for the Nav page.
+// Sizes itself to its container via a ResizeObserver, so
 // it can be the standalone Map page OR a teleop PiP tile that reparents between
 // a small thumbnail and the full stage. No three.js — a canvas + putImageData
 // is all a 2D map needs.
@@ -16,6 +18,9 @@ import {
   CANCEL_NAVIGATION_SERVICE,
   LOCALIZE_SERVICE,
   SET_INITIAL_POSE_SERVICE,
+  SCAN_TOPIC,
+  GLOBAL_COSTMAP_TOPIC,
+  TF_STATIC_TOPIC,
 } from "../constants.js";
 
 // /localize scan-matches for up to ~30 s before answering.
@@ -26,12 +31,22 @@ const MIN_ZOOM_M = 1;
 const MAX_ZOOM_M = 60;
 const ZOOM_STEP = 1.15; // per wheel notch
 
+// Odometry breadcrumb trail: drop a point every few cm, keep the last N.
+const TRAIL_MIN_STEP_M = 0.03;
+const TRAIL_MAX_POINTS = 600;
+
+/**
+ * @typedef {"scan" | "costmap" | "trail"} LayerName
+ */
+
 /**
  * @param {HTMLElement} root container the map fills (sized via ResizeObserver).
- * @param {{ zoom?: number, onZoomChange?: (meters: number) => void }} [opts] zoom = metres of real-world
- *   width to show, centred on the robot pose (keeps the map legible when small); enables scroll-to-zoom.
- *   Omit to fit the whole grid (the standalone page). onZoomChange fires after each wheel-zoom.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void }}
+ * @param {{ zoom?: number, onZoomChange?: (meters: number) => void, layers?: Partial<Record<LayerName, boolean>> }} [opts]
+ *   zoom = metres of real-world width to show, centred on the robot pose (keeps the map legible when
+ *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
+ *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live laser scan,
+ *   global costmap, odometry trail — each adds its subscription only while enabled.
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -142,6 +157,112 @@ export function createMap(root, opts = {}) {
   }
   /** @type {Array<{ x: number, y: number }> | null} world-frame plan points */
   let plan = null;
+
+  // ---- optional overlay layers (Nav page) ---------------------------------
+  /** @type {Record<LayerName, boolean>} */
+  const layers = { scan: false, costmap: false, trail: false, ...opts.layers };
+  /** @type {any} latest sensor_msgs/LaserScan */
+  let scanMsg = null;
+  // base_link -> base_laser from /tf_static (URDF); zero until it arrives.
+  let laserOffset = { x: 0, y: 0, yaw: 0 };
+  // Costmap rendered like the map: 1px-per-cell offscreen + world placement.
+  const costOff = document.createElement("canvas");
+  const costOffCtx = costOff.getContext("2d");
+  /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
+  let costGrid = null;
+  /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
+  const trail = [];
+  /** @type {Partial<Record<"scan" | "costmap" | "tf", () => void>>} live layer subscriptions */
+  const layerUnsubs = {};
+
+  /** @param {any} msg sensor_msgs/LaserScan */
+  function onScan(msg) {
+    if (!Array.isArray(msg?.ranges)) return;
+    scanMsg = msg;
+    draw();
+  }
+
+  /** @param {any} msg tf2_msgs/TFMessage — pick out base_link -> base_laser */
+  function onTfStatic(msg) {
+    for (const t of msg?.transforms ?? []) {
+      if (t?.child_frame_id !== "base_laser") continue;
+      const tr = t.transform?.translation;
+      const q = t.transform?.rotation;
+      if (typeof tr?.x !== "number" || !q) continue;
+      laserOffset = { x: tr.x, y: tr.y, yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)) };
+      draw();
+    }
+  }
+
+  /** @param {any} msg nav_msgs/OccupancyGrid — Nav2 cost colormap, transparent where free */
+  function onCostmap(msg) {
+    const info = msg?.info;
+    const data = msg?.data;
+    const width = info?.width | 0;
+    const height = info?.height | 0;
+    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height || !costOffCtx) return;
+    costOff.width = width;
+    costOff.height = height;
+    const img = costOffCtx.createImageData(width, height);
+    for (let row = 0; row < height; row++) {
+      const srcRow = height - 1 - row; // same flip as the map grid
+      for (let col = 0; col < width; col++) {
+        const v = data[srcRow * width + col];
+        const di = (row * width + col) * 4;
+        if (v <= 0) continue; // free/unknown stays transparent (alpha 0)
+        if (v >= 100) {
+          // Lethal — the obstacle itself.
+          img.data[di] = 217;
+          img.data[di + 1] = 106;
+          img.data[di + 2] = 90;
+          img.data[di + 3] = 210;
+        } else if (v >= 99) {
+          // Inscribed — the footprint would collide here.
+          img.data[di] = 232;
+          img.data[di + 1] = 163;
+          img.data[di + 2] = 61;
+          img.data[di + 3] = 190;
+        } else {
+          // Inflation gradient, fading with cost.
+          img.data[di] = 77;
+          img.data[di + 1] = 124;
+          img.data[di + 2] = 254;
+          img.data[di + 3] = 25 + Math.round((v / 98) * 115);
+        }
+      }
+    }
+    costOffCtx.putImageData(img, 0, 0);
+    costGrid = {
+      width,
+      height,
+      resolution: info.resolution || 0.05,
+      originX: info.origin?.position?.x ?? 0,
+      originY: info.origin?.position?.y ?? 0,
+    };
+    draw();
+  }
+
+  // Subscribe/unsubscribe to match the enabled layers, so an off layer costs
+  // no bandwidth (the costmap especially — a map-sized grid as JSON).
+  function syncLayerSubs() {
+    if (layers.scan && !layerUnsubs.scan) {
+      layerUnsubs.scan = ros.subscribe(SCAN_TOPIC, onScan, 150, "sensor_msgs/msg/LaserScan");
+      layerUnsubs.tf = ros.subscribe(TF_STATIC_TOPIC, onTfStatic, 0, "tf2_msgs/msg/TFMessage");
+    } else if (!layers.scan && layerUnsubs.scan) {
+      layerUnsubs.scan();
+      layerUnsubs.tf?.();
+      delete layerUnsubs.scan;
+      delete layerUnsubs.tf;
+      scanMsg = null;
+    }
+    if (layers.costmap && !layerUnsubs.costmap) {
+      layerUnsubs.costmap = ros.subscribe(GLOBAL_COSTMAP_TOPIC, onCostmap, 1000, "nav_msgs/msg/OccupancyGrid");
+    } else if (!layers.costmap && layerUnsubs.costmap) {
+      layerUnsubs.costmap();
+      delete layerUnsubs.costmap;
+      costGrid = null;
+    }
+  }
 
   // Last draw's grid→canvas placement, so pointer handlers can invert it.
   /** @type {{ ox: number, oy: number, scale: number } | null} */
@@ -262,6 +383,13 @@ export function createMap(root, opts = {}) {
     if (!p) return;
     odomPose = p;
     pose = composedPose();
+    if (layers.trail && pose) {
+      const last = trail[trail.length - 1];
+      if (!last || Math.hypot(pose.x - last.x, pose.y - last.y) > TRAIL_MIN_STEP_M) {
+        trail.push({ x: pose.x, y: pose.y });
+        if (trail.length > TRAIL_MAX_POINTS) trail.shift();
+      }
+    }
     draw();
   }
 
@@ -384,6 +512,27 @@ export function createMap(root, opts = {}) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(off, ox, oy, grid.width * scale, grid.height * scale);
 
+    // Costmap overlay, aligned by world coords (its origin/size differ from the
+    // map's). scale is px per map cell, so convert via the resolution ratio.
+    if (layers.costmap && costGrid) {
+      const topLeft = worldToCanvas(costGrid.originX, costGrid.originY + costGrid.height * costGrid.resolution);
+      const cellPx = (costGrid.resolution / grid.resolution) * scale;
+      ctx.drawImage(costOff, topLeft.px, topLeft.py, costGrid.width * cellPx, costGrid.height * cellPx);
+    }
+
+    if (layers.trail && trail.length >= 2) {
+      ctx.strokeStyle = "rgb(232 163 61 / 45%)";
+      ctx.lineWidth = 1.5 * dpr();
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      trail.forEach((p, i) => {
+        const { px, py } = worldToCanvas(p.x, p.y);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    }
+
     if (plan && plan.length >= 2) {
       ctx.strokeStyle = "#00b7ff";
       ctx.lineWidth = 2 * dpr();
@@ -395,6 +544,26 @@ export function createMap(root, opts = {}) {
         else ctx.lineTo(px, py);
       });
       ctx.stroke();
+    }
+
+    // Laser scan, projected from the composed robot pose + the static laser
+    // offset. Rects, not arcs — up to ~1500 points per sweep.
+    if (layers.scan && scanMsg && pose) {
+      const c = Math.cos(pose.yaw);
+      const s = Math.sin(pose.yaw);
+      const lx = pose.x + laserOffset.x * c - laserOffset.y * s;
+      const ly = pose.y + laserOffset.x * s + laserOffset.y * c;
+      const lyaw = pose.yaw + laserOffset.yaw;
+      const { ranges, angle_min: a0, angle_increment: inc, range_min: rMin, range_max: rMax } = scanMsg;
+      const size = Math.max(2, 2 * dpr());
+      ctx.fillStyle = "#d96a5a";
+      for (let i = 0; i < ranges.length; i++) {
+        const r = ranges[i];
+        if (!Number.isFinite(r) || r < rMin || r > rMax) continue;
+        const a = lyaw + a0 + i * inc;
+        const { px, py } = worldToCanvas(lx + r * Math.cos(a), ly + r * Math.sin(a));
+        ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      }
     }
 
     // Goal dot + heading arrow; a manual-locate drag places the robot, not a
@@ -709,6 +878,7 @@ export function createMap(root, opts = {}) {
   fit();
   render();
 
+  syncLayerSubs();
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
@@ -723,6 +893,14 @@ export function createMap(root, opts = {}) {
         draw();
       }
     },
+    /** Toggle an overlay layer (subscribes/unsubscribes its topics live). */
+    setLayer(name, on) {
+      if (layers[name] === on) return;
+      layers[name] = on;
+      if (name === "trail" && !on) trail.length = 0;
+      syncLayerSubs();
+      draw();
+    },
     destroy() {
       clearTimeout(navStaleTimer);
       clearTimeout(statusClearTimer);
@@ -732,6 +910,7 @@ export function createMap(root, opts = {}) {
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
+      for (const unsub of Object.values(layerUnsubs)) unsub();
       canvas.remove();
       controls.remove();
     },

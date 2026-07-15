@@ -29,6 +29,7 @@ import { initShell } from "./shell.js";
 const ROUTES = [
   { path: "/", key: "teleop", load: () => import("./teleop/main.js") },
   { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
+  { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
   { path: "/debugging", key: "debugging", load: () => import("./debugging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
@@ -64,7 +65,7 @@ const shell = initShell(navigate);
 // Sim deployments hide robot-data workflows from the rail (shell.js's
 // SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
 // a page whose services have no sim backing.
-const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "debugging", "settings"]);
+const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "debugging", "settings"]);
 const configPromise = fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));

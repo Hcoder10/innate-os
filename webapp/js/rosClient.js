@@ -369,7 +369,16 @@ export class RosClient {
     try {
       data = JSON.parse(raw);
     } catch {
-      return;
+      // rws serializes non-finite floats as empty array slots — a LaserScan
+      // with inf ranges arrives as `[2.48,,,,0.39]`, which strict JSON
+      // rejects. Patch the holes to null and retry (consumers already skip
+      // non-finite values). Only attempted once a strict parse has failed;
+      // `[]` is left alone so empty arrays keep their meaning.
+      try {
+        data = JSON.parse(raw.replace(/,(?=[,\]])/g, ",null").replace(/\[(?=,)/g, "[null"));
+      } catch {
+        return;
+      }
     }
 
     if (data.op === "service_response") {

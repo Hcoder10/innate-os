@@ -66,6 +66,22 @@ export const LOCALIZE_SERVICE = "/localize";
 // AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
 export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
 
+// ---- Nav page (Foxglove-style sensor panel) --------------------------------
+// RPLidar scan, throttled to ~6 Hz on the robot (frame base_laser).
+export const SCAN_TOPIC = "/scan"; // sensor_msgs/LaserScan
+// The velocity actually sent to the base — output of the cmd_vel priority mux.
+export const CMD_VEL_TOPIC = "/cmd_vel"; // geometry_msgs/Twist
+// Nav2 global costmap (map frame; the planner runs under the "navigation"
+// namespace). The local costmap lives in the odom frame, so it can't be
+// overlaid on the map canvas without a live map->odom transform — skipped.
+export const GLOBAL_COSTMAP_TOPIC = "/navigation/global_costmap/costmap"; // nav_msgs/OccupancyGrid
+// Latched static transforms; carries base_link -> base_laser from the URDF.
+export const TF_STATIC_TOPIC = "/tf_static"; // tf2_msgs/TFMessage
+// mode_manager state (std_msgs/String each): mapped/mapfree/mapping, and the
+// active map's name.
+export const NAV_CURRENT_MODE_TOPIC = "/nav/current_mode";
+export const NAV_CURRENT_MAP_TOPIC = "/nav/current_map";
+
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
 // as the agent runs primitives. Separate from chat_out — the chat surfaces it so

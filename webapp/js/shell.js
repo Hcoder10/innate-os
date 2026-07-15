@@ -17,7 +17,7 @@ import { installPressActivate } from "./pressActivate.js";
 // (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
 // with no sim backing — the sim has no real stereo camera or ChArUco board to
 // calibrate against — so they're hidden from the rail.
-const SIM_SECTIONS = new Set(["teleop", "agent", "debugging", "settings"]);
+const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "debugging", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
@@ -32,6 +32,12 @@ const SECTIONS = [
     label: "Agent",
     // Sparkle motif: a four-point star for the autonomous brain.
     icon: '<path d="M12 3.5l1.7 6.8 6.8 1.7-6.8 1.7L12 20.5l-1.7-6.8L3.5 12l6.8-1.7z"/>',
+  },
+  {
+    key: "nav",
+    label: "Nav",
+    // Radar motif: sweep arcs and a contact dot, for the live sensor view.
+    icon: '<path d="M12 12L18.4 5.6"/><path d="M15.2 8.8a4.5 4.5 0 1 0 1.3 3.2"/><path d="M18.4 5.6A9 9 0 1 0 21 12"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   },
   {
     key: "debugging",
