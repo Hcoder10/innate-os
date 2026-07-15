@@ -135,6 +135,8 @@ export function createAgentPanel(root, rosClient, agentState) {
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
     directiveSelect.disabled = applying || agents.length === 0;
     resetBtn.disabled = applying;
+    // Sending while idle auto-starts the armed agent (see submit) — say so.
+    input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
 
   /** @param {() => Promise<any>} fn */
@@ -339,27 +341,34 @@ export function createAgentPanel(root, rosClient, agentState) {
   }
 
   // ---- composer -----------------------------------------------------------
-  function submit() {
+  async function submit() {
     const text = input.value.trim();
     if (!text) return;
     addMessage("user", text, Date.now() / 1000);
-    rosClient.publish(CHAT_IN_TOPIC, {
-      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
-    });
     input.value = "";
     input.style.height = "auto";
     // Always jump to our own message, even if we'd scrolled up reading earlier.
     stream.scrollTop = stream.scrollHeight;
+    // Messaging an idle agent means "start it": activate the armed directive
+    // first (same choice as the Start button) so the message reaches a running
+    // brain instead of vanishing into an inactive one.
+    if (!agentState.get().brainActive) {
+      const id = directiveSelect.value || lastDirective;
+      if (id) await withApplying(() => agentState.setDirective(id));
+    }
+    rosClient.publish(CHAT_IN_TOPIC, {
+      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
+    });
   }
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    submit();
+    void submit();
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   });
   input.addEventListener("input", () => {

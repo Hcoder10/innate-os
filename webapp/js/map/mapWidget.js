@@ -455,7 +455,7 @@ export function createMap(root, opts = {}) {
     canvas.style.cursor = ui === "manual" || ui === "goto" ? "crosshair" : "grab";
   }
 
-  /** @param {typeof ui} next */
+  /** @param {"idle" | "locate" | "manual" | "goto"} next */
   function setUi(next) {
     ui = next;
     if (ui !== "manual" && ui !== "goto") goalDrag = null;
