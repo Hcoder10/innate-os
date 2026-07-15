@@ -304,7 +304,7 @@ void WebRTCStreamer::poll_pipeline_health() {
     // handshake fails) are expected and handled — the peer is released below —
     // so they log at WARN. Errors on the shared encode/audio pipelines are
     // real faults and stay at ERROR.
-    auto drain_bus = [this](GstElement* pipeline, const char* label, bool expected_teardown = false) {
+    auto drain_bus = [this](GstElement* pipeline, const char* label, bool expected_teardown) {
         bool saw_error = false;
         if (!pipeline) {
             return saw_error;
@@ -349,8 +349,8 @@ void WebRTCStreamer::poll_pipeline_health() {
         return saw_error;
     };
 
-    drain_bus(encode_pipeline_, "encode");
-    drain_bus(audio_pipeline_, "audio");
+    drain_bus(encode_pipeline_, "encode", /*expected_teardown=*/false);
+    drain_bus(audio_pipeline_, "audio", /*expected_teardown=*/false);
 
     std::unique_lock<std::mutex> lock(peers_mutex_);
     if (peers_.empty()) {

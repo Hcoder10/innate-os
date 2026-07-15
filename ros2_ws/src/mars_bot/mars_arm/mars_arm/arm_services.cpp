@@ -184,6 +184,16 @@ void MarsArmNode::healthMonitorCallback() {
             if (hw_status != 0) {
                 status_msg.is_ok = false;
                 status_msg.error = describeHardwareError(hw_status, servo_id);
+                // These servos latch the hardware-error bit until a servo
+                // reboot/power cycle. If the present load is low, the flag is
+                // stale — say so and name the remedy instead of leaving an
+                // alarming error that outlives its cause.
+                int16_t load_now = dynamixel_->readPresentLoad(servo_id);
+                if (std::abs(static_cast<int>(load_now)) < kLoadWarningThreshold) {
+                    status_msg.error +=
+                        " — present load is low, so this flag is likely latched from a past event;"
+                        " use 'Reboot arm' (/mars/arm/reboot) or power-cycle the arm to clear it";
+                }
                 break;
             }
 
