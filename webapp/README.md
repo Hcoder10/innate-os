@@ -138,10 +138,13 @@ frame and would need a live `map->odom` transform to sit on the map canvas.
 delete maps (`/nav/available_maps`, `/nav/change_navigation_map`,
 `/nav/delete_map`), a map-free toggle, and **+ New map**, which flips the
 robot into mapping mode (`/nav/change_mode {mode: "mapping"}`). While
-mapping, a banner over the scene carries Save-as/Discard; Save calls
+mapping, a banner over the scene runs the record flow (Finish → name →
+Save, mirroring the mobile app's record/name screens); Save calls
 `/nav/save_map` (name must be alphanumeric/`_`/`-`; `.yaml` appended
 server-side), then returns to navigation and activates the new map — the
-same sequence the mobile app runs. The widget swaps its pose source to
+same sequence the mobile app runs. All nav state and every mode_manager
+call live in `js/nav/navStore.js` (the webapp's port of the mobile app's
+MapDataContext); the panel, banner, and page are views of that store. The widget swaps its pose source to
 `/mapping_pose` (map-frame TF, published by mode_manager only while
 mapping) because raw `/odom` drifts against the growing SLAM map and any
 AMCL fix predates it. Mode follows the `/nav/current_mode` topic, so a

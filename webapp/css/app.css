@@ -5890,6 +5890,74 @@ button {
   height: 14px;
 }
 
+/* Busy veil: mode/map changes bring Nav2 lifecycle stacks up and down (up to
+   a minute) — block the scene and say what's happening instead of going dead. */
+.nav-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 8; /* above the banner (5) and PiP (4) */
+  display: grid;
+  place-items: center;
+  background: rgb(10 10 12 / 55%);
+  backdrop-filter: blur(2px);
+}
+
+.nav-veil-text {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  background: var(--glass);
+}
+
+/* Confirm dialog body (shares the app's .modal-* frame). */
+.confirm-body {
+  margin: 0 0 16px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-btn {
+  padding: 7px 16px;
+  font-size: 12px;
+  color: var(--text);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+}
+
+.confirm-btn:hover {
+  border-color: var(--accent-dim);
+}
+
+.confirm-primary {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+.confirm-primary.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgb(217 106 90 / 12%);
+}
+
+/* Inline validity hint next to the map-name field. */
+.mapping-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.mapping-hint:empty {
+  display: none;
+}
+
 /* Main-camera PiP while mapping (the drive kit's video tile). The teleop
    .video-stage inside fills it (position:absolute; inset:0). */
 .nav-cam-pip {

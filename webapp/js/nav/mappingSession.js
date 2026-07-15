@@ -1,0 +1,142 @@
+// @ts-check
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Innate Inc
+// Mapping banner — the recording controls pinned over the scene while the
+// robot is in mapping mode, a pure view of the nav store. Two steps, like
+// the mobile app's record → name screens:
+//
+//   recording:  "Recording map — drive slowly…"   [Finish] [Discard]
+//   naming:     name field + inline validation    [Save]   [Back]
+//
+// Visibility follows the store's mode (topic-driven), so a session started
+// from the mobile app shows the same controls here; leaving mapping — by
+// whoever — resets the banner to the recording step for next time.
+
+import { confirmDialog } from "./confirm.js";
+import { MAP_NAME_RE } from "./navStore.js";
+
+/**
+ * @param {HTMLElement} scene the map stage the banner overlays.
+ * @param {ReturnType<typeof import("./navStore.js").createNavStore>} store
+ * @returns {{ destroy: () => void }}
+ */
+export function createMappingSession(scene, store) {
+  const banner = document.createElement("div");
+  banner.className = "mapping-banner";
+  banner.hidden = true;
+
+  const text = document.createElement("span");
+  text.className = "mapping-banner-text";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "mapping-name mono";
+  nameInput.placeholder = "map name";
+  const hint = document.createElement("span");
+  hint.className = "mapping-hint mono";
+  const primaryBtn = document.createElement("button");
+  primaryBtn.type = "button";
+  primaryBtn.className = "mapping-btn";
+  const secondaryBtn = document.createElement("button");
+  secondaryBtn.type = "button";
+  secondaryBtn.className = "mapping-btn danger";
+  banner.append(text, nameInput, hint, primaryBtn, secondaryBtn);
+  scene.appendChild(banner);
+
+  /** @type {"recording" | "naming"} */
+  let step = "recording";
+
+  /** Inline validation while typing; returns the trimmed name if saveable. */
+  function validName() {
+    const name = nameInput.value.trim();
+    if (!name) {
+      hint.textContent = "";
+      return null;
+    }
+    if (!MAP_NAME_RE.test(name)) {
+      hint.textContent = "letters, digits, _ or - only";
+      return null;
+    }
+    hint.textContent = store.state.maps.includes(`${name}.yaml`) ? "exists — Save overwrites" : "";
+    return name;
+  }
+
+  /** @param {import("./navStore.js").NavState} s */
+  function render(s) {
+    const mapping = s.mode === "mapping";
+    banner.hidden = !mapping;
+    if (!mapping) {
+      step = "recording";
+      nameInput.value = "";
+      hint.textContent = "";
+      return;
+    }
+    const naming = step === "naming";
+    text.textContent = naming ? "Name this map" : "Recording map — drive slowly to cover the space";
+    nameInput.hidden = !naming;
+    hint.hidden = !naming;
+    primaryBtn.textContent = naming ? "Save" : "Finish";
+    secondaryBtn.textContent = naming ? "Back" : "Discard";
+    secondaryBtn.classList.toggle("danger", !naming);
+    primaryBtn.disabled = !!s.busy || (naming && validName() === null);
+    secondaryBtn.disabled = !!s.busy;
+    nameInput.disabled = !!s.busy;
+  }
+
+  primaryBtn.addEventListener("click", async () => {
+    if (step === "recording") {
+      step = "naming";
+      render(store.state);
+      nameInput.focus();
+      return;
+    }
+    const name = validName();
+    if (!name) return;
+    const overwrite = store.state.maps.includes(`${name}.yaml`);
+    if (overwrite) {
+      const ok = await confirmDialog({
+        title: "Overwrite map?",
+        body: `${name}.yaml already exists and will be replaced.`,
+        confirmLabel: "Overwrite",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    await store.saveAndActivate(name, overwrite);
+    // On success the mode topic flips to navigation and render() resets us.
+  });
+
+  secondaryBtn.addEventListener("click", async () => {
+    if (step === "naming") {
+      step = "recording";
+      render(store.state);
+      return;
+    }
+    // Discard. With no saved maps there is no navigation to return to —
+    // offer map-free instead of stranding the robot mapless.
+    const mapless = store.state.maps.length === 0;
+    const ok = await confirmDialog({
+      title: "Discard recording?",
+      body: mapless
+        ? "The map progress is lost and the robot switches to map-free mode (no map)."
+        : "The map progress is lost and the robot returns to navigation.",
+      confirmLabel: "Discard",
+      danger: true,
+    });
+    if (ok) await store.changeMode(mapless ? "mapfree" : "navigation");
+  });
+
+  nameInput.addEventListener("input", () => render(store.state));
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !primaryBtn.disabled) primaryBtn.click();
+    if (e.key === "Escape") secondaryBtn.click();
+  });
+
+  const unsub = store.onChange(render);
+
+  return {
+    destroy() {
+      unsub();
+      banner.remove();
+    },
+  };
+}

@@ -14,8 +14,6 @@ import {
   BATTERY_STATE_TOPIC,
   CMD_VEL_TOPIC,
   MAP_TOPIC,
-  NAV_CURRENT_MAP_TOPIC,
-  NAV_CURRENT_MODE_TOPIC,
   ODOM_TOPIC,
   SCAN_TOPIC,
 } from "../constants.js";
@@ -53,9 +51,12 @@ function makeRate() {
 
 /**
  * @param {HTMLElement} root the sidebar container.
+ * @param {ReturnType<typeof import("./navStore.js").createNavStore>} store nav-state
+ *   rows (mode, active map) read from the shared store rather than duplicate
+ *   topic subscriptions.
  * @returns {{ destroy: () => void }}
  */
-export function createNavPanels(root) {
+export function createNavPanels(root, store) {
   /** @param {string} title @returns {{ row: (label: string) => HTMLElement }} */
   function panel(title) {
     const section = document.createElement("section");
@@ -183,12 +184,10 @@ export function createNavPanels(root) {
   watch(MAP_TOPIC, () => {}, 250);
 
   unsubs.push(
-    ros.subscribe(NAV_CURRENT_MODE_TOPIC, (msg) => {
-      if (typeof msg?.data === "string" && msg.data) navMode.textContent = msg.data;
-    }, 0, "std_msgs/msg/String"),
-    ros.subscribe(NAV_CURRENT_MAP_TOPIC, (msg) => {
-      if (typeof msg?.data === "string" && msg.data) navMap.textContent = msg.data;
-    }, 0, "std_msgs/msg/String"),
+    store.onChange((s) => {
+      if (s.mode) navMode.textContent = s.mode;
+      if (s.currentMap) navMap.textContent = s.currentMap;
+    }),
     ros.subscribe(BATTERY_STATE_TOPIC, (msg) => {
       const p = msg?.percentage;
       if (typeof p !== "number" || Number.isNaN(p)) return;
