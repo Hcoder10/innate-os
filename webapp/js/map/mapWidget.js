@@ -21,6 +21,7 @@ import {
   SCAN_TOPIC,
   GLOBAL_COSTMAP_TOPIC,
   TF_STATIC_TOPIC,
+  MAPPING_POSE_TOPIC,
 } from "../constants.js";
 
 // /localize scan-matches for up to ~30 s before answering.
@@ -46,7 +47,7 @@ const TRAIL_MAX_POINTS = 600;
  *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
  *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live laser scan,
  *   global costmap, odometry trail — each adds its subscription only while enabled.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void }}
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -140,7 +141,17 @@ export function createMap(root, opts = {}) {
   /** @type {{ x: number, y: number, yaw: number } | null} latest raw odom */
   let odomPose = null;
 
+  // While the robot is building a map (SLAM), the only pose that's valid
+  // against the growing grid is mode_manager's /mapping_pose (map frame, from
+  // TF): raw odom drifts against it and any AMCL fix predates the map.
+  let mappingMode = false;
+  /** @type {{ x: number, y: number, yaw: number } | null} */
+  let mappingPose = null;
+  /** @type {(() => void) | null} */
+  let unsubMappingPose = null;
+
   function composedPose() {
+    if (mappingMode) return mappingPose ?? odomPose;
     if (!amclPose) return odomPose;
     if (!odomAtAmcl || !odomPose) return amclPose;
     // Motion since the fix in the base frame, re-applied at the AMCL fix.
@@ -606,20 +617,22 @@ export function createMap(root, opts = {}) {
 
   function render() {
     const navActive = navigating || goalMarker !== null;
-    backBtn.hidden = ui === "idle";
-    locateBtn.hidden = ui !== "idle";
+    // Mapping mode: navigation actions (locate/goto/stop) are meaningless
+    // against a half-built map — only Recenter survives.
+    backBtn.hidden = ui === "idle" || mappingMode;
+    locateBtn.hidden = ui !== "idle" || mappingMode;
     locateBtn.disabled = locating || navActive;
     locateBtn.classList.toggle("is-active", locating);
     setHint(locateBtn, locating ? "locating…" : "auto or manual");
-    autoBtn.hidden = ui !== "locate";
+    autoBtn.hidden = ui !== "locate" || mappingMode;
     autoBtn.disabled = locating;
-    manualBtn.hidden = ui !== "locate" && ui !== "manual";
+    manualBtn.hidden = (ui !== "locate" && ui !== "manual") || mappingMode;
     manualBtn.classList.toggle("is-active", ui === "manual");
     setHint(manualBtn, ui === "manual" ? "click & drag on the map" : "drag where the robot is");
-    goBtn.hidden = (ui !== "idle" && ui !== "goto") || (ui === "idle" && navActive);
+    goBtn.hidden = (ui !== "idle" && ui !== "goto") || (ui === "idle" && navActive) || mappingMode;
     goBtn.classList.toggle("is-active", ui === "goto");
     setHint(goBtn, ui === "goto" ? "click & drag on the map" : "tap a point to navigate");
-    stopBtn.hidden = !(ui === "idle" && navActive);
+    stopBtn.hidden = !(ui === "idle" && navActive) || mappingMode;
     centerBtn.hidden = panCenter === null;
     canvas.style.cursor = ui === "manual" || ui === "goto" ? "crosshair" : "grab";
   }
@@ -893,6 +906,45 @@ export function createMap(root, opts = {}) {
         draw();
       }
     },
+    /**
+     * Enter/leave mapping mode: swaps the pose source to /mapping_pose,
+     * clears nav-mode leftovers (route, goal, AMCL anchor — all tied to the
+     * previous map), and hides the navigation controls.
+     * @param {boolean} on
+     */
+    setMappingMode(on) {
+      if (mappingMode === on) return;
+      mappingMode = on;
+      setUi("idle");
+      plan = null;
+      goalMarker = null;
+      goalIsCommanded = false;
+      activePlanTopic = null;
+      clearTimeout(navStaleTimer);
+      if (on) {
+        amclPose = null;
+        odomAtAmcl = null;
+        unsubMappingPose = ros.subscribe(
+          MAPPING_POSE_TOPIC,
+          (msg) => {
+            const p = poseOf(msg);
+            if (!p) return;
+            mappingPose = p;
+            pose = composedPose();
+            draw();
+          },
+          100,
+          "nav_msgs/msg/Odometry",
+        );
+      } else {
+        unsubMappingPose?.();
+        unsubMappingPose = null;
+        mappingPose = null;
+      }
+      pose = composedPose();
+      render();
+      draw();
+    },
     /** Toggle an overlay layer (subscribes/unsubscribes its topics live). */
     setLayer(name, on) {
       if (layers[name] === on) return;
@@ -910,6 +962,7 @@ export function createMap(root, opts = {}) {
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
+      unsubMappingPose?.();
       for (const unsub of Object.values(layerUnsubs)) unsub();
       canvas.remove();
       controls.remove();

@@ -134,6 +134,19 @@ layer off drops its subscription, so an unused costmap costs no bandwidth.
 The **local** costmap is deliberately not overlaid: it lives in the `odom`
 frame and would need a live `map->odom` transform to sit on the map canvas.
 
+**Mapping.** The Maps panel ports the mobile app's workflow: list/switch/
+delete maps (`/nav/available_maps`, `/nav/change_navigation_map`,
+`/nav/delete_map`), a map-free toggle, and **+ New map**, which flips the
+robot into mapping mode (`/nav/change_mode {mode: "mapping"}`). While
+mapping, a banner over the scene carries Save-as/Discard; Save calls
+`/nav/save_map` (name must be alphanumeric/`_`/`-`; `.yaml` appended
+server-side), then returns to navigation and activates the new map — the
+same sequence the mobile app runs. The widget swaps its pose source to
+`/mapping_pose` (map-frame TF, published by mode_manager only while
+mapping) because raw `/odom` drifts against the growing SLAM map and any
+AMCL fix predates it. Mode follows the `/nav/current_mode` topic, so a
+mapping session started from the mobile app shows the same controls here.
+
 **Measured velocity is derived, not read.** This robot never populates
 `Odometry.twist` — `mars_bringup`'s `_publish_odometry` copies pose out of the
 I2C transform and publishes, leaving twist at its zero default (the sim driver

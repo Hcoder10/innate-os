@@ -5779,6 +5779,175 @@ button {
   height: 100%;
 }
 
+/* Maps panel: roster rows + a recording banner over the scene. */
+.maps-new {
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+}
+
+.maps-new:disabled {
+  color: var(--muted);
+  border-color: var(--hairline);
+}
+
+.maps-list {
+  margin-top: 8px;
+}
+
+.maps-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.maps-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.maps-pick:hover:not(:disabled) {
+  background: var(--accent-faint);
+}
+
+.maps-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline-strong);
+}
+
+.maps-row.is-active .maps-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.maps-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maps-row.is-active .maps-name {
+  color: var(--accent);
+}
+
+.maps-delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.maps-delete:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgb(217 106 90 / 12%);
+}
+
+.maps-delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.maps-empty,
+.maps-status {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.maps-status[data-kind="fail"] {
+  color: var(--danger);
+}
+
+.maps-status[data-kind="ok"] {
+  color: var(--ok);
+}
+
+.maps-mapfree {
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.maps-mapfree input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+}
+
+/* Recording banner pinned over the scene while the robot is in mapping mode. */
+.mapping-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  background: var(--glass);
+  backdrop-filter: blur(6px);
+}
+
+.mapping-banner-text {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.mapping-name {
+  width: 130px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+}
+
+.mapping-btn {
+  flex: none;
+  padding: 5px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+}
+
+.mapping-btn:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.mapping-btn.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.mapping-btn:disabled {
+  color: var(--muted);
+}
+
 /* Layer toggle chips in the page header. */
 .layer-chips {
   display: flex;

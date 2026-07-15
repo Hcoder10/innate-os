@@ -77,10 +77,26 @@ export const CMD_VEL_TOPIC = "/cmd_vel"; // geometry_msgs/Twist
 export const GLOBAL_COSTMAP_TOPIC = "/navigation/global_costmap/costmap"; // nav_msgs/OccupancyGrid
 // Latched static transforms; carries base_link -> base_laser from the URDF.
 export const TF_STATIC_TOPIC = "/tf_static"; // tf2_msgs/TFMessage
-// mode_manager state (std_msgs/String each): mapped/mapfree/mapping, and the
-// active map's name.
+// mode_manager state (std_msgs/String each): navigation/mapfree/mapping, and
+// the active map's name.
 export const NAV_CURRENT_MODE_TOPIC = "/nav/current_mode";
 export const NAV_CURRENT_MAP_TOPIC = "/nav/current_map";
+// std_msgs/String carrying JSON {"available_maps": ["home.yaml", ...]}.
+export const NAV_AVAILABLE_MAPS_TOPIC = "/nav/available_maps";
+// mode_manager services (brain_messages srvs, all → {success, message}):
+// change_mode {mode: "navigation"|"mapping"|"mapfree"} swaps the whole nav
+// lifecycle stack; save_map {map_name, overwrite} only works in mapping mode
+// (name must be alphanumeric/_/-; ".yaml" is appended server-side);
+// delete_map accepts base name or filename.
+export const NAV_CHANGE_MODE_SERVICE = "/nav/change_mode";
+export const NAV_CHANGE_MAP_SERVICE = "/nav/change_navigation_map";
+export const NAV_SAVE_MAP_SERVICE = "/nav/save_map";
+export const NAV_DELETE_MAP_SERVICE = "/nav/delete_map";
+// map-frame pose while mapping (nav_msgs/Odometry, TF map->base_link),
+// published by mode_manager only in mapping mode. The right pose source
+// during SLAM: raw /odom drifts against the growing map, and /amcl_pose is
+// stale from navigation mode.
+export const MAPPING_POSE_TOPIC = "/mapping_pose";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
