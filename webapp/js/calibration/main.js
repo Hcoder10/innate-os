@@ -56,8 +56,6 @@ export function mount(stage) {
  *   POOR), empty if not computed (e.g. cancelled before finishing).
  */
 
-// Printable ChArUco board, served from the public docs repo. Must be printed
-// at 100% scale (no fit-to-page) or the measured square size is wrong.
 const CALIBRATION_BOARD_PDF_URL =
   "https://raw.githubusercontent.com/innate-inc/web-docs/main/.gitbook/assets/mars-calibration-board.pdf";
 
@@ -109,7 +107,6 @@ function buildView(root) {
     "Save calibration when done (backs up the existing calibration file, then writes the new one)";
   saveRow.append(saveCheckbox, saveText);
 
-  // Download card for the printable board — the first thing an operator needs.
   const boardLink = document.createElement("a");
   boardLink.className = "calib-board-link";
   boardLink.href = CALIBRATION_BOARD_PDF_URL;
@@ -137,8 +134,7 @@ function buildView(root) {
     '<path d="M12 4v10m-4-3.5 4 4 4-4M5 18.5h14"/></svg>';
   boardLink.append(boardIcon, boardText, boardDl);
 
-  // One action row that morphs with the run state: Start alone while idle,
-  // Capture + Stop while a run is active (no dead disabled buttons).
+  // One row, morphing with the run state: Start while idle, Capture + Stop while active.
   const actionRow = document.createElement("div");
   actionRow.className = "calib-action-row";
   const startBtn = document.createElement("button");

@@ -300,10 +300,8 @@ bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
 }
 
 void WebRTCStreamer::poll_pipeline_health() {
-    // Per-peer transport errors (DTLS teardown when a peer vanishes or a
-    // handshake fails) are expected and handled — the peer is released below —
-    // so they log at WARN. Errors on the shared encode/audio pipelines are
-    // real faults and stay at ERROR.
+    // expected_teardown: a peer's DTLS error on disconnect is routine (the peer
+    // is released below), unlike a fault on the shared encode/audio pipelines.
     auto drain_bus = [this](GstElement* pipeline, const char* label, bool expected_teardown) {
         bool saw_error = false;
         if (!pipeline) {

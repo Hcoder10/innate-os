@@ -29,8 +29,6 @@ export function initTtsAudio() {
   if (started) return;
   started = true;
 
-  // Type given: the publisher (brain_client_node) may not be up yet — with a
-  // type rws parks the subscription instead of erroring per retry.
   ros.subscribe(TTS_AUDIO_TOPIC, (msg) => {
     if (!speaker) return; // another tab is the elected speaker
     const b64 = msg?.data;

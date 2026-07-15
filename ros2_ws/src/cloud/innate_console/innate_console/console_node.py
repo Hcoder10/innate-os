@@ -73,10 +73,7 @@ REWIRE_SEC = 10.0  # how often to pick up newly-appeared panes
 MAX_LINES_PER_DRAIN = 400  # per-pane flood cap per poll tick
 FILE_CAP_BYTES = 4_000_000  # truncate a capture file once it grows past this
 SCROLLBACK_LINES = 200  # tmux history lines to seed per pane on first wire
-# Repeat collapsing: a line identical to the previous one from the same source
-# is suppressed; a summary goes out when the run ends (quiet/new message) and
-# at least every REPEAT_REMIND_SEC while it continues.
-REPEAT_QUIET_SEC = 3.0  # run ends after this long without another repeat
+REPEAT_QUIET_SEC = 3.0  # a repeat run ends after this long without another repeat
 REPEAT_REMIND_SEC = 30.0  # cadence of "still repeating" summaries
 
 # Standard launched rcl line: "[exe-N] [LEVEL] [ts] [name]: msg".
@@ -144,10 +141,8 @@ class ConsoleBridge(Node):
         self._backfill = self.create_publisher(String, "/innate/console/backfill", 1)
         self.create_subscription(String, "/innate/console/request", self._on_request, 1)
 
-        # Repeat collapsing state: per bucket, the (level, msg) of the last line
-        # and the currently-suppressed run of identical follow-ups (if any).
-        self._last_line = {}
-        self._repeats = {}
+        self._last_line = {}  # bucket -> (level, msg) of its last line
+        self._repeats = {}  # bucket -> in-flight run of suppressed repeats
 
         # pane_id -> {"window", "pane", "path", "fh", "carry"}
         self._panes = {}
@@ -296,14 +291,8 @@ class ConsoleBridge(Node):
         dq.append(rec)
 
     def _emit(self, rec):
-        """Publish a record, collapsing consecutive repeats from the same source.
-
-        The first line goes out verbatim; identical follow-ups are swallowed and
-        surface as one "repeated N×" summary — at REPEAT_REMIND_SEC cadence while
-        the run continues, and when it ends (a different line, or REPEAT_QUIET_SEC
-        of silence via _flush_repeats). A single stray repeat is re-emitted
-        verbatim: the line itself is clearer than a summary about it.
-        """
+        """Publish a record, collapsing consecutive repeats from the same source
+        into one "repeated N×" summary."""
         key = self._bucket_key(rec)
         body = rec["msg"] if rec["msg"] is not None else rec["text"]
         now = time.monotonic()
@@ -333,7 +322,7 @@ class ConsoleBridge(Node):
         if not run or run["count"] == 0:
             return
         if run["count"] == 1:
-            self._publish(run["rec"])
+            self._publish(run["rec"])  # a summary about one line is noisier than the line
             return
         rec = dict(run["rec"])
         body = rec["msg"] if rec["msg"] is not None else rec["text"]

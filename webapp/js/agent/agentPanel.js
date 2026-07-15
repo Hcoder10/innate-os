@@ -135,7 +135,6 @@ export function createAgentPanel(root, rosClient, agentState) {
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
     directiveSelect.disabled = applying || agents.length === 0;
     resetBtn.disabled = applying;
-    // Sending while idle auto-starts the armed agent (see submit) — say so.
     input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
 
@@ -349,9 +348,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     input.style.height = "auto";
     // Always jump to our own message, even if we'd scrolled up reading earlier.
     stream.scrollTop = stream.scrollHeight;
-    // Messaging an idle agent means "start it": activate the armed directive
-    // first (same choice as the Start button) so the message reaches a running
-    // brain instead of vanishing into an inactive one.
+    // Messaging an idle agent means "start it" — an inactive brain drops chat_in.
     if (!agentState.get().brainActive) {
       const id = directiveSelect.value || lastDirective;
       if (id) await withApplying(() => agentState.setDirective(id));

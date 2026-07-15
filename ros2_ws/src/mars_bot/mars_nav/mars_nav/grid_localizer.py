@@ -466,10 +466,8 @@ class GridLocalizer(Node):
         pix_x = self.free_pixels[pos_indices, 0]
         pix_y = self.free_pixels[pos_indices, 1]
 
-        # Convert to world coordinates — cell centers. The corner conversion
-        # (pix * res + origin) put edge-cell candidates exactly ON the map
-        # boundary; a pose published there seeds AMCL where the costmap cannot
-        # raytrace ("Sensor origin is out of map bounds" on every scan).
+        # Cell centers, not corners: a corner pose on an edge cell lands exactly
+        # on the map boundary, where the costmap can't raytrace.
         pos_x = ((pix_x + 0.5) * self.resolution + self.origin[0]).astype(np.float32)
         pos_y = ((self.map_h - pix_y - 0.5) * self.resolution + self.origin[1]).astype(np.float32)
         pos_theta = angle_offsets[ang_indices]
@@ -512,9 +510,7 @@ class GridLocalizer(Node):
         self.status_pub.publish(msg)
         self.get_logger().info(f"Published status: {status}")
 
-    # A pose this close to the map border degrades navigation (the costmap
-    # cannot see past the map edge), so it earns a one-time operator hint.
-    EDGE_MARGIN_M = 0.30
+    EDGE_MARGIN_M = 0.30  # closer to the border than this and the costmap can't see ahead
 
     def _warn_if_at_map_edge(self, x: float, y: float) -> None:
         """Log one clear hint when the localized pose hugs the map border."""

@@ -127,7 +127,6 @@ class MarsArmNode : public rclcpp::Node {
     std::vector<double> latest_joint_positions_;
     std::mutex joint_state_mutex_;
 
-    // Joint names
     std::vector<std::string> joint_names_{"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
 
     // HEAD members

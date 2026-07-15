@@ -270,7 +270,7 @@ export function createSkillsMenu(parent, rosClient) {
   /** Name of the skill running right now, from a local run or the brain topic. */
   function currentActiveName() {
     if (run && !run.done) {
-      const skillId = run.skillId; // capture: `run` is mutable, so the closure below un-narrows it
+      const skillId = run.skillId; // capture: `run` is mutable, so the closure can't re-narrow it
       const s = skills.find((x) => x.id === skillId);
       return s ? formatName(s) : prettify(skillId);
     }

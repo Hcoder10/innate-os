@@ -223,9 +223,8 @@ if [ -f "$ENV_FILE" ]; then
             (umask 077; printf '%s\n' "$SERVICE_KEY_LINE" > "$SYSTEM_ENV_FILE")
             log "Copied INNATE_SERVICE_KEY from .env to $SYSTEM_ENV_FILE"
         fi
-        # Repair mode/owner unconditionally: files written by older updaters are
-        # 0600 root:root, which the non-root launch readers complain about on
-        # every boot ("[config_loader] Could not open /etc/innate.env").
+        # Unconditional: older updaters left this 0600 root:root, unreadable by
+        # the non-root launch readers.
         chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
         chmod 640 "$SYSTEM_ENV_FILE"
     fi

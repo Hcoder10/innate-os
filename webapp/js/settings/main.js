@@ -586,7 +586,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       recompute();
     });
   } else if (knob.options) {
-    const options = knob.options; // capture the narrowed value for the closures below
+    const options = knob.options; // capture: the closures below can't re-narrow it
     const CUSTOM = "__custom__";
     const select = document.createElement("select");
     select.className = "set-text set-select";

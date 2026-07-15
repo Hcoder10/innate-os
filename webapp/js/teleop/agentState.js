@@ -70,10 +70,8 @@ export function createAgentState(rosClient) {
     }, delay);
   }
 
-  // True after the first /brain/agent_status sample. The brain publishes it
-  // only once its services exist, so gating refresh() on it means the
-  // get_available_directives call can never race the brain's boot ("Service
-  // not found" in the rws log on every early attempt).
+  // The brain only publishes agent_status once its services exist, so this
+  // gates refresh() against racing its boot.
   let brainSeen = false;
 
   async function refresh() {
@@ -183,7 +181,6 @@ export function createAgentState(rosClient) {
     }
     if (typeof payload?.brain_active !== "boolean") return;
     if (!brainSeen) {
-      // First proof the brain is up — fetch the roster now (deferred at connect).
       brainSeen = true;
       resetRetry();
       void refresh();
@@ -201,7 +198,7 @@ export function createAgentState(rosClient) {
     if (unchanged) return;
     state = { ...state, brainActive, currentDirective, activeSkills };
     emit();
-  }, undefined, "std_msgs/msg/String"); // typed: the brain may not be up yet
+  }, undefined, "std_msgs/msg/String");
 
   const unsubConn = rosClient.onStateChange((s) => {
     if (s === "connected") {

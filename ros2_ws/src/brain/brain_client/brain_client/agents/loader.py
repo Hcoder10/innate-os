@@ -192,8 +192,6 @@ class AgentLoader(DynamicLoader):
                     missing_skills.append(skill_name)
 
             if missing_skills:
-                # Just the dangling ids — repeating the full catalog per agent
-                # turns a stale-agents nudge into a wall of noise.
                 self.logger.warning(
                     f"Agent '{agent_instance.id}' references skills that are not available: {missing_skills}"
                 )

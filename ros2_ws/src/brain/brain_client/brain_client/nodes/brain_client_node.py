@@ -266,10 +266,8 @@ class BrainClientNode(Node):
         self.create_service(GetAvailableDirectives, "/brain/get_available_directives", self._svc_get_directives)
 
     def _startup(self) -> None:
-        # Wait for the first available-skills message (transient_local replays
-        # the last). Monotonic clock: boot-time NTP steps must not truncate the
-        # wait. 60s covers the skills server's slow first load (torch import,
-        # Nav2 node creation) on the Jetson.
+        # Monotonic: a boot-time NTP step would truncate a wall-clock wait.
+        # 60s covers the skills server's first load (torch, Nav2) on the Jetson.
         self.get_logger().info("Waiting for /brain/available_skills topic...")
         deadline = time.monotonic() + 60.0
         while not self.state.registry and time.monotonic() < deadline:
@@ -277,11 +275,8 @@ class BrainClientNode(Node):
         if not self.state.registry:
             self.get_logger().warn("No primitives received from /brain/available_skills after 60s")
 
-        # With an empty registry (skills not published yet), per-agent skill
-        # validation is meaningless noise — pass None to skip it. The registry
-        # itself self-heals when the roster lands (SkillCatalog rebuilds it and
-        # re-registers with the cloud); the skipped validation is logging-only
-        # and simply doesn't run this boot.
+        # None skips per-agent skill validation: against an empty registry every
+        # agent would "fail" it.
         self.state.directives, self.state.current_directive = initialize_agents(
             self.get_logger(), self.state.registry.primitives or None
         )

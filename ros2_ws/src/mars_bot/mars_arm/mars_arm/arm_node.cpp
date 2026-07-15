@@ -210,10 +210,8 @@ MarsArmNode::MarsArmNode() : Node("mars_arm") {
 
     RCLCPP_INFO(this->get_logger(), "Mars Arm Node ready!");
 
-    // No homing here: trajectories are consumed by the control timer, which
-    // only fires once the executor spins (after this constructor returns), so
-    // a constructor-time home can never execute. Homing stays on-demand (the
-    // reboot/home services).
+    // No homing here: the control timer consumes trajectories, and it only
+    // fires once the executor spins — after this constructor returns.
 }
 
 }  // namespace mars_arm
