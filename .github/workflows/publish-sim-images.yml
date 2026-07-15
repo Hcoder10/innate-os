@@ -50,13 +50,12 @@ jobs:
           # inputs-<hash> versions against retention.
           image_inputs_hash="$(python3 ci/compute_sim_image_inputs_hash.py)"
           short_sha="${GITHUB_SHA::12}"
+          # Every build is content/commit-addressed (sha-, inputs-); only
+          # main-branch builds may move the floating `main` alias.
+          image_tag="sha-${short_sha}"
           push_main_tags="false"
-
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            image_tag="sha-${short_sha}"
             push_main_tags="true"
-          else
-            image_tag="manual-${short_sha}"
           fi
 
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
