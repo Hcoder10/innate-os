@@ -73,7 +73,7 @@ const SECTIONS = [
   },
 ];
 
-/** Path for a section key: teleop is the site root, the rest are /<key>. */
+/** Path for a section key: teleop is the site root, the rest are /<key>. @param {string} key */
 function pathForKey(key) {
   return key === "teleop" ? "/" : `/${key}`;
 }
@@ -102,6 +102,7 @@ document.addEventListener("gesturestart", (e) => {
   if (!(e.target instanceof HTMLCanvasElement)) e.preventDefault();
 });
 
+/** @param {(path: string) => void} navigate */
 export function initShell(navigate) {
   // Buttons fire on press-down instead of release, app-wide. Installed here
   // because the router builds the shell exactly once per page load. Idempotent.

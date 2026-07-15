@@ -129,6 +129,7 @@ export function buildRolloutControl(chartWindow, session) {
   let destroyed = false;
 
   const unsubSkills = ros.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
+    /** @type {any[]} */
     const all = Array.isArray(msg?.skills) ? msg.skills : [];
     const learned = all.filter((s) => s?.id && s.type === "learned" && !s.in_training);
     const prevValue = select.value;
@@ -138,6 +139,7 @@ export function buildRolloutControl(chartWindow, session) {
     sync();
   });
 
+  /** @param {string} [flash] */
   function sync(flash) {
     const running = state === "starting" || state === "running";
     runBtn.textContent =
@@ -154,6 +156,7 @@ export function buildRolloutControl(chartWindow, session) {
     okBtn.disabled = failBtn.disabled = discardBtn.disabled = state === "saving";
   }
 
+  /** @param {string} [flash] */
   function toReady(flash) {
     state = "ready";
     sync(flash);
@@ -162,7 +165,8 @@ export function buildRolloutControl(chartWindow, session) {
 
   /** One failure funnel: whatever step died, don't leave a half-open episode.
    * Auto-continue never re-arms after a failure — the countdown is only armed
-   * from a successful save — so an error stops the loop by construction. */
+   * from a successful save — so an error stops the loop by construction.
+   * @param {any} err */
   function onError(err) {
     console.error("[profiling] rollout:", err);
     if (cancelSkill) {

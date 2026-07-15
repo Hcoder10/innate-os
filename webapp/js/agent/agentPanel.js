@@ -18,7 +18,7 @@ import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_U
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {ReturnType<import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
 export function createAgentPanel(root, rosClient, agentState) {

@@ -236,7 +236,9 @@ function setLive(live, flowing, windowOpen) {
 async function exportJson(samples, btn) {
   if (!samples.length) return flashBtn(btn, "No data", "Export JSON");
   const st = computeStats(samples);
+  /** @param {number} x */
   const r = (x, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
+  /** @param {number | null | undefined} x */
   const rn = (x, d = 2) => (x == null ? null : r(x, d)); // null-safe (quality may be absent)
   const profile = {
     generated_at: new Date().toISOString(),
@@ -534,7 +536,8 @@ function computeStats(samples) {
   const meanTransfer = mean(samples.map((s) => s.transfer_ms || 0));
   // Behavior-quality signals (present only when recorded against an ensembling policy
   // with a progress head). num() drops missing values so stats stay meaningful.
-  const num = (key) => samples.map((s) => s[key]).filter((v) => typeof v === "number");
+  /** @param {keyof Sample} key */
+  const num = (key) => /** @type {number[]} */ (samples.map((s) => s[key]).filter((v) => typeof v === "number"));
   const progress = num("progress");
   const disagree = num("disagreement");
   const armJerk = num("arm_jerk");
@@ -576,6 +579,7 @@ function computeStats(samples) {
 function renderStats(st, host) {
   const n = st.sampleCount;
   const q = st.quality;
+  /** @param {number | null | undefined} v */
   const fmt = (v, d = 3) => (v == null ? "—" : v.toFixed(d));
   // Fixed-order rows; labels are stable, so build the cards once and update value/foot/warn
   // in place each tick. The two quality cards are always present but hidden until recorded.
@@ -818,6 +822,7 @@ function plotFrame(host, W, H) {
   plot.className = "prof-plot";
   const yaxis = document.createElement("div");
   yaxis.className = "prof-yaxis";
+  /** @type {HTMLSpanElement[]} */
   const ticks = [];
   for (let i = 0; i <= GRID_DIVS; i++) {
     const span = document.createElement("span");
@@ -835,6 +840,7 @@ function plotFrame(host, W, H) {
   plot.append(yaxis, wrap);
   host.appendChild(plot);
 
+  /** @param {number} hi @param {number} lo @param {(v: number) => string} fmt */
   const setY = (hi, lo, fmt) => {
     ticks.forEach((span, i) => {
       span.textContent = fmt(hi - ((hi - lo) * i) / GRID_DIVS);

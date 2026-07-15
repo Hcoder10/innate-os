@@ -586,10 +586,11 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       recompute();
     });
   } else if (knob.options) {
+    const options = knob.options; // capture the narrowed value for the closures below
     const CUSTOM = "__custom__";
     const select = document.createElement("select");
     select.className = "set-text set-select";
-    for (const opt of knob.options) {
+    for (const opt of options) {
       const o = document.createElement("option");
       o.value = opt.value;
       o.textContent = opt.label;
@@ -609,7 +610,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
     custom.placeholder = "Paste a voice ID";
     ctl.appendChild(custom);
 
-    const isStock = () => knob.options.some((o) => o.value === entry.value);
+    const isStock = () => options.some((o) => o.value === entry.value);
     entry.render = () => {
       const stock = isStock();
       select.value = stock ? String(entry.value) : CUSTOM;

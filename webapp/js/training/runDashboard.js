@@ -43,12 +43,12 @@ const isTerminal = (s) =>
  * @param {import("../rosClient.js").RosClient} ros
  * @param {{ jobList: TrainingJobList | null, skills: Skill[], statusFor: (d: string) => any, pending?: Map<string, any>, selected?: { skillDir: string, runId: number } | null }} store
  * @param {{ onTrain: (skill?: Skill) => void, onOpenLogs: (skillDir: string, runId: number, live?: boolean) => void, onSelect?: (skillDir: string, runId: number) => void, onRunInfo?: () => void }} opts
- * @returns {{ render: () => void, destroy: () => void }}
+ * @returns {{ render: () => void, destroy: () => void, actionsFor: (sk: TrainingSkillStatus, run: TrainingRunStatus) => HTMLElement[], infoFor: (sk: TrainingSkillStatus, run: TrainingRunStatus) => ({ downloaded: boolean, has_checkpoint: boolean, files: string[], error_excerpt?: string } | undefined) }}
  */
 export function createRunDashboard(parent, ros, store, opts) {
   // Per-run results info (downloaded?/has_checkpoint?), fetched lazily from the
   // front door for finished runs and cached. has_checkpoint == success.
-  /** @type {Map<string, { downloaded: boolean, has_checkpoint: boolean, files: string[] }>} */
+  /** @type {Map<string, { downloaded: boolean, has_checkpoint: boolean, files: string[], error_excerpt?: string }>} */
   const runInfo = new Map();
   /** @type {Set<string>} */
   const infoInflight = new Set();

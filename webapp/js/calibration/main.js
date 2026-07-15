@@ -429,7 +429,7 @@ function buildView(root) {
       // real Result, via r.timedOut, gets to say the run actually ended).
       const remainingMs = fb.deadlineMs !== null ? fb.deadlineMs - Date.now() : null;
       countdownRow.row.hidden = !activeRun || remainingMs === null;
-      if (!countdownRow.row.hidden) {
+      if (activeRun && remainingMs !== null) {
         countdownRow.value.textContent = remainingMs > 0 ? `${Math.ceil(remainingMs / 1000)}s` : "wrapping up…";
         countdownRow.value.classList.toggle("calib-countdown-warn", remainingMs <= 15000);
       }

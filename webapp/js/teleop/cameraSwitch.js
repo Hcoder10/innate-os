@@ -18,6 +18,7 @@ import { createMap } from "../map/mapWidget.js";
 const STORE_KEY = "innate.cameras";
 
 // Tile tag labels; roster ids stay the wire/camera names.
+/** @type {Record<string, string>} */
 const DISPLAY_LABELS = { main: "Main", arm: "Arm", orbit: "Top View" };
 
 /** @param {string} name */
@@ -191,16 +192,6 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   function buildCameraTile(name) {
     const index = roster.indexOf(name);
     const tile = liveTile(name, displayLabel(name), `Make ${name} the main view`);
-    // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
-    // capture pinned page composition to its capture rate); mount those
-    // directly. Real robots keep the <video> + WebRTC stream path.
-    const thumbCanvas = session.thumbnailCanvas?.(index) ?? null;
-    if (thumbCanvas) {
-      thumbCanvas.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
-      tile.prepend(thumbCanvas);
-      tiles.set(name, { tile, video: null, index });
-      return tile;
-    }
     const video = document.createElement("video");
     video.autoplay = true;
     video.muted = true;
@@ -217,7 +208,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     return tile;
   }
 
-  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title @param {boolean} [closable] */
+  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title */
   function liveTile(id, label, title) {
     const tile = document.createElement("div");
     tile.className = "cam-tile live";
