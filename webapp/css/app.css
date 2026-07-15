@@ -5948,6 +5948,23 @@ button {
   background: rgb(217 106 90 / 12%);
 }
 
+/* Shift key cap inline in the recording line — the .wasd-chip key-cap
+   language, sized to sit in a sentence and tinted to the banner's amber. */
+.mapping-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  vertical-align: baseline;
+  border: 1px solid var(--accent-dim);
+  border-radius: 5px;
+  background: var(--accent-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 /* Inline validity hint next to the map-name field. */
 .mapping-hint {
   font-size: 10px;

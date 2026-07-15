@@ -5,7 +5,7 @@
 // robot is in mapping mode, a pure view of the nav store. Two steps, like
 // the mobile app's record → name screens:
 //
-//   recording:  "Recording map — drive slowly…"   [Finish] [Discard]
+//   recording:  "…hold ⇧ Shift to drive slowly"   [Finish] [Discard]
 //   naming:     name field + inline validation    [Save]   [Back]
 //
 // Visibility follows the store's mode (topic-driven), so a session started
@@ -14,6 +14,20 @@
 
 import { confirmDialog } from "./confirm.js";
 import { MAP_NAME_RE } from "./navStore.js";
+
+// The ⇧ glyph as an outline path rather than the unicode character: its
+// rendering varies wildly by platform font, and this matches the stroke
+// language of every other icon in the app.
+const SHIFT_ICON =
+  '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2l5.2 5.6H10.4V13.4H5.6V7.8H2.8z"/></svg>';
+
+/** A Shift key cap, in the same visual language as the WASD hint chips. */
+function shiftKeyCap() {
+  const kbd = document.createElement("kbd");
+  kbd.className = "mapping-kbd";
+  kbd.innerHTML = `${SHIFT_ICON}<span>Shift</span>`;
+  return kbd;
+}
 
 /**
  * @param {HTMLElement} scene the map stage the banner overlays.
@@ -25,8 +39,15 @@ export function createMappingSession(scene, store) {
   banner.className = "mapping-banner";
   banner.hidden = true;
 
-  const text = document.createElement("span");
-  text.className = "mapping-banner-text";
+  // Two prebuilt prose spans rather than one retitled on every render: the
+  // recording line carries a key cap, and render() runs on every store change.
+  const recordingText = document.createElement("span");
+  recordingText.className = "mapping-banner-text";
+  recordingText.append("Recording map — cover the space, hold ", shiftKeyCap(), " to drive slowly");
+  const namingText = document.createElement("span");
+  namingText.className = "mapping-banner-text";
+  namingText.textContent = "Name this map";
+
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.className = "mapping-name mono";
@@ -39,7 +60,7 @@ export function createMappingSession(scene, store) {
   const secondaryBtn = document.createElement("button");
   secondaryBtn.type = "button";
   secondaryBtn.className = "mapping-btn danger";
-  banner.append(text, nameInput, hint, primaryBtn, secondaryBtn);
+  banner.append(recordingText, namingText, nameInput, hint, primaryBtn, secondaryBtn);
   scene.appendChild(banner);
 
   /** @type {"recording" | "naming"} */
@@ -71,7 +92,8 @@ export function createMappingSession(scene, store) {
       return;
     }
     const naming = step === "naming";
-    text.textContent = naming ? "Name this map" : "Recording map — drive slowly to cover the space";
+    recordingText.hidden = naming;
+    namingText.hidden = !naming;
     nameInput.hidden = !naming;
     hint.hidden = !naming;
     primaryBtn.textContent = naming ? "Save" : "Finish";
