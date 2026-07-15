@@ -6,8 +6,9 @@ same modules:
 - **Teleop** (`index.html`) — live video, joystick/keyboard drive, head tilt,
   robot speech, telemetry, and leader-arm USB follow.
 - **Nav** (`js/nav/`) — Foxglove-style live navigation view: the map widget
-  with laser scan / global costmap / odometry-trail overlays, plus telemetry
-  panels (pose, velocity, lidar, nav state, per-topic receive rates).
+  with laser scan / global costmap / odometry-trail overlays, telemetry panels
+  (pose, velocity, lidar, nav state, per-topic receive rates), and live strip
+  charts (commanded vs measured velocity, nearest obstacle).
 - **Collect** (`collect/`) — record episodes (learned skills) and one-shot
   recorded movements; reuses the teleop cockpit with a recording HUD.
 - **Datasets** (`datasets/`) — browse a skill's episodes and replay them
@@ -118,3 +119,27 @@ serial driver.
   holds its last pose.
 - Chrome/Edge only (WebSerial). Protocol layer is tested headlessly:
   `node tests/dynamixel.test.js`.
+
+## Nav page
+
+A Foxglove-style live view of the navigation sensors, over the same rosbridge
+socket as everything else — the `foxglove_bridge` (`innate foxglove`, port
+8765) is a separate ws-protocol path for desktop Foxglove Studio and is not
+what this page uses.
+
+The map widget carries three opt-in overlays, toggled by the header chips:
+laser scan (`/scan`), global costmap
+(`/navigation/global_costmap/costmap`), and an odometry trail. Toggling a
+layer off drops its subscription, so an unused costmap costs no bandwidth.
+The **local** costmap is deliberately not overlaid: it lives in the `odom`
+frame and would need a live `map->odom` transform to sit on the map canvas.
+
+**Measured velocity is derived, not read.** This robot never populates
+`Odometry.twist` — `mars_bringup`'s `_publish_odometry` copies pose out of the
+I2C transform and publishes, leaving twist at its zero default (the sim driver
+does the same), and no other topic carries measured base motion (every
+`/cmd_vel*` is a *command*). So `js/nav/odomVelocity.js` differentiates the raw
+odom pose instead. It differentiates *raw* odom, never the map-frame composite:
+the odom frame is continuous, whereas a map-frame pose jumps on every AMCL
+correction and would read as a velocity spike. Tested headlessly:
+`node tests/odomVelocity.test.js`.

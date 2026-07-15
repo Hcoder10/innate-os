@@ -11,6 +11,7 @@
 import { mountPage } from "../pageMount.js";
 import { createMap } from "../map/mapWidget.js";
 import { createNavPanels } from "./panels.js";
+import { createNavPlots } from "./plots.js";
 
 // Scene default: robot-centred window, wheel-zoomable (Foxglove-like), not
 // the fit-whole-grid mode — remembered across visits.
@@ -76,10 +77,18 @@ function buildView(root) {
     chips.appendChild(chip);
   }
 
-  const panels = createNavPanels(side);
+  // Numeric readouts first, then the rolling plots beneath them: the numbers
+  // answer "what is it now", the plots "how did it get here". Each gets its own
+  // container so neither module's teardown can clear the other's DOM.
+  const readoutHost = document.createElement("div");
+  const plotHost = document.createElement("div");
+  side.append(readoutHost, plotHost);
+  const panels = createNavPanels(readoutHost);
+  const plots = createNavPlots(plotHost);
 
   return {
     destroy() {
+      plots.destroy();
       panels.destroy();
       map.destroy();
       root.innerHTML = "";

@@ -8,6 +8,7 @@
 // that never publishes just keeps its "—".
 
 import { ros } from "../rosClient.js";
+import { createVelocityTracker } from "./odomVelocity.js";
 import {
   AMCL_POSE_TOPIC,
   BATTERY_STATE_TOPIC,
@@ -129,16 +130,18 @@ export function createNavPanels(root) {
     );
   }
 
+  // Measured motion is differentiated from the pose — Odometry.twist is never
+  // populated by this robot (see odomVelocity.js), so reading it would peg
+  // this readout at a permanent 0.00 m/s.
+  const velTracker = createVelocityTracker();
+
   watch(ODOM_TOPIC, (msg) => {
     const p = msg?.pose?.pose?.position;
     const yaw = yawOf(msg?.pose?.pose?.orientation);
     if (typeof p?.x === "number" && typeof p?.y === "number") odomXY.textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
     if (yaw !== null) odomYaw.textContent = `${deg(yaw).toFixed(0)}°`;
-    const v = msg?.twist?.twist?.linear?.x;
-    const w = msg?.twist?.twist?.angular?.z;
-    if (typeof v === "number" && typeof w === "number") {
-      velActual.textContent = `${v.toFixed(2)} m/s · ${deg(w).toFixed(0)}°/s`;
-    }
+    const measured = velTracker.update(msg);
+    if (measured) velActual.textContent = `${measured.v.toFixed(2)} m/s · ${deg(measured.w).toFixed(0)}°/s`;
   }, 100);
 
   watch(AMCL_POSE_TOPIC, (msg) => {

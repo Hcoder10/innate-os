@@ -5723,7 +5723,7 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 320px; /* scene | telemetry panels */
+  grid-template-columns: 1fr 360px; /* scene | telemetry panels + plots */
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -5764,6 +5764,19 @@ button {
   font-size: 12px;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+/* Live strip charts. Overrides .telemetry-plot's 190px (sized for the episode
+   player's joint graph) — three stacked plots share the sidebar here. */
+.nav-plot {
+  height: 84px;
+  margin-top: 8px;
+}
+
+.nav-plot-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* Layer toggle chips in the page header. */
