@@ -31,6 +31,9 @@ class I2CManager:
     RESP_STATUS = 0x83  # Health data
     RESP_CALIBRATE = 0x84  # Calibration status
 
+    # Seconds between "dropping frames" warnings while drops are ongoing.
+    DROP_REPORT_INTERVAL = 10.0
+
     def __init__(
         self,
         node: Node,
@@ -86,7 +89,8 @@ class I2CManager:
         self.motor_temperature = 0.0
         self.fault_code = 0
         self.calibration_status = None
-        self._unknown_resp_ids = set()
+        self._dropped_frames = 0
+        self._last_drop_report = 0.0
 
         # Communication thread control
         self.running = True
@@ -181,9 +185,19 @@ class I2CManager:
             # unrecognised id means the buffer was misaligned or corrupt, so the
             # payload behind it cannot be trusted either.
             if resp_id not in (self.RESP_MOVE, self.RESP_STATUS, self.RESP_CALIBRATE):
-                if resp_id not in self._unknown_resp_ids:
-                    self._unknown_resp_ids.add(resp_id)
-                    self.logger.warning(f"Ignoring unknown I2C response id 0x{resp_id:02X}")
+                self._dropped_frames += 1
+                now = time.time()
+                # Report the first drop at once, then at most every DROP_REPORT_INTERVAL
+                # while they keep coming. A persistent fault (0xFF NACK reads at 30Hz,
+                # say) has to stay visible: warning once per id and then falling silent
+                # is how the CRC gate hid this bug in the first place.
+                if now - self._last_drop_report >= self.DROP_REPORT_INTERVAL:
+                    self.logger.warning(
+                        f"Ignoring unknown I2C response id 0x{resp_id:02X} "
+                        f"({self._dropped_frames} frame(s) dropped since last report)"
+                    )
+                    self._dropped_frames = 0
+                    self._last_drop_report = now
                 return None
 
             self._process_response(resp_id, response_data)
