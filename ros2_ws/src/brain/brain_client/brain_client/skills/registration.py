@@ -24,6 +24,9 @@ AVAILABLE_SKILLS_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
 )
 
+# How often register() re-checks the execute_skill server while waiting for it.
+REGISTRATION_RETRY_SEC = 0.5
+
 
 def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
     """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message."""
@@ -46,11 +49,17 @@ def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRe
 
 
 class SkillCatalog:
-    def __init__(self, node, ws_bridge, state):
+    def __init__(self, node, ws_bridge, state, *, execute_skill_ready=None):
         self._node = node
         self._logger = node.get_logger()
         self._ws = ws_bridge
         self._state = state
+
+        # Callable returning whether the execute_skill action server is
+        # discoverable (PrimitiveRunner.action_client.server_is_ready); None
+        # disables the wait.
+        self._execute_skill_ready = execute_skill_ready
+        self._register_retry_timer = None
 
         self._last_skills_signature: tuple | None = None
         self._sub = node.create_subscription(
@@ -101,9 +110,36 @@ class SkillCatalog:
                 self._state.pending_reregistration = True
 
     def register(self) -> None:
-        """Collect skill + directive definitions and send the registration message."""
+        """Send the skills + directive registration to the cloud.
+
+        Registering is the cloud's licence to trigger skills, so it waits for
+        the execute_skill server to be reachable first — otherwise the very
+        first trigger races graph discovery and the dispatch fails (INN-711's
+        root cause). While the server isn't ready, a short timer re-runs this.
+        """
         if self._state.current_directive is None:
+            self._stop_waiting_for_server()
             return
+        if not self._server_ready():
+            self._wait_for_server()
+            return
+        self._stop_waiting_for_server()
+        self._send_registration()
+
+    def _server_ready(self) -> bool:
+        return self._execute_skill_ready is None or self._execute_skill_ready()
+
+    def _wait_for_server(self) -> None:
+        if self._register_retry_timer is None:
+            self._logger.info("execute_skill server not ready; deferring registration until it is.")
+            self._register_retry_timer = self._node.create_timer(REGISTRATION_RETRY_SEC, self.register)
+
+    def _stop_waiting_for_server(self) -> None:
+        if self._register_retry_timer is not None:
+            self._node.destroy_timer(self._register_retry_timer)
+            self._register_retry_timer = None
+
+    def _send_registration(self) -> None:
         directive = self._state.current_directive
         primitives = self._state.registry.metadata
         active_skill_ids = set(self.active_skill_ids_for_registration())
