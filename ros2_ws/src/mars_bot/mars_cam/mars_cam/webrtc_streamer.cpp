@@ -300,7 +300,11 @@ bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
 }
 
 void WebRTCStreamer::poll_pipeline_health() {
-    auto drain_bus = [this](GstElement* pipeline, const char* label) {
+    // Per-peer transport errors (DTLS teardown when a peer vanishes or a
+    // handshake fails) are expected and handled — the peer is released below —
+    // so they log at WARN. Errors on the shared encode/audio pipelines are
+    // real faults and stay at ERROR.
+    auto drain_bus = [this](GstElement* pipeline, const char* label, bool expected_teardown = false) {
         bool saw_error = false;
         if (!pipeline) {
             return saw_error;
@@ -313,9 +317,14 @@ void WebRTCStreamer::poll_pipeline_health() {
                     GError* err = nullptr;
                     gchar* debug = nullptr;
                     gst_message_parse_error(m, &err, &debug);
-                    RCLCPP_ERROR(this->get_logger(), "GStreamer %s error from %s: %s%s%s", label,
-                                 GST_OBJECT_NAME(m->src), err ? err->message : "unknown", debug ? " debug=" : "",
-                                 debug ? debug : "");
+                    if (expected_teardown) {
+                        RCLCPP_WARN(this->get_logger(), "GStreamer %s error from %s: %s", label,
+                                    GST_OBJECT_NAME(m->src), err ? err->message : "unknown");
+                    } else {
+                        RCLCPP_ERROR(this->get_logger(), "GStreamer %s error from %s: %s%s%s", label,
+                                     GST_OBJECT_NAME(m->src), err ? err->message : "unknown", debug ? " debug=" : "",
+                                     debug ? debug : "");
+                    }
                     g_clear_error(&err);
                     g_free(debug);
                     break;
@@ -355,7 +364,7 @@ void WebRTCStreamer::poll_pipeline_health() {
     for (auto& kv : peers_) {
         Peer* p = kv.second.get();
         // Drain this peer's bus so runtime errors are logged.
-        if (drain_bus(p->pipeline, "transport")) {
+        if (drain_bus(p->pipeline, "transport", /*expected_teardown=*/true)) {
             RCLCPP_INFO(this->get_logger(), "Peer '%s' transport bus error; releasing",
                         kv.first.empty() ? "(default)" : kv.first.c_str());
             dead.push_back(kv.first);
