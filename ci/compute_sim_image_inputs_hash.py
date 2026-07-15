@@ -35,6 +35,7 @@ paths = [Path(path) for path in static_paths if (root / path).is_file()]
 # sync with sim/launcher/config.py.
 tracked = subprocess.run(
     ["git", "ls-files", "-z", "--", "ros2_ws/src"],
+    cwd=root,
     capture_output=True,
     text=True,
     check=True,
