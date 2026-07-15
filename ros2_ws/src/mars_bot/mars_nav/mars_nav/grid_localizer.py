@@ -463,9 +463,12 @@ class GridLocalizer(Node):
         pix_x = self.free_pixels[pos_indices, 0]
         pix_y = self.free_pixels[pos_indices, 1]
 
-        # Convert to world coordinates
-        pos_x = (pix_x * self.resolution + self.origin[0]).astype(np.float32)
-        pos_y = ((self.map_h - pix_y) * self.resolution + self.origin[1]).astype(np.float32)
+        # Convert to world coordinates — cell centers. The corner conversion
+        # (pix * res + origin) put edge-cell candidates exactly ON the map
+        # boundary; a pose published there seeds AMCL where the costmap cannot
+        # raytrace ("Sensor origin is out of map bounds" on every scan).
+        pos_x = ((pix_x + 0.5) * self.resolution + self.origin[0]).astype(np.float32)
+        pos_y = ((self.map_h - pix_y - 0.5) * self.resolution + self.origin[1]).astype(np.float32)
         pos_theta = angle_offsets[ang_indices]
 
         return pos_x, pos_y, pos_theta
@@ -488,8 +491,9 @@ class GridLocalizer(Node):
         pix_x = self.free_pixels[pos_idx, 0]
         pix_y = self.free_pixels[pos_idx, 1]
 
-        x = pix_x * self.resolution + self.origin[0]
-        y = (self.map_h - pix_y) * self.resolution + self.origin[1]
+        # Cell centers, matching _generate_candidates_for_batch.
+        x = (pix_x + 0.5) * self.resolution + self.origin[0]
+        y = (self.map_h - pix_y - 0.5) * self.resolution + self.origin[1]
         theta = angle_offsets[ang_idx]
 
         return float(x), float(y), float(theta)
