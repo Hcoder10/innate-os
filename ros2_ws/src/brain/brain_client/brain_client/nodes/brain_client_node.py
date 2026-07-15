@@ -266,16 +266,22 @@ class BrainClientNode(Node):
         self.create_service(GetAvailableDirectives, "/brain/get_available_directives", self._svc_get_directives)
 
     def _startup(self) -> None:
-        # Wait for the first available-skills message (transient_local replays the last).
+        # Wait for the first available-skills message (transient_local replays
+        # the last). Monotonic clock: boot-time NTP steps must not truncate the
+        # wait. 60s covers the skills server's slow first load (torch import,
+        # Nav2 node creation) on the Jetson.
         self.get_logger().info("Waiting for /brain/available_skills topic...")
-        deadline = time.time() + 25.0
-        while not self.state.registry and time.time() < deadline:
+        deadline = time.monotonic() + 60.0
+        while not self.state.registry and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.5)
         if not self.state.registry:
-            self.get_logger().warn("No primitives received from /brain/available_skills after 25s")
+            self.get_logger().warn("No primitives received from /brain/available_skills after 60s")
 
+        # With an empty registry (skills not published yet), per-agent skill
+        # validation is meaningless noise — pass None to skip it. The catalog
+        # self-heals when the roster lands (SkillCatalog re-registers).
         self.state.directives, self.state.current_directive = initialize_agents(
-            self.get_logger(), self.state.registry.primitives
+            self.get_logger(), self.state.registry.primitives or None
         )
         self.state.active_skill_ids = (
             list(self.state.current_directive.get_skills()) if self.state.current_directive else []
