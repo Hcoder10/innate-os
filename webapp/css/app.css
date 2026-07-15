@@ -5981,8 +5981,14 @@ button {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  z-index: 4;
-  width: min(280px, 38%);
+  /* No z-index: driveKit appends this before the control overlays, so DOM
+     order alone keeps the joystick / WASD chips / head tilt painting on top
+     (same trick as .cam-map-host.big). An explicit z-index here would let the
+     opaque video cover the controls. */
+  /* Grow with the scene, but never reach the joystick: it is 198px wide and
+     centred, so its right edge is 50% + 99px — the second term keeps a 12px
+     gap clear of it at any width. */
+  width: min(360px, calc(50% - 132px));
   aspect-ratio: 4 / 3;
   overflow: hidden;
   border: 1px solid var(--hairline-strong);
