@@ -131,7 +131,7 @@ export function createEpisodeList(parent, ros, opts) {
     // fires once per completion, so this is at most one extra fetch.
     if (msg.stage === "done") show(current);
     else render();
-  });
+  }, undefined, "brain_messages/msg/EncodeStatus");
 
   search.addEventListener("input", () => {
     query = search.value.trim();

@@ -56,7 +56,7 @@ function buildView(root) {
     trainTargets = all
       .filter((s) => s && s.directory && s.type === "learned")
       .sort((a, b) => a.name.localeCompare(b.name));
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
   const getTargets = () => trainTargets;
 
   /** @type {{ destroy: () => void } | null} */

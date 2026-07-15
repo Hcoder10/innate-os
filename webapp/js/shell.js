@@ -62,8 +62,9 @@ const SECTIONS = [
   {
     key: "calibration",
     label: "Calibration",
-    // Camera motif: body with a viewfinder bump, and a lens.
-    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.4"/>',
+    // Camera motif: body with a viewfinder bump, and a lens centered on the
+    // body (which spans x 4–19, y 6–19 — hence the half-unit coordinates).
+    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="11.5" cy="12.5" r="3.4"/>',
   },
   {
     key: "settings",

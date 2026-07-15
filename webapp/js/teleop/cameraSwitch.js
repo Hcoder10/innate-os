@@ -269,7 +269,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     roster = next;
     reconcile();
     commit();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     destroy() {

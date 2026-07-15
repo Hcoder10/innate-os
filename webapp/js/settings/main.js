@@ -350,7 +350,7 @@ function buildVolumeSection() {
     // Don't clobber a value the operator is actively dragging or saving.
     if (!dragging && !saving) renderValue(robotPercent);
     if (firstValue) refreshEnabled(); // enable now that the live value has loaded
-  });
+  }, undefined, "std_msgs/msg/String");
   cleanups.push(unsubInfo);
 
   slider.addEventListener("input", () => {

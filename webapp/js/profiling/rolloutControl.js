@@ -137,7 +137,7 @@ export function buildRolloutControl(chartWindow, session) {
     for (const s of learned) select.add(new Option(s.name || s.id, s.id));
     select.value = learned.some((s) => s.id === prevValue) ? prevValue : "";
     sync();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   /** @param {string} [flash] */
   function sync(flash) {

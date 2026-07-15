@@ -447,7 +447,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     const text = String(payload?.text ?? "");
     if (!text) return;
     addMessage("user", text, Number(payload?.timestamp) || Date.now() / 1000);
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubOut = rosClient.subscribe(CHAT_OUT_TOPIC, (m) => {
     if (typeof m?.data !== "string") return;
@@ -470,7 +470,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     } else {
       addMessage("system", text, ts, sender);
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubSkill = rosClient.subscribe(SKILL_STATUS_UPDATE_TOPIC, (m) => {
     if (typeof m?.data !== "string") return;
@@ -486,7 +486,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
     const reason = typeof payload?.reason === "string" ? payload.reason : "";
     addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason);
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     destroy() {

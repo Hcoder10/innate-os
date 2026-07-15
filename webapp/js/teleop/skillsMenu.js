@@ -507,7 +507,7 @@ export function createSkillsMenu(parent, rosClient) {
     skills = next;
     if (expandedId && !skills.some((s) => s.id === expandedId)) expandedId = null;
     if (open) render();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   // The brain announces every skill run (manual or agent-driven) here. The robot
   // runs one skill at a time, so any terminal status clears the readout.
@@ -524,7 +524,7 @@ export function createSkillsMenu(parent, rosClient) {
     if (!name || !status) return;
     topicActiveName = status === "running" ? prettify(name) : "";
     syncActive();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubState = rosClient.onStateChange(() => {
     if (rosClient.state !== "connected") topicActiveName = "";

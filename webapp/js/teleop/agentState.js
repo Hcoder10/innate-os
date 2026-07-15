@@ -70,8 +70,14 @@ export function createAgentState(rosClient) {
     }, delay);
   }
 
+  // True after the first /brain/agent_status sample. The brain publishes it
+  // only once its services exist, so gating refresh() on it means the
+  // get_available_directives call can never race the brain's boot ("Service
+  // not found" in the rws log on every early attempt).
+  let brainSeen = false;
+
   async function refresh() {
-    if (rosClient.state !== "connected") return;
+    if (rosClient.state !== "connected" || !brainSeen) return;
     try {
       const v = await rosClient.callService(GET_AVAILABLE_DIRECTIVES_SERVICE, {});
       const entries = Array.isArray(v?.directives)
@@ -176,6 +182,12 @@ export function createAgentState(rosClient) {
       return;
     }
     if (typeof payload?.brain_active !== "boolean") return;
+    if (!brainSeen) {
+      // First proof the brain is up — fetch the roster now (deferred at connect).
+      brainSeen = true;
+      resetRetry();
+      void refresh();
+    }
     const brainActive = payload.brain_active;
     // Idle brain → no current directive (toggles disabled, picker shows None),
     // mirroring refresh().
@@ -189,7 +201,7 @@ export function createAgentState(rosClient) {
     if (unchanged) return;
     state = { ...state, brainActive, currentDirective, activeSkills };
     emit();
-  });
+  }, undefined, "std_msgs/msg/String"); // typed: the brain may not be up yet
 
   const unsubConn = rosClient.onStateChange((s) => {
     if (s === "connected") {

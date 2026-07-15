@@ -162,7 +162,7 @@ function buildView(root) {
       if (samples.length > MAX_SAMPLES) samples.shift();
       dirty = true;
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   // ---- render loop --------------------------------------------------------
   // Throttle to ~7 Hz: SVG re-render on every 25 Hz sample is wasteful and the
