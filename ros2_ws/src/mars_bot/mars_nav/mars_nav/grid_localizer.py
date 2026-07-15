@@ -391,6 +391,7 @@ class GridLocalizer(Node):
                 self._auto_timer.cancel()
 
             self._publish_pose(pose[0], pose[1], pose[2])
+            self._warn_if_at_map_edge(pose[0], pose[1])
 
             if score < self.score_threshold:
                 self._publish_status("localized")
@@ -404,7 +405,9 @@ class GridLocalizer(Node):
                 self.get_logger().warn(
                     f"Auto-localized with LOW confidence at "
                     f"({pose[0]:.2f}, {pose[1]:.2f}, {np.degrees(pose[2]):.1f}°) "
-                    f"score={score:.3f} (threshold: {self.score_threshold}) in {elapsed:.2f}s"
+                    f"score={score:.3f} (threshold: {self.score_threshold}) in {elapsed:.2f}s "
+                    f"— the map may not match the robot's surroundings; please check the robot "
+                    f"is inside the mapped area, or remap it"
                 )
         except ValueError as e:
             # Insufficient scan data - retry on next tick
@@ -508,6 +511,25 @@ class GridLocalizer(Node):
         msg.data = status
         self.status_pub.publish(msg)
         self.get_logger().info(f"Published status: {status}")
+
+    # A pose this close to the map border degrades navigation (the costmap
+    # cannot see past the map edge), so it earns a one-time operator hint.
+    EDGE_MARGIN_M = 0.30
+
+    def _warn_if_at_map_edge(self, x: float, y: float) -> None:
+        """Log one clear hint when the localized pose hugs the map border."""
+        dist = min(
+            x - self.origin[0],
+            self.origin[0] + self.map_w * self.resolution - x,
+            y - self.origin[1],
+            self.origin[1] + self.map_h * self.resolution - y,
+        )
+        if dist < self.EDGE_MARGIN_M:
+            self.get_logger().warn(
+                f"Localized {max(dist, 0.0):.2f} m from the map border — please make sure the map is "
+                "correct and the robot is not right against a wall or outside the mapped area "
+                "(the costmap cannot see past the map edge, so navigation is unreliable there)"
+            )
 
     def _publish_pose(self, x: float, y: float, theta: float):
         """Publish pose to /initialpose (latched for AMCL)."""
@@ -617,6 +639,7 @@ class GridLocalizer(Node):
             pose, score = self._find_pose(self.latest_scan)
 
             self._publish_pose(pose[0], pose[1], pose[2])
+            self._warn_if_at_map_edge(pose[0], pose[1])
 
             response.success = True
             response.message = (
