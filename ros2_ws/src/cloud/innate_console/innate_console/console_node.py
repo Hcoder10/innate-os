@@ -285,7 +285,12 @@ class ConsoleBridge(Node):
             dq = deque(maxlen=PER_NODE_LINES)
             self._buckets[key] = dq
             if len(self._buckets) > MAX_BUCKETS:
-                self._buckets.popitem(last=False)  # evict least-recently-active
+                evicted, _ = self._buckets.popitem(last=False)  # evict least-recently-active
+                # The repeat-collapse state is keyed the same way, so it has to
+                # go with the bucket or it outlives the LRU cap (dead
+                # client_handler_N loggers would accumulate forever).
+                self._last_line.pop(evicted, None)
+                self._repeats.pop(evicted, None)
         else:
             self._buckets.move_to_end(key)
         dq.append(rec)
