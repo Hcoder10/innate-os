@@ -13,6 +13,7 @@ import { createMap } from "../map/mapWidget.js";
 import { createNavPanels } from "./panels.js";
 import { createNavPlots } from "./plots.js";
 import { createNavMaps } from "./maps.js";
+import { createDriveKit } from "./driveKit.js";
 
 // Scene default: robot-centred window, wheel-zoomable (Foxglove-like), not
 // the fit-whole-grid mode — remembered across visits.
@@ -65,6 +66,8 @@ function buildView(root) {
     layers: { scan: true, costmap: true, trail: true },
   });
 
+  /** @type {Map<string, HTMLButtonElement>} */
+  const chipEls = new Map();
   for (const { key, label } of LAYERS) {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -75,7 +78,54 @@ function buildView(root) {
       chip.classList.toggle("is-on", on);
       map.setLayer(key, on);
     });
+    chipEls.set(key, chip);
     chips.appendChild(chip);
+  }
+
+  /** @param {string} key @param {boolean} on */
+  function forceLayer(key, on) {
+    const chip = chipEls.get(key);
+    if (chip) chip.classList.toggle("is-on", on);
+    map.setLayer(/** @type {import("../map/mapWidget.js").LayerName} */ (key), on);
+  }
+
+  // Mapping mode reshapes the whole page: the scene shows only the growing
+  // map + live scan (costmap belongs to the previous map, and the layer
+  // chips lock so the view can't drift mid-recording), the widget swaps to
+  // /mapping_pose, and the teleop drive kit (main camera PiP, joystick,
+  // WASD, head tilt) mounts over the scene — you drive to build the map.
+  /** @type {Record<string, boolean> | null} chip states to restore after mapping */
+  let savedLayers = null;
+  /** @type {{ destroy: () => void } | null} */
+  let driveKit = null;
+  let kitGen = 0; // guards the async mount against a fast mapping exit
+
+  /** @param {boolean} mapping */
+  function onMappingChange(mapping) {
+    map.setMappingMode(mapping);
+    const gen = ++kitGen;
+    if (mapping) {
+      savedLayers = {};
+      for (const [key, chip] of chipEls) {
+        savedLayers[key] = chip.classList.contains("is-on");
+        chip.disabled = true;
+      }
+      forceLayer("scan", true);
+      forceLayer("costmap", false);
+      forceLayer("trail", false);
+      createDriveKit(scene).then((kit) => {
+        if (gen !== kitGen) kit.destroy(); // mapping ended while mounting
+        else driveKit = kit;
+      });
+    } else {
+      driveKit?.destroy();
+      driveKit = null;
+      for (const [key, chip] of chipEls) {
+        chip.disabled = false;
+        if (savedLayers) forceLayer(key, savedLayers[key]);
+      }
+      savedLayers = null;
+    }
   }
 
   // Maps (the interactive panel) on top, then numeric readouts, then the
@@ -86,12 +136,14 @@ function buildView(root) {
   const readoutHost = document.createElement("div");
   const plotHost = document.createElement("div");
   side.append(mapsHost, readoutHost, plotHost);
-  const mapsPanel = createNavMaps(mapsHost, scene, map);
+  const mapsPanel = createNavMaps(mapsHost, scene, { onMappingChange });
   const panels = createNavPanels(readoutHost);
   const plots = createNavPlots(plotHost);
 
   return {
     destroy() {
+      kitGen++; // cancel any in-flight drive-kit mount
+      driveKit?.destroy();
       plots.destroy();
       panels.destroy();
       mapsPanel.destroy();

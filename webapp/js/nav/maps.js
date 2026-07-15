@@ -36,10 +36,13 @@ const MAP_NAME_RE = /^[A-Za-z0-9_-]+$/;
 /**
  * @param {HTMLElement} host sidebar container for the panel.
  * @param {HTMLElement} scene the map stage — the mapping banner overlays it.
- * @param {{ setMappingMode: (on: boolean) => void }} widget the page's map widget.
+ * @param {{ onMappingChange: (on: boolean) => void }} opts fires on every
+ *   mapping-mode edge (from the /nav/current_mode topic, so sessions started
+ *   by other clients fire it too) — the page mounts/unmounts the drive kit
+ *   and swaps the widget's pose source there.
  * @returns {{ destroy: () => void }}
  */
-export function createNavMaps(host, scene, widget) {
+export function createNavMaps(host, scene, opts) {
   // ---- panel skeleton ------------------------------------------------------
   const section = document.createElement("section");
   section.className = "nav-panel";
@@ -298,8 +301,10 @@ export function createNavMaps(host, scene, widget) {
     }, 0, "std_msgs/msg/String"),
     ros.subscribe(NAV_CURRENT_MODE_TOPIC, (msg) => {
       if (typeof msg?.data !== "string" || !msg.data || msg.data === mode) return;
+      const wasMapping = mode === "mapping";
       mode = msg.data;
-      widget.setMappingMode(mode === "mapping");
+      const isMapping = mode === "mapping";
+      if (isMapping !== wasMapping) opts.onMappingChange(isMapping);
       renderAll();
     }, 0, "std_msgs/msg/String"),
   ];

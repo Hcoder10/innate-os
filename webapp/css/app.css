@@ -5890,6 +5890,21 @@ button {
   height: 14px;
 }
 
+/* Main-camera PiP while mapping (the drive kit's video tile). The teleop
+   .video-stage inside fills it (position:absolute; inset:0). */
+.nav-cam-pip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  width: min(280px, 38%);
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: #000;
+}
+
 /* Recording banner pinned over the scene while the robot is in mapping mode. */
 .mapping-banner {
   position: absolute;

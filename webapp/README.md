@@ -146,6 +146,11 @@ same sequence the mobile app runs. The widget swaps its pose source to
 mapping) because raw `/odom` drifts against the growing SLAM map and any
 AMCL fix predates it. Mode follows the `/nav/current_mode` topic, so a
 mapping session started from the mobile app shows the same controls here.
+While mapping, the scene strips down to the growing map + live scan (the
+costmap belongs to the previous map; layer chips lock), and the teleop
+drive kit mounts over it — main-camera PiP (WebRTC, or the sim viewer in
+sim), virtual joystick, WASD, and head tilt — because you drive the robot
+to build the map, exactly like the mobile app's record screen.
 
 **Measured velocity is derived, not read.** This robot never populates
 `Odometry.twist` — `mars_bringup`'s `_publish_odometry` copies pose out of the
