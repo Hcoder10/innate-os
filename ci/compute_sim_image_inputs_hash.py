@@ -14,6 +14,7 @@
 # why this lives in one file. sim/launcher/config.py computes the same hash
 # independently; keep them in sync.
 import hashlib
+import subprocess
 from pathlib import Path
 
 root = Path(".")
@@ -27,14 +28,24 @@ static_paths = (
     "ros2_ws/apt-dependencies.sim.txt",
 )
 paths = [Path(path) for path in static_paths if (root / path).is_file()]
-src_root = root / "ros2_ws" / "src"
-if src_root.exists():
-    for path in sorted(src_root.rglob("*")):
-        if not path.is_file():
-            continue
-        relative_path = path.relative_to(root)
-        if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
-            continue
+# Only git-tracked files, NOT a filesystem walk: rglob would also pull in
+# untracked/gitignored cruft (macOS .DS_Store, gitignored dirs, build
+# artifacts) that a dev's working tree has but this clean checkout does not,
+# making the hash non-reproducible between a dev machine and CI. Keep this in
+# sync with sim/launcher/config.py.
+tracked = subprocess.run(
+    ["git", "ls-files", "-z", "--", "ros2_ws/src"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.split("\0")
+for name in tracked:
+    if not name:
+        continue
+    relative_path = Path(name)
+    if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
+        continue
+    if (root / relative_path).is_file():
         paths.append(relative_path)
 
 digest = hashlib.sha256()
