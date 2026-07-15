@@ -247,8 +247,6 @@ class I2CManager:
                 self.logger.info(f"Calibration Status: {status_str} ({status})")
             except Exception as e:
                 self.logger.error(f"Failed to unpack calibration response: {e}")
-        else:
-            self.logger.warning(f"Unknown Response ID: {resp_id}")
 
     def _send_move_command(self):
         """Send movement command with timeout handling"""
