@@ -43,11 +43,20 @@ class I2CManager:
         # this long without a command means the operator/controller is gone
         # and the base must stop, not coast on the last latched velocity.
         speed_command_timeout=0.5,
+        # The MCU firmware does not compute a CRC over its responses: it leaves
+        # the trailing byte at 0x00 (or 0xFF) on every frame, for every response
+        # id, regardless of payload. Verifying it therefore rejects ~100% of
+        # frames -- and the ~1/256 that slip through are the ones whose payload
+        # CRC happens to equal 0x00, i.e. a random dropout, not an integrity
+        # check. Leave this off until the firmware actually emits a CRC; the
+        # command direction (Jetson -> MCU) still sends one.
+        verify_response_crc=False,
     ):
         self.node = node
         self.debug = debug
         self.logger = self.node.get_logger()
         self.update_frequency = update_frequency
+        self.verify_response_crc = verify_response_crc
         self.speed_command_timeout = speed_command_timeout
         self.bus_number = bus_number
         self.device_address = device_address
@@ -77,6 +86,7 @@ class I2CManager:
         self.motor_temperature = 0.0
         self.fault_code = 0
         self.calibration_status = None
+        self._unknown_resp_ids = set()
 
         # Communication thread control
         self.running = True
@@ -138,8 +148,10 @@ class I2CManager:
         Format: [resp_id] + [6 data bytes] + [crc]
         """
         try:
-            # Small delay to allow MCU to prepare response
-            time.sleep(0.001)  # 1ms delay
+            # Delay to allow the MCU to fill its response buffer. At 1ms ~18% of
+            # reads come back empty (id byte 0x00); at 5ms that is 0%, measured
+            # over 60-frame sweeps. Cheap against the 33ms loop budget.
+            time.sleep(0.005)
 
             # Read 8 bytes from MCU
             data = self.bus.read_i2c_block_data(self.device_address, 0x00, 8)
@@ -153,18 +165,26 @@ class I2CManager:
                     self.logger.debug("Received empty response from MCU")
                 return None
 
-            # Verify CRC
-            message = data[:7]
-            received_crc = data[7]
-            calculated_crc = self._calculate_crc(message)
-
-            if received_crc != calculated_crc:
-                if self.debug:
-                    self.logger.debug(f"CRC mismatch: expected 0x{calculated_crc:02X}, got 0x{received_crc:02X}")
-                return None
-
             resp_id = data[0]
             response_data = data[1:7]
+
+            # Only validate the response CRC if the firmware actually emits one.
+            # See verify_response_crc in __init__ for why this is off by default.
+            if self.verify_response_crc:
+                calculated_crc = self._calculate_crc(data[:7])
+                if data[7] != calculated_crc:
+                    if self.debug:
+                        self.logger.debug(f"CRC mismatch: expected 0x{calculated_crc:02X}, got 0x{data[7]:02X}")
+                    return None
+
+            # Structural validation, standing in for the missing CRC: an
+            # unrecognised id means the buffer was misaligned or corrupt, so the
+            # payload behind it cannot be trusted either.
+            if resp_id not in (self.RESP_MOVE, self.RESP_STATUS, self.RESP_CALIBRATE):
+                if resp_id not in self._unknown_resp_ids:
+                    self._unknown_resp_ids.add(resp_id)
+                    self.logger.warning(f"Ignoring unknown I2C response id 0x{resp_id:02X}")
+                return None
 
             self._process_response(resp_id, response_data)
             return True
