@@ -73,6 +73,11 @@ REWIRE_SEC = 10.0  # how often to pick up newly-appeared panes
 MAX_LINES_PER_DRAIN = 400  # per-pane flood cap per poll tick
 FILE_CAP_BYTES = 4_000_000  # truncate a capture file once it grows past this
 SCROLLBACK_LINES = 200  # tmux history lines to seed per pane on first wire
+# Repeat collapsing: a line identical to the previous one from the same source
+# is suppressed; a summary goes out when the run ends (quiet/new message) and
+# at least every REPEAT_REMIND_SEC while it continues.
+REPEAT_QUIET_SEC = 3.0  # run ends after this long without another repeat
+REPEAT_REMIND_SEC = 30.0  # cadence of "still repeating" summaries
 
 # Standard launched rcl line: "[exe-N] [LEVEL] [ts] [name]: msg".
 STD_RE = re.compile(
@@ -139,11 +144,17 @@ class ConsoleBridge(Node):
         self._backfill = self.create_publisher(String, "/innate/console/backfill", 1)
         self.create_subscription(String, "/innate/console/request", self._on_request, 1)
 
+        # Repeat collapsing state: per bucket, the (level, msg) of the last line
+        # and the currently-suppressed run of identical follow-ups (if any).
+        self._last_line = {}
+        self._repeats = {}
+
         # pane_id -> {"window", "pane", "path", "fh", "carry"}
         self._panes = {}
         self._wire_panes()
         self.create_timer(1.0 / POLL_HZ, self._drain_panes)
         self.create_timer(REWIRE_SEC, self._wire_panes)
+        self.create_timer(1.0, self._flush_repeats)
         self.get_logger().info(f"innate_console up; tapping tmux '{TMUX_SESSION}' (structured, per-node fair buffer)")
 
     # ---- tmux capture ----------------------------------------------------
@@ -280,10 +291,58 @@ class ConsoleBridge(Node):
         dq.append(rec)
 
     def _emit(self, rec):
+        """Publish a record, collapsing consecutive repeats from the same source.
+
+        The first line goes out verbatim; identical follow-ups are swallowed and
+        surface as one "repeated N×" summary — at REPEAT_REMIND_SEC cadence while
+        the run continues, and when it ends (a different line, or REPEAT_QUIET_SEC
+        of silence via _flush_repeats). A single stray repeat is re-emitted
+        verbatim: the line itself is clearer than a summary about it.
+        """
+        key = self._bucket_key(rec)
+        body = rec["msg"] if rec["msg"] is not None else rec["text"]
+        now = time.monotonic()
+        if body and self._last_line.get(key) == (rec["level"], body):
+            run = self._repeats.get(key)
+            if run is None:
+                run = self._repeats[key] = {"rec": rec, "count": 0, "window_start": now, "last_wall": now}
+            run["rec"] = rec
+            run["count"] += 1
+            run["last_wall"] = now
+            if now - run["window_start"] >= REPEAT_REMIND_SEC:
+                self._end_repeat_run(key)
+            return
+        self._end_repeat_run(key)
+        self._last_line[key] = (rec["level"], body)
+        self._publish(rec)
+
+    def _publish(self, rec):
         self._store(rec)
         m = String()
         m.data = json.dumps(rec, separators=(",", ":"))
         self._live.publish(m)
+
+    def _end_repeat_run(self, key):
+        """Emit what a suppressed run owes the stream (summary or the lone repeat)."""
+        run = self._repeats.pop(key, None)
+        if not run or run["count"] == 0:
+            return
+        if run["count"] == 1:
+            self._publish(run["rec"])
+            return
+        rec = dict(run["rec"])
+        body = rec["msg"] if rec["msg"] is not None else rec["text"]
+        span = max(1.0, time.monotonic() - run["window_start"])
+        rec["msg"] = f"↻ repeated {run['count']}× in the last {span:.0f}s: {body}"
+        rec["text"] = rec["msg"]
+        rec["t"] = time.time()
+        self._publish(rec)
+
+    def _flush_repeats(self):
+        """Timer: close out suppressed runs that have gone quiet."""
+        now = time.monotonic()
+        for key in [k for k, r in self._repeats.items() if now - r["last_wall"] >= REPEAT_QUIET_SEC]:
+            self._end_repeat_run(key)
 
     def _on_request(self, msg: String):
         """Reply on /innate/console/backfill with a fair tail across buckets.
