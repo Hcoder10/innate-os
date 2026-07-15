@@ -56,6 +56,11 @@ export function mount(stage) {
  *   POOR), empty if not computed (e.g. cancelled before finishing).
  */
 
+// Printable ChArUco board, served from the public docs repo. Must be printed
+// at 100% scale (no fit-to-page) or the measured square size is wrong.
+const CALIBRATION_BOARD_PDF_URL =
+  "https://raw.githubusercontent.com/innate-inc/web-docs/main/.gitbook/assets/mars-calibration-board.pdf";
+
 /**
  * @param {HTMLElement} root
  * @returns {{ destroy: () => void }}
@@ -104,13 +109,42 @@ function buildView(root) {
     "Save calibration when done (backs up the existing calibration file, then writes the new one)";
   saveRow.append(saveCheckbox, saveText);
 
+  // Download card for the printable board — the first thing an operator needs.
+  const boardLink = document.createElement("a");
+  boardLink.className = "calib-board-link";
+  boardLink.href = CALIBRATION_BOARD_PDF_URL;
+  boardLink.target = "_blank";
+  boardLink.rel = "noopener";
+  const boardIcon = document.createElement("span");
+  boardIcon.className = "calib-board-icon";
+  boardIcon.innerHTML =
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 4v16M4 12h16"/>' +
+    '<path d="M5 5h7v7H5zM12 12h7v7h-7z" fill="currentColor" opacity=".3" stroke="none"/></svg>';
+  const boardText = document.createElement("span");
+  boardText.className = "calib-board-text";
+  const boardTitle = document.createElement("span");
+  boardTitle.className = "calib-board-title";
+  boardTitle.textContent = "Calibration board (PDF)";
+  const boardSub = document.createElement("span");
+  boardSub.className = "calib-board-sub";
+  boardSub.textContent = "ChArUco board — print at 100% scale and keep it flat";
+  boardText.append(boardTitle, boardSub);
+  const boardDl = document.createElement("span");
+  boardDl.className = "calib-board-dl";
+  boardDl.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 4v10m-4-3.5 4 4 4-4M5 18.5h14"/></svg>';
+  boardLink.append(boardIcon, boardText, boardDl);
+
+  // One action row that morphs with the run state: Start alone while idle,
+  // Capture + Stop while a run is active (no dead disabled buttons).
+  const actionRow = document.createElement("div");
+  actionRow.className = "calib-action-row";
   const startBtn = document.createElement("button");
   startBtn.type = "button";
   startBtn.className = "calib-btn calib-btn-primary";
   startBtn.textContent = "Start Calibration";
-
-  const actionRow = document.createElement("div");
-  actionRow.className = "calib-action-row";
   const captureBtn = document.createElement("button");
   captureBtn.type = "button";
   captureBtn.className = "calib-btn";
@@ -119,12 +153,12 @@ function buildView(root) {
   stopBtn.type = "button";
   stopBtn.className = "calib-btn calib-btn-stop";
   stopBtn.textContent = "Stop";
-  actionRow.append(captureBtn, stopBtn);
+  actionRow.append(startBtn, captureBtn, stopBtn);
 
   const statusLine = document.createElement("p");
   statusLine.className = "calib-status microlabel";
 
-  controls.append(numField.row, minField.row, saveRow, startBtn, actionRow, statusLine);
+  controls.append(boardLink, numField.row, minField.row, saveRow, actionRow, statusLine);
 
   // ---- live feedback --------------------------------------------------------
   const feedback = document.createElement("div");
@@ -407,7 +441,11 @@ function buildView(root) {
   }
 
   function render() {
-    startBtn.disabled = !!activeRun || ros.state !== "connected";
+    const running = !!activeRun;
+    startBtn.hidden = running;
+    captureBtn.hidden = !running;
+    stopBtn.hidden = !running;
+    startBtn.disabled = running || ros.state !== "connected";
     captureBtn.disabled = !activeRun || activeRun.canceling;
     stopBtn.disabled = !activeRun || activeRun.canceling;
     stopBtn.textContent = activeRun?.canceling ? "Stopping…" : "Stop";
