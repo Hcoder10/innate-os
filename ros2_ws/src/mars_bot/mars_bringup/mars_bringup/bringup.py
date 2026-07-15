@@ -248,6 +248,11 @@ class Bringup(Node):
         odom.pose.pose.position.z = transform.transform.translation.z
         odom.pose.pose.orientation = transform.transform.rotation
 
+        # Yaw rate measured by the MCU's IMU (rad/s, base_link frame). Linear
+        # twist stays zero: the MCU reports no linear velocity, and deriving one
+        # from cm-quantised pose would be noise dressed up as measurement.
+        odom.twist.twist.angular.z = self.i2c_manager.gyro_z
+
         # Publish the odometry message
         self.odom_pub.publish(odom)
 

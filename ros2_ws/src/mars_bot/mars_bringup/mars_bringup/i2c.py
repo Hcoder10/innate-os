@@ -26,10 +26,27 @@ class I2CManager:
     CMD_STATUS = 0x03
     CMD_CALIBRATE = 0x04
 
-    # Response definitions (MCU → Jetson)
+    # Response definitions (MCU → Jetson). The firmware also defines
+    # RESP_RESET (0x85), but only ever sends it in reply to a reset command,
+    # which this node never issues.
     RESP_MOVE = 0x81  # Position feedback
     RESP_STATUS = 0x83  # Health data
     RESP_CALIBRATE = 0x84  # Calibration status
+
+    # Two response frame layouts exist in flashed mars-firmware builds:
+    #
+    #   8-byte  (main branch):        [id, payload(6), crc]
+    #   10-byte (feat/useRealRPM):    [id, payload(6), gyroZ(2), crc]
+    #
+    # Both put the CRC-8/MAXIM over everything before it, and bytes 0-6 are
+    # laid out identically (RESP_MOVE carries x, y in cm and theta in rad*100
+    # at the same offsets). The 10-byte layout appends the IMU's body-frame
+    # yaw rate (rad/s * 100, big-endian int16) on RESP_MOVE; on other ids
+    # those two bytes are reserved zeros. We read the larger size and accept
+    # whichever layout's CRC verifies -- reading 10 bytes from an 8-byte
+    # firmware just clocks two junk bytes past the real frame, which the
+    # 8-byte CRC check never looks at.
+    READ_LENGTH = 10
 
     # Seconds between "dropping frames" warnings while drops are ongoing.
     DROP_REPORT_INTERVAL = 10.0
@@ -46,20 +63,11 @@ class I2CManager:
         # this long without a command means the operator/controller is gone
         # and the base must stop, not coast on the last latched velocity.
         speed_command_timeout=0.5,
-        # The MCU firmware does not compute a CRC over its responses: it leaves
-        # the trailing byte at 0x00 (or 0xFF) on every frame, for every response
-        # id, regardless of payload. Verifying it therefore rejects ~100% of
-        # frames -- and the ~1/256 that slip through are the ones whose payload
-        # CRC happens to equal 0x00, i.e. a random dropout, not an integrity
-        # check. Leave this off until the firmware actually emits a CRC; the
-        # command direction (Jetson -> MCU) still sends one.
-        verify_response_crc=False,
     ):
         self.node = node
         self.debug = debug
         self.logger = self.node.get_logger()
         self.update_frequency = update_frequency
-        self.verify_response_crc = verify_response_crc
         self.speed_command_timeout = speed_command_timeout
         self.bus_number = bus_number
         self.device_address = device_address
@@ -85,6 +93,9 @@ class I2CManager:
         # -------------------------
         # Initialize zero transform for odom->base_link using a dedicated method.
         self.current_transform = self._initialize_transform()
+        # Body-frame yaw rate from the MCU's IMU (rad/s). Only the 10-byte
+        # firmware reports it; stays 0.0 on the 8-byte protocol.
+        self.gyro_z = 0.0
         self.battery_voltage = 0.0
         self.motor_temperature = 0.0
         self.fault_code = 0
@@ -146,10 +157,27 @@ class I2CManager:
                 self.logger.debug(f"Failed to send command 0x{cmd_id:02X}: {e}")
             return False
 
+    def _report_dropped_frame(self, reason):
+        """Rate-limited warning for discarded response frames.
+
+        Reports the first drop at once, then at most every DROP_REPORT_INTERVAL
+        while they keep coming. A persistent fault (0xFF NACK reads at 30Hz,
+        say) has to stay visible: warning once and then falling silent is how
+        the original odometry bug went unnoticed.
+        """
+        self._dropped_frames += 1
+        now = time.time()
+        if now - self._last_drop_report >= self.DROP_REPORT_INTERVAL:
+            self.logger.warning(
+                f"Dropping I2C response frames ({reason}); {self._dropped_frames} dropped since last report"
+            )
+            self._dropped_frames = 0
+            self._last_drop_report = now
+
     def _read_response(self):
         """
-        Read 8-byte response from MCU via I2C
-        Format: [resp_id] + [6 data bytes] + [crc]
+        Read one response frame from the MCU via I2C.
+        See READ_LENGTH for the two frame layouts in circulation.
         """
         try:
             # Delay to allow the MCU to fill its response buffer. At 1ms ~18% of
@@ -157,10 +185,9 @@ class I2CManager:
             # over 60-frame sweeps. Cheap against the 33ms loop budget.
             time.sleep(0.005)
 
-            # Read 8 bytes from MCU
-            data = self.bus.read_i2c_block_data(self.device_address, 0x00, 8)
+            data = self.bus.read_i2c_block_data(self.device_address, 0x00, self.READ_LENGTH)
 
-            if len(data) != 8:
+            if len(data) != self.READ_LENGTH:
                 return None
 
             # Check if response is empty (all zeros or first byte is 0)
@@ -170,37 +197,28 @@ class I2CManager:
                 return None
 
             resp_id = data[0]
-            response_data = data[1:7]
 
-            # Only validate the response CRC if the firmware actually emits one.
-            # See verify_response_crc in __init__ for why this is off by default.
-            if self.verify_response_crc:
-                calculated_crc = self._calculate_crc(data[:7])
-                if data[7] != calculated_crc:
-                    if self.debug:
-                        self.logger.debug(f"CRC mismatch: expected 0x{calculated_crc:02X}, got 0x{data[7]:02X}")
-                    return None
-
-            # Structural validation, standing in for the missing CRC: an
-            # unrecognised id means the buffer was misaligned or corrupt, so the
-            # payload behind it cannot be trusted either.
+            # Cheap structural check before the CRC math: an unrecognised id
+            # (0xFF idle/NACK reads, say) can't be a frame worth checksumming.
             if resp_id not in (self.RESP_MOVE, self.RESP_STATUS, self.RESP_CALIBRATE):
-                self._dropped_frames += 1
-                now = time.time()
-                # Report the first drop at once, then at most every DROP_REPORT_INTERVAL
-                # while they keep coming. A persistent fault (0xFF NACK reads at 30Hz,
-                # say) has to stay visible: warning once per id and then falling silent
-                # is how the CRC gate hid this bug in the first place.
-                if now - self._last_drop_report >= self.DROP_REPORT_INTERVAL:
-                    self.logger.warning(
-                        f"Ignoring unknown I2C response id 0x{resp_id:02X} "
-                        f"({self._dropped_frames} frame(s) dropped since last report)"
-                    )
-                    self._dropped_frames = 0
-                    self._last_drop_report = now
+                self._report_dropped_frame(f"unknown id 0x{resp_id:02X}")
                 return None
 
-            self._process_response(resp_id, response_data)
+            # Accept whichever frame layout's CRC verifies. Check the 8-byte
+            # layout first: on 8-byte firmware it always verifies (the trailing
+            # junk bytes are never read), while a 10-byte frame only passes it
+            # by 1/256 accident -- and then still decodes to the same pose,
+            # since bytes 0-6 agree between layouts.
+            extra = None
+            if data[7] == self._calculate_crc(data[:7]):
+                pass  # 8-byte frame; no gyro field
+            elif data[9] == self._calculate_crc(data[:9]):
+                extra = data[7:9]  # 10-byte frame; gyroZ on RESP_MOVE
+            else:
+                self._report_dropped_frame(f"CRC mismatch on id 0x{resp_id:02X}")
+                return None
+
+            self._process_response(resp_id, data[1:7], extra)
             return True
 
         except Exception as e:
@@ -208,7 +226,7 @@ class I2CManager:
                 self.logger.debug(f"Failed to read response: {e}")
             return None
 
-    def _process_response(self, resp_id, data):
+    def _process_response(self, resp_id, data, extra=None):
         """Process received response from MCU"""
         if self.debug:
             self.logger.debug(f"Received response 0x{resp_id:02X}: {[hex(b) for b in data]}")
@@ -234,6 +252,9 @@ class I2CManager:
             self.current_transform.transform.rotation.y = 0.0
             self.current_transform.transform.rotation.z = math.sin(theta_rad / 2.0)
             self.current_transform.transform.rotation.w = math.cos(theta_rad / 2.0)
+            if extra is not None:
+                # 10-byte firmware: IMU body-frame yaw rate, rad/s * 100
+                self.gyro_z = struct.unpack(">h", bytes(extra))[0] / 100.0
             if self.debug:
                 self.logger.debug(f"Position Update - X: {x / 100.0}, Y: {y / 100.0}, θ: {theta_rad} rad")
         elif resp_id == self.RESP_STATUS:
