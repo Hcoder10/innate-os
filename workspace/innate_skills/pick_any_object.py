@@ -38,15 +38,12 @@ That's it. Everything else is plumbing and knobs.
 import base64
 import json
 import math
-import os
 import re
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
-from google import genai
-from google.genai import types as genai_types
+from innate_proxy import ProxyClient
 from std_msgs.msg import String
 
 from brain_client.skills.types import (
@@ -60,6 +57,14 @@ from brain_client.skills.types import (
 from innate.skills import SkillFailed, arm_rest_position
 from workspace.skill_lib import arm as armlib
 from workspace.skill_lib.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
+
+# Vision model, reached through the Innate proxy's OpenAI-compatible endpoint
+# (service "gemini", /v1/chat/completions). The proxy holds the upstream key;
+# the robot authenticates with its service key. NOTE: the service key must be
+# granted access to the "gemini" service or the proxy returns 403.
+GEMINI_SERVICE = "gemini"
+GEMINI_ENDPOINT = "/v1/chat/completions"
+GEMINI_MODEL = "gemini-3.5-flash"
 
 # hardware-tuned constants (not exposed to the live panel)
 GRIPPER_EMPTY_J6 = -0.085  # joint6 when fingers are open / empty
@@ -152,48 +157,17 @@ TUNABLE = {
 DEBUG_TOPIC = "/pick_any_object/debug"
 TUNING_TOPIC = "/pick_any_object/tuning"
 
-FOLLOW_TIMEOUT_S = 20.0  # one optical-flow follow attempt
-WRIST_ALIGN_TIMEOUT_S = 60.0  # whole wrist-servo descent (deliberately slow:
-                              # every step waits for two verified flow matches)
-WRIST_MAX_JUMP_PX = 80.0      # a tracked blob moving more than this between
-                              # consecutive frames isn't our object — drop it
-WRIST_SEG_MIN_SCORE = 25.0    # mean back-projection likelihood (0-255) inside
-                              # the tracked window below which the object is
-                              # considered lost (segmentation collapsed)
-# Wrist camera sits ~7 cm above ee_link (URDF: on link5, up the wrist). Only
-# used to scale the px->m gains with camera height as the arm descends.
+FOLLOW_TIMEOUT_S = 20.0
+WRIST_ALIGN_TIMEOUT_S = 60.0
+WRIST_MAX_JUMP_PX = 80.0
+WRIST_SEG_MIN_SCORE = 25.0
 WRIST_CAM_ABOVE_EE = 0.07
-# The wrist-servo search position, posed by the operator (2026-07-14): elbow
-# high near 90°, wrist camera looking down at the floor ahead. FK puts ee_link
-# at (0.296, -0.022, 0.198), ee pitch 0.8221. This IS the hover — the servo
-# descends from wherever this pose is. It also seeds the KDL-LMA IK (which
-# converges to the branch nearest the current joints), keeping every servo
-# move on this elbow-up branch. j1 is re-aimed at the target, j4 is derived
-# (j2+j3+j4 = wrist_pitch, = the posed j4 at the default pitch), and j6 keeps
-# the gripper, so only j2/j3/j5 are used verbatim.
 WRIST_SEARCH_ARM = [0.1473, -0.0706, -0.4449, 1.3376, -0.0491]
 # Lucas-Kanade defaults — a small patch beats a single point
 _LK_PARAMS = dict(
     winSize=(21, 21), maxLevel=3,
     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
 )
-
-
-def _load_gemini_key() -> str:
-    # env first, then the repo .env — same pattern as the rest of the stack
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if key:
-        return key
-    env_path = Path.home() / "innate-os" / ".env"
-    if env_path.exists():
-        m = re.search(r"^GEMINI_API_KEY=(.+)$", env_path.read_text(), re.M)
-        if m:
-            return m.group(1).strip().strip('"')
-    return ""
-
-
-# floor localization (pixel + head tilt <-> base_link x,y) lives in
-# workspace/skill_lib/geometry.py — imported above, same names.
 
 
 def _r(v, nd=4):
@@ -218,8 +192,11 @@ class PickAnyObject(Skill):
     def __init__(self, logger):
         super().__init__(logger)
         self._cancelled = False
-        key = _load_gemini_key()
-        self._gemini = genai.Client(api_key=key) if key else None
+        # Vision runs through the Innate proxy (upstream key managed there);
+        # None when the robot has no proxy credentials configured.
+        self._proxy = ProxyClient()
+        if not self._proxy.is_available():
+            self._proxy = None
         self._p = dict(TUNABLE)  # live copy; panel mutates this
         self._dbg_pub = None
         self._tuning_sub = None
@@ -281,27 +258,35 @@ class PickAnyObject(Skill):
     # vision: Gemini finds a pixel, geometry turns it into a floor point
     # -------------------------------------------------------------------------
     def _gemini_call(self, image_b64, question, retries=3):
+        """Ask the vision model about an image. Routes through the Innate
+        proxy's OpenAI-compatible chat endpoint (image as a data URI); returns
+        the reply text, or None after `retries` failures."""
+        proxy = self._proxy
+        if proxy is None:
+            return None
+        body = {
+            "model": GEMINI_MODEL,
+            "temperature": 0.0,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_b64}"}},
+                ],
+            }],
+        }
         for attempt in range(retries):
             try:
-                resp = self._gemini.models.generate_content(
-                    model="gemini-3.5-flash",
-                    contents=[
-                        genai_types.Part.from_bytes(
-                            data=base64.b64decode(image_b64), mime_type="image/jpeg"
-                        ),
-                        question,
-                    ],
-                    config=genai_types.GenerateContentConfig(
-                        temperature=0.0,
-                        thinking_config=genai_types.ThinkingConfig(
-                            thinking_level=genai_types.ThinkingLevel.LOW
-                        ),
-                    ),
-                )
-                return resp.text or ""
+                with proxy.request_stream(
+                    GEMINI_SERVICE, GEMINI_ENDPOINT, method="POST", json=body,
+                ) as resp:
+                    resp.raise_for_status()
+                    data = json.loads(resp.read())
+                return data["choices"][0]["message"]["content"] or ""
             except Exception as e:  # noqa: BLE001
                 self.logger.warning(
-                    f"[PickAnyObject] Gemini failed (try {attempt + 1}/{retries}): {e}"
+                    f"[PickAnyObject] vision call failed (try {attempt + 1}/{retries}): {e}"
                 )
                 if attempt < retries - 1:
                     time.sleep(2.0 * (attempt + 1))
@@ -1124,8 +1109,8 @@ class PickAnyObject(Skill):
             max_base_steps: kept for interface compatibility; unused in v3.
         """
         self._cancelled = False
-        if self._gemini is None:
-            return "GEMINI_API_KEY not configured", SkillResult.FAILURE
+        if self._proxy is None:
+            return "Innate proxy not configured (INNATE_SERVICE_KEY)", SkillResult.FAILURE
         if self.manipulation is None or self.mobility is None:
             return "Manipulation/mobility interface not available", SkillResult.FAILURE
 
@@ -1135,12 +1120,8 @@ class PickAnyObject(Skill):
         holding = False
         try:
             self.head.set_position(int(round(self._p["tilt_deg"])))
-            time.sleep(0.8)
-            # Fold the arm to rest BEFORE searching so it's low and swung to the
-            # side, out of the head camera's downward view (a lifted arm sits in
-            # frame and hides the floor). The rest pose now clears the floor, so
-            # this no longer jams the gripper into the ground. Best-effort — a
-            # failed fold shouldn't abort the pick (a cancel still propagates).
+            time.sleep(0.5)
+            # Fold the arm to rest BEFORE searching to not hide the camera pov
             try:
                 arm_rest_position()
             except SkillFailed as e:
@@ -1154,8 +1135,6 @@ class PickAnyObject(Skill):
                     SkillResult.FAILURE,
                 )
 
-            # one shot: position -> grasp -> verify. No retry re-approach —
-            # driving forward again after a miss surprised the operator.
             if self._cancelled:
                 return "Cancelled", SkillResult.CANCELLED
             xy = self._position_above(prompt, xy)
