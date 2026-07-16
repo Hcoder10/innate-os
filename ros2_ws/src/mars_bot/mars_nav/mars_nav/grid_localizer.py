@@ -25,9 +25,7 @@ Key features:
 - Runs as a lifecycle node for proper initialization coordination
 
 On startup, automatically tries to localize for up to `auto_localize_timeout` seconds.
-Publishes status to /localization/status ('processing_map', 'localized',
-'localized_low_confidence', or 'error'), repeating the last value at 1 Hz so
-late subscribers (the webapp) see the current state.
+Publishes status to /localization/status ('localized' or 'timeout').
 Service remains available for manual triggers after auto-localize completes.
 """
 
@@ -56,11 +54,6 @@ class GridLocalizer(Node):
     srv = None
     _auto_timer = None
     _map_check_timer = None
-    _status_timer = None
-
-    # Last published /localization/status value, republished at 1 Hz while
-    # active so late subscribers (the webapp) see the current state.
-    _last_status: str | None = None
 
     # Map state
     map_received: bool = False
@@ -128,7 +121,6 @@ class GridLocalizer(Node):
 
         # Auto-localize state
         self._auto_done = not auto_localize  # Skip if disabled
-        self._last_status = None
 
         # Subscribers
         scan_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -186,13 +178,6 @@ class GridLocalizer(Node):
                 f"Auto-localize enabled: {self.auto_timeout}s timeout, score threshold {self.score_threshold}"
             )
 
-        # Keep the status topic fresh for subscribers that join after the
-        # one-shot auto-localize result was published
-        if self._status_timer is None:
-            self._status_timer = self.create_timer(1.0, self._republish_status)
-        else:
-            self._status_timer.reset()  # restart after a deactivate/reactivate cycle
-
         # This call automatically activates lifecycle publishers (pose_pub and status_pub)
         return super().on_activate(state)
 
@@ -206,8 +191,6 @@ class GridLocalizer(Node):
             self._auto_timer.cancel()
         if self._map_check_timer:
             self._map_check_timer.cancel()
-        if self._status_timer:
-            self._status_timer.cancel()
         # Drop any pending AMCL seed: across a deactivate/reactivate (e.g. a
         # map switch) a surviving retry would deliver the PREVIOUS map's pose.
         if self._seed_retry_timer:
@@ -232,9 +215,6 @@ class GridLocalizer(Node):
         if self._seed_retry_timer:
             self.destroy_timer(self._seed_retry_timer)
             self._seed_retry_timer = None
-        if self._status_timer:
-            self.destroy_timer(self._status_timer)
-            self._status_timer = None
         # Clear the pending seed too: an in-flight /set_initial_pose failing
         # after cleanup would otherwise see it as current and re-arm a retry
         # timer on a cleaned-up node.
@@ -521,9 +501,6 @@ class GridLocalizer(Node):
 
     def _publish_status(self, status: str):
         """Publish status for app to consume."""
-        # Remember it even if the publisher isn't active yet — the republish
-        # timer delivers it once activation completes.
-        self._last_status = status
         if self.status_pub is None or not self.status_pub.is_activated:
             self.get_logger().warn(f"Status publisher is not active. Cannot publish status: {status}")
             return
@@ -532,14 +509,6 @@ class GridLocalizer(Node):
         msg.data = status
         self.status_pub.publish(msg)
         self.get_logger().info(f"Published status: {status}")
-
-    def _republish_status(self):
-        """1 Hz repeat of the last status so late subscribers converge (silent — no log spam)."""
-        if self._last_status is None or self.status_pub is None or not self.status_pub.is_activated:
-            return
-        msg = String()
-        msg.data = self._last_status
-        self.status_pub.publish(msg)
 
     EDGE_MARGIN_M = 0.30  # closer to the border than this and the costmap can't see ahead
 
@@ -667,9 +636,6 @@ class GridLocalizer(Node):
 
             self._publish_pose(pose[0], pose[1], pose[2])
             self._warn_if_at_map_edge(pose[0], pose[1])
-            # Manual localization updates the status topic the same way
-            # auto-localize does, so the app's status row stays truthful.
-            self._publish_status("localized" if score < self.score_threshold else "localized_low_confidence")
 
             response.success = True
             response.message = (

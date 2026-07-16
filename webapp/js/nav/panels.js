@@ -104,18 +104,22 @@ export function createNavPanels(root, store) {
   const navLoc = nav.row("localization");
   const battery = nav.row("battery");
 
-  // grid_localizer's status values → readout text + severity color. Low
-  // confidence and error are exactly the states that make goals fail with
-  // "start in lethal space", so they must be visible, not log-only.
+  // Localization health, the mobile app's approach (LocalizationContext):
+  // AMCL's pose covariance is the continuous truth — it streams with every
+  // pose update, so a page opened at any time converges. grid_localizer's
+  // one-shot /localization/status is only caught when the page is already
+  // open as localization runs; it seeds the row, covariance then owns it.
+  // A mislocalized robot is exactly what makes goals abort with "start in
+  // lethal space", so this must be visible, not log-only.
+  const CONFIDENT_VAR = 0.1; // m², same thresholds as the mobile app
+  const UNCERTAIN_VAR = 0.5;
+  const UNCERTAIN_HINT = "The robot may not be where the map thinks — use Locate (or place manually), or remap.";
+
   /** @type {Record<string, [string, string, string]>} */
   const LOC_STATES = {
     processing_map: ["processing map…", "", ""],
     localized: ["localized", "ok", ""],
-    localized_low_confidence: [
-      "low confidence",
-      "warn",
-      "The map may not match the robot's surroundings — use Locate (or place manually), or remap.",
-    ],
+    localized_low_confidence: ["low confidence", "warn", UNCERTAIN_HINT],
     error: ["error", "fail", "Localization failed — see robot logs, then use Locate or Manual placement."],
   };
 
@@ -174,6 +178,14 @@ export function createNavPanels(root, store) {
     const yaw = yawOf(msg?.pose?.pose?.orientation);
     if (typeof p?.x === "number" && typeof p?.y === "number") mapXY.textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
     if (yaw !== null) mapYaw.textContent = `${deg(yaw).toFixed(0)}°`;
+    const cov = msg?.pose?.covariance;
+    if (Array.isArray(cov) && cov.length >= 36) {
+      const maxVar = Math.max(cov[0], cov[7]); // x/y position variance
+      const detail = `position variance ${maxVar.toFixed(2)} m²`;
+      if (maxVar > UNCERTAIN_VAR) setLocalization("lost", "fail", `${detail} — ${UNCERTAIN_HINT}`);
+      else if (maxVar > CONFIDENT_VAR) setLocalization("uncertain", "warn", `${detail} — ${UNCERTAIN_HINT}`);
+      else setLocalization("confident", "ok", detail);
+    }
   }, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
 
   watch(CMD_VEL_TOPIC, (msg) => {
