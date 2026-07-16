@@ -77,6 +77,15 @@ function buildView(root) {
   veil.appendChild(veilText);
   scene.appendChild(veil);
 
+  // Map-free runs Nav2 without map_server or AMCL, so the scene has no map
+  // behind it — the widget either waits on /map forever or keeps drawing the
+  // previously loaded grid. Say so rather than let either state mislead.
+  const mapfreeNote = document.createElement("div");
+  mapfreeNote.className = "nav-scene-note mono";
+  mapfreeNote.textContent = "map-free mode — no map is loaded; the scene may show the last map, which is not in use";
+  mapfreeNote.hidden = true;
+  scene.appendChild(mapfreeNote);
+
   // ---- store + scene ---------------------------------------------------------
   const store = createNavStore();
 
@@ -159,6 +168,7 @@ function buildView(root) {
   const unsubStore = store.onChange((s) => {
     veil.hidden = !s.busy;
     if (s.busy) veilText.textContent = `${s.busy}…`;
+    mapfreeNote.hidden = s.mode !== "mapfree";
     const mapping = s.mode === "mapping";
     if (mapping !== wasMapping) {
       wasMapping = mapping;

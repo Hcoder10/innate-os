@@ -25,8 +25,10 @@ import {
 } from "../constants.js";
 
 const MODE_CHANGE_TIMEOUT_MS = 60_000;
-// mode_manager's own save_map validation, mirrored for inline feedback.
-export const MAP_NAME_RE = /^[A-Za-z0-9_-]+$/;
+// mode_manager's own save_map validation, mirrored for inline feedback: it
+// strips _ and - then requires isalnum(), so at least one alphanumeric is
+// needed — "___" is rejected server-side.
+export const MAP_NAME_RE = /^[A-Za-z0-9_-]*[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * @typedef {{
@@ -98,7 +100,13 @@ export function createNavStore() {
       if (typeof msg?.data !== "string") return;
       try {
         const parsed = JSON.parse(msg.data);
-        if (Array.isArray(parsed?.available_maps)) set({ maps: parsed.available_maps });
+        // mode_manager re-publishes the (usually unchanged) roster at 1 Hz;
+        // emit only on real change, like the mode/map subscriptions below —
+        // otherwise every listener re-renders each second, and the maps
+        // panel's rebuilt rows eat any click whose press straddles the emit.
+        if (Array.isArray(parsed?.available_maps) && parsed.available_maps.join("\n") !== state.maps.join("\n")) {
+          set({ maps: parsed.available_maps });
+        }
       } catch {
         // torn payload — keep the last good roster
       }

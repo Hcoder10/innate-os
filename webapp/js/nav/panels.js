@@ -37,15 +37,23 @@ function yawOf(q) {
 function makeRate() {
   /** @type {number[]} */
   const stamps = [];
+  /** @type {number | null} */
+  let firstTick = null;
   return {
     tick() {
-      stamps.push(performance.now());
+      const now = performance.now();
+      if (firstTick === null) firstTick = now;
+      stamps.push(now);
     },
     hz() {
       const now = performance.now();
       while (stamps.length && now - stamps[0] > RATE_WINDOW_MS) stamps.shift();
       if (stamps.length < 2) return null;
-      return stamps.length / (RATE_WINDOW_MS / 1000);
+      // Divide by the span actually observed, not the full window — else a
+      // 10 Hz topic reads 2 Hz one second in and only ramps to truth at 5 s.
+      const spanMs = Math.min(RATE_WINDOW_MS, now - (firstTick ?? now));
+      if (spanMs <= 0) return null;
+      return stamps.length / (spanMs / 1000);
     },
   };
 }
@@ -170,7 +178,9 @@ export function createNavPanels(root, store) {
     if (typeof p?.x === "number" && typeof p?.y === "number") odomXY.textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m`;
     if (yaw !== null) odomYaw.textContent = `${deg(yaw).toFixed(0)}°`;
     const measured = velTracker.update(msg);
-    if (measured) velActual.textContent = `${measured.v.toFixed(2)} m/s · ${deg(measured.w).toFixed(0)}°/s`;
+    // null is the tracker's "unknown" (first sample, or resuming after a
+    // gap) — show the dash rather than holding a stale velocity.
+    velActual.textContent = measured ? `${measured.v.toFixed(2)} m/s · ${deg(measured.w).toFixed(0)}°/s` : DASH;
   }, 100);
 
   watch(AMCL_POSE_TOPIC, (msg) => {

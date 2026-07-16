@@ -135,24 +135,33 @@ function createChart(parent, spec) {
     canvas.style.height = `${r.height}px`;
   }
 
+  /**
+   * Drop samples that scrolled off the left edge; keep one extra so the
+   * line still enters from off-canvas rather than starting mid-plot.
+   * @param {Array<{ t: number, v: number }>} buf @param {number} from
+   */
+  function prune(buf, from) {
+    let keep = 0;
+    while (keep < buf.length && buf[keep].t < from) keep++;
+    if (keep > 1) buf.splice(0, keep - 1);
+  }
+
   /** @param {string} key @param {number} v */
   function push(key, v) {
     const buf = data.get(key);
     if (!buf || typeof v !== "number" || !Number.isFinite(v)) return;
-    buf.push({ t: performance.now(), v });
+    const now = performance.now();
+    buf.push({ t: now, v });
+    // Prune on arrival as well as on draw: rAF stops painting on a hidden
+    // tab while the socket keeps delivering, and draw()'s prune stops with it.
+    prune(buf, now - WINDOW_MS);
   }
 
   /** @param {number} now */
   function draw(now) {
     if (!ctx) return;
     const from = now - WINDOW_MS;
-    // Drop samples that scrolled off the left edge; keep one extra so the
-    // line still enters from off-canvas rather than starting mid-plot.
-    for (const buf of data.values()) {
-      let keep = 0;
-      while (keep < buf.length && buf[keep].t < from) keep++;
-      if (keep > 1) buf.splice(0, keep - 1);
-    }
+    for (const buf of data.values()) prune(buf, from);
 
     const w = canvas.width;
     const h = canvas.height;

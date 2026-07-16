@@ -74,7 +74,7 @@ export function createMappingSession(scene, store) {
       return null;
     }
     if (!MAP_NAME_RE.test(name)) {
-      hint.textContent = "letters, digits, _ or - only";
+      hint.textContent = /^[_-]+$/.test(name) ? "needs at least one letter or digit" : "letters, digits, _ or - only";
       return null;
     }
     hint.textContent = store.state.maps.includes(`${name}.yaml`) ? "exists — Save overwrites" : "";
