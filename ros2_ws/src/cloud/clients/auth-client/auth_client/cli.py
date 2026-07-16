@@ -11,7 +11,7 @@ from auth_client.provider import AuthError, AuthProvider
 
 
 def main() -> None:
-    issuer_url = os.environ.get("INNATE_AUTH_URL", "https://auth-v1.innate.bot")
+    issuer_url = os.environ.get("INNATE_AUTH_URL", "https://auth-v1.svc.innate.bot")
     service_key = os.environ.get("INNATE_SERVICE_KEY", "")
 
     if not service_key:

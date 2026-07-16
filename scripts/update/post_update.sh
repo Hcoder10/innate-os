@@ -188,9 +188,9 @@ if [ -f "$ENV_FILE" ]; then
         log "  Backed up .env to $ACTUAL_HOME/.env.backup"
 
         # Replace deprecated URLs with their new equivalents in-place
-        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot.*|INNATE_PROXY_URL=https://proxy-v1.innate.bot|' "$ENV_FILE"
-        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot.*|BRAIN_WEBSOCKET_URI=wss://agent-v1.innate.bot|' "$ENV_FILE"
-        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot.*|TELEMETRY_URL=https://logs-v1.innate.bot|' "$ENV_FILE"
+        sed -i 's|^INNATE_PROXY_URL=https://robot-services\.innate\.bot.*|INNATE_PROXY_URL=https://proxy-v1.svc.innate.bot|' "$ENV_FILE"
+        sed -i 's|^BRAIN_WEBSOCKET_URI=wss://brain\.innate\.bot.*|BRAIN_WEBSOCKET_URI=wss://agent-v1.svc.innate.bot|' "$ENV_FILE"
+        sed -i 's|^TELEMETRY_URL=https://logs\.innate\.bot.*|TELEMETRY_URL=https://logs.svc.innate.bot|' "$ENV_FILE"
 
         # Add reference comment at the bottom of .env
         if ! grep -q 'Refer to .env.template for examples' "$ENV_FILE"; then
@@ -200,9 +200,9 @@ if [ -f "$ENV_FILE" ]; then
 
         chown "$ACTUAL_USER:$ACTUAL_USER" "$ENV_FILE"
         log "  Deprecated URLs replaced with new endpoints in .env"
-        log "    robot-services.innate.bot → proxy-v1.innate.bot"
-        log "    brain.innate.bot          → agent-v1.innate.bot"
-        log "    logs.innate.bot           → logs-v1.innate.bot"
+        log "    robot-services.innate.bot → proxy-v1.svc.innate.bot"
+        log "    brain.innate.bot          → agent-v1.svc.innate.bot"
+        log "    logs.innate.bot           → logs.svc.innate.bot"
     fi
 fi
 

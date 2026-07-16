@@ -31,9 +31,9 @@ config file at `config/params.yaml` or overridden on the command line.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `ws_url` | string | env `UNINAVID_WS_URL` or `wss://nav-v1.innate.bot` | WebSocket server URL |
+| `ws_url` | string | env `UNINAVID_WS_URL` or `wss://uninavid-v1.svc.innate.bot` | WebSocket server URL |
 | `service_key` | string | env `INNATE_SERVICE_KEY` | Service key for auth token acquisition |
-| `auth_issuer_url` | string | env `INNATE_AUTH_URL` or `https://auth-v1.innate.bot` | Auth token issuer |
+| `auth_issuer_url` | string | env `INNATE_AUTH_URL` or `https://auth-v1.svc.innate.bot` | Auth token issuer |
 | `forward_speed` | float | 0.3 | Linear speed (m/s) for the FORWARD action |
 | `turn_speed` | float | 0.8 | Angular speed (rad/s) for the LEFT / RIGHT actions |
 | `cmd_duration_sec` | float | 0.1 | How long each action command is published |

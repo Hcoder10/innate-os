@@ -20,8 +20,8 @@ from std_msgs.msg import String
 
 from innate_logger.client import TelemetryClient
 
-DEFAULT_TELEMETRY_URL = "https://logs-v1.innate.bot"
-DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
+DEFAULT_TELEMETRY_URL = "https://logs.svc.innate.bot"
+DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.svc.innate.bot"
 
 
 class LoggerNode(Node):

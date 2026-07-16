@@ -35,7 +35,7 @@ python -m training_client.cli download ./skill <RUN_ID>
 By default the client authenticates via **OIDC** (OpenID Connect).  The
 `--token` / `INNATE_SERVICE_KEY` value is treated as a **service key** and
 exchanged for a short-lived JWT through the issuer at
-`https://auth-v1.innate.bot` (the default `--issuer`).
+`https://auth-v1.svc.innate.bot` (the default `--issuer`).
 
 - **OIDC discovery** is lazy — the `/.well-known/openid-configuration`
   endpoint is only called on the first request, not at startup.
@@ -197,7 +197,7 @@ Lifecycle node for ROS 2 Humble. ROS is **not** required by the core library —
 | Topic | `~/status` | `std_msgs/msg/String` | JSON run state + daemon_state on each poll |
 | Parameter | `server_url` | `string` | Orchestrator URL |
 | Parameter | `auth_token` | `string` | Service key (exchanged for JWT via OIDC) |
-| Parameter | `auth_issuer_url` | `string` | OIDC issuer (default `https://auth-v1.innate.bot`, `""` = plain bearer) |
+| Parameter | `auth_issuer_url` | `string` | OIDC issuer (default `https://auth-v1.svc.innate.bot`, `""` = plain bearer) |
 | Parameter | `poll_interval` | `double` | Status poll interval in seconds (default 20.0) |
 | Parameter | `source_dir` | `string` | Default source directory for submissions |
 | Parameter | `skill_name` | `string` | Optional skill name (default: directory name) |
