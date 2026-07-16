@@ -122,11 +122,6 @@ serial driver.
 
 ## Nav page
 
-A Foxglove-style live view of the navigation sensors, over the same rosbridge
-socket as everything else — the `foxglove_bridge` (`innate foxglove`, port
-8765) is a separate ws-protocol path for desktop Foxglove Studio and is not
-what this page uses.
-
 The map widget carries three opt-in overlays, toggled by the header chips:
 laser scan (`/scan`), global costmap
 (`/navigation/global_costmap/costmap`), and an odometry trail. Toggling a
