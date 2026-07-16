@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 
@@ -71,8 +72,11 @@ class LoggerNode(Node):
         auth.wait_for_token(on_retry=self._log_auth_retry)
         self._client = TelemetryClient(url=telemetry_url, auth=auth)
 
-        # Git commit at startup
+        # Git commit and robot identity at startup
         self._git_commit: str = self._get_git_commit()
+        self._robot_id: str = self._get_robot_id()
+        if self._robot_id == "unknown":
+            self.get_logger().warning("robot_id not found in robot_info.json — reporting 'unknown'")
 
         # Initialise CPU baseline (first call always returns 0.0%)
         psutil.cpu_percent()
@@ -92,6 +96,16 @@ class LoggerNode(Node):
 
     def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
         self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
+
+    @staticmethod
+    def _get_robot_id() -> str:
+        mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
+        robot_info_path = os.path.join(mars_root, "data", "robot_info.json")
+        try:
+            with open(robot_info_path) as f:
+                return str(json.load(f).get("robot_id", "unknown"))
+        except Exception:
+            return "unknown"
 
     @staticmethod
     def _get_git_commit() -> str:
@@ -123,6 +137,7 @@ class LoggerNode(Node):
         cpu_usage = psutil.cpu_percent(interval=None)
 
         vitals: dict[str, object] = {
+            "robot_id": self._robot_id,
             "commit": self._git_commit,
             "cpu_usage": cpu_usage,
         }
