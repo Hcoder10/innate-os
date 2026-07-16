@@ -7,6 +7,19 @@
 // actions the cancel button takes initial focus so a stray Enter can't
 // delete anything.
 
+/** Open dialogs' settle functions, so page teardown can sweep strays. */
+/** @type {Set<(result: boolean) => void>} */
+const openDialogs = new Set();
+
+/**
+ * Cancel every open confirm. Called from the page's destroy: a dialog lives
+ * on document.body, so navigating away (number-key shortcut, back button)
+ * would otherwise leave it floating over the next page.
+ */
+export function dismissAllConfirms() {
+  for (const settle of [...openDialogs]) settle(false);
+}
+
 /**
  * @param {{ title: string, body: string, confirmLabel: string, danger?: boolean }} opts
  * @returns {Promise<boolean>}
@@ -54,10 +67,12 @@ export function confirmDialog(opts) {
 
     /** @param {boolean} result */
     function settle(result) {
+      openDialogs.delete(settle);
       document.removeEventListener("keydown", onKey, true);
       backdrop.remove();
       resolve(result);
     }
+    openDialogs.add(settle);
     /** @param {KeyboardEvent} e */
     function onKey(e) {
       if (e.key === "Escape") {

@@ -245,7 +245,9 @@ export function createNavPanels(root, store) {
     ros.subscribe(BATTERY_STATE_TOPIC, (msg) => {
       const p = msg?.percentage;
       if (typeof p !== "number" || Number.isNaN(p)) return;
-      // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
+      // The robot publishes the spec's 0–1 (battery.py get_percentage returns
+      // percentage/100), so <=1 must scale up: 1.0 is full, not 1%. Values >1
+      // pass through in case a 0–100 source ever appears.
       const pct = p <= 1 ? p * 100 : p;
       const volts = typeof msg?.voltage === "number" && msg.voltage > 0 ? ` · ${msg.voltage.toFixed(1)} V` : "";
       battery.textContent = `${Math.round(pct)}%${volts}`;

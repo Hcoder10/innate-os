@@ -24,6 +24,7 @@ import { createMappingSession } from "./mappingSession.js";
 import { createNavPanels } from "./panels.js";
 import { createNavPlots } from "./plots.js";
 import { createDriveKit } from "./driveKit.js";
+import { dismissAllConfirms } from "./confirm.js";
 
 // Scene default: robot-centred window, wheel-zoomable (Foxglove-like), not
 // the fit-whole-grid mode — remembered across visits.
@@ -194,6 +195,9 @@ function buildView(root) {
 
   return {
     destroy() {
+      // Dialogs live on document.body, not under root — sweep them or a
+      // confirm orphaned by navigation floats over the next page.
+      dismissAllConfirms();
       kitGen++; // cancel any in-flight drive-kit mount
       driveKit?.destroy();
       for (const part of parts) part.destroy();

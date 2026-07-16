@@ -77,7 +77,9 @@ export function createNavStore() {
    * @returns {Promise<boolean>}
    */
   async function call(service, args, doing) {
-    if (state.busy) return false;
+    // destroyed: the page is gone, but a caller may still resolve later (a
+    // confirm dialog orphaned by navigation) — never command the robot then.
+    if (destroyed || state.busy) return false;
     set({ busy: doing, status: null });
     try {
       const res = await ros.callService(service, args, MODE_CHANGE_TIMEOUT_MS);

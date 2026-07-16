@@ -33,6 +33,38 @@ function isEmptyDeep(v) {
 }
 
 /**
+ * rws serializes non-finite floats as empty array slots — a LaserScan with
+ * inf ranges arrives as `[2.48,,,,0.39]`, which strict JSON rejects. Fill
+ * each hole with null, walking the string so a `,,` inside a string value is
+ * never touched. `[]` keeps its meaning (no hole to fill).
+ * Exported for tests (tests/patchJsonHoles.test.js).
+ * @param {string} raw
+ * @returns {string}
+ */
+export function patchJsonHoles(raw) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") out += raw[++i] ?? "";
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch === "[" && raw[i + 1] === ",") {
+      out += "[null";
+    } else if (ch === "," && (raw[i + 1] === "," || raw[i + 1] === "]")) {
+      out += ",null";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
  * @typedef {Object} Subscription
  * @property {Set<(msg: any) => void>} handlers
  * @property {number | undefined} throttleRate
@@ -369,13 +401,11 @@ export class RosClient {
     try {
       data = JSON.parse(raw);
     } catch {
-      // rws serializes non-finite floats as empty array slots — a LaserScan
-      // with inf ranges arrives as `[2.48,,,,0.39]`, which strict JSON
-      // rejects. Patch the holes to null and retry (consumers already skip
-      // non-finite values). Only attempted once a strict parse has failed;
-      // `[]` is left alone so empty arrays keep their meaning.
+      // rws array holes (non-finite floats) — patch to null and retry
+      // (consumers already skip non-finite values). Only attempted once a
+      // strict parse has failed.
       try {
-        data = JSON.parse(raw.replace(/,(?=[,\]])/g, ",null").replace(/\[(?=,)/g, "[null"));
+        data = JSON.parse(patchJsonHoles(raw));
       } catch {
         return;
       }
