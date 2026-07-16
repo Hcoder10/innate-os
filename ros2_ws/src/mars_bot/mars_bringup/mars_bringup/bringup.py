@@ -248,6 +248,12 @@ class Bringup(Node):
         odom.pose.pose.position.z = transform.transform.translation.z
         odom.pose.pose.orientation = transform.transform.rotation
 
+        # Report the commanded speed as measured twist. The MCU returns position only, and its
+        # cm / rad*100 quantization makes differencing it at odom rate unusable (~0.3 m/s per LSB).
+        speed, turn = self.i2c_manager.get_effective_speed()
+        odom.twist.twist.linear.x = speed
+        odom.twist.twist.angular.z = -turn  # undo the hardware sign inversion applied on the command path
+
         # Publish the odometry message
         self.odom_pub.publish(odom)
 

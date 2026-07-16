@@ -230,14 +230,18 @@ class I2CManager:
         else:
             self.logger.warning(f"Unknown Response ID: {resp_id}")
 
+    def get_effective_speed(self):
+        """Return the (forward, turn) speed actually being sent to the MCU.
+
+        Zero once the command timeout has lapsed, matching what _send_move_command sends.
+        """
+        if time.time() - self.last_speed_command_time > self.speed_command_timeout:
+            return (0.0, 0.0)
+        return self.latest_speed
+
     def _send_move_command(self):
         """Send movement command with timeout handling"""
-        current_time = time.time()
-        if current_time - self.last_speed_command_time > self.speed_command_timeout:
-            # Timeout exceeded, send zero speed
-            speed, turn = 0.0, 0.0
-        else:
-            speed, turn = self.latest_speed
+        speed, turn = self.get_effective_speed()
 
         # Scale and clamp values
         speed_int = int(max(-32767, min(32767, speed * 100)))
