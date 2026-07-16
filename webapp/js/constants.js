@@ -71,7 +71,7 @@ export const LOCALIZATION_STATUS_TOPIC = "/localization/status";
 // AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
 export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
 
-// ---- Nav page (Foxglove-style sensor panel) --------------------------------
+// ---- Nav page (live sensor panel) ------------------------------------------
 // RPLidar scan, throttled to ~6 Hz on the robot (frame base_laser).
 export const SCAN_TOPIC = "/scan"; // sensor_msgs/LaserScan
 // The velocity actually sent to the base — output of the cmd_vel priority mux.

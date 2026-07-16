@@ -1,7 +1,7 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Nav page entry — a Foxglove-style live view of everything navigation.
+// Nav page entry — a live view of everything navigation.
 //
 // Composition (one-directional: topics → store → views → store actions):
 //   navStore.js        mode/maps/currentMap truth + the mode_manager actions
@@ -35,8 +35,8 @@ import { createNavPlots } from "./plots.js";
 import { createDriveKit } from "./driveKit.js";
 import { dismissAllConfirms } from "./confirm.js";
 
-// Scene default: robot-centred window, wheel-zoomable (Foxglove-like), not
-// the fit-whole-grid mode — remembered across visits.
+// Scene default: robot-centred window, wheel-zoomable, not the
+// fit-whole-grid mode — remembered across visits.
 const ZOOM_KEY = "innate.navZoom";
 const DEFAULT_ZOOM_M = 14;
 

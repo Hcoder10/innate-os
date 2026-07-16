@@ -1,8 +1,8 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Live strip charts for the Nav page — the rolling-time-series half of a
-// Foxglove Plot panel. Three charts that answer questions the numeric readouts
+// Live strip charts for the Nav page — the rolling-time-series half of the
+// telemetry sidebar. Three charts that answer questions the numeric readouts
 // can't: is the base tracking what nav commands it (commanded vs measured,
 // overlaid), and is an obstacle closing in.
 //

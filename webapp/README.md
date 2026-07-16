@@ -5,10 +5,10 @@ same modules:
 
 - **Teleop** (`index.html`) — live video, joystick/keyboard drive, head tilt,
   robot speech, telemetry, and leader-arm USB follow.
-- **Nav** (`js/nav/`) — Foxglove-style live navigation view: the map widget
-  with laser scan / global costmap / odometry-trail overlays, telemetry panels
-  (pose, velocity, lidar, nav state, per-topic receive rates), and live strip
-  charts (commanded vs measured velocity, nearest obstacle).
+- **Nav** (`js/nav/`) — live navigation view: the map widget with laser scan /
+  global costmap / traveled-path overlays, telemetry panels (pose, velocity,
+  lidar, nav state, per-topic receive rates), and live strip charts (commanded
+  vs measured velocity, nearest obstacle).
 - **Collect** (`collect/`) — record episodes (learned skills) and one-shot
   recorded movements; reuses the teleop cockpit with a recording HUD.
 - **Datasets** (`datasets/`) — browse a skill's episodes and replay them
