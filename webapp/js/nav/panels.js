@@ -13,6 +13,7 @@ import {
   AMCL_POSE_TOPIC,
   BATTERY_STATE_TOPIC,
   CMD_VEL_TOPIC,
+  LOCALIZATION_STATUS_TOPIC,
   MAP_TOPIC,
   ODOM_TOPIC,
   SCAN_TOPIC,
@@ -100,7 +101,30 @@ export function createNavPanels(root, store) {
   const nav = panel("Nav state");
   const navMode = nav.row("mode");
   const navMap = nav.row("map");
+  const navLoc = nav.row("localization");
   const battery = nav.row("battery");
+
+  // grid_localizer's status values → readout text + severity color. Low
+  // confidence and error are exactly the states that make goals fail with
+  // "start in lethal space", so they must be visible, not log-only.
+  /** @type {Record<string, [string, string, string]>} */
+  const LOC_STATES = {
+    processing_map: ["processing map…", "", ""],
+    localized: ["localized", "ok", ""],
+    localized_low_confidence: [
+      "low confidence",
+      "warn",
+      "The map may not match the robot's surroundings — use Locate (or place manually), or remap.",
+    ],
+    error: ["error", "fail", "Localization failed — see robot logs, then use Locate or Manual placement."],
+  };
+
+  /** @param {string} text @param {string} kind @param {string} hint */
+  function setLocalization(text, kind, hint) {
+    navLoc.textContent = text;
+    navLoc.className = `nav-row-value mono${kind ? ` ${kind}` : ""}`;
+    navLoc.title = hint;
+  }
 
   const rates = panel("Received rates");
 
@@ -187,7 +211,15 @@ export function createNavPanels(root, store) {
     store.onChange((s) => {
       if (s.mode) navMode.textContent = s.mode;
       if (s.currentMap) navMap.textContent = s.currentMap;
+      // Outside navigation mode the localizer is deactivated and stops
+      // publishing — blank the row rather than pin a stale verdict.
+      if (s.mode && s.mode !== "navigation") setLocalization(DASH, "", "");
     }),
+    ros.subscribe(LOCALIZATION_STATUS_TOPIC, (msg) => {
+      if (typeof msg?.data !== "string" || !msg.data) return;
+      const [text, kind, hint] = LOC_STATES[msg.data] ?? [msg.data, "", ""];
+      setLocalization(text, kind, hint);
+    }, 1000, "std_msgs/msg/String"),
     ros.subscribe(BATTERY_STATE_TOPIC, (msg) => {
       const p = msg?.percentage;
       if (typeof p !== "number" || Number.isNaN(p)) return;

@@ -5766,6 +5766,19 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* Severity accents for status rows (localization). */
+.nav-row-value.ok {
+  color: var(--ok);
+}
+
+.nav-row-value.warn {
+  color: var(--accent);
+}
+
+.nav-row-value.fail {
+  color: var(--danger);
+}
+
 /* Live strip charts. Overrides .telemetry-plot's 190px (sized for the episode
    player's joint graph) — three stacked plots share the sidebar here. */
 .nav-plot {
