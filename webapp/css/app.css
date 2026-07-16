@@ -275,9 +275,9 @@ button {
 
 .map-controls {
   position: absolute;
-  /* Top-left under the robot info card; top-right belongs to the camera strip. */
-  top: 96px;
-  left: 16px;
+  /* Top-left corner; top-right belongs to the camera strip. */
+  top: 14px;
+  left: 14px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -786,6 +786,12 @@ button {
 /* The map's Locate / Go To controls only make sense at full size. */
 .cam-map-host:not(.big) .map-controls {
   display: none;
+}
+
+/* On the cockpit stage the telemetry card owns the very corner (it paints
+   over the map) — start the controls just below it. */
+.cam-map-host.big .map-controls {
+  top: 72px;
 }
 
 /* Map promoted to the big stage: full-bleed under the control overlays. Inserted as the stage's first
@@ -1627,9 +1633,9 @@ button {
 }
 
 
-/* ---- debugging page ------------------------------------------------------- */
+/* ---- logging page --------------------------------------------------------- */
 
-.debug {
+.logging {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1637,7 +1643,7 @@ button {
   min-height: 0;
 }
 
-.debug-grid {
+.log-grid {
   flex: 1;
   min-height: 0;
   display: grid;
@@ -1661,14 +1667,14 @@ button {
   font-weight: 600;
 }
 
-.debug-main {
+.log-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.debug-side {
+.log-side {
   border-left: 1px solid var(--hairline);
   overflow-y: auto;
   min-height: 0;
@@ -1693,7 +1699,7 @@ button {
 }
 
 @media (max-width: 700px) {
-  .debug-grid {
+  .log-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1701,11 +1707,11 @@ button {
     display: inline-flex;
   }
 
-  .debug-side {
+  .log-side {
     display: none;
   }
 
-  .debug-grid.sources-open .debug-side {
+  .log-grid.sources-open .log-side {
     display: block;
     position: fixed;
     top: 0;
@@ -1718,7 +1724,7 @@ button {
   }
 
   /* Tap anywhere off the drawer to close it. */
-  .debug-grid.sources-open .sources-backdrop {
+  .log-grid.sources-open .sources-backdrop {
     display: block;
     position: fixed;
     inset: 0;
@@ -1728,11 +1734,11 @@ button {
 
   /* Fixed columns leave the message a few characters wide on a phone:
      meta on one line, the message full-width beneath it. */
-  .debug-cols {
+  .log-cols {
     display: none;
   }
 
-  .debug-row {
+  .log-row {
     grid-template-columns: auto auto 1fr;
     grid-template-areas:
       "time level source"
@@ -1743,19 +1749,19 @@ button {
     padding: 3px 16px;
   }
 
-  .debug-row .col-time {
+  .log-row .col-time {
     grid-area: time;
   }
 
-  .debug-row .col-level {
+  .log-row .col-level {
     grid-area: level;
   }
 
-  .debug-row .col-source {
+  .log-row .col-source {
     grid-area: source;
   }
 
-  .debug-row .col-msg {
+  .log-row .col-msg {
     grid-area: msg;
   }
 }
@@ -1766,7 +1772,7 @@ button {
 }
 
 /* toolbar */
-.debug-bar {
+.log-bar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1794,18 +1800,18 @@ button {
   background: rgb(217 106 90 / 14%);
 }
 
-.debug-bar-spacer {
+.log-bar-spacer {
   flex: 1;
 }
 
-.debug-seg {
+.log-seg {
   display: flex;
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
   overflow: hidden;
 }
 
-.debug-seg-btn {
+.log-seg-btn {
   padding: 5px 11px;
   font-size: 10px;
   letter-spacing: 0.1em;
@@ -1813,12 +1819,12 @@ button {
   color: var(--muted);
 }
 
-.debug-seg-btn.active {
+.log-seg-btn.active {
   background: var(--accent-faint);
   color: var(--accent);
 }
 
-.debug-select {
+.log-select {
   background: transparent;
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
@@ -1828,16 +1834,16 @@ button {
   color: var(--text);
 }
 
-.debug-select:disabled {
+.log-select:disabled {
   opacity: 0.4;
 }
 
-.debug-pickers {
+.log-pickers {
   display: inline-flex;
   gap: 8px;
 }
 
-.debug-search {
+.log-search {
   flex: 0 1 220px;
   background: transparent;
   border: none;
@@ -1847,16 +1853,16 @@ button {
   color: var(--text);
 }
 
-.debug-search:focus {
+.log-search:focus {
   outline: none;
   border-bottom-color: var(--accent);
 }
 
-.debug-count {
+.log-count {
   white-space: nowrap;
 }
 
-.debug-btn {
+.log-btn {
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
   padding: 5px 10px;
@@ -1866,24 +1872,24 @@ button {
   color: var(--muted);
 }
 
-.debug-btn:hover {
+.log-btn:hover {
   color: var(--text);
   border-color: var(--accent-dim);
 }
 
-.debug-btn.active {
+.log-btn.active {
   color: var(--ok);
   border-color: rgb(86 194 140 / 50%);
 }
 
-.debug-btn.debug-icon-btn {
+.log-btn.log-icon-btn {
   line-height: 0;
 }
 
 /* log list */
 /* columns shared by the header and each log row */
-.debug-cols,
-.debug-row {
+.log-cols,
+.log-row {
   display: grid;
   grid-template-columns: 104px 60px 172px 1fr;
   gap: 14px;
@@ -1891,7 +1897,7 @@ button {
   padding: 2px 16px;
 }
 
-.debug-cols {
+.log-cols {
   padding-top: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--hairline);
@@ -1901,7 +1907,7 @@ button {
   color: var(--muted);
 }
 
-.debug-list {
+.log-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1910,7 +1916,7 @@ button {
   line-height: 1.55;
 }
 
-.debug-row:hover {
+.log-row:hover {
   background: rgb(255 255 255 / 4%);
 }
 
@@ -1952,20 +1958,20 @@ button {
   word-break: break-word;
 }
 
-.debug-row.sev-warn .col-msg {
+.log-row.sev-warn .col-msg {
   color: var(--accent);
 }
 
-.debug-row.sev-error .col-msg {
+.log-row.sev-error .col-msg {
   color: var(--danger);
 }
 
-.debug-row.sev-debug .col-msg {
+.log-row.sev-debug .col-msg {
   color: var(--muted);
 }
 
 /* current-scope breadcrumb text inside .logs-crumb */
-.debug-scope {
+.log-scope {
   flex: 1;
   min-width: 0;
   font-size: 12px;
@@ -5611,8 +5617,10 @@ button {
     left: 14px !important;
   }
 
-  /* The camera strip spans the whole top on phones -- start below the tiles. */
-  .map-controls {
+  /* The camera strip spans the whole top on phones -- start below the tiles
+     (the .big selector outranks the desktop cockpit offset). */
+  .map-controls,
+  .cam-map-host.big .map-controls {
     top: calc(26px + min(120px, 24vw));
     left: 14px;
   }
@@ -5707,4 +5715,500 @@ button {
 
 .app-promo-stay:hover {
   color: var(--text);
+}
+
+/* ---- Nav page (Foxglove-style sensor view) ------------------------------- */
+
+.nav-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nav-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 360px; /* scene | telemetry panels + plots */
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.nav-scene {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nav-side {
+  border-left: 1px solid var(--hairline);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Scene-corner legend for the map's marks (bottom-right; the map controls
+   own the top-left, the mapping drive kit the other corners). */
+.map-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgb(10 10 12 / 72%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* The legend box passes pointer events through to the map; re-enable them
+     per row so its topic tooltip (title) can show on hover. */
+  pointer-events: auto;
+}
+
+.legend-swatch {
+  flex: none;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legend-line {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* Mirrors the costmap colormap: inflation blue → inscribed amber → lethal red. */
+.legend-cost {
+  width: 26px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, rgb(77 124 254 / 45%), #e8a33d, #d96a5a);
+}
+
+.nav-panel {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nav-panel .microlabel {
+  margin-bottom: 8px;
+}
+
+.nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.nav-row-label {
+  color: var(--muted);
+}
+
+.nav-row-value {
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Severity accents for status rows (localization). */
+.nav-row-value.ok {
+  color: var(--ok);
+}
+
+.nav-row-value.warn {
+  color: var(--accent);
+}
+
+.nav-row-value.fail {
+  color: var(--danger);
+}
+
+/* Live strip charts. Overrides .telemetry-plot's 190px (sized for the episode
+   player's joint graph) — three stacked plots share the sidebar here. */
+.nav-plot {
+  height: 84px;
+  margin-top: 8px;
+}
+
+.nav-plot-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Maps panel: roster rows + a recording banner over the scene. */
+.maps-new {
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+}
+
+.maps-new:disabled {
+  color: var(--muted);
+  border-color: var(--hairline);
+}
+
+.maps-list {
+  margin-top: 8px;
+}
+
+.maps-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.maps-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.maps-pick:hover:not(:disabled) {
+  background: var(--accent-faint);
+}
+
+.maps-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline-strong);
+}
+
+.maps-row.is-active .maps-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.maps-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maps-row.is-active .maps-name {
+  color: var(--accent);
+}
+
+/* Floating map preview beside a hovered roster row (fixed — the JS positions
+   it left of the sidebar so no ancestor overflow can clip it). */
+.maps-preview {
+  position: fixed;
+  z-index: 30;
+  width: 220px;
+  padding: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  background: rgb(10 10 12 / 92%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.maps-preview img {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
+}
+
+.maps-delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.maps-delete:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgb(217 106 90 / 12%);
+}
+
+.maps-delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.maps-empty,
+.maps-status {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.maps-status[data-kind="fail"] {
+  color: var(--danger);
+}
+
+.maps-status[data-kind="ok"] {
+  color: var(--ok);
+}
+
+.maps-mapfree {
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.maps-mapfree input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+}
+
+/* Busy veil: mode/map changes bring Nav2 lifecycle stacks up and down (up to
+   a minute) — block the scene and say what's happening instead of going dead. */
+.nav-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 8; /* above the banner (5) and PiP (4) */
+  display: grid;
+  place-items: center;
+  background: rgb(10 10 12 / 55%);
+  backdrop-filter: blur(2px);
+}
+
+.nav-veil-text {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  background: var(--glass);
+}
+
+/* Map-free notice pinned over the scene (same slot as the mapping banner —
+   the two modes are mutually exclusive, so they never coexist). */
+.nav-scene-note {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(6px);
+}
+
+/* Confirm dialog body (shares the app's .modal-* frame). */
+.confirm-body {
+  margin: 0 0 16px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-btn {
+  padding: 7px 16px;
+  font-size: 12px;
+  color: var(--text);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+}
+
+.confirm-btn:hover {
+  border-color: var(--accent-dim);
+}
+
+.confirm-primary {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+.confirm-primary.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgb(217 106 90 / 12%);
+}
+
+/* Shift key cap inline in the recording line — the .wasd-chip key-cap
+   language, sized to sit in a sentence and tinted to the banner's amber. */
+.mapping-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  vertical-align: baseline;
+  border: 1px solid var(--accent-dim);
+  border-radius: 5px;
+  background: var(--accent-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* Inline validity hint next to the map-name field. */
+.mapping-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.mapping-hint:empty {
+  display: none;
+}
+
+/* Main-camera PiP while mapping (the drive kit's video tile). The teleop
+   .video-stage inside fills it (position:absolute; inset:0). */
+.nav-cam-pip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  /* No z-index: driveKit appends this before the control overlays, so DOM
+     order alone keeps the joystick / WASD chips / head tilt painting on top
+     (same trick as .cam-map-host.big). An explicit z-index here would let the
+     opaque video cover the controls. */
+  /* Grow with the scene, but never reach the joystick: it is 198px wide and
+     centred, so its right edge is 50% + 99px — the second term keeps a 12px
+     gap clear of it at any width. */
+  width: min(360px, calc(50% - 132px));
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: #000;
+}
+
+/* Recording banner pinned over the scene while the robot is in mapping mode. */
+.mapping-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  background: var(--glass);
+  backdrop-filter: blur(6px);
+}
+
+.mapping-banner-text {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.mapping-name {
+  width: 130px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+}
+
+.mapping-btn {
+  flex: none;
+  padding: 5px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+}
+
+.mapping-btn:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.mapping-btn.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.mapping-btn:disabled {
+  color: var(--muted);
+}
+
+/* Layer toggle chips in the page header. */
+.layer-chips {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.layer-chip {
+  padding: 5px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.layer-chip.is-on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
+}
+
+/* Momentary action chip (never .is-on) — reads as a button, not a toggle. */
+.layer-chip-action:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.layer-chip-action:disabled {
+  opacity: 0.45;
+}
+
+/* Phones: scene on top, telemetry scrolling beneath it. */
+@media (max-width: 700px) {
+  .nav-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 55vh minmax(0, 1fr);
+  }
+
+  .nav-side {
+    border-left: none;
+    border-top: 1px solid var(--hairline);
+  }
 }

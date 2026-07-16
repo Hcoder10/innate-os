@@ -5,7 +5,7 @@
 // same quiet connect card as teleop. Connected: the master/detail view — a
 // live skill roster on the left (from /brain/available_skills), the selected
 // skill's episodes on the right (from /brain/recorder/get_task_metadata).
-// Mirrors the debugging page's connect/view lifecycle.
+// Mirrors the logging page's connect/view lifecycle.
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";

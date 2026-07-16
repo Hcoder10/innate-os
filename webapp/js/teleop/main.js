@@ -34,7 +34,7 @@ const config = await fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));
 
-// Console debugging hook (also handy until the Debugging page exists).
+// Console debugging hook (also handy alongside the Logging page).
 /** @type {{ ros: typeof ros, drive: typeof drive, session: WebRtcSession | null }} */
 const dbg = { ros, drive, session: null };
 /** @type {any} */ (window).innate = dbg;

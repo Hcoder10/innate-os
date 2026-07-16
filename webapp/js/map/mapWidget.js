@@ -1,7 +1,9 @@
 // @ts-check
 // Reusable nav-map widget — a plain 2D <canvas> rendering the occupancy grid
 // (/map), robot pose (/odom), planner route (/plan), and click-to-navigate
-// (sends a NavigateToPose goal via the router). Sizes itself to its container via a ResizeObserver, so
+// (sends a NavigateToPose goal via the router), plus opt-in overlay layers
+// (lidar scan / global costmap / local costmap / odometry trail) for the Nav page.
+// Sizes itself to its container via a ResizeObserver, so
 // it can be the standalone Map page OR a teleop PiP tile that reparents between
 // a small thumbnail and the full stage. No three.js — a canvas + putImageData
 // is all a 2D map needs.
@@ -16,7 +18,30 @@ import {
   CANCEL_NAVIGATION_SERVICE,
   LOCALIZE_SERVICE,
   SET_INITIAL_POSE_SERVICE,
+  SCAN_TOPIC,
+  GLOBAL_COSTMAP_TOPIC,
+  LOCAL_COSTMAP_TOPIC,
+  TF_STATIC_TOPIC,
+  MAPPING_POSE_TOPIC,
 } from "../constants.js";
+
+// Overlay palette — exported so the Nav page legend shows the same colors.
+// The robot is deliberately far from the costmap ramp (blue → amber → red):
+// it used to be the same amber as the inscribed band and vanished into it.
+export const MAP_COLORS = {
+  robot: "#ff5ce1",
+  trail: "rgb(255 92 225 / 45%)",
+  goal: "#00ff88",
+  route: "#00b7ff",
+  scan: "#d96a5a",
+  costLethal: "rgb(217 106 90 / 82%)",
+  costInscribed: "rgb(232 163 61 / 75%)",
+  costInflation: "rgb(77 124 254 / 45%)",
+};
+
+// Robot marker radius in metres — matches the footprint half-width (0.165 m
+// in costmap.yaml), so the dot covers what the robot covers at every zoom.
+const ROBOT_RADIUS_M = 0.18;
 
 // /localize scan-matches for up to ~30 s before answering.
 const LOCALIZE_TIMEOUT_MS = 40_000;
@@ -26,12 +51,64 @@ const MIN_ZOOM_M = 1;
 const MAX_ZOOM_M = 60;
 const ZOOM_STEP = 1.15; // per wheel notch
 
+// Odometry breadcrumb trail: drop a point every few cm, keep the last N.
+const TRAIL_MIN_STEP_M = 0.03;
+const TRAIL_MAX_POINTS = 600;
+// A step this large between consecutive odom samples (throttled to 100 ms) is
+// a relocalization — Locate, manual placement, or a map switch, from any
+// client — not motion. The history belongs to the previous frame: restart.
+const TRAIL_JUMP_M = 1;
+
+/**
+ * @typedef {"scan" | "costmap" | "local" | "trail"} LayerName
+ */
+
+/**
+ * Rasterize a nav_msgs/OccupancyGrid into `canvas` at 1px per cell, flipped
+ * so canvas-top is the highest world-y. `paint` colors one cell: it writes
+ * RGBA at px[di..di+3], or leaves it untouched for a transparent cell.
+ * Shared by the map grid and the costmap overlay, which differ only in
+ * colormap.
+ * @param {any} msg
+ * @param {HTMLCanvasElement} canvas 1px-per-cell offscreen buffer, resized to fit.
+ * @param {CanvasRenderingContext2D | null} ctx the canvas's 2d context.
+ * @param {(v: number, px: Uint8ClampedArray, di: number) => void} paint
+ * @returns {{ width: number, height: number, resolution: number, originX: number, originY: number } | null}
+ *   the grid's world placement, or null if the message isn't a usable grid.
+ */
+function rasterizeGrid(msg, canvas, ctx, paint) {
+  const info = msg?.info;
+  const data = msg?.data;
+  const width = info?.width | 0;
+  const height = info?.height | 0;
+  if (!ctx || !info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height) return null;
+  canvas.width = width;
+  canvas.height = height;
+  const img = ctx.createImageData(width, height);
+  for (let row = 0; row < height; row++) {
+    const srcRow = height - 1 - row; // flip so canvas-top = highest world-y
+    for (let col = 0; col < width; col++) {
+      paint(data[srcRow * width + col], img.data, (row * width + col) * 4);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return {
+    width,
+    height,
+    resolution: info.resolution || 0.05,
+    originX: info.origin?.position?.x ?? 0,
+    originY: info.origin?.position?.y ?? 0,
+  };
+}
+
 /**
  * @param {HTMLElement} root container the map fills (sized via ResizeObserver).
- * @param {{ zoom?: number, onZoomChange?: (meters: number) => void }} [opts] zoom = metres of real-world
- *   width to show, centred on the robot pose (keeps the map legible when small); enables scroll-to-zoom.
- *   Omit to fit the whole grid (the standalone page). onZoomChange fires after each wheel-zoom.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void }}
+ * @param {{ zoom?: number, onZoomChange?: (meters: number) => void, layers?: Partial<Record<LayerName, boolean>> }} [opts]
+ *   zoom = metres of real-world width to show, centred on the robot pose (keeps the map legible when
+ *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
+ *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live lidar scan,
+ *   global/local costmaps, odometry trail — each adds its subscription only while enabled.
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -73,10 +150,15 @@ export function createMap(root, opts = {}) {
   backBtn.classList.add("map-btn-compact");
   backBtn.title = "Back";
   const locateBtn = makeButton(ICONS.locate, "Locate", "auto or manual");
+  locateBtn.title = `${LOCALIZE_SERVICE} · ${SET_INITIAL_POSE_SERVICE}`;
   const autoBtn = makeButton(ICONS.auto, "Auto", "match lidar to the map");
+  autoBtn.title = LOCALIZE_SERVICE;
   const manualBtn = makeButton(ICONS.manual, "Manual", "drag where the robot is");
+  manualBtn.title = SET_INITIAL_POSE_SERVICE;
   const goBtn = makeButton(ICONS.go, "Go To", "tap a point to navigate");
+  goBtn.title = "/navigate_to_pose (action)";
   const stopBtn = makeButton(ICONS.stop, "Stop", "cancel navigation");
+  stopBtn.title = CANCEL_NAVIGATION_SERVICE;
   const centerBtn = makeButton(ICONS.center, "Recenter", "follow the robot");
   const controlsRow = document.createElement("div");
   controlsRow.className = "map-controls-row";
@@ -125,7 +207,17 @@ export function createMap(root, opts = {}) {
   /** @type {{ x: number, y: number, yaw: number } | null} latest raw odom */
   let odomPose = null;
 
+  // While the robot is building a map (SLAM), the only pose that's valid
+  // against the growing grid is mode_manager's /mapping_pose (map frame, from
+  // TF): raw odom drifts against it and any AMCL fix predates the map.
+  let mappingMode = false;
+  /** @type {{ x: number, y: number, yaw: number } | null} */
+  let mappingPose = null;
+  /** @type {(() => void) | null} */
+  let unsubMappingPose = null;
+
   function composedPose() {
+    if (mappingMode) return mappingPose ?? odomPose;
     if (!amclPose) return odomPose;
     if (!odomAtAmcl || !odomPose) return amclPose;
     // Motion since the fix in the base frame, re-applied at the AMCL fix.
@@ -143,6 +235,120 @@ export function createMap(root, opts = {}) {
   /** @type {Array<{ x: number, y: number }> | null} world-frame plan points */
   let plan = null;
 
+  // ---- optional overlay layers (Nav page) ---------------------------------
+  /** @type {Record<LayerName, boolean>} */
+  const layers = { scan: false, costmap: false, local: false, trail: false, ...opts.layers };
+  /** @type {any} latest sensor_msgs/LaserScan */
+  let scanMsg = null;
+  // base_link -> base_laser from /tf_static (URDF); zero until it arrives.
+  let laserOffset = { x: 0, y: 0, yaw: 0 };
+  // Costmaps rendered like the map: 1px-per-cell offscreen + world placement.
+  const costOff = document.createElement("canvas");
+  const costOffCtx = costOff.getContext("2d");
+  /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
+  let costGrid = null;
+  // The controller's rolling local costmap — same rendering, odom frame.
+  const localOff = document.createElement("canvas");
+  const localOffCtx = localOff.getContext("2d");
+  /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
+  let localGrid = null;
+  /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
+  const trail = [];
+  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf", () => void>>} live layer subscriptions */
+  const layerUnsubs = {};
+
+  /** @param {any} msg sensor_msgs/LaserScan */
+  function onScan(msg) {
+    if (!Array.isArray(msg?.ranges)) return;
+    scanMsg = msg;
+    draw();
+  }
+
+  /** @param {any} msg tf2_msgs/TFMessage — pick out base_link -> base_laser */
+  function onTfStatic(msg) {
+    for (const t of msg?.transforms ?? []) {
+      if (t?.child_frame_id !== "base_laser") continue;
+      const tr = t.transform?.translation;
+      const q = t.transform?.rotation;
+      if (typeof tr?.x !== "number" || !q) continue;
+      laserOffset = { x: tr.x, y: tr.y, yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)) };
+      draw();
+    }
+  }
+
+  /**
+   * Nav2 cost colormap, transparent where free — the paint half of the two
+   * costmap layers (global and local differ only in frame, not in color).
+   * @param {number} v @param {Uint8ClampedArray} px @param {number} di
+   */
+  function paintCost(v, px, di) {
+    if (v <= 0) return; // free/unknown stays transparent (alpha 0)
+    if (v >= 100) {
+      // Lethal — the obstacle itself.
+      px[di] = 217;
+      px[di + 1] = 106;
+      px[di + 2] = 90;
+      px[di + 3] = 210;
+    } else if (v >= 99) {
+      // Inscribed — the footprint would collide here.
+      px[di] = 232;
+      px[di + 1] = 163;
+      px[di + 2] = 61;
+      px[di + 3] = 190;
+    } else {
+      // Inflation gradient, fading with cost.
+      px[di] = 77;
+      px[di + 1] = 124;
+      px[di + 2] = 254;
+      px[di + 3] = 25 + Math.round((v / 98) * 115);
+    }
+  }
+
+  /** @param {any} msg nav_msgs/OccupancyGrid (map frame) */
+  function onCostmap(msg) {
+    const g = rasterizeGrid(msg, costOff, costOffCtx, paintCost);
+    if (!g) return;
+    costGrid = g;
+    draw();
+  }
+
+  /** @param {any} msg nav_msgs/OccupancyGrid (odom frame, rolling window) */
+  function onLocalCostmap(msg) {
+    const g = rasterizeGrid(msg, localOff, localOffCtx, paintCost);
+    if (!g) return;
+    localGrid = g;
+    draw();
+  }
+
+  // Subscribe/unsubscribe to match the enabled layers, so an off layer costs
+  // no bandwidth (the costmap especially — a map-sized grid as JSON).
+  function syncLayerSubs() {
+    if (layers.scan && !layerUnsubs.scan) {
+      layerUnsubs.scan = ros.subscribe(SCAN_TOPIC, onScan, 150, "sensor_msgs/msg/LaserScan");
+      layerUnsubs.tf = ros.subscribe(TF_STATIC_TOPIC, onTfStatic, 0, "tf2_msgs/msg/TFMessage");
+    } else if (!layers.scan && layerUnsubs.scan) {
+      layerUnsubs.scan();
+      layerUnsubs.tf?.();
+      delete layerUnsubs.scan;
+      delete layerUnsubs.tf;
+      scanMsg = null;
+    }
+    if (layers.costmap && !layerUnsubs.costmap) {
+      layerUnsubs.costmap = ros.subscribe(GLOBAL_COSTMAP_TOPIC, onCostmap, 1000, "nav_msgs/msg/OccupancyGrid");
+    } else if (!layers.costmap && layerUnsubs.costmap) {
+      layerUnsubs.costmap();
+      delete layerUnsubs.costmap;
+      costGrid = null;
+    }
+    if (layers.local && !layerUnsubs.local) {
+      layerUnsubs.local = ros.subscribe(LOCAL_COSTMAP_TOPIC, onLocalCostmap, 500, "nav_msgs/msg/OccupancyGrid");
+    } else if (!layers.local && layerUnsubs.local) {
+      layerUnsubs.local();
+      delete layerUnsubs.local;
+      localGrid = null;
+    }
+  }
+
   // Last draw's grid→canvas placement, so pointer handlers can invert it.
   /** @type {{ ox: number, oy: number, scale: number } | null} */
   let view = null;
@@ -155,6 +361,10 @@ export function createMap(root, opts = {}) {
   let navigating = false; // a goal sent from this widget is in flight
   /** @type {{ start: { x: number, y: number }, cur: { x: number, y: number } } | null} */
   let goalDrag = null;
+  // Cursor preview while manual/goto is armed: a ghost dot shows where the
+  // press would land before the user commits.
+  /** @type {{ x: number, y: number } | null} */
+  let hoverPt = null;
   // Grab-to-pan: while set, the view centres here instead of on the robot.
   /** @type {{ x: number, y: number } | null} */
   let panCenter = null;
@@ -207,42 +417,16 @@ export function createMap(root, opts = {}) {
 
   /** @param {any} msg nav_msgs/OccupancyGrid */
   function onMap(msg) {
-    const info = msg?.info;
-    const data = msg?.data;
-    const width = info?.width | 0;
-    const height = info?.height | 0;
-    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height) return;
-    off.width = width;
-    off.height = height;
-    if (!offCtx) return;
-    const img = offCtx.createImageData(width, height);
-    for (let row = 0; row < height; row++) {
-      const srcRow = height - 1 - row; // flip so canvas-top = highest world-y
-      for (let col = 0; col < width; col++) {
-        const v = data[srcRow * width + col];
-        const di = (row * width + col) * 4;
-        let shade;
-        let a = 255;
-        if (v < 0) {
-          shade = 105; // unknown
-          a = 200;
-        } else {
-          shade = 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
-        }
-        img.data[di] = shade;
-        img.data[di + 1] = shade;
-        img.data[di + 2] = shade;
-        img.data[di + 3] = a;
-      }
-    }
-    offCtx.putImageData(img, 0, 0);
-    grid = {
-      width,
-      height,
-      resolution: info.resolution || 0.05,
-      originX: info.origin?.position?.x ?? 0,
-      originY: info.origin?.position?.y ?? 0,
-    };
+    const g = rasterizeGrid(msg, off, offCtx, (v, px, di) => {
+      // Unknown = translucent gray; occupancy shades white (free) → black (wall).
+      const shade = v < 0 ? 105 : 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
+      px[di] = shade;
+      px[di + 1] = shade;
+      px[di + 2] = shade;
+      px[di + 3] = v < 0 ? 200 : 255;
+    });
+    if (!g) return;
+    grid = g;
     draw();
   }
 
@@ -262,6 +446,15 @@ export function createMap(root, opts = {}) {
     if (!p) return;
     odomPose = p;
     pose = composedPose();
+    if (layers.trail && pose) {
+      const last = trail[trail.length - 1];
+      const step = last ? Math.hypot(pose.x - last.x, pose.y - last.y) : Infinity;
+      if (step > TRAIL_JUMP_M) trail.length = 0; // teleport = relocalized; don't draw the leap
+      if (trail.length === 0 || step > TRAIL_MIN_STEP_M) {
+        trail.push({ x: pose.x, y: pose.y });
+        if (trail.length > TRAIL_MAX_POINTS) trail.shift();
+      }
+    }
     draw();
   }
 
@@ -384,8 +577,59 @@ export function createMap(root, opts = {}) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(off, ox, oy, grid.width * scale, grid.height * scale);
 
+    // Costmap overlay, aligned by world coords (its origin/size differ from the
+    // map's). scale is px per map cell, so convert via the resolution ratio.
+    if (layers.costmap && costGrid) {
+      const topLeft = worldToCanvas(costGrid.originX, costGrid.originY + costGrid.height * costGrid.resolution);
+      const cellPx = (costGrid.resolution / grid.resolution) * scale;
+      ctx.drawImage(costOff, topLeft.px, topLeft.py, costGrid.width * cellPx, costGrid.height * cellPx);
+    }
+
+    // Local costmap: its coordinates are in the ODOM frame, so place it via
+    // the map<-odom correction implied by the composed (map-frame) pose vs
+    // raw odom — identity until AMCL's first fix, when the frames coincide.
+    if (layers.local && localGrid) {
+      let theta = 0;
+      let tx = 0;
+      let ty = 0;
+      if (pose && odomPose) {
+        theta = pose.yaw - odomPose.yaw;
+        const c = Math.cos(theta);
+        const s = Math.sin(theta);
+        tx = pose.x - (odomPose.x * c - odomPose.y * s);
+        ty = pose.y - (odomPose.x * s + odomPose.y * c);
+      }
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      // The image's top-left corner (max-y edge, matching the row flip) in
+      // odom, carried into the map frame, then a canvas rotation of -theta
+      // (canvas y points down, so world CCW is canvas CW).
+      const tlx = localGrid.originX;
+      const tly = localGrid.originY + localGrid.height * localGrid.resolution;
+      const { px, py } = worldToCanvas(tx + tlx * c - tly * s, ty + tlx * s + tly * c);
+      const cellPx = (localGrid.resolution / grid.resolution) * scale;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(-theta);
+      ctx.drawImage(localOff, 0, 0, localGrid.width * cellPx, localGrid.height * cellPx);
+      ctx.restore();
+    }
+
+    if (layers.trail && trail.length >= 2) {
+      ctx.strokeStyle = MAP_COLORS.trail;
+      ctx.lineWidth = 1.5 * dpr();
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      trail.forEach((p, i) => {
+        const { px, py } = worldToCanvas(p.x, p.y);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    }
+
     if (plan && plan.length >= 2) {
-      ctx.strokeStyle = "#00b7ff";
+      ctx.strokeStyle = MAP_COLORS.route;
       ctx.lineWidth = 2 * dpr();
       ctx.lineJoin = "round";
       ctx.beginPath();
@@ -397,11 +641,44 @@ export function createMap(root, opts = {}) {
       ctx.stroke();
     }
 
+    // Laser scan, projected from the composed robot pose + the static laser
+    // offset. Rects, not arcs — up to ~1500 points per sweep.
+    if (layers.scan && scanMsg && pose) {
+      const c = Math.cos(pose.yaw);
+      const s = Math.sin(pose.yaw);
+      const lx = pose.x + laserOffset.x * c - laserOffset.y * s;
+      const ly = pose.y + laserOffset.x * s + laserOffset.y * c;
+      const lyaw = pose.yaw + laserOffset.yaw;
+      const { ranges, angle_min: a0, angle_increment: inc, range_min: rMin, range_max: rMax } = scanMsg;
+      const size = Math.max(3, 3 * dpr());
+      ctx.fillStyle = MAP_COLORS.scan;
+      for (let i = 0; i < ranges.length; i++) {
+        const r = ranges[i];
+        if (!Number.isFinite(r) || r < rMin || r > rMax) continue;
+        const a = lyaw + a0 + i * inc;
+        const { px, py } = worldToCanvas(lx + r * Math.cos(a), ly + r * Math.sin(a));
+        ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      }
+    }
+
+    // Ghost dot under the cursor while manual/goto is armed, until the press
+    // starts the real drag.
+    if (hoverPt && !goalDrag && (ui === "manual" || ui === "goto")) {
+      const { px, py } = worldToCanvas(hoverPt.x, hoverPt.y);
+      const r = Math.max(4, 6 * dpr());
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     // Goal dot + heading arrow; a manual-locate drag places the robot, not a
-    // goal — draw it in the robot's orange.
+    // goal — draw it in the robot's color.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
     if (goalAt) {
-      const color = goalDrag && ui === "manual" ? "#e8a33d" : "#00ff88";
+      const color = goalDrag && ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
       const { px, py } = worldToCanvas(goalAt.x, goalAt.y);
       const r = Math.max(4, 6 * dpr());
       ctx.fillStyle = color;
@@ -421,12 +698,14 @@ export function createMap(root, opts = {}) {
 
     if (pose) {
       const { px, py } = worldToCanvas(pose.x, pose.y);
-      const rad = Math.max(4, 6 * dpr());
-      ctx.fillStyle = "#e8a33d";
+      // World-sized, not screen-sized: the dot covers the same floor area at
+      // every zoom (scale is px per map cell). Floored so it never vanishes.
+      const rad = Math.max(3 * dpr(), (ROBOT_RADIUS_M / grid.resolution) * scale);
+      ctx.fillStyle = MAP_COLORS.robot;
       ctx.beginPath();
       ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#e8a33d";
+      ctx.strokeStyle = MAP_COLORS.robot;
       ctx.lineWidth = 2 * dpr();
       ctx.beginPath();
       ctx.moveTo(px, py);
@@ -437,20 +716,22 @@ export function createMap(root, opts = {}) {
 
   function render() {
     const navActive = navigating || goalMarker !== null;
-    backBtn.hidden = ui === "idle";
-    locateBtn.hidden = ui !== "idle";
+    // Mapping mode: navigation actions (locate/goto/stop) are meaningless
+    // against a half-built map — only Recenter survives.
+    backBtn.hidden = ui === "idle" || mappingMode;
+    locateBtn.hidden = ui !== "idle" || mappingMode;
     locateBtn.disabled = locating || navActive;
     locateBtn.classList.toggle("is-active", locating);
     setHint(locateBtn, locating ? "locating…" : "auto or manual");
-    autoBtn.hidden = ui !== "locate";
+    autoBtn.hidden = ui !== "locate" || mappingMode;
     autoBtn.disabled = locating;
-    manualBtn.hidden = ui !== "locate" && ui !== "manual";
+    manualBtn.hidden = (ui !== "locate" && ui !== "manual") || mappingMode;
     manualBtn.classList.toggle("is-active", ui === "manual");
     setHint(manualBtn, ui === "manual" ? "click & drag on the map" : "drag where the robot is");
-    goBtn.hidden = (ui !== "idle" && ui !== "goto") || (ui === "idle" && navActive);
+    goBtn.hidden = (ui !== "idle" && ui !== "goto") || (ui === "idle" && navActive) || mappingMode;
     goBtn.classList.toggle("is-active", ui === "goto");
     setHint(goBtn, ui === "goto" ? "click & drag on the map" : "tap a point to navigate");
-    stopBtn.hidden = !(ui === "idle" && navActive);
+    stopBtn.hidden = !(ui === "idle" && navActive) || mappingMode;
     centerBtn.hidden = panCenter === null;
     canvas.style.cursor = ui === "manual" || ui === "goto" ? "crosshair" : "grab";
   }
@@ -458,7 +739,11 @@ export function createMap(root, opts = {}) {
   /** @param {"idle" | "locate" | "manual" | "goto"} next */
   function setUi(next) {
     ui = next;
-    if (ui !== "manual" && ui !== "goto") goalDrag = null;
+    if ((ui !== "manual" && ui !== "goto") && (goalDrag || hoverPt)) {
+      goalDrag = null;
+      hoverPt = null;
+      draw();
+    }
     render();
   }
 
@@ -579,6 +864,7 @@ export function createMap(root, opts = {}) {
     canvas.setPointerCapture(e.pointerId);
     if (ui === "manual" || ui === "goto") {
       const w = canvasToWorld(px, py);
+      hoverPt = null; // the drag's own dot takes over
       goalDrag = { start: w, cur: w };
       draw();
       return;
@@ -592,6 +878,13 @@ export function createMap(root, opts = {}) {
     if (goalDrag) {
       const { px, py } = eventToCanvas(e);
       goalDrag.cur = canvasToWorld(px, py);
+      draw();
+      return;
+    }
+    if (!panDrag && (ui === "manual" || ui === "goto")) {
+      if (!grid || !view) return;
+      const { px, py } = eventToCanvas(e);
+      hoverPt = canvasToWorld(px, py);
       draw();
       return;
     }
@@ -700,6 +993,11 @@ export function createMap(root, opts = {}) {
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointerleave", () => {
+    if (!hoverPt) return;
+    hoverPt = null;
+    draw();
+  });
   canvas.addEventListener("wheel", onWheel, { passive: false });
 
   // Resize with the container, not just the window — covers reparenting between
@@ -709,6 +1007,7 @@ export function createMap(root, opts = {}) {
   fit();
   render();
 
+  syncLayerSubs();
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
@@ -723,6 +1022,71 @@ export function createMap(root, opts = {}) {
         draw();
       }
     },
+    /**
+     * Enter/leave mapping mode: swaps the pose source to /mapping_pose,
+     * clears nav-mode leftovers (route, goal, AMCL anchor — all tied to the
+     * previous map), and hides the navigation controls.
+     * @param {boolean} on
+     */
+    setMappingMode(on) {
+      if (mappingMode === on) return;
+      mappingMode = on;
+      setUi("idle");
+      plan = null;
+      goalMarker = null;
+      goalIsCommanded = false;
+      activePlanTopic = null;
+      clearTimeout(navStaleTimer);
+      if (on) {
+        amclPose = null;
+        odomAtAmcl = null;
+        unsubMappingPose = ros.subscribe(
+          MAPPING_POSE_TOPIC,
+          (msg) => {
+            const p = poseOf(msg);
+            if (!p) return;
+            mappingPose = p;
+            pose = composedPose();
+            draw();
+          },
+          100,
+          "nav_msgs/msg/Odometry",
+        );
+      } else {
+        unsubMappingPose?.();
+        unsubMappingPose = null;
+        mappingPose = null;
+      }
+      pose = composedPose();
+      render();
+      draw();
+    },
+    /** Drop the breadcrumb trail — points from a previous map are meaningless in the new map's frame. */
+    clearTrail() {
+      trail.length = 0;
+      draw();
+    },
+    /**
+     * The active map switched: the AMCL anchor and trail belong to the old
+     * map's frame — drop both. (AMCL keeps streaming its stale pose across a
+     * switch, so "wait for the next fix" can't work; the stale stub the trail
+     * regrows from is wiped by the jump detector when re-localization lands.)
+     */
+    mapChanged() {
+      amclPose = null;
+      odomAtAmcl = null;
+      trail.length = 0;
+      pose = composedPose();
+      draw();
+    },
+    /** Toggle an overlay layer (subscribes/unsubscribes its topics live).
+     * The trail survives an off/on toggle — hiding is not clearing (that's clearTrail). */
+    setLayer(name, on) {
+      if (layers[name] === on) return;
+      layers[name] = on;
+      syncLayerSubs();
+      draw();
+    },
     destroy() {
       clearTimeout(navStaleTimer);
       clearTimeout(statusClearTimer);
@@ -732,6 +1096,8 @@ export function createMap(root, opts = {}) {
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
+      unsubMappingPose?.();
+      for (const unsub of Object.values(layerUnsubs)) unsub();
       canvas.remove();
       controls.remove();
     },
