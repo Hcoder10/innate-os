@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import types
@@ -269,8 +270,17 @@ class SkillRepository:
         return f"{prefix}/{basename}"
 
     # --- reload ---
+    @staticmethod
+    def _evict_skill_lib() -> None:
+        """Drop cached workspace.skill_lib modules so a skills reload picks up
+        lib edits too — skill files re-import the lib as they load. Without
+        this, sys.modules keeps serving the pre-edit lib to reloaded skills."""
+        for name in [m for m in sys.modules if m.startswith("workspace.skill_lib")]:
+            del sys.modules[name]
+
     def reload_all(self) -> None:
         self._logger.info("Reloading skills...")
+        self._evict_skill_lib()
         self._skills_directories = self._resolve_skills_directories()
         new_code_skills = self._load_code_skills(self._skills_directories)
         new_physical, new_in_training = self._load_physical_skills(self._skills_directories)
@@ -291,6 +301,7 @@ class SkillRepository:
                 return list(self._code_skills.keys()) + list(self._physical_skills.keys())
 
         self._logger.info(f"Selectively reloading skills: {skill_ids}")
+        self._evict_skill_lib()
         reloaded = []
         for skill_id in skill_ids:
             basename = skill_id.split("/", 1)[-1] if "/" in skill_id else skill_id

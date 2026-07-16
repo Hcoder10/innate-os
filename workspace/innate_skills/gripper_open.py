@@ -10,24 +10,29 @@ Callable from any skill's code as a plain function:
     gripper_open()      # fully open the claw
 
 (also from the agent, the webapp skills menu, and
-`scripts/innate skill run local/gripper_open`).
+`scripts/innate skill run gripper_open`).
 
-Enables arm torque first. A hard close that overloads the servo leaves its
-torque disabled, after which a plain open silently does nothing — that's why
-opening from a resting closed claw failed. Enabling torque first makes it move.
+The implementation lives in workspace/skill_lib/arm.py (open_checked):
+torque on first, then VERIFY the claw actually opened — an overcurrent-
+tripped servo no-ops silently — rebooting to clear a trip and retrying.
 """
 
-from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from brain_client.skills.types import (
+    Interface,
+    InterfaceType,
+    RobotState,
+    RobotStateType,
+    Skill,
+    SkillResult,
+)
+from workspace.skill_lib import arm as armlib
 
 
 class GripperOpen(Skill):
     """Open the gripper (claw)."""
 
     manipulation = Interface(InterfaceType.MANIPULATION)
-
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
+    joint_states = RobotState(RobotStateType.LAST_JOINT_STATES)
 
     @property
     def name(self):
@@ -40,14 +45,13 @@ class GripperOpen(Skill):
         """Open the claw. percent 0-100 (default fully open)."""
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
-        self.manipulation.torque_on()  # a torque-disabled servo won't move
-        ok = self.manipulation.open_gripper(
-            percent=percent, duration=duration, blocking=True
+        ok = armlib.open_checked(
+            self.manipulation, lambda: armlib.gripper_j6(self.joint_states),
+            percent=percent, duration=duration, logger=self.logger,
         )
         if not ok:
             return "Failed to open gripper", SkillResult.FAILURE
         return "Gripper opened", SkillResult.SUCCESS
 
     def cancel(self):
-        self._cancelled = True
         return "Gripper motion cancelled"
