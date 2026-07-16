@@ -101,13 +101,20 @@ class LoggerNode(Node):
 
     @staticmethod
     def _get_robot_id() -> str:
+        """Read robot_id from robot_info.json.
+
+        mars_control seeds the file with `"robot_id": null` (app.cpp
+        get_robot_info), so an unprovisioned robot has the key present but
+        empty — test the value, not just the key.
+        """
         mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
         robot_info_path = os.path.join(mars_root, "data", "robot_info.json")
         try:
             with open(robot_info_path) as f:
-                return str(json.load(f).get("robot_id", "unknown"))
+                robot_id = json.load(f).get("robot_id")
         except Exception:
             return "unknown"
+        return str(robot_id) if robot_id else "unknown"
 
     @staticmethod
     def _get_git_commit() -> str:
