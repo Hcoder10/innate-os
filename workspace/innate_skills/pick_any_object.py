@@ -57,17 +57,9 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-from innate.skills import SkillFailed, arm_rest_position, gripper_close, gripper_open
-
-# -----------------------------------------------------------------------------
-# geometry from mars.urdf
-# base_footprint == base_link, so z=0 is the floor. Camera sits in the head,
-# head pitches about y. That's enough to raycast a pixel onto the floor.
-# -----------------------------------------------------------------------------
-HEAD_ORIGIN = (-0.040751, -0.0002, 0.25882)  # base_link -> head joint
-CAM_IN_HEAD = (0.04327, 0.0297, -0.000275)   # head -> left camera optical
-IMG_W, IMG_H = 640, 480
-HFOV_DEG = 70.0
+from innate.skills import SkillFailed, arm_rest_position
+from workspace.skill_lib import arm as armlib
+from workspace.skill_lib.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
 
 # hardware-tuned constants (not exposed to the live panel)
 GRIPPER_EMPTY_J6 = -0.085  # joint6 when fingers are open / empty
@@ -200,53 +192,8 @@ def _load_gemini_key() -> str:
     return ""
 
 
-# -----------------------------------------------------------------------------
-# floor localization: pixel + head tilt -> (x, y) in base_link
-# Pure math. No ROS, no depth. If the ray doesn't hit the floor (or hits
-# behind the robot), return None.
-# -----------------------------------------------------------------------------
-def _head_rot(tilt_rad):
-    # pitch about +y: nose down is negative tilt in our convention
-    c, s = math.cos(tilt_rad), math.sin(tilt_rad)
-    return ((c, 0.0, -s), (0.0, 1.0, 0.0), (s, 0.0, c))
-
-
-def _rot(R, v):
-    return tuple(sum(R[i][k] * v[k] for k in range(3)) for i in range(3))
-
-
-def pixel_to_floor(u, v, head_tilt_deg):
-    """Cast a ray from the camera through pixel (u,v) and intersect z=0."""
-    fx = IMG_W / (2.0 * math.tan(math.radians(HFOV_DEG) / 2.0))
-    cx, cy = IMG_W / 2.0, IMG_H / 2.0
-    R = _head_rot(math.radians(head_tilt_deg))
-    cam = tuple(HEAD_ORIGIN[i] + _rot(R, CAM_IN_HEAD)[i] for i in range(3))
-    # camera frame in base_link: forward, right, down (optical convention)
-    fwd, right, down = _rot(R, (1, 0, 0)), _rot(R, (0, -1, 0)), _rot(R, (0, 0, -1))
-    xo, yo = (u - cx) / fx, (v - cy) / fx
-    d = tuple(fwd[i] + xo * right[i] + yo * down[i] for i in range(3))
-    if d[2] >= -1e-6:  # ray not pointing at the floor
-        return None
-    t = -cam[2] / d[2]
-    x, y = cam[0] + t * d[0], cam[1] + t * d[1]
-    return (x, y) if x > 0 else None  # behind the robot = nonsense
-
-
-def floor_to_pixel(x, y, head_tilt_deg):
-    """Inverse: floor point (x,y,0) -> image pixel. Used to draw the pick box
-    and the grasp target back onto the live head-camera frame."""
-    fx = IMG_W / (2.0 * math.tan(math.radians(HFOV_DEG) / 2.0))
-    cx, cy = IMG_W / 2.0, IMG_H / 2.0
-    R = _head_rot(math.radians(head_tilt_deg))
-    cam = tuple(HEAD_ORIGIN[i] + _rot(R, CAM_IN_HEAD)[i] for i in range(3))
-    fwd, right, down = _rot(R, (1, 0, 0)), _rot(R, (0, -1, 0)), _rot(R, (0, 0, -1))
-    D = (x - cam[0], y - cam[1], -cam[2])
-    a = sum(D[i] * fwd[i] for i in range(3))
-    if a <= 1e-6:  # on or behind the image plane
-        return None
-    b = sum(D[i] * right[i] for i in range(3))
-    c = sum(D[i] * down[i] for i in range(3))
-    return (cx + (b / a) * fx, cy + (c / a) * fx)
+# floor localization (pixel + head tilt <-> base_link x,y) lives in
+# workspace/skill_lib/geometry.py — imported above, same names.
 
 
 def _r(v, nd=4):
@@ -539,52 +486,14 @@ class PickAnyObject(Skill):
         self._dbg("drive_done", err_m=round(err, 4), s=round(time.time() - t0, 2))
 
     # -------------------------------------------------------------------------
-    # arm. Servos can brown out mid-move — check FK, reboot once, then abort
-    # loudly rather than continuing limp into the floor.
+    # arm. Health-checked moves, recovery, and reach clamps live in
+    # workspace/skill_lib/arm.py (armlib) — thin state accessors stay here.
     # -------------------------------------------------------------------------
-    class ArmUnhealthy(RuntimeError):
-        pass
-
     def _ee_xyz(self):
-        pose = self.manipulation.get_current_end_effector_pose()
-        try:
-            p = pose["position"]
-            return (float(p["x"]), float(p["y"]), float(p["z"]))
-        except (KeyError, TypeError):
-            return None
+        return armlib.ee_xyz(self.manipulation)
 
     def _gripper_j6(self):
-        js = self.joint_states
-        try:
-            return js["position"][5] if js else None
-        except (KeyError, IndexError, TypeError):
-            return None
-
-    def _recover_arm(self):
-        self.logger.warning("[PickAnyObject] recovering arm (reboot + torque on)")
-        self.manipulation.reboot_servos()
-        time.sleep(2.0)
-        self.manipulation.torque_on()
-        time.sleep(0.5)
-
-    def _move_arm(self, x, y, z, pitch, duration=1.5, tol=0.05):
-        """Cartesian move with a health check. Recover + retry once, then raise."""
-        for attempt in (1, 2):
-            ok = self.manipulation.move_to_cartesian_pose(
-                x=x, y=y, z=z, roll=0.0, pitch=pitch, yaw=0.0,
-                duration=duration, blocking=True,
-            )
-            cur = self._ee_xyz()
-            err = math.dist(cur, (x, y, z)) if cur is not None else None
-            if ok and err is not None and err <= tol:
-                return True
-            self.logger.warning(
-                f"[PickAnyObject] arm not tracking (ok={ok} err={err}) — "
-                f"{'recovering' if attempt == 1 else 'giving up'}"
-            )
-            if attempt == 1:
-                self._recover_arm()
-        raise self.ArmUnhealthy(f"arm failed to reach ({x:.2f},{y:.2f},{z:.2f})")
+        return armlib.gripper_j6(self.joint_states)
 
     def _rest_arm(self, keep_grip):
         """Fold to home. If carrying: go to the operator's CARRY_ARM pose with
@@ -1032,13 +941,13 @@ class PickAnyObject(Skill):
                 cap = p["wrist_step_max"]
                 x += max(-cap, min(cap, p["wrist_kx"] / 100.0 * err_v * s))
                 y += max(-cap, min(cap, p["wrist_ky"] / 100.0 * err_u * s))
-                x = max(0.22, min(0.40, x))  # the arm's reach box
-                y = max(-0.10, min(0.10, y))
+                x, y = armlib.clamp_reach(x, y)
                 # feed-forward: this correction should land the object at the
                 # box center — tell the tracker to look for it there
                 guess = (p["wrist_box_u"], p["wrist_box_v"])
-            self._move_arm(x, y, z, pitch=p["wrist_pitch"],
-                           duration=p["wrist_move_s"])
+            armlib.move_checked(self.manipulation, x, y, z,
+                                pitch=p["wrist_pitch"],
+                                duration=p["wrist_move_s"], logger=self.logger)
             streak = 0
             centered = 0  # the view shifted — re-confirm centering
 
@@ -1067,19 +976,11 @@ class PickAnyObject(Skill):
         self._dbg("hover", ee=self._ee_dbg())
 
     def _open_gripper_checked(self):
-        """Open the claw, and make sure it actually opened. A prior hard
-        close can overcurrent-trip the gripper servo — a hardware fault
-        torque_on alone can't clear — after which open silently no-ops and
-        the hand stays shut straight into the grasp. Reboot clears the trip."""
-        gripper_open()
-        j6 = self._gripper_j6()
-        if j6 is not None and j6 < 0.10:
-            self.logger.warning(
-                f"[PickAnyObject] gripper did not open (j6={j6:.3f}); "
-                "rebooting servos to clear a trip, then retrying")
-            self._dbg("gripper_reboot", j6=_r(j6))
-            self._recover_arm()
-            gripper_open()
+        """Open the claw, verified (trip recovery) — see armlib.open_checked."""
+        armlib.open_checked(
+            self.manipulation, self._gripper_j6, logger=self.logger,
+            on_reboot=lambda j6: self._dbg("gripper_reboot", j6=_r(j6)),
+        )
 
     def _push_to_floor(self, x, y, z_from, deep):
         """The last blind centimeters: rotate to the grasp pitch and descend
@@ -1100,14 +1001,14 @@ class PickAnyObject(Skill):
             )
             self._dbg("descend", z=round(z, 3), ok=bool(ok), ee=self._ee_dbg())
             if not ok:
-                self._recover_arm()
+                armlib.recover(self.manipulation, self.logger)
                 break
         ee = self._ee_xyz()
         if ee is not None and ee[2] > p["descend_abort_z"]:
             self._dbg("grasp_abort", reason="arm would not descend",
                       ee_z=round(ee[2], 4))
-            self._recover_arm()
-            raise self.ArmUnhealthy("arm would not descend")
+            armlib.recover(self.manipulation, self.logger)
+            raise armlib.ArmUnhealthy("arm would not descend")
 
     def _close_twist_lift(self, x, y):
         """Take it: squeeze, wind the fabric onto the fingers, lift. Twist
@@ -1117,7 +1018,8 @@ class PickAnyObject(Skill):
         position instead relaxes the squeeze mid-lift and drops socks."""
         p = self._p
         j6_open = self._gripper_j6()
-        gripper_close(strength=p["close_strength"], duration=p["close_s"])
+        armlib.close(self.manipulation, strength=p["close_strength"],
+                     duration=p["close_s"])
         time.sleep(p["close_settle_s"])
         self._dbg("close", j6_open=_r(j6_open), j6=_r(self._gripper_j6()),
                   strength=p["close_strength"])
@@ -1139,8 +1041,9 @@ class PickAnyObject(Skill):
             time.sleep(0.3)
             self._dbg("lift", ee=self._ee_dbg(), j6=_r(self._gripper_j6()))
         except (KeyError, IndexError, TypeError):  # no joint state — IK lift
-            self._move_arm(x, y, 0.22, pitch=p["arm_pitch"], duration=2.0,
-                           tol=0.10)
+            armlib.move_checked(self.manipulation, x, y, 0.22,
+                                pitch=p["arm_pitch"], duration=2.0, tol=0.10,
+                                logger=self.logger)
             self._dbg("lift", ee=self._ee_dbg(), j6=_r(self._gripper_j6()),
                       ik_fallback=True)
 
@@ -1150,8 +1053,7 @@ class PickAnyObject(Skill):
         so the panel can retune a grasp mid-run."""
         p = self._p
         # aim short: fingertips land ~grasp_x_off forward of ee_link
-        x = max(0.22, min(0.40, xy[0] - p["grasp_x_off"]))
-        y = max(-0.10, min(0.10, xy[1]))
+        x, y = armlib.clamp_reach(xy[0] - p["grasp_x_off"], xy[1])
 
         # telemetry: where the object is vs where the fingers will land (they
         # differ only when the object is outside the reach box — aim clamped)
@@ -1174,8 +1076,9 @@ class PickAnyObject(Skill):
             x, y, z = self._wrist_servo(prompt, x, y)
         else:  # classic blind grasp: IK hover above the estimate
             z = p["hover_z"]
-            self._move_arm(x, y, z, pitch=p["arm_pitch"],
-                           duration=p["hover_s"])
+            armlib.move_checked(self.manipulation, x, y, z,
+                                pitch=p["arm_pitch"], duration=p["hover_s"],
+                                logger=self.logger)
             self._dbg("hover", ee=self._ee_dbg())
 
         self._push_to_floor(x, y, z, deep)
@@ -1276,7 +1179,7 @@ class PickAnyObject(Skill):
                 "backing up)",
                 SkillResult.FAILURE,
             )
-        except self.ArmUnhealthy as e:
+        except armlib.ArmUnhealthy as e:
             self.say("My arm isn't responding properly, stopping.")
             return f"Arm servo failure: {e}", SkillResult.FAILURE
         finally:
