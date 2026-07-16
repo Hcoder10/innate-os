@@ -17,7 +17,7 @@ import { installPressActivate } from "./pressActivate.js";
 // (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
 // with no sim backing — the sim has no real stereo camera or ChArUco board to
 // calibrate against — so they're hidden from the rail.
-const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "debugging", "settings"]);
+const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
@@ -40,8 +40,8 @@ const SECTIONS = [
     icon: '<path d="M12 12L18.4 5.6"/><path d="M15.2 8.8a4.5 4.5 0 1 0 1.3 3.2"/><path d="M18.4 5.6A9 9 0 1 0 21 12"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   },
   {
-    key: "debugging",
-    label: "Debugging",
+    key: "logging",
+    label: "Logging",
     icon: '<polyline points="4.5,7 10,12 4.5,17"/><line x1="12.5" y1="17" x2="19.5" y2="17"/>',
   },
   {
@@ -164,7 +164,7 @@ export function initShell(navigate) {
   rail.appendChild(createBadge());
   document.body.prepend(rail);
 
-  // Sim deployments only expose Teleop/Agent/Debugging/Settings — drop the rest
+  // Sim deployments only expose Teleop/Agent/Logging/Settings — drop the rest
   // from the rail once the (env-driven) config says we're in sim mode.
   void applySimSectionFilter(nav);
 

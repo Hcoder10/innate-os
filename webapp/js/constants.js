@@ -167,10 +167,10 @@ export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;
 
-// ---- Debugging page -------------------------------------------------------
+// ---- Logging page ---------------------------------------------------------
 // innate_console bridge (see innate-os/.../innate_console): raw tmux pane
 // stdout live, plus on-request backlog replay. String payloads carrying JSON.
-// This is the single log source — the Debugging page parses node identity and
+// This is the single log source — the Logging page parses node identity and
 // severity out of the rcl lines, so /rosout (incomplete) isn't used.
 export const CONSOLE_TOPIC = "/innate/console";
 export const CONSOLE_REQUEST_TOPIC = "/innate/console/request";
@@ -253,7 +253,7 @@ export const BRAIN_RELOAD_SERVICE = "/brain/reload";
 
 // Friendly subpane names per tmux window — index = pane (0 = left, 1 = right).
 // Mirrors innate-os/scripts/launch_ros_in_tmux.sh ROS_COMMAND_GROUPS; keep the
-// two in sync. Labels the Debugging page's subpane picker by launch file.
+// two in sync. Labels the Logging page's subpane picker by launch file.
 /** @type {Record<string, string[]>} */
 export const PANE_LAUNCH_LABELS = {
   "app-bringup": ["app.launch.py", "mars_bringup.launch.py"],

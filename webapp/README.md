@@ -15,7 +15,7 @@ same modules:
   (per-camera MP4 + synced joint graph).
 - **Training** (`training/`) — start and monitor cloud training runs: live
   step progress, ETA, logs, and the W&B link.
-- **Debugging** (`debugging/`) — a live, structured view of the robot's full
+- **Logging** (`logging/`) — a live, structured view of the robot's full
   console (the `innate_console` stream).
 
 ## Run
@@ -55,7 +55,7 @@ app-wide tooling.
 
 ```
 index.html              teleop (the front door)
-collect/  datasets/  training/  debugging/     the other page entry points
+collect/  datasets/  training/  logging/     the other page entry points
 css/app.css             entire design system
 proxy/https_server.py   HTTPS front door: app + wss rosbridge proxy + episode media
 js/
@@ -66,7 +66,7 @@ js/
   dynamixel.js          leader-arm WebSerial reader (Protocol 2.0)
   shell.js              icon rail + connection badge on every page
   teleop/               teleop modules (joystick, keyboard, head tilt, TTS, arm)
-  nav/ collect/ datasets/ training/ debugging/      per-page modules
+  nav/ collect/ datasets/ training/ logging/      per-page modules
 ```
 
 ## Robot interface (rosbridge `ws://<robot>:9090`, rws)

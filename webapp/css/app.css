@@ -1627,9 +1627,9 @@ button {
 }
 
 
-/* ---- debugging page ------------------------------------------------------- */
+/* ---- logging page --------------------------------------------------------- */
 
-.debug {
+.logging {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1637,7 +1637,7 @@ button {
   min-height: 0;
 }
 
-.debug-grid {
+.log-grid {
   flex: 1;
   min-height: 0;
   display: grid;
@@ -1661,14 +1661,14 @@ button {
   font-weight: 600;
 }
 
-.debug-main {
+.log-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.debug-side {
+.log-side {
   border-left: 1px solid var(--hairline);
   overflow-y: auto;
   min-height: 0;
@@ -1693,7 +1693,7 @@ button {
 }
 
 @media (max-width: 700px) {
-  .debug-grid {
+  .log-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1701,11 +1701,11 @@ button {
     display: inline-flex;
   }
 
-  .debug-side {
+  .log-side {
     display: none;
   }
 
-  .debug-grid.sources-open .debug-side {
+  .log-grid.sources-open .log-side {
     display: block;
     position: fixed;
     top: 0;
@@ -1718,7 +1718,7 @@ button {
   }
 
   /* Tap anywhere off the drawer to close it. */
-  .debug-grid.sources-open .sources-backdrop {
+  .log-grid.sources-open .sources-backdrop {
     display: block;
     position: fixed;
     inset: 0;
@@ -1728,11 +1728,11 @@ button {
 
   /* Fixed columns leave the message a few characters wide on a phone:
      meta on one line, the message full-width beneath it. */
-  .debug-cols {
+  .log-cols {
     display: none;
   }
 
-  .debug-row {
+  .log-row {
     grid-template-columns: auto auto 1fr;
     grid-template-areas:
       "time level source"
@@ -1743,19 +1743,19 @@ button {
     padding: 3px 16px;
   }
 
-  .debug-row .col-time {
+  .log-row .col-time {
     grid-area: time;
   }
 
-  .debug-row .col-level {
+  .log-row .col-level {
     grid-area: level;
   }
 
-  .debug-row .col-source {
+  .log-row .col-source {
     grid-area: source;
   }
 
-  .debug-row .col-msg {
+  .log-row .col-msg {
     grid-area: msg;
   }
 }
@@ -1766,7 +1766,7 @@ button {
 }
 
 /* toolbar */
-.debug-bar {
+.log-bar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1794,18 +1794,18 @@ button {
   background: rgb(217 106 90 / 14%);
 }
 
-.debug-bar-spacer {
+.log-bar-spacer {
   flex: 1;
 }
 
-.debug-seg {
+.log-seg {
   display: flex;
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
   overflow: hidden;
 }
 
-.debug-seg-btn {
+.log-seg-btn {
   padding: 5px 11px;
   font-size: 10px;
   letter-spacing: 0.1em;
@@ -1813,12 +1813,12 @@ button {
   color: var(--muted);
 }
 
-.debug-seg-btn.active {
+.log-seg-btn.active {
   background: var(--accent-faint);
   color: var(--accent);
 }
 
-.debug-select {
+.log-select {
   background: transparent;
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
@@ -1828,16 +1828,16 @@ button {
   color: var(--text);
 }
 
-.debug-select:disabled {
+.log-select:disabled {
   opacity: 0.4;
 }
 
-.debug-pickers {
+.log-pickers {
   display: inline-flex;
   gap: 8px;
 }
 
-.debug-search {
+.log-search {
   flex: 0 1 220px;
   background: transparent;
   border: none;
@@ -1847,16 +1847,16 @@ button {
   color: var(--text);
 }
 
-.debug-search:focus {
+.log-search:focus {
   outline: none;
   border-bottom-color: var(--accent);
 }
 
-.debug-count {
+.log-count {
   white-space: nowrap;
 }
 
-.debug-btn {
+.log-btn {
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
   padding: 5px 10px;
@@ -1866,24 +1866,24 @@ button {
   color: var(--muted);
 }
 
-.debug-btn:hover {
+.log-btn:hover {
   color: var(--text);
   border-color: var(--accent-dim);
 }
 
-.debug-btn.active {
+.log-btn.active {
   color: var(--ok);
   border-color: rgb(86 194 140 / 50%);
 }
 
-.debug-btn.debug-icon-btn {
+.log-btn.log-icon-btn {
   line-height: 0;
 }
 
 /* log list */
 /* columns shared by the header and each log row */
-.debug-cols,
-.debug-row {
+.log-cols,
+.log-row {
   display: grid;
   grid-template-columns: 104px 60px 172px 1fr;
   gap: 14px;
@@ -1891,7 +1891,7 @@ button {
   padding: 2px 16px;
 }
 
-.debug-cols {
+.log-cols {
   padding-top: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--hairline);
@@ -1901,7 +1901,7 @@ button {
   color: var(--muted);
 }
 
-.debug-list {
+.log-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1910,7 +1910,7 @@ button {
   line-height: 1.55;
 }
 
-.debug-row:hover {
+.log-row:hover {
   background: rgb(255 255 255 / 4%);
 }
 
@@ -1952,20 +1952,20 @@ button {
   word-break: break-word;
 }
 
-.debug-row.sev-warn .col-msg {
+.log-row.sev-warn .col-msg {
   color: var(--accent);
 }
 
-.debug-row.sev-error .col-msg {
+.log-row.sev-error .col-msg {
   color: var(--danger);
 }
 
-.debug-row.sev-debug .col-msg {
+.log-row.sev-debug .col-msg {
   color: var(--muted);
 }
 
 /* current-scope breadcrumb text inside .logs-crumb */
-.debug-scope {
+.log-scope {
   flex: 1;
   min-width: 0;
   font-size: 12px;
