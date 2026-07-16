@@ -84,10 +84,12 @@ class LoggerNode(Node):
         # ── Subscriptions ───────────────────────────────────────────
         self._latest_battery: BatteryState | None = None
         self._latest_diagnostics: DiagnosticArray | None = None
+        self._mac_address: str | None = None
 
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
         self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diagnostics, 1)
         self.create_subscription(String, "/brain/set_directive", self._on_directive, 10)
+        self.create_subscription(String, "/robot/info", self._on_robot_info, 1)
 
         # Timer for vitals logging
         self.create_timer(self.LOG_INTERVAL, self._log_vitals)
@@ -128,6 +130,21 @@ class LoggerNode(Node):
     def _on_diagnostics(self, msg: DiagnosticArray) -> None:
         self._latest_diagnostics = msg
 
+    def _on_robot_info(self, msg: String) -> None:
+        """Cache the Bluetooth MAC that mars_control publishes as `device_id`.
+
+        The key is absent when the robot has no Bluetooth adapter, so keep any
+        previously seen value rather than clearing it.
+        """
+        try:
+            device_id = json.loads(msg.data).get("device_id")
+        except json.JSONDecodeError:
+            self.get_logger().warning("Malformed JSON on /robot/info", throttle_duration_sec=60.0)
+            return
+
+        if device_id:
+            self._mac_address = str(device_id)
+
     def _on_directive(self, msg: String) -> None:
         self.get_logger().info(f"Received directive: {msg.data}")
         self._client.log_directive(msg.data)
@@ -141,6 +158,9 @@ class LoggerNode(Node):
             "commit": self._git_commit,
             "cpu_usage": cpu_usage,
         }
+
+        if self._mac_address is not None:
+            vitals["mac_address"] = self._mac_address
 
         summary = f"cpu {cpu_usage:.0f}%"
 
