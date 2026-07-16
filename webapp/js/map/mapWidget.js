@@ -60,6 +60,44 @@ const TRAIL_MAX_POINTS = 600;
  */
 
 /**
+ * Rasterize a nav_msgs/OccupancyGrid into `canvas` at 1px per cell, flipped
+ * so canvas-top is the highest world-y. `paint` colors one cell: it writes
+ * RGBA at px[di..di+3], or leaves it untouched for a transparent cell.
+ * Shared by the map grid and the costmap overlay, which differ only in
+ * colormap.
+ * @param {any} msg
+ * @param {HTMLCanvasElement} canvas 1px-per-cell offscreen buffer, resized to fit.
+ * @param {CanvasRenderingContext2D | null} ctx the canvas's 2d context.
+ * @param {(v: number, px: Uint8ClampedArray, di: number) => void} paint
+ * @returns {{ width: number, height: number, resolution: number, originX: number, originY: number } | null}
+ *   the grid's world placement, or null if the message isn't a usable grid.
+ */
+function rasterizeGrid(msg, canvas, ctx, paint) {
+  const info = msg?.info;
+  const data = msg?.data;
+  const width = info?.width | 0;
+  const height = info?.height | 0;
+  if (!ctx || !info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height) return null;
+  canvas.width = width;
+  canvas.height = height;
+  const img = ctx.createImageData(width, height);
+  for (let row = 0; row < height; row++) {
+    const srcRow = height - 1 - row; // flip so canvas-top = highest world-y
+    for (let col = 0; col < width; col++) {
+      paint(data[srcRow * width + col], img.data, (row * width + col) * 4);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return {
+    width,
+    height,
+    resolution: info.resolution || 0.05,
+    originX: info.origin?.position?.x ?? 0,
+    originY: info.origin?.position?.y ?? 0,
+  };
+}
+
+/**
  * @param {HTMLElement} root container the map fills (sized via ResizeObserver).
  * @param {{ zoom?: number, onZoomChange?: (meters: number) => void, layers?: Partial<Record<LayerName, boolean>> }} [opts]
  *   zoom = metres of real-world width to show, centred on the robot pose (keeps the map legible when
@@ -230,62 +268,36 @@ export function createMap(root, opts = {}) {
   }
 
   /**
-   * nav_msgs/OccupancyGrid → Nav2 cost colormap on a 1px-per-cell offscreen
-   * canvas, transparent where free. Shared by the global and local costmaps.
-   * @param {any} msg @param {HTMLCanvasElement} target @param {CanvasRenderingContext2D | null} targetCtx
-   * @returns {{ width: number, height: number, resolution: number, originX: number, originY: number } | null}
+   * Nav2 cost colormap, transparent where free — the paint half of the two
+   * costmap layers (global and local differ only in frame, not in color).
+   * @param {number} v @param {Uint8ClampedArray} px @param {number} di
    */
-  function decodeCostmap(msg, target, targetCtx) {
-    const info = msg?.info;
-    const data = msg?.data;
-    const width = info?.width | 0;
-    const height = info?.height | 0;
-    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height || !targetCtx) {
-      return null;
+  function paintCost(v, px, di) {
+    if (v <= 0) return; // free/unknown stays transparent (alpha 0)
+    if (v >= 100) {
+      // Lethal — the obstacle itself.
+      px[di] = 217;
+      px[di + 1] = 106;
+      px[di + 2] = 90;
+      px[di + 3] = 210;
+    } else if (v >= 99) {
+      // Inscribed — the footprint would collide here.
+      px[di] = 232;
+      px[di + 1] = 163;
+      px[di + 2] = 61;
+      px[di + 3] = 190;
+    } else {
+      // Inflation gradient, fading with cost.
+      px[di] = 77;
+      px[di + 1] = 124;
+      px[di + 2] = 254;
+      px[di + 3] = 25 + Math.round((v / 98) * 115);
     }
-    target.width = width;
-    target.height = height;
-    const img = targetCtx.createImageData(width, height);
-    for (let row = 0; row < height; row++) {
-      const srcRow = height - 1 - row; // same flip as the map grid
-      for (let col = 0; col < width; col++) {
-        const v = data[srcRow * width + col];
-        const di = (row * width + col) * 4;
-        if (v <= 0) continue; // free/unknown stays transparent (alpha 0)
-        if (v >= 100) {
-          // Lethal — the obstacle itself.
-          img.data[di] = 217;
-          img.data[di + 1] = 106;
-          img.data[di + 2] = 90;
-          img.data[di + 3] = 210;
-        } else if (v >= 99) {
-          // Inscribed — the footprint would collide here.
-          img.data[di] = 232;
-          img.data[di + 1] = 163;
-          img.data[di + 2] = 61;
-          img.data[di + 3] = 190;
-        } else {
-          // Inflation gradient, fading with cost.
-          img.data[di] = 77;
-          img.data[di + 1] = 124;
-          img.data[di + 2] = 254;
-          img.data[di + 3] = 25 + Math.round((v / 98) * 115);
-        }
-      }
-    }
-    targetCtx.putImageData(img, 0, 0);
-    return {
-      width,
-      height,
-      resolution: info.resolution || 0.05,
-      originX: info.origin?.position?.x ?? 0,
-      originY: info.origin?.position?.y ?? 0,
-    };
   }
 
   /** @param {any} msg nav_msgs/OccupancyGrid (map frame) */
   function onCostmap(msg) {
-    const g = decodeCostmap(msg, costOff, costOffCtx);
+    const g = rasterizeGrid(msg, costOff, costOffCtx, paintCost);
     if (!g) return;
     costGrid = g;
     draw();
@@ -293,7 +305,7 @@ export function createMap(root, opts = {}) {
 
   /** @param {any} msg nav_msgs/OccupancyGrid (odom frame, rolling window) */
   function onLocalCostmap(msg) {
-    const g = decodeCostmap(msg, localOff, localOffCtx);
+    const g = rasterizeGrid(msg, localOff, localOffCtx, paintCost);
     if (!g) return;
     localGrid = g;
     draw();
@@ -392,42 +404,16 @@ export function createMap(root, opts = {}) {
 
   /** @param {any} msg nav_msgs/OccupancyGrid */
   function onMap(msg) {
-    const info = msg?.info;
-    const data = msg?.data;
-    const width = info?.width | 0;
-    const height = info?.height | 0;
-    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height) return;
-    off.width = width;
-    off.height = height;
-    if (!offCtx) return;
-    const img = offCtx.createImageData(width, height);
-    for (let row = 0; row < height; row++) {
-      const srcRow = height - 1 - row; // flip so canvas-top = highest world-y
-      for (let col = 0; col < width; col++) {
-        const v = data[srcRow * width + col];
-        const di = (row * width + col) * 4;
-        let shade;
-        let a = 255;
-        if (v < 0) {
-          shade = 105; // unknown
-          a = 200;
-        } else {
-          shade = 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
-        }
-        img.data[di] = shade;
-        img.data[di + 1] = shade;
-        img.data[di + 2] = shade;
-        img.data[di + 3] = a;
-      }
-    }
-    offCtx.putImageData(img, 0, 0);
-    grid = {
-      width,
-      height,
-      resolution: info.resolution || 0.05,
-      originX: info.origin?.position?.x ?? 0,
-      originY: info.origin?.position?.y ?? 0,
-    };
+    const g = rasterizeGrid(msg, off, offCtx, (v, px, di) => {
+      // Unknown = translucent gray; occupancy shades white (free) → black (wall).
+      const shade = v < 0 ? 105 : 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
+      px[di] = shade;
+      px[di + 1] = shade;
+      px[di + 2] = shade;
+      px[di + 3] = v < 0 ? 200 : 255;
+    });
+    if (!g) return;
+    grid = g;
     draw();
   }
 
