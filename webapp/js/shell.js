@@ -68,8 +68,9 @@ const SECTIONS = [
   {
     key: "calibration",
     label: "Calibration",
-    // Camera motif: body with a viewfinder bump, and a lens.
-    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="12" cy="13" r="3.4"/>',
+    // Camera motif: body with a viewfinder bump, and a lens. The body spans
+    // x 4–19, y 6–19, so its centre lands on the half unit.
+    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="11.5" cy="12.5" r="3.4"/>',
   },
   {
     key: "settings",
@@ -79,7 +80,7 @@ const SECTIONS = [
   },
 ];
 
-/** Path for a section key: teleop is the site root, the rest are /<key>. */
+/** Path for a section key: teleop is the site root, the rest are /<key>. @param {string} key */
 function pathForKey(key) {
   return key === "teleop" ? "/" : `/${key}`;
 }
@@ -108,6 +109,7 @@ document.addEventListener("gesturestart", (e) => {
   if (!(e.target instanceof HTMLCanvasElement)) e.preventDefault();
 });
 
+/** @param {(path: string) => void} navigate */
 export function initShell(navigate) {
   // Buttons fire on press-down instead of release, app-wide. Installed here
   // because the router builds the shell exactly once per page load. Idempotent.

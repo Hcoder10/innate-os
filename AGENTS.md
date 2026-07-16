@@ -38,7 +38,7 @@ Run `innate` with no arguments to print the current system status (version, mode
 |---|---|
 | `mars_control` | Top-level app node, rosbridge websocket, teleop receiver |
 | `mars_bringup` | Motor/IMU/LiDAR hardware drivers, TF tree |
-| `mars_arm` | Arm + head servos, MoveIt, IK solver |
+| `mars_arm` | Arm + head servos, IK solver |
 | `mars_cam` | Stereo cameras, depth estimation, WebRTC stream |
 | `mars_nav` | Nav2 navigation, SLAM, mode manager |
 | `brain_client` | Cloud brain bridge (STT/TTS, skills action server) |

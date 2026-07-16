@@ -48,13 +48,13 @@ let currentKey = "";
 // newer navigation started can detect it's stale and not mount over the winner.
 let navSeq = 0;
 
-/** Drop a trailing slash (except root) so "/profiling/" and "/profiling" match. */
+/** Drop a trailing slash (except root) so "/profiling/" and "/profiling" match. @param {string} pathname */
 function normalize(pathname) {
   const p = pathname.replace(/\/+$/, "");
   return p === "" ? "/" : p;
 }
 
-/** The route for a pathname, defaulting to teleop for anything unrecognized. */
+/** The route for a pathname, defaulting to teleop for anything unrecognized. @param {string} pathname */
 function routeFor(pathname) {
   const p = normalize(pathname);
   return ROUTES.find((r) => r.path === p) || ROUTES[0];
@@ -66,6 +66,7 @@ const shell = initShell(navigate);
 // SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
 // a page whose services have no sim backing.
 const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "debugging", "settings"]);
+/** @type {Promise<{simControls?: boolean}>} */
 const configPromise = fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));

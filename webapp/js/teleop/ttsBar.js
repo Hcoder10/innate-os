@@ -77,7 +77,7 @@ export function createTtsBar(parent, rosClient) {
     sendBtn.disabled = !available;
     input.placeholder = available ? "Make the robot speak…" : TTS_UNAVAILABLE_PLACEHOLDER;
     input.title = available ? "" : "The speak bar needs the hosted Innate brain (INNATE_SERVICE_KEY).";
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     destroy() {

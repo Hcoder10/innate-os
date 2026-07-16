@@ -97,6 +97,9 @@ workspace/custom_skills/
 # Runtime start_training resume markers (innate_training_node).
 workspace/.training_pending/
 
+# Per-skill persistent key-value stores (Skill.storage, skills/types.py).
+workspace/skill_storage/
+
 # recordings folder
 recordings/
 

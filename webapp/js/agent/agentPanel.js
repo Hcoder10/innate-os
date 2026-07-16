@@ -18,7 +18,7 @@ import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_U
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {ReturnType<import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
 export function createAgentPanel(root, rosClient, agentState) {
@@ -135,6 +135,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
     directiveSelect.disabled = applying || agents.length === 0;
     resetBtn.disabled = applying;
+    input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
 
   /** @param {() => Promise<any>} fn */
@@ -339,27 +340,32 @@ export function createAgentPanel(root, rosClient, agentState) {
   }
 
   // ---- composer -----------------------------------------------------------
-  function submit() {
+  async function submit() {
     const text = input.value.trim();
     if (!text) return;
     addMessage("user", text, Date.now() / 1000);
-    rosClient.publish(CHAT_IN_TOPIC, {
-      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
-    });
     input.value = "";
     input.style.height = "auto";
     // Always jump to our own message, even if we'd scrolled up reading earlier.
     stream.scrollTop = stream.scrollHeight;
+    // Messaging an idle agent means "start it" — an inactive brain drops chat_in.
+    if (!agentState.get().brainActive) {
+      const id = directiveSelect.value || lastDirective;
+      if (id) await withApplying(() => agentState.setDirective(id));
+    }
+    rosClient.publish(CHAT_IN_TOPIC, {
+      data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
+    });
   }
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    submit();
+    void submit();
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   });
   input.addEventListener("input", () => {
@@ -447,7 +453,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     const text = String(payload?.text ?? "");
     if (!text) return;
     addMessage("user", text, Number(payload?.timestamp) || Date.now() / 1000);
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubOut = rosClient.subscribe(CHAT_OUT_TOPIC, (m) => {
     if (typeof m?.data !== "string") return;
@@ -470,7 +476,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     } else {
       addMessage("system", text, ts, sender);
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubSkill = rosClient.subscribe(SKILL_STATUS_UPDATE_TOPIC, (m) => {
     if (typeof m?.data !== "string") return;
@@ -486,7 +492,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
     const reason = typeof payload?.reason === "string" ? payload.reason : "";
     addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason);
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     destroy() {

@@ -107,22 +107,35 @@ class DetectOpponentMove(Skill):
             self.logger.warning("[DetectOpponentMove] GEMINI_API_KEY not set in .env.scan")
 
     def _load_board_center(self):
-        """Compute board centre X/Y from calibration corners."""
+        """Compute board centre X/Y from calibration corners.
+
+        Loaded at skill discovery (boot), so an absent or partial calibration is
+        not an error here — just "not calibrated yet". execute() errors when the
+        pose is actually needed.
+        """
         self.obs_x = None
         self.obs_y = None
+        if not CALIBRATION_FILE.exists():
+            self.logger.warning("[DetectOpponentMove] No board calibration yet — run board calibration before use")
+            return
         try:
-            if CALIBRATION_FILE.exists():
-                cal = json.loads(CALIBRATION_FILE.read_text())
-                corners = [cal["top_left"], cal["top_right"], cal["bottom_left"], cal["bottom_right"]]
-                self.obs_x = sum(c["x"] for c in corners) / 4.0
-                self.obs_y = sum(c["y"] for c in corners) / 4.0
-                self.logger.info(
-                    f"[DetectOpponentMove] Board center from calibration: x={self.obs_x:.4f}, y={self.obs_y:.4f}"
+            cal = json.loads(CALIBRATION_FILE.read_text())
+            corner_keys = ("top_left", "top_right", "bottom_left", "bottom_right")
+            missing = [k for k in corner_keys if k not in cal]
+            if missing:
+                self.logger.warning(
+                    f"[DetectOpponentMove] Board calibration incomplete (missing {', '.join(missing)}) — "
+                    "re-run board calibration"
                 )
-            else:
-                self.logger.error("[DetectOpponentMove] board_calibration.json not found — run board calibration first")
+                return
+            corners = [cal[k] for k in corner_keys]
+            self.obs_x = sum(c["x"] for c in corners) / 4.0
+            self.obs_y = sum(c["y"] for c in corners) / 4.0
+            self.logger.info(
+                f"[DetectOpponentMove] Board center from calibration: x={self.obs_x:.4f}, y={self.obs_y:.4f}"
+            )
         except Exception as e:
-            self.logger.error(f"[DetectOpponentMove] Failed to load calibration: {e}")
+            self.logger.warning(f"[DetectOpponentMove] Unreadable board calibration ({e}) — re-run board calibration")
 
     # ── Metadata ──────────────────────────────────────────────────────
 

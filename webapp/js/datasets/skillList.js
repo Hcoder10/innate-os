@@ -140,7 +140,7 @@ export function createSkillList(parent, ros, opts) {
         opts.onSelect(match);
       }
     }
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   render();
 
