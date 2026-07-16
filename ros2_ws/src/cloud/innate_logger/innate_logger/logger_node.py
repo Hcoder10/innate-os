@@ -72,11 +72,8 @@ class LoggerNode(Node):
         auth.wait_for_token(on_retry=self._log_auth_retry)
         self._client = TelemetryClient(url=telemetry_url, auth=auth)
 
-        # Git commit and robot identity at startup
+        # Git commit at startup
         self._git_commit: str = self._get_git_commit()
-        self._robot_id: str = self._get_robot_id()
-        if self._robot_id == "unknown":
-            self.get_logger().warning("robot_id not found in robot_info.json — reporting 'unknown'")
 
         # Initialise CPU baseline (first call always returns 0.0%)
         psutil.cpu_percent()
@@ -84,6 +81,7 @@ class LoggerNode(Node):
         # ── Subscriptions ───────────────────────────────────────────
         self._latest_battery: BatteryState | None = None
         self._latest_diagnostics: DiagnosticArray | None = None
+        self._robot_id: str | None = None
         self._mac_address: str | None = None
 
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
@@ -98,23 +96,6 @@ class LoggerNode(Node):
 
     def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
         self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
-
-    @staticmethod
-    def _get_robot_id() -> str:
-        """Read robot_id from robot_info.json.
-
-        mars_control seeds the file with `"robot_id": null` (app.cpp
-        get_robot_info), so an unprovisioned robot has the key present but
-        empty — test the value, not just the key.
-        """
-        mars_root = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
-        robot_info_path = os.path.join(mars_root, "data", "robot_info.json")
-        try:
-            with open(robot_info_path) as f:
-                robot_id = json.load(f).get("robot_id")
-        except Exception:
-            return "unknown"
-        return str(robot_id) if robot_id else "unknown"
 
     @staticmethod
     def _get_git_commit() -> str:
@@ -138,17 +119,23 @@ class LoggerNode(Node):
         self._latest_diagnostics = msg
 
     def _on_robot_info(self, msg: String) -> None:
-        """Cache the Bluetooth MAC that mars_control publishes as `device_id`.
+        """Cache robot identity from mars_control's /robot/info.
 
-        The key is absent when the robot has no Bluetooth adapter, so keep any
+        Either field can be null or absent — robot_id until the robot is
+        provisioned, device_id when there is no Bluetooth adapter — so keep any
         previously seen value rather than clearing it.
         """
         try:
-            device_id = json.loads(msg.data).get("device_id")
+            info = json.loads(msg.data)
         except json.JSONDecodeError:
             self.get_logger().warning("Malformed JSON on /robot/info", throttle_duration_sec=60.0)
             return
 
+        robot_id = info.get("robot_id")
+        if robot_id:
+            self._robot_id = str(robot_id)
+
+        device_id = info.get("device_id")
         if device_id:
             self._mac_address = str(device_id)
 
@@ -161,10 +148,12 @@ class LoggerNode(Node):
         cpu_usage = psutil.cpu_percent(interval=None)
 
         vitals: dict[str, object] = {
-            "robot_id": self._robot_id,
             "commit": self._git_commit,
             "cpu_usage": cpu_usage,
         }
+
+        if self._robot_id is not None:
+            vitals["robot_id"] = self._robot_id
 
         if self._mac_address is not None:
             vitals["mac_address"] = self._mac_address
