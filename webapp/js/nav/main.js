@@ -17,7 +17,7 @@
 // when mapping starts or ends, no matter which client started it.
 
 import { mountPage } from "../pageMount.js";
-import { createMap } from "../map/mapWidget.js";
+import { createMap, MAP_COLORS } from "../map/mapWidget.js";
 import { createNavStore } from "./navStore.js";
 import { createMapsPanel } from "./mapsPanel.js";
 import { createMappingSession } from "./mappingSession.js";
@@ -30,11 +30,12 @@ import { createDriveKit } from "./driveKit.js";
 const ZOOM_KEY = "innate.navZoom";
 const DEFAULT_ZOOM_M = 14;
 
-/** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string }>} */
+/** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string, on: boolean }>} */
 const LAYERS = [
-  { key: "scan", label: "Scan" },
-  { key: "costmap", label: "Costmap" },
-  { key: "trail", label: "Trail" },
+  { key: "scan", label: "LIDAR", on: true },
+  { key: "costmap", label: "Global costmap", on: true },
+  { key: "local", label: "Local costmap", on: false },
+  { key: "trail", label: "Trail", on: true },
 ];
 
 /** @param {HTMLElement} stage */
@@ -83,31 +84,35 @@ function buildView(root) {
   const map = createMap(scene, {
     zoom: savedZoom > 0 ? savedZoom : DEFAULT_ZOOM_M,
     onZoomChange: (m) => localStorage.setItem(ZOOM_KEY, String(m)),
-    layers: { scan: true, costmap: true, trail: true },
+    layers: Object.fromEntries(LAYERS.map(({ key, on }) => [key, on])),
   });
 
   // ---- layer chips -----------------------------------------------------------
   /** @type {Map<string, HTMLButtonElement>} */
   const chipEls = new Map();
-  for (const { key, label } of LAYERS) {
+  for (const { key, label, on } of LAYERS) {
     const chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "layer-chip is-on";
+    chip.className = `layer-chip${on ? " is-on" : ""}`;
     chip.textContent = label;
     chip.addEventListener("click", () => {
-      const on = !chip.classList.contains("is-on");
-      chip.classList.toggle("is-on", on);
-      map.setLayer(key, on);
+      const next = !chip.classList.contains("is-on");
+      chip.classList.toggle("is-on", next);
+      map.setLayer(key, next);
+      legend.sync();
     });
     chipEls.set(key, chip);
     chips.appendChild(chip);
   }
+
+  const legend = createLegend(scene, chipEls);
 
   /** @param {string} key @param {boolean} on */
   function forceLayer(key, on) {
     const chip = chipEls.get(key);
     if (chip) chip.classList.toggle("is-on", on);
     map.setLayer(/** @type {import("../map/mapWidget.js").LayerName} */ (key), on);
+    legend.sync();
   }
 
   // ---- mapping reaction --------------------------------------------------------
@@ -124,6 +129,7 @@ function buildView(root) {
   /** @param {boolean} mapping */
   function onMappingChange(mapping) {
     map.setMappingMode(mapping);
+    legend.setHidden(mapping); // the drive kit's overlays own the scene corners
     const gen = ++kitGen;
     if (mapping) {
       savedLayers = {};
@@ -183,8 +189,64 @@ function buildView(root) {
       for (const part of parts) part.destroy();
       unsubStore();
       store.destroy();
+      legend.destroy();
       map.destroy();
       root.innerHTML = "";
+    },
+  };
+}
+
+/**
+ * Scene-corner legend for the map's marks, using the widget's own palette.
+ * Layer-bound rows follow their chips; robot/goal/route are always drawn by
+ * the widget so their rows always show.
+ * @param {HTMLElement} scene
+ * @param {Map<string, HTMLButtonElement>} chipEls
+ * @returns {{ sync: () => void, setHidden: (hidden: boolean) => void, destroy: () => void }}
+ */
+function createLegend(scene, chipEls) {
+  const el = document.createElement("div");
+  el.className = "map-legend mono";
+  /** @type {Array<{ keys: string[] | null, row: HTMLElement }>} */
+  const rows = [];
+
+  /** @param {string[] | null} keys chips gating this row (null = always) @param {string} swatch @param {string} label */
+  function row(keys, swatch, label) {
+    const r = document.createElement("div");
+    r.className = "legend-row";
+    r.innerHTML = `${swatch}<span>${label}</span>`;
+    el.appendChild(r);
+    rows.push({ keys, row: r });
+  }
+  /** @param {string} color */
+  const dot = (color) => `<span class="legend-swatch legend-dot" style="background:${color}"></span>`;
+  /** @param {string} color */
+  const line = (color) => `<span class="legend-swatch legend-line" style="background:${color}"></span>`;
+
+  row(null, dot(MAP_COLORS.robot), "robot");
+  row(null, dot(MAP_COLORS.goal), "goal");
+  row(null, line(MAP_COLORS.route), "route");
+  row(["scan"], dot(MAP_COLORS.scan), "lidar");
+  row(["trail"], line(MAP_COLORS.trail), "trail");
+  row(["costmap", "local"], '<span class="legend-swatch legend-cost"></span>', "cost low → lethal");
+
+  function sync() {
+    for (const { keys, row: r } of rows) {
+      if (!keys) continue;
+      r.hidden = !keys.some((k) => chipEls.get(k)?.classList.contains("is-on"));
+    }
+  }
+  sync();
+  scene.appendChild(el);
+
+  return {
+    sync,
+    /** @param {boolean} hidden hide wholesale (mapping mode — the drive kit owns the corners) */
+    setHidden(hidden) {
+      el.hidden = hidden;
+    },
+    destroy() {
+      el.remove();
     },
   };
 }

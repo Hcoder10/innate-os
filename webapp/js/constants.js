@@ -80,6 +80,9 @@ export const CMD_VEL_TOPIC = "/cmd_vel"; // geometry_msgs/Twist
 // namespace). The local costmap lives in the odom frame, so it can't be
 // overlaid on the map canvas without a live map->odom transform — skipped.
 export const GLOBAL_COSTMAP_TOPIC = "/navigation/global_costmap/costmap"; // nav_msgs/OccupancyGrid
+// Controller's 6x6 m rolling window (nav_msgs/OccupancyGrid). Odom-framed —
+// the map widget places it via the current map<-odom correction.
+export const LOCAL_COSTMAP_TOPIC = "/local_costmap/costmap";
 // Latched static transforms; carries base_link -> base_laser from the URDF.
 export const TF_STATIC_TOPIC = "/tf_static"; // tf2_msgs/TFMessage
 // mode_manager state (std_msgs/String each): navigation/mapfree/mapping, and

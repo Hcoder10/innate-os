@@ -2,7 +2,7 @@
 // Reusable nav-map widget — a plain 2D <canvas> rendering the occupancy grid
 // (/map), robot pose (/odom), planner route (/plan), and click-to-navigate
 // (sends a NavigateToPose goal via the router), plus opt-in overlay layers
-// (laser scan / global costmap / odometry trail) for the Nav page.
+// (lidar scan / global costmap / local costmap / odometry trail) for the Nav page.
 // Sizes itself to its container via a ResizeObserver, so
 // it can be the standalone Map page OR a teleop PiP tile that reparents between
 // a small thumbnail and the full stage. No three.js — a canvas + putImageData
@@ -20,9 +20,28 @@ import {
   SET_INITIAL_POSE_SERVICE,
   SCAN_TOPIC,
   GLOBAL_COSTMAP_TOPIC,
+  LOCAL_COSTMAP_TOPIC,
   TF_STATIC_TOPIC,
   MAPPING_POSE_TOPIC,
 } from "../constants.js";
+
+// Overlay palette — exported so the Nav page legend shows the same colors.
+// The robot is deliberately far from the costmap ramp (blue → amber → red):
+// it used to be the same amber as the inscribed band and vanished into it.
+export const MAP_COLORS = {
+  robot: "#ff5ce1",
+  trail: "rgb(255 92 225 / 45%)",
+  goal: "#00ff88",
+  route: "#00b7ff",
+  scan: "#d96a5a",
+  costLethal: "rgb(217 106 90 / 82%)",
+  costInscribed: "rgb(232 163 61 / 75%)",
+  costInflation: "rgb(77 124 254 / 45%)",
+};
+
+// Robot marker radius in metres — matches the footprint half-width (0.165 m
+// in costmap.yaml), so the dot covers what the robot covers at every zoom.
+const ROBOT_RADIUS_M = 0.18;
 
 // /localize scan-matches for up to ~30 s before answering.
 const LOCALIZE_TIMEOUT_MS = 40_000;
@@ -37,7 +56,7 @@ const TRAIL_MIN_STEP_M = 0.03;
 const TRAIL_MAX_POINTS = 600;
 
 /**
- * @typedef {"scan" | "costmap" | "trail"} LayerName
+ * @typedef {"scan" | "costmap" | "local" | "trail"} LayerName
  */
 
 /**
@@ -45,8 +64,8 @@ const TRAIL_MAX_POINTS = 600;
  * @param {{ zoom?: number, onZoomChange?: (meters: number) => void, layers?: Partial<Record<LayerName, boolean>> }} [opts]
  *   zoom = metres of real-world width to show, centred on the robot pose (keeps the map legible when
  *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
- *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live laser scan,
- *   global costmap, odometry trail — each adds its subscription only while enabled.
+ *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live lidar scan,
+ *   global/local costmaps, odometry trail — each adds its subscription only while enabled.
  * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void }}
  */
 export function createMap(root, opts = {}) {
@@ -171,19 +190,24 @@ export function createMap(root, opts = {}) {
 
   // ---- optional overlay layers (Nav page) ---------------------------------
   /** @type {Record<LayerName, boolean>} */
-  const layers = { scan: false, costmap: false, trail: false, ...opts.layers };
+  const layers = { scan: false, costmap: false, local: false, trail: false, ...opts.layers };
   /** @type {any} latest sensor_msgs/LaserScan */
   let scanMsg = null;
   // base_link -> base_laser from /tf_static (URDF); zero until it arrives.
   let laserOffset = { x: 0, y: 0, yaw: 0 };
-  // Costmap rendered like the map: 1px-per-cell offscreen + world placement.
+  // Costmaps rendered like the map: 1px-per-cell offscreen + world placement.
   const costOff = document.createElement("canvas");
   const costOffCtx = costOff.getContext("2d");
   /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
   let costGrid = null;
+  // The controller's rolling local costmap — same rendering, odom frame.
+  const localOff = document.createElement("canvas");
+  const localOffCtx = localOff.getContext("2d");
+  /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
+  let localGrid = null;
   /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
   const trail = [];
-  /** @type {Partial<Record<"scan" | "costmap" | "tf", () => void>>} live layer subscriptions */
+  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf", () => void>>} live layer subscriptions */
   const layerUnsubs = {};
 
   /** @param {any} msg sensor_msgs/LaserScan */
@@ -205,16 +229,23 @@ export function createMap(root, opts = {}) {
     }
   }
 
-  /** @param {any} msg nav_msgs/OccupancyGrid — Nav2 cost colormap, transparent where free */
-  function onCostmap(msg) {
+  /**
+   * nav_msgs/OccupancyGrid → Nav2 cost colormap on a 1px-per-cell offscreen
+   * canvas, transparent where free. Shared by the global and local costmaps.
+   * @param {any} msg @param {HTMLCanvasElement} target @param {CanvasRenderingContext2D | null} targetCtx
+   * @returns {{ width: number, height: number, resolution: number, originX: number, originY: number } | null}
+   */
+  function decodeCostmap(msg, target, targetCtx) {
     const info = msg?.info;
     const data = msg?.data;
     const width = info?.width | 0;
     const height = info?.height | 0;
-    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height || !costOffCtx) return;
-    costOff.width = width;
-    costOff.height = height;
-    const img = costOffCtx.createImageData(width, height);
+    if (!info || !Array.isArray(data) || width <= 0 || height <= 0 || data.length < width * height || !targetCtx) {
+      return null;
+    }
+    target.width = width;
+    target.height = height;
+    const img = targetCtx.createImageData(width, height);
     for (let row = 0; row < height; row++) {
       const srcRow = height - 1 - row; // same flip as the map grid
       for (let col = 0; col < width; col++) {
@@ -242,14 +273,29 @@ export function createMap(root, opts = {}) {
         }
       }
     }
-    costOffCtx.putImageData(img, 0, 0);
-    costGrid = {
+    targetCtx.putImageData(img, 0, 0);
+    return {
       width,
       height,
       resolution: info.resolution || 0.05,
       originX: info.origin?.position?.x ?? 0,
       originY: info.origin?.position?.y ?? 0,
     };
+  }
+
+  /** @param {any} msg nav_msgs/OccupancyGrid (map frame) */
+  function onCostmap(msg) {
+    const g = decodeCostmap(msg, costOff, costOffCtx);
+    if (!g) return;
+    costGrid = g;
+    draw();
+  }
+
+  /** @param {any} msg nav_msgs/OccupancyGrid (odom frame, rolling window) */
+  function onLocalCostmap(msg) {
+    const g = decodeCostmap(msg, localOff, localOffCtx);
+    if (!g) return;
+    localGrid = g;
     draw();
   }
 
@@ -272,6 +318,13 @@ export function createMap(root, opts = {}) {
       layerUnsubs.costmap();
       delete layerUnsubs.costmap;
       costGrid = null;
+    }
+    if (layers.local && !layerUnsubs.local) {
+      layerUnsubs.local = ros.subscribe(LOCAL_COSTMAP_TOPIC, onLocalCostmap, 500, "nav_msgs/msg/OccupancyGrid");
+    } else if (!layers.local && layerUnsubs.local) {
+      layerUnsubs.local();
+      delete layerUnsubs.local;
+      localGrid = null;
     }
   }
 
@@ -531,8 +584,38 @@ export function createMap(root, opts = {}) {
       ctx.drawImage(costOff, topLeft.px, topLeft.py, costGrid.width * cellPx, costGrid.height * cellPx);
     }
 
+    // Local costmap: its coordinates are in the ODOM frame, so place it via
+    // the map<-odom correction implied by the composed (map-frame) pose vs
+    // raw odom — identity until AMCL's first fix, when the frames coincide.
+    if (layers.local && localGrid) {
+      let theta = 0;
+      let tx = 0;
+      let ty = 0;
+      if (pose && odomPose) {
+        theta = pose.yaw - odomPose.yaw;
+        const c = Math.cos(theta);
+        const s = Math.sin(theta);
+        tx = pose.x - (odomPose.x * c - odomPose.y * s);
+        ty = pose.y - (odomPose.x * s + odomPose.y * c);
+      }
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      // The image's top-left corner (max-y edge, matching the row flip) in
+      // odom, carried into the map frame, then a canvas rotation of -theta
+      // (canvas y points down, so world CCW is canvas CW).
+      const tlx = localGrid.originX;
+      const tly = localGrid.originY + localGrid.height * localGrid.resolution;
+      const { px, py } = worldToCanvas(tx + tlx * c - tly * s, ty + tlx * s + tly * c);
+      const cellPx = (localGrid.resolution / grid.resolution) * scale;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(-theta);
+      ctx.drawImage(localOff, 0, 0, localGrid.width * cellPx, localGrid.height * cellPx);
+      ctx.restore();
+    }
+
     if (layers.trail && trail.length >= 2) {
-      ctx.strokeStyle = "rgb(232 163 61 / 45%)";
+      ctx.strokeStyle = MAP_COLORS.trail;
       ctx.lineWidth = 1.5 * dpr();
       ctx.lineJoin = "round";
       ctx.beginPath();
@@ -545,7 +628,7 @@ export function createMap(root, opts = {}) {
     }
 
     if (plan && plan.length >= 2) {
-      ctx.strokeStyle = "#00b7ff";
+      ctx.strokeStyle = MAP_COLORS.route;
       ctx.lineWidth = 2 * dpr();
       ctx.lineJoin = "round";
       ctx.beginPath();
@@ -567,7 +650,7 @@ export function createMap(root, opts = {}) {
       const lyaw = pose.yaw + laserOffset.yaw;
       const { ranges, angle_min: a0, angle_increment: inc, range_min: rMin, range_max: rMax } = scanMsg;
       const size = Math.max(2, 2 * dpr());
-      ctx.fillStyle = "#d96a5a";
+      ctx.fillStyle = MAP_COLORS.scan;
       for (let i = 0; i < ranges.length; i++) {
         const r = ranges[i];
         if (!Number.isFinite(r) || r < rMin || r > rMax) continue;
@@ -578,10 +661,10 @@ export function createMap(root, opts = {}) {
     }
 
     // Goal dot + heading arrow; a manual-locate drag places the robot, not a
-    // goal — draw it in the robot's orange.
+    // goal — draw it in the robot's color.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
     if (goalAt) {
-      const color = goalDrag && ui === "manual" ? "#e8a33d" : "#00ff88";
+      const color = goalDrag && ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
       const { px, py } = worldToCanvas(goalAt.x, goalAt.y);
       const r = Math.max(4, 6 * dpr());
       ctx.fillStyle = color;
@@ -601,12 +684,14 @@ export function createMap(root, opts = {}) {
 
     if (pose) {
       const { px, py } = worldToCanvas(pose.x, pose.y);
-      const rad = Math.max(4, 6 * dpr());
-      ctx.fillStyle = "#e8a33d";
+      // World-sized, not screen-sized: the dot covers the same floor area at
+      // every zoom (scale is px per map cell). Floored so it never vanishes.
+      const rad = Math.max(3 * dpr(), (ROBOT_RADIUS_M / grid.resolution) * scale);
+      ctx.fillStyle = MAP_COLORS.robot;
       ctx.beginPath();
       ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#e8a33d";
+      ctx.strokeStyle = MAP_COLORS.robot;
       ctx.lineWidth = 2 * dpr();
       ctx.beginPath();
       ctx.moveTo(px, py);

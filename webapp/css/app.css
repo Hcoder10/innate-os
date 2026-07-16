@@ -5739,6 +5739,54 @@ button {
   min-height: 0;
 }
 
+/* Scene-corner legend for the map's marks (bottom-right; the map controls
+   own the top-left, the mapping drive kit the other corners). */
+.map-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgb(10 10 12 / 72%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-swatch {
+  flex: none;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legend-line {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* Mirrors the costmap colormap: inflation blue → inscribed amber → lethal red. */
+.legend-cost {
+  width: 26px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, rgb(77 124 254 / 45%), #e8a33d, #d96a5a);
+}
+
 .nav-panel {
   padding: 14px 16px;
   border-bottom: 1px solid var(--hairline);
