@@ -8,6 +8,7 @@
 // navigation). Any map can be deleted, including the one in use — the store
 // drops to map-free first. The roster locks while a recording is in progress.
 
+import { NAV_AVAILABLE_MAPS_TOPIC } from "../constants.js";
 import { confirmDialog } from "./confirm.js";
 
 /**
@@ -24,6 +25,7 @@ export function createMapsPanel(host, store) {
   const label = document.createElement("p");
   label.className = "microlabel";
   label.textContent = "Maps";
+  label.title = NAV_AVAILABLE_MAPS_TOPIC;
   const newBtn = document.createElement("button");
   newBtn.type = "button";
   newBtn.className = "maps-new";
@@ -126,6 +128,33 @@ export function createMapsPanel(host, store) {
         if (ok) await store.changeMap(name);
       });
 
+      // Hover preview: a floating render of the saved map (from the proxy's
+      // /map/preview), so you can tell maps apart without switching. Fixed
+      // positioning escapes the sidebar's clipping; hover-only, so touch
+      // clients simply never see it.
+      const preview = document.createElement("div");
+      preview.className = "maps-preview";
+      preview.hidden = true;
+      row.addEventListener("mouseenter", () => {
+        if (!preview.firstChild) {
+          const img = document.createElement("img");
+          img.alt = `Preview of ${name}`;
+          img.src = `/map/preview?name=${encodeURIComponent(name)}`;
+          img.addEventListener("error", () => {
+            img.remove();
+            preview.textContent = "no preview";
+          });
+          preview.appendChild(img);
+        }
+        const r = row.getBoundingClientRect();
+        preview.style.right = `${window.innerWidth - r.left + 10}px`;
+        preview.style.top = `${Math.max(12, Math.min(r.top - 60, window.innerHeight - 260))}px`;
+        preview.hidden = false;
+      });
+      row.addEventListener("mouseleave", () => {
+        preview.hidden = true;
+      });
+
       const del = document.createElement("button");
       del.type = "button";
       del.className = "maps-delete";
@@ -146,7 +175,7 @@ export function createMapsPanel(host, store) {
         if (ok) await store.deleteMap(name);
       });
 
-      row.append(pick, del);
+      row.append(pick, del, preview);
       list.appendChild(row);
     }
   }

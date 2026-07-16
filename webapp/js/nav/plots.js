@@ -33,7 +33,7 @@ const MEASURED_COLOR = "#5aa9e6"; // blue — measured
 const OBSTACLE_COLOR = "#e66a6a"; // red — nearest obstacle
 
 /**
- * @typedef {{ key: string, name: string, color: string }} SeriesSpec
+ * @typedef {{ key: string, name: string, color: string, topic: string }} SeriesSpec
  * @typedef {{ label: string, unit: string, zeroed: boolean, minSpan: number, series: SeriesSpec[] }} ChartSpec
  */
 
@@ -45,8 +45,8 @@ const CHARTS = {
     zeroed: true,
     minSpan: 0.4,
     series: [
-      { key: "cmd", name: "commanded", color: CMD_COLOR },
-      { key: "measured", name: "measured", color: MEASURED_COLOR },
+      { key: "cmd", name: "commanded", color: CMD_COLOR, topic: CMD_VEL_TOPIC },
+      { key: "measured", name: "measured", color: MEASURED_COLOR, topic: `${ODOM_TOPIC} (differentiated)` },
     ],
   },
   angular: {
@@ -55,8 +55,8 @@ const CHARTS = {
     zeroed: true,
     minSpan: 30,
     series: [
-      { key: "cmd", name: "commanded", color: CMD_COLOR },
-      { key: "measured", name: "measured", color: MEASURED_COLOR },
+      { key: "cmd", name: "commanded", color: CMD_COLOR, topic: CMD_VEL_TOPIC },
+      { key: "measured", name: "measured", color: MEASURED_COLOR, topic: `${ODOM_TOPIC} (differentiated)` },
     ],
   },
   obstacle: {
@@ -64,7 +64,7 @@ const CHARTS = {
     unit: "m",
     zeroed: false,
     minSpan: 1,
-    series: [{ key: "scan", name: "lidar min", color: OBSTACLE_COLOR }],
+    series: [{ key: "scan", name: "lidar min", color: OBSTACLE_COLOR, topic: SCAN_TOPIC }],
   },
 };
 
@@ -98,11 +98,13 @@ function createChart(parent, spec) {
   const label = document.createElement("p");
   label.className = "microlabel";
   label.textContent = spec.label;
+  label.title = [...new Set(spec.series.map((s) => s.topic))].join(" · ");
   const legend = document.createElement("div");
   legend.className = "telemetry-legend";
   for (const s of spec.series) {
     const item = document.createElement("span");
     item.className = "legend-item";
+    item.title = s.topic;
     const dot = document.createElement("span");
     dot.className = "legend-dot";
     dot.style.background = s.color;

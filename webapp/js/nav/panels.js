@@ -15,6 +15,8 @@ import {
   CMD_VEL_TOPIC,
   LOCALIZATION_STATUS_TOPIC,
   MAP_TOPIC,
+  NAV_CURRENT_MAP_TOPIC,
+  NAV_CURRENT_MODE_TOPIC,
   ODOM_TOPIC,
   SCAN_TOPIC,
 } from "../constants.js";
@@ -76,12 +78,16 @@ export function createNavPanels(root, store) {
     section.appendChild(label);
     root.appendChild(section);
     return {
-      row(name) {
+      /** @param {string} name @param {string} [topic] tooltip on the label: where the value comes from */
+      row(name, topic = "") {
         const row = document.createElement("div");
         row.className = "nav-row";
         const key = document.createElement("span");
         key.className = "nav-row-label";
         key.textContent = name;
+        // On the label, not the row — the value span carries its own titles
+        // (e.g. the localization hint) and must not be shadowed.
+        if (topic) key.title = topic;
         const value = document.createElement("span");
         value.className = "nav-row-value mono";
         value.textContent = DASH;
@@ -93,24 +99,24 @@ export function createNavPanels(root, store) {
   }
 
   const pose = panel("Pose");
-  const mapXY = pose.row("map x · y");
-  const mapYaw = pose.row("map heading");
-  const odomXY = pose.row("odom x · y");
-  const odomYaw = pose.row("odom heading");
+  const mapXY = pose.row("map x · y", AMCL_POSE_TOPIC);
+  const mapYaw = pose.row("map heading", AMCL_POSE_TOPIC);
+  const odomXY = pose.row("odom x · y", ODOM_TOPIC);
+  const odomYaw = pose.row("odom heading", ODOM_TOPIC);
 
   const vel = panel("Velocity");
-  const velActual = vel.row("measured v · ω");
-  const velCmd = vel.row("commanded v · ω");
+  const velActual = vel.row("measured v · ω", `${ODOM_TOPIC} (differentiated)`);
+  const velCmd = vel.row("commanded v · ω", CMD_VEL_TOPIC);
 
   const lidar = panel("Lidar");
-  const scanPoints = lidar.row("points");
-  const scanNearest = lidar.row("nearest");
+  const scanPoints = lidar.row("points", SCAN_TOPIC);
+  const scanNearest = lidar.row("nearest", SCAN_TOPIC);
 
   const nav = panel("Nav state");
-  const navMode = nav.row("mode");
-  const navMap = nav.row("map");
-  const navLoc = nav.row("localization");
-  const battery = nav.row("battery");
+  const navMode = nav.row("mode", NAV_CURRENT_MODE_TOPIC);
+  const navMap = nav.row("map", NAV_CURRENT_MAP_TOPIC);
+  const navLoc = nav.row("localization", `${AMCL_POSE_TOPIC} (covariance) · ${LOCALIZATION_STATUS_TOPIC}`);
+  const battery = nav.row("battery", BATTERY_STATE_TOPIC);
 
   // Localization health, the mobile app's approach (LocalizationContext):
   // AMCL's pose covariance is the continuous truth — it streams with every

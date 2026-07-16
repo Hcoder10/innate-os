@@ -17,6 +17,15 @@
 // when mapping starts or ends, no matter which client started it.
 
 import { mountPage } from "../pageMount.js";
+import {
+  AMCL_POSE_TOPIC,
+  COMMANDED_GOAL_TOPIC,
+  GLOBAL_COSTMAP_TOPIC,
+  LOCAL_COSTMAP_TOPIC,
+  ODOM_TOPIC,
+  PLAN_TOPICS,
+  SCAN_TOPIC,
+} from "../constants.js";
 import { createMap, MAP_COLORS } from "../map/mapWidget.js";
 import { createNavStore } from "./navStore.js";
 import { createMapsPanel } from "./mapsPanel.js";
@@ -31,12 +40,12 @@ import { dismissAllConfirms } from "./confirm.js";
 const ZOOM_KEY = "innate.navZoom";
 const DEFAULT_ZOOM_M = 14;
 
-/** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string, on: boolean }>} */
+/** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string, on: boolean, topic: string }>} */
 const LAYERS = [
-  { key: "scan", label: "LIDAR", on: true },
-  { key: "costmap", label: "Global costmap", on: true },
-  { key: "local", label: "Local costmap", on: false },
-  { key: "trail", label: "Trail", on: true },
+  { key: "scan", label: "LIDAR", on: true, topic: SCAN_TOPIC },
+  { key: "costmap", label: "Global costmap", on: true, topic: GLOBAL_COSTMAP_TOPIC },
+  { key: "local", label: "Local costmap", on: false, topic: LOCAL_COSTMAP_TOPIC },
+  { key: "trail", label: "Path traveled", on: true, topic: ODOM_TOPIC },
 ];
 
 /** @param {HTMLElement} stage */
@@ -100,11 +109,12 @@ function buildView(root) {
   // ---- layer chips -----------------------------------------------------------
   /** @type {Map<string, HTMLButtonElement>} */
   const chipEls = new Map();
-  for (const { key, label, on } of LAYERS) {
+  for (const { key, label, on, topic } of LAYERS) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = `layer-chip${on ? " is-on" : ""}`;
     chip.textContent = label;
+    chip.title = topic;
     chip.addEventListener("click", () => {
       const next = !chip.classList.contains("is-on");
       chip.classList.toggle("is-on", next);
@@ -114,6 +124,15 @@ function buildView(root) {
     chipEls.set(key, chip);
     chips.appendChild(chip);
   }
+
+  // Toggling the trail chip only hides/shows — this is the one way to wipe it.
+  const clearTrailBtn = document.createElement("button");
+  clearTrailBtn.type = "button";
+  clearTrailBtn.className = "layer-chip layer-chip-action";
+  clearTrailBtn.textContent = "Clear path";
+  clearTrailBtn.title = "Erase the traveled-path line";
+  clearTrailBtn.addEventListener("click", () => map.clearTrail());
+  chips.appendChild(clearTrailBtn);
 
   const legend = createLegend(scene, chipEls);
 
@@ -141,6 +160,7 @@ function buildView(root) {
     map.setMappingMode(mapping);
     legend.setHidden(mapping); // the drive kit's overlays own the scene corners
     const gen = ++kitGen;
+    clearTrailBtn.disabled = mapping;
     if (mapping) {
       savedLayers = {};
       for (const [key, chip] of chipEls) {
@@ -166,6 +186,7 @@ function buildView(root) {
   }
 
   let wasMapping = false;
+  let lastMap = store.state.currentMap;
   const unsubStore = store.onChange((s) => {
     veil.hidden = !s.busy;
     if (s.busy) veilText.textContent = `${s.busy}…`;
@@ -174,6 +195,12 @@ function buildView(root) {
     if (mapping !== wasMapping) {
       wasMapping = mapping;
       onMappingChange(mapping);
+    }
+    if (s.currentMap !== lastMap) {
+      // Trail and AMCL anchor drawn against the previous map are nonsense in
+      // the new frame — reset both.
+      if (lastMap) map.mapChanged();
+      lastMap = s.currentMap;
     }
   });
 
@@ -224,11 +251,12 @@ function createLegend(scene, chipEls) {
   /** @type {Array<{ keys: string[] | null, row: HTMLElement }>} */
   const rows = [];
 
-  /** @param {string[] | null} keys chips gating this row (null = always) @param {string} swatch @param {string} label */
-  function row(keys, swatch, label) {
+  /** @param {string[] | null} keys chips gating this row (null = always) @param {string} swatch @param {string} label @param {string} topic tooltip: where the mark's data comes from */
+  function row(keys, swatch, label, topic) {
     const r = document.createElement("div");
     r.className = "legend-row";
     r.innerHTML = `${swatch}<span>${label}</span>`;
+    r.title = topic;
     el.appendChild(r);
     rows.push({ keys, row: r });
   }
@@ -237,12 +265,12 @@ function createLegend(scene, chipEls) {
   /** @param {string} color */
   const line = (color) => `<span class="legend-swatch legend-line" style="background:${color}"></span>`;
 
-  row(null, dot(MAP_COLORS.robot), "robot");
-  row(null, dot(MAP_COLORS.goal), "goal");
-  row(null, line(MAP_COLORS.route), "route");
-  row(["scan"], dot(MAP_COLORS.scan), "lidar");
-  row(["trail"], line(MAP_COLORS.trail), "trail");
-  row(["costmap", "local"], '<span class="legend-swatch legend-cost"></span>', "cost low → lethal");
+  row(null, dot(MAP_COLORS.robot), "robot", `${AMCL_POSE_TOPIC} + ${ODOM_TOPIC}`);
+  row(null, dot(MAP_COLORS.goal), "goal", COMMANDED_GOAL_TOPIC);
+  row(null, line(MAP_COLORS.route), "planned path", PLAN_TOPICS.join(" · "));
+  row(["scan"], dot(MAP_COLORS.scan), "lidar", SCAN_TOPIC);
+  row(["trail"], line(MAP_COLORS.trail), "path traveled", ODOM_TOPIC);
+  row(["costmap", "local"], '<span class="legend-swatch legend-cost"></span>', "cost low → lethal", `${GLOBAL_COSTMAP_TOPIC} · ${LOCAL_COSTMAP_TOPIC}`);
 
   function sync() {
     for (const { keys, row: r } of rows) {

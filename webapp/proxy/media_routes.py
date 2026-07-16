@@ -41,6 +41,12 @@ def _under_skills_root(p: Path) -> bool:
     return any(p.is_relative_to(root) for root in SKILLS_ROOTS)
 
 
+# Saved navigation maps (mode_manager's maps dir): <name>.yaml + its image.
+MAPS_DIR = (Path(_INNATE_OS_ROOT) / "data" / "maps").resolve()
+# mode_manager's save_map name validation, mirrored.
+_MAP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def _plain(status: int, reason: str, text: str) -> Response:
     body = text.encode()
     return Response(status, reason, Headers({"Content-Type": "text/plain", "Content-Length": str(len(body))}), body)
@@ -192,6 +198,69 @@ async def thumb_response(qs: dict) -> Response:
         200,
         "OK",
         Headers({"Content-Type": "image/jpeg", "Content-Length": str(len(data)), "Cache-Control": "max-age=86400"}),
+        data,
+    )
+
+
+# name -> (image mtime_ns, png bytes). Maps only change on save/overwrite, so
+# a stale hit is impossible (mtime keys the entry) and the dict stays tiny.
+_map_png_cache: dict[str, tuple[int, bytes]] = {}
+
+
+def _render_map_png(image_path: Path, max_px: int = 480) -> bytes:
+    """Decode a saved map image (.pgm) and re-encode it as a small PNG."""
+    import cv2  # available in the robot's system python
+
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise RuntimeError("could not decode map image")
+    h, w = img.shape[:2]
+    scale = max_px / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise RuntimeError("png encode failed")
+    return buf.tobytes()
+
+
+def map_preview_response(qs: dict) -> Response:
+    """GET /map/preview?name=<base or file.yaml> → PNG preview of a saved map,
+    so the Nav sidebar can show a map without switching to it. The image path
+    comes from the map's own yaml (map_saver writes `image: <file>`), fenced to
+    the maps directory."""
+    name = (qs.get("name") or [""])[0]
+    if name.endswith(".yaml"):
+        name = name[:-5]
+    if not _MAP_NAME_RE.match(name):
+        return _plain(404, "Not Found", "no such map")
+    yaml_path = MAPS_DIR / f"{name}.yaml"
+    if not yaml_path.is_file():
+        return _plain(404, "Not Found", "no such map")
+    image_rel = ""
+    try:
+        for line in yaml_path.read_text().splitlines():
+            if line.startswith("image:"):
+                image_rel = line.split(":", 1)[1].strip()
+                break
+    except OSError as err:
+        return _plain(500, "Internal Server Error", f"failed to read map yaml: {err}")
+    image_path = _safe_resolve(MAPS_DIR / image_rel) if image_rel else None
+    if image_path is None or not image_path.is_relative_to(MAPS_DIR) or not image_path.is_file():
+        return _plain(404, "Not Found", "map has no image")
+    try:
+        mtime = image_path.stat().st_mtime_ns
+        cached = _map_png_cache.get(name)
+        if cached is None or cached[0] != mtime:
+            cached = (mtime, _render_map_png(image_path))
+            _map_png_cache[name] = cached
+        data = cached[1]
+    except Exception as err:  # noqa: BLE001 — surface a clean 500 to the client
+        return _plain(500, "Internal Server Error", f"map preview failed: {err}")
+    return Response(
+        200,
+        "OK",
+        Headers({"Content-Type": "image/png", "Content-Length": str(len(data)), "Cache-Control": "no-cache"}),
         data,
     )
 

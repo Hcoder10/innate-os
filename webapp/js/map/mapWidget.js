@@ -54,6 +54,10 @@ const ZOOM_STEP = 1.15; // per wheel notch
 // Odometry breadcrumb trail: drop a point every few cm, keep the last N.
 const TRAIL_MIN_STEP_M = 0.03;
 const TRAIL_MAX_POINTS = 600;
+// A step this large between consecutive odom samples (throttled to 100 ms) is
+// a relocalization — Locate, manual placement, or a map switch, from any
+// client — not motion. The history belongs to the previous frame: restart.
+const TRAIL_JUMP_M = 1;
 
 /**
  * @typedef {"scan" | "costmap" | "local" | "trail"} LayerName
@@ -104,7 +108,7 @@ function rasterizeGrid(msg, canvas, ctx, paint) {
  *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
  *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live lidar scan,
  *   global/local costmaps, odometry trail — each adds its subscription only while enabled.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void }}
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -146,10 +150,15 @@ export function createMap(root, opts = {}) {
   backBtn.classList.add("map-btn-compact");
   backBtn.title = "Back";
   const locateBtn = makeButton(ICONS.locate, "Locate", "auto or manual");
+  locateBtn.title = `${LOCALIZE_SERVICE} · ${SET_INITIAL_POSE_SERVICE}`;
   const autoBtn = makeButton(ICONS.auto, "Auto", "match lidar to the map");
+  autoBtn.title = LOCALIZE_SERVICE;
   const manualBtn = makeButton(ICONS.manual, "Manual", "drag where the robot is");
+  manualBtn.title = SET_INITIAL_POSE_SERVICE;
   const goBtn = makeButton(ICONS.go, "Go To", "tap a point to navigate");
+  goBtn.title = "/navigate_to_pose (action)";
   const stopBtn = makeButton(ICONS.stop, "Stop", "cancel navigation");
+  stopBtn.title = CANCEL_NAVIGATION_SERVICE;
   const centerBtn = makeButton(ICONS.center, "Recenter", "follow the robot");
   const controlsRow = document.createElement("div");
   controlsRow.className = "map-controls-row";
@@ -352,6 +361,10 @@ export function createMap(root, opts = {}) {
   let navigating = false; // a goal sent from this widget is in flight
   /** @type {{ start: { x: number, y: number }, cur: { x: number, y: number } } | null} */
   let goalDrag = null;
+  // Cursor preview while manual/goto is armed: a ghost dot shows where the
+  // press would land before the user commits.
+  /** @type {{ x: number, y: number } | null} */
+  let hoverPt = null;
   // Grab-to-pan: while set, the view centres here instead of on the robot.
   /** @type {{ x: number, y: number } | null} */
   let panCenter = null;
@@ -435,7 +448,9 @@ export function createMap(root, opts = {}) {
     pose = composedPose();
     if (layers.trail && pose) {
       const last = trail[trail.length - 1];
-      if (!last || Math.hypot(pose.x - last.x, pose.y - last.y) > TRAIL_MIN_STEP_M) {
+      const step = last ? Math.hypot(pose.x - last.x, pose.y - last.y) : Infinity;
+      if (step > TRAIL_JUMP_M) trail.length = 0; // teleport = relocalized; don't draw the leap
+      if (trail.length === 0 || step > TRAIL_MIN_STEP_M) {
         trail.push({ x: pose.x, y: pose.y });
         if (trail.length > TRAIL_MAX_POINTS) trail.shift();
       }
@@ -646,6 +661,19 @@ export function createMap(root, opts = {}) {
       }
     }
 
+    // Ghost dot under the cursor while manual/goto is armed, until the press
+    // starts the real drag.
+    if (hoverPt && !goalDrag && (ui === "manual" || ui === "goto")) {
+      const { px, py } = worldToCanvas(hoverPt.x, hoverPt.y);
+      const r = Math.max(4, 6 * dpr());
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     // Goal dot + heading arrow; a manual-locate drag places the robot, not a
     // goal — draw it in the robot's color.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
@@ -711,7 +739,11 @@ export function createMap(root, opts = {}) {
   /** @param {"idle" | "locate" | "manual" | "goto"} next */
   function setUi(next) {
     ui = next;
-    if (ui !== "manual" && ui !== "goto") goalDrag = null;
+    if ((ui !== "manual" && ui !== "goto") && (goalDrag || hoverPt)) {
+      goalDrag = null;
+      hoverPt = null;
+      draw();
+    }
     render();
   }
 
@@ -832,6 +864,7 @@ export function createMap(root, opts = {}) {
     canvas.setPointerCapture(e.pointerId);
     if (ui === "manual" || ui === "goto") {
       const w = canvasToWorld(px, py);
+      hoverPt = null; // the drag's own dot takes over
       goalDrag = { start: w, cur: w };
       draw();
       return;
@@ -845,6 +878,13 @@ export function createMap(root, opts = {}) {
     if (goalDrag) {
       const { px, py } = eventToCanvas(e);
       goalDrag.cur = canvasToWorld(px, py);
+      draw();
+      return;
+    }
+    if (!panDrag && (ui === "manual" || ui === "goto")) {
+      if (!grid || !view) return;
+      const { px, py } = eventToCanvas(e);
+      hoverPt = canvasToWorld(px, py);
       draw();
       return;
     }
@@ -953,6 +993,11 @@ export function createMap(root, opts = {}) {
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointerleave", () => {
+    if (!hoverPt) return;
+    hoverPt = null;
+    draw();
+  });
   canvas.addEventListener("wheel", onWheel, { passive: false });
 
   // Resize with the container, not just the window — covers reparenting between
@@ -1016,11 +1061,29 @@ export function createMap(root, opts = {}) {
       render();
       draw();
     },
-    /** Toggle an overlay layer (subscribes/unsubscribes its topics live). */
+    /** Drop the breadcrumb trail — points from a previous map are meaningless in the new map's frame. */
+    clearTrail() {
+      trail.length = 0;
+      draw();
+    },
+    /**
+     * The active map switched: the AMCL anchor and trail belong to the old
+     * map's frame — drop both. (AMCL keeps streaming its stale pose across a
+     * switch, so "wait for the next fix" can't work; the stale stub the trail
+     * regrows from is wiped by the jump detector when re-localization lands.)
+     */
+    mapChanged() {
+      amclPose = null;
+      odomAtAmcl = null;
+      trail.length = 0;
+      pose = composedPose();
+      draw();
+    },
+    /** Toggle an overlay layer (subscribes/unsubscribes its topics live).
+     * The trail survives an off/on toggle — hiding is not clearing (that's clearTrail). */
     setLayer(name, on) {
       if (layers[name] === on) return;
       layers[name] = on;
-      if (name === "trail" && !on) trail.length = 0;
       syncLayerSubs();
       draw();
     },

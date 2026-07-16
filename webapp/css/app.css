@@ -275,9 +275,9 @@ button {
 
 .map-controls {
   position: absolute;
-  /* Top-left under the robot info card; top-right belongs to the camera strip. */
-  top: 96px;
-  left: 16px;
+  /* Top-left corner; top-right belongs to the camera strip. */
+  top: 14px;
+  left: 14px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -786,6 +786,12 @@ button {
 /* The map's Locate / Go To controls only make sense at full size. */
 .cam-map-host:not(.big) .map-controls {
   display: none;
+}
+
+/* On the cockpit stage the telemetry card owns the very corner (it paints
+   over the map) — start the controls just below it. */
+.cam-map-host.big .map-controls {
+  top: 72px;
 }
 
 /* Map promoted to the big stage: full-bleed under the control overlays. Inserted as the stage's first
@@ -5611,8 +5617,10 @@ button {
     left: 14px !important;
   }
 
-  /* The camera strip spans the whole top on phones -- start below the tiles. */
-  .map-controls {
+  /* The camera strip spans the whole top on phones -- start below the tiles
+     (the .big selector outranks the desktop cockpit offset). */
+  .map-controls,
+  .cam-map-host.big .map-controls {
     top: calc(26px + min(120px, 24vw));
     left: 14px;
   }
@@ -5761,6 +5769,9 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* The legend box passes pointer events through to the map; re-enable them
+     per row so its topic tooltip (title) can show on hover. */
+  pointer-events: auto;
 }
 
 .legend-swatch {
@@ -5903,6 +5914,28 @@ button {
 
 .maps-row.is-active .maps-name {
   color: var(--accent);
+}
+
+/* Floating map preview beside a hovered roster row (fixed — the JS positions
+   it left of the sidebar so no ancestor overflow can clip it). */
+.maps-preview {
+  position: fixed;
+  z-index: 30;
+  width: 220px;
+  padding: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  background: rgb(10 10 12 / 92%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.maps-preview img {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
 }
 
 .maps-delete {
@@ -6155,6 +6188,16 @@ button {
   color: var(--accent);
   border-color: var(--accent-dim);
   background: var(--accent-faint);
+}
+
+/* Momentary action chip (never .is-on) — reads as a button, not a toggle. */
+.layer-chip-action:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.layer-chip-action:disabled {
+  opacity: 0.45;
 }
 
 /* Phones: scene on top, telemetry scrolling beneath it. */
