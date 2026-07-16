@@ -5,8 +5,8 @@
 // switch the active one, delete, toggle map-free, start a new recording.
 // Every mutation goes through a store action behind an in-app confirm (all
 // four are disruptive: they drop localization, delete files, or stop
-// navigation). UX guards mirror the mobile app: the last remaining map can
-// never be deleted, and the roster locks while a recording is in progress.
+// navigation). Any map can be deleted, including the one in use — the store
+// drops to map-free first. The roster locks while a recording is in progress.
 
 import { confirmDialog } from "./confirm.js";
 
@@ -131,13 +131,15 @@ export function createMapsPanel(host, store) {
       del.className = "maps-delete";
       del.innerHTML =
         '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/></svg>';
-      const last = s.maps.length === 1;
-      del.disabled = !!s.busy || last;
-      del.title = last ? "Cannot delete the last remaining map" : `Delete ${name}`;
+      del.disabled = !!s.busy;
+      del.title = `Delete ${name}`;
       del.addEventListener("click", async () => {
+        const deletingActive = name === store.state.currentMap && store.state.mode === "navigation";
         const ok = await confirmDialog({
           title: "Delete map?",
-          body: `${name} is deleted from the robot. This cannot be undone.`,
+          body: deletingActive
+            ? `${name} is the map in use — the robot switches to map-free mode, then the map is deleted. This cannot be undone.`
+            : `${name} is deleted from the robot. This cannot be undone.`,
           confirmLabel: "Delete",
           danger: true,
         });

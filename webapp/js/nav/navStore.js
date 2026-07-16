@@ -136,8 +136,16 @@ export function createNavStore() {
       return call(NAV_CHANGE_MAP_SERVICE, { map_name: name }, `Switching to ${name}`);
     },
 
-    /** @param {string} name */
-    deleteMap(name) {
+    /**
+     * Deleting the map navigation is localized against is refused by
+     * mode_manager, so drop to map-free first. Works for the last remaining
+     * map too — the robot just stays map-free.
+     * @param {string} name
+     */
+    async deleteMap(name) {
+      if (name === state.currentMap && state.mode === "navigation") {
+        if (!(await call(NAV_CHANGE_MODE_SERVICE, { mode: "mapfree" }, "Switching to map-free"))) return false;
+      }
       return call(NAV_DELETE_MAP_SERVICE, { map_name: name }, `Deleting ${name}`);
     },
 
