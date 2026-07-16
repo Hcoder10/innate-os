@@ -206,6 +206,10 @@ class SkillRepository:
             if not os.path.exists(skills_directory):
                 continue
             for item in os.listdir(skills_directory):
+                # __pycache__/.git and friends are never skills, whatever files
+                # happen to sit inside them.
+                if item.startswith((".", "__")):
+                    continue
                 item_path = os.path.join(skills_directory, item)
                 if not os.path.isdir(item_path):
                     continue

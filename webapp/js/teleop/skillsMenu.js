@@ -270,8 +270,9 @@ export function createSkillsMenu(parent, rosClient) {
   /** Name of the skill running right now, from a local run or the brain topic. */
   function currentActiveName() {
     if (run && !run.done) {
-      const s = skills.find((x) => x.id === run.skillId);
-      return s ? formatName(s) : prettify(run.skillId);
+      const skillId = run.skillId; // capture: `run` is mutable, so the closure can't re-narrow it
+      const s = skills.find((x) => x.id === skillId);
+      return s ? formatName(s) : prettify(skillId);
     }
     return topicActiveName;
   }
@@ -506,7 +507,7 @@ export function createSkillsMenu(parent, rosClient) {
     skills = next;
     if (expandedId && !skills.some((s) => s.id === expandedId)) expandedId = null;
     if (open) render();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   // The brain announces every skill run (manual or agent-driven) here. The robot
   // runs one skill at a time, so any terminal status clears the readout.
@@ -523,7 +524,7 @@ export function createSkillsMenu(parent, rosClient) {
     if (!name || !status) return;
     topicActiveName = status === "running" ? prettify(name) : "";
     syncActive();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubState = rosClient.onStateChange(() => {
     if (rosClient.state !== "connected") topicActiveName = "";

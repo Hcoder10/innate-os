@@ -22,6 +22,7 @@ export function buildRebootArm() {
 
   let rebooting = false;
 
+  /** @param {string} [flash] */
   function sync(flash) {
     btn.disabled = rebooting || ros.state !== "connected";
     btn.textContent = flash ?? (rebooting ? "Rebooting…" : "⟳ Reboot arm");

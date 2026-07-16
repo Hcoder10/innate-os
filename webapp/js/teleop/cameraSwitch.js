@@ -18,6 +18,7 @@ import { createMap } from "../map/mapWidget.js";
 const STORE_KEY = "innate.cameras";
 
 // Tile tag labels; roster ids stay the wire/camera names.
+/** @type {Record<string, string>} */
 const DISPLAY_LABELS = { main: "Main", arm: "Arm", orbit: "Top View" };
 
 /** @param {string} name */
@@ -48,8 +49,8 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   /** @type {Set<string>} */ let enabledCams = new Set();
   let mapOn = false;
   /** @type {string} */ let primary = MAP_ID; // a camera name or MAP_ID; reconcile fixes the real default
-  /** @type {Map<string, { tile: HTMLElement, video: HTMLVideoElement, index: number }>} */
-  let tiles = new Map();
+  /** @type {Map<string, { tile: HTMLElement, video: HTMLVideoElement | null, index: number }>} */
+  let tiles = new Map(); // video is null for sim tiles (canvas-backed, no MediaStream)
 
   // The map widget is heavy (subscriptions + canvas), so it exists only while the map is on. Its host div
   // is persistent and reparents between a strip tile (small) and the stage (big) — never rebuilt.
@@ -193,8 +194,13 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     const tile = liveTile(name, displayLabel(name), `Make ${name} the main view`);
     // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
     // capture pinned page composition to its capture rate); mount those
-    // directly. Real robots keep the <video> + WebRTC stream path.
-    const thumbCanvas = session.thumbnailCanvas?.(index) ?? null;
+    // directly. Real robots keep the <video> + WebRTC stream path. SimSession
+    // reaches here through robotSession.js's runtime import, so tsc only sees
+    // WebRtcSession -- duck-type the sim-only method instead.
+    const maybeSim = /** @type {{ thumbnailCanvas?: (i: number) => HTMLCanvasElement | null }} */ (
+      /** @type {unknown} */ (session)
+    );
+    const thumbCanvas = maybeSim.thumbnailCanvas?.(index) ?? null;
     if (thumbCanvas) {
       thumbCanvas.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
       tile.prepend(thumbCanvas);
@@ -217,7 +223,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     return tile;
   }
 
-  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title @param {boolean} [closable] */
+  /** Live thumbnail shell (caller prepends the video/map). @param {string} id @param {string} label @param {string} title */
   function liveTile(id, label, title) {
     const tile = document.createElement("div");
     tile.className = "cam-tile live";
@@ -263,7 +269,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     roster = next;
     reconcile();
     commit();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     destroy() {

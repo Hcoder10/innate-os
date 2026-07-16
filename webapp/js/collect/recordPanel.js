@@ -250,7 +250,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
     }
     renderSelect();
     render();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   const unsubInfo = ros.subscribe(ROBOT_INFO_TOPIC, (payload) => {
     if (typeof payload?.data !== "string") return;
@@ -265,7 +265,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
     } catch {
       // ignore malformed payloads
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   // ---- new-skill modal: type chooser → name (+ guidelines for replay) ------
 
@@ -621,7 +621,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
     renderOrphan();
   });
 
-  const unsubStatus = ros.subscribe(RECORDER_STATUS_TOPIC, onRecorderStatus);
+  const unsubStatus = ros.subscribe(RECORDER_STATUS_TOPIC, onRecorderStatus, undefined, "brain_messages/msg/RecorderStatus");
 
   // ---- render -------------------------------------------------------------
 

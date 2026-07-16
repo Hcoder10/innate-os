@@ -455,7 +455,7 @@ export function createMap(root, opts = {}) {
     canvas.style.cursor = ui === "manual" || ui === "goto" ? "crosshair" : "grab";
   }
 
-  /** @param {typeof ui} next */
+  /** @param {"idle" | "locate" | "manual" | "goto"} next */
   function setUi(next) {
     ui = next;
     if (ui !== "manual" && ui !== "goto") goalDrag = null;
@@ -709,8 +709,8 @@ export function createMap(root, opts = {}) {
   fit();
   render();
 
-  const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250);
-  const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100);
+  const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
+  const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
   const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");

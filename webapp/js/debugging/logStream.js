@@ -24,7 +24,7 @@ function procKeyOf(rec) {
 
 /**
  * @param {HTMLElement} parent
- * @param {ReturnType<import("./consoleSource.js").createConsoleSource>} source
+ * @param {ReturnType<typeof import("./consoleSource.js").createConsoleSource>} source
  * @param {{ onSourceClick?: (rec: any) => void }} [opts]
  * @returns {{ destroy: () => void, setScope: (scope: any) => void }}
  */
@@ -166,7 +166,7 @@ export function createLogStream(parent, source, opts) {
     src.style.color = sourceColor(source);
     src.title = `${source} — click to show all logs from this source`;
     if (opts && opts.onSourceClick) {
-      src.addEventListener("click", (e) => { e.stopPropagation(); opts.onSourceClick(rec); });
+      src.addEventListener("click", (e) => { e.stopPropagation(); /** @type {(rec: any) => void} */ (opts.onSourceClick)(rec); });
     }
 
     const msg = document.createElement("span");
@@ -203,6 +203,7 @@ export function createLogStream(parent, source, opts) {
   }
   function scrollToEnd() { list.scrollTop = list.scrollHeight; }
 
+  /** @param {any} rec */
   function appendRow(rec) {
     if (!passes(rec)) return;
     const wasBottom = atBottom();
@@ -250,6 +251,7 @@ export function createLogStream(parent, source, opts) {
   }
 
   // ---- ingest -----------------------------------------------------------
+  /** @param {any} rec */
   function push(rec) {
     buffer.push(rec);
     if (buffer.length > BUFFER_MAX) buffer.splice(0, buffer.length - BUFFER_MAX);

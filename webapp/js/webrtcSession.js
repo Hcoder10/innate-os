@@ -100,8 +100,8 @@ export class WebRtcSession {
   constructor(rosClient) {
     this.#ros = rosClient;
     this.#unsubs = [
-      rosClient.subscribe(WEBRTC_OFFER_TOPIC, (p) => void this.#onOffer(p)),
-      rosClient.subscribe(WEBRTC_ICE_OUT_TOPIC, (p) => void this.#onIceOut(p)),
+      rosClient.subscribe(WEBRTC_OFFER_TOPIC, (p) => void this.#onOffer(p), undefined, "std_msgs/msg/String"),
+      rosClient.subscribe(WEBRTC_ICE_OUT_TOPIC, (p) => void this.#onIceOut(p), undefined, "std_msgs/msg/String"),
       // We're an independent peer (client_id), so we do NOT yield when another device opens the
       // camera — the robot fans out to all viewers concurrently. (No /webrtc/start watch / preemption.)
       rosClient.onStateChange((state) => {

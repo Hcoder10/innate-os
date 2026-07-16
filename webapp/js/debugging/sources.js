@@ -14,7 +14,7 @@ import { NODES_SERVICE } from "../constants.js";
 
 const REFRESH_MS = 5000;
 
-/** Inline icons (24-viewBox, currentColor). */
+/** Inline icons (24-viewBox, currentColor). @type {Record<string, string>} */
 const ICON = {
   all: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
   file: '<path d="M6 2.5h7l5 5V21.5H6z"/><path d="M13 2.5V8h5"/>',
@@ -44,7 +44,7 @@ function worst(s) { return s.error > 0 ? "error" : s.warn > 0 ? "warn" : "ok"; }
 
 /**
  * @param {HTMLElement} parent
- * @param {ReturnType<import("./consoleSource.js").createConsoleSource>} source
+ * @param {ReturnType<typeof import("./consoleSource.js").createConsoleSource>} source
  * @param {import("../rosClient.js").RosClient} ros
  * @param {{ onSelect: (scope: any) => void }} opts
  * @returns {{ destroy: () => void, selectFromRecord: (rec: any) => void }}
@@ -144,7 +144,7 @@ export function createSources(parent, source, ros, opts) {
    * @param {string} o.key @param {number} o.depth @param {string} o.type
    * @param {string} o.label @param {{n:number,warn:number,error:number}} o.stats
    * @param {boolean|null} o.expandable @param {(()=>void)|null} o.onToggle
-   * @param {()=>void} o.onSelect @param {string} [o.sub]
+   * @param {()=>void} o.onSelect @param {string} [o.sub] @param {boolean} [o.wordy]
    */
   function row(o) {
     const el = document.createElement("div");
@@ -201,6 +201,10 @@ export function createSources(parent, source, ros, opts) {
     return el;
   }
 
+  /**
+   * @param {string} key @param {number} depth @param {string} name
+   * @param {{n:number,warn:number,error:number}} stats @param {any} scope @param {boolean} wordy
+   */
   function leafRow(key, depth, name, stats, scope, wordy) {
     return row({
       key, depth, type: leafType(name), label: name, stats, wordy: !!wordy,
@@ -296,11 +300,13 @@ export function createSources(parent, source, ros, opts) {
     }
     for (const name of [...agg.keys()].sort((a, b) => a.localeCompare(b))) {
       if (filterText && !hits(name)) continue;
-      frag.appendChild(leafRow(`G:${name}`, 0, name, agg.get(name), { kind: "node", node: name }, true));
+      frag.appendChild(leafRow(`G:${name}`, 0, name, /** @type {{n:number,warn:number,error:number}} */ (agg.get(name)), { kind: "node", node: name }, true));
     }
   }
 
+  /** @param {any} L */
   const sortedProcs = (L) => [...L.procs.values()].sort((a, b) => a.proc.localeCompare(b.proc) || a.key.localeCompare(b.key));
+  /** @param {any} P */
   const sortedNodes = (P) => [...P.nodes.values()].sort((a, b) => {
     if (a.node === "(process)") return 1;
     if (b.node === "(process)") return -1;

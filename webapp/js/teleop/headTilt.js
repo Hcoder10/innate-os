@@ -162,7 +162,7 @@ export function createHeadTilt(parent, rosClient) {
       place(thumb, deg);
       readout.textContent = `${Math.round(deg)}°`;
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   return {
     // Exposed so the Collect page can hide head control during learned-policy

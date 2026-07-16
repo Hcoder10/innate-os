@@ -133,6 +133,10 @@ class WebSocketManager:
                 asyncio.run_coroutine_threadsafe(self.ws_client.send(message_in), self.ws_client.loop)
             except RuntimeError as e:
                 self.get_logger().error(f"Error sending message: {e}")
+        elif self.ws_thread is None:
+            # Normal before the first connect. Registration is re-sent when the
+            # socket opens (orchestrator.on_ws_status); other types are lost.
+            self.get_logger().info(f"WebSocket not running; dropping '{message_in.type.value}' message")
         else:
             self.get_logger().warn("Cannot send message: WebSocket or event loop not available")
 

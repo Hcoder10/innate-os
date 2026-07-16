@@ -41,7 +41,7 @@ export function initTtsAudio() {
     } catch (err) {
       console.warn("[tts] failed to play audio:", err);
     }
-  });
+  }, undefined, "std_msgs/msg/String");
 }
 
 /** @param {string} b64 base64-encoded WAV */
