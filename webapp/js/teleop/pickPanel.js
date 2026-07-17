@@ -93,7 +93,7 @@ const STAGES = [
       descend_s: [0.4, 3, 0.1],
       descend_abort_z: [0.05, 0.2, 0.005],
       arm_pitch: [0.8, 1.6, 0.02],
-      close_strength: [0, 0.6, 0.05],
+      close_strength: [0, 0.8, 0.05],
       close_s: [0.5, 3, 0.1],
       close_settle_s: [0, 2, 0.1],
       twist_rad: [0, 1.4, 0.05],

@@ -84,7 +84,7 @@ TUNABLE = {
     "descend_s": 1.2,
     "descend_abort_z": 0.12,  # EE still above this => limp, abort
     "arm_pitch": 1.30,
-    "close_strength": 0.60,  # >~0.6 overcurrent-trips the gripper servo
+    "close_strength": 0.80,  # firmer grip holds better on hardware; watch for servo trips above this
     "close_s": 1.5,
     "close_settle_s": 0.8,
     "twist_rad": 0.6,  # wind fabric onto fingers

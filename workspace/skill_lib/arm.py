@@ -103,6 +103,6 @@ def open_checked(manipulation, get_j6, percent=100.0, duration=1.0, logger=None,
 
 
 def close(manipulation, strength=0.0, duration=1.0):
-    """Close gripper. strength = extra squeeze; keep <=~0.6 or servo trips."""
+    """Close gripper. strength = extra squeeze; ~0.8 holds well, watch for trips above."""
     manipulation.torque_on()
     return bool(manipulation.close_gripper(strength=strength, duration=duration, blocking=True))
