@@ -154,13 +154,17 @@ class VirtualMars:
         visual_dir = ASSETS_DIR / "apartment_visual"
         visual_rooms = world.find_visual_rooms(visual_dir) if visual_dir.is_dir() else {}
 
-        human_obj = ASSETS_DIR / world.HUMAN_MESH  # optional: older asset bundles lack it
+        # Prop meshes are optional: older asset bundles lack them (the human
+        # body is then absent; ball/dog fall back to bare primitives).
+        human_obj = ASSETS_DIR / world.HUMAN_MESH
+        object_meshes = {k: p for k, rel in world.OBJECT_MESHES.items() if (p := ASSETS_DIR / rel).exists()}
         xml = world.build_world_xml(
             rooms,
             include_placeholder_robot=False,
             visual_rooms=visual_rooms,
             texture_max=_texture_cap(self._render_w),
             human_obj=human_obj if human_obj.exists() else None,
+            object_meshes=object_meshes,
         )
         # Lidar rays hit only the textured visual meshes (true surfaces, like
         # a real lidar) when available -- without them, fall back to all
@@ -177,6 +181,8 @@ class VirtualMars:
             *(p for obj in visual_rooms.values() for p in (obj, obj.with_suffix(".png"))),
             *(f for f in urdf_path.parent.rglob("*") if f.suffix in (".stl", ".dae", ".obj", ".png", ".urdf")),
             *((human_obj, human_obj.with_name(f"{human_obj.stem}_basecolor.png")) if human_obj.exists() else ()),
+            *(f for p in object_meshes.values() for f in (p, p.with_name(f"{p.stem}_basecolor.png"))),
+            *(f for p in object_meshes.values() for f in sorted(p.parent.glob(f"{p.stem}_collision_*.obj"))),
         ]
         cache_path = _model_cache_path(xml, asset_files)
         self.model = None
@@ -232,11 +238,16 @@ class VirtualMars:
         jid = self.model.joint(f"robot_{mimic_name}").id
         self._mimic = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid], mimic_source, mimic_mult)
 
-        self._human: tuple[int, int] | None = None  # (qpos_adr, dof_adr) of human_free
-        if human_obj.exists():
-            jid = self.model.joint("human_free").id
-            self._human = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid])
-        self.human_dropped = False
+        # Droppable props: freejoint (qpos_adr, dof_adr) per kind (see
+        # world.OBJECT_KINDS). The mesh-backed human is present only when its
+        # asset shipped; the ball and dog primitives are always in the world.
+        self._objects: dict[str, tuple[int, int]] = {}
+        for kind in world.OBJECT_KINDS:
+            if kind == "human" and not human_obj.exists():
+                continue
+            jid = self.model.joint(f"{kind}_free").id
+            self._objects[kind] = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid])
+        self._dropped: set[str] = set()  # kinds placed by drop_object (else parked off-map)
 
         self._renderer: mujoco.Renderer | None = None
         self._depth_renderer: mujoco.Renderer | None = None
@@ -255,32 +266,32 @@ class VirtualMars:
             self.data.qpos[qadr] = home
         mq, _md, source, mult = self._mimic
         self.data.qpos[mq] = mult * ARM_HOME[source]
-        self.human_dropped = False  # mj_resetData re-parked it at HUMAN_PARK_XY
+        self._dropped.clear()  # mj_resetData re-parked every prop at OBJECT_PARK
         self._cmd_vx = self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
         mujoco.mj_forward(self.model, self.data)
 
-    def drop_human(self, x: float, y: float, yaw: float) -> bool:
-        """Teleport the scenario human above (x, y), lying on its back with
-        the head pointing along yaw's +y-rotated axis, and let physics settle
-        it onto whatever is below. False if the asset isn't in the bundle."""
-        if self._human is None:
+    def drop_object(self, kind: str, x: float, y: float, yaw: float) -> bool:
+        """Teleport a scenario prop (see world.OBJECT_KINDS) above (x, y),
+        yawed about +z (the human lands on its back, head along yaw's
+        +y-rotated axis), and let physics settle it onto whatever is below.
+        False if the kind isn't in the world (unknown, or its asset is missing
+        from the bundle)."""
+        obj = self._objects.get(kind)
+        if obj is None:
             return False
-        qadr, dadr = self._human
+        qadr, dadr = obj
         half = yaw / 2
-        self.data.qpos[qadr : qadr + 7] = [x, y, world.HUMAN_DROP_Z, math.cos(half), 0.0, 0.0, math.sin(half)]
+        self.data.qpos[qadr : qadr + 7] = [x, y, world.OBJECT_DROP_Z[kind], math.cos(half), 0.0, 0.0, math.sin(half)]
         self.data.qvel[dadr : dadr + 6] = 0.0
-        self.human_dropped = True
+        self._dropped.add(kind)
         mujoco.mj_forward(self.model, self.data)
         return True
 
-    def human_pose(self) -> list[float] | None:
-        """Ground-truth [x, y, z, qw, qx, qy, qz] of the human body; None
-        until the first drop (parked out of sight)."""
-        if self._human is None or not self.human_dropped:
-            return None
-        body = self.data.body("human")
-        return [*map(float, body.xpos), *map(float, body.xquat)]
+    def object_poses(self) -> dict[str, list[float]]:
+        """Ground-truth {kind: [x, y, z, qw, qx, qy, qz]} for every prop
+        dropped this session; parked (never-dropped) props are omitted."""
+        return {kind: [*map(float, (b := self.data.body(kind)).xpos), *map(float, b.xquat)] for kind in self._dropped}
 
     def set_cmd_vel(self, vx: float, wz: float) -> None:
         self._cmd_vx = max(-world.MAX_LINEAR, min(world.MAX_LINEAR, vx))

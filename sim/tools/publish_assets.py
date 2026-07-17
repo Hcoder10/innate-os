@@ -40,7 +40,7 @@ REPO = (
     "innate-inc/innate-sim-assets"  # dedicated repo: keeps asset tags out of innate-os (robots version-check its tags)
 )
 
-WORK_DIRS = ["apartment_split", "apartment_split_v2", "apartment_visual", "sdf_shells", "map", "humans"]
+WORK_DIRS = ["apartment_split", "apartment_split_v2", "apartment_visual", "sdf_shells", "map", "humans", "objects"]
 
 # Kept in sync with sim/README.md's Credits section.
 ATTRIBUTION = (

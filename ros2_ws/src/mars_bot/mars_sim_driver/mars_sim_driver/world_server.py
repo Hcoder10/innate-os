@@ -33,6 +33,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
+from .challenges import ChallengeEngine, SkillEventBridge
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
@@ -93,6 +94,9 @@ class WorldServer:
         self.state_payload = "{}"
         self.state_seq = 0
         self.state_cond = threading.Condition()
+        # Challenge judge: evaluated on each published state, driven by
+        # observer commands, fed skill events by SkillEventBridge (main()).
+        self.challenges = ChallengeEngine(sim, self.lock)
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
 
@@ -127,11 +131,20 @@ class WorldServer:
         with self.lock:
             x, y, yaw = self.sim.pose()
             joints = self.sim.joint_positions()
-            human = self.sim.human_pose()
+            objects = self.sim.object_poses()
             sim_time = float(self.sim.data.time)
+        # Judged outside the sim lock: pure evaluation over the gathered state.
+        challenge = self.challenges.tick(sim_time, (x, y, yaw), objects)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
-            {"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints, "human": human}
+            {
+                "t": sim_time,
+                "wall": time.time(),
+                "pose": [x, y, yaw],
+                "joints": joints,
+                "objects": objects,
+                "challenge": challenge,
+            }
         )
         with self.state_cond:
             self.state_payload = payload
@@ -141,7 +154,7 @@ class WorldServer:
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
         client skips states instead of queueing lag). The receive side takes
-        scenario commands ({"op": "drop_human", ...}) -- world manipulation
+        scenario commands ({"op": "drop_object", ...}) -- world manipulation
         stays on the observer channel, never in the robot's RPC surface."""
 
         def push() -> None:
@@ -163,11 +176,19 @@ class WorldServer:
             pass
 
     def handle_observer_command(self, cmd: dict) -> None:
-        if cmd.get("op") == "drop_human":
+        op = cmd.get("op")
+        if op == "drop_object":
+            kind = str(cmd.get("kind", "human"))
             with self.lock:
-                ok = self.sim.drop_human(float(cmd["x"]), float(cmd["y"]), float(cmd["yaw"]))
+                ok = self.sim.drop_object(kind, float(cmd["x"]), float(cmd["y"]), float(cmd["yaw"]))
             if not ok:
-                print("[world-server] drop_human ignored: human asset missing from the bundle", flush=True)
+                print(f"[world-server] drop_object ignored: '{kind}' not in the world (unknown or asset missing)", flush=True)
+            self.publish_state()
+        elif op == "start_challenge":
+            self.challenges.start(str(cmd.get("id", "")))
+            self.publish_state()
+        elif op == "abort_challenge":
+            self.challenges.abort()
             self.publish_state()
 
     # --- renders (main thread only: macOS GL is main-thread-sensitive) ---
@@ -376,6 +397,7 @@ def main() -> None:
         print(f"[world-server] observer state stream on port {args.state_port} ({', '.join(binds)})", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()
+    SkillEventBridge(server.challenges)  # robot skill events for challenge goals (best-effort)
 
     def accept_loop(listener: socket.socket) -> None:
         while True:
