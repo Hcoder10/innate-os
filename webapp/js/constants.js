@@ -133,8 +133,11 @@ export const EXECUTE_SKILL_ACTION = "/execute_skill";
 export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
 
 // pick_any_object stage events (std_msgs/String JSON: {ev, t, ...}) — drive
-// the Teleop aim overlays.
+// the Teleop aim overlays. The tuning panel and draggable wrist box publish
+// partial TUNABLE dicts (String JSON) back on the tuning topic; the running
+// skill applies them mid-run and acks with a params event.
 export const PICK_DEBUG_TOPIC = "/pick_any_object/debug";
+export const PICK_TUNING_TOPIC = "/pick_any_object/tuning";
 
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;

@@ -38,10 +38,6 @@ class ArmRestPosition(Skill):
     manipulation = Interface(InterfaceType.MANIPULATION)
     joint_states = RobotState(RobotStateType.LAST_JOINT_STATES)
 
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-
     @property
     def name(self):
         return "arm_rest_position"
