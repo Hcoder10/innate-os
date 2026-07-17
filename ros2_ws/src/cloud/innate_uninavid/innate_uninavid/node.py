@@ -40,8 +40,8 @@ from std_msgs.msg import Int32MultiArray, String
 
 from .ws_client import Action, ClientState, UninavidWsClient
 
-DEFAULT_WS_URL = "wss://nav-v1.innate.bot"
-DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
+DEFAULT_WS_URL = "wss://uninavid-v1.svc.innate.bot"
+DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.svc.innate.bot"
 RUNTIME_BACKEND_CONFIG_TOPIC = "/brain/backend_config"
 
 # Default drive speeds for UniNavid's discrete actions (overridable via uninavid_node params).

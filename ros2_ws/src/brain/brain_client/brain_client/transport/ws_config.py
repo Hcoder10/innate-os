@@ -9,7 +9,11 @@ isolation.
 
 from __future__ import annotations
 
-_HOSTED_PREFIXES = ("wss://agent-v1.innate.bot", "wss://brain.innate.bot")
+_HOSTED_PREFIXES = (
+    "wss://agent-v1.svc.innate.bot",
+    "wss://agent-v1.innate.bot",
+    "wss://brain.innate.bot",
+)
 
 
 def validate_ws_uri(uri: str) -> bool:

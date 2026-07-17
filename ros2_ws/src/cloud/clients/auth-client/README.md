@@ -14,7 +14,7 @@ pip install -e clients/auth-client
 from auth_client import AuthProvider
 
 auth = AuthProvider(
-    issuer_url="https://auth-v1.innate.bot",
+    issuer_url="https://auth-v1.svc.innate.bot",
     service_key="sk_...",
 )
 print(auth.token)       # lazily discovers OIDC + fetches JWT
@@ -24,7 +24,7 @@ print(auth.expires_at)  # when the JWT expires
 ## CLI
 
 ```bash
-export INNATE_AUTH_URL="https://auth-v1.innate.bot"
+export INNATE_AUTH_URL="https://auth-v1.svc.innate.bot"
 export INNATE_SERVICE_KEY="sk_..."
 
 # If pip-installed:

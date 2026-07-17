@@ -54,7 +54,7 @@ AUTO_MODE = "auto"
 NONE_MODE = "none"
 LOCAL_MODES = {LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}
 VALID_CLOUD_AGENT_MODES = {AUTO_MODE, HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE, NONE_MODE}
-DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.innate.bot"
+DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.svc.innate.bot"
 # The local cloud-agent runs as the `local-brain` service inside the same compose
 # project as the OS container, reachable by service name on the shared network.
 DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI = "ws://cloud-agent:8765"
