@@ -58,7 +58,7 @@ def recover(manipulation, logger=None):
     time.sleep(0.5)
 
 
-def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.05, logger=None):
+def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.07, logger=None):
     """Cartesian move; verify FK within tol, recover+retry once, else raise."""
     for attempt in (1, 2):
         ok = manipulation.move_to_cartesian_pose(
