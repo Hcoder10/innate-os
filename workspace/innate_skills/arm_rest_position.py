@@ -23,13 +23,7 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-
-# joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
-# Folded rest shape. j4=0.30 keeps the gripper off the floor (ee_link z ~0.042 m);
-# pitching it further down jams the fingers into the ground and trips a servo.
-# These are the values the arm reaches and HOLDS — j1/j2 sit at their limits, so
-# commanding "more folded" just settles here.
-REST_POSITION = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+from workspace.skill_lib.arm import REST_POSITION
 
 
 class ArmRestPosition(Skill):

@@ -336,7 +336,7 @@ class PickAnyObject(Skill):
         if keep_grip:
             target = CARRY_ARM + [-self._p["close_strength"]]
         else:
-            target = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            target = list(armlib.REST_POSITION)
         for _ in range(2):
             self.manipulation.move_to_joint_positions(
                 joint_positions=target,
