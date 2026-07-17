@@ -9,7 +9,7 @@ import base64
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
@@ -49,7 +49,7 @@ class RecordPosition(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        corner = corner.lower().replace("-", "_").replace(" ", "_")
+        corner = cast(BoardCorner, corner.lower().replace("-", "_").replace(" ", "_"))
         if corner not in VALID_CORNERS:
             return f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}", SkillResult.FAILURE
 

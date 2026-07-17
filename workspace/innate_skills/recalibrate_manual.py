@@ -12,7 +12,7 @@ import json
 import math
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 
@@ -114,7 +114,7 @@ class RecalibrateManual(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        corner = corner.upper().strip()
+        corner = cast(CalibrationCorner, corner.upper().strip())
         if corner not in ("A8", "H8"):
             return f"Invalid corner '{corner}'. Must be 'A8' or 'H8'.", SkillResult.FAILURE
 

@@ -168,7 +168,11 @@ class RetrieveEmails(Skill):
                         continue
 
                     # Parse the email
-                    msg = email.message_from_bytes(msg_data[0][1])
+                    payload = msg_data[0]
+                    if not isinstance(payload, tuple):
+                        self.logger.warning(f"Unexpected fetch payload for email {email_id}")
+                        continue
+                    msg = email.message_from_bytes(payload[1])
 
                     # Extract email information
                     subject = self._decode_header_value(msg.get("Subject", "No Subject"))

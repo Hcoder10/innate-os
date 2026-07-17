@@ -5,7 +5,7 @@
 Arm Utils Skill - Torque on, torque off, or reboot the arm servos.
 """
 
-from typing import Literal
+from typing import Literal, cast
 
 from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
@@ -44,7 +44,7 @@ class ArmUtils(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        command = command.strip().lower()
+        command = cast(ArmCommand, command.strip().lower())
         if command not in VALID_COMMANDS:
             return (
                 f"Invalid command '{command}'. Must be one of: {', '.join(VALID_COMMANDS)}.",

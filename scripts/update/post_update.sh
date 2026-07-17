@@ -228,6 +228,19 @@ if [ -f "$ENV_FILE" ]; then
     fi
 fi
 
+# Enforce ownership/mode on an existing /etc/innate.env no matter how it got there:
+# a hand-created file (sudo redirect/tee) ends up 600 root:root, which the non-root
+# launch readers can't open — print_runtime_env.py then treats it as absent and the
+# service key silently drops out of the runtime env (proxy "not configured").
+# Idempotent; matches the seeded state above. Contents are never touched.
+if [ -f "$SYSTEM_ENV_FILE" ]; then
+    if [ "$(stat -c '%U:%G %a' "$SYSTEM_ENV_FILE")" != "root:$ACTUAL_USER 640" ]; then
+        chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
+        chmod 640 "$SYSTEM_ENV_FILE"
+        log "Fixed $SYSTEM_ENV_FILE ownership/mode to root:$ACTUAL_USER 640 so launch readers can read the service key"
+    fi
+fi
+
 # -----------------------------------------------------------------------------
 # 0a. Migrate user-created data into the post-refactor layout.
 # The refactor moved agents/skills/inputs under workspace/ and maps + nav-state

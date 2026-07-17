@@ -6,7 +6,7 @@ Head Emotion Skill - Express emotions through vertical head (tilt) movements.
 """
 
 import time
-from typing import Literal
+from typing import Literal, cast
 
 from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
 
@@ -123,7 +123,7 @@ class HeadEmotion(Skill):
         if self.head is None:
             return "Head interface not available", SkillResult.FAILURE
 
-        emotion = emotion.strip().lower()
+        emotion = cast(EmotionName, emotion.strip().lower())
         if emotion not in EMOTIONS:
             available = ", ".join(sorted(EMOTIONS))
             return f"Unknown emotion '{emotion}'. Available: {available}", SkillResult.FAILURE

@@ -23,7 +23,7 @@ import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
-import { createPickTunePanel } from "./pickTunePanel.js";
+import { createPickOverlay } from "./pickOverlay.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
 
@@ -93,7 +93,7 @@ function buildCockpit(root) {
     createSkillsMenu(ttsOverlay, ros),
     createArmPanel(armOverlay, ros, { hideServices: !!config.simControls }),
     ...(config.simControls ? [] : [createProfilingPanel(root, session)]),
-    createPickTunePanel(root, ros, session),
+    createPickOverlay(root, ros, session),
     createCameraSwitch(root, session, ros),
     keyboard,
   );

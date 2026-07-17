@@ -14,7 +14,7 @@ import base64
 import json
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import chess
 from google import genai
@@ -288,6 +288,9 @@ class DetectOpponentMove(Skill):
 
         Returns parsed dict {move_uci, confidence, reasoning} or None.
         """
+        if self.gemini_client is None:
+            return None
+
         prompt = (
             "You are analyzing a physical chess board to detect the opponent's last move.\n\n"
             f"{board_context}\n"
@@ -301,7 +304,7 @@ class DetectOpponentMove(Skill):
             '"reasoning": "brief explanation"}'
         )
 
-        contents = [prompt]
+        contents: list[Any] = [prompt]
         if wrist_b64:
             contents.append(types.Part.from_bytes(data=base64.b64decode(wrist_b64), mime_type="image/jpeg"))
 
@@ -317,7 +320,7 @@ class DetectOpponentMove(Skill):
                     thinking_config=types.ThinkingConfig(thinking_budget=1024),
                 ),
             )
-            result = json.loads(response.text.strip())
+            result = json.loads((response.text or "").strip())
             self.logger.info(f"[DetectOpponentMove] Stage 1 result: {result}")
             self._save_gemini_response("stage1", result)
             return result
@@ -332,6 +335,9 @@ class DetectOpponentMove(Skill):
 
         Narrows the candidate list and asks Gemini to pick one.
         """
+        if self.gemini_client is None:
+            return None
+
         prompt = (
             "You are analyzing a physical chess board to confirm which move was played.\n\n"
             f"{board_context}\n"
@@ -343,7 +349,7 @@ class DetectOpponentMove(Skill):
             '"reasoning": "brief explanation"}'
         )
 
-        contents = [prompt]
+        contents: list[Any] = [prompt]
         if wrist_b64:
             contents.append(types.Part.from_bytes(data=base64.b64decode(wrist_b64), mime_type="image/jpeg"))
 
@@ -359,7 +365,7 @@ class DetectOpponentMove(Skill):
                     thinking_config=types.ThinkingConfig(thinking_budget=512),
                 ),
             )
-            result = json.loads(response.text.strip())
+            result = json.loads((response.text or "").strip())
             self.logger.info(f"[DetectOpponentMove] Stage 2 result: {result}")
             self._save_gemini_response("stage2", result)
             return result
@@ -378,7 +384,7 @@ class DetectOpponentMove(Skill):
                          On first call, initialises the game state.
         """
         self._cancelled = False
-        robot_color = robot_color.strip().lower()
+        robot_color = cast(RobotColor, robot_color.strip().lower())
         if robot_color not in ROBOT_COLORS:
             return f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.", SkillResult.FAILURE
 
