@@ -644,8 +644,8 @@ class PickAnyObject(Skill):
         self._dbg("hover", ee=self._ee_xyz())
 
     def _open_gripper_checked(self):
-        """Open gripper with trip recovery."""
-        armlib.open_checked(
+        """Open gripper with trip recovery. False if still shut afterwards."""
+        return armlib.open_checked(
             self.manipulation,
             self._gripper_j6,
             logger=self.logger,
@@ -718,7 +718,9 @@ class PickAnyObject(Skill):
         clamped = abs((xy[0] - p["grasp_x_off"]) - x) > 1e-4 or abs(xy[1] - y) > 1e-4
         self._dbg("grasp", xy=xy, tx=x, ty=y, deep=deep, grab_px=grab_px, obj_px=obj_px, clamped=clamped)
 
-        self._open_gripper_checked()
+        if not self._open_gripper_checked():
+            self._dbg("grasp_abort", reason="gripper would not open", j6=self._gripper_j6())
+            raise armlib.ArmUnhealthy("gripper would not open")
 
         if p["wrist_steps"] >= 1:
             self._goto_search_pose(math.atan2(y, x))

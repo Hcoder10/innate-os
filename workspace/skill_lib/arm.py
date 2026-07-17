@@ -87,6 +87,11 @@ def open_checked(manipulation, get_j6, percent=100.0, duration=1.0, logger=None,
             on_reboot(j6)
         recover(manipulation, logger)
         ok = manipulation.open_gripper(percent=percent, duration=duration, blocking=True)
+        # A tripped servo accepts the command and no-ops, so the retry's own
+        # status proves nothing — j6 is the only evidence the claw moved.
+        j6 = get_j6()
+        if j6 is not None and j6 < 0.10:
+            return False
     return bool(ok)
 
 
