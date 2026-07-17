@@ -627,6 +627,218 @@ button {
   padding: 10px 12px;
 }
 
+/* Top-left overlay column (agent page): sim challenge panel above telemetry.
+   Children keep the .overlay glass look but stack instead of self-anchoring. */
+.overlay-stack-top-left {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  z-index: 6;
+}
+
+.overlay-stack-top-left > .overlay {
+  position: static;
+  /* The sim's 3D scene behind these cards is often bright wall/floor, where
+     the default 40% glass washes the text out -- use the darker glass the
+     sim debug stack (.overlay-sim) settled on. */
+  background: rgb(0 0 0 / 66%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ---- challenge panel (sim only, see agent/challengePanel.js) ------------- */
+.challenge-panel {
+  width: 252px;
+  padding: 10px 12px 12px;
+}
+
+.challenge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.challenge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.challenge-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.challenge-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.challenge-item:hover {
+  background: rgb(255 255 255 / 8%);
+  border-color: var(--hairline-strong);
+}
+
+.challenge-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+}
+
+.challenge-dot.passed {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.challenge-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.challenge-item-title {
+  font-size: 13px;
+}
+
+.challenge-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.challenge-play {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.challenge-item:hover .challenge-play {
+  color: var(--accent);
+}
+
+.challenge-active {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.challenge-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.challenge-timer {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.challenge-timer.final {
+  color: var(--muted);
+}
+
+.challenge-brief {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.challenge-goals {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.challenge-goals li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.challenge-goals li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+}
+
+.challenge-goals li.done {
+  color: var(--text);
+}
+
+.challenge-goals li.done::before {
+  content: "✓";
+  border-color: var(--ok);
+  background: rgb(86 194 140 / 18%);
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 9px;
+  text-align: center;
+}
+
+.challenge-banner {
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.challenge-banner.passed {
+  background: rgb(86 194 140 / 14%);
+  border: 1px solid rgb(86 194 140 / 45%);
+  color: var(--ok);
+}
+
+.challenge-banner.failed {
+  background: rgb(217 106 90 / 12%);
+  border: 1px solid rgb(217 106 90 / 45%);
+  color: var(--danger);
+}
+
+.challenge-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.challenge-action {
+  flex: 1;
+  padding: 6px 0;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.challenge-action:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
 /* Sim-only debug controls — stacks just under the telemetry card (top-left). */
 .overlay-sim {
   left: 14px;

@@ -19,6 +19,14 @@ const MIN_FRAME_MS = 1000 / 62;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
 
+// Droppable props offered by the placement picker; kind matches world.py
+// OBJECT_KINDS and scene.ts OBJECTS.
+const DROP_KINDS: { kind: string; label: string }[] = [
+  { kind: "human", label: "🧍" },
+  { kind: "soccer_ball", label: "⚽" },
+  { kind: "labrador", label: "🐕" },
+];
+
 export function createSimStage(parent: HTMLElement, session: SimSession): { audioEl: null; destroy: () => void } {
   const wrap = document.createElement("div");
   wrap.className = "video-stage"; // reuse the webapp's stage styling/CSS ladder
@@ -65,7 +73,20 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   };
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
-  const setDropChip = addChip("drop human", (on) => armDrop(on));
+  // Drop-object picker: one chip per prop (world.py OBJECT_KINDS). Selecting a
+  // kind arms placement for it; the others disarm (mutually exclusive). A
+  // stepping stone toward per-challenge UI -- for now it just seeds the world.
+  const dropLabel = document.createElement("span");
+  dropLabel.textContent = "drop";
+  dropLabel.style.cssText = "align-self:center;color:rgba(255,255,255,.5);font:500 11px system-ui;margin-left:4px;";
+  chips.appendChild(dropLabel);
+  const dropChipSetters = new Map<string, (on: boolean) => void>();
+  for (const { kind, label } of DROP_KINDS) {
+    dropChipSetters.set(
+      kind,
+      addChip(label, (on) => armDrop(on ? kind : null)),
+    );
+  }
   debugStack.appendChild(chips);
 
   // Loading indicator: a compact pill holding a progress bar, centered just
@@ -150,10 +171,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
 
-  // "drop human" placement: while armed the orbit controls are paused --
-  // press marks the spot on the floor, drag points the head (arrow preview),
-  // release drops the body there and physics settles it.
-  let dropArmed = false;
+  // Drop-object placement: while a kind is armed the orbit controls are paused
+  // -- press marks the spot on the floor, drag points the yaw (arrow preview,
+  // the human's head), release drops that body there and physics settles it.
+  let armedKind: string | null = null;
   let dropStart: THREE.Vector3 | null = null;
   let dropArrow: THREE.ArrowHelper | null = null;
   const clearDropDrag = () => {
@@ -164,15 +185,15 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       dropArrow = null;
     }
   };
-  const armDrop = (on: boolean) => {
-    dropArmed = on;
-    scene.placementMode = on;
-    canvas.style.cursor = on ? "crosshair" : "";
-    setDropChip(on);
-    if (!on) clearDropDrag();
+  const armDrop = (kind: string | null) => {
+    armedKind = kind;
+    scene.placementMode = kind !== null;
+    canvas.style.cursor = kind !== null ? "crosshair" : "";
+    for (const [k, set] of dropChipSetters) set(k === kind); // reflect the armed kind, disarm the rest
+    if (kind === null) clearDropDrag();
   };
   canvas.addEventListener("pointerdown", (e) => {
-    if (!dropArmed || e.button !== 0) return;
+    if (armedKind === null || e.button !== 0) return;
     dropStart = scene.screenToFloor(e.clientX, e.clientY);
   });
   canvas.addEventListener("pointermove", (e) => {
@@ -189,13 +210,13 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
   });
   canvas.addEventListener("pointerup", (e) => {
-    if (!dropArmed || !dropStart) return;
+    if (armedKind === null || !dropStart) return;
     const end = scene.screenToFloor(e.clientX, e.clientY);
     const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
-    // An identity drop lies head toward +y; the drag vector is the head direction.
+    // An identity drop faces +y (the human's head); the drag vector is that direction.
     const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
-    session.dropHuman(dropStart.x, dropStart.y, yaw);
-    armDrop(false);
+    session.dropObject(armedKind, dropStart.x, dropStart.y, yaw);
+    armDrop(null);
   });
 
   const resize = () => {

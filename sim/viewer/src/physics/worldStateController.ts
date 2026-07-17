@@ -3,6 +3,33 @@
 // (proxied at /worldstate) -- the 3D view's only state source. See
 // world_server.py "two interfaces".
 
+/** One challenge's roster entry (challenge block "list"). */
+export interface ChallengeInfo {
+  id: string;
+  title: string;
+  brief: string;
+  passed: boolean;
+  best_time_s: number | null;
+  attempts: number;
+}
+
+/** The currently running (or just finished) challenge. */
+export interface ChallengeActive {
+  id: string;
+  state: "running" | "passed" | "failed";
+  reason: string;
+  elapsed_s: number;
+  time_limit_s: number | null;
+  goals: { label: string; done: boolean }[];
+}
+
+/** The world server's challenge judge state (challenges.py), embedded in
+ * every state broadcast so any frontend is a thin renderer. */
+export interface ChallengeBlock {
+  list: ChallengeInfo[];
+  active: ChallengeActive | null;
+}
+
 export interface WorldState {
   /** Sim clock (s) -- the playback timeline. */
   t: number;
@@ -12,8 +39,11 @@ export interface WorldState {
   y: number;
   yaw: number;
   joints: Record<string, number>;
-  /** Scenario human ground truth [x, y, z, qw, qx, qy, qz]; null until dropped. */
-  human: number[] | null;
+  /** Ground truth of every dropped scenario prop, keyed by kind (human,
+   * soccer_ball, labrador): [x, y, z, qw, qx, qy, qz]. Empty until a drop. */
+  objects: Record<string, number[]>;
+  /** Challenge judge state; null on servers that predate it. */
+  challenge: ChallengeBlock | null;
 }
 
 export class WorldStateController {
@@ -63,7 +93,7 @@ export class WorldStateController {
     await this.#open;
   }
 
-  /** Send a scenario command up the observer socket (e.g. drop_human);
+  /** Send a scenario command up the observer socket (e.g. drop_object);
    * dropped silently while the socket is (re)connecting. */
   send(cmd: object): void {
     if (this.#ws.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(cmd));
@@ -80,7 +110,8 @@ export class WorldStateController {
       wall: number;
       pose: [number, number, number];
       joints: Record<string, number>;
-      human?: number[] | null;
+      objects?: Record<string, number[]> | null;
+      challenge?: ChallengeBlock | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
@@ -92,7 +123,8 @@ export class WorldStateController {
       y: msg.pose[1],
       yaw: msg.pose[2],
       joints,
-      human: msg.human ?? null,
+      objects: msg.objects ?? {},
+      challenge: msg.challenge ?? null,
     });
   }
 }

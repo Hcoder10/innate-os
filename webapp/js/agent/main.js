@@ -18,6 +18,7 @@ import { createTelemetry } from "../teleop/telemetry.js";
 import { createCameraSwitch } from "../teleop/cameraSwitch.js";
 import { createAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
+import { createChallengePanel } from "./challengePanel.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -45,13 +46,18 @@ function buildAgentView(root) {
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
-  const telemetryOverlay = overlay("overlay-top-left");
-  root.append(telemetryOverlay);
-
+  // Top-left column: the sim challenge panel (when the session supports it)
+  // stacked above the telemetry card; on real robots it holds telemetry alone,
+  // in the same corner position as before.
+  const cornerStack = document.createElement("div");
+  cornerStack.className = "overlay-stack-top-left";
+  root.append(cornerStack);
+  const telemetryOverlay = overlay("");
   const agentState = createAgentState(ros);
 
   const parts = [
     videoStage,
+    ...(typeof session.onChallenge === "function" ? [createChallengePanel(cornerStack, session)] : []),
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" }),
@@ -59,6 +65,7 @@ function buildAgentView(root) {
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },
   ];
+  cornerStack.append(telemetryOverlay);
 
   session.start();
 
