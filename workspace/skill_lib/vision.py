@@ -16,6 +16,7 @@ import numpy as np
 
 from workspace.skill_lib.geometry import IMG_H, IMG_W
 
+
 def b64_to_gray(image_b64):
     """base64 JPEG -> gray ndarray, or None."""
     try:
@@ -58,8 +59,7 @@ def _box_corners_px(det):
     y0, x0, y1, x1 = [float(v) for v in b[:4]]
     y0, y1 = sorted((y0, y1))
     x0, x1 = sorted((x0, x1))
-    return (x0 / 1000.0 * IMG_W, y0 / 1000.0 * IMG_H,
-            x1 / 1000.0 * IMG_W, y1 / 1000.0 * IMG_H)
+    return (x0 / 1000.0 * IMG_W, y0 / 1000.0 * IMG_H, x1 / 1000.0 * IMG_W, y1 / 1000.0 * IMG_H)
 
 
 def parse_det_px(text):
@@ -88,23 +88,28 @@ def parse_det_box(text):
 
 
 LK_PARAMS: dict[str, Any] = dict(
-    winSize=(21, 21), maxLevel=3,
+    winSize=(21, 21),
+    maxLevel=3,
     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
 )
 
 
 def grid_pts(u, v, step=12, n=2):
     """(2n+1)^2 LK feature patch around (u,v)."""
-    pts = [[u + dx * step, v + dy * step]
-           for dx in range(-n, n + 1) for dy in range(-n, n + 1)]
+    pts = [[u + dx * step, v + dy * step] for dx in range(-n, n + 1) for dy in range(-n, n + 1)]
     return np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
 
 
 def track_point(prev_gray, gray, grid):
     """One LK step -> median pixel, or None if lost."""
     # nextPts=None is the standard cv2 idiom; the stubs demand an array.
-    nxt, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, grid, None,  # pyright: ignore[reportCallIssue, reportArgumentType]
-                                              **LK_PARAMS)
+    nxt, status, _ = cv2.calcOpticalFlowPyrLK(
+        prev_gray,
+        gray,
+        grid,
+        None,  # pyright: ignore[reportCallIssue, reportArgumentType]
+        **LK_PARAMS,
+    )
     if nxt is None or status is None:
         return None
     good = nxt[status.flatten() == 1].reshape(-1, 2)
@@ -121,9 +126,9 @@ _SEG_RANGES = [0, 180, 0, 256, 0, 256]
 def seg_model(hsv, box):
     """Object/floor hist-ratio LUT for back-projection, or None."""
     x, y, w, h = box
-    obj = hsv[y:y + h, x:x + w]
+    obj = hsv[y : y + h, x : x + w]
     rx0, ry0 = max(0, x - w // 2), max(0, y - h // 2)
-    ring = hsv[ry0:y + h + h // 2, rx0:x + w + w // 2]
+    ring = hsv[ry0 : y + h + h // 2, rx0 : x + w + w // 2]
     h_obj = cv2.calcHist([obj], [0, 1, 2], None, _SEG_BINS, _SEG_RANGES)
     h_ring = cv2.calcHist([ring], [0, 1, 2], None, _SEG_BINS, _SEG_RANGES)
     ratio = h_obj / (np.maximum(h_ring - h_obj, 0.0) + 1.0)
@@ -144,7 +149,7 @@ def seg_track(hsv, model, window, min_score=25.0):
     x, y, w, h = window
     if w < 4 or h < 4 or w * h > 0.4 * IMG_W * IMG_H:
         return None, window, 0.0
-    score = float(bp[y:y + h, x:x + w].mean())
+    score = float(bp[y : y + h, x : x + w].mean())
     if score < min_score:
         return None, window, score
     return (x + w / 2.0, y + h / 2.0), window, score

@@ -18,6 +18,7 @@
 #   <repo>/maps/*                          -> <repo>/data/maps/
 #   <repo>/.last_mode                      -> <repo>/data/.last_mode
 #   <repo>/.last_map                       -> <repo>/data/.last_map
+#   workspace/custom_skills/<superseded>.py -> <same>.py.superseded (see below)
 #
 # Home-directory skills/agents (~/skills, ~/agents) are NOT handled here; they
 # are migrated at brain startup by
@@ -159,6 +160,28 @@ _migrate_nav_state() {
     done
 }
 
+# Retire custom_skills copies of skills that later became shipped (tracked in
+# workspace/innate_skills/). custom_skills/ is gitignored, so git pull leaves
+# the old copy in place — and the catalog gives local/ precedence for both the
+# bare import name and the plain display name, so the stale copy would silently
+# shadow the shipped skill forever. Rename (never delete: the user may have
+# local edits worth diffing) to *.py.superseded, which the loader ignores.
+_retire_superseded_custom_skills() {
+    local repo="$1"
+    local custom="$repo/workspace/custom_skills"
+    local name src
+    for name in arm_rest_position gripper_close gripper_open pick_any_object; do
+        src="$custom/$name.py"
+        [ -f "$src" ] && [ -f "$repo/workspace/innate_skills/$name.py" ] || continue
+        if [ -e "$src.superseded" ]; then
+            _mig_log "  Kept custom_skills/$name.py ($name.py.superseded already exists — reconcile manually)"
+            continue
+        fi
+        mv "$src" "$src.superseded"
+        _mig_log "Retired custom_skills/$name.py -> $name.py.superseded (now shipped in innate_skills/)"
+    done
+}
+
 run_user_data_migrations() {
     local repo="${1:?run_user_data_migrations: repo dir required}"
     _migrate_dir_into_workspace "$repo" agents     custom_agents
@@ -167,6 +190,7 @@ run_user_data_migrations() {
     _migrate_dir_into_workspace "$repo" inputs     inputs
     _migrate_primitives_models  "$repo"
     _migrate_nav_state          "$repo"
+    _retire_superseded_custom_skills "$repo"
 }
 
 # Execute when run directly (not when sourced).

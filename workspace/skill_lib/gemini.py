@@ -30,10 +30,7 @@ def ask_image(client, images_b64, question, logger=None, retries=3):
     if isinstance(images_b64, str):
         images_b64 = [images_b64]
     content = [{"type": "text", "text": question}]
-    content += [
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b}"}}
-        for b in images_b64
-    ]
+    content += [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b}"}} for b in images_b64]
     body = {
         "model": MODEL,
         "temperature": 0.0,
@@ -42,16 +39,17 @@ def ask_image(client, images_b64, question, logger=None, retries=3):
     for attempt in range(retries):
         try:
             with client.request_stream(
-                SERVICE, ENDPOINT, method="POST", json=body,
+                SERVICE,
+                ENDPOINT,
+                method="POST",
+                json=body,
             ) as resp:
                 resp.raise_for_status()
                 data = json.loads(resp.read())
             return data["choices"][0]["message"]["content"] or ""
         except Exception as e:  # noqa: BLE001
             if logger:
-                logger.warning(
-                    f"[gemini] vision call failed (try {attempt + 1}/{retries}): {e}"
-                )
+                logger.warning(f"[gemini] vision call failed (try {attempt + 1}/{retries}): {e}")
             if attempt < retries - 1:
                 time.sleep(2.0 * (attempt + 1))
     return None

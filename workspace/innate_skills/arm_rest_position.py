@@ -80,13 +80,8 @@ class ArmRestPosition(Skill):
             except (KeyError, IndexError, TypeError):
                 pass  # no reading — fall back to the captured gripper value
 
-        self.logger.info(
-            f"Moving arm to rest position {[round(j, 3) for j in target]} "
-            f"over {duration}s"
-        )
-        success = self.manipulation.move_to_joint_positions(
-            joint_positions=target, duration=duration, blocking=False
-        )
+        self.logger.info(f"Moving arm to rest position {[round(j, 3) for j in target]} over {duration}s")
+        success = self.manipulation.move_to_joint_positions(joint_positions=target, duration=duration, blocking=False)
         if not success:
             return "Failed to send arm command", SkillResult.FAILURE
 

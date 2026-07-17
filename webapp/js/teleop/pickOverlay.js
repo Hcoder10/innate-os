@@ -132,7 +132,7 @@ export function createPickOverlay(parent, rosClient, session) {
   const boxGoal = document.createElement("div");
   boxGoal.className = "picktune-boxgoal";
   boxGoal.hidden = true;
-  // Inner accept box (ACCEPT_FRAC of the outer): the point must land in THIS
+  // Inner accept box (accept_frac of the outer): the point must land in THIS
   // to stop positioning. Greens when the skill reports inside; the outer stays
   // a dim guide.
   boxGoal.innerHTML =

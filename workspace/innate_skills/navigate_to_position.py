@@ -10,6 +10,7 @@ from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.duration import Duration
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
+
 # TransformException is re-exported from the compiled tf2_py module, which
 # pyright cannot introspect.
 from tf2_ros import TransformException  # pyright: ignore[reportAttributeAccessIssue]

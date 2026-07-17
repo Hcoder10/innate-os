@@ -46,8 +46,11 @@ class GripperOpen(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
         ok = armlib.open_checked(
-            self.manipulation, lambda: armlib.gripper_j6(self.joint_states),
-            percent=percent, duration=duration, logger=self.logger,
+            self.manipulation,
+            lambda: armlib.gripper_j6(self.joint_states),
+            percent=percent,
+            duration=duration,
+            logger=self.logger,
         )
         if not ok:
             return "Failed to open gripper", SkillResult.FAILURE

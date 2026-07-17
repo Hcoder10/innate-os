@@ -274,7 +274,12 @@ class SkillRepository:
     def _evict_skill_lib() -> None:
         """Drop cached workspace.skill_lib modules so a skills reload picks up
         lib edits too — skill files re-import the lib as they load. Without
-        this, sys.modules keeps serving the pre-edit lib to reloaded skills."""
+        this, sys.modules keeps serving the pre-edit lib to reloaded skills.
+
+        After a selective reload, skills NOT on the reload list keep the module
+        objects they imported at their own load time — two lib copies coexist.
+        Fine while the lib is stateless helpers; revisit if it ever holds state
+        shared across skills."""
         for name in [m for m in sys.modules if m.startswith("workspace.skill_lib")]:
             del sys.modules[name]
 

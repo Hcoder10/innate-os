@@ -12,6 +12,7 @@ import json
 import math
 import time
 
+from innate.skills import SkillCancelled, SkillFailed, arm_rest_position
 from std_msgs.msg import String
 
 from brain_client.skills.types import (
@@ -22,7 +23,6 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-from innate.skills import SkillCancelled, SkillFailed, arm_rest_position
 from workspace.skill_lib import arm as armlib
 from workspace.skill_lib import gemini as gemlib
 from workspace.skill_lib import vision
@@ -36,45 +36,45 @@ VERIFY_BACKUP_M = 0.15
 CARRY_ARM = [0.0537, -0.5031, 0.4157, 0.9434, -0.0077]
 
 # Live knobs, overridable mid-run via TUNING_TOPIC (String JSON partial dict).
-# The webapp draws the pick/wrist boxes from mirrors of the aim defaults
-# (pickOverlay.js) — keep those in sync when changing them here.
+# The webapp overlay (pickOverlay.js) draws the pick/wrist boxes from the
+# params/box fields on run_start/params debug events — nothing mirrored there.
 TUNABLE = {
     # FIND / LOCALIZE
-    "tilt_deg": -20.0,          # head pitch (negative = down)
-    "settle_s": 1.2,            # settle before a frame
+    "tilt_deg": -20.0,  # head pitch (negative = down)
+    "settle_s": 1.2,  # settle before a frame
     # POSITION
-    "sweet_x": 0.30,            # pick-box range in base_link (m)
-    "box_y": 0.0,               # pick-box lateral offset (m)
-    "box_half_px": 40.0,        # outer box half-width (px)
-    "accept_frac": 0.5,         # inner accept box as fraction of outer
-    "box_steps": 6.0,           # max follow / re-detect attempts
-    "bearing_go_deg": 4.0,      # stepwise: turn above this
-    "follow_gain_ang": 0.3,     # rad/s per 100 px
-    "follow_gain_lin": 0.06,    # m/s per 100 px
+    "sweet_x": 0.30,  # pick-box range in base_link (m)
+    "box_y": 0.0,  # pick-box lateral offset (m)
+    "box_half_px": 40.0,  # outer box half-width (px)
+    "accept_frac": 0.5,  # inner accept box as fraction of outer
+    "box_steps": 6.0,  # max follow / re-detect attempts
+    "bearing_go_deg": 4.0,  # stepwise: turn above this
+    "follow_gain_ang": 0.3,  # rad/s per 100 px
+    "follow_gain_lin": 0.06,  # m/s per 100 px
     # base odometry
     "rot_tol_deg": 2.5,
     "rot_kp": 1.2,
     "rot_wz_max": 0.5,
-    "rot_wz_min": 0.15,         # below this motors don't move
+    "rot_wz_min": 0.15,  # below this motors don't move
     "drive_tol_m": 0.015,
     "drive_kp": 0.3,
     "drive_v_max": 0.10,
     "drive_v_min": 0.04,
     # WRIST ALIGN (0 wrist_steps = blind grasp)
-    "wrist_steps": 2.0,         # Gemini looks (seed + re-seeds)
-    "wrist_stop_z": 0.04,       # hand off to blind ladder
+    "wrist_steps": 2.0,  # Gemini looks (seed + re-seeds)
+    "wrist_stop_z": 0.04,  # hand off to blind ladder
     "wrist_z_step": 0.01,
     "wrist_move_s": 0.5,
-    "wrist_pitch": 0.82,        # match WRIST_SEARCH_ARM camera pitch
-    "wrist_box_u": 320.0,       # wrist goal pixel
+    "wrist_pitch": 0.82,  # match WRIST_SEARCH_ARM camera pitch
+    "wrist_box_u": 320.0,  # wrist goal pixel
     "wrist_box_v": 240.0,
     "wrist_half_px": 60.0,
-    "wrist_kx": -0.04,          # m/100px v-error (signed; flip if diverges)
-    "wrist_ky": -0.04,          # m/100px u-error; gains at z=0.15, scale w/ height
+    "wrist_kx": -0.04,  # m/100px v-error (signed; flip if diverges)
+    "wrist_ky": -0.04,  # m/100px u-error; gains at z=0.15, scale w/ height
     "wrist_step_max": 0.04,
     "wrist_settle_s": 0.8,
     # GRASP
-    "grasp_x_off": 0.03,        # fingertips ahead of ee_link
+    "grasp_x_off": 0.03,  # fingertips ahead of ee_link
     "hover_z": 0.15,
     "hover_s": 2.0,
     "descend_z1": 0.10,
@@ -82,12 +82,12 @@ TUNABLE = {
     "descend_z3": 0.03,
     "floor_z": 0.01,
     "descend_s": 1.2,
-    "descend_abort_z": 0.12,    # EE still above this => limp, abort
+    "descend_abort_z": 0.12,  # EE still above this => limp, abort
     "arm_pitch": 1.30,
-    "close_strength": 0.60,     # >~0.6 overcurrent-trips the gripper servo
+    "close_strength": 0.60,  # >~0.6 overcurrent-trips the gripper servo
     "close_s": 1.5,
     "close_settle_s": 0.8,
-    "twist_rad": 0.6,           # wind fabric onto fingers
+    "twist_rad": 0.6,  # wind fabric onto fingers
     "lift_rad": 0.6,
 }
 
@@ -141,10 +141,8 @@ class _BlobTracker:
 
     def update(self, hsv):
         """Blob center, or None on miss (keeps last window for retry)."""
-        pt, window, _score = vision.seg_track(
-            hsv, self.model, self.window, min_score=WRIST_SEG_MIN_SCORE)
-        if pt is not None and math.hypot(pt[0] - self.guess[0],
-                                         pt[1] - self.guess[1]) > WRIST_MAX_JUMP_PX:
+        pt, window, _score = vision.seg_track(hsv, self.model, self.window, min_score=WRIST_SEG_MIN_SCORE)
+        if pt is not None and math.hypot(pt[0] - self.guess[0], pt[1] - self.guess[1]) > WRIST_MAX_JUMP_PX:
             pt = None
         if pt is None:
             self.misses += 1
@@ -191,9 +189,7 @@ class PickAnyObject(Skill):
         if self._dbg_pub is not None or self.node is None:
             return
         self._dbg_pub = self.node.create_publisher(String, DEBUG_TOPIC, 10)
-        self._tuning_sub = self.node.create_subscription(
-            String, TUNING_TOPIC, self._on_tuning, 10
-        )
+        self._tuning_sub = self.node.create_subscription(String, TUNING_TOPIC, self._on_tuning, 10)
 
     def _on_tuning(self, msg):
         try:
@@ -202,15 +198,11 @@ class PickAnyObject(Skill):
             return
         if not isinstance(incoming, dict):
             return
-        applied = {
-            k: float(v)
-            for k, v in incoming.items()
-            if k in self._p and isinstance(v, (int, float))
-        }
+        applied = {k: float(v) for k, v in incoming.items() if k in self._p and isinstance(v, (int, float))}
         if applied:
             self._p.update(applied)
             self.logger.info(f"[PickAnyObject] tuning applied: {applied}")
-        self._dbg("params", params=dict(self._p))
+        self._dbg("params", params=dict(self._p), box=self._box_px())
 
     def _dbg(self, ev, **fields):
         if self._dbg_pub is None:
@@ -228,8 +220,7 @@ class PickAnyObject(Skill):
 
     def _gemini_call(self, image_b64, question):
         """Vision Q&A via gemlib."""
-        return gemlib.ask_image(self._proxy, image_b64, question,
-                                logger=self.logger)
+        return gemlib.ask_image(self._proxy, image_b64, question, logger=self.logger)
 
     def _detect_px(self, prompt):
         """Head frame -> best grasp pixel, or None."""
@@ -258,10 +249,7 @@ class PickAnyObject(Skill):
             return None, None
         xy = pixel_to_floor(px[0], px[1], self._p["tilt_deg"])
         if xy:
-            self.logger.info(
-                f"[PickAnyObject] px=({px[0]:.0f},{px[1]:.0f}) -> "
-                f"base_link ({xy[0]:.3f},{xy[1]:.3f})"
-            )
+            self.logger.info(f"[PickAnyObject] px=({px[0]:.0f},{px[1]:.0f}) -> base_link ({xy[0]:.3f},{xy[1]:.3f})")
         self._dbg("localize", px=px, xy=xy, tilt_deg=self._p["tilt_deg"])
         return xy, px
 
@@ -276,8 +264,7 @@ class PickAnyObject(Skill):
         try:
             if isinstance(od, dict):
                 p = od["pose"]["pose"]["position"]
-                return (float(p["x"]), float(p["y"]),
-                        math.radians(float(od["theta_degrees"])))
+                return (float(p["x"]), float(p["y"]), math.radians(float(od["theta_degrees"])))
             return (float(od.x), float(od.y), float(od.theta))
         except (KeyError, AttributeError, TypeError):
             return None
@@ -286,8 +273,7 @@ class PickAnyObject(Skill):
         self._dbg("rotate", angle_deg=math.degrees(angle))
         od = self._odom_xyt()
         if od is None:
-            self.mobility.send_cmd_vel(0.0, math.copysign(0.35, angle),
-                                       abs(angle) / 0.35)
+            self.mobility.send_cmd_vel(0.0, math.copysign(0.35, angle), abs(angle) / 0.35)
             time.sleep(abs(angle) / 0.35 + 0.4)
             return
         target = od[2] + angle
@@ -299,8 +285,7 @@ class PickAnyObject(Skill):
             if od is None:
                 break
             err = math.atan2(math.sin(target - od[2]), math.cos(target - od[2]))
-            if abs(err) < (tol if tol is not None
-                           else math.radians(self._p["rot_tol_deg"])):
+            if abs(err) < (tol if tol is not None else math.radians(self._p["rot_tol_deg"])):
                 break
             wz_max = self._p["rot_wz_max"]
             wz = max(-wz_max, min(wz_max, self._p["rot_kp"] * err))
@@ -319,8 +304,7 @@ class PickAnyObject(Skill):
         od = self._odom_xyt()
         if od is None:
             self.logger.warning("[PickAnyObject] no odom — open-loop drive")
-            self.mobility.send_cmd_vel(math.copysign(0.08, dist), 0.0,
-                                       abs(dist) / 0.08)
+            self.mobility.send_cmd_vel(math.copysign(0.08, dist), 0.0, abs(dist) / 0.08)
             time.sleep(abs(dist) / 0.08 + 0.4)
             return
         x0, y0 = od[0], od[1]
@@ -336,8 +320,7 @@ class PickAnyObject(Skill):
             if err < tol:
                 break
             v = math.copysign(
-                max(self._p["drive_v_min"],
-                    min(self._p["drive_v_max"], self._p["drive_kp"] * err)),
+                max(self._p["drive_v_min"], min(self._p["drive_v_max"], self._p["drive_kp"] * err)),
                 dist,
             )
             self.mobility.send_cmd_vel(v, 0.0, 0.15)
@@ -359,7 +342,9 @@ class PickAnyObject(Skill):
             target = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         for _ in range(2):
             self.manipulation.move_to_joint_positions(
-                joint_positions=target, duration=3, blocking=True,
+                joint_positions=target,
+                duration=3,
+                blocking=True,
             )
             time.sleep(0.3)
 
@@ -376,13 +361,23 @@ class PickAnyObject(Skill):
                 return xy
         return None
 
+    def _box_px(self):
+        """[cu, cv, half, accept] pick box in image px, or None off-image.
+        Sent on run_start/params events; the webapp overlay draws this box
+        instead of mirroring the aim knobs and camera model in JS."""
+        c = floor_to_pixel(self._p["sweet_x"], self._p["box_y"], self._p["tilt_deg"])
+        if c is None:
+            return None
+        half = self._p["box_half_px"]
+        return [c[0], c[1], half, half * self._p["accept_frac"]]
+
     def _sweet_box(self):
         """(center_px, outer_half, accept_half). Stop only inside accept."""
-        c = floor_to_pixel(self._p["sweet_x"], self._p["box_y"],
-                           self._p["tilt_deg"])
-        assert c is not None, "pick box off-image — check tilt_deg/sweet_x"
-        half = self._p["box_half_px"]
-        return c, half, half * self._p["accept_frac"]
+        box = self._box_px()
+        if box is None:  # reachable via live tuning; assert would vanish under -O
+            raise RuntimeError("pick box off-image — check tilt_deg/sweet_x")
+        cu, cv, half, accept = box
+        return (cu, cv), half, accept
 
     def _gray_frame(self):
         img = self.main_image
@@ -421,8 +416,7 @@ class PickAnyObject(Skill):
 
             now = time.time()
             if now - last_dbg > 0.1:
-                self._dbg("servo", px=[u, v], box=[cu, cv, half, accept],
-                          inside=inside)
+                self._dbg("servo", px=[u, v], box=[cu, cv, half, accept], inside=inside)
                 last_dbg = now
 
             if inside:
@@ -435,10 +429,8 @@ class PickAnyObject(Skill):
             in_box = 0
 
             # Deadband = accept (inner) box; right -> -wz, too close (low) -> -vx.
-            wz = _servo_vel(u - cu, self._p["follow_gain_ang"],
-                            self._p["rot_wz_min"], self._p["rot_wz_max"], accept)
-            vx = _servo_vel(v - cv, self._p["follow_gain_lin"],
-                            self._p["drive_v_min"], self._p["drive_v_max"], accept)
+            wz = _servo_vel(u - cu, self._p["follow_gain_ang"], self._p["rot_wz_min"], self._p["rot_wz_max"], accept)
+            vx = _servo_vel(v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept)
             self.mobility.send_cmd_vel(vx, wz, 0.15)
             time.sleep(0.03)
         self._stop_base()
@@ -467,7 +459,7 @@ class PickAnyObject(Skill):
             if px2 is None:
                 self._dbg("position_done", xy=None, reason="lost")
                 return None
-            (cu, cv), half, accept = self._sweet_box()
+            (cu, cv), _half, accept = self._sweet_box()
             if xy2 is not None and _inside_box(px2, cu, cv, accept):
                 self._dbg("position_done", xy=xy2, attempts=attempt)
                 return xy2
@@ -489,8 +481,7 @@ class PickAnyObject(Skill):
                     return None
             (cu, cv), half, accept = self._sweet_box()
             inside = xy is not None and _inside_box(px, cu, cv, accept)
-            self._dbg("position", step=step, px=px, xy=xy,
-                      box=[cu, cv, half, accept], inside=inside)
+            self._dbg("position", step=step, px=px, xy=xy, box=[cu, cv, half, accept], inside=inside)
             if inside:
                 self._dbg("position_done", xy=xy, steps=step)
                 return xy
@@ -512,14 +503,18 @@ class PickAnyObject(Skill):
         """Wrist Gemini box -> (center_px, box) or (None, None)."""
         time.sleep(self._p["wrist_settle_s"])
         img = self.wrist_image
-        text = self._gemini_call(
-            img,
-            f"Wrist camera on a robot gripper, looking down at the floor. "
-            f"Find '{prompt}' on the floor. Ignore the gripper fingers "
-            "themselves. Return ONLY a JSON list of matches, each "
-            '{"box_2d":[ymin,xmin,ymax,xmax]} normalized 0-1000, best first, '
-            "each box TIGHT around its object. Empty list if not visible.",
-        ) if img else None
+        text = (
+            self._gemini_call(
+                img,
+                f"Wrist camera on a robot gripper, looking down at the floor. "
+                f"Find '{prompt}' on the floor. Ignore the gripper fingers "
+                "themselves. Return ONLY a JSON list of matches, each "
+                '{"box_2d":[ymin,xmin,ymax,xmax]} normalized 0-1000, best first, '
+                "each box TIGHT around its object. Empty list if not visible.",
+            )
+            if img
+            else None
+        )
         box = vision.parse_det_box(text)
         px = (box[0] + box[2] / 2.0, box[1] + box[3] / 2.0) if box else None
         self._dbg("wrist_seed", z=z, px=px)
@@ -585,7 +580,7 @@ class PickAnyObject(Skill):
             return self._wrist_done(tx, ty, z, "not seen")
 
         deadline = time.time() + WRIST_ALIGN_TIMEOUT_S
-        streak = 0    # verified matches since the arm last moved
+        streak = 0  # verified matches since the arm last moved
         centered = 0  # consecutive matches INSIDE the box
         reason = "reached stop z"
         while z > p["wrist_stop_z"] + 1e-6:
@@ -616,11 +611,9 @@ class PickAnyObject(Skill):
 
             err_u = px[0] - p["wrist_box_u"]
             err_v = px[1] - p["wrist_box_v"]
-            inside = _inside_box(px, p["wrist_box_u"], p["wrist_box_v"],
-                                 p["wrist_half_px"])
+            inside = _inside_box(px, p["wrist_box_u"], p["wrist_box_v"], p["wrist_half_px"])
             centered = centered + 1 if inside else 0
-            self._dbg("wrist_servo", px=px, z=z, inside=inside,
-                      tx=x, ty=y, ee=self._ee_xyz())
+            self._dbg("wrist_servo", px=px, z=z, inside=inside, tx=x, ty=y, ee=self._ee_xyz())
             if streak < 2:
                 continue  # watch one more frame before trusting it
             if inside and centered < 2:
@@ -638,9 +631,9 @@ class PickAnyObject(Skill):
                 x, y = armlib.clamp_reach(x, y)
                 # feed-forward: expect the blob at the box center next frame
                 tracker.guess = (p["wrist_box_u"], p["wrist_box_v"])
-            armlib.move_checked(self.manipulation, x, y, z,
-                                pitch=p["wrist_pitch"],
-                                duration=p["wrist_move_s"], logger=self.logger)
+            armlib.move_checked(
+                self.manipulation, x, y, z, pitch=p["wrist_pitch"], duration=p["wrist_move_s"], logger=self.logger
+            )
             streak = 0
             centered = 0  # view shifted — re-confirm centering
 
@@ -650,33 +643,37 @@ class PickAnyObject(Skill):
         """WRIST_SEARCH_ARM aimed at bearing; pins IK to elbow-up branch."""
         a = WRIST_SEARCH_ARM
         j6 = self._gripper_j6()
-        pose = [bearing, a[1], a[2],
-                self._p["wrist_pitch"] - a[1] - a[2], a[4],
-                j6 if j6 is not None else 0.0]
-        self.manipulation.move_to_joint_positions(
-            joint_positions=pose, duration=self._p["hover_s"], blocking=True)
+        pose = [bearing, a[1], a[2], self._p["wrist_pitch"] - a[1] - a[2], a[4], j6 if j6 is not None else 0.0]
+        self.manipulation.move_to_joint_positions(joint_positions=pose, duration=self._p["hover_s"], blocking=True)
         time.sleep(0.3)
         self._dbg("hover", ee=self._ee_xyz())
 
     def _open_gripper_checked(self):
         """Open gripper with trip recovery."""
         armlib.open_checked(
-            self.manipulation, self._gripper_j6, logger=self.logger,
+            self.manipulation,
+            self._gripper_j6,
+            logger=self.logger,
             on_reboot=lambda j6: self._dbg("gripper_reboot", j6=j6),
         )
 
     def _push_to_floor(self, x, y, z_from, deep):
         """Blind descent ladder to floor. Failed rung = contact; abort if still high."""
         p = self._p
-        rungs = [p["descend_z1"], p["descend_z2"], p["descend_z3"],
-                 0.0 if deep else p["floor_z"]]
+        rungs = [p["descend_z1"], p["descend_z2"], p["descend_z3"], 0.0 if deep else p["floor_z"]]
         for z in rungs:
             if z >= z_from - 1e-6:
                 continue
             self._checkpoint()
             ok = self.manipulation.move_to_cartesian_pose(
-                x=x, y=y, z=z, roll=0.0, pitch=p["arm_pitch"], yaw=0.0,
-                duration=p["descend_s"], blocking=True,
+                x=x,
+                y=y,
+                z=z,
+                roll=0.0,
+                pitch=p["arm_pitch"],
+                yaw=0.0,
+                duration=p["descend_s"],
+                blocking=True,
             )
             self._dbg("descend", z=z, ok=bool(ok), ee=self._ee_xyz())
             if not ok:
@@ -692,34 +689,29 @@ class PickAnyObject(Skill):
         """Close, joint-space twist+lift (IK would unwind j5). Hold full close cmd."""
         p = self._p
         j6_open = self._gripper_j6()
-        armlib.close(self.manipulation, strength=p["close_strength"],
-                     duration=p["close_s"])
+        armlib.close(self.manipulation, strength=p["close_strength"], duration=p["close_s"])
         time.sleep(p["close_settle_s"])
-        self._dbg("close", j6_open=j6_open, j6=self._gripper_j6(),
-                  strength=p["close_strength"])
+        self._dbg("close", j6_open=j6_open, j6=self._gripper_j6(), strength=p["close_strength"])
 
         grip = -p["close_strength"]
         try:
             j = list(self.joint_states["position"][:6])
             j[4] = max(-1.4, min(1.4, j[4] + p["twist_rad"]))
             j[5] = grip
-            self.manipulation.move_to_joint_positions(
-                joint_positions=j, duration=1.0, blocking=True)
+            self.manipulation.move_to_joint_positions(joint_positions=j, duration=1.0, blocking=True)
             time.sleep(0.3)
             self._dbg("twist", j4=j[4])
             j = list(self.joint_states["position"][:6])
             j[1] = max(-1.4, j[1] - p["lift_rad"])
             j[5] = grip
-            self.manipulation.move_to_joint_positions(
-                joint_positions=j, duration=2.0, blocking=True)
+            self.manipulation.move_to_joint_positions(joint_positions=j, duration=2.0, blocking=True)
             time.sleep(0.3)
             self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6())
         except (KeyError, IndexError, TypeError):
-            armlib.move_checked(self.manipulation, x, y, 0.22,
-                                pitch=p["arm_pitch"], duration=2.0, tol=0.10,
-                                logger=self.logger)
-            self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6(),
-                      ik_fallback=True)
+            armlib.move_checked(
+                self.manipulation, x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol=0.10, logger=self.logger
+            )
+            self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6(), ik_fallback=True)
 
     def _grasp_at(self, prompt, xy, deep=False):
         """Full grasp at floor xy (base_link). Reads live self._p knobs."""
@@ -728,10 +720,8 @@ class PickAnyObject(Skill):
 
         grab_px = floor_to_pixel(x + p["grasp_x_off"], y, p["tilt_deg"])
         obj_px = floor_to_pixel(xy[0], xy[1], p["tilt_deg"])
-        clamped = (abs((xy[0] - p["grasp_x_off"]) - x) > 1e-4
-                   or abs(xy[1] - y) > 1e-4)
-        self._dbg("grasp", xy=xy, tx=x, ty=y, deep=deep,
-                  grab_px=grab_px, obj_px=obj_px, clamped=clamped)
+        clamped = abs((xy[0] - p["grasp_x_off"]) - x) > 1e-4 or abs(xy[1] - y) > 1e-4
+        self._dbg("grasp", xy=xy, tx=x, ty=y, deep=deep, grab_px=grab_px, obj_px=obj_px, clamped=clamped)
 
         self._open_gripper_checked()
 
@@ -740,9 +730,9 @@ class PickAnyObject(Skill):
             x, y, z = self._wrist_servo(prompt, x, y)
         else:
             z = p["hover_z"]
-            armlib.move_checked(self.manipulation, x, y, z,
-                                pitch=p["arm_pitch"], duration=p["hover_s"],
-                                logger=self.logger)
+            armlib.move_checked(
+                self.manipulation, x, y, z, pitch=p["arm_pitch"], duration=p["hover_s"], logger=self.logger
+            )
             self._dbg("hover", ee=self._ee_xyz())
 
         self._push_to_floor(x, y, z, deep)
@@ -761,17 +751,22 @@ class PickAnyObject(Skill):
         wrist_note = (
             " Image 2 is the WRIST camera next to the gripper fingers "
             "(mirrored) — the object may be visible held in the fingers there."
-            if len(images) > 1 else ""
+            if len(images) > 1
+            else ""
         )
-        floor_text = self._gemini_call(
-            images,
-            f"Robot just tried to pick up '{prompt}'. Image 1 is the head "
-            f"camera looking at the floor.{wrist_note} "
-            f"Is '{prompt}' lying ON the floor/carpet anywhere in view? "
-            "Something hanging from the robot's gripper or held between the "
-            "gripper fingers does NOT count as on the floor. "
-            "Answer only YES or NO.",
-        ) if images else None
+        floor_text = (
+            self._gemini_call(
+                images,
+                f"Robot just tried to pick up '{prompt}'. Image 1 is the head "
+                f"camera looking at the floor.{wrist_note} "
+                f"Is '{prompt}' lying ON the floor/carpet anywhere in view? "
+                "Something hanging from the robot's gripper or held between the "
+                "gripper fingers does NOT count as on the floor. "
+                "Answer only YES or NO.",
+            )
+            if images
+            else None
+        )
         floor_clear = bool(floor_text) and "NO" in floor_text.upper()
         j6_ok = j6 is not None and j6 > GRIPPER_EMPTY_J6 + 0.02
         held = floor_clear and j6_ok
@@ -779,19 +774,18 @@ class PickAnyObject(Skill):
             f"[PickAnyObject] verify: floor={floor_text!r} j6={j6} "
             f"({len(images)} cams) -> {'HELD' if held else 'NOT HELD'}"
         )
-        self._dbg("verify", floor_clear=floor_clear, j6=j6, held=held,
-                  cams=len(images))
+        self._dbg("verify", floor_clear=floor_clear, j6=j6, held=held, cams=len(images))
         return held
 
     def execute(self, prompt: str = "the sock", max_base_steps: int = 10):
         """Pick up `prompt` from the floor. max_base_steps unused (compat)."""
         if self._proxy is None:
             return "Innate proxy not configured (INNATE_SERVICE_KEY)", SkillResult.FAILURE
-        if self.manipulation is None or self.mobility is None:
-            return "Manipulation/mobility interface not available", SkillResult.FAILURE
+        if self.manipulation is None or self.mobility is None or self.head is None:
+            return "Manipulation/mobility/head interface not available", SkillResult.FAILURE
 
         self._ensure_debug_io()
-        self._dbg("run_start", prompt=prompt, params=dict(self._p))
+        self._dbg("run_start", prompt=prompt, params=dict(self._p), box=self._box_px())
 
         holding = False
         try:
@@ -828,8 +822,7 @@ class PickAnyObject(Skill):
                 )
             self.say("I couldn't get a grip on it.")
             return (
-                f"Grasp missed — '{prompt}' is still on the floor (verified after "
-                "backing up)",
+                f"Grasp missed — '{prompt}' is still on the floor (verified after backing up)",
                 SkillResult.FAILURE,
             )
         except SkillCancelled:
@@ -844,8 +837,7 @@ class PickAnyObject(Skill):
                 self._rest_arm(keep_grip=holding)
             except Exception as e:  # noqa: BLE001
                 self.logger.warning(f"[PickAnyObject] rest-arm failed: {e}")
-            if self.head is not None:
-                self.head.set_position(0)
+            self.head.set_position(0)  # non-None: guarded at entry
 
     def cancel(self):
         self._cancelled = True
