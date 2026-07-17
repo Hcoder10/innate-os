@@ -20,7 +20,6 @@ class ArmUnhealthy(RuntimeError):
 
 
 def clamp_reach(x, y):
-    """Clamp (x, y) into the arm reach box."""
     return (max(REACH_X[0], min(REACH_X[1], x)), max(REACH_Y[0], min(REACH_Y[1], y)))
 
 

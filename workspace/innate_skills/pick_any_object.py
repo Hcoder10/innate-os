@@ -114,7 +114,6 @@ def _round_floats(v, nd=4):
 
 
 def _inside_box(px, cu, cv, half):
-    """True if pixel is within ±half of (cu, cv)."""
     return abs(px[0] - cu) <= half and abs(px[1] - cv) <= half
 
 
@@ -211,15 +210,13 @@ class PickAnyObject(Skill):
         self._dbg_pub.publish(String(data=json.dumps(_round_floats(fields))))
 
     def _checkpoint(self):
-        """Raise out of the run if cancel() latched. One raise here, one
-        `except SkillCancelled` in execute — no cancelled-as-None plumbing.
-        Deliberately NOT called during close/twist/lift: once the fingers
-        commit, aborting mid-grip would drag the object on the way home."""
+        """Raise out of the run if cancel() latched. Deliberately NOT called
+        during close/twist/lift: once the fingers commit, aborting mid-grip
+        would drag the object on the way home."""
         if self._cancelled:
             raise SkillCancelled("Pick cancelled")
 
     def _gemini_call(self, image_b64, question):
-        """Vision Q&A via gemlib."""
         return gemlib.ask_image(self._proxy, image_b64, question, logger=self.logger)
 
     def _detect_px(self, prompt):
@@ -540,9 +537,8 @@ class PickAnyObject(Skill):
         return x, y, z
 
     def _wrist_reseed(self, prompt, z, raw):
-        """Persistent tracking loss: one Gemini look + fresh color model
-        (the view changed). Returns (tracker, raw, fail_reason) — tracker
-        is None on failure, fail_reason "" on success."""
+        """Persistent tracking loss: one Gemini look + a fresh color model,
+        since the view has changed. -> (tracker|None, raw, fail_reason)."""
         px, box = self._wrist_seed(prompt, z)
         if px is None:
             return None, raw, "lost track"
@@ -555,9 +551,8 @@ class PickAnyObject(Skill):
         return tracker, raw, ""
 
     def _wrist_servo(self, prompt, tx, ty):
-        """Wrist CamShift servo: watch until 2 frames agree (arm still),
-        then act — one nudge toward the wrist box, or one wrist_z_step down
-        once it has been seen inside the box twice; repeat to wrist_stop_z.
+        """Wrist CamShift servo down to wrist_stop_z: nudge toward the wrist
+        box, or step down once the object has been seen inside it twice.
         A miss gets 2 frames of patience, then a Gemini re-seed (budget =
         wrist_steps - 1). Color model, not LK: the object grows/deforms
         during the descent and optical flow slides off.
@@ -740,9 +735,8 @@ class PickAnyObject(Skill):
         self._close_twist_lift(x, y)
 
     def _grasp_verified(self, prompt):
-        """Back up, then check floor clear + gripper not open. Gemini gets
-        BOTH cameras: the head view answers "is it still on the floor?", the
-        wrist view (mirrored) can show the object in the fingers so a held
+        """Back up, then check floor clear + gripper not open. Gemini gets both
+        cameras: the wrist view can show the object in the fingers, so a held
         object isn't mistaken for a dropped one."""
         self._drive(-VERIFY_BACKUP_M)
         time.sleep(self._p["settle_s"])

@@ -12,9 +12,6 @@ Callable from any skill's code as a plain function:
 
 (also from the agent, the webapp skills menu, and
 `scripts/innate skill run gripper_close`).
-
-The implementation lives in workspace/skill_lib/arm.py (close): torque on
-first so the claw still moves after an overload left the servo disabled.
 """
 
 from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult

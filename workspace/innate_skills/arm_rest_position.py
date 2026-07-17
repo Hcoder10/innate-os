@@ -25,14 +25,10 @@ from brain_client.skills.types import (
 )
 
 # joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
-# The folded rest shape, but with the wrist pitch (j4) lifted to 0.55 so the
-# gripper clears the floor instead of pitching down into it: at the old j4~0.87+
-# the gripper jammed into the ground and tripped/broke a servo when driven here
-# under torque.
-# These are the values the arm actually REACHES and HOLDS (j1/j2 clamp to their
-# limits, so commanding "more folded" just settles here). j4=0.30 lifts the
-# wrist ~2 cm further than the first floor-clearing try (0.55, where the
-# fingertips still grazed the floor) — verified live: ee_link z ~0.042 m.
+# Folded rest shape. j4=0.30 keeps the gripper off the floor (ee_link z ~0.042 m);
+# pitching it further down jams the fingers into the ground and trips a servo.
+# These are the values the arm reaches and HOLDS — j1/j2 sit at their limits, so
+# commanding "more folded" just settles here.
 REST_POSITION = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
 
 
@@ -85,7 +81,6 @@ class ArmRestPosition(Skill):
         if not success:
             return "Failed to send arm command", SkillResult.FAILURE
 
-        # Wait for motion to complete (with cancellation check)
         start_time = time.time()
         while time.time() - start_time < duration:
             if self._cancelled:

@@ -1,30 +1,18 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Pick overlays — live aim feedback for the pick_any_object skill, drawn over
-// the video stage while a run is active (run_start → run_end on
-// /pick_any_object/debug). Nothing shows when the skill is idle.
-//
-// The skill reprojects its grasp target back onto the head frame and sends the
-// pixel (grab_px) on the debug topic. We draw a reticle over the live video at
-// that pixel — the actual spot on the floor the fingers will close on. The
-// detection pixel from each localize event gets its own marker (green box
-// corners) so you see where Gemini found the object vs where the arm will
-// grab; it clears whenever the base starts moving, since a stored pixel no
-// longer matches the shifted view, and reappears on the next localization.
-// The head video is object-fit:contain (letterboxed, never cropped), so the
-// 640×480 pixel maps to the screen with a single uniform scale + centering.
-// When the ARM (wrist) camera is on the big stage instead, the same stage
-// hosts the wrist-align overlays: the goal box in raw wrist-image pixels
-// (wrist_box_u/v) and the skill's wrist detection marker.
+// Pick overlays — aim feedback for the pick_any_object skill, drawn over the
+// video stage between run_start and run_end on /pick_any_object/debug.
+// Head-camera overlays (grasp reticle, detection marker, pick box) only make
+// sense while the "main" stream is on the stage; the wrist-align overlays only
+// while "arm" is.
 
 import { PICK_DEBUG_TOPIC } from "../constants.js";
 
-// Live copies of the skill's aim params, seeded with the TUNABLE defaults
-// from pick_any_object.py. The skill broadcasts its full live dict on every
-// run_start and params debug event — we resync from those so the boxes are
-// drawn where the skill actually aims, not where the defaults say it would
-// (live tuning overrides survive in the running skill between runs).
+// Live copies of the skill's aim params, seeded with the TUNABLE defaults from
+// pick_any_object.py and resynced from every run_start/params debug event —
+// live tuning overrides survive in the running skill between runs, so the
+// defaults alone would draw the boxes where the skill no longer aims.
 // Display-only: never written back.
 const P = {
   sweet_x: 0.3,
@@ -46,13 +34,11 @@ function syncParams(params) {
   }
 }
 
-// Head-camera frame size the skill's grasp pixel is expressed in (IMG_W/IMG_H
-// in pick_any_object.py). Only a fallback — the live <video>'s intrinsic size
-// wins when known.
+// Fallback only — the live <video>'s intrinsic size wins when known.
 const IMG = { w: 640, h: 480 };
 
-// Head-camera geometry, mirrored from pick_any_object.py (URDF values) so the
-// pick box can be drawn without asking the skill.
+// Head-camera geometry, mirrored from workspace/skill_lib/geometry.py (URDF
+// values) so the pick box can be drawn without asking the skill.
 const HEAD_ORIGIN = [-0.040751, -0.0002, 0.25882];
 const CAM_IN_HEAD = [0.04327, 0.0297, -0.000275];
 const HFOV_DEG = 70;
@@ -75,7 +61,7 @@ function camPose(tiltDeg) {
 }
 
 /** Floor point (base_link x,y, z=0) -> image pixel, or null behind the camera.
- *  Mirror of floor_to_pixel in pick_any_object.py.
+ *  Mirror of floor_to_pixel in workspace/skill_lib/geometry.py.
  *  @param {number} x @param {number} y @param {number} tiltDeg */
 function floorToPixel(x, y, tiltDeg) {
   const { cam, fwd, right, down } = camPose(tiltDeg);
@@ -91,16 +77,13 @@ function floorToPixel(x, y, tiltDeg) {
  * @param {HTMLElement} parent cockpit root — must contain the .video-stage.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {import("../webrtcSession.js").WebRtcSession} [session]
- *   Video session — tells us which camera fills the big stage: head-camera
- *   overlays (reticle, pick box) only show on "main", wrist-align overlays
- *   only on "arm" (a floor pixel is meaningless on the wrist cam and vice
- *   versa).
+ *   Tells us which camera fills the big stage; overlays hide on the other one.
  * @returns {{ destroy: () => void }}
  */
 export function createPickOverlay(parent, rosClient, session) {
   const videoStage = /** @type {HTMLElement | null} */ (parent.querySelector(".video-stage"));
 
-  // Reticle drawn over the live video at the skill's grasp pixel.
+  // Grasp target: the spot on the floor the fingers will close on.
   const reticle = document.createElement("div");
   reticle.className = "picktune-grab";
   reticle.hidden = true;
@@ -114,8 +97,8 @@ export function createPickOverlay(parent, rosClient, session) {
     '<span class="picktune-grab-tag mono">grasp target</span>';
   if (videoStage) videoStage.appendChild(reticle);
 
-  // Detection marker: box corners around the pixel Gemini reported, in the
-  // detection color, so "seen here" and "grabbing here" read apart at a glance.
+  // Where Gemini reported the object, so "seen here" and "grabbing here" read
+  // apart at a glance.
   const seenMark = document.createElement("div");
   seenMark.className = "picktune-grab picktune-seen";
   seenMark.hidden = true;
@@ -127,31 +110,25 @@ export function createPickOverlay(parent, rosClient, session) {
     '<span class="picktune-grab-tag mono">detected</span>';
   if (videoStage) videoStage.appendChild(seenMark);
 
-  // The pick box: the positioning goal square, shown only while a run is
-  // active. Turns green while the skill reports the detection inside it.
+  // Positioning goal. The detection must land in the inner accept box (not
+  // just the outer guide) for the skill to stop driving.
   const boxGoal = document.createElement("div");
   boxGoal.className = "picktune-boxgoal";
   boxGoal.hidden = true;
-  // Inner accept box (accept_frac of the outer): the point must land in THIS
-  // to stop positioning. Greens when the skill reports inside; the outer stays
-  // a dim guide.
   boxGoal.innerHTML =
     '<span class="picktune-boxgoal-tag mono">pick box</span>' +
     '<div class="picktune-boxaccept"></div>';
   const boxAccept = /** @type {HTMLElement} */ (boxGoal.querySelector(".picktune-boxaccept"));
   if (videoStage) videoStage.appendChild(boxGoal);
 
-  // The wrist box: the wrist-align goal square, shown when the ARM camera is
-  // on the big stage during a run. Same idea as the pick box, but in raw
-  // wrist-image pixels (wrist_box_u/v) — no floor projection, the wrist cam
-  // has none.
+  // Wrist-align goal, in raw wrist-image pixels — no floor projection, the
+  // wrist cam has none.
   const wristBox = document.createElement("div");
   wristBox.className = "picktune-boxgoal";
   wristBox.hidden = true;
   wristBox.innerHTML = '<span class="picktune-boxgoal-tag mono">wrist box</span>';
   if (videoStage) videoStage.appendChild(wristBox);
 
-  // Wrist detection marker: where Gemini found the object on the wrist image.
   const wristMark = document.createElement("div");
   wristMark.className = "picktune-grab picktune-seen";
   wristMark.hidden = true;
@@ -165,32 +142,29 @@ export function createPickOverlay(parent, rosClient, session) {
 
   // ---- state ---------------------------------------------------------------
 
-  /** Skill's grasp target in 640×480 image px, or null when none is active. @type {{ u: number, v: number } | null} */
+  /** @type {{ u: number, v: number } | null} */
   let grabPx = null;
-  /** Latest detection pixel from localize; null after base motion shifts the view. @type {{ u: number, v: number } | null} */
+  /** Detection pixel from localize; null after base motion shifts the view.
+   *  @type {{ u: number, v: number } | null} */
   let seenPx = null;
-  /** Latest wrist-camera detection pixel from wrist_align. @type {{ u: number, v: number } | null} */
+  /** @type {{ u: number, v: number } | null} */
   let wristPx = null;
   let running = false;
 
   // ---- overlays over the live video ----------------------------------------
 
-  /** True when the head camera fills the big stage (a floor pixel only maps
-   *  onto that view). Defaults to true when no session was passed. */
+  /** Defaults to true when no session was passed. */
   function headCamPrimary() {
     return !session || session.primaryCamera?.name === "main";
   }
 
-  /** True when the wrist ("arm") camera fills the big stage — the view the
-   *  wrist-align box and detection marker live on. */
   function wristCamPrimary() {
     return session?.primaryCamera?.name === "arm";
   }
 
   /** Letterbox geometry of the live video inside the stage (object-fit:
    *  contain → one uniform scale + symmetric offsets), or null when no video
-   *  is up. Camera-agnostic — both cams are 640×480 and the video's intrinsic
-   *  size wins; callers gate on WHICH camera is primary.
+   *  is up. Camera-agnostic; callers gate on which camera is primary.
    *  @returns {{ s: number, offX: number, offY: number } | null} */
   function stageGeom() {
     const video = /** @type {HTMLVideoElement | null} */ (videoStage?.querySelector("video"));
@@ -204,10 +178,9 @@ export function createPickOverlay(parent, rosClient, session) {
     return { s, offX: (boxW - iw * s) / 2, offY: (boxH - ih * s) / 2 };
   }
 
-  /** Position (or hide) the image-pixel markers and the goal boxes over the
-   *  video — head-camera overlays when the head cam is primary, wrist-camera
-   *  overlays when the arm cam is. The goal boxes only show while a run is
-   *  active; a stale aim frame over an idle robot reads as noise. */
+  /** Position (or hide) every marker and goal box. The goal boxes only show
+   *  while a run is active; a stale aim frame over an idle robot reads as
+   *  noise. */
   function placeOverlays() {
     const g = stageGeom();
     const headG = g && headCamPrimary() ? g : null;
@@ -226,7 +199,6 @@ export function createPickOverlay(parent, rosClient, session) {
       el.style.top = `${geom.offY + px.v * geom.s}px`;
       el.hidden = false;
     }
-    // The wrist-align goal square.
     if (running && wristG) {
       const side = 2 * P.wrist_half_px * wristG.s;
       wristBox.style.left = `${wristG.offX + P.wrist_box_u * wristG.s}px`;
@@ -237,7 +209,6 @@ export function createPickOverlay(parent, rosClient, session) {
     } else {
       wristBox.hidden = true;
     }
-    // The pick box goal square.
     const center = running && headG ? floorToPixel(P.sweet_x, P.box_y, P.tilt_deg) : null;
     if (!headG || !center) {
       boxGoal.hidden = true;
@@ -248,17 +219,14 @@ export function createPickOverlay(parent, rosClient, session) {
     boxGoal.style.top = `${headG.offY + center.v * headG.s}px`;
     boxGoal.style.width = `${side}px`;
     boxGoal.style.height = `${side}px`;
-    // Inner accept box, centered, sized as a fraction of the outer.
     const acceptPct = `${P.accept_frac * 100}%`;
     boxAccept.style.width = acceptPct;
     boxAccept.style.height = acceptPct;
     boxGoal.hidden = false;
   }
 
-  // Video letterbox geometry shifts on any stage resize; the overlays' validity
-  // also flips when the primary camera or the stream changes (switch to wrist
-  // cam, stream drop). Re-place on both so a mid-grasp camera switch is instant,
-  // not delayed to the next debug event.
+  // Re-place on resize and on camera/stream changes, so a mid-grasp camera
+  // switch is instant rather than delayed to the next debug event.
   const onResize = () => placeOverlays();
   window.addEventListener("resize", onResize);
   const unsubSession = session ? session.onChange(() => placeOverlays()) : null;
@@ -293,8 +261,6 @@ export function createPickOverlay(parent, rosClient, session) {
         seenPx = Array.isArray(ev.px) ? { u: ev.px[0], v: ev.px[1] } : null;
         break;
       case "servo":
-        // High-rate (~10 Hz) optical-flow tracking updates during the follow:
-        // glide the marker to the tracked point and colour the box.
         if (Array.isArray(ev.px)) seenPx = { u: ev.px[0], v: ev.px[1] };
         boxGoal.classList.toggle("inside", ev.inside === true);
         break;
@@ -310,18 +276,14 @@ export function createPickOverlay(parent, rosClient, session) {
         break;
       case "grasp":
         grabPx = Array.isArray(ev.grab_px) ? { u: ev.grab_px[0], v: ev.grab_px[1] } : null;
-        // Pin the "detected" marker to the object point so the amber grasp
-        // target and the green object marker sit side by side — their gap is
-        // the reach clamp (grasp aims short when the object is out of reach).
+        // The gap between the two markers is the reach clamp — grasp aims
+        // short when the object is out of reach.
         if (Array.isArray(ev.obj_px)) seenPx = { u: ev.obj_px[0], v: ev.obj_px[1] };
         break;
       case "wrist_seed":
-        // A Gemini look on the wrist image (initial seed or re-seed on loss).
         wristPx = Array.isArray(ev.px) ? { u: ev.px[0], v: ev.px[1] } : null;
         break;
       case "wrist_servo":
-        // Per-cycle tracking during the servo descent: glide the marker,
-        // colour the box.
         if (Array.isArray(ev.px)) wristPx = { u: ev.px[0], v: ev.px[1] };
         wristBox.classList.toggle("inside", ev.inside === true);
         break;
