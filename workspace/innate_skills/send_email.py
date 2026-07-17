@@ -36,7 +36,7 @@ class SendEmail(Skill):
             "potential emergency is detected and assistance might be required."
         )
 
-    def execute(self, subject: str, message: str, recipients: list[str] | str = None):
+    def execute(self, subject: str, message: str, recipients: list[str] | str | None = None):
         """
         Sends an email to the specified recipient(s) (or default list if none provided).
 

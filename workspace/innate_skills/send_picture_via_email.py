@@ -38,7 +38,7 @@ class SendPictureViaEmail(Skill):
             "The view will be automatically attached."
         )
 
-    def execute(self, subject: str, message: str, recipient: str = None):
+    def execute(self, subject: str, message: str, recipient: str | None = None):
         """
         Sends an email with the last captured image attached.
 

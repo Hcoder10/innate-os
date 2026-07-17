@@ -1,39 +1,32 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Arm primitives shared by skills. The hardware lessons live here once.
+"""Shared arm primitives (blocking moves, recovery, reach clamp).
 
-Plain functions: pass the manipulation interface (and, where needed, a
-joint-state getter) explicitly — no ambient context, no Skill machinery.
-Rule of thumb: short blocking device commands, recovery sequences, and
-pure math belong here; anything long-running or cancellable stays a Skill.
-
-Import gotcha (applies to all of workspace/skill_lib): import at the TOP of
-a skill file. The skill loader puts the repo root on sys.path only while the
-skill module executes, so a lazy import inside execute() will not resolve.
+Pass interfaces explicitly. Import at TOP of skill files — lazy imports
+inside execute() fail (loader only puts repo root on path during load).
 """
 
 import math
 import time
 
-# The arm's grasp-reach box in base_link meters — beyond it, IK strains or
-# the fingers land short. The webapp draws this box (REACH in pickTunePanel.js).
+# Grasp reach box (base_link m).
 REACH_X = (0.22, 0.40)
 REACH_Y = (-0.10, 0.10)
 
 
 class ArmUnhealthy(RuntimeError):
-    """Servo brownout / refusal — abort loudly, never continue limp."""
+    """Servo brownout/refusal — abort, don't continue limp."""
 
 
 def clamp_reach(x, y):
-    """Clamp a grasp / servo target into the arm's reach box."""
+    """Clamp (x, y) into the arm reach box."""
     return (max(REACH_X[0], min(REACH_X[1], x)),
             max(REACH_Y[0], min(REACH_Y[1], y)))
 
 
 def ee_xyz(manipulation):
-    """Current end-effector position from FK, or None while state is absent."""
+    """FK end-effector (x,y,z), or None."""
     pose = manipulation.get_current_end_effector_pose()
     try:
         p = pose["position"]
@@ -43,7 +36,7 @@ def ee_xyz(manipulation):
 
 
 def gripper_j6(joint_states):
-    """Gripper joint (j6) from a joint_states dict, or None."""
+    """Gripper joint j6, or None."""
     try:
         return joint_states["position"][5] if joint_states else None
     except (KeyError, IndexError, TypeError):
@@ -51,8 +44,7 @@ def gripper_j6(joint_states):
 
 
 def recover(manipulation, logger=None):
-    """Reboot servos + torque on — the only cure for an overcurrent trip or
-    a brownout (torque_on alone can't clear a tripped servo's hardware error)."""
+    """Reboot servos + torque on (clears overcurrent trip / brownout)."""
     if logger:
         logger.warning("[arm] recovering (reboot + torque on)")
     manipulation.reboot_servos()
@@ -62,9 +54,7 @@ def recover(manipulation, logger=None):
 
 
 def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.05, logger=None):
-    """Cartesian move with a health check: verify FK landed within tol,
-    recover + retry once, then raise ArmUnhealthy rather than let a limp
-    arm continue into the floor."""
+    """Cartesian move; verify FK within tol, recover+retry once, else raise."""
     for attempt in (1, 2):
         ok = manipulation.move_to_cartesian_pose(
             x=x, y=y, z=z, roll=0.0, pitch=pitch, yaw=0.0,
@@ -84,11 +74,7 @@ def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.05, logger=No
 
 def open_checked(manipulation, get_j6, percent=100.0, duration=1.0,
                  logger=None, on_reboot=None):
-    """Open the gripper and VERIFY it opened. A prior hard close can
-    overcurrent-TRIP the gripper servo — a hardware error torque_on alone
-    can't clear — after which open silently does nothing and the hand stays
-    shut. If j6 says it didn't open, reboot to clear the trip and retry.
-    on_reboot(j6) is called before the reboot (telemetry hook)."""
+    """Open gripper and verify j6. Reboot+retry if tripped shut. on_reboot(j6) hook."""
     manipulation.torque_on()  # a torque-disabled servo won't move at all
     ok = manipulation.open_gripper(percent=percent, duration=duration, blocking=True)
     j6 = get_j6()
@@ -104,10 +90,7 @@ def open_checked(manipulation, get_j6, percent=100.0, duration=1.0,
 
 
 def close(manipulation, strength=0.0, duration=1.0):
-    """Close the gripper. strength = extra squeeze past the closed stop.
-    Keep it <= ~0.6 against a real object: higher stalls j6 at max current
-    on the fingers and overcurrent-trips the servo (open then no-ops until
-    a reboot)."""
+    """Close gripper. strength = extra squeeze; keep <=~0.6 or servo trips."""
     manipulation.torque_on()
     return bool(manipulation.close_gripper(strength=strength, duration=duration,
                                            blocking=True))

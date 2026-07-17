@@ -1,0 +1,14 @@
+{
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux",
+  "extraPaths": [
+    "ros2_ws/src/brain/brain_client",
+    "ros2_ws/src/cloud/clients/proxy-client",
+    "ros2_ws/install/brain_client/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/brain_messages/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/innate_cloud_msgs/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/mars_msgs/local/lib/python3.10/dist-packages",
+    "/opt/ros/humble/lib/python3.10/site-packages",
+    "/opt/ros/humble/local/lib/python3.10/dist-packages"
+  ]
+}

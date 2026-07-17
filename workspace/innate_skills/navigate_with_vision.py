@@ -100,17 +100,18 @@ class NavigateWithVision(Skill):
             self._send_feedback(msg)
             return msg, SkillResult.FAILURE
 
-        self._goal_handle = goal_future.result()
-        if not self._goal_handle.accepted:
+        goal_handle = goal_future.result()
+        if goal_handle is None or not goal_handle.accepted:
             msg = "Navigation goal was rejected."
             self.logger.info(msg)
             self._send_feedback(msg)
             return msg, SkillResult.FAILURE
+        self._goal_handle = goal_handle
 
         self.logger.info("Goal accepted — waiting for result …")
         self._send_feedback("Navigation started, waiting for completion …")
 
-        result_future = self._goal_handle.get_result_async()
+        result_future = goal_handle.get_result_async()
 
         # Wait for the result WITHOUT re-spinning self.node — the skills_server's
         # dedicated executor already services the result/feedback callbacks. Register
@@ -125,7 +126,7 @@ class NavigateWithVision(Skill):
         while not result_ready.wait(timeout=0.25):
             if self._cancel_requested.is_set():
                 self.logger.info("Cancel requested — forwarding to action server")
-                self._goal_handle.cancel_goal_async()
+                goal_handle.cancel_goal_async()
                 # Wait for the server to acknowledge the cancel.
                 result_ready.wait(timeout=10.0)
                 break

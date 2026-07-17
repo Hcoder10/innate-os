@@ -10,7 +10,9 @@ from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.duration import Duration
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
-from tf2_ros import TransformException
+# TransformException is re-exported from the compiled tf2_py module, which
+# pyright cannot introspect.
+from tf2_ros import TransformException  # pyright: ignore[reportAttributeAccessIssue]
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
@@ -68,8 +70,10 @@ class Nav2Controller:
         """
         navigator = self.navigator
         clock = navigator.get_clock()
-        deadline = clock.now() + Duration(seconds=timeout_sec)
-        min_stamp = clock.now() - Duration(seconds=max_age_sec)
+        # rclpy's Duration accepts float seconds; its unannotated default makes
+        # pyright infer int.
+        deadline = clock.now() + Duration(seconds=timeout_sec)  # pyright: ignore[reportArgumentType]
+        min_stamp = clock.now() - Duration(seconds=max_age_sec)  # pyright: ignore[reportArgumentType]
         while clock.now() < deadline:
             rclpy.spin_once(navigator, timeout_sec=0.05)
             try:

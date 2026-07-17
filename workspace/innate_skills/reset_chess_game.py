@@ -7,7 +7,7 @@ Reset Chess Game Skill - Resets the board state to the starting position.
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from brain_client.skills.types import Skill, SkillResult
 
@@ -72,7 +72,7 @@ class ResetChessGame(Skill):
         Args:
             robot_color: Which side the robot plays ('white' or 'black').
         """
-        robot_color = robot_color.strip().lower()
+        robot_color = cast(RobotColor, robot_color.strip().lower())
         if robot_color not in ROBOT_COLORS:
             return f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.", SkillResult.FAILURE
         if not self._is_calibrated():

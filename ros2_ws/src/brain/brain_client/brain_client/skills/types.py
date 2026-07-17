@@ -208,7 +208,7 @@ class Skill(ABC):
 
     @property
     @abstractmethod
-    def name(self):
+    def name(self) -> str:
         """
         The name of the skill.
         Must be defined by every subclass.
@@ -216,7 +216,7 @@ class Skill(ABC):
         pass
 
     @abstractmethod
-    def execute(self, *args, **kwargs):
+    def execute(self, *args, **kwargs) -> tuple:
         """
         Execute the skill.
 
@@ -389,14 +389,14 @@ class Skill(ABC):
                 return True
         return False
 
-    def guidelines(self):
+    def guidelines(self) -> str | None:
         """
         Optionally provide guidelines for this skill.
         Subclasses may override this method if guidelines are available.
         """
         return None
 
-    def guidelines_when_running(self):
+    def guidelines_when_running(self) -> str | None:
         """
         Optionally provide guidelines for this skill when it is running.
         Subclasses may override this method if guidelines are available.
