@@ -20,16 +20,31 @@
 
 import { PICK_DEBUG_TOPIC } from "../constants.js";
 
-// Display-only mirrors of the skill's aim defaults (TUNABLE in
-// pick_any_object.py) — the boxes are drawn from these, never written.
-const SWEET_X = 0.3;
-const BOX_Y = 0;
-const BOX_HALF_PX = 40;
-const ACCEPT_FRAC = 0.5;
-const TILT_DEG = -20;
-const WRIST_BOX_U = 320;
-const WRIST_BOX_V = 240;
-const WRIST_HALF_PX = 60;
+// Live copies of the skill's aim params, seeded with the TUNABLE defaults
+// from pick_any_object.py. The skill broadcasts its full live dict on every
+// run_start and params debug event — we resync from those so the boxes are
+// drawn where the skill actually aims, not where the defaults say it would
+// (live tuning overrides survive in the running skill between runs).
+// Display-only: never written back.
+const P = {
+  sweet_x: 0.3,
+  box_y: 0,
+  box_half_px: 40,
+  accept_frac: 0.5,
+  tilt_deg: -20,
+  wrist_box_u: 320,
+  wrist_box_v: 240,
+  wrist_half_px: 60,
+};
+
+/** Fold a params payload from the debug topic into P (unknown keys ignored).
+ *  @param {any} params */
+function syncParams(params) {
+  if (!params || typeof params !== "object") return;
+  for (const k of Object.keys(P)) {
+    if (typeof params[k] === "number" && Number.isFinite(params[k])) P[k] = params[k];
+  }
+}
 
 // Head-camera frame size the skill's grasp pixel is expressed in (IMG_W/IMG_H
 // in pick_any_object.py). Only a fallback — the live <video>'s intrinsic size
@@ -213,9 +228,9 @@ export function createPickOverlay(parent, rosClient, session) {
     }
     // The wrist-align goal square.
     if (running && wristG) {
-      const side = 2 * WRIST_HALF_PX * wristG.s;
-      wristBox.style.left = `${wristG.offX + WRIST_BOX_U * wristG.s}px`;
-      wristBox.style.top = `${wristG.offY + WRIST_BOX_V * wristG.s}px`;
+      const side = 2 * P.wrist_half_px * wristG.s;
+      wristBox.style.left = `${wristG.offX + P.wrist_box_u * wristG.s}px`;
+      wristBox.style.top = `${wristG.offY + P.wrist_box_v * wristG.s}px`;
       wristBox.style.width = `${side}px`;
       wristBox.style.height = `${side}px`;
       wristBox.hidden = false;
@@ -223,18 +238,18 @@ export function createPickOverlay(parent, rosClient, session) {
       wristBox.hidden = true;
     }
     // The pick box goal square.
-    const center = running && headG ? floorToPixel(SWEET_X, BOX_Y, TILT_DEG) : null;
+    const center = running && headG ? floorToPixel(P.sweet_x, P.box_y, P.tilt_deg) : null;
     if (!headG || !center) {
       boxGoal.hidden = true;
       return;
     }
-    const side = 2 * BOX_HALF_PX * headG.s;
+    const side = 2 * P.box_half_px * headG.s;
     boxGoal.style.left = `${headG.offX + center.u * headG.s}px`;
     boxGoal.style.top = `${headG.offY + center.v * headG.s}px`;
     boxGoal.style.width = `${side}px`;
     boxGoal.style.height = `${side}px`;
     // Inner accept box, centered, sized as a fraction of the outer.
-    const acceptPct = `${ACCEPT_FRAC * 100}%`;
+    const acceptPct = `${P.accept_frac * 100}%`;
     boxAccept.style.width = acceptPct;
     boxAccept.style.height = acceptPct;
     boxGoal.hidden = false;
@@ -254,12 +269,17 @@ export function createPickOverlay(parent, rosClient, session) {
   function onDebugEvent(ev) {
     switch (ev.ev) {
       case "run_start":
+        syncParams(ev.params); // run_start carries the skill's full live dict
         grabPx = null;
         seenPx = null;
         wristPx = null;
         boxGoal.classList.remove("inside");
         wristBox.classList.remove("inside");
         running = true;
+        break;
+      case "params":
+        // Tuning ack (mid-run retunes included) — move the boxes live.
+        syncParams(ev.params);
         break;
       case "run_end":
         running = false;
