@@ -31,7 +31,7 @@ import shutil
 import ssl
 import subprocess
 import sys
-from email.utils import formatdate
+from email.utils import formatdate, parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -190,19 +190,65 @@ CACHEABLE_ASSET_PREFIXES = ("/models/", "/robot/", "/physics/")
 ASSET_MAX_AGE_SECONDS = 86400
 
 
-def cache_validators(path: Path) -> tuple[str, str]:
-    """ETag + Last-Modified for a file, from a single stat().
+def _sim_assets_tag() -> str:
+    """The pinned sim-assets release tag, mixed into the 3D assets' ETag.
+
+    Needed because the bundle is extracted from a tarball that preserves
+    epoch-0 mtimes — 1319 of the 1322 served asset files have mtime 0 — so a
+    bare mtime+size validator degrades to size-only for them, and a refreshed
+    asset whose size happened to match would keep its ETag and be served stale.
+    The tag is a content hash of the whole bundle and changes on every
+    republish, which is the only boundary at which these files can change."""
+    try:
+        return json.loads((SIM_VIEWER_ROOT.parent / "sim-assets.lock").read_text())["tag"]
+    except Exception:
+        return "noassets"
+
+
+SIM_ASSETS_TAG = _sim_assets_tag()
+
+
+def cache_validators(path: Path, prefix: str = "") -> tuple[str, str, float]:
+    """ETag + Last-Modified (+ raw mtime) for a file, from a single stat().
 
     Deliberately NOT a content hash: the body has to be read and digested to
     produce one, so every conditional request paid a full read + SHA-1 of the
     34MB apartment glb just to answer a bodyless 304. mtime+size is the same
     validator nginx and Apache use — it changes on any write, and costs one
-    stat() regardless of file size."""
+    stat() regardless of file size.
+
+    prefix qualifies the ETag for files whose mtime carries no information (see
+    _sim_assets_tag); app files keep real mtimes and need none."""
     st = path.stat()
-    return f'"{st.st_mtime_ns:x}-{st.st_size:x}"', formatdate(st.st_mtime, usegmt=True)
+    etag = f'"{prefix}{"-" if prefix else ""}{st.st_mtime_ns:x}-{st.st_size:x}"'
+    return etag, formatdate(st.st_mtime, usegmt=True), st.st_mtime
 
 
-def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
+def client_has_current(etag: str, mtime: float, if_none_match: str, if_modified_since: str) -> bool:
+    """Whether the client's cached copy is still current, per RFC 9110 §13.1.3:
+    If-None-Match wins outright when present, and only in its absence does
+    If-Modified-Since get a say.
+
+    Honouring the date matters because we advertise Last-Modified: a client
+    whose cached ETag was evicted, or a proxy that strips ETags, revalidates
+    with the date alone. Without this it misses the 304 and re-downloads the
+    whole asset — 34MB for the apartment glb."""
+    if if_none_match:
+        return if_none_match == etag
+    if not if_modified_since:
+        return False
+    try:
+        since = parsedate_to_datetime(if_modified_since)
+    except (TypeError, ValueError):
+        return False  # malformed date -> treat as no validator, send the body
+    if since is None:
+        return False
+    # HTTP-dates carry whole seconds, so compare at that resolution: a
+    # sub-second-newer file must not read as modified against its own date.
+    return int(mtime) <= int(since.timestamp())
+
+
+def sim_viewer_response(path: str, if_none_match: str = "", if_modified_since: str = "") -> "Response | None":
     clean = path.split("?", 1)[0].split("#", 1)[0]
     for prefix, base in SIM_VIEWER_ROUTES.items():
         if not clean.startswith(prefix):
@@ -214,12 +260,12 @@ def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None"
         # on every page mount now that the SPA router remounts the stage per
         # visit. Validate from stat() and return 304 *before* touching the body,
         # so an unchanged asset costs a stat instead of a full read.
-        etag, last_modified = cache_validators(target)
+        etag, last_modified, mtime = cache_validators(target, prefix=SIM_ASSETS_TAG)
         cache_control = (
             f"public, max-age={ASSET_MAX_AGE_SECONDS}" if clean.startswith(CACHEABLE_ASSET_PREFIXES) else "no-cache"
         )
         validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": cache_control}
-        if if_none_match == etag:
+        if client_has_current(etag, mtime, if_none_match, if_modified_since):
             return Response(304, "Not Modified", Headers(validators), b"")
         body = target.read_bytes()
         ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
@@ -228,7 +274,7 @@ def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None"
     return None
 
 
-def static_response(path: str, if_none_match: str = "") -> Response:
+def static_response(path: str, if_none_match: str = "", if_modified_since: str = "") -> Response:
     clean = path.split("?", 1)[0].split("#", 1)[0]
     target = (ROOT / clean.lstrip("/")).resolve()
     if target.is_dir():
@@ -249,9 +295,9 @@ def static_response(path: str, if_none_match: str = "") -> Response:
     # Cache-Control stays no-cache so a redeploy is always picked up — the
     # browser still revalidates every load, but revalidation is a tiny
     # conditional request that never reads the file.
-    etag, last_modified = cache_validators(body_path)
+    etag, last_modified, mtime = cache_validators(body_path)
     validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": "no-cache"}
-    if if_none_match == etag:
+    if client_has_current(etag, mtime, if_none_match, if_modified_since):
         return Response(304, "Not Modified", Headers(validators), b"")
     body = body_path.read_bytes()
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
@@ -316,7 +362,12 @@ async def _dispatch_request(connection, request):
         return None  # proceed with the WebSocket handshake
     if request.path.split("?", 1)[0] == "/config.json":
         return await asyncio.to_thread(config_response)
-    sim_viewer = await asyncio.to_thread(sim_viewer_response, request.path, request.headers.get("If-None-Match", ""))
+    sim_viewer = await asyncio.to_thread(
+        sim_viewer_response,
+        request.path,
+        request.headers.get("If-None-Match", ""),
+        request.headers.get("If-Modified-Since", ""),
+    )
     if sim_viewer is not None:
         return sim_viewer
     split = urlsplit(request.path)
@@ -348,7 +399,12 @@ async def _dispatch_request(connection, request):
         if request.headers.get("X-Requested-By", "") != "innate-webapp":
             return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
-    return await asyncio.to_thread(static_response, request.path, request.headers.get("If-None-Match", ""))
+    return await asyncio.to_thread(
+        static_response,
+        request.path,
+        request.headers.get("If-None-Match", ""),
+        request.headers.get("If-Modified-Since", ""),
+    )
 
 
 async def relay(source, sink):
