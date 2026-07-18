@@ -183,6 +183,7 @@ class SkillsActionServer(Node):
         self._reload_skills_srv = self.create_service(
             ReloadSkillsAgents, "/brain/reload_skills", self._handle_reload_skills_agents
         )
+        self._cancel_skill_srv = self.create_service(Trigger, "/brain/cancel_skill", self._handle_cancel_skill)
 
         self.get_logger().debug("Skills Action Server has started.")
         self.get_logger().info(f"Total skills available: {self.catalog.code_count + self.catalog.physical_count}")
@@ -249,6 +250,25 @@ class SkillsActionServer(Node):
         except Exception as e:
             response.success = False
             response.message = str(e)
+        return response
+
+    def _handle_cancel_skill(self, request, response):
+        """Cancel the currently running skill, whoever started it.
+
+        The action protocol only lets the goal's sender cancel; a client that
+        merely sees the run on /brain/skill_status_update (the mobile app,
+        another webapp tab) holds no goal handle — this service is its Stop.
+        """
+        with self._skill_execution_lock:
+            goal_handle = self._active_goal_handle if self._skill_running else None
+        if goal_handle is None:
+            response.success = False
+            response.message = "No skill is running"
+            return response
+        skill_type = goal_handle.request.skill_type
+        self.cancel_callback(goal_handle)
+        response.success = True
+        response.message = f"Cancellation requested for '{skill_type}'"
         return response
 
     def _handle_reload_skills_agents(self, request, response):

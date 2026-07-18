@@ -171,6 +171,9 @@ export const PINNED_SKILLS = ["navigate with vision", "navigate with position", 
 // drives. Skill roster + per-skill input schema come from AVAILABLE_SKILLS_TOPIC.
 export const EXECUTE_SKILL_ACTION = "/execute_skill";
 export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
+// Cancels the running skill regardless of which client sent its goal (action
+// cancels only bind to the sender). std_srvs/Trigger.
+export const CANCEL_SKILL_SERVICE = "/brain/cancel_skill";
 
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;
