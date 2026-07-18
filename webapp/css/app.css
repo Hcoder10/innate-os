@@ -5428,7 +5428,8 @@ button {
   background: rgb(232 163 61 / 22%);
 }
 
-/* Operator-mic + speaker + stt toggles at the head of the composer — stretch to the input height. */
+/* Listen + operator-mic + speaker + stt toggles at the head of the composer — stretch to the input height. */
+.agent-compose .audio-toggle,
 .agent-compose .mic-toggle,
 .agent-compose .speaker-toggle,
 .agent-compose .stt-toggle {

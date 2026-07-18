@@ -259,6 +259,7 @@ export class WebRtcSession {
     if (!this.#started || this.#ros.state !== "connected") return;
     // Adding/removing the recvonly mic m-line requires a fresh offer, so re-handshake rather than sending a
     // reneg-free active-toggle START. #onOffer binds the mic track to the new offer's recvonly audio m-line.
+    console.log("[webrtc] operator mic ->", on, "(mic m-line is per-request: full re-handshake, not a live flip)");
     this.#handshakeAttempts = 0;
     this.#handshake();
   }

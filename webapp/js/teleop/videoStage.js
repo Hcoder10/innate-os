@@ -294,21 +294,36 @@ export function createSpeakerToggle(parent, rosClient) {
   };
   render();
 
+  const publishGate = (why) => {
+    if (rosClient.state !== "connected") {
+      console.warn("[speaker-gate] not connected — gate", on, "not sent (" + why + ")");
+      return;
+    }
+    rosClient.publish(REMOTE_MIC_SPEAKER_TOPIC, { data: on });
+    console.log("[speaker-gate] ->", on, "(" + why + ")");
+  };
+
   button.addEventListener("click", () => {
     on = !on;
-    rosClient.publish(REMOTE_MIC_SPEAKER_TOPIC, { data: on });
+    publishGate("click");
     render();
   });
 
-  // Re-assert the gate whenever the socket comes up (the robot's player restarts muted).
+  // Re-assert the gate on reconnect AND periodically while on: publish is fire-and-forget
+  // (dropped if the player node isn't up yet / rws hasn't seen the topic), and the robot's
+  // player restarts muted — a lost Bool would strand the button visually on but silent.
   const unsub = rosClient.onStateChange((state) => {
-    if (state === "connected") rosClient.publish(REMOTE_MIC_SPEAKER_TOPIC, { data: on });
+    if (state === "connected") publishGate("reconnect");
   });
+  const reassert = setInterval(() => {
+    if (on) publishGate("re-assert");
+  }, 5000);
 
   parent.appendChild(button);
   return {
     destroy() {
       unsub();
+      clearInterval(reassert);
       button.remove();
     },
   };
@@ -342,21 +357,36 @@ export function createSttToggle(parent, rosClient) {
   };
   render();
 
+  const publishGate = (why) => {
+    if (rosClient.state !== "connected") {
+      console.warn("[stt-gate] not connected — gate", on, "not sent (" + why + ")");
+      return;
+    }
+    rosClient.publish(REMOTE_MIC_STT_TOPIC, { data: on });
+    console.log("[stt-gate] ->", on, "(" + why + ")");
+  };
+
   button.addEventListener("click", () => {
     on = !on;
-    rosClient.publish(REMOTE_MIC_STT_TOPIC, { data: on });
+    publishGate("click");
     render();
   });
 
-  // Re-assert the gate whenever the socket comes up (the remote STT stream defaults off).
+  // Re-assert on reconnect AND periodically while on: publish is fire-and-forget and the
+  // remote STT stream defaults off, so a Bool lost during an input_manager restart would
+  // strand the button visually on with no transcription.
   const unsub = rosClient.onStateChange((state) => {
-    if (state === "connected") rosClient.publish(REMOTE_MIC_STT_TOPIC, { data: on });
+    if (state === "connected") publishGate("reconnect");
   });
+  const reassert = setInterval(() => {
+    if (on) publishGate("re-assert");
+  }, 5000);
 
   parent.appendChild(button);
   return {
     destroy() {
       unsub();
+      clearInterval(reassert);
       button.remove();
     },
   };

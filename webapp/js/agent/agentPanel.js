@@ -14,16 +14,17 @@
 // (it originated in the old teleop chat pane, since removed).
 
 import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
-import { createMicToggle, createSpeakerToggle, createSttToggle } from "../teleop/videoStage.js";
+import { createAudioToggle, createMicToggle, createSpeakerToggle, createSttToggle } from "../teleop/videoStage.js";
 
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
  * @param {import("../webrtcSession.js").WebRtcSession} session
+ * @param {HTMLAudioElement} [audioEl] video stage's hidden <audio> — enables the robot-mic listen toggle
  * @returns {{ destroy: () => void }}
  */
-export function createAgentPanel(root, rosClient, agentState, session) {
+export function createAgentPanel(root, rosClient, agentState, session, audioEl) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
 
   const panel = document.createElement("section");
@@ -96,6 +97,10 @@ export function createAgentPanel(root, rosClient, agentState, session) {
   // /audio/remote_mic), left of the input. Only WebRtcSession can send it; sim's
   // SimSession has no setMic, so gate on it and skip the toggle there.
   const micToggle = typeof session?.setMic === "function" ? createMicToggle(form, session) : null;
+  // Robot-mic listen toggle: on a real robot TTS plays ONLY out the physical speaker
+  // (/tts/audio is sim-only), so this is the one way to hear agent speech remotely.
+  const audioToggle =
+    micToggle && audioEl && typeof session?.setAudio === "function" ? createAudioToggle(form, session, audioEl) : null;
   // Speaker-gate toggle beside it: publishes /audio/remote_mic/to_speaker so the
   // robot plays (or drops) the operator's mic out its physical speaker.
   const speakerToggle = micToggle ? createSpeakerToggle(form, rosClient) : null;
@@ -509,6 +514,7 @@ export function createAgentPanel(root, rosClient, agentState, session) {
   return {
     destroy() {
       micToggle?.destroy();
+      audioToggle?.destroy();
       speakerToggle?.destroy();
       sttToggle?.destroy();
       unsubAgents();
