@@ -12,6 +12,7 @@ import json
 import math
 import time
 
+from innate.skills import SkillCancelled, SkillFailed
 from std_msgs.msg import String
 
 from brain_client.skills.types import (
@@ -22,9 +23,9 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-from innate.skills import SkillCancelled, SkillFailed
 from workspace.skill_lib import arm as armlib
 from workspace.skill_lib import gemini as gemlib
+from workspace.skill_lib import mobility as moblib
 from workspace.skill_lib import vision
 from workspace.skill_lib.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
 
@@ -36,8 +37,8 @@ VERIFY_BACKUP_M = 0.15
 CARRY_ARM = [0.0537, -0.5031, 0.4157, 0.9434, -0.0077]
 
 # Live knobs, overridable mid-run via TUNING_TOPIC (String JSON partial dict).
-# The webapp draws the pick/wrist boxes from mirrors of the aim defaults
-# (pickOverlay.js) — keep those in sync when changing them here.
+# The webapp overlay (pickOverlay.js) draws the pick/wrist boxes from the
+# params/box fields on run_start/params debug events — nothing mirrored there.
 TUNABLE = {
     # FIND / LOCALIZE
     "tilt_deg": -20.0,  # head pitch (negative = down)
@@ -118,16 +119,7 @@ def _round_floats(v, nd=4):
 
 
 def _inside_box(px, cu, cv, half):
-    """True if pixel is within ±half of (cu, cv)."""
     return abs(px[0] - cu) <= half and abs(px[1] - cv) <= half
-
-
-def _servo_vel(err_px, gain, v_min, v_max, deadband_px):
-    """Pixel P-servo axis: gain per 100 px, clamp to [v_min, v_max], 0 in deadband."""
-    if abs(err_px) <= deadband_px:
-        return 0.0
-    v = max(-v_max, min(v_max, -gain / 100.0 * err_px))
-    return math.copysign(v_min, v) if abs(v) < v_min else v
 
 
 class _BlobTracker:
@@ -206,7 +198,7 @@ class PickAnyObject(Skill):
         if applied:
             self._p.update(applied)
             self.logger.info(f"[PickAnyObject] tuning applied: {applied}")
-        self._dbg("params", params=dict(self._p))
+        self._dbg("params", params=dict(self._p), box=self._box_px())
 
     def _dbg(self, ev, **fields):
         if self._dbg_pub is None:
@@ -224,7 +216,6 @@ class PickAnyObject(Skill):
             raise SkillCancelled("Pick cancelled")
 
     def _gemini_call(self, image_b64, question):
-        """Vision Q&A via gemlib."""
         return gemlib.ask_image(self._proxy, image_b64, question, logger=self.logger)
 
     def _detect_px(self, prompt):
@@ -259,79 +250,39 @@ class PickAnyObject(Skill):
         return xy, px
 
     def _stop_base(self):
-        self.mobility.send_cmd_vel(0.0, 0.0, 0.1)
+        moblib.stop(self.mobility)
 
     def _odom_xyt(self):
-        """(x, y, theta) from nested dict or flat dataclass."""
-        od = self.odom
-        if od is None:
-            return None
-        try:
-            if isinstance(od, dict):
-                p = od["pose"]["pose"]["position"]
-                return (float(p["x"]), float(p["y"]), math.radians(float(od["theta_degrees"])))
-            return (float(od.x), float(od.y), float(od.theta))
-        except (KeyError, AttributeError, TypeError):
-            return None
+        return moblib.odom_xyt(self.odom)
 
-    def _rotate_by(self, angle, tol=None, timeout=12.0):
-        self._dbg("rotate", angle_deg=math.degrees(angle))
-        od = self._odom_xyt()
-        if od is None:
-            self.mobility.send_cmd_vel(0.0, math.copysign(0.35, angle), abs(angle) / 0.35)
-            time.sleep(abs(angle) / 0.35 + 0.4)
-            return
-        target = od[2] + angle
-        t0 = time.time()
-        err = angle
-        while time.time() - t0 < timeout:
-            self._checkpoint()
-            od = self._odom_xyt()
-            if od is None:
-                break
-            err = math.atan2(math.sin(target - od[2]), math.cos(target - od[2]))
-            if abs(err) < (tol if tol is not None else math.radians(self._p["rot_tol_deg"])):
-                break
-            wz_max = self._p["rot_wz_max"]
-            wz = max(-wz_max, min(wz_max, self._p["rot_kp"] * err))
-            if abs(wz) < self._p["rot_wz_min"]:
-                wz = math.copysign(self._p["rot_wz_min"], wz)
-            self.mobility.send_cmd_vel(0.0, wz, 0.15)
-            time.sleep(0.08)
-        self._stop_base()
-        self._dbg("rotate_done", err_deg=math.degrees(err), s=time.time() - t0)
+    def _rotate_by(self, angle):
+        moblib.rotate_by(
+            self.mobility,
+            self._odom_xyt,
+            angle,
+            kp=self._p["rot_kp"],
+            wz_max=self._p["rot_wz_max"],
+            wz_min=self._p["rot_wz_min"],
+            tol=math.radians(self._p["rot_tol_deg"]),
+            cancelled=lambda: self._cancelled,
+            dbg=self._dbg,
+        )
+        self._checkpoint()  # rotate_by returns early on cancel — unwind here
 
-    def _drive(self, dist, tol=None, timeout=15.0):
-        tol = tol if tol is not None else self._p["drive_tol_m"]
-        if abs(dist) < tol:
-            return
-        self._dbg("drive", dist_m=dist)
-        od = self._odom_xyt()
-        if od is None:
-            self.logger.warning("[PickAnyObject] no odom — open-loop drive")
-            self.mobility.send_cmd_vel(math.copysign(0.08, dist), 0.0, abs(dist) / 0.08)
-            time.sleep(abs(dist) / 0.08 + 0.4)
-            return
-        x0, y0 = od[0], od[1]
-        t0 = time.time()
-        err = abs(dist)
-        while time.time() - t0 < timeout:
-            self._checkpoint()
-            od = self._odom_xyt()
-            if od is None:
-                break
-            gone = math.hypot(od[0] - x0, od[1] - y0)
-            err = abs(dist) - gone
-            if err < tol:
-                break
-            v = math.copysign(
-                max(self._p["drive_v_min"], min(self._p["drive_v_max"], self._p["drive_kp"] * err)),
-                dist,
-            )
-            self.mobility.send_cmd_vel(v, 0.0, 0.15)
-            time.sleep(0.08)
-        self._stop_base()
-        self._dbg("drive_done", err_m=err, s=time.time() - t0)
+    def _drive(self, dist):
+        moblib.drive(
+            self.mobility,
+            self._odom_xyt,
+            dist,
+            kp=self._p["drive_kp"],
+            v_max=self._p["drive_v_max"],
+            v_min=self._p["drive_v_min"],
+            tol=self._p["drive_tol_m"],
+            cancelled=lambda: self._cancelled,
+            dbg=self._dbg,
+            logger=self.logger,
+        )
+        self._checkpoint()  # drive returns early on cancel — unwind here
 
     def _ee_xyz(self):
         return armlib.ee_xyz(self.manipulation)
@@ -362,12 +313,23 @@ class PickAnyObject(Skill):
                 return xy
         raise SkillFailed(f"Could not find '{prompt}' on the floor, even after scanning")
 
+    def _box_px(self):
+        """[cu, cv, half, accept] pick box in image px, or None off-image.
+        Sent on run_start/params events; the webapp overlay draws this box
+        instead of mirroring the aim knobs and camera model in JS."""
+        c = floor_to_pixel(self._p["sweet_x"], self._p["box_y"], self._p["tilt_deg"])
+        if c is None:
+            return None
+        half = self._p["box_half_px"]
+        return [c[0], c[1], half, half * self._p["accept_frac"]]
+
     def _sweet_box(self):
         """(center_px, outer_half, accept_half). Stop only inside accept."""
-        c = floor_to_pixel(self._p["sweet_x"], self._p["box_y"], self._p["tilt_deg"])
-        assert c is not None, "pick box off-image — check tilt_deg/sweet_x"
-        half = self._p["box_half_px"]
-        return c, half, half * self._p["accept_frac"]
+        box = self._box_px()
+        if box is None:  # reachable via live tuning; assert would vanish under -O
+            raise RuntimeError("pick box off-image — check tilt_deg/sweet_x")
+        cu, cv, half, accept = box
+        return (cu, cv), half, accept
 
     def _gray_frame(self):
         img = self.main_image
@@ -419,8 +381,12 @@ class PickAnyObject(Skill):
             in_box = 0
 
             # Deadband = accept (inner) box; right -> -wz, too close (low) -> -vx.
-            wz = _servo_vel(u - cu, self._p["follow_gain_ang"], self._p["rot_wz_min"], self._p["rot_wz_max"], accept)
-            vx = _servo_vel(v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept)
+            wz = moblib.servo_vel(
+                u - cu, self._p["follow_gain_ang"], self._p["rot_wz_min"], self._p["rot_wz_max"], accept
+            )
+            vx = moblib.servo_vel(
+                v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept
+            )
             self.mobility.send_cmd_vel(vx, wz, 0.15)
             time.sleep(0.03)
         self._stop_base()
@@ -450,7 +416,7 @@ class PickAnyObject(Skill):
             if px2 is None:
                 self._dbg("position_done", xy=None, reason="lost")
                 break
-            (cu, cv), half, accept = self._sweet_box()
+            (cu, cv), _half, accept = self._sweet_box()
             if xy2 is not None and _inside_box(px2, cu, cv, accept):
                 self._dbg("position_done", xy=xy2, attempts=attempt)
                 return xy2
@@ -534,9 +500,8 @@ class PickAnyObject(Skill):
         return x, y, z
 
     def _wrist_reseed(self, prompt, z, raw):
-        """Persistent tracking loss: one Gemini look + fresh color model
-        (the view changed). Returns (tracker, raw, fail_reason) — tracker
-        is None on failure, fail_reason "" on success."""
+        """Persistent tracking loss: one Gemini look + a fresh color model,
+        since the view has changed. -> (tracker|None, raw, fail_reason)."""
         px, box = self._wrist_seed(prompt, z)
         if px is None:
             return None, raw, "lost track"
@@ -549,9 +514,8 @@ class PickAnyObject(Skill):
         return tracker, raw, ""
 
     def _wrist_servo(self, prompt, tx, ty):
-        """Wrist CamShift servo: watch until 2 frames agree (arm still),
-        then act — one nudge toward the wrist box, or one wrist_z_step down
-        once it has been seen inside the box twice; repeat to wrist_stop_z.
+        """Wrist CamShift servo down to wrist_stop_z: nudge toward the wrist
+        box, or step down once the object has been seen inside it twice.
         A miss gets 2 frames of patience, then a Gemini re-seed (budget =
         wrist_steps - 1). Color model, not LK: the object grows/deforms
         during the descent and optical flow slides off.
@@ -643,8 +607,8 @@ class PickAnyObject(Skill):
         self._dbg("hover", ee=self._ee_xyz())
 
     def _open_gripper_checked(self):
-        """Open gripper with trip recovery."""
-        armlib.open_checked(
+        """Open gripper with trip recovery. False if still shut afterwards."""
+        return armlib.open_checked(
             self.manipulation,
             self._gripper_j6,
             logger=self.logger,
@@ -703,7 +667,7 @@ class PickAnyObject(Skill):
             self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6())
         except (KeyError, IndexError, TypeError):
             armlib.move_checked(
-                self.manipulation, x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol=0.10, logger=self.logger
+                self.manipulation, x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10, logger=self.logger
             )
             self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6(), ik_fallback=True)
 
@@ -717,7 +681,9 @@ class PickAnyObject(Skill):
         clamped = abs((xy[0] - p["grasp_x_off"]) - x) > 1e-4 or abs(xy[1] - y) > 1e-4
         self._dbg("grasp", xy=xy, tx=x, ty=y, deep=deep, grab_px=grab_px, obj_px=obj_px, clamped=clamped)
 
-        self._open_gripper_checked()
+        if not self._open_gripper_checked():
+            self._dbg("grasp_abort", reason="gripper would not open", j6=self._gripper_j6())
+            raise armlib.ArmUnhealthy("gripper would not open")
 
         if p["wrist_steps"] >= 1:
             self._goto_search_pose(math.atan2(y, x))
@@ -734,9 +700,8 @@ class PickAnyObject(Skill):
         self._close_twist_lift(x, y)
 
     def _grasp_verified(self, prompt):
-        """Back up, then check floor clear + gripper not open. Gemini gets
-        BOTH cameras: the head view answers "is it still on the floor?", the
-        wrist view (mirrored) can show the object in the fingers so a held
+        """Back up, then check floor clear + gripper not open. Gemini gets both
+        cameras: the wrist view can show the object in the fingers, so a held
         object isn't mistaken for a dropped one."""
         self._drive(-VERIFY_BACKUP_M)
         time.sleep(self._p["settle_s"])
@@ -775,11 +740,11 @@ class PickAnyObject(Skill):
         """Pick up `prompt` from the floor. max_base_steps unused (compat)."""
         if self._proxy is None:
             return "Innate proxy not configured (INNATE_SERVICE_KEY)", SkillResult.FAILURE
-        if self.manipulation is None or self.mobility is None:
-            return "Manipulation/mobility interface not available", SkillResult.FAILURE
+        if self.manipulation is None or self.mobility is None or self.head is None:
+            return "Manipulation/mobility/head interface not available", SkillResult.FAILURE
 
         self._ensure_debug_io()
-        self._dbg("run_start", prompt=prompt, params=dict(self._p))
+        self._dbg("run_start", prompt=prompt, params=dict(self._p), box=self._box_px())
 
         holding = False
         try:
@@ -813,8 +778,7 @@ class PickAnyObject(Skill):
             self._dbg("run_end")
             self._stop_base()
             self._rest_arm(keep_grip=holding)
-            if self.head is not None:
-                self.head.set_position(0)
+            self.head.set_position(0)  # non-None: guarded at entry
 
     def cancel(self):
         self._cancelled = True

@@ -11,10 +11,6 @@ Callable from any skill's code as a plain function:
 
 (also from the agent, the webapp skills menu, and
 `scripts/innate skill run gripper_open`).
-
-The implementation lives in workspace/skill_lib/arm.py (open_checked):
-torque on first, then VERIFY the claw actually opened — an overcurrent-
-tripped servo no-ops silently — rebooting to clear a trip and retrying.
 """
 
 from brain_client.skills.types import (
@@ -46,8 +42,11 @@ class GripperOpen(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
         ok = armlib.open_checked(
-            self.manipulation, lambda: armlib.gripper_j6(self.joint_states),
-            percent=percent, duration=duration, logger=self.logger,
+            self.manipulation,
+            lambda: armlib.gripper_j6(self.joint_states),
+            percent=percent,
+            duration=duration,
+            logger=self.logger,
         )
         if not ok:
             return "Failed to open gripper", SkillResult.FAILURE

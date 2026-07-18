@@ -4,16 +4,17 @@
 """
 Arm Rest Position Skill — move the arm to its resting pose.
 
-Callable from any skill's code as a plain function:
+From skill code, call the library function directly instead of this skill:
 
-    from innate.skills import arm_rest_position
-    arm_rest_position()            # blocks until the arm is resting
+    from workspace.skill_lib import arm as armlib
+    armlib.rest(self.manipulation, self.joint_states)
 
 (also runnable from the agent, the webapp skills menu, and
 `scripts/innate skill run local/arm_rest_position`).
 
 Implementation: workspace/skill_lib/arm.py (rest).
 """
+
 
 from brain_client.skills.types import (
     Interface,
@@ -31,10 +32,6 @@ class ArmRestPosition(Skill):
 
     manipulation = Interface(InterfaceType.MANIPULATION)
     joint_states = RobotState(RobotStateType.LAST_JOINT_STATES)
-
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
 
     @property
     def name(self):

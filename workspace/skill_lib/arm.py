@@ -45,9 +45,7 @@ class ArmCancelled(Exception):
 
 
 def clamp_reach(x, y):
-    """Clamp (x, y) into the arm reach box."""
-    return (max(REACH_X[0], min(REACH_X[1], x)),
-            max(REACH_Y[0], min(REACH_Y[1], y)))
+    return (max(REACH_X[0], min(REACH_X[1], x)), max(REACH_Y[0], min(REACH_Y[1], y)))
 
 
 def ee_xyz(manipulation):
@@ -149,44 +147,60 @@ def recover(manipulation, logger=None):
     time.sleep(0.5)
 
 
-def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.05, logger=None):
-    """Cartesian move; verify FK within tol, recover+retry once, else raise."""
+def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol_xy=0.05, tol_z=0.10, logger=None):
+    """Cartesian move; verify FK within per-axis tolerances, recover+retry once, else raise.
+
+    tol_z is looser than tol_xy on purpose: a z shortfall usually means the
+    fingers met the object/floor early (expected while descending), while xy
+    error means the grasp is off target.
+    """
     for attempt in (1, 2):
         ok = manipulation.move_to_cartesian_pose(
-            x=x, y=y, z=z, roll=0.0, pitch=pitch, yaw=0.0,
-            duration=duration, blocking=True,
+            x=x,
+            y=y,
+            z=z,
+            roll=0.0,
+            pitch=pitch,
+            yaw=0.0,
+            duration=duration,
+            blocking=True,
         )
         cur = ee_xyz(manipulation)
-        err = math.dist(cur, (x, y, z)) if cur is not None else None
-        if ok and err is not None and err <= tol:
+        err_xy = math.hypot(cur[0] - x, cur[1] - y) if cur is not None else None
+        err_z = abs(cur[2] - z) if cur is not None else None
+        if ok and err_xy is not None and err_z is not None and err_xy <= tol_xy and err_z <= tol_z:
             return True
         if logger:
-            logger.warning(f"[arm] not tracking (ok={ok} err={err}) — "
-                           f"{'recovering' if attempt == 1 else 'giving up'}")
+            logger.warning(
+                f"[arm] not tracking (ok={ok} err_xy={err_xy} err_z={err_z}) — "
+                f"{'recovering' if attempt == 1 else 'giving up'}"
+            )
         if attempt == 1:
             recover(manipulation, logger)
     raise ArmUnhealthy(f"arm failed to reach ({x:.2f},{y:.2f},{z:.2f})")
 
 
-def open_checked(manipulation, get_j6, percent=100.0, duration=1.0,
-                 logger=None, on_reboot=None):
+def open_checked(manipulation, get_j6, percent=100.0, duration=1.0, logger=None, on_reboot=None):
     """Open gripper and verify j6. Reboot+retry if tripped shut. on_reboot(j6) hook."""
     manipulation.torque_on()  # a torque-disabled servo won't move at all
     ok = manipulation.open_gripper(percent=percent, duration=duration, blocking=True)
     j6 = get_j6()
     if j6 is not None and j6 < 0.10:
         if logger:
-            logger.warning(f"[arm] gripper did not open (j6={j6:.3f}); "
-                           "rebooting servos to clear a trip, then retrying")
+            logger.warning(f"[arm] gripper did not open (j6={j6:.3f}); rebooting servos to clear a trip, then retrying")
         if on_reboot:
             on_reboot(j6)
         recover(manipulation, logger)
         ok = manipulation.open_gripper(percent=percent, duration=duration, blocking=True)
+        # A tripped servo accepts the command and no-ops, so the retry's own
+        # status proves nothing — j6 is the only evidence the claw moved.
+        j6 = get_j6()
+        if j6 is not None and j6 < 0.10:
+            return False
     return bool(ok)
 
 
 def close(manipulation, strength=0.0, duration=1.0):
-    """Close gripper. strength = extra squeeze; keep <=~0.6 or servo trips."""
+    """Close gripper. strength = extra squeeze; >~0.6 overcurrent-trips the servo."""
     manipulation.torque_on()
-    return bool(manipulation.close_gripper(strength=strength, duration=duration,
-                                           blocking=True))
+    return bool(manipulation.close_gripper(strength=strength, duration=duration, blocking=True))
