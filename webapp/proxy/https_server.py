@@ -216,9 +216,7 @@ def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None"
         # so an unchanged asset costs a stat instead of a full read.
         etag, last_modified = cache_validators(target)
         cache_control = (
-            f"public, max-age={ASSET_MAX_AGE_SECONDS}"
-            if clean.startswith(CACHEABLE_ASSET_PREFIXES)
-            else "no-cache"
+            f"public, max-age={ASSET_MAX_AGE_SECONDS}" if clean.startswith(CACHEABLE_ASSET_PREFIXES) else "no-cache"
         )
         validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": cache_control}
         if if_none_match == etag:
