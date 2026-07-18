@@ -119,7 +119,7 @@ class FollowAruco(Skill):
         corners, ids, _rejected = self._detector.detectMarkers(frame)
         if ids is None:
             return {}
-        return {int(marker_id): quad.reshape(4, 2) for marker_id, quad in zip(ids.flatten(), corners)}
+        return {int(marker_id): quad.reshape(4, 2) for marker_id, quad in zip(ids.flatten(), corners, strict=True)}
 
     def _current_frame(self):
         b64 = self.image
