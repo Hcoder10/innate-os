@@ -154,7 +154,12 @@ export function initShell(navigate) {
   // simply has no match, so its number is inert.
   window.addEventListener("keydown", (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey || e.repeat || isTypingContext()) return;
-    const section = SECTIONS[Number(e.key) - 1];
+    // Match the physical digit-row position (e.code), not the typed character:
+    // on non-QWERTY layouts (e.g. AZERTY) the digit row emits punctuation in
+    // e.key, which silently disabled these shortcuts. e.key still covers the
+    // numpad, whose codes are NumpadN and only produce digits with NumLock on.
+    const digit = e.code.startsWith("Digit") ? e.code.slice(5) : e.key;
+    const section = /^[1-9]$/.test(digit) ? SECTIONS[Number(digit) - 1] : undefined;
     if (!section) return;
     // A removed link (sim-mode filter) has no match, so its number stays inert.
     const link = nav.querySelector(`.rail-link[data-section="${section.key}"]`);

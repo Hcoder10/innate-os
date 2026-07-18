@@ -683,6 +683,14 @@ class C:
     NC = "\033[0m" if _on else ""
 
 
+def hyperlink(url, label=None):
+    """Wrap a URL in an OSC 8 escape so terminals render it clickable."""
+    text = label or url
+    if not C._on:
+        return text
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+
 # ---------------------------------------------------------------------------
 # Environment detection
 # ---------------------------------------------------------------------------
@@ -766,7 +774,7 @@ def get_webapp_uri():
 def print_webapp_uri():
     uri = get_webapp_uri()
     if uri:
-        print(f"  {C.BOLD}Web app:{C.NC} {uri}")
+        print(f"  {C.BOLD}Web app:{C.NC} {hyperlink(uri)}")
 
 
 @contextmanager
