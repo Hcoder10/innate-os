@@ -49,6 +49,7 @@ class FollowAruco(Skill):
         super().__init__(logger)
         dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
         self._detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+        self._frame_width = 1  # real width set on every successful _detect_markers() decode
 
     @property
     def name(self):

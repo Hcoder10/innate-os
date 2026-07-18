@@ -261,12 +261,15 @@ class SkillsActionServer(Node):
         """
         with self._skill_execution_lock:
             goal_handle = self._active_goal_handle if self._skill_running else None
-        if goal_handle is None:
-            response.success = False
-            response.message = "No skill is running"
-            return response
-        skill_type = goal_handle.request.skill_type
-        self.cancel_callback(goal_handle)
+            if goal_handle is None:
+                response.success = False
+                response.message = "No skill is running"
+                return response
+            skill_type = goal_handle.request.skill_type
+            # Dispatch under the lock: released, the slot could be freed and
+            # re-claimed by a new run of the same skill, and the cancel would
+            # hit that fresh execution instead.
+            self.cancel_callback(goal_handle)
         response.success = True
         response.message = f"Cancellation requested for '{skill_type}'"
         return response
