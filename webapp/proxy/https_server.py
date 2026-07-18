@@ -23,7 +23,6 @@ Persist:    launched on boot in the `console-webapp` tmux window
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import mimetypes
@@ -32,6 +31,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+from email.utils import formatdate
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -180,6 +180,27 @@ SIM_VIEWER_ROUTES = {
     "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
 }
 
+# The 3D asset trees ship in the pinned sim-assets release (sim/sim-assets.lock)
+# and only change when that lock bumps, so they are worth a real max-age: the SPA
+# remounts the stage on every visit, and revalidating ~63MB across 1300+ files
+# each time costs a round trip per file for an answer that is always "unchanged".
+# /sim-viewer/ is deliberately NOT here — viewer devs rebuild the bundle in place
+# (INNATE_SIM_VIEWER_DEV=1) and must see a rebuild without a hard refresh.
+CACHEABLE_ASSET_PREFIXES = ("/models/", "/robot/", "/physics/")
+ASSET_MAX_AGE_SECONDS = 86400
+
+
+def cache_validators(path: Path) -> tuple[str, str]:
+    """ETag + Last-Modified for a file, from a single stat().
+
+    Deliberately NOT a content hash: the body has to be read and digested to
+    produce one, so every conditional request paid a full read + SHA-1 of the
+    34MB apartment glb just to answer a bodyless 304. mtime+size is the same
+    validator nginx and Apache use — it changes on any write, and costs one
+    stat() regardless of file size."""
+    st = path.stat()
+    return f'"{st.st_mtime_ns:x}-{st.st_size:x}"', formatdate(st.st_mtime, usegmt=True)
+
 
 def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
     clean = path.split("?", 1)[0].split("#", 1)[0]
@@ -189,17 +210,22 @@ def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None"
         target = (base / clean[len(prefix) :]).resolve()
         if not target.is_file() or not target.is_relative_to(base.resolve()):
             return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-        body = target.read_bytes()
-        # Same ETag/304 revalidation as static_response -- these routes carry
-        # the ~35MB apartment glb + robot meshes, re-requested on every page
-        # mount now that the SPA router remounts the stage per visit.
-        etag = f'"{hashlib.sha1(body).hexdigest()}"'
-        if if_none_match == etag:
-            return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
-        ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        headers = Headers(
-            {"Content-Type": ctype, "Content-Length": str(len(body)), "Cache-Control": "no-cache", "ETag": etag}
+        # These routes carry the ~35MB apartment glb + robot meshes, re-requested
+        # on every page mount now that the SPA router remounts the stage per
+        # visit. Validate from stat() and return 304 *before* touching the body,
+        # so an unchanged asset costs a stat instead of a full read.
+        etag, last_modified = cache_validators(target)
+        cache_control = (
+            f"public, max-age={ASSET_MAX_AGE_SECONDS}"
+            if clean.startswith(CACHEABLE_ASSET_PREFIXES)
+            else "no-cache"
         )
+        validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": cache_control}
+        if if_none_match == etag:
+            return Response(304, "Not Modified", Headers(validators), b"")
+        body = target.read_bytes()
+        ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        headers = Headers({**validators, "Content-Type": ctype, "Content-Length": str(len(body))})
         return Response(200, "OK", headers, body)
     return None
 
@@ -220,24 +246,18 @@ def static_response(path: str, if_none_match: str = "") -> Response:
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-    body = body_path.read_bytes()
-    # Content-hash ETag: the first load (and any hard refresh) requests all ~27
-    # modules, but unchanged ones come back as a bodyless 304 instead of a full
-    # re-download. Cache-Control stays no-cache so a redeploy is always picked up
-    # — the browser still revalidates every load, but revalidation is now a tiny
-    # conditional request, not a transfer of the whole file.
-    etag = f'"{hashlib.sha1(body).hexdigest()}"'
+    # The first load (and any hard refresh) requests all ~27 modules, but
+    # unchanged ones come back as a bodyless 304 instead of a full re-download.
+    # Cache-Control stays no-cache so a redeploy is always picked up — the
+    # browser still revalidates every load, but revalidation is a tiny
+    # conditional request that never reads the file.
+    etag, last_modified = cache_validators(body_path)
+    validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": "no-cache"}
     if if_none_match == etag:
-        return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
+        return Response(304, "Not Modified", Headers(validators), b"")
+    body = body_path.read_bytes()
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
-    headers = Headers(
-        {
-            "Content-Type": ctype,
-            "Content-Length": str(len(body)),
-            "Cache-Control": "no-cache",
-            "ETag": etag,
-        }
-    )
+    headers = Headers({**validators, "Content-Type": ctype, "Content-Length": str(len(body))})
     return Response(200, "OK", headers, body)
 
 
