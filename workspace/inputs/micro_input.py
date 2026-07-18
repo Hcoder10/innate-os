@@ -89,28 +89,31 @@ class MicroInput(InputDevice):
             is_playing: True if robot is speaking, False otherwise
         """
         self._is_robot_talking = is_playing
-        for stream in (self._local, self._remote):
-            if stream:
-                stream.set_ducking(is_playing)
+        # Only the local stream is ducked: the on-robot mic hears the robot's own speaker,
+        # but the operator's phone mic doesn't — ducking it would drop operator speech
+        # whenever the robot talks.
+        if self._local:
+            self._local.set_ducking(is_playing)
 
     def on_open(self):
-        """Start whichever streams are currently enabled."""
+        """Start the local stream (the remote one follows only its own gate)."""
         if not self.proxy or not self.proxy.is_available():
             self.logger.error("❌ Proxy not configured - cannot start microphone input")
             return
 
         if self._local_enabled:
             self._start_local()
-        if self._remote_enabled:
-            self._start_remote()
 
     def on_close(self):
-        """Stop both streams (control subscriptions stay up until shutdown)."""
+        """Stop the local stream. The remote stream is deliberately left running:
+        it is the operator's own phone mic, gated solely by /audio/remote_mic/stt,
+        not by which directive (and thus which declared inputs) is active."""
         self._stop_local()
-        self._stop_remote()
 
     def shutdown(self):
-        """Tear down the control subscriptions."""
+        """Tear down the streams and control subscriptions."""
+        self._stop_local()
+        self._stop_remote()
         for sub in self._control_subs:
             try:
                 self.node.destroy_subscription(sub)
@@ -146,8 +149,8 @@ class MicroInput(InputDevice):
             return
         self.logger.info(f"🎚️ remote mic stt {'enabled' if enabled else 'disabled'}")
         self._remote_enabled = enabled
-        if not self.is_active():
-            return  # device closed; applied on next on_open()
+        # Operator's own phone mic: the Bool gate alone starts/stops it — no device-active
+        # gate, so it works regardless of the running directive's declared inputs.
         self._start_remote() if enabled else self._stop_remote()
 
     # --- stream lifecycle ---
@@ -164,23 +167,30 @@ class MicroInput(InputDevice):
     def _start_remote(self):
         if self._remote:
             return
-        self._remote = self._make_stream("remote", RemoteMicStreamer(self.node, REMOTE_MIC_TOPIC, self.logger))
+        if not self.proxy or not self.proxy.is_available():
+            self.logger.error("❌ Proxy not configured - cannot start remote mic stream")
+            return
+        # is_active=True: transcripts flow whenever the gate is on, device active or not.
+        self._remote = self._make_stream(
+            "remote", RemoteMicStreamer(self.node, REMOTE_MIC_TOPIC, self.logger), is_active=lambda: True
+        )
 
     def _stop_remote(self):
         if self._remote:
             self._remote.stop()
             self._remote = None
 
-    def _make_stream(self, name: str, source) -> "TranscriptionStream | None":
+    def _make_stream(self, name: str, source, is_active=None) -> "TranscriptionStream | None":
         stream = TranscriptionStream(
             name=name,
             source=source,
             proxy=self.proxy,
             logger=self.logger,
             on_transcript=lambda text: self._on_transcript(text, name),
-            is_active=self.is_active,
+            is_active=is_active or self.is_active,
         )
-        stream.set_ducking(self._is_robot_talking)
+        if name == "local":
+            stream.set_ducking(self._is_robot_talking)
         try:
             stream.start()
             return stream

@@ -309,11 +309,13 @@ export function createSpeakerToggle(parent, rosClient) {
     render();
   });
 
-  // Re-assert the gate on reconnect AND periodically while on: publish is fire-and-forget
-  // (dropped if the player node isn't up yet / rws hasn't seen the topic), and the robot's
-  // player restarts muted — a lost Bool would strand the button visually on but silent.
+  // Re-assert the gate on reconnect AND periodically, but only while ON: publish is
+  // fire-and-forget (dropped if the player node isn't up yet), and the robot's player
+  // restarts muted — a lost true would strand the button visually on but silent. Never
+  // push false on reconnect: off is the robot default, and an idle second tab doing so
+  // would stomp the tab that has it on.
   const unsub = rosClient.onStateChange((state) => {
-    if (state === "connected") publishGate("reconnect");
+    if (state === "connected" && on) publishGate("reconnect");
   });
   const reassert = setInterval(() => {
     if (on) publishGate("re-assert");
@@ -372,11 +374,12 @@ export function createSttToggle(parent, rosClient) {
     render();
   });
 
-  // Re-assert on reconnect AND periodically while on: publish is fire-and-forget and the
-  // remote STT stream defaults off, so a Bool lost during an input_manager restart would
-  // strand the button visually on with no transcription.
+  // Re-assert on reconnect AND periodically, but only while ON: the remote STT stream
+  // defaults off, so a lost true would strand the button visually on with no
+  // transcription — while a false pushed on reconnect from an idle second tab would
+  // stomp the tab that has it on (off is the default; it never needs asserting).
   const unsub = rosClient.onStateChange((state) => {
-    if (state === "connected") publishGate("reconnect");
+    if (state === "connected" && on) publishGate("reconnect");
   });
   const reassert = setInterval(() => {
     if (on) publishGate("re-assert");
