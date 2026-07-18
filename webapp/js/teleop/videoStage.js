@@ -227,9 +227,9 @@ export function createAudioToggle(parent, session, audioEl) {
 
 /**
  * Operator-mic toggle. Sends the browser microphone up to the robot (browser -> robot -> ROS), the
- * opposite direction from the robot-mic toggle above. The click both requests the recvonly audio m-line
- * (a renegotiating rebuild in the session) and — because setMic acquires getUserMedia — surfaces the
- * permission prompt inside the gesture.
+ * opposite direction from the robot-mic toggle above. The mic m-line is always negotiated, so the click
+ * is a live replaceTrack flip in the session; because setMic acquires getUserMedia, the permission
+ * prompt surfaces inside the gesture.
  * @param {HTMLElement} parent
  * @param {import("../webrtcSession.js").WebRtcSession} session
  * @returns {{ destroy: () => void }}

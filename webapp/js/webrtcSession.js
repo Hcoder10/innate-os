@@ -13,10 +13,9 @@
 // operator opts in); video dispatched by transceiver mid with arrival-order
 // fallback; only the main camera is exposed (the arm camera is ignored in v1).
 // Operator mic (setMic) sends the reverse direction — the browser's mic up to
-// the robot on a recvonly audio m-line the robot only offers when we ask, so
-// toggling it re-handshakes (the m-line isn't negotiated up front like the
-// robot-mic one); #onOffer binds the local mic track to that m-line before
-// answering.
+// the robot on a recvonly audio m-line the robot always offers. #onOffer binds
+// that m-line sendonly (with the current mic track, or none) before answering,
+// so toggling the mic is a live replaceTrack flip — no renegotiation.
 //
 // Self-heal: 30 s initial-handshake watchdog, ICE disconnected/failed
 // persisting 10 s → re-handshake, and a re-handshake whenever the rosbridge
@@ -104,6 +103,8 @@ export class WebRtcSession {
   // stopped when the operator turns the mic off or the session stops.
   /** @type {MediaStream | null} */ #micStream = null;
   /** @type {MediaStreamTrack | null} */ #micTrack = null;
+  // Sender of the always-negotiated mic m-line on the current pc; replaceTrack on it flips the mic live.
+  /** @type {RTCRtpSender | null} */ #micSender = null;
   #processingOffer = false;
   #remoteDescriptionSet = false;
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
@@ -241,9 +242,9 @@ export class WebRtcSession {
 
   /**
    * Toggle sending the OPERATOR's microphone up to the robot (browser -> robot -> ROS, played out the
-   * robot). This is the opposite direction from setAudio, which RECEIVES the robot's mic. The recvonly
-   * m-line is NOT negotiated up front (the robot only offers it when we ask), so toggling adds/removes an
-   * m-line — a renegotiating rebuild, not a live flip. Acquiring the mic here (inside the click gesture)
+   * robot). This is the opposite direction from setAudio, which RECEIVES the robot's mic. The robot
+   * always negotiates the recvonly mic m-line and #onOffer binds it sendonly, so toggling is a live
+   * replaceTrack flip — no renegotiation, no reconnect. Acquiring the mic here (inside the click gesture)
    * both keeps the permission prompt off the happy path and lets a denial leave us cleanly off.
    * @param {boolean} on
    * @returns {Promise<void>}
@@ -257,9 +258,28 @@ export class WebRtcSession {
     }
     this.#patch({ micRequested: on });
     if (!this.#started || this.#ros.state !== "connected") return;
-    // Adding/removing the recvonly mic m-line requires a fresh offer, so re-handshake rather than sending a
-    // reneg-free active-toggle START. #onOffer binds the mic track to the new offer's recvonly audio m-line.
-    console.log("[webrtc] operator mic ->", on, "(mic m-line is per-request: full re-handshake, not a live flip)");
+    if (this.#pc && this.#micSender) {
+      try {
+        await this.#micSender.replaceTrack(on ? this.#micTrack : null);
+        // Reneg-free START keeps the robot's view of the mic flag current (status/release decisions).
+        this.#ros.publish(WEBRTC_START_TOPIC, {
+          data: JSON.stringify({
+            source: "live",
+            audio: this.#state.audioRequested,
+            mic: on,
+            client_id: this.#clientId,
+            video: this.#activeCams,
+          }),
+        });
+        console.log("[webrtc] operator mic ->", on, "(live replaceTrack, no reconnect)");
+        return;
+      } catch (err) {
+        console.warn("[webrtc] mic replaceTrack failed, falling back to re-handshake:", err);
+      }
+    } else if (this.#pc) {
+      console.warn("[webrtc] no mic sender on this pc (old robot offer?) — re-handshaking");
+    }
+    // No live pc (map-only) or no bound mic sender — a fresh handshake binds the mic in #onOffer.
     this.#handshakeAttempts = 0;
     this.#handshake();
   }
@@ -288,28 +308,29 @@ export class WebRtcSession {
   }
 
   /**
-   * Bind the operator mic track to the robot-offered recvonly audio m-line so this pc's answer sends it.
-   * A no-op unless the mic is requested and the offer actually carries the m-line.
+   * Bind the robot-offered recvonly audio m-line sendonly on this pc — with the current mic track when
+   * the mic is on, or trackless otherwise — and remember its sender so setMic can flip the track live
+   * (replaceTrack, no renegotiation). The robot always offers this m-line.
    * @param {RTCPeerConnection} pc owning connection
    * @param {string} offerSdp the robot's offer SDP (already applied via setRemoteDescription)
    * @returns {Promise<void>}
    */
   async #attachMic(pc, offerSdp) {
-    const track = this.#micTrack;
-    if (!this.#state.micRequested || !track) return;
     const mid = micRecvMid(offerSdp);
     if (!mid) {
-      console.warn("[webrtc] mic requested but offer has no recvonly audio m-line");
+      if (this.#state.micRequested) console.warn("[webrtc] mic requested but offer has no recvonly audio m-line");
       return;
     }
     const transceiver = pc.getTransceivers().find((t) => t.mid === mid);
     if (!transceiver) return;
     try {
       transceiver.direction = "sendonly";
+      const track = this.#state.micRequested ? this.#micTrack : null;
       await transceiver.sender.replaceTrack(track);
-      console.log("[webrtc] operator mic attached (mid=" + mid + ")");
+      this.#micSender = transceiver.sender;
+      console.log("[webrtc] mic m-line bound (mid=" + mid + ", track=" + (track ? "live" : "none") + ")");
     } catch (err) {
-      console.warn("[webrtc] failed to attach operator mic:", err);
+      console.warn("[webrtc] failed to bind mic m-line:", err);
     }
   }
 
@@ -718,6 +739,7 @@ export class WebRtcSession {
   #closePc() {
     this.#clearWatchdog();
     this.#clearDegradeTimer();
+    this.#micSender = null;
     this.#processingOffer = false;
     this.#remoteDescriptionSet = false;
     this.#iceQueue = [];

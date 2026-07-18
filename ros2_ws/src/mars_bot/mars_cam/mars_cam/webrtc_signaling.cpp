@@ -186,11 +186,12 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     const bool audio_active = enable_audio_ && request_audio;
     // Peers negotiate the audio m-line up front (if a mic exists) so toggling is reneg-free, like cameras.
     const bool negotiate_audio = enable_audio_;
-    // Phone-mic (recvonly, browser -> robot) is opt-in per START. Unlike the send audio it is NOT negotiated
-    // up front — it only exists on the offer when the peer asked for it, so adding/removing it renegotiates.
-    const bool negotiate_mic = request_mic;
+    // Phone-mic (recvonly, browser -> robot): ALWAYS negotiated, like the send audio, so the browser flips
+    // its track live (replaceTrack) with no renegotiation. Whether audio flows is the browser's choice;
+    // START's mic flag only participates in the release decision below.
+    const bool negotiate_mic = true;
 
-    if (videos.empty() && !audio_active && !negotiate_mic) {
+    if (videos.empty() && !audio_active && !request_mic) {
         RCLCPP_INFO(this->get_logger(), "START requested no streams; releasing peer");
         destroy_peer(client_id);
         return;

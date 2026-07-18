@@ -147,6 +147,8 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     // Inbound phone-mic (recvonly): add an opus transceiver so the offer carries a recvonly audio m-line
     // (browser -> robot). No appsrc — the RTP arrives on a webrtcbin src pad, handled by on_incoming_pad.
     // Added as the LAST m-line, after the video/send-audio appsrcs, so its index is deterministic.
+    // Always negotiated (with_mic is true for every peer): the browser answers it sendonly with a null
+    // track and flips the real track in via replaceTrack — mic toggles never renegotiate.
     if (with_mic) {
         GstCaps* caps = gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name",
                                             G_TYPE_STRING, "OPUS", "clock-rate", G_TYPE_INT, 48000, "encoding-params",

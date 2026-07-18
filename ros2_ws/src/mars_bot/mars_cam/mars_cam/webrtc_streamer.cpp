@@ -164,7 +164,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (%zu cameras, source: %s, compressed: %s)", cameras_.size(),
                 current_source_.c_str(), use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Mic audio: %s", enable_audio_ ? "enabled (opt-in per peer)" : "disabled");
-    RCLCPP_INFO(this->get_logger(), "  Inbound phone-mic: opt-in per peer (START mic:true) -> %s",
+    RCLCPP_INFO(this->get_logger(), "  Inbound phone-mic: m-line always negotiated (browser flips track live) -> %s",
                 remote_mic_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  Local STUN: %s", enable_local_stun_ ? "enabled" : "disabled");
     RCLCPP_INFO(this->get_logger(), "  RTCP-inactivity teardown: %.1f s", rtcp_inactivity_timeout_s_);
