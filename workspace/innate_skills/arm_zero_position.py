@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """
-Arm Zero Position Skill - Move arm to all-zeros joint position.
+Arm Zero Position Skill — move arm to all-zeros joint position.
+
+Implementation: workspace/skill_lib/arm.py (zero).
 """
 
-import time
-
 from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from workspace.skill_lib import arm as armlib
 
 
 class ArmZeroPosition(Skill):
@@ -29,28 +30,18 @@ class ArmZeroPosition(Skill):
     def execute(self, duration: int = 3):
         """Execute the arm movement to zero position."""
         self._cancelled = False
-
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        self.logger.info(f"Moving arm to zero position [0,0,0,0,0,0] over {duration}s")
-
-        joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-        success = self.manipulation.move_to_joint_positions(
-            joint_positions=joint_positions, duration=duration, blocking=False
-        )
-
-        if not success:
+        try:
+            armlib.zero(
+                self.manipulation, duration=duration,
+                is_cancelled=lambda: self._cancelled, logger=self.logger,
+            )
+        except armlib.ArmCancelled:
+            return "Arm motion cancelled", SkillResult.CANCELLED
+        except armlib.ArmFailed:
             return "Failed to send arm command", SkillResult.FAILURE
-
-        # Wait for motion to complete (with cancellation check)
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            if self._cancelled:
-                return "Arm motion cancelled", SkillResult.CANCELLED
-            time.sleep(0.1)
-
         return "Arm moved to zero position", SkillResult.SUCCESS
 
     def cancel(self):

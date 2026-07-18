@@ -27,7 +27,7 @@ import { PICK_DEBUG_TOPIC } from "../constants.js";
 // (live tuning overrides survive in the running skill between runs).
 // Display-only: never written back.
 const P = {
-  sweet_x: 0.3,
+  sweet_x: 0.4,
   box_y: 0,
   box_half_px: 40,
   accept_frac: 0.5,

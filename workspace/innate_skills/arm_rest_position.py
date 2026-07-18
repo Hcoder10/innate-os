@@ -11,9 +11,9 @@ Callable from any skill's code as a plain function:
 
 (also runnable from the agent, the webapp skills menu, and
 `scripts/innate skill run local/arm_rest_position`).
-"""
 
-import time
+Implementation: workspace/skill_lib/arm.py (rest).
+"""
 
 from brain_client.skills.types import (
     Interface,
@@ -23,17 +23,7 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-
-# joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
-# The folded rest shape, but with the wrist pitch (j4) lifted to 0.55 so the
-# gripper clears the floor instead of pitching down into it: at the old j4~0.87+
-# the gripper jammed into the ground and tripped/broke a servo when driven here
-# under torque.
-# These are the values the arm actually REACHES and HOLDS (j1/j2 clamp to their
-# limits, so commanding "more folded" just settles here). j4=0.30 lifts the
-# wrist ~2 cm further than the first floor-clearing try (0.55, where the
-# fingertips still grazed the floor) — verified live: ee_link z ~0.042 m.
-REST_POSITION = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+from workspace.skill_lib import arm as armlib
 
 
 class ArmRestPosition(Skill):
@@ -68,35 +58,19 @@ class ArmRestPosition(Skill):
                 rest gripper value.
         """
         self._cancelled = False
-
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        target = list(REST_POSITION)
-        if keep_gripper:
-            js = self.joint_states
-            try:
-                target[5] = float(js["position"][5])
-            except (KeyError, IndexError, TypeError):
-                pass  # no reading — fall back to the captured gripper value
-
-        self.logger.info(
-            f"Moving arm to rest position {[round(j, 3) for j in target]} "
-            f"over {duration}s"
-        )
-        success = self.manipulation.move_to_joint_positions(
-            joint_positions=target, duration=duration, blocking=False
-        )
-        if not success:
+        try:
+            armlib.rest(
+                self.manipulation, self.joint_states, duration=duration,
+                keep_gripper=keep_gripper, is_cancelled=lambda: self._cancelled,
+                logger=self.logger,
+            )
+        except armlib.ArmCancelled:
+            return "Arm motion cancelled", SkillResult.CANCELLED
+        except armlib.ArmFailed:
             return "Failed to send arm command", SkillResult.FAILURE
-
-        # Wait for motion to complete (with cancellation check)
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            if self._cancelled:
-                return "Arm motion cancelled", SkillResult.CANCELLED
-            time.sleep(0.1)
-
         return "Arm moved to rest position", SkillResult.SUCCESS
 
     def cancel(self):

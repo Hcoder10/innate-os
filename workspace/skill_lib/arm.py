@@ -5,6 +5,12 @@
 
 Pass interfaces explicitly. Import at TOP of skill files — lazy imports
 inside execute() fail (loader only puts repo root on path during load).
+
+Poses are plain joint lists. ``go`` / ``rest`` / ``zero`` raise on failure
+so call sites stay declarative:
+
+    armlib.rest(self.manipulation, self.joint_states)
+    armlib.go(self.manipulation, CARRY if holding else armlib.ZERO)
 """
 
 import math
@@ -14,9 +20,28 @@ import time
 REACH_X = (0.22, 0.40)
 REACH_Y = (-0.10, 0.10)
 
+# joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
+# Folded rest with j4 lifted so the gripper clears the floor (verified live:
+# ee_link z ~0.042 m). j1/j2 clamp to their limits, so this is what the arm
+# actually reaches and holds.
+REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Back-compat aliases.
+REST_POSITION = REST
+ZERO_POSITION = ZERO
+
 
 class ArmUnhealthy(RuntimeError):
     """Servo brownout/refusal — abort, don't continue limp."""
+
+
+class ArmFailed(RuntimeError):
+    """Joint/cartesian command rejected or did not complete."""
+
+
+class ArmCancelled(Exception):
+    """Caller-supplied cancel check fired mid-wait."""
 
 
 def clamp_reach(x, y):
@@ -41,6 +66,77 @@ def gripper_j6(joint_states):
         return joint_states["position"][5] if joint_states else None
     except (KeyError, IndexError, TypeError):
         return None
+
+
+def with_gripper(joints, j6):
+    """Copy of joints with j6 set (no-op if j6 is None)."""
+    out = list(joints)
+    if j6 is not None:
+        out[5] = float(j6)
+    return out
+
+
+def rest_joints(joint_states=None, keep_gripper=True):
+    """Joint target for the folded rest pose."""
+    if keep_gripper:
+        return with_gripper(REST, gripper_j6(joint_states))
+    return list(REST)
+
+
+def go(manipulation, joints, duration=3.0, *, times=1, pause=0.3,
+       is_cancelled=None, logger=None):
+    """Move to joint positions. Raises ArmFailed / ArmCancelled.
+
+    ``times`` + ``pause`` repeat the move so the arm can settle (pick teardown).
+    With ``is_cancelled``, the move is non-blocking and polled so a skill
+    cancel can abort the wait; otherwise each move blocks for ``duration``.
+    """
+    joints = list(joints)
+    blocking = is_cancelled is None
+    for i in range(times):
+        if logger:
+            logger.info(
+                f"[arm] joints {[round(j, 3) for j in joints]} over {duration}s"
+            )
+        ok = manipulation.move_to_joint_positions(
+            joint_positions=joints, duration=duration, blocking=blocking,
+        )
+        if not ok:
+            raise ArmFailed("Failed to send arm command")
+        if is_cancelled is not None:
+            t0 = time.time()
+            while time.time() - t0 < duration:
+                if is_cancelled():
+                    raise ArmCancelled("Arm motion cancelled")
+                time.sleep(0.1)
+        if pause and i + 1 < times:
+            time.sleep(pause)
+
+
+# Back-compat name used by earlier call sites.
+go_joints = go
+
+
+def rest(manipulation, joint_states=None, duration=3.0, keep_gripper=True,
+         is_cancelled=None, logger=None, **go_kw):
+    """Fold to REST. keep_gripper preserves current j6 when held."""
+    go(
+        manipulation, rest_joints(joint_states, keep_gripper),
+        duration=duration, is_cancelled=is_cancelled, logger=logger, **go_kw,
+    )
+
+
+def zero(manipulation, duration=3.0, is_cancelled=None, logger=None, **go_kw):
+    """Move all joints to 0."""
+    go(
+        manipulation, ZERO, duration=duration,
+        is_cancelled=is_cancelled, logger=logger, **go_kw,
+    )
+
+
+# Back-compat aliases.
+rest_position = rest
+zero_position = zero
 
 
 def recover(manipulation, logger=None):

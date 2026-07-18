@@ -9,6 +9,8 @@ from workspace.skill_lib import arm as armlib
 
 armlib.open_checked(self.manipulation, self._gripper_j6)
 armlib.move_checked(self.manipulation, x, y, z, pitch=1.3, logger=self.logger)
+armlib.rest(self.manipulation, self.joint_states)
+armlib.go(self.manipulation, CARRY if holding else armlib.ZERO, times=2)
 ```
 
 ## What belongs where
