@@ -134,7 +134,7 @@ class TTSHandler:
         # Check if we're already playing audio
         with self.play_lock:
             if self.is_playing:
-                self.logger.debug("🔊 Audio already playing, skipping new speech request")
+                self.logger.info("🔊 Audio already playing, skipping new speech request")
                 return False
             self.is_playing = True
 

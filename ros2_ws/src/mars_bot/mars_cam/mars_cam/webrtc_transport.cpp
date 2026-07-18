@@ -158,6 +158,8 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         if (trans) {
             gst_object_unref(trans);
             g_signal_connect(peer->webrtc, "pad-added", G_CALLBACK(on_incoming_pad), this);
+            RCLCPP_INFO(this->get_logger(), "Negotiated recvonly phone-mic m-line for '%s' (pt %d)",
+                        client_id.c_str(), kMicRecvPayloadType);
         } else {
             RCLCPP_WARN(this->get_logger(), "Failed to add recvonly mic transceiver; no phone-mic for this peer");
             peer->with_mic = false;
@@ -229,9 +231,10 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     reconcile_subscriptions();  // this peer just negotiated its cameras — make sure they're subscribed
 
     on_negotiation_needed(raw->webrtc, this);
-    RCLCPP_INFO(this->get_logger(), "Peer '%s' transport PLAYING (negotiated=%zu, active=%zu, audio=%s)",
+    RCLCPP_INFO(this->get_logger(), "Peer '%s' transport PLAYING (negotiated=%zu, active=%zu, audio=%s, mic=%s)",
                 client_id.c_str(), negotiated.size(), active.size(),
-                raw->audio_active ? "on" : (raw->with_audio ? "negotiated/off" : "off"));
+                raw->audio_active ? "on" : (raw->with_audio ? "negotiated/off" : "off"),
+                raw->with_mic ? "negotiated" : "off");
     return raw;
 }
 
@@ -432,7 +435,13 @@ GstFlowReturn WebRTCStreamer::on_mic_sample(GstElement* appsink, gpointer user_d
             msg.channels = 1;
             msg.samples.assign(pcm, pcm + n);
             gst_buffer_unmap(buffer, &map);
+            const uint32_t seq = msg.seq;
             self->remote_mic_pub_->publish(std::move(msg));
+            // Flow heartbeat: proves decoded mic audio is being published, and shows whether the
+            // consumers (speaker player / STT) are actually subscribed.
+            RCLCPP_INFO_THROTTLE(self->get_logger(), *self->get_clock(), 30000,
+                                 "Phone-mic flowing: seq %u -> %s (%zu subscriber(s))", seq,
+                                 self->remote_mic_topic_.c_str(), self->remote_mic_pub_->get_subscription_count());
         }
     }
     gst_sample_unref(sample);
