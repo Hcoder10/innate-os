@@ -26,6 +26,31 @@ class ArmUnhealthy(RuntimeError):
     """Servo brownout/refusal — abort, don't continue limp."""
 
 
+def rest(manipulation, joint_states=None, duration=3, keep_gripper=True, cancelled=None):
+    """Fold the arm to REST_POSITION (blocking up to `duration` seconds).
+
+    keep_gripper preserves the current j6 closure so a held object isn't
+    released. cancelled: optional predicate polled during the move; when it
+    turns true the wait stops early. Returns False if the command was refused
+    or the move was cancelled, else True.
+    """
+    target = list(REST_POSITION)
+    if keep_gripper:
+        j6 = gripper_j6(joint_states)
+        if j6 is not None:
+            target[5] = j6
+    if cancelled is None:
+        return bool(manipulation.move_to_joint_positions(joint_positions=target, duration=duration, blocking=True))
+    if not manipulation.move_to_joint_positions(joint_positions=target, duration=duration, blocking=False):
+        return False
+    start = time.time()
+    while time.time() - start < duration:
+        if cancelled():
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def clamp_reach(x, y):
     return (max(REACH_X[0], min(REACH_X[1], x)), max(REACH_Y[0], min(REACH_Y[1], y)))
 
@@ -58,8 +83,13 @@ def recover(manipulation, logger=None):
     time.sleep(0.5)
 
 
-def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.07, logger=None):
-    """Cartesian move; verify FK within tol, recover+retry once, else raise."""
+def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol_xy=0.05, tol_z=0.10, logger=None):
+    """Cartesian move; verify FK within per-axis tolerances, recover+retry once, else raise.
+
+    tol_z is looser than tol_xy on purpose: a z shortfall usually means the
+    fingers met the object/floor early (expected while descending), while xy
+    error means the grasp is off target.
+    """
     for attempt in (1, 2):
         ok = manipulation.move_to_cartesian_pose(
             x=x,
@@ -72,11 +102,15 @@ def move_checked(manipulation, x, y, z, pitch, duration=1.5, tol=0.07, logger=No
             blocking=True,
         )
         cur = ee_xyz(manipulation)
-        err = math.dist(cur, (x, y, z)) if cur is not None else None
-        if ok and err is not None and err <= tol:
+        err_xy = math.hypot(cur[0] - x, cur[1] - y) if cur is not None else None
+        err_z = abs(cur[2] - z) if cur is not None else None
+        if ok and err_xy is not None and err_xy <= tol_xy and err_z <= tol_z:
             return True
         if logger:
-            logger.warning(f"[arm] not tracking (ok={ok} err={err}) — {'recovering' if attempt == 1 else 'giving up'}")
+            logger.warning(
+                f"[arm] not tracking (ok={ok} err_xy={err_xy} err_z={err_z}) — "
+                f"{'recovering' if attempt == 1 else 'giving up'}"
+            )
         if attempt == 1:
             recover(manipulation, logger)
     raise ArmUnhealthy(f"arm failed to reach ({x:.2f},{y:.2f},{z:.2f})")

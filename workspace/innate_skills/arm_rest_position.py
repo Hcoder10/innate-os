@@ -4,16 +4,14 @@
 """
 Arm Rest Position Skill — move the arm to its resting pose.
 
-Callable from any skill's code as a plain function:
+From skill code, call the library function directly instead of this skill:
 
-    from innate.skills import arm_rest_position
-    arm_rest_position()            # blocks until the arm is resting
+    from workspace.skill_lib import arm as armlib
+    armlib.rest(self.manipulation, self.joint_states)
 
-(also runnable from the agent, the webapp skills menu, and
-`scripts/innate skill run local/arm_rest_position`).
+This class is the door for the agent, the webapp skills menu, and
+`scripts/innate skill run local/arm_rest_position`.
 """
-
-import time
 
 from brain_client.skills.types import (
     Interface,
@@ -23,7 +21,7 @@ from brain_client.skills.types import (
     Skill,
     SkillResult,
 )
-from workspace.skill_lib.arm import REST_POSITION
+from workspace.skill_lib import arm as armlib
 
 
 class ArmRestPosition(Skill):
@@ -58,25 +56,18 @@ class ArmRestPosition(Skill):
         if self.manipulation is None:
             return "Manipulation interface not available", SkillResult.FAILURE
 
-        target = list(REST_POSITION)
-        if keep_gripper:
-            js = self.joint_states
-            try:
-                target[5] = float(js["position"][5])
-            except (KeyError, IndexError, TypeError):
-                pass  # no reading — fall back to the captured gripper value
-
-        self.logger.info(f"Moving arm to rest position {[round(j, 3) for j in target]} over {duration}s")
-        success = self.manipulation.move_to_joint_positions(joint_positions=target, duration=duration, blocking=False)
-        if not success:
+        self.logger.info(f"Moving arm to rest position over {duration}s")
+        ok = armlib.rest(
+            self.manipulation,
+            self.joint_states,
+            duration=duration,
+            keep_gripper=keep_gripper,
+            cancelled=lambda: self._cancelled,
+        )
+        if self._cancelled:
+            return "Arm motion cancelled", SkillResult.CANCELLED
+        if not ok:
             return "Failed to send arm command", SkillResult.FAILURE
-
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            if self._cancelled:
-                return "Arm motion cancelled", SkillResult.CANCELLED
-            time.sleep(0.1)
-
         return "Arm moved to rest position", SkillResult.SUCCESS
 
     def cancel(self):

@@ -12,7 +12,7 @@ import json
 import math
 import time
 
-from innate.skills import SkillCancelled, SkillFailed, arm_rest_position
+from innate.skills import SkillCancelled
 from std_msgs.msg import String
 
 from brain_client.skills.types import (
@@ -25,6 +25,7 @@ from brain_client.skills.types import (
 )
 from workspace.skill_lib import arm as armlib
 from workspace.skill_lib import gemini as gemlib
+from workspace.skill_lib import mobility as moblib
 from workspace.skill_lib import vision
 from workspace.skill_lib.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
 
@@ -115,14 +116,6 @@ def _round_floats(v, nd=4):
 
 def _inside_box(px, cu, cv, half):
     return abs(px[0] - cu) <= half and abs(px[1] - cv) <= half
-
-
-def _servo_vel(err_px, gain, v_min, v_max, deadband_px):
-    """Pixel P-servo axis: gain per 100 px, clamp to [v_min, v_max], 0 in deadband."""
-    if abs(err_px) <= deadband_px:
-        return 0.0
-    v = max(-v_max, min(v_max, -gain / 100.0 * err_px))
-    return math.copysign(v_min, v) if abs(v) < v_min else v
 
 
 class _BlobTracker:
@@ -251,79 +244,39 @@ class PickAnyObject(Skill):
         return xy, px
 
     def _stop_base(self):
-        self.mobility.send_cmd_vel(0.0, 0.0, 0.1)
+        moblib.stop(self.mobility)
 
     def _odom_xyt(self):
-        """(x, y, theta) from nested dict or flat dataclass."""
-        od = self.odom
-        if od is None:
-            return None
-        try:
-            if isinstance(od, dict):
-                p = od["pose"]["pose"]["position"]
-                return (float(p["x"]), float(p["y"]), math.radians(float(od["theta_degrees"])))
-            return (float(od.x), float(od.y), float(od.theta))
-        except (KeyError, AttributeError, TypeError):
-            return None
+        return moblib.odom_xyt(self.odom)
 
-    def _rotate_by(self, angle, tol=None, timeout=12.0):
-        self._dbg("rotate", angle_deg=math.degrees(angle))
-        od = self._odom_xyt()
-        if od is None:
-            self.mobility.send_cmd_vel(0.0, math.copysign(0.35, angle), abs(angle) / 0.35)
-            time.sleep(abs(angle) / 0.35 + 0.4)
-            return
-        target = od[2] + angle
-        t0 = time.time()
-        err = angle
-        while time.time() - t0 < timeout:
-            self._checkpoint()
-            od = self._odom_xyt()
-            if od is None:
-                break
-            err = math.atan2(math.sin(target - od[2]), math.cos(target - od[2]))
-            if abs(err) < (tol if tol is not None else math.radians(self._p["rot_tol_deg"])):
-                break
-            wz_max = self._p["rot_wz_max"]
-            wz = max(-wz_max, min(wz_max, self._p["rot_kp"] * err))
-            if abs(wz) < self._p["rot_wz_min"]:
-                wz = math.copysign(self._p["rot_wz_min"], wz)
-            self.mobility.send_cmd_vel(0.0, wz, 0.15)
-            time.sleep(0.08)
-        self._stop_base()
-        self._dbg("rotate_done", err_deg=math.degrees(err), s=time.time() - t0)
+    def _rotate_by(self, angle):
+        moblib.rotate_by(
+            self.mobility,
+            self._odom_xyt,
+            angle,
+            kp=self._p["rot_kp"],
+            wz_max=self._p["rot_wz_max"],
+            wz_min=self._p["rot_wz_min"],
+            tol=math.radians(self._p["rot_tol_deg"]),
+            cancelled=lambda: self._cancelled,
+            dbg=self._dbg,
+        )
+        self._checkpoint()  # rotate_by returns early on cancel — unwind here
 
-    def _drive(self, dist, tol=None, timeout=15.0):
-        tol = tol if tol is not None else self._p["drive_tol_m"]
-        if abs(dist) < tol:
-            return
-        self._dbg("drive", dist_m=dist)
-        od = self._odom_xyt()
-        if od is None:
-            self.logger.warning("[PickAnyObject] no odom — open-loop drive")
-            self.mobility.send_cmd_vel(math.copysign(0.08, dist), 0.0, abs(dist) / 0.08)
-            time.sleep(abs(dist) / 0.08 + 0.4)
-            return
-        x0, y0 = od[0], od[1]
-        t0 = time.time()
-        err = abs(dist)
-        while time.time() - t0 < timeout:
-            self._checkpoint()
-            od = self._odom_xyt()
-            if od is None:
-                break
-            gone = math.hypot(od[0] - x0, od[1] - y0)
-            err = abs(dist) - gone
-            if err < tol:
-                break
-            v = math.copysign(
-                max(self._p["drive_v_min"], min(self._p["drive_v_max"], self._p["drive_kp"] * err)),
-                dist,
-            )
-            self.mobility.send_cmd_vel(v, 0.0, 0.15)
-            time.sleep(0.08)
-        self._stop_base()
-        self._dbg("drive_done", err_m=err, s=time.time() - t0)
+    def _drive(self, dist):
+        moblib.drive(
+            self.mobility,
+            self._odom_xyt,
+            dist,
+            kp=self._p["drive_kp"],
+            v_max=self._p["drive_v_max"],
+            v_min=self._p["drive_v_min"],
+            tol=self._p["drive_tol_m"],
+            cancelled=lambda: self._cancelled,
+            dbg=self._dbg,
+            logger=self.logger,
+        )
+        self._checkpoint()  # drive returns early on cancel — unwind here
 
     def _ee_xyz(self):
         return armlib.ee_xyz(self.manipulation)
@@ -426,8 +379,12 @@ class PickAnyObject(Skill):
             in_box = 0
 
             # Deadband = accept (inner) box; right -> -wz, too close (low) -> -vx.
-            wz = _servo_vel(u - cu, self._p["follow_gain_ang"], self._p["rot_wz_min"], self._p["rot_wz_max"], accept)
-            vx = _servo_vel(v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept)
+            wz = moblib.servo_vel(
+                u - cu, self._p["follow_gain_ang"], self._p["rot_wz_min"], self._p["rot_wz_max"], accept
+            )
+            vx = moblib.servo_vel(
+                v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept
+            )
             self.mobility.send_cmd_vel(vx, wz, 0.15)
             time.sleep(0.03)
         self._stop_base()
@@ -704,7 +661,7 @@ class PickAnyObject(Skill):
             self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6())
         except (KeyError, IndexError, TypeError):
             armlib.move_checked(
-                self.manipulation, x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol=0.10, logger=self.logger
+                self.manipulation, x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10, logger=self.logger
             )
             self._dbg("lift", ee=self._ee_xyz(), j6=self._gripper_j6(), ik_fallback=True)
 
@@ -788,10 +745,9 @@ class PickAnyObject(Skill):
             self.head.set_position(int(round(self._p["tilt_deg"])))
             time.sleep(0.5)
             # Rest arm first so it doesn't occlude the head camera.
-            try:
-                arm_rest_position()
-            except SkillFailed as e:
-                self.logger.warning(f"[PickAnyObject] rest-before-search failed: {e}")
+            if not armlib.rest(self.manipulation, self.joint_states, cancelled=lambda: self._cancelled):
+                self._checkpoint()  # rest() also returns False on cancel — unwind, don't warn
+                self.logger.warning("[PickAnyObject] rest-before-search failed")
 
             self.say(f"Looking for {prompt}.")
             xy = self._search(prompt)
