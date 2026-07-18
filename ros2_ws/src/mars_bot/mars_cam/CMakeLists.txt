@@ -296,6 +296,11 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
   RENAME stereo_calibrator
 )
+install(PROGRAMS
+  mars_cam/remote_mic_player.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME remote_mic_player
+)
 
 # Install launch files
 install(DIRECTORY launch/

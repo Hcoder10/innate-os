@@ -171,6 +171,15 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_calibration_manager")),
     )
 
+    # Plays the inbound operator mic (/audio/remote_mic) out the robot speaker, gated on
+    # /audio/remote_mic/to_speaker (off until true). A plain Node (spawns aplay), not composable.
+    remote_mic_player = Node(
+        package="mars_cam",
+        executable="remote_mic_player",
+        name="remote_mic_player",
+        output="screen",
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
@@ -178,5 +187,6 @@ def generate_launch_description():
             start_calibration_manager_arg,
             camera_container,
             stereo_calibration_manager,
+            remote_mic_player,
         ]
     )

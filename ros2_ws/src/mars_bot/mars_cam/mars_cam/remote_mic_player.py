@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
 """Subscribe to /audio/remote_mic and play it through aplay.
 
 The publisher (mars_cam webrtc) emits innate_audio/Audio: S16LE, 48000 Hz, mono,

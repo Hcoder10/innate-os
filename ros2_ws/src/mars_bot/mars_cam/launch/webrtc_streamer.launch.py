@@ -25,6 +25,14 @@ def generate_launch_description():
                         "audio_capture_device": "sysdefault:CARD=Light",
                     }
                 ],
-            )
+            ),
+            # Plays the inbound operator mic (/audio/remote_mic) out the robot speaker, gated on
+            # /audio/remote_mic/to_speaker (off until true). Alongside the streamer that publishes it.
+            Node(
+                package="mars_cam",
+                executable="remote_mic_player",
+                name="remote_mic_player",
+                output="screen",
+            ),
         ]
     )
