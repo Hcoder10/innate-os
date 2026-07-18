@@ -265,6 +265,10 @@
 
 .calib-coverage-tile img {
   width: 100%;
+  /* Coverage maps are drawn on the camera's squashed 4:3 frames; display at
+     the true 16:9 aspect so they line up with the (un-squashed) live feed. */
+  aspect-ratio: 16 / 9;
+  object-fit: fill;
   border-radius: 8px;
   border: 1px solid var(--hairline);
   background: #000;
@@ -314,10 +318,10 @@
   }
 
   .calib-video {
-    /* Main camera stream is 640x480 (see /mars/main_camera/left/image_raw) —
-       matching this avoids the black top/bottom letterboxing a taller,
-       aspect-ratio-agnostic box produced. */
-    aspect-ratio: 4 / 3;
+    /* Main camera displays un-squashed at 16:9 (see .video-stage
+       video.anamorphic in app.css) — matching this avoids the black
+       top/bottom letterboxing a taller, aspect-ratio-agnostic box produced. */
+    aspect-ratio: 16 / 9;
     min-height: 0;
   }
 

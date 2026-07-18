@@ -97,6 +97,12 @@ export function createVideoStage(parent, session) {
 
   const render = () => {
     const state = latest;
+    // The main stereo camera publishes its 16:9 per-eye sensor FOV squashed
+    // into a 4:3 frame (the capture pipeline scales without cropping — see
+    // main_camera_driver's nvvidconv stage). Stretch it back to true aspect
+    // for display so the view doesn't read narrower than what the camera
+    // sees. Other cameras (arm) are native 4:3 and shown as-is.
+    video.classList.toggle("anamorphic", session.primaryCamera?.name === "main");
     // Cold-start "loading" only — never over a rebuild's freeze-frame.
     const loading = buffering && !everPlayed;
     const showStatus = (state.status !== "streaming" && !state.videoStream) || loading;

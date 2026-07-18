@@ -61,12 +61,17 @@ function buildCockpit(root) {
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
   const telemetryOverlay = overlay("overlay-top-left");
+  // Right-edge column: the record card (real robots) stacked directly above
+  // the control rail — separate glass cards, one shared centered anchor.
+  const rightStack = document.createElement("div");
+  rightStack.className = "right-stack";
   const rightRail = overlay("overlay-right");
+  rightStack.append(rightRail);
   const chipsOverlay = overlay("overlay-bottom-left");
   const stickOverlay = overlay("overlay-joystick");
   const ttsOverlay = overlay("overlay-tts");
   const armOverlay = overlay("overlay-arm");
-  root.append(telemetryOverlay, rightRail, chipsOverlay, stickOverlay, ttsOverlay, armOverlay);
+  root.append(telemetryOverlay, rightStack, chipsOverlay, stickOverlay, ttsOverlay, armOverlay);
 
   /** @param {string} className */
   function overlay(className) {
@@ -84,13 +89,11 @@ function buildCockpit(root) {
   if (!config.simControls && videoStage.audioEl) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
   }
-  // Rosbag record toggle (recording_manager node) — its own floating card
-  // above the right control rail, so recording stays visually separate from
-  // the drive controls. Skipped in the sim: no recorder node there.
+  // Rosbag record toggle (recording_manager node) — a bare button at the top
+  // of the right-edge stack (no card of its own), visually separate from the
+  // control rail below. Skipped in the sim: no recorder node there.
   if (!config.simControls) {
-    const recordOverlay = overlay("overlay-record");
-    root.append(recordOverlay);
-    parts.push(createRecordButton(recordOverlay, ros));
+    parts.push(createRecordButton(rightStack, ros));
   }
   parts.push(
     createHeadTilt(rightRail, ros),

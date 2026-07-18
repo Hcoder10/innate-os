@@ -456,12 +456,27 @@ button {
   position: absolute;
   inset: 0;
   background: #000;
+  container-type: size; /* cq units size the anamorphic 16:9 box below */
 }
 
 .video-stage video {
   width: 100%;
   height: 100%;
   object-fit: contain; /* never crop the operator's view */
+}
+
+/* The main stereo camera arrives anamorphic — a 16:9 sensor FOV squashed into
+   a 4:3 frame by the robot's capture pipeline. Display it in a 16:9 box
+   contained in the stage and stretch to fill: true aspect, nothing cropped
+   (the source pixels already hold the full FOV, just horizontally
+   compressed). */
+.video-stage video.anamorphic {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  height: min(100cqh, calc(100cqw * 9 / 16));
+  object-fit: fill;
 }
 
 .video-stage.degraded video {
@@ -540,17 +555,37 @@ button {
   padding: 10px 7px;
 }
 
-/* Record button card — right edge, floating above the centered control rail.
-   The 176px anchors this card's bottom ~14px above the rail's top edge
-   (half the rail's ~324px height + a 14px gap); revisit if the rail's
-   contents change. */
-.overlay-record {
+/* Right-edge stack (Teleop): record card directly above the control rail —
+   two separate glass cards sharing one centered anchor, so they stay adjacent
+   no matter how the rail's contents change. Children keep their .overlay glass
+   look but the stack owns all positioning. */
+.right-stack {
+  position: absolute;
   right: 14px;
-  bottom: calc(50% + 176px);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 7px;
+  gap: 10px;
+}
+
+.right-stack .overlay {
+  position: static;
+  transform: none;
+}
+
+/* Record button — a bare button above the rail, no card of its own. It sits
+   straight on the video, so the button itself carries the glass backdrop the
+   card would otherwise provide. */
+.right-stack > .record-wrap {
+  order: -1;
+}
+
+.right-stack > .record-wrap .record-toggle {
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .overlay-bottom-left {
