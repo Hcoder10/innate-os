@@ -6,6 +6,8 @@
 // audio toggle, which must flip the track and call audio.play() inside the
 // click gesture to satisfy autoplay policy.
 
+import { REMOTE_MIC_SPEAKER_TOPIC, REMOTE_MIC_STT_TOPIC } from "../constants.js";
+
 /**
  * @param {HTMLElement} parent
  * @param {import("../webrtcSession.js").WebRtcSession} session
@@ -252,6 +254,103 @@ export function createMicToggle(parent, session) {
 
   button.addEventListener("click", () => {
     void session.setMic(!session.state.micRequested);
+  });
+
+  parent.appendChild(button);
+  return {
+    destroy() {
+      unsub();
+      button.remove();
+    },
+  };
+}
+
+/**
+ * Speaker-gate toggle: publishes REMOTE_MIC_SPEAKER_TOPIC (std_msgs/Bool) to
+ * decide whether the operator's mic (received on the robot as /audio/remote_mic)
+ * is played out the robot's physical speaker. Purely a command — the state is
+ * local; re-published on (re)connect so a robot restart doesn't strand it.
+ * @param {HTMLElement} parent
+ * @param {import("../rosClient.js").RosClient} rosClient
+ * @returns {{ destroy: () => void }}
+ */
+export function createSpeakerToggle(parent, rosClient) {
+  let on = false;
+  const button = document.createElement("button");
+  button.className = "icon-toggle speaker-toggle";
+  button.type = "button";
+  button.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M11 5 6.5 9H3.5v6h3L11 19z"/>' +
+    '<path class="wave wave1" d="M15 9.5a4 4 0 0 1 0 5"/>' +
+    '<path class="wave wave2" d="M17.5 7a8 8 0 0 1 0 10"/>' +
+    "</svg>";
+
+  const render = () => {
+    button.classList.toggle("active", on);
+    button.title = on ? "Playing on robot speaker — click to mute" : "Play your voice on the robot speaker";
+    button.setAttribute("aria-pressed", String(on));
+    button.setAttribute("aria-label", "Robot speaker output");
+  };
+  render();
+
+  button.addEventListener("click", () => {
+    on = !on;
+    rosClient.publish(REMOTE_MIC_SPEAKER_TOPIC, { data: on });
+    render();
+  });
+
+  // Re-assert the gate whenever the socket comes up (the robot's player restarts muted).
+  const unsub = rosClient.onStateChange((state) => {
+    if (state === "connected") rosClient.publish(REMOTE_MIC_SPEAKER_TOPIC, { data: on });
+  });
+
+  parent.appendChild(button);
+  return {
+    destroy() {
+      unsub();
+      button.remove();
+    },
+  };
+}
+
+/**
+ * STT-gate toggle: publishes REMOTE_MIC_STT_TOPIC (std_msgs/Bool) to decide
+ * whether the operator's mic (received on the robot as /audio/remote_mic) is
+ * transcribed. Purely a command — the state is local; re-published on (re)connect
+ * so a robot restart doesn't strand it (the remote STT stream defaults off).
+ * @param {HTMLElement} parent
+ * @param {import("../rosClient.js").RosClient} rosClient
+ * @returns {{ destroy: () => void }}
+ */
+export function createSttToggle(parent, rosClient) {
+  let on = false;
+  const button = document.createElement("button");
+  button.className = "icon-toggle stt-toggle";
+  button.type = "button";
+  button.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="3" y="5" width="18" height="14" rx="2"/>' +
+    '<path d="M7 10h4M7 14h7"/>' +
+    "</svg>";
+
+  const render = () => {
+    button.classList.toggle("active", on);
+    button.title = on ? "Transcribing your voice — click to stop" : "Transcribe your voice to the agent";
+    button.setAttribute("aria-pressed", String(on));
+    button.setAttribute("aria-label", "Transcribe operator mic");
+  };
+  render();
+
+  button.addEventListener("click", () => {
+    on = !on;
+    rosClient.publish(REMOTE_MIC_STT_TOPIC, { data: on });
+    render();
+  });
+
+  // Re-assert the gate whenever the socket comes up (the remote STT stream defaults off).
+  const unsub = rosClient.onStateChange((state) => {
+    if (state === "connected") rosClient.publish(REMOTE_MIC_STT_TOPIC, { data: on });
   });
 
   parent.appendChild(button);

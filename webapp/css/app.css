@@ -5428,6 +5428,15 @@ button {
   background: rgb(232 163 61 / 22%);
 }
 
+/* Operator-mic + speaker + stt toggles at the head of the composer — stretch to the input height. */
+.agent-compose .mic-toggle,
+.agent-compose .speaker-toggle,
+.agent-compose .stt-toggle {
+  align-self: stretch;
+  height: auto;
+  border-radius: 11px;
+}
+
 /* Bottom-left "agent active" chip — only while the brain is running. */
 .agent-active-chip {
   position: absolute;

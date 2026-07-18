@@ -6,8 +6,9 @@
 //
 // Connect/disconnect lifecycle and optimistic mount mirror teleop (see
 // pageMount.js): the view builds immediately and panels fill in once the socket
-// is up. No mic toggle here — robot speech already plays in-browser via the
-// shell's ttsAudio.
+// is up. The robot-mic *receive* toggle is omitted (robot speech already plays
+// in-browser via the shell's ttsAudio); the operator-mic *send* toggle lives at
+// the head of the Agent panel's composer.
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
@@ -56,7 +57,7 @@ function buildAgentView(root) {
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" }),
-    createAgentPanel(root, ros, agentState),
+    createAgentPanel(root, ros, agentState, session),
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },
   ];

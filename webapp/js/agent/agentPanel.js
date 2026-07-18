@@ -14,14 +14,16 @@
 // (it originated in the old teleop chat pane, since removed).
 
 import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
+import { createMicToggle, createSpeakerToggle, createSttToggle } from "../teleop/videoStage.js";
 
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {import("../webrtcSession.js").WebRtcSession} session
  * @returns {{ destroy: () => void }}
  */
-export function createAgentPanel(root, rosClient, agentState) {
+export function createAgentPanel(root, rosClient, agentState, session) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
 
   const panel = document.createElement("section");
@@ -90,6 +92,16 @@ export function createAgentPanel(root, rosClient, agentState) {
   // ---- composer -----------------------------------------------------------
   const form = document.createElement("form");
   form.className = "agent-compose";
+  // Operator-mic toggle at the head of the composer (browser mic -> robot ->
+  // /audio/remote_mic), left of the input. Only WebRtcSession can send it; sim's
+  // SimSession has no setMic, so gate on it and skip the toggle there.
+  const micToggle = typeof session?.setMic === "function" ? createMicToggle(form, session) : null;
+  // Speaker-gate toggle beside it: publishes /audio/remote_mic/to_speaker so the
+  // robot plays (or drops) the operator's mic out its physical speaker.
+  const speakerToggle = micToggle ? createSpeakerToggle(form, rosClient) : null;
+  // STT-gate toggle beside it: publishes /audio/remote_mic/stt so the robot
+  // transcribes (or ignores) the operator's mic. Remote STT defaults off.
+  const sttToggle = micToggle ? createSttToggle(form, rosClient) : null;
   const input = document.createElement("textarea");
   input.className = "agent-compose-input";
   input.rows = 1;
@@ -496,6 +508,9 @@ export function createAgentPanel(root, rosClient, agentState) {
 
   return {
     destroy() {
+      micToggle?.destroy();
+      speakerToggle?.destroy();
+      sttToggle?.destroy();
       unsubAgents();
       unsubConn();
       unsubIn();

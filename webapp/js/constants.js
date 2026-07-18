@@ -125,6 +125,14 @@ export const ROBOT_INFO_TOPIC = "/robot/info";
 // mobile app's volume slider calls; current value rides on /robot/info.
 export const SET_VOLUME_SERVICE = "/set_volume";
 
+// std_msgs/Bool gate for playing the operator's mic (received on /audio/remote_mic)
+// out the robot's physical speaker. The robot-side player drops samples while false.
+export const REMOTE_MIC_SPEAKER_TOPIC = "/audio/remote_mic/to_speaker";
+
+// std_msgs/Bool gate for transcribing the operator's mic (received on
+// /audio/remote_mic). The robot's MicroInput remote stream is off until this is true.
+export const REMOTE_MIC_STT_TOPIC = "/audio/remote_mic/stt";
+
 // WebRTC signaling over rosbridge. START is a std_msgs/String JSON payload that
 // carries our client_id: {"source":"live","audio":bool,"client_id":"...","video":[...]}.
 // The robot routes offer/answer/ICE on the *_id topics, each enveloped as {client_id, ...}
