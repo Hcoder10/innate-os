@@ -301,4 +301,15 @@ export const STEREO_CALIB_DEFAULT_MIN_CORNERS = 10;
 // zero-new-ROS-code proxy for "the robot currently has a calibration file".
 export const MAIN_CAMERA_DEPTH_TOPIC = "/mars/main_camera/depth/image_rect_raw";
 
+// ---- Teleop bag recording ---------------------------------------------------
+// recording_manager node (mars_bringup): wraps `ros2 bag record` capturing the
+// three cameras (raw stereo pair + arm), camera_info, and odometry/TF/scan/nav
+// state into data/recordings/teleop_<timestamp> for offline 3D reconstruction.
+// Both services are std_srvs/Trigger (start's message = bag path, stop's = path
+// + size). Status is JSON-in-String republished every ~2s: {recording, path,
+// started_at (epoch s), size_bytes, error}.
+export const RECORDING_START_SERVICE = "/recording/start";
+export const RECORDING_STOP_SERVICE = "/recording/stop";
+export const RECORDING_STATUS_TOPIC = "/recording/status";
+
 export const LAST_IP_KEY = "innate.lastRobotIP";

@@ -540,6 +540,19 @@ button {
   padding: 10px 7px;
 }
 
+/* Record button card — right edge, floating above the centered control rail.
+   The 176px anchors this card's bottom ~14px above the rail's top edge
+   (half the rail's ~324px height + a 14px gap); revisit if the rail's
+   contents change. */
+.overlay-record {
+  right: 14px;
+  bottom: calc(50% + 176px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 7px;
+}
+
 .overlay-bottom-left {
   left: 14px;
   bottom: 14px;
@@ -1385,6 +1398,51 @@ button {
 
 .audio-toggle:not(.active) .wave {
   opacity: 0.2;
+}
+
+/* ---- record toggle ---------------------------------------------------------- */
+
+.record-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.record-toggle .rec-dot {
+  opacity: 0.35;
+  transition: opacity 150ms ease;
+}
+
+.record-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.record-toggle.recording {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.record-toggle.recording .rec-dot {
+  opacity: 1;
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.record-readout {
+  font-size: 10px;
+  color: var(--danger);
+  min-height: 14px;
 }
 
 /* ---- TTS bar ---------------------------------------------------------------- */

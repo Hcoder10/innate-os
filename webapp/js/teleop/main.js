@@ -22,6 +22,7 @@ import { createHeadTilt } from "./headTilt.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
+import { createRecordButton } from "./recordButton.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
@@ -82,6 +83,14 @@ function buildCockpit(root) {
   // is the sim deployment's feature flag (env-driven; false on the real robot).
   if (!config.simControls && videoStage.audioEl) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
+  }
+  // Rosbag record toggle (recording_manager node) — its own floating card
+  // above the right control rail, so recording stays visually separate from
+  // the drive controls. Skipped in the sim: no recorder node there.
+  if (!config.simControls) {
+    const recordOverlay = overlay("overlay-record");
+    root.append(recordOverlay);
+    parts.push(createRecordButton(recordOverlay, ros));
   }
   parts.push(
     createHeadTilt(rightRail, ros),

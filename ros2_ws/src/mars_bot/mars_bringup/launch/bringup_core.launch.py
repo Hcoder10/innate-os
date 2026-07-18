@@ -23,11 +23,21 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Teleop bag recorder — start/stop services + status topic for the
+    # webapp's record button (writes to data/recordings).
+    recording_manager_node = Node(
+        package="mars_bringup",
+        executable="recording_manager.py",
+        name="recording_manager",
+        output="screen",
+    )
+
     # base_link -> base_footprint static TF is now published by
     # robot_state_publisher via the URDF (base_footprint_joint).
 
     return LaunchDescription(
         [
             bringup_node,
+            recording_manager_node,
         ]
     )
