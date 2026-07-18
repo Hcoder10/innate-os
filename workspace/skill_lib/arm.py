@@ -81,8 +81,7 @@ def rest_joints(joint_states=None, keep_gripper=True):
     return list(REST)
 
 
-def go(manipulation, joints, duration=3.0, *, times=1, pause=0.3,
-       is_cancelled=None, logger=None):
+def go(manipulation, joints, duration=3.0, *, times=1, pause=0.3, is_cancelled=None, logger=None):
     """Move to joint positions. Raises ArmFailed / ArmCancelled.
 
     ``times`` + ``pause`` repeat the move so the arm can settle (pick teardown).
@@ -93,11 +92,11 @@ def go(manipulation, joints, duration=3.0, *, times=1, pause=0.3,
     blocking = is_cancelled is None
     for i in range(times):
         if logger:
-            logger.info(
-                f"[arm] joints {[round(j, 3) for j in joints]} over {duration}s"
-            )
+            logger.info(f"[arm] joints {[round(j, 3) for j in joints]} over {duration}s")
         ok = manipulation.move_to_joint_positions(
-            joint_positions=joints, duration=duration, blocking=blocking,
+            joint_positions=joints,
+            duration=duration,
+            blocking=blocking,
         )
         if not ok:
             raise ArmFailed("Failed to send arm command")
@@ -115,20 +114,27 @@ def go(manipulation, joints, duration=3.0, *, times=1, pause=0.3,
 go_joints = go
 
 
-def rest(manipulation, joint_states=None, duration=3.0, keep_gripper=True,
-         is_cancelled=None, logger=None, **go_kw):
+def rest(manipulation, joint_states=None, duration=3.0, keep_gripper=True, is_cancelled=None, logger=None, **go_kw):
     """Fold to REST. keep_gripper preserves current j6 when held."""
     go(
-        manipulation, rest_joints(joint_states, keep_gripper),
-        duration=duration, is_cancelled=is_cancelled, logger=logger, **go_kw,
+        manipulation,
+        rest_joints(joint_states, keep_gripper),
+        duration=duration,
+        is_cancelled=is_cancelled,
+        logger=logger,
+        **go_kw,
     )
 
 
 def zero(manipulation, duration=3.0, is_cancelled=None, logger=None, **go_kw):
     """Move all joints to 0."""
     go(
-        manipulation, ZERO, duration=duration,
-        is_cancelled=is_cancelled, logger=logger, **go_kw,
+        manipulation,
+        ZERO,
+        duration=duration,
+        is_cancelled=is_cancelled,
+        logger=logger,
+        **go_kw,
     )
 
 

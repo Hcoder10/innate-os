@@ -35,8 +35,10 @@ class ArmZeroPosition(Skill):
 
         try:
             armlib.zero(
-                self.manipulation, duration=duration,
-                is_cancelled=lambda: self._cancelled, logger=self.logger,
+                self.manipulation,
+                duration=duration,
+                is_cancelled=lambda: self._cancelled,
+                logger=self.logger,
             )
         except armlib.ArmCancelled:
             return "Arm motion cancelled", SkillResult.CANCELLED

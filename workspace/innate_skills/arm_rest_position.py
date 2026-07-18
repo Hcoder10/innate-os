@@ -15,7 +15,6 @@ From skill code, call the library function directly instead of this skill:
 Implementation: workspace/skill_lib/arm.py (rest).
 """
 
-
 from brain_client.skills.types import (
     Interface,
     InterfaceType,
@@ -60,8 +59,11 @@ class ArmRestPosition(Skill):
 
         try:
             armlib.rest(
-                self.manipulation, self.joint_states, duration=duration,
-                keep_gripper=keep_gripper, is_cancelled=lambda: self._cancelled,
+                self.manipulation,
+                self.joint_states,
+                duration=duration,
+                keep_gripper=keep_gripper,
+                is_cancelled=lambda: self._cancelled,
                 logger=self.logger,
             )
         except armlib.ArmCancelled:
