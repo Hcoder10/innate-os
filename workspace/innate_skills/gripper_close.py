@@ -30,8 +30,8 @@ class GripperClose(Skill):
     def guidelines(self):
         return (
             "Close the gripper/claw. strength adds squeeze (radians past the "
-            "closed stop) for a firmer grip; default 0.0. Keep it <= 0.6 on a "
-            "real object — more overcurrent-trips the servo."
+            "closed stop) for a firmer grip; default 0.0. Up to ~0.8 holds "
+            "well on a real object — watch for overcurrent servo trips above."
         )
 
     def execute(self, strength: float = 0.0, duration: float = 1.0):

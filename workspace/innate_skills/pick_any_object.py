@@ -291,8 +291,10 @@ class PickAnyObject(Skill):
         return armlib.gripper_j6(self.joint_states)
 
     def _rest_arm(self, keep_grip):
-        """Best-effort teardown: carry if holding, else zero. Never raises."""
-        joints = CARRY_ARM + [-self._p["close_strength"]] if keep_grip else armlib.ZERO
+        """Best-effort teardown: carry if holding, else fold to rest. Never
+        raises. REST, not ZERO: after a failed descent the arm can be near the
+        floor, and the zero posture would sweep the gripper through it."""
+        joints = CARRY_ARM + [-self._p["close_strength"]] if keep_grip else list(armlib.REST)
         try:
             armlib.go(self.manipulation, joints, duration=3.0, times=2)
         except Exception as e:  # noqa: BLE001 — teardown must not mask the run result
@@ -600,7 +602,7 @@ class PickAnyObject(Skill):
         a = WRIST_SEARCH_ARM
         j6 = self._gripper_j6()
         pose = [bearing, a[1], a[2], self._p["wrist_pitch"] - a[1] - a[2], a[4], j6 if j6 is not None else 0.0]
-        self.manipulation.move_to_joint_positions(joint_positions=pose, duration=self._p["hover_s"], blocking=True)
+        armlib.go(self.manipulation, pose, duration=self._p["hover_s"], logger=self.logger)
         time.sleep(0.3)
         self._dbg("hover", ee=self._ee_xyz())
 

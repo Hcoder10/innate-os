@@ -10,7 +10,7 @@ Poses are plain joint lists. ``go`` / ``rest`` / ``zero`` raise on failure
 so call sites stay declarative:
 
     armlib.rest(self.manipulation, self.joint_states)
-    armlib.go(self.manipulation, CARRY if holding else armlib.ZERO)
+    armlib.go(self.manipulation, CARRY if holding else armlib.REST)
 """
 
 import math
