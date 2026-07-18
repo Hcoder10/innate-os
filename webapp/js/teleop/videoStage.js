@@ -222,3 +222,43 @@ export function createAudioToggle(parent, session, audioEl) {
     },
   };
 }
+
+/**
+ * Operator-mic toggle. Sends the browser microphone up to the robot (browser -> robot -> ROS), the
+ * opposite direction from the robot-mic toggle above. The click both requests the recvonly audio m-line
+ * (a renegotiating rebuild in the session) and — because setMic acquires getUserMedia — surfaces the
+ * permission prompt inside the gesture.
+ * @param {HTMLElement} parent
+ * @param {import("../webrtcSession.js").WebRtcSession} session
+ * @returns {{ destroy: () => void }}
+ */
+export function createMicToggle(parent, session) {
+  const button = document.createElement("button");
+  button.className = "icon-toggle mic-toggle";
+  button.type = "button";
+  button.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
+    '<path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>' +
+    '<path d="M12 17.5V21"/>' +
+    "</svg>";
+
+  const unsub = session.onChange((state) => {
+    button.classList.toggle("active", state.micRequested);
+    button.title = state.micRequested ? "Your mic on — click to mute" : "Your mic off — click to talk";
+    button.setAttribute("aria-pressed", String(state.micRequested));
+    button.setAttribute("aria-label", "Your microphone");
+  });
+
+  button.addEventListener("click", () => {
+    void session.setMic(!session.state.micRequested);
+  });
+
+  parent.appendChild(button);
+  return {
+    destroy() {
+      unsub();
+      button.remove();
+    },
+  };
+}

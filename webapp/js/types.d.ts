@@ -258,6 +258,8 @@ interface WebRtcState {
   videoLive: boolean[];
   audioStream: MediaStream | null;
   audioRequested: boolean;
+  /** True while the operator's microphone is being SENT to the robot (browser -> robot -> ROS). */
+  micRequested: boolean;
   /** Live RTCPeerConnection.iceConnectionState ("new" before a peer exists). */
   iceState: string;
   /** True once we've fallen back to a public STUN server after the local-only config failed. */

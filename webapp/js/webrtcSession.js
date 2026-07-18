@@ -12,6 +12,11 @@
 // Tracks: audio starts disabled (robot mic must never be audible before the
 // operator opts in); video dispatched by transceiver mid with arrival-order
 // fallback; only the main camera is exposed (the arm camera is ignored in v1).
+// Operator mic (setMic) sends the reverse direction — the browser's mic up to
+// the robot on a recvonly audio m-line the robot only offers when we ask, so
+// toggling it re-handshakes (the m-line isn't negotiated up front like the
+// robot-mic one); #onOffer binds the local mic track to that m-line before
+// answering.
 //
 // Self-heal: 30 s initial-handshake watchdog, ICE disconnected/failed
 // persisting 10 s → re-handshake, and a re-handshake whenever the rosbridge
@@ -50,6 +55,31 @@ const OFFER_GUARD_RESET_MS = 1_000;
 // refreshing feel faster.
 const MAX_HANDSHAKE_ATTEMPTS = 3;
 
+/**
+ * Mid of the robot's recvonly audio m-line — the phone-mic slot we send into — or null if absent.
+ * The robot marks this m-line a=recvonly (it receives); the robot->browser send-audio m-line is
+ * a=sendonly, so recvonly uniquely identifies the mic slot regardless of m-line order.
+ * @param {string} sdp
+ * @returns {string | null}
+ */
+function micRecvMid(sdp) {
+  let inAudio = false;
+  let mid = null;
+  let recvonly = false;
+  for (const line of sdp.split(/\r?\n/)) {
+    if (line.startsWith("m=")) {
+      if (inAudio && recvonly && mid) return mid; // the section that just ended was the mic slot
+      inAudio = line.startsWith("m=audio");
+      mid = null;
+      recvonly = false;
+    } else if (inAudio) {
+      if (line.startsWith("a=mid:")) mid = line.slice(6).trim();
+      else if (line.trim() === "a=recvonly") recvonly = true;
+    }
+  }
+  return inAudio && recvonly && mid ? mid : null;
+}
+
 export class WebRtcSession {
   /** @type {import("./rosClient.js").RosClient} */ #ros;
   /** @type {RTCPeerConnection | null} */ #pc = null;
@@ -60,6 +90,7 @@ export class WebRtcSession {
     videoLive: [],
     audioStream: null,
     audioRequested: false,
+    micRequested: false,
     iceState: "new",
     stunFallback: false,
   };
@@ -68,6 +99,11 @@ export class WebRtcSession {
 
   #started = false;
   #builtWithAudio = false;
+  // Operator microphone captured for sending to the robot. Kept across pc rebuilds (like the video
+  // freeze-frame) so a re-handshake re-binds the same track without re-prompting for permission; only
+  // stopped when the operator turns the mic off or the session stops.
+  /** @type {MediaStream | null} */ #micStream = null;
+  /** @type {MediaStreamTrack | null} */ #micTrack = null;
   #processingOffer = false;
   #remoteDescriptionSet = false;
   /** @type {RTCIceCandidateInit[]} */ #iceQueue = [];
@@ -150,9 +186,17 @@ export class WebRtcSession {
     this.#useFallbackStun = false;
     this.#closePc();
     this.#clearAudioDebounce();
-    // No mic stream once stopped (e.g. leaving the teleop page) — let TTS play.
+    this.#releaseMic();
+    // No robot-mic stream once stopped (e.g. leaving the teleop page) — let TTS play.
     setMicAudioActive(false);
-    this.#patch({ status: "idle", videoStream: null, audioStream: null, iceState: "new", stunFallback: false });
+    this.#patch({
+      status: "idle",
+      videoStream: null,
+      audioStream: null,
+      micRequested: false,
+      iceState: "new",
+      stunFallback: false,
+    });
   }
 
   destroy() {
@@ -180,12 +224,91 @@ export class WebRtcSession {
     if (!this.#started || this.#ros.state !== "connected") return;
     if (this.#pc) {
       this.#ros.publish(WEBRTC_START_TOPIC, {
-        data: JSON.stringify({ source: "live", audio: on, client_id: this.#clientId, video: this.#activeCams }),
+        data: JSON.stringify({
+          source: "live",
+          audio: on,
+          mic: this.#state.micRequested,
+          client_id: this.#clientId,
+          video: this.#activeCams,
+        }),
       });
       console.log("[webrtc] audio toggle ->", on, "(no reconnect)");
     } else {
       // No live peer (map-only, all cameras off) — bring one up so the mic can flow.
       this.#handshake();
+    }
+  }
+
+  /**
+   * Toggle sending the OPERATOR's microphone up to the robot (browser -> robot -> ROS, played out the
+   * robot). This is the opposite direction from setAudio, which RECEIVES the robot's mic. The recvonly
+   * m-line is NOT negotiated up front (the robot only offers it when we ask), so toggling adds/removes an
+   * m-line — a renegotiating rebuild, not a live flip. Acquiring the mic here (inside the click gesture)
+   * both keeps the permission prompt off the happy path and lets a denial leave us cleanly off.
+   * @param {boolean} on
+   * @returns {Promise<void>}
+   */
+  async setMic(on) {
+    if (this.#state.micRequested === on) return;
+    if (on) {
+      if (!(await this.#acquireMic())) return; // permission denied / no device — stay off
+    } else {
+      this.#releaseMic();
+    }
+    this.#patch({ micRequested: on });
+    if (!this.#started || this.#ros.state !== "connected") return;
+    // Adding/removing the recvonly mic m-line requires a fresh offer, so re-handshake rather than sending a
+    // reneg-free active-toggle START. #onOffer binds the mic track to the new offer's recvonly audio m-line.
+    this.#handshakeAttempts = 0;
+    this.#handshake();
+  }
+
+  /** @returns {Promise<boolean>} true once a live mic track is held. */
+  async #acquireMic() {
+    if (this.#micTrack && this.#micTrack.readyState === "live") return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.#micStream = stream;
+      this.#micTrack = stream.getAudioTracks()[0] ?? null;
+      return this.#micTrack != null;
+    } catch (err) {
+      console.warn("[webrtc] microphone unavailable:", err);
+      return false;
+    }
+  }
+
+  /** Stop and drop the local mic track, releasing the OS microphone. */
+  #releaseMic() {
+    if (this.#micStream) {
+      for (const track of this.#micStream.getTracks()) track.stop();
+    }
+    this.#micStream = null;
+    this.#micTrack = null;
+  }
+
+  /**
+   * Bind the operator mic track to the robot-offered recvonly audio m-line so this pc's answer sends it.
+   * A no-op unless the mic is requested and the offer actually carries the m-line.
+   * @param {RTCPeerConnection} pc owning connection
+   * @param {string} offerSdp the robot's offer SDP (already applied via setRemoteDescription)
+   * @returns {Promise<void>}
+   */
+  async #attachMic(pc, offerSdp) {
+    const track = this.#micTrack;
+    if (!this.#state.micRequested || !track) return;
+    const mid = micRecvMid(offerSdp);
+    if (!mid) {
+      console.warn("[webrtc] mic requested but offer has no recvonly audio m-line");
+      return;
+    }
+    const transceiver = pc.getTransceivers().find((t) => t.mid === mid);
+    if (!transceiver) return;
+    try {
+      transceiver.direction = "sendonly";
+      await transceiver.sender.replaceTrack(track);
+      console.log("[webrtc] operator mic attached (mid=" + mid + ")");
+    } catch (err) {
+      console.warn("[webrtc] failed to attach operator mic:", err);
     }
   }
 
@@ -210,7 +333,13 @@ export class WebRtcSession {
       return;
     }
     this.#ros.publish(WEBRTC_START_TOPIC, {
-      data: JSON.stringify({ source: "live", video: next, audio: this.#state.audioRequested, client_id: this.#clientId }),
+      data: JSON.stringify({
+        source: "live",
+        video: next,
+        audio: this.#state.audioRequested,
+        mic: this.#state.micRequested,
+        client_id: this.#clientId,
+      }),
     });
     console.log("[webrtc] active cameras ->", next.join("+"), "(no reconnect)");
   }
@@ -243,13 +372,13 @@ export class WebRtcSession {
     // Map-only view: no cameras (and no mic) requested. Tear the peer down and stay idle — the robot
     // releases its side on an empty START, and arming a watchdog for media that will never come would
     // just thrash. The map runs over rosbridge, so it's unaffected. (Mic-only still builds a peer below.)
-    if (this.#activeCams.length === 0 && !this.#state.audioRequested) {
+    if (this.#activeCams.length === 0 && !this.#state.audioRequested && !this.#state.micRequested) {
       this.#closePc();
       this.#videoLive = [];
       this.#patch({ status: "idle", videoStream: null, ...this.#videoArrays() });
       if (this.#ros.state === "connected") {
         this.#ros.publish(WEBRTC_START_TOPIC, {
-          data: JSON.stringify({ source: "live", video: [], audio: false, client_id: this.#clientId }),
+          data: JSON.stringify({ source: "live", video: [], audio: false, mic: false, client_id: this.#clientId }),
         });
       }
       console.log("[webrtc] no streams requested — peer released (map-only)");
@@ -334,12 +463,17 @@ export class WebRtcSession {
       data: JSON.stringify({
         source: "live",
         audio: this.#state.audioRequested,
+        mic: this.#state.micRequested,
         client_id: this.#clientId,
         renegotiate: true,
         video: this.#activeCams,
       }),
     });
-    console.log("[webrtc] handshake: START sent", { client_id: this.#clientId, audio: this.#builtWithAudio });
+    console.log("[webrtc] handshake: START sent", {
+      client_id: this.#clientId,
+      audio: this.#builtWithAudio,
+      mic: this.#state.micRequested,
+    });
   }
 
   /**
@@ -459,6 +593,12 @@ export class WebRtcSession {
         }
       }
       this.#iceQueue = [];
+
+      // Attach the operator mic to the robot's recvonly audio m-line before answering, so the answer's
+      // matching m-line is sendonly (browser -> robot). Must happen after setRemoteDescription (the
+      // transceiver only exists once the offer is applied) and before createAnswer.
+      await this.#attachMic(pc, sdp);
+      if (this.#pc !== pc) return;
 
       const answer = await pc.createAnswer();
       if (this.#pc !== pc) return;

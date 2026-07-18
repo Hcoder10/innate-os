@@ -15,7 +15,7 @@ import { drive } from "../driveController.js";
 import { WebRtcSession } from "../webrtcSession.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
-import { createVideoStage, createAudioToggle } from "./videoStage.js";
+import { createVideoStage, createAudioToggle, createMicToggle } from "./videoStage.js";
 import { createJoystick } from "./joystick.js";
 import { createKeyboardDrive, createWasdChips } from "./keyboardDrive.js";
 import { createHeadTilt } from "./headTilt.js";
@@ -82,6 +82,11 @@ function buildCockpit(root) {
   // is the sim deployment's feature flag (env-driven; false on the real robot).
   if (!config.simControls && videoStage.audioEl) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
+  }
+  // Operator-mic toggle (browser mic -> robot). Skipped in the sim: sim uses SimSession (a Three.js
+  // canvas over rosbridge, no WebRTC peer and no setMic), so there is nowhere to send the mic.
+  if (!config.simControls) {
+    parts.push(createMicToggle(rightRail, session));
   }
   parts.push(
     createHeadTilt(rightRail, ros),
