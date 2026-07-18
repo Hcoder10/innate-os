@@ -28,6 +28,7 @@
   <depend>message_filters</depend>
   <depend>OpenCV</depend>
   <depend>mars_msgs</depend>
+  <depend>innate_audio</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>

@@ -55,7 +55,7 @@ bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, Gst
 
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
                                             const std::vector<std::string>& active, bool with_audio,
-                                            bool audio_active) {
+                                            bool audio_active, bool with_mic) {
     if (client_id.empty()) {
         RCLCPP_WARN(this->get_logger(), "Refusing to create WebRTC peer without client_id");
         return nullptr;
@@ -82,6 +82,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     peer->active = active;
     peer->with_audio = with_audio;
     peer->audio_active = with_audio && audio_active;  // can only be active if the m-line was negotiated
+    peer->with_mic = with_mic;                        // recvonly phone-mic m-line (set true below once linked)
     peer->created_ns = std::chrono::steady_clock::now().time_since_epoch().count();
     peer->webrtc = gst_bin_get_by_name(GST_BIN(pipeline), "webrtc");
     if (!peer->webrtc) {
@@ -121,10 +122,10 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     if (ok && peer->with_audio) {
         GstElement* asrc = gst_bin_get_by_name(GST_BIN(pipeline), "rtp_audio");
         if (asrc) {
-            GstCaps* caps =
-                gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name",
-                                    G_TYPE_STRING, "OPUS", "clock-rate", G_TYPE_INT, 48000, "encoding-params",
-                                    G_TYPE_STRING, "2", "payload", G_TYPE_INT, 98, nullptr);
+            GstCaps* caps = gst_caps_new_simple(
+                "application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name", G_TYPE_STRING, "OPUS",
+                "clock-rate", G_TYPE_INT, 48000, "encoding-params", G_TYPE_STRING, "2", "payload", G_TYPE_INT,
+                kAudioSendPayloadType, nullptr);
             if (link_rtp_appsrc(peer->webrtc, asrc, caps, 1 * 1024 * 1024)) {
                 peer->rtp["audio"] = asrc;  // keep the ref
             } else {
@@ -143,6 +144,26 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         return nullptr;  // ~Peer() tears down the pipeline + the rtp appsrcs stored so far
     }
 
+    // Inbound phone-mic (recvonly): add an opus transceiver so the offer carries a recvonly audio m-line
+    // (browser -> robot). No appsrc — the RTP arrives on a webrtcbin src pad, handled by on_incoming_pad.
+    // Added as the LAST m-line, after the video/send-audio appsrcs, so its index is deterministic.
+    if (with_mic) {
+        GstCaps* caps = gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, "audio", "encoding-name",
+                                            G_TYPE_STRING, "OPUS", "clock-rate", G_TYPE_INT, 48000, "encoding-params",
+                                            G_TYPE_STRING, "2", "payload", G_TYPE_INT, kMicRecvPayloadType, nullptr);
+        GstWebRTCRTPTransceiver* trans = nullptr;
+        g_signal_emit_by_name(peer->webrtc, "add-transceiver", GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_RECVONLY, caps,
+                              &trans);
+        gst_caps_unref(caps);
+        if (trans) {
+            gst_object_unref(trans);
+            g_signal_connect(peer->webrtc, "pad-added", G_CALLBACK(on_incoming_pad), this);
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Failed to add recvonly mic transceiver; no phone-mic for this peer");
+            peer->with_mic = false;
+        }
+    }
+
     // Tag the webrtcbin with its client_id (ICE-candidate routing) and a copy of its generation token,
     // so the on-negotiation-needed handler can build the offer context lock-free off the element alone.
     g_object_set_data_full(G_OBJECT(peer->webrtc), "client_id", g_strdup(client_id.c_str()), g_free);
@@ -158,6 +179,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_videos",
                       GUINT_TO_POINTER(static_cast<guint>(negotiated.size())));
     g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_audio", GINT_TO_POINTER(peer->with_audio ? 1 : 0));
+    g_object_set_data(G_OBJECT(peer->webrtc), "mars_expected_mic", GINT_TO_POINTER(peer->with_mic ? 1 : 0));
     // Offer-once latch: CAS'd 0->1 by whichever of the racing negotiation-needed callers wins (the explicit
     // one below on the executor thread vs. webrtcbin's queued signal on the GLib thread). A second create-offer
     // would renegotiate and disrupt the live connection; the atomic prevents it.
@@ -290,7 +312,8 @@ void WebRTCStreamer::on_negotiation_needed(GstElement* webrtc, gpointer user_dat
         (*genp)->load(),
         client_id,
         static_cast<guint>(GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_videos"))),
-        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_audio")))};
+        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_audio"))),
+        static_cast<bool>(GPOINTER_TO_INT(g_object_get_data(G_OBJECT(webrtc), "mars_expected_mic")))};
     GstPromise* promise = gst_promise_new_with_change_func(on_offer_created, ctx, offer_context_free);
     g_signal_emit_by_name(webrtc, "create-offer", nullptr, promise);
     RCLCPP_INFO(self->get_logger(), "Negotiation needed for '%s'; offering...", client_id.c_str());
@@ -314,6 +337,106 @@ void WebRTCStreamer::destroy_peer(const std::string& client_id) {
     RCLCPP_INFO(this->get_logger(), "Released peer '%s'", client_id.c_str());
     peers_.erase(it);           // ~Peer() NULLs the transport (joining its streaming threads) and releases the refs
     reconcile_subscriptions();  // last peer wanting a camera may have just left — drop its sub if so
+}
+
+// =============================================================================
+// Inbound phone-mic: webrtcbin src pad -> opus decode -> ROS topic
+// =============================================================================
+
+// webrtcbin fires this when incoming RTP arrives on a negotiated recv m-line (our recvonly mic). Build a
+// decode branch into the peer's transport pipeline and link the pad to it. Runs on a GStreamer thread and
+// does NOT take peers_mutex_ (dynamic linking only), so it can't deadlock against ~Peer.
+void WebRTCStreamer::on_incoming_pad(GstElement* webrtc, GstPad* pad, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    if (GST_PAD_DIRECTION(pad) != GST_PAD_SRC) {
+        return;  // only webrtcbin src pads carry incoming media
+    }
+    // Only handle audio (opus) pads; ignore anything else (there is only the mic recv m-line today).
+    GstCaps* caps = gst_pad_get_current_caps(pad);
+    if (!caps) {
+        caps = gst_pad_query_caps(pad, nullptr);
+    }
+    const GstStructure* st = caps ? gst_caps_get_structure(caps, 0) : nullptr;
+    const char* media = st ? gst_structure_get_string(st, "media") : nullptr;
+    const bool is_audio = media && g_strcmp0(media, "audio") == 0;
+    if (caps) {
+        gst_caps_unref(caps);
+    }
+    if (!is_audio) {
+        return;
+    }
+    const char* cid = static_cast<const char*>(g_object_get_data(G_OBJECT(webrtc), "client_id"));
+
+    GstElement* pipeline = GST_ELEMENT_PARENT(webrtc);  // the peer's transport pipeline
+    if (!pipeline) {
+        return;
+    }
+    // Depayload -> decode -> S16LE/48k/mono -> appsink. drop=false: don't silently discard mic packets;
+    // new-sample pulls immediately, so backpressure stays bounded.
+    const char* desc =
+        "rtpopusdepay ! opusdec ! audioconvert ! audioresample ! "
+        "audio/x-raw,format=S16LE,rate=48000,channels=1,layout=interleaved ! "
+        "appsink name=mic_appsink emit-signals=true sync=false async=false max-buffers=8 drop=false";
+    GError* error = nullptr;
+    GstElement* bin = gst_parse_bin_from_description(desc, TRUE, &error);  // ghost the unlinked depay sink
+    if (error || !bin) {
+        RCLCPP_ERROR(self->get_logger(), "Failed to build mic decode branch for '%s': %s",
+                     (cid && *cid) ? cid : "(peer)", error ? error->message : "unknown");
+        if (error) {
+            g_error_free(error);
+        }
+        if (bin) {
+            gst_object_unref(bin);
+        }
+        return;
+    }
+    gst_bin_add(GST_BIN(pipeline), bin);  // transfer: pipeline owns the bin now
+    GstPad* sinkpad = gst_element_get_static_pad(bin, "sink");
+    if (!sinkpad || gst_pad_link(pad, sinkpad) != GST_PAD_LINK_OK) {
+        RCLCPP_ERROR(self->get_logger(), "Failed to link incoming mic pad for '%s'", (cid && *cid) ? cid : "(peer)");
+        if (sinkpad) {
+            gst_object_unref(sinkpad);
+        }
+        gst_bin_remove(GST_BIN(pipeline), bin);  // unref + tears the half-built branch back down
+        return;
+    }
+    gst_object_unref(sinkpad);
+    gst_element_sync_state_with_parent(bin);
+
+    if (GstElement* appsink = gst_bin_get_by_name(GST_BIN(bin), "mic_appsink")) {
+        g_signal_connect(appsink, "new-sample", G_CALLBACK(on_mic_sample), self);
+        gst_object_unref(appsink);
+    }
+    RCLCPP_INFO(self->get_logger(), "Inbound phone-mic connected for '%s' -> publishing %s",
+                (cid && *cid) ? cid : "(peer)", self->remote_mic_topic_.c_str());
+}
+
+// appsink new-sample: one decoded S16LE/48k/mono PCM chunk -> one innate_audio/Audio message. Runs on the
+// decode branch's streaming thread; publish + now() are thread-safe. seq is node-wide (see remote_mic_seq_).
+GstFlowReturn WebRTCStreamer::on_mic_sample(GstElement* appsink, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
+    if (!sample) {
+        return GST_FLOW_OK;
+    }
+    if (GstBuffer* buffer = gst_sample_get_buffer(sample)) {
+        GstMapInfo map;
+        if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+            const size_t n = map.size / sizeof(int16_t);
+            const int16_t* pcm = reinterpret_cast<const int16_t*>(map.data);
+            innate_audio::msg::Audio msg;
+            msg.header.stamp = self->now();
+            msg.header.frame_id = "remote";
+            msg.seq = self->remote_mic_seq_.fetch_add(1, std::memory_order_relaxed);
+            msg.rate = 48000;
+            msg.channels = 1;
+            msg.samples.assign(pcm, pcm + n);
+            gst_buffer_unmap(buffer, &map);
+            self->remote_mic_pub_->publish(std::move(msg));
+        }
+    }
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
 }
 
 }  // namespace mars_cam

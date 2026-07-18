@@ -84,6 +84,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("enable_audio", true);
     this->declare_parameter("audio_source_element", "alsasrc");
     this->declare_parameter("audio_capture_device", "");
+    this->declare_parameter("remote_mic_topic", "/audio/remote_mic");
     this->declare_parameter("playout_min_delay_ms", 0);
     this->declare_parameter("playout_max_delay_ms", 40);
     this->declare_parameter("enable_local_stun", true);
@@ -98,6 +99,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     enable_audio_ = this->get_parameter("enable_audio").as_bool();
     audio_source_element_ = this->get_parameter("audio_source_element").as_string();
     audio_capture_device_ = this->get_parameter("audio_capture_device").as_string();
+    remote_mic_topic_ = this->get_parameter("remote_mic_topic").as_string();
     playout_min_delay_ms_ = static_cast<guint>(this->get_parameter("playout_min_delay_ms").as_int());
     playout_max_delay_ms_ = static_cast<guint>(this->get_parameter("playout_max_delay_ms").as_int());
     enable_local_stun_ = this->get_parameter("enable_local_stun").as_bool();
@@ -127,6 +129,9 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     offer_id_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/offer_id", 10);
     ice_out_id_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/ice_out_id", 10);
     active_streams_pub_ = this->create_publisher<std_msgs::msg::String>("/webrtc/active_streams", 10);
+    // Decoded inbound phone-mic PCM. sensor_data QoS (best-effort): mic audio is a lossy live stream, and
+    // the Audio.msg seq field lets a consumer detect the drops rather than block on them.
+    remote_mic_pub_ = this->create_publisher<innate_audio::msg::Audio>(remote_mic_topic_, rclcpp::SensorDataQoS());
 
     start_sub_ = this->create_subscription<std_msgs::msg::String>(
         "/webrtc/start", 10, std::bind(&WebRTCStreamer::on_start, this, std::placeholders::_1));
@@ -159,6 +164,8 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (%zu cameras, source: %s, compressed: %s)", cameras_.size(),
                 current_source_.c_str(), use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Mic audio: %s", enable_audio_ ? "enabled (opt-in per peer)" : "disabled");
+    RCLCPP_INFO(this->get_logger(), "  Inbound phone-mic: opt-in per peer (START mic:true) -> %s",
+                remote_mic_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "  Local STUN: %s", enable_local_stun_ ? "enabled" : "disabled");
     RCLCPP_INFO(this->get_logger(), "  RTCP-inactivity teardown: %.1f s", rtcp_inactivity_timeout_s_);
 }

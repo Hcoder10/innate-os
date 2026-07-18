@@ -66,6 +66,13 @@ inline int cam_pt_for_index(size_t index) {
     return pt >= 98 ? pt + 1 : pt;
 }
 
+// PT for the outbound (robot mic -> browser) opus send m-line.
+constexpr int kAudioSendPayloadType = 98;
+// PT for the inbound (browser phone mic -> robot) recvonly opus m-line. Must differ from the send audio PT
+// and every camera PT: all m-lines share one bundle (max-bundle), where the PT must be unique. 110 sits
+// clear of the camera range (96,97,99,100,…) and the send-audio 98.
+constexpr int kMicRecvPayloadType = 110;
+
 // Chrome/Firefox often obfuscate their host ICE candidates as "<uuid>.local" mDNS names (one per local
 // interface). These parsing helpers are kept for diagnostics and for a future non-destructive fast path:
 // if we ever resolve a .local name ourselves, we must ADD the resolved-IP candidate, not replace/drop the
@@ -106,7 +113,8 @@ struct OfferContext {
     uint64_t gen_value;
     std::string client_id;
     guint expected_videos = 0;
-    bool expected_audio = false;
+    bool expected_audio = false;  // outbound robot-mic send m-line negotiated
+    bool expected_mic = false;    // inbound phone-mic recvonly m-line negotiated
 };
 
 inline void offer_context_free(gpointer data) {

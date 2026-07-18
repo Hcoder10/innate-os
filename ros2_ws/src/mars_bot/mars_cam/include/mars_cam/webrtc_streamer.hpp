@@ -12,6 +12,7 @@
 #include <std_msgs/msg/string.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
+#include <innate_audio/msg/audio.hpp>
 
 #include <gst/gst.h>
 #include <gst/webrtc/webrtc.h>
@@ -81,6 +82,7 @@ struct Peer {
                                              // stream switch without renegotiating, so switches are instant
     bool with_audio = false;                 // audio m-line NEGOTIATED (an opus transceiver exists)
     bool audio_active = false;               // audio currently being SENT — toggled live like the cameras (no reneg)
+    bool with_mic = false;                   // recvonly opus m-line NEGOTIATED (phone-mic in): browser -> robot -> ROS
     // True only after webrtcbin CONNECTED; gates RTP fan-out into webrtcbin. Shared + atomic because it
     // is written from webrtcbin's PC thread (the connection-state callback, via a copy tagged on the
     // element) — that callback must NOT take peers_mutex_: ~Peer runs set_state(NULL) under the mutex,
@@ -163,6 +165,14 @@ class WebRTCStreamer : public rclcpp::Node {
     static GstFlowReturn on_audio_sample(GstElement* appsink, gpointer user_data);
     void fan_out_audio(GstElement* appsink);
 
+    // ---- Inbound audio (phone mic): browser opus track -> webrtcbin -> decode -> ROS topic ----
+    // A peer that requested `mic` gets a recvonly opus m-line in the offer. When RTP arrives, webrtcbin
+    // fires pad-added with a src pad; on_incoming_pad builds a per-peer decode branch
+    // (rtpopusdepay -> opusdec -> audioconvert -> audioresample -> S16LE/48k/mono -> appsink) into the
+    // peer's transport pipeline, and on_mic_sample publishes each PCM chunk as innate_audio/Audio.
+    static void on_incoming_pad(GstElement* webrtc, GstPad* pad, gpointer user_data);
+    static GstFlowReturn on_mic_sample(GstElement* appsink, gpointer user_data);
+
     // Per-peer RTCP-liveness probe on the peer's rtpbin recv_rtcp_sink pad (ticks per RTCP packet).
     static GstPadProbeReturn on_rtcp_buffer(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     bool install_rtcp_probe_for(Peer* peer);  // attach once the peer's rtcp pad exists
@@ -183,7 +193,8 @@ class WebRTCStreamer : public rclcpp::Node {
     // create_peer_transport builds the transport pipeline, wires signals, and kicks off create-offer.
     // Caller holds peers_mutex_. Returns the inserted Peer* (or nullptr on failure).
     Peer* create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
-                                const std::vector<std::string>& active, bool with_audio, bool audio_active);
+                                const std::vector<std::string>& active, bool with_audio, bool audio_active,
+                                bool with_mic);
     // Toggle which negotiated cameras (and audio) a connected peer is being sent, with NO renegotiation:
     // adjusts the per-camera/audio want-count + push gate and forces a keyframe on newly-enabled cameras.
     // Caller holds peers_mutex_.
@@ -216,6 +227,10 @@ class WebRTCStreamer : public rclcpp::Node {
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr offer_id_pub_;    // {client_id, sdp}
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr ice_out_id_pub_;  // {client_id, ...}
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr active_streams_pub_;
+    // Decoded phone-mic PCM (browser -> robot over WebRTC). One shared topic across peers; seq is node-wide
+    // (a single active sender is the tested case — concurrent senders would interleave, see on_mic_sample).
+    rclcpp::Publisher<innate_audio::msg::Audio>::SharedPtr remote_mic_pub_;
+    std::atomic<uint32_t> remote_mic_seq_{0};
 
     // Subscribers (signaling only; the per-camera image subscriptions live in cameras_)
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr start_sub_;
@@ -256,6 +271,7 @@ class WebRTCStreamer : public rclcpp::Node {
     bool enable_audio_ = true;
     std::string audio_source_element_ = "alsasrc";
     std::string audio_capture_device_;
+    std::string remote_mic_topic_ = "/audio/remote_mic";  // decoded inbound phone-mic PCM
     guint playout_min_delay_ms_ = 0;
     guint playout_max_delay_ms_ = 40;
     bool enable_local_stun_ = true;

@@ -18,6 +18,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(stereo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
+find_package(innate_audio REQUIRED)
 
 # Find OpenCV
 find_package(OpenCV REQUIRED)
@@ -120,6 +121,7 @@ ament_target_dependencies(webrtc_streamer_component
   std_msgs
   sensor_msgs
   cv_bridge
+  innate_audio
 )
 rclcpp_components_register_nodes(webrtc_streamer_component "mars_cam::WebRTCStreamer")
 
@@ -215,6 +217,7 @@ ament_target_dependencies(webrtc_streamer_node
   std_msgs
   sensor_msgs
   cv_bridge
+  innate_audio
 )
 
 # Create stereo depth estimator executable (requires VPI)

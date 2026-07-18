@@ -88,6 +88,7 @@ const char* peer_label(const std::string& client_id) {
 void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     std::string source = "live";
     bool request_audio = false;
+    bool request_mic = false;
     std::string client_id;
     std::vector<std::string> videos;
     bool video_specified = false;
@@ -125,6 +126,13 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
         }
         request_audio = json["audio"].get<bool>();
     }
+    if (json.contains("mic")) {
+        if (!json["mic"].is_boolean()) {
+            RCLCPP_WARN(this->get_logger(), "Ignoring START for '%s': mic must be boolean", client_id.c_str());
+            return;
+        }
+        request_mic = json["mic"].get<bool>();
+    }
     if (json.contains("renegotiate")) {
         if (!json["renegotiate"].is_boolean()) {
             RCLCPP_WARN(this->get_logger(), "Ignoring START for '%s': renegotiate must be boolean", client_id.c_str());
@@ -161,9 +169,9 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     for (const auto& v : videos) {
         video_list += (video_list.empty() ? "" : "+") + v;
     }
-    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s, renegotiate=%s)", client_id.c_str(),
-                source.c_str(), video_list.c_str(), request_audio ? "requested" : "off",
-                renegotiate ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "START '%s' (source=%s, video=[%s], audio=%s, mic=%s, renegotiate=%s)",
+                client_id.c_str(), source.c_str(), video_list.c_str(), request_audio ? "requested" : "off",
+                request_mic ? "requested" : "off", renegotiate ? "true" : "false");
 
     std::lock_guard<std::mutex> lock(peers_mutex_);
 
@@ -178,29 +186,33 @@ void WebRTCStreamer::on_start(const std_msgs::msg::String::SharedPtr msg) {
     const bool audio_active = enable_audio_ && request_audio;
     // Peers negotiate the audio m-line up front (if a mic exists) so toggling is reneg-free, like cameras.
     const bool negotiate_audio = enable_audio_;
+    // Phone-mic (recvonly, browser -> robot) is opt-in per START. Unlike the send audio it is NOT negotiated
+    // up front — it only exists on the offer when the peer asked for it, so adding/removing it renegotiates.
+    const bool negotiate_mic = request_mic;
 
-    if (videos.empty() && !audio_active) {
+    if (videos.empty() && !audio_active && !negotiate_mic) {
         RCLCPP_INFO(this->get_logger(), "START requested no streams; releasing peer");
         destroy_peer(client_id);
         return;
     }
 
     // Stream/audio switch on an already-set-up independent peer (its negotiated m-lines unchanged): flip
-    // which cameras + audio are pushed live, with no renegotiation/ICE — instant, not a reconnect.
+    // which cameras + audio are pushed live, with no renegotiation/ICE — instant, not a reconnect. The mic
+    // m-line's presence is fixed at negotiation, so a change in it forces the reconnect path below.
     if (!renegotiate) {
         auto it = peers_.find(client_id);
-        if (it != peers_.end() && it->second->with_audio == negotiate_audio) {
+        if (it != peers_.end() && it->second->with_audio == negotiate_audio && it->second->with_mic == negotiate_mic) {
             update_peer_active(it->second.get(), videos, audio_active);
             return;
         }
     }
 
-    // Connect (or audio-negotiation change). Peers negotiate ALL cameras up front so future switches stay
+    // Connect (or audio/mic-negotiation change). Peers negotiate ALL cameras up front so future switches stay
     // reneg-free.
     std::vector<std::string> all_cams;
     for (auto& cam : cameras_)
         all_cams.push_back(cam->name);
-    if (!create_peer_transport(client_id, all_cams, videos, negotiate_audio, audio_active)) {
+    if (!create_peer_transport(client_id, all_cams, videos, negotiate_audio, audio_active, negotiate_mic)) {
         RCLCPP_ERROR(this->get_logger(), "Failed to start transport for peer");
     }
 }
@@ -240,12 +252,13 @@ void WebRTCStreamer::on_offer_created(GstPromise* promise, gpointer user_data) {
     // webrtcbin that still holds transceivers is the _connect_input_stream abort. on-negotiation-needed
     // should prevent this, but a dropped offer just trips the connect timeout — an abort kills the robot.
     const SdpMediaCounts counts = count_sdp_media(offer->sdp);
+    const guint expected_audio_lines = (ctx->expected_audio ? 1u : 0u) + (ctx->expected_mic ? 1u : 0u);
     const bool missing_video = counts.video < ctx->expected_videos;
-    const bool missing_audio = ctx->expected_audio && counts.audio == 0;
+    const bool missing_audio = counts.audio < expected_audio_lines;
     if (missing_video || missing_audio) {
-        RCLCPP_WARN(self->get_logger(), "Dropping incomplete offer for '%s' (video=%u/%u audio=%u%s)",
+        RCLCPP_WARN(self->get_logger(), "Dropping incomplete offer for '%s' (video=%u/%u audio=%u/%u)",
                     peer_label(ctx->client_id), counts.video, ctx->expected_videos, counts.audio,
-                    ctx->expected_audio ? " required" : "");
+                    expected_audio_lines);
         // Do not retry create-offer on this same webrtcbin; an immediate second offer can disrupt it. The
         // client offer watchdog will send a renegotiate START, which creates a fresh transport; until then
         // the connect timeout releases this peer. The offer-once latch (set when this offer was kicked off)
@@ -279,12 +292,13 @@ void WebRTCStreamer::apply_answer(Peer* peer, const std::string& sdp) {
         return;
     }
     const SdpMediaCounts counts = count_sdp_media(sdp_msg);
+    const guint expected_audio_lines = (peer->with_audio ? 1u : 0u) + (peer->with_mic ? 1u : 0u);
     const bool missing_video = counts.video < peer->videos.size();
-    const bool missing_audio = peer->with_audio && counts.audio == 0;
+    const bool missing_audio = counts.audio < expected_audio_lines;
     if (missing_video || missing_audio) {
-        RCLCPP_WARN(this->get_logger(), "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u%s)",
+        RCLCPP_WARN(this->get_logger(), "Ignoring incomplete SDP answer for '%s' (video=%u/%zu audio=%u/%u)",
                     peer_label(peer->client_id), counts.video, peer->videos.size(), counts.audio,
-                    peer->with_audio ? " required" : "");
+                    expected_audio_lines);
         gst_sdp_message_free(sdp_msg);
         return;
     }
@@ -339,7 +353,8 @@ void WebRTCStreamer::deliver_ice(const std::string& client_id, const std::string
     auto it = peers_.find(client_id);
     if (it != peers_.end()) {
         Peer* peer = it->second.get();
-        const int max_mline = static_cast<int>(peer->videos.size()) + (peer->with_audio ? 1 : 0);
+        const int max_mline =
+            static_cast<int>(peer->videos.size()) + (peer->with_audio ? 1 : 0) + (peer->with_mic ? 1 : 0);
         if (mline >= max_mline) {
             RCLCPP_WARN(this->get_logger(), "Ignoring ICE for '%s': m-line %d outside negotiated range [0,%d)",
                         client_id.c_str(), mline, max_mline - 1);
