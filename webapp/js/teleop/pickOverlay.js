@@ -318,8 +318,8 @@ export function createPickOverlay(parent, rosClient, session) {
         // A Gemini look on the wrist image (initial seed or re-seed on loss).
         wristPx = Array.isArray(ev.px) ? { u: ev.px[0], v: ev.px[1] } : null;
         break;
-      case "wrist_servo":
-        // Per-cycle tracking during the servo descent.
+      case "wrist_descend":
+        // Per-cycle tracking during the wrist descent.
         if (Array.isArray(ev.px)) wristPx = { u: ev.px[0], v: ev.px[1] };
         wristBox.classList.toggle("inside", ev.inside === true);
         break;

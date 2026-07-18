@@ -89,7 +89,7 @@ TUNABLE = {
     "descend_s": 1.2,
     "descend_abort_z": 0.12,  # EE still above this => limp, abort
     "arm_pitch": 1.30,
-    "close_strength": 0.60,  # >~0.6 overcurrent-trips the gripper servo
+    "close_strength": 0.70,  # firmer grip holds better on hardware; watch for servo trips above this
     "close_s": 1.5,
     "close_settle_s": 0.8,
     "twist_rad": 0.6,  # wind fabric onto fingers
@@ -292,9 +292,7 @@ class PickAnyObject(Skill):
 
     def _rest_arm(self, keep_grip):
         """Best-effort teardown: carry if holding, else zero. Never raises."""
-        joints = (
-            CARRY_ARM + [-self._p["close_strength"]] if keep_grip else armlib.ZERO
-        )
+        joints = CARRY_ARM + [-self._p["close_strength"]] if keep_grip else armlib.ZERO
         try:
             armlib.go(self.manipulation, joints, duration=3.0, times=2)
         except Exception as e:  # noqa: BLE001 — teardown must not mask the run result
@@ -494,7 +492,7 @@ class PickAnyObject(Skill):
         return None, last_b64
 
     def _wrist_done(self, x, y, z, reason):
-        """Telemetry + return value for every _wrist_servo exit."""
+        """Telemetry + return value for every _wrist_descend exit."""
         grab = floor_to_pixel(x + self._p["grasp_x_off"], y, self._p["tilt_deg"])
         self._dbg("wrist_done", tx=x, ty=y, z=z, reason=reason, grab_px=grab)
         return x, y, z
@@ -513,7 +511,7 @@ class PickAnyObject(Skill):
             return None, raw, "lost track"
         return tracker, raw, ""
 
-    def _wrist_servo(self, prompt, tx, ty):
+    def _wrist_descend(self, prompt, tx, ty):
         """Wrist CamShift servo down to wrist_stop_z: nudge toward the wrist
         box, or step down once the object has been seen inside it twice.
         A miss gets 2 frames of patience, then a Gemini re-seed (budget =
@@ -571,7 +569,7 @@ class PickAnyObject(Skill):
             err_v = px[1] - p["wrist_box_v"]
             inside = _inside_box(px, p["wrist_box_u"], p["wrist_box_v"], p["wrist_half_px"])
             centered = centered + 1 if inside else 0
-            self._dbg("wrist_servo", px=px, z=z, inside=inside, tx=x, ty=y, ee=self._ee_xyz())
+            self._dbg("wrist_descend", px=px, z=z, inside=inside, tx=x, ty=y, ee=self._ee_xyz())
             if streak < 2:
                 continue  # watch one more frame before trusting it
             if inside and centered < 2:
@@ -687,7 +685,7 @@ class PickAnyObject(Skill):
 
         if p["wrist_steps"] >= 1:
             self._goto_search_pose(math.atan2(y, x))
-            x, y, z = self._wrist_servo(prompt, x, y)
+            x, y, z = self._wrist_descend(prompt, x, y)
         else:
             z = p["hover_z"]
             armlib.move_checked(
