@@ -41,8 +41,8 @@ SIZE_DEADBAND = 0.15  # relative size error below which we don't drive
 # Smoothing: per-frame corner jitter would otherwise feed straight into the
 # command, and step changes in cmd_vel jerk the base.
 MEAS_SMOOTHING = 0.35  # EMA weight of the newest measurement, (0, 1]
-MAX_LINEAR_STEP = 0.05  # m/s change per loop tick (0.5 m/s^2 slew limit)
-MAX_ANGULAR_STEP = 0.2  # rad/s change per loop tick
+LINEAR_SLEW = 0.5  # m/s^2 max change in commanded linear velocity
+ANGULAR_SLEW = 2.0  # rad/s^2 max change in commanded angular velocity
 LOST_GRACE_FRAMES = 5  # ramp down this many missed frames before a hard stop
 
 
@@ -61,6 +61,7 @@ class FollowAruco(Skill):
         self._size_error_filtered = None
         self._cmd_linear = 0.0
         self._cmd_angular = 0.0
+        self._last_cmd_time = None
 
     @property
     def name(self):
@@ -110,6 +111,10 @@ class FollowAruco(Skill):
             quad = markers.get(locked_id)
             if quad is None:
                 lost_frames += 1
+                # Drop stale measurements so a re-acquired marker that moved
+                # during the miss doesn't steer off the old filter state.
+                self._offset_filtered = None
+                self._size_error_filtered = None
                 if lost_frames > LOST_GRACE_FRAMES:
                     self._stop()  # marker out of sight: hold position, keep scanning
                 else:
@@ -177,9 +182,15 @@ class FollowAruco(Skill):
 
     def _send_cmd(self, linear, angular) -> None:
         # Slew-limit toward the requested velocities so the base accelerates
-        # and decelerates gradually.
-        self._cmd_linear += float(np.clip(linear - self._cmd_linear, -MAX_LINEAR_STEP, MAX_LINEAR_STEP))
-        self._cmd_angular += float(np.clip(angular - self._cmd_angular, -MAX_ANGULAR_STEP, MAX_ANGULAR_STEP))
+        # and decelerates gradually. The step scales with real elapsed time, so
+        # a slow loop iteration doesn't silently lower the slew rate. dt is
+        # capped at CMD_DURATION: past that the deadman has stopped the base,
+        # and a bigger step would jerk it from standstill.
+        now = time.monotonic()
+        dt = min(now - self._last_cmd_time, CMD_DURATION) if self._last_cmd_time is not None else LOOP_PERIOD
+        self._last_cmd_time = now
+        self._cmd_linear += float(np.clip(linear - self._cmd_linear, -LINEAR_SLEW * dt, LINEAR_SLEW * dt))
+        self._cmd_angular += float(np.clip(angular - self._cmd_angular, -ANGULAR_SLEW * dt, ANGULAR_SLEW * dt))
         self.mobility.send_cmd_vel(linear_x=self._cmd_linear, angular_z=self._cmd_angular, duration=CMD_DURATION)
 
     def _wait_for_frame(self, timeout: float = 5.0) -> bool:
@@ -195,5 +206,6 @@ class FollowAruco(Skill):
         self._size_error_filtered = None
         self._cmd_linear = 0.0
         self._cmd_angular = 0.0
+        self._last_cmd_time = None
         if self.mobility is not None:
             self.mobility.send_cmd_vel(linear_x=0.0, angular_z=0.0)
