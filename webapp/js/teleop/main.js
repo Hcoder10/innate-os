@@ -24,7 +24,6 @@ import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createPickOverlay } from "./pickOverlay.js";
-import { createPickPanel } from "./pickPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
 
@@ -95,7 +94,6 @@ function buildCockpit(root) {
     createArmPanel(armOverlay, ros, { hideServices: !!config.simControls }),
     ...(config.simControls ? [] : [createProfilingPanel(root, session)]),
     createPickOverlay(root, ros, session),
-    createPickPanel(root, ros),
     createCameraSwitch(root, session, ros),
     keyboard,
   );
