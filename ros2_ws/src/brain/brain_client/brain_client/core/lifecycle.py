@@ -170,11 +170,25 @@ class BrainLifecycle:
         self._reactivate_timer.cancel()  # one-shot
         if not self._state.is_brain_active:
             return  # deactivated during the wait; nothing to re-register
-        self.unregister_primitives()
-        self.catalog.register()
+        # No unregister/re-register cycle here. The webapp's Start sends
+        # set_directive (which registers) immediately before set_brain_active,
+        # so by now a registration for the current directive is usually acked
+        # or in flight; its ack has already opened the trigger gate and the
+        # first image may be out. Yanking primitives_registered to False for
+        # the ~2s of another register round trip closes the gate exactly while
+        # the cloud's first decision (VLM latency 2-4s) is in flight — the
+        # reply gets dropped unanswered, and the cloud waits forever on a
+        # primitive the robot never saw (INN-711's startup variant: the agent
+        # starts convinced a skill is running while nothing happens).
+        # register() replaces the server-side roster wholesale, so there is
+        # nothing to unregister first; only register when no registration for
+        # this activation has been acked yet (plain set_brain_active without a
+        # preceding set_directive — deactivate_brain cleared the flag).
+        if not self._state.primitives_registered:
+            self.catalog.register()
         self.activate_directive_inputs()
         self._state.ready_for_image = True
-        self._logger.info("[BrainClient] Brain reactivated and skills re-registered.")
+        self._logger.info("[BrainClient] Brain reactivated; skill registration confirmed or in flight.")
 
     # --- directive switching ---
     def set_directive(self, name: str) -> None:
