@@ -198,10 +198,23 @@ def _sim_assets_tag() -> str:
     bare mtime+size validator degrades to size-only for them, and a refreshed
     asset whose size happened to match would keep its ETag and be served stale.
     The tag is a content hash of the whole bundle and changes on every
-    republish, which is the only boundary at which these files can change."""
+    republish, which is the only boundary at which these files can change.
+
+    Read from .assets-tag first: it sits next to the extracted bundle under
+    sim/assets, which IS bind-mounted into the sim container, whereas
+    sim-assets.lock (repo root) is NOT — so the lock is only reachable on host
+    dev runs, and relying on it alone silently degraded the ETag to size-only
+    in the container. Both carry the same tag string."""
+    sim = SIM_VIEWER_ROOT.parent
     try:
-        return json.loads((SIM_VIEWER_ROOT.parent / "sim-assets.lock").read_text())["tag"]
-    except Exception:
+        tag = (sim / "assets" / ".assets-tag").read_text().strip()
+        if tag:
+            return tag
+    except OSError:
+        pass
+    try:
+        return json.loads((sim / "sim-assets.lock").read_text())["tag"]
+    except (OSError, ValueError, KeyError):
         return "noassets"
 
 
