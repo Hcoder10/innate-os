@@ -35,10 +35,17 @@ class FavoriteSkillsStore:
     def replace(self, ids) -> list[str]:
         """Replace the whole list (the client-toggle contract), persist, return it.
 
-        Non-strings are dropped and duplicates collapse to their first
-        position; a malformed payload therefore degrades to "some stars
-        ignored", never to a crash or a wiped file.
+        A payload that isn't a list at all is ignored — persisting it would
+        wipe the stored favorites, and only `[]` (an explicit unstar-all) may
+        do that. Within a list, non-strings are dropped and duplicates
+        collapse to their first position; malformed input therefore degrades
+        to "some stars ignored", never to a crash or a wiped file.
         """
+        if not isinstance(ids, list):
+            self._logger.warning(
+                f"Ignoring non-list favorite skills payload ({type(ids).__name__}); keeping current list"
+            )
+            return self.ids
         self._ids = self._sanitize(ids)
         self._save()
         return self.ids
