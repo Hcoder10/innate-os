@@ -161,6 +161,9 @@ class BrainClientNode(Node):
                         "brain_active": self.state.is_brain_active,
                         "current_directive": self.state.current_directive.id if self.state.current_directive else "",
                         "active_skills": list(self.state.active_skill_ids or []),
+                        # Speech needs the hosted proxy (an Innate service
+                        # key); clients gray out their TTS input without it.
+                        "tts_available": bool(self._tts_handler is not None and self._tts_handler.is_available()),
                     }
                 )
             )
@@ -180,14 +183,22 @@ class BrainClientNode(Node):
         self.map_state = MapState(self, cfg.map_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
         self.gaze = GazeController(self, state)
-        self.catalog = SkillCatalog(self, self.ws_bridge, state)
         self.runner = PrimitiveRunner(
             self,
             self.ws_bridge,
             self.chat,
             state,
             stop_robot=self._stop_robot,
+            # self.catalog binds late — it is created just below.
             on_task_finished=lambda: (self.gaze.resume(), self.catalog.drain_pending_reregistration()),
+        )
+        self.catalog = SkillCatalog(
+            self,
+            self.ws_bridge,
+            state,
+            # Gate registration on the execute_skill server being discoverable:
+            # registering invites the cloud to trigger skills immediately.
+            execute_skill_ready=self.runner.action_client.server_is_ready,
         )
         self.orchestrator = Orchestrator(
             self,
@@ -263,16 +274,19 @@ class BrainClientNode(Node):
         self.create_service(GetAvailableDirectives, "/brain/get_available_directives", self._svc_get_directives)
 
     def _startup(self) -> None:
-        # Wait for the first available-skills message (transient_local replays the last).
+        # Monotonic: a boot-time NTP step would truncate a wall-clock wait.
+        # 60s covers the skills server's first load (torch, Nav2) on the Jetson.
         self.get_logger().info("Waiting for /brain/available_skills topic...")
-        deadline = time.time() + 25.0
-        while not self.state.registry and time.time() < deadline:
+        deadline = time.monotonic() + 60.0
+        while not self.state.registry and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.5)
         if not self.state.registry:
-            self.get_logger().warn("No primitives received from /brain/available_skills after 25s")
+            self.get_logger().warn("No primitives received from /brain/available_skills after 60s")
 
+        # None skips per-agent skill validation: against an empty registry every
+        # agent would "fail" it.
         self.state.directives, self.state.current_directive = initialize_agents(
-            self.get_logger(), self.state.registry.primitives
+            self.get_logger(), self.state.registry.primitives or None
         )
         self.state.active_skill_ids = (
             list(self.state.current_directive.get_skills()) if self.state.current_directive else []

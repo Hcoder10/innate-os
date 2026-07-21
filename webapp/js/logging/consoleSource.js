@@ -50,7 +50,7 @@ export function createConsoleSource(ros) {
 
   const unsubLive = ros.subscribe(CONSOLE_TOPIC, (m) => {
     try { emit(JSON.parse(m.data), false); } catch { /* skip malformed */ }
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubBackfill = ros.subscribe(CONSOLE_BACKFILL_TOPIC, (m) => {
     if (backfilled) return; // one batch only
@@ -60,7 +60,7 @@ export function createConsoleSource(ros) {
       for (const rec of JSON.parse(m.data).entries || []) emit(rec, true);
     } catch { /* ignore */ }
     signalReady();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   // Ask for history. The reply comes over a volatile topic, and on a fresh page
   // load it can be published before this subscription has finished matching

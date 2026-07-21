@@ -70,8 +70,12 @@ export function createAgentState(rosClient) {
     }, delay);
   }
 
+  // The brain only publishes agent_status once its services exist, so this
+  // gates refresh() against racing its boot.
+  let brainSeen = false;
+
   async function refresh() {
-    if (rosClient.state !== "connected") return;
+    if (rosClient.state !== "connected" || !brainSeen) return;
     try {
       const v = await rosClient.callService(GET_AVAILABLE_DIRECTIVES_SERVICE, {});
       const entries = Array.isArray(v?.directives)
@@ -176,6 +180,11 @@ export function createAgentState(rosClient) {
       return;
     }
     if (typeof payload?.brain_active !== "boolean") return;
+    if (!brainSeen) {
+      brainSeen = true;
+      resetRetry();
+      void refresh();
+    }
     const brainActive = payload.brain_active;
     // Idle brain → no current directive (toggles disabled, picker shows None),
     // mirroring refresh().
@@ -189,7 +198,7 @@ export function createAgentState(rosClient) {
     if (unchanged) return;
     state = { ...state, brainActive, currentDirective, activeSkills };
     emit();
-  });
+  }, undefined, "std_msgs/msg/String");
 
   const unsubConn = rosClient.onStateChange((s) => {
     if (s === "connected") {

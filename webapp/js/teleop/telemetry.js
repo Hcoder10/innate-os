@@ -59,7 +59,7 @@ export function createTelemetry(parent, rosClient, opts = {}) {
       if (label) {
         name.value.textContent = info.version ? `${label} · v${info.version}` : label;
       }
-    }),
+    }, undefined, "std_msgs/msg/String"),
     rosClient.onStateChange((state) => {
       link.value.textContent = state === "connected" ? "live" : state;
       link.el.classList.toggle("live", state === "connected");
@@ -96,6 +96,7 @@ export function createTelemetry(parent, rosClient, opts = {}) {
         agent.el.classList.toggle("warn", warn);
       },
       500,
+      "std_msgs/msg/String",
     ),
   ];
 
@@ -112,6 +113,7 @@ export function createTelemetry(parent, rosClient, opts = {}) {
           battery.el.classList.toggle("warn", pct <= 15);
         },
         1000,
+        "sensor_msgs/msg/BatteryState",
       ),
     );
   }

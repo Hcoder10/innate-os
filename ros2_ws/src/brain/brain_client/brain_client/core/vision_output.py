@@ -88,7 +88,11 @@ class VisionOutputHandler:
         self._logger.info(f"[BrainClient] Next task: {task.type}")
         skill_id = self._state.registry.resolve_skill_id(task.type)
         if skill_id is None:
-            self._logger.warn(f"Unknown primitive type: {task.type}")
+            self._runner.report_start_failure(
+                primitive_name=task.type,
+                primitive_id=task.primitive_id,
+                reason=f"Unknown skill '{task.type}' — not in the registered skill set.",
+            )
             return
 
         self._gaze.pause()

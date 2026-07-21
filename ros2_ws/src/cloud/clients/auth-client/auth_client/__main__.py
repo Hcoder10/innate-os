@@ -26,7 +26,7 @@ def _fetch_and_print(auth: AuthProvider) -> None:
 
 
 def main() -> None:
-    issuer_url = os.environ.get("INNATE_AUTH_URL", "https://auth-v1.innate.bot")
+    issuer_url = os.environ.get("INNATE_AUTH_URL", "https://auth-v1.svc.innate.bot")
     service_key = os.environ.get("INNATE_SERVICE_KEY", "")
     watch = len(sys.argv) > 1 and sys.argv[1] == "watch"
 

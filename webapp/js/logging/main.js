@@ -1,7 +1,7 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Debugging page entry — wires the shared RosClient to the structured console
+// Logging page entry — wires the shared RosClient to the structured console
 // stream: a chronological log on the left, a launch → process → node tree on the
 // right (click a branch to scope the log). Disconnected: the same quiet connect
 // card as teleop. Mirrors teleop's connect/cockpit lifecycle.
@@ -14,7 +14,7 @@ import { createSources } from "./sources.js";
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {
-  return mountPage(stage, "debug", buildView);
+  return mountPage(stage, "logging", buildView);
 }
 
 /**
@@ -38,11 +38,11 @@ function buildView(root) {
   head.appendChild(sourcesToggle);
 
   const grid = document.createElement("div");
-  grid.className = "debug-grid";
+  grid.className = "log-grid";
   const mainEl = document.createElement("div");
-  mainEl.className = "debug-main";
+  mainEl.className = "log-main";
   const sideEl = document.createElement("aside");
-  sideEl.className = "debug-side";
+  sideEl.className = "log-side";
   const backdrop = document.createElement("div");
   backdrop.className = "sources-backdrop";
   grid.append(mainEl, backdrop, sideEl);

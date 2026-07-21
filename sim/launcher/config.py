@@ -54,7 +54,7 @@ AUTO_MODE = "auto"
 NONE_MODE = "none"
 LOCAL_MODES = {LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}
 VALID_CLOUD_AGENT_MODES = {AUTO_MODE, HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE, NONE_MODE}
-DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.innate.bot"
+DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.svc.innate.bot"
 # The local cloud-agent runs as the `local-brain` service inside the same compose
 # project as the OS container, reachable by service name on the shared network.
 DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI = "ws://cloud-agent:8765"
@@ -72,9 +72,9 @@ SIM_IMAGE_INPUT_FILES = (
     "sim/Dockerfile",
     "sim/Dockerfile.ros-prebuilt",
     "sim/Dockerfile.ros-prebuilt.dockerignore",
-    "sim/apt-dependencies.txt",
     "ros2_ws/apt-dependencies.common.txt",
     "ros2_ws/apt-dependencies.hardware.txt",
+    "ros2_ws/apt-dependencies.sim.txt",
 )
 # What the local (deps-only) sim/Dockerfile build actually reads from the repo.
 LOCAL_OS_IMAGE_REPO = "innate-os-sim-clean-innate"
@@ -107,6 +107,10 @@ CLI_SIM = "./innate-sim"
 
 class StackError(RuntimeError):
     pass
+
+
+class DockerUnresponsiveError(StackError):
+    """Docker did not answer a probe; availability is unknown, not "no"."""
 
 
 def log(message: str) -> None:
@@ -314,14 +318,18 @@ def resolve_cloud_agent_mode(sim_config: dict[str, object], env: dict[str, str])
 
 def resolve_brain_client_version(repo_root: Path) -> str:
     def git_output(*args: str) -> str:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=repo_root,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_root,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+                timeout=10.0,
+            )
+        except subprocess.TimeoutExpired:
+            return ""
         if result.returncode != 0:
             return ""
         return result.stdout.strip()
@@ -352,6 +360,21 @@ def require_path(path: Path, label: str) -> Path:
     return path
 
 
+def git_tracked_files(repo_root: Path, pathspec: str) -> list[Path]:
+    """Repo-relative paths of the git-tracked files under pathspec. Errors
+    loudly rather than falling back to a filesystem walk: a silent fallback
+    would reintroduce the untracked-cruft non-reproducibility this exists to
+    avoid (see iter_sim_image_input_files)."""
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", pathspec],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [Path(name) for name in result.stdout.split("\0") if name]
+
+
 def iter_sim_image_input_files(repo_root: Path) -> list[Path]:
     relative_paths: list[Path] = []
     for raw_path in SIM_IMAGE_INPUT_FILES:
@@ -359,14 +382,17 @@ def iter_sim_image_input_files(repo_root: Path) -> list[Path]:
         if (repo_root / relative_path).is_file():
             relative_paths.append(relative_path)
 
-    src_root = repo_root / "ros2_ws" / "src"
-    if src_root.exists():
-        for path in sorted(src_root.rglob("*")):
-            if not path.is_file():
-                continue
-            relative_path = path.relative_to(repo_root)
-            if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
-                continue
+    # Only git-tracked files, NOT a filesystem walk: rglob would also pull in
+    # untracked/gitignored cruft (macOS .DS_Store, gitignored dirs, build
+    # artifacts) that a dev's working tree has but CI's clean checkout does
+    # not -- making this content-addressed hash, and thus the prebuilt image
+    # tag, non-reproducible. CI publishes inputs-<hash> from a clean checkout,
+    # so the tracked set is exactly what it built from.
+    # ci/compute_sim_image_inputs_hash.py must enumerate the same set.
+    for relative_path in git_tracked_files(repo_root, "ros2_ws/src"):
+        if "__pycache__" in relative_path.parts or relative_path.suffix == ".pyc":
+            continue
+        if (repo_root / relative_path).is_file():
             relative_paths.append(relative_path)
 
     return sorted(relative_paths, key=lambda path: path.as_posix())

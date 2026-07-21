@@ -172,12 +172,12 @@ function buildView(root) {
     store._prunePending(); // clear "Starting run…" hints that have landed
     autoSelect();
     store._emit();
-  });
+  }, undefined, "innate_cloud_msgs/msg/TrainingJobList");
   const unsubSkills = ros.subscribe(AVAILABLE_SKILLS_TOPIC, (msg) => {
     const all = Array.isArray(msg?.skills) ? /** @type {Skill[]} */ (msg.skills) : [];
     store.skills = all.filter((s) => s && s.directory).sort((a, b) => a.name.localeCompare(b.name));
     store._emit();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   return {
     destroy() {

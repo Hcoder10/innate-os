@@ -8,6 +8,7 @@
 
 import {
   AVAILABLE_SKILLS_TOPIC,
+  CANCEL_SKILL_SERVICE,
   EXECUTE_SKILL_ACTION,
   EXECUTE_SKILL_ACTION_TYPE,
   PINNED_SKILLS,
@@ -68,6 +69,9 @@ export function createSkillsMenu(parent, rosClient) {
   /** Skill the robot reports running via /brain/skill_status_update (covers
    *  agent-driven runs too, not just ones launched from this menu). */
   let topicActiveName = "";
+  /** Stop requested (via /brain/cancel_skill) for a run started elsewhere;
+   *  cleared when the status topic reports the run over. */
+  let externCanceling = false;
 
   // ---- skill input schema (mirrors the sim console) -----------------------
 
@@ -238,6 +242,28 @@ export function createSkillsMenu(parent, rosClient) {
     render();
   }
 
+  /** Stop a run this tab didn't start: no goal handle to cancel, so ask the
+   *  skills server to cancel whatever is running. */
+  function stopExternRun() {
+    if (externCanceling) return;
+    externCanceling = true;
+    render();
+    rosClient.callService(CANCEL_SKILL_SERVICE).then(
+      (res) => {
+        // success=false means nothing was running (already over) — the status
+        // topic clears the readout; just re-arm the button.
+        if (res?.success === false) {
+          externCanceling = false;
+          render();
+        }
+      },
+      () => {
+        externCanceling = false;
+        render();
+      },
+    );
+  }
+
   // ---- open / close -------------------------------------------------------
 
   /** @param {boolean} next */
@@ -270,8 +296,9 @@ export function createSkillsMenu(parent, rosClient) {
   /** Name of the skill running right now, from a local run or the brain topic. */
   function currentActiveName() {
     if (run && !run.done) {
-      const s = skills.find((x) => x.id === run.skillId);
-      return s ? formatName(s) : prettify(run.skillId);
+      const skillId = run.skillId; // capture: `run` is mutable, so the closure can't re-narrow it
+      const s = skills.find((x) => x.id === skillId);
+      return s ? formatName(s) : prettify(skillId);
     }
     return topicActiveName;
   }
@@ -291,6 +318,9 @@ export function createSkillsMenu(parent, rosClient) {
   function render() {
     syncActive();
     const frag = document.createDocumentFragment();
+    // A run started elsewhere (agent, CLI, another tab) has no local cancel
+    // handle — offer a Stop that goes through /brain/cancel_skill instead.
+    if (topicActiveName && !(run && !run.done)) frag.appendChild(renderExternRow());
     for (const skill of skills) frag.appendChild(renderRow(skill));
     if (skills.length === 0) {
       const empty = document.createElement("p");
@@ -299,6 +329,25 @@ export function createSkillsMenu(parent, rosClient) {
       frag.appendChild(empty);
     }
     listEl.replaceChildren(frag);
+  }
+
+  /** Banner row for the externally-started run: name + Stop. */
+  function renderExternRow() {
+    const row = document.createElement("div");
+    row.className = "skills-pop-row";
+    const status = document.createElement("div");
+    status.className = "skills-pop-status";
+    const txt = document.createElement("span");
+    txt.textContent = `${topicActiveName} — running`;
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "skill-confirm stop";
+    stop.textContent = externCanceling ? "Stopping" : "Stop";
+    stop.disabled = externCanceling || rosClient.state !== "connected";
+    stop.addEventListener("click", stopExternRun);
+    status.append(txt, stop);
+    row.appendChild(status);
+    return row;
   }
 
   /** @param {any} skill */
@@ -506,7 +555,7 @@ export function createSkillsMenu(parent, rosClient) {
     skills = next;
     if (expandedId && !skills.some((s) => s.id === expandedId)) expandedId = null;
     if (open) render();
-  });
+  }, undefined, "brain_messages/msg/AvailableSkills");
 
   // The brain announces every skill run (manual or agent-driven) here. The robot
   // runs one skill at a time, so any terminal status clears the readout.
@@ -521,12 +570,19 @@ export function createSkillsMenu(parent, rosClient) {
     const name = String(payload?.primitive_name ?? payload?.skill_name ?? payload?.skill_id ?? "");
     const status = String(payload?.status ?? "");
     if (!name || !status) return;
+    const prevActive = topicActiveName;
     topicActiveName = status === "running" ? prettify(name) : "";
+    if (topicActiveName === "") externCanceling = false;
     syncActive();
-  });
+    // The extern-run banner tracks this topic; repaint it while the popup is up.
+    if (open && topicActiveName !== prevActive) render();
+  }, undefined, "std_msgs/msg/String");
 
   const unsubState = rosClient.onStateChange(() => {
-    if (rosClient.state !== "connected") topicActiveName = "";
+    if (rosClient.state !== "connected") {
+      topicActiveName = "";
+      externCanceling = false;
+    }
     syncActive();
     if (open) render();
   });

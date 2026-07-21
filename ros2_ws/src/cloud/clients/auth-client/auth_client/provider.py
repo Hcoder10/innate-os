@@ -9,7 +9,7 @@ Usage::
 
     from auth_client import AuthProvider
 
-    auth = AuthProvider(issuer_url="https://auth-v1.innate.bot", service_key="sk_...")
+    auth = AuthProvider(issuer_url="https://auth-v1.svc.innate.bot", service_key="sk_...")
     token = auth.token              # lazily discovers + fetches on first access
     print(auth.expires_at)          # datetime of JWT expiration
 

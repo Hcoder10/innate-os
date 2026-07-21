@@ -8,7 +8,7 @@ run unchanged -- see README "Virtual MARS driver".
   pub /scan                                       sensor_msgs/LaserScan @6Hz, frame base_laser
   pub /mars/main_camera/left/image_raw/compressed sensor_msgs/CompressedImage @7.5Hz (lazy)
   pub /mars/arm/image_raw/compressed              sensor_msgs/CompressedImage @5Hz (lazy)
-  pub /mars/main_camera/depth/image_rect_raw      sensor_msgs/Image 16SC1 mm @8Hz (lazy)
+  pub /mars/main_camera/depth/image_rect_raw      sensor_msgs/Image 16UC1 mm @8Hz (lazy)
   pub /mars/main_camera/points                    sensor_msgs/PointCloud2 xyz @8Hz (lazy)
   pub /mars/main_camera/left/camera_info          sensor_msgs/CameraInfo @8Hz
   pub /mars/arm/state                             sensor_msgs/JointState (joint1..6, rad) @20Hz
@@ -54,7 +54,7 @@ from std_msgs.msg import Empty, Float64MultiArray, Int32, String
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
-from .core import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH
+from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH
 from .remote_world import RemoteWorld
 
 try:
@@ -368,8 +368,16 @@ class VirtualMarsNode(Node):
         return self.get_clock().now().to_msg()
 
     def _publish_odom(self) -> None:
-        with self._lock:
-            x, y, yaw = self.sim.pose()
+        try:
+            with self._lock:
+                x, y, yaw = self.sim.pose()
+        except (OSError, RuntimeError):
+            # World server gone past the stale grace: go silent so health
+            # checks see the truth instead of a frozen 'ok' robot.
+            self.get_logger().warning(
+                "world server unreachable -- suspending /odom until it returns", throttle_duration_sec=10.0
+            )
+            return
         stamp = self._stamp()
 
         # Like bringup.py: pose only, zero twist/covariance.
@@ -509,17 +517,17 @@ class VirtualMarsNode(Node):
         img_scale = CAMERA_HEIGHT // depth.shape[0]
 
         if want_depth:
-            # 16SC1 mm, invalid=0 (publishing.cpp convention); nearest-neighbor
+            # 16UC1 mm, invalid=0 (publishing.cpp convention); nearest-neighbor
             # upscale only -- depth must not interpolate across edges.
             mm = np.where(invalid, 0, depth * 1000.0)
-            mm = np.clip(mm, 0, np.iinfo(np.int16).max).astype(np.int16)
+            mm = np.clip(mm, 0, np.iinfo(np.uint16).max).astype(np.uint16)
             if img_scale > 1:
                 mm = np.repeat(np.repeat(mm, img_scale, axis=0), img_scale, axis=1)
             msg = Image()
             msg.header.stamp = stamp
             msg.header.frame_id = "camera_optical_frame"
             msg.height, msg.width = mm.shape
-            msg.encoding = "16SC1"
+            msg.encoding = "16UC1"
             msg.is_bigendian = False
             msg.step = msg.width * 2
             msg.data = mm.tobytes()
@@ -561,8 +569,11 @@ class VirtualMarsNode(Node):
         self._caminfo_pub.publish(msg)
 
     def _publish_joint_states(self) -> None:
-        with self._lock:
-            positions = self.sim.joint_positions()
+        try:
+            with self._lock:
+                positions = self.sim.joint_positions()
+        except (OSError, RuntimeError):
+            return  # world server gone; _publish_odom carries the warning
         msg = JointState()
         msg.header.stamp = self._stamp()
         msg.name = [*ARM_JOINTS, "joint_head"]  # same 7 as the real arm node
@@ -570,8 +581,11 @@ class VirtualMarsNode(Node):
         self._joint_states_pub.publish(msg)
 
     def _publish_arm_state(self) -> None:
-        with self._lock:
-            positions = self.sim.joint_positions()
+        try:
+            with self._lock:
+                positions = self.sim.joint_positions()
+        except (OSError, RuntimeError):
+            return
         msg = JointState()
         msg.header.stamp = self._stamp()
         msg.name = list(ARM_JOINTS)
@@ -584,8 +598,11 @@ class VirtualMarsNode(Node):
         self._streams_pub.publish(msg)
 
     def _publish_head(self) -> None:
-        with self._lock:
-            pitch = self.sim.head_pitch_deg()
+        try:
+            with self._lock:
+                pitch = self.sim.head_pitch_deg()
+        except (OSError, RuntimeError):
+            return
         msg = String()
         msg.data = json.dumps(
             {

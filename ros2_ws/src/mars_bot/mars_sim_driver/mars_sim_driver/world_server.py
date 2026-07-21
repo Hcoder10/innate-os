@@ -8,17 +8,20 @@ sim/README.md "world_server.py"):
   truth ({t, wall, pose, joints}) after every physics slice. View-only;
   robot software must never consume it.
 
-Placement is the launcher's call (host = native GL, container = software GL
-at --render-scale 2); the node can't tell the difference. No ROS; beyond
+Always runs on the host (the launcher starts it via uv): in-container
+software GL was slow enough to starve the whole ROS stack. No ROS; beyond
 VirtualMars' deps only `websockets`, and without it the stream is disabled.
-Binds 127.0.0.1 only. macOS GL is main-thread-sensitive, so all render work
-runs on the main thread; state reads take the physics lock directly.
+Binds 127.0.0.1 unless --bind says otherwise (see its help). macOS GL is
+main-thread-sensitive, so all render work runs on the main thread; state
+reads take the physics lock directly.
 """
 
 import argparse
 import json
+import os
 import socket
 import struct
+import sys
 import threading
 import time
 
@@ -30,7 +33,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
-from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg
+from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
 DEPTH_WH = (CAMERA_WIDTH // 4, CAMERA_HEIGHT // 4)
@@ -69,6 +72,11 @@ class WorldServer:
         # Advertised in ping replies so the launcher can tell a current
         # server from a stale pre-stream one (which it must restart).
         self.state_port: int | None = None
+        # Advertised in ping replies so the launcher can restart a reused
+        # server whose listeners don't match the current bind policy (a
+        # leftover INNATE_SIM_WORLD_BIND=0.0.0.0 server must not outlive the
+        # run that asked for it).
+        self.binds: list[str] | None = None
         # Latest rendered frame per product; RPCs return the freshest frame
         # instead of rendering inline, so a GL stall degrades freshness,
         # never liveness.
@@ -169,10 +177,12 @@ class WorldServer:
             if not active:
                 # macOS parks idle offscreen GL contexts and re-acquiring can
                 # stall for minutes; a 5Hz heartbeat prevents the parking.
-                try:
-                    self._render_product("jpeg:main")
-                except Exception:  # noqa: BLE001,S110 -- heartbeat is best-effort
-                    pass
+                # Only macOS needs it -- elsewhere it's 5 renders/s of waste.
+                if sys.platform == "darwin":
+                    try:
+                        self._render_product("jpeg:main")
+                    except Exception:  # noqa: BLE001,S110 -- heartbeat is best-effort
+                        pass
                 time.sleep(0.2)
                 continue
             todo = [p for p in active if p in self.wanted]
@@ -209,7 +219,7 @@ class WorldServer:
     def handle(self, req: dict) -> tuple[dict, bytes | None]:
         op = req.get("op")
         if op == "ping":
-            return {"ok": True, "state_port": self.state_port}, None
+            return {"ok": True, "state_port": self.state_port, "binds": self.binds}, None
         if op == "state":
             with self.lock:
                 x, y, yaw = self.sim.pose()
@@ -286,6 +296,13 @@ def main() -> None:
         default=1,
         help="Divide the RGB render resolution by N (software-GL mitigation; the wire stays 640x480)",
     )
+    parser.add_argument(
+        "--bind",
+        default="127.0.0.1",
+        help="Comma-separated addresses to listen on. Docker Desktop reaches the host loopback via "
+        "host.docker.internal, but a native Linux/WSL Docker engine resolves it to the bridge "
+        "gateway -- there the launcher passes '127.0.0.1,<gateway>' (host-owned, not LAN-routable).",
+    )
     args = parser.parse_args()
 
     print(f"[world-server] loading VirtualMars (render scale {args.render_scale})...", flush=True)
@@ -293,36 +310,58 @@ def main() -> None:
     server = WorldServer(VirtualMars(render_wh=render_wh, depth_render_wh=DEPTH_WH))
     server.sim.step(0.5)  # settle from the spawn drop before clients look
 
-    # Boot self-test: prove GL works before accepting clients, and report the
-    # per-frame cost so placement decisions are visible in the log.
+    # Boot self-test: prove GL works before accepting clients, and report
+    # backend + per-frame cost -- the launcher parses this line into the
+    # startup health checks.
     t0 = time.perf_counter()
     server.sim.render_rgb("main")
     first_ms = (time.perf_counter() - t0) * 1000
     t1 = time.perf_counter()
-    server.sim.render_rgb("main")
+    frame = server.sim.render_rgb("main")
     steady_ms = (time.perf_counter() - t1) * 1000
-    print(f"[world-server] GL self-test: {steady_ms:.0f} ms/frame (first frame {first_ms:.0f} ms)", flush=True)
+    # A context can be created "successfully" yet render nothing (seen on a
+    # Raspberry Pi: EGL came up with GL_OUT_OF_MEMORY warnings and produced
+    # blank frames). A real render of the spawn view always has texture;
+    # refuse to serve garbage so the launcher's ladder falls to the next
+    # backend instead.
+    if float(frame.std()) < 1.0:
+        print(
+            "[world-server] GL self-test produced a blank image -- the GL context is not actually "
+            "rendering (GPU out of memory?). Refusing to serve broken frames.",
+            flush=True,
+        )
+        raise SystemExit(1)
+    backend = os.environ.get("MUJOCO_GL", "").strip() or "native"
+    print(
+        f"[world-server] GL self-test ({backend}): {steady_ms:.0f} ms/frame (first frame {first_ms:.0f} ms)",
+        flush=True,
+    )
+    release_freed_heap()  # model-compile + GL-context scratch, ~1GB on glibc
 
-    listener = socket.create_server(("127.0.0.1", args.port))
-    print(f"[world-server] ready on 127.0.0.1:{args.port}", flush=True)
+    binds = [b.strip() for b in args.bind.split(",") if b.strip()]
+    server.binds = binds
+    listeners = [socket.create_server((bind, args.port)) for bind in binds]
+    print(f"[world-server] ready on {', '.join(f'{b}:{args.port}' for b in binds)}", flush=True)
 
     server.publish_state()  # observers get a frame before the first physics slice
     if ws_serve is None:
         print("[world-server] `websockets` not installed -- observer state stream disabled", flush=True)
     else:
-        state_server = ws_serve(server.serve_state, "127.0.0.1", args.state_port)
-        threading.Thread(target=state_server.serve_forever, daemon=True).start()
+        for bind in binds:
+            state_server = ws_serve(server.serve_state, bind, args.state_port)
+            threading.Thread(target=state_server.serve_forever, daemon=True).start()
         server.state_port = args.state_port
-        print(f"[world-server] observer state stream on ws://127.0.0.1:{args.state_port}", flush=True)
+        print(f"[world-server] observer state stream on port {args.state_port} ({', '.join(binds)})", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()
 
-    def accept_loop() -> None:
+    def accept_loop(listener: socket.socket) -> None:
         while True:
             conn, _addr = listener.accept()
             threading.Thread(target=server.serve_connection, args=(conn,), daemon=True).start()
 
-    threading.Thread(target=accept_loop, daemon=True).start()
+    for listener in listeners:
+        threading.Thread(target=accept_loop, args=(listener,), daemon=True).start()
     server.render_loop()  # main thread owns the GL context
 
 

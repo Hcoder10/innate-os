@@ -14,6 +14,7 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // series key → [label, color]; drawn/legended only when present in the data.
+/** @type {[string, [string, string]][]} key → [display name, stroke color] */
 const SERIES = [
   ["progress", ["progress", "#e0a03c"]],
   ["arm_jerk", ["arm motion", "#5aa9e6"]],
@@ -47,7 +48,7 @@ export function buildProfileTrace(q) {
   };
 }
 
-/** value → chart y for a series scaled to [min, min+span]. */
+/** value → chart y for a series scaled to [min, min+span]. @param {number} v @param {number} min @param {number} span */
 function toY(v, min, span) {
   return VBH - ((v - min) / span) * (VBH - 2 * PAD) - PAD;
 }

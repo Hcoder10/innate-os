@@ -53,6 +53,7 @@ _Innate OS is developed for MARS; if you want to port it to your robot, we are h
 - [Skills](#skills)
 - [Agents](#agents)
 - [Simulator](#simulator)
+- [Foxglove](#foxglove)
 - [Additional Inputs](#additional-inputs)
 - [ROS Reference](#ros-reference)
 - [More Docs](#more-docs)
@@ -282,6 +283,10 @@ Use the [simulator](#simulator) to test custom agents before running them on a p
 
 Innate OS includes a MuJoCo digital twin of MARS that runs the **real robot software** -- the same navigation stack, skills, brain client, and webapp as the physical robot, with only the hardware drivers swapped for a simulated equivalent. Use it to build and test skills, agents, and input devices before you have a robot on your desk.
 
+<p align="center">
+  <img src="docs/assets/readme/sim.png" alt="Driving the simulated MARS robot through its apartment in the browser" width="85%">
+</p>
+
 ```bash
 ./innate-sim setup
 ./innate-sim up
@@ -297,6 +302,22 @@ The first `up` provisions everything automatically (simulation assets, the 3D vi
 ```
 
 See [`sim/README.md`](sim/README.md) for everything else: the day-to-day workflow, the ROS-free VirtualMars Python API (with a walkthrough notebook), and the architecture.
+
+---
+
+## Foxglove
+
+[Foxglove Studio](https://foxglove.dev) gives you a live view of TF, `/scan`, camera images, point clouds, and `/cmd_vel` teleop for debugging. In the [simulator](#simulator) the bridge is always on; on a physical robot it is opt-in:
+
+```bash
+innate foxglove start   # start the bridge (ws://<robot-ip>:8765)
+innate foxglove stop    # stop it
+innate foxglove         # status
+```
+
+Then connect Foxglove Studio to the printed `ws://` URL.
+
+> **Over Wi-Fi, subscribe to the `/mars/main_camera/remote/*` topics, not the raw ones.** The raw camera images (~0.9 MB/frame) and point clouds (`/mars/main_camera/points`, ~10 MB/s) are far more than a Wi-Fi link can carry, so every panel — including `/cmd_vel` — falls seconds behind. The `remote/` namespace carries the same topics throttled to ~2 Hz (and images already compressed), which fits comfortably. Prefer `.../compressed` image topics and mono `remote/points` over `remote/points_color`.
 
 ---
 
@@ -384,7 +405,7 @@ Innate OS is currently based on ROS 2, the reference framework for robotics oper
 
 - **[mars_control](ros2_ws/src/mars_bot/mars_control)** - top-level robot app node, rosbridge websocket server for the mobile/web app, and low-latency UDP receiver for leader-arm teleop.
 - **[mars_bringup](ros2_ws/src/mars_bot/mars_bringup)** - hardware bringup for motors, base, IMU, and LiDAR, plus `robot_state_publisher` for the TF tree.
-- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** - arm and head servo driver, MoveIt `move_group`, and KDL-based IK solver.
+- **[mars_arm](ros2_ws/src/mars_bot/mars_arm)** - arm and head servo driver and KDL-based IK solver.
 - **[mars_cam](ros2_ws/src/mars_bot/mars_cam)** - stereo main camera, arm camera, VPI stereo depth estimator, WebRTC streamer, and stereo calibration action server.
 - **[mars_nav](ros2_ws/src/mars_bot/mars_nav)** - Nav2-based navigation, SLAM mapping, and the mode manager that switches between `mapfree`, `mapping`, and `navigation`.
 - **[brain_client](ros2_ws/src/brain/brain_client)** - bridge to the Innate cloud brain, websocket client, skills action server, and user input manager.

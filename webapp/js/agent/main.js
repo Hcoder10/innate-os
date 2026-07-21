@@ -82,7 +82,7 @@ function buildAgentView(root) {
 /**
  * Bottom-left "AGENT ACTIVE" chip — shown only while the brain is running.
  * @param {HTMLElement} root
- * @param {ReturnType<import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
  * @returns {{ destroy: () => void }}
  */
 function createActiveChip(root, agentState) {

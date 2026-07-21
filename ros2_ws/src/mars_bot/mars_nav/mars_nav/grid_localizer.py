@@ -391,6 +391,7 @@ class GridLocalizer(Node):
                 self._auto_timer.cancel()
 
             self._publish_pose(pose[0], pose[1], pose[2])
+            self._warn_if_at_map_edge(pose[0], pose[1])
 
             if score < self.score_threshold:
                 self._publish_status("localized")
@@ -404,7 +405,9 @@ class GridLocalizer(Node):
                 self.get_logger().warn(
                     f"Auto-localized with LOW confidence at "
                     f"({pose[0]:.2f}, {pose[1]:.2f}, {np.degrees(pose[2]):.1f}°) "
-                    f"score={score:.3f} (threshold: {self.score_threshold}) in {elapsed:.2f}s"
+                    f"score={score:.3f} (threshold: {self.score_threshold}) in {elapsed:.2f}s "
+                    f"— the map may not match the robot's surroundings; please check the robot "
+                    f"is inside the mapped area, or remap it"
                 )
         except ValueError as e:
             # Insufficient scan data - retry on next tick
@@ -463,9 +466,10 @@ class GridLocalizer(Node):
         pix_x = self.free_pixels[pos_indices, 0]
         pix_y = self.free_pixels[pos_indices, 1]
 
-        # Convert to world coordinates
-        pos_x = (pix_x * self.resolution + self.origin[0]).astype(np.float32)
-        pos_y = ((self.map_h - pix_y) * self.resolution + self.origin[1]).astype(np.float32)
+        # Cell centers, not corners: a corner pose on an edge cell lands exactly
+        # on the map boundary, where the costmap can't raytrace.
+        pos_x = ((pix_x + 0.5) * self.resolution + self.origin[0]).astype(np.float32)
+        pos_y = ((self.map_h - pix_y - 0.5) * self.resolution + self.origin[1]).astype(np.float32)
         pos_theta = angle_offsets[ang_indices]
 
         return pos_x, pos_y, pos_theta
@@ -488,8 +492,9 @@ class GridLocalizer(Node):
         pix_x = self.free_pixels[pos_idx, 0]
         pix_y = self.free_pixels[pos_idx, 1]
 
-        x = pix_x * self.resolution + self.origin[0]
-        y = (self.map_h - pix_y) * self.resolution + self.origin[1]
+        # Cell centers, matching _generate_candidates_for_batch.
+        x = (pix_x + 0.5) * self.resolution + self.origin[0]
+        y = (self.map_h - pix_y - 0.5) * self.resolution + self.origin[1]
         theta = angle_offsets[ang_idx]
 
         return float(x), float(y), float(theta)
@@ -504,6 +509,23 @@ class GridLocalizer(Node):
         msg.data = status
         self.status_pub.publish(msg)
         self.get_logger().info(f"Published status: {status}")
+
+    EDGE_MARGIN_M = 0.30  # closer to the border than this and the costmap can't see ahead
+
+    def _warn_if_at_map_edge(self, x: float, y: float) -> None:
+        """Log one clear hint when the localized pose hugs the map border."""
+        dist = min(
+            x - self.origin[0],
+            self.origin[0] + self.map_w * self.resolution - x,
+            y - self.origin[1],
+            self.origin[1] + self.map_h * self.resolution - y,
+        )
+        if dist < self.EDGE_MARGIN_M:
+            self.get_logger().warn(
+                f"Localized {max(dist, 0.0):.2f} m from the map border — please make sure the map is "
+                "correct and the robot is not right against a wall or outside the mapped area "
+                "(the costmap cannot see past the map edge, so navigation is unreliable there)"
+            )
 
     def _publish_pose(self, x: float, y: float, theta: float):
         """Publish pose to /initialpose (latched for AMCL)."""
@@ -613,6 +635,7 @@ class GridLocalizer(Node):
             pose, score = self._find_pose(self.latest_scan)
 
             self._publish_pose(pose[0], pose[1], pose[2])
+            self._warn_if_at_map_edge(pose[0], pose[1])
 
             response.success = True
             response.message = (

@@ -49,7 +49,7 @@ class ProxyClient:
         auth_issuer_url: str | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
-        raw_url = (proxy_url or os.getenv("INNATE_PROXY_URL", "https://proxy-v1.innate.bot")).rstrip("/")
+        raw_url = (proxy_url or os.getenv("INNATE_PROXY_URL", "https://proxy-v1.svc.innate.bot")).rstrip("/")
         if raw_url and not raw_url.startswith(("http://", "https://")):
             raw_url = f"https://{raw_url}"
         self.proxy_url: str = raw_url
@@ -57,7 +57,7 @@ class ProxyClient:
         self._service_key: str = innate_service_key or os.getenv("INNATE_SERVICE_KEY", "")
         self.config: dict[str, Any] = config or {}
 
-        issuer_url = auth_issuer_url or os.getenv("INNATE_AUTH_URL", "https://auth-v1.innate.bot")
+        issuer_url = auth_issuer_url or os.getenv("INNATE_AUTH_URL", "https://auth-v1.svc.innate.bot")
         if issuer_url and self._service_key:
             self._auth: AuthProvider | None = AuthProvider(
                 issuer_url=issuer_url,

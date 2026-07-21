@@ -63,8 +63,48 @@ export const COMMANDED_GOAL_TOPIC = "/nav/commanded_goal";
 export const CANCEL_NAVIGATION_SERVICE = "/nav/cancel_navigation";
 // Auto-localization (std_srvs/Trigger on grid_localizer). Can take tens of seconds.
 export const LOCALIZE_SERVICE = "/localize";
+// grid_localizer's one-shot result (std_msgs/String, published once per
+// localization attempt): processing_map | localized | localized_low_confidence
+// | error. Only seen if subscribed when it fires — steady-state localization
+// health comes from /amcl_pose covariance instead (mobile-app pattern).
+export const LOCALIZATION_STATUS_TOPIC = "/localization/status";
 // AMCL's manual seed (nav2_msgs/srv/SetInitialPose) — place the robot by hand.
 export const SET_INITIAL_POSE_SERVICE = "/set_initial_pose";
+
+// ---- Nav page (live sensor panel) ------------------------------------------
+// RPLidar scan, throttled to ~6 Hz on the robot (frame base_laser).
+export const SCAN_TOPIC = "/scan"; // sensor_msgs/LaserScan
+// The velocity actually sent to the base — output of the cmd_vel priority mux.
+export const CMD_VEL_TOPIC = "/cmd_vel"; // geometry_msgs/Twist
+// Nav2 global costmap (map frame; the planner runs under the "navigation"
+// namespace). The local costmap lives in the odom frame, so it can't be
+// overlaid on the map canvas without a live map->odom transform — skipped.
+export const GLOBAL_COSTMAP_TOPIC = "/navigation/global_costmap/costmap"; // nav_msgs/OccupancyGrid
+// Controller's 6x6 m rolling window (nav_msgs/OccupancyGrid). Odom-framed —
+// the map widget places it via the current map<-odom correction.
+export const LOCAL_COSTMAP_TOPIC = "/local_costmap/costmap";
+// Latched static transforms; carries base_link -> base_laser from the URDF.
+export const TF_STATIC_TOPIC = "/tf_static"; // tf2_msgs/TFMessage
+// mode_manager state (std_msgs/String each): navigation/mapfree/mapping, and
+// the active map's name.
+export const NAV_CURRENT_MODE_TOPIC = "/nav/current_mode";
+export const NAV_CURRENT_MAP_TOPIC = "/nav/current_map";
+// std_msgs/String carrying JSON {"available_maps": ["home.yaml", ...]}.
+export const NAV_AVAILABLE_MAPS_TOPIC = "/nav/available_maps";
+// mode_manager services (brain_messages srvs, all → {success, message}):
+// change_mode {mode: "navigation"|"mapping"|"mapfree"} swaps the whole nav
+// lifecycle stack; save_map {map_name, overwrite} only works in mapping mode
+// (name must be alphanumeric/_/-; ".yaml" is appended server-side);
+// delete_map accepts base name or filename.
+export const NAV_CHANGE_MODE_SERVICE = "/nav/change_mode";
+export const NAV_CHANGE_MAP_SERVICE = "/nav/change_navigation_map";
+export const NAV_SAVE_MAP_SERVICE = "/nav/save_map";
+export const NAV_DELETE_MAP_SERVICE = "/nav/delete_map";
+// map-frame pose while mapping (nav_msgs/Odometry, TF map->base_link),
+// published by mode_manager only in mapping mode. The right pose source
+// during SLAM: raw /odom drifts against the growing map, and /amcl_pose is
+// stale from navigation mode.
+export const MAPPING_POSE_TOPIC = "/mapping_pose";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
 // status: running|completed|failed|interrupted, primitive_id, ...}), published
@@ -131,14 +171,17 @@ export const PINNED_SKILLS = ["navigate with vision", "navigate with position", 
 // drives. Skill roster + per-skill input schema come from AVAILABLE_SKILLS_TOPIC.
 export const EXECUTE_SKILL_ACTION = "/execute_skill";
 export const EXECUTE_SKILL_ACTION_TYPE = "brain_messages/action/ExecuteSkill";
+// Cancels the running skill regardless of which client sent its goal (action
+// cancels only bind to the sender). std_srvs/Trigger.
+export const CANCEL_SKILL_SERVICE = "/brain/cancel_skill";
 
 export const HEAD_MIN_DEG = -40;
 export const HEAD_MAX_DEG = 70;
 
-// ---- Debugging page -------------------------------------------------------
+// ---- Logging page ---------------------------------------------------------
 // innate_console bridge (see innate-os/.../innate_console): raw tmux pane
 // stdout live, plus on-request backlog replay. String payloads carrying JSON.
-// This is the single log source — the Debugging page parses node identity and
+// This is the single log source — the Logging page parses node identity and
 // severity out of the rcl lines, so /rosout (incomplete) isn't used.
 export const CONSOLE_TOPIC = "/innate/console";
 export const CONSOLE_REQUEST_TOPIC = "/innate/console/request";
@@ -221,7 +264,7 @@ export const BRAIN_RELOAD_SERVICE = "/brain/reload";
 
 // Friendly subpane names per tmux window — index = pane (0 = left, 1 = right).
 // Mirrors innate-os/scripts/launch_ros_in_tmux.sh ROS_COMMAND_GROUPS; keep the
-// two in sync. Labels the Debugging page's subpane picker by launch file.
+// two in sync. Labels the Logging page's subpane picker by launch file.
 /** @type {Record<string, string[]>} */
 export const PANE_LAUNCH_LABELS = {
   "app-bringup": ["app.launch.py", "mars_bringup.launch.py"],
@@ -233,5 +276,29 @@ export const PANE_LAUNCH_LABELS = {
   "training-uninavid": ["training_node", "uninavid.launch.py"],
   "console": ["console.launch.py", "dataset_encoder.launch.py"],
 };
+
+// ---- Camera Calibration page ----------------------------------------------
+// Interactive stereo (ChArUco) calibration, driven by the mars_cam
+// stereo_calibrator node. The action stays open for the whole capture session:
+// goal {mode: MODE_MANUAL(0), num_images, min_corners, save_calibration},
+// feedback streams after each capture attempt ({phase, images_captured,
+// capture_attempts, corners_found, image_names, images: CompressedImage[]}),
+// result lands once enough images are captured / the goal is cancelled / the
+// server's capture watchdog times out ({success, message, images_captured,
+// left_rms, right_rms, stereo_rms}).
+export const RUN_STEREO_CALIBRATION_ACTION = "/mars/main_camera/run_stereo_calibration";
+export const RUN_STEREO_CALIBRATION_ACTION_TYPE = "mars_msgs/action/RunStereoCalibration";
+// Publishing a std_msgs/Bool here (while a goal is running) triggers one
+// capture attempt against the current stereo frame. Must be a non-empty
+// message type — rws cannot deserialize a zero-field std_msgs/Empty published
+// from a browser client (crashes the subscriber node), so this is Bool not Empty.
+export const STEREO_CALIB_CAPTURE_TOPIC = "/mars/main_camera/calib/enter_events";
+// Server-side defaults, mirrored here as the page's number-input defaults.
+export const STEREO_CALIB_DEFAULT_NUM_IMAGES = 20;
+export const STEREO_CALIB_DEFAULT_MIN_CORNERS = 10;
+// Depth is only published once a valid stereo calibration is loaded (the depth
+// estimator gates on it), so whether a frame ever arrives here is a reliable,
+// zero-new-ROS-code proxy for "the robot currently has a calibration file".
+export const MAIN_CAMERA_DEPTH_TOPIC = "/mars/main_camera/depth/image_rect_raw";
 
 export const LAST_IP_KEY = "innate.lastRobotIP";

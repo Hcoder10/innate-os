@@ -49,6 +49,11 @@ class ArmCameraDriver : public rclcpp::Node {
     std::string createGStreamerPipeline();
 
     /**
+     * @brief Apply the anti-flicker (power line frequency) V4L2 control
+     */
+    void applyPowerLineFrequency();
+
+    /**
      * @brief Frame processing loop (runs in separate thread)
      */
     void frameProcessingLoop();
@@ -81,6 +86,9 @@ class ArmCameraDriver : public rclcpp::Node {
     bool publish_compressed_{false};
     int compressed_frame_interval_{5};
     int compressed_frame_counter_{0};
+
+    // Anti-flicker filter: 0=disabled, 50 or 60 (Hz)
+    int power_line_frequency_{60};
 };
 
 }  // namespace mars_cam

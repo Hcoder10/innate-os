@@ -207,6 +207,41 @@ def generate_debug_mosaic(node, result):
         node.get_logger().warn(f"Failed to generate debug mosaic: {e}")
 
 
+def generate_coverage_images(node):
+    """Build per-camera corner-coverage dot maps from corners captured so far.
+
+    Unlike :func:`generate_visualizations` (post-calibration, written to disk),
+    this is cheap enough to call after every single capture and returns the
+    images directly for use as action feedback.
+
+    TODO: alongside these two debug renders, compute and report a coverage
+    percentage metric (e.g. fraction of the image plane, gridded into cells,
+    that has at least one captured corner nearby) so the operator gets a
+    number to target, not just a visual dot map.
+
+    Args:
+        node: StereoCalibrator node instance (needs ``indiv_corners_left/right``,
+              ``image_width``/``image_height``).
+
+    Returns:
+        tuple(left_coverage, right_coverage) as BGR ``np.ndarray`` images.
+    """
+    w, h = node.image_width, node.image_height
+
+    def _coverage_canvas(all_corners):
+        canvas = np.zeros((h, w, 3), dtype=np.uint8)
+        for corners in all_corners:
+            for corner in corners:
+                x, y = int(corner[0, 0]), int(corner[0, 1])
+                if 0 <= x < w and 0 <= y < h:
+                    cv2.circle(canvas, (x, y), 3, (255, 255, 0), -1)
+        return canvas
+
+    left_coverage = _coverage_canvas(node.indiv_corners_left)
+    right_coverage = _coverage_canvas(node.indiv_corners_right)
+    return left_coverage, right_coverage
+
+
 def generate_visualizations(node):
     """Generate visualization images showing detected corners and rectified corners.
 

@@ -29,11 +29,13 @@ import { initShell } from "./shell.js";
 const ROUTES = [
   { path: "/", key: "teleop", load: () => import("./teleop/main.js") },
   { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/debugging", key: "debugging", load: () => import("./debugging/main.js") },
+  { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
+  { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
   { path: "/training", key: "training", load: () => import("./training/main.js") },
   { path: "/profiling", key: "profiling", load: () => import("./profiling/main.js") },
+  { path: "/calibration", key: "calibration", load: () => import("./calibration/main.js") },
   { path: "/settings", key: "settings", load: () => import("./settings/main.js") },
 ];
 
@@ -46,13 +48,13 @@ let currentKey = "";
 // newer navigation started can detect it's stale and not mount over the winner.
 let navSeq = 0;
 
-/** Drop a trailing slash (except root) so "/profiling/" and "/profiling" match. */
+/** Drop a trailing slash (except root) so "/profiling/" and "/profiling" match. @param {string} pathname */
 function normalize(pathname) {
   const p = pathname.replace(/\/+$/, "");
   return p === "" ? "/" : p;
 }
 
-/** The route for a pathname, defaulting to teleop for anything unrecognized. */
+/** The route for a pathname, defaulting to teleop for anything unrecognized. @param {string} pathname */
 function routeFor(pathname) {
   const p = normalize(pathname);
   return ROUTES.find((r) => r.path === p) || ROUTES[0];
@@ -63,7 +65,8 @@ const shell = initShell(navigate);
 // Sim deployments hide robot-data workflows from the rail (shell.js's
 // SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
 // a page whose services have no sim backing.
-const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "debugging", "settings"]);
+const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
+/** @type {Promise<{simControls?: boolean}>} */
 const configPromise = fetch("/config.json", { cache: "no-store" })
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}));

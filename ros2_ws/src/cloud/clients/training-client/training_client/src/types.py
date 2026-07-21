@@ -10,8 +10,8 @@ from typing import Any
 
 # ── Configuration ───────────────────────────────────────────────────
 
-DEFAULT_SERVER_URL = "https://training-v1.innate.bot"
-DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
+DEFAULT_SERVER_URL = "https://training-v1.svc.innate.bot"
+DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.svc.innate.bot"
 
 
 @dataclass

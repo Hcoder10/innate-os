@@ -14,9 +14,10 @@ import { installPressActivate } from "./pressActivate.js";
 /** @typedef {{ key: string, label: string, icon: string }} Section */
 
 // In sim mode (config.simControls) only these sections make sense — the rest
-// (Datasets/Collect/Training/Profiling) are robot-data workflows with no sim
-// backing, so they're hidden from the rail.
-const SIM_SECTIONS = new Set(["teleop", "agent", "debugging", "settings"]);
+// (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
+// with no sim backing — the sim has no real stereo camera or ChArUco board to
+// calibrate against — so they're hidden from the rail.
+const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
@@ -33,8 +34,14 @@ const SECTIONS = [
     icon: '<path d="M12 3.5l1.7 6.8 6.8 1.7-6.8 1.7L12 20.5l-1.7-6.8L3.5 12l6.8-1.7z"/>',
   },
   {
-    key: "debugging",
-    label: "Debugging",
+    key: "nav",
+    label: "Nav",
+    // Radar motif: sweep arcs and a contact dot, for the live sensor view.
+    icon: '<path d="M12 12L18.4 5.6"/><path d="M15.2 8.8a4.5 4.5 0 1 0 1.3 3.2"/><path d="M18.4 5.6A9 9 0 1 0 21 12"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  },
+  {
+    key: "logging",
+    label: "Logging",
     icon: '<polyline points="4.5,7 10,12 4.5,17"/><line x1="12.5" y1="17" x2="19.5" y2="17"/>',
   },
   {
@@ -59,6 +66,13 @@ const SECTIONS = [
     icon: '<circle cx="12" cy="13" r="7.5"/><line x1="12" y1="13" x2="15" y2="10"/><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="9.5" y1="2.5" x2="14.5" y2="2.5"/>',
   },
   {
+    key: "calibration",
+    label: "Calibration",
+    // Camera motif: body with a viewfinder bump, and a lens. The body spans
+    // x 4–19, y 6–19, so its centre lands on the half unit.
+    icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="11.5" cy="12.5" r="3.4"/>',
+  },
+  {
     key: "settings",
     label: "Settings",
     // Sliders motif: two tracks, each with a knob.
@@ -66,7 +80,7 @@ const SECTIONS = [
   },
 ];
 
-/** Path for a section key: teleop is the site root, the rest are /<key>. */
+/** Path for a section key: teleop is the site root, the rest are /<key>. @param {string} key */
 function pathForKey(key) {
   return key === "teleop" ? "/" : `/${key}`;
 }
@@ -95,6 +109,7 @@ document.addEventListener("gesturestart", (e) => {
   if (!(e.target instanceof HTMLCanvasElement)) e.preventDefault();
 });
 
+/** @param {(path: string) => void} navigate */
 export function initShell(navigate) {
   // Buttons fire on press-down instead of release, app-wide. Installed here
   // because the router builds the shell exactly once per page load. Idempotent.
@@ -149,7 +164,7 @@ export function initShell(navigate) {
   rail.appendChild(createBadge());
   document.body.prepend(rail);
 
-  // Sim deployments only expose Teleop/Agent/Debugging/Settings — drop the rest
+  // Sim deployments only expose Teleop/Agent/Logging/Settings — drop the rest
   // from the rail once the (env-driven) config says we're in sim mode.
   void applySimSectionFilter(nav);
 

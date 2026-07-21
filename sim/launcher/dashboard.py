@@ -187,7 +187,9 @@ def clear_screen() -> None:
 
 
 def print_banner() -> None:
-    clear_screen()
+    # No clear_screen: the user's scrollback (earlier runs, their own
+    # commands) is theirs. The live dashboard uses the alternate screen
+    # buffer, so it never needs a destructive clear either.
     divider()
     print_ascii_banner()
     print(f"{DIM}one env // one cli // os + sim + optional cloud agent{NC}")
@@ -299,13 +301,13 @@ def gradient_text(
     return "".join(out)
 
 
-def dashboard_snapshot_worker(runtime: DashboardRuntime, interval_seconds: float = 0.5) -> None:
+def dashboard_snapshot_worker(runtime: DashboardRuntime, interval_seconds: float = 1.0) -> None:
     while not runtime.stop_event.is_set():
         runtime.refresh_snapshot()
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.35) -> None:
+def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.75) -> None:
     while not runtime.stop_event.is_set():
         runtime.set_log(
             "brain",
@@ -314,7 +316,7 @@ def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: floa
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_agent_log_worker(runtime: DashboardRuntime, interval_seconds: float = 0.5) -> None:
+def dashboard_agent_log_worker(runtime: DashboardRuntime, interval_seconds: float = 1.5) -> None:
     while not runtime.stop_event.is_set():
         runtime.set_log(
             "agent",
@@ -810,6 +812,7 @@ def render_status(
         "  ".join(
             [
                 f"{BOLD}Mood:{NC} {format_level(str(snapshot['stack_level']), str(snapshot['stack_label']))}",
+                f"{BOLD}World:{NC} {format_level(str(snapshot['world_level']), str(snapshot['world_label']))}",
                 f"{BOLD}Sim driver:{NC} {format_level(str(snapshot['sim_level']), str(snapshot['sim_label']))}",
                 f"{BOLD}Transport:{NC} {format_level(str(snapshot['transport_level']), str(snapshot['transport_label']))}",
                 f"{BOLD}Brain:{NC} {format_level(str(snapshot['brain_level']), str(snapshot['brain_label']))}",

@@ -4,7 +4,7 @@
 // Agent page to take control. Glass + full pill shape mirror the speak bar.
 
 /**
- * @param {ReturnType<import("./teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("./teleop/agentState.js").createAgentState>} agentState
  * @param {string} agentHref Link to the Agent page.
  * @returns {{ el: HTMLElement, destroy: () => void }}
  */

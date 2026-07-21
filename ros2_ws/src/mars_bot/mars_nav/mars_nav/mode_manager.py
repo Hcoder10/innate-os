@@ -379,8 +379,13 @@ class ModeManager(Node):
             self.get_logger().error(f"Error saving mode: {e}")
 
     def save_last_map(self, map_name):
-        """Save the current map to file for persistence"""
+        """Save the current map to file for persistence; None clears the saved map"""
         try:
+            if map_name is None:
+                if os.path.exists(self.map_file):
+                    os.remove(self.map_file)
+                self.get_logger().debug("Cleared saved map")
+                return
             # Ensure directory exists
             os.makedirs(os.path.dirname(self.map_file), exist_ok=True)
             with open(self.map_file, "w") as f:
@@ -963,14 +968,13 @@ class ModeManager(Node):
             # If we are deleting the current map (but not running navigation), pick a fallback
             if map_yaml_name == self.current_map:
                 remaining_maps = [m for m in self.available_maps if m != map_yaml_name]
-                fallback = None
                 if "home.yaml" in remaining_maps:
                     fallback = "home.yaml"
                 elif remaining_maps:
                     fallback = remaining_maps[0]
                 else:
-                    # No maps left, default to home.yaml placeholder
-                    fallback = "home.yaml"
+                    # No maps left: None forces mapping mode until a new map is saved
+                    fallback = None
 
                 self._switch_generation += 1  # supersede any in-flight relocalization waiter
                 self.current_map = fallback
@@ -1107,6 +1111,12 @@ class ModeManager(Node):
                     # Refresh available maps list
                     self.available_maps = self.discover_maps()
                     self.get_logger().info(f"Updated available maps: {self.available_maps}")
+
+                    # Adopt the saved map if there is no valid current map
+                    if self.current_map not in self.available_maps:
+                        self.current_map = map_yaml_name
+                        self.save_last_map(map_yaml_name)
+                        self.get_logger().info(f"Current map set to newly saved '{map_yaml_name}'")
                 else:
                     response.success = False
                     response.message = f"Map saver completed but files not found at {map_path}"
@@ -1224,6 +1234,16 @@ class ModeManager(Node):
                 response.message = f"Already in {target_mode} mode"
                 self.get_logger().info(response.message)
                 return response
+
+            # A stale current_map (e.g. deleted from disk) would fail every map
+            # load attempt; fall back to a map that actually exists.
+            if target_mode == "navigation" and self.current_map not in self.available_maps:
+                fallback = self.available_maps[0]
+                self.get_logger().warning(
+                    f"Current map '{self.current_map}' not found on disk, falling back to '{fallback}'"
+                )
+                self.current_map = fallback
+                self.save_last_map(fallback)
 
             # Cancel active nav goals before tearing down their lifecycle nodes.
             # If cancellation can't be confirmed (service unreachable, or goals

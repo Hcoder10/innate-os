@@ -1,8 +1,11 @@
 name: innate-os
 
 services:
+  # Optional X display for GUI debugging inside the container; the sim runs
+  # headless and never draws to it. Start it with COMPOSE_PROFILES=x11.
   novnc:
     image: theasp/novnc:latest
+    profiles: ["x11"]
     environment:
       # Adjust to your desired screen resolution:
       - DISPLAY_WIDTH=1600
@@ -30,9 +33,9 @@ services:
       network: host
     container_name: innate-dev
     # Use host networking if you need direct access to hardware, or use your own approach
-    depends_on:
-      - novnc
     environment:
+      # Points at the optional novnc X display (COMPOSE_PROFILES=x11);
+      # harmless when that profile is off -- the sim renders headless.
       - DISPLAY=novnc:0.0
       - VIRTUAL_MARS_ASSETS=/root/innate-os/sim/assets
       - INNATE_OS_ROOT=/root/innate-os
@@ -43,8 +46,12 @@ services:
       - INNATE_ZENOH_DISABLE_SHM=1
       # Set by the launcher when the host world server runs (native GL
       # rendering outside Docker, see mars_sim_driver/world_server.py);
-      # empty = simulate in-container on software GL.
+      # required -- the sim world always runs outside the container.
       - VIRTUAL_MARS_REMOTE=${VIRTUAL_MARS_REMOTE:-}
+      # The Foxglove bridge's published host port, so in-container tooling
+      # (innate foxglove status) can print the address that actually works
+      # from the host. Must match the ports entry below.
+      - SIM_FOXGLOVE_PORT=${SIM_FOXGLOVE_PORT:-8765}
       # Brain ("agent") websocket the robot connects to. With
       # COMPOSE_PROFILES=local-brain the in-compose cloud-agent service starts and
       # the brain client is pointed at it over the shared x11 network. With no
@@ -65,6 +72,12 @@ services:
       # publish on a non-privileged port; the container always binds 443/80.
       - "${SIM_HTTPS_PORT:-443}:443"
       - "${SIM_HTTP_PORT:-80}:80"
+      # Foxglove bridge websocket (auto-started by launch_sim_in_tmux.zsh).
+      # Loopback by default, like rosbridge; SIM_FOXGLOVE_BIND=0.0.0.0 opens it
+      # to the LAN. The launcher publishes 8766 instead when the local brain is
+      # active (cloud-agent owns host 8765) — set SIM_FOXGLOVE_PORT yourself for
+      # raw `docker compose --profile local-brain` runs.
+      - "${SIM_FOXGLOVE_BIND:-127.0.0.1}:${SIM_FOXGLOVE_PORT:-8765}:8765"
 
     volumes:
       # 1) Mount your local code (paths are relative to this file's directory)

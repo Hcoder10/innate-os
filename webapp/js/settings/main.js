@@ -350,7 +350,7 @@ function buildVolumeSection() {
     // Don't clobber a value the operator is actively dragging or saving.
     if (!dragging && !saving) renderValue(robotPercent);
     if (firstValue) refreshEnabled(); // enable now that the live value has loaded
-  });
+  }, undefined, "std_msgs/msg/String");
   cleanups.push(unsubInfo);
 
   slider.addEventListener("input", () => {
@@ -586,10 +586,11 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       recompute();
     });
   } else if (knob.options) {
+    const options = knob.options; // capture: the closures below can't re-narrow it
     const CUSTOM = "__custom__";
     const select = document.createElement("select");
     select.className = "set-text set-select";
-    for (const opt of knob.options) {
+    for (const opt of options) {
       const o = document.createElement("option");
       o.value = opt.value;
       o.textContent = opt.label;
@@ -609,7 +610,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
     custom.placeholder = "Paste a voice ID";
     ctl.appendChild(custom);
 
-    const isStock = () => knob.options.some((o) => o.value === entry.value);
+    const isStock = () => options.some((o) => o.value === entry.value);
     entry.render = () => {
       const stock = isStock();
       select.value = stock ? String(entry.value) : CUSTOM;

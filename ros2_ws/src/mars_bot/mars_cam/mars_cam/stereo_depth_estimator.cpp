@@ -622,7 +622,7 @@ int main(int argc, char** argv) {
 //         ▼                ▼                  ▼                ▼
 //  ┌──────────────┐  ┌───────────┐  ┌─────────────┐ ┌───────────────┐
 //  │.../disparity │  │.../depth  │  │.../points   │ │.../points_    │
-//  │(DisparityImg)│  │ (16SC1 mm)│  │(PointCloud2 │ │    color      │
+//  │(DisparityImg)│  │ (16UC1 mm)│  │(PointCloud2 │ │    color      │
 //  └──────────────┘  └───────────┘  │   XYZ)      │ │(PointCloud2   │
 //                                   └─────────────┘ │  XYZRGB)      │
 //                                                    └───────────────┘

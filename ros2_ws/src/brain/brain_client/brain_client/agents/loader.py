@@ -193,8 +193,7 @@ class AgentLoader(DynamicLoader):
 
             if missing_skills:
                 self.logger.warning(
-                    f"Agent '{agent_instance.id}' references skills that are not available: "
-                    f"{missing_skills}. Available skills: {list(available_skills.keys())}"
+                    f"Agent '{agent_instance.id}' references skills that are not available: {missing_skills}"
                 )
             else:
                 self.logger.debug(f"Agent '{agent_instance.id}' skills validated successfully: {agent_skills}")

@@ -23,10 +23,11 @@ MainCameraDriver::MainCameraDriver(const rclcpp::NodeOptions& options) : Node("m
     this->declare_parameter<int>("jpeg_quality", 80);
     this->declare_parameter<bool>("publish_compressed", true);
     this->declare_parameter<int>("compressed_frame_interval", 3);
-    this->declare_parameter<bool>("publish_stereo", false);  // Combined stereo image for legacy compatibility
-    this->declare_parameter<int>("exposure", -1);            // -1 means use current value
-    this->declare_parameter<int>("gain", -1);                // -1 means use current value
-    this->declare_parameter<int>("default_gain", 110);       // Default gain for auto-exposure mode
+    this->declare_parameter<bool>("publish_stereo", false);    // Combined stereo image for legacy compatibility
+    this->declare_parameter<int>("exposure", -1);              // -1 means use current value
+    this->declare_parameter<int>("gain", -1);                  // -1 means use current value
+    this->declare_parameter<int>("default_gain", 110);         // Default gain for auto-exposure mode
+    this->declare_parameter<int>("power_line_frequency", 60);  // Anti-flicker filter: 0=disabled, 50 or 60 (Hz)
 
     // Auto exposure parameters
     this->declare_parameter<int>("auto_exposure_mode", 0);
@@ -55,6 +56,7 @@ MainCameraDriver::MainCameraDriver(const rclcpp::NodeOptions& options) : Node("m
     exposure_setting_ = this->get_parameter("exposure").as_int();
     gain_setting_ = this->get_parameter("gain").as_int();
     default_gain_param_ = this->get_parameter("default_gain").as_int();
+    power_line_frequency_ = this->get_parameter("power_line_frequency").as_int();
 
     // Get auto exposure parameter values
     auto_exposure_mode_ = static_cast<AutoExposureMode>(this->get_parameter("auto_exposure_mode").as_int());
@@ -300,6 +302,24 @@ bool MainCameraDriver::initializeCamera() {
                     RCLCPP_DEBUG(this->get_logger(), "AE mode: MANUAL (pure manual, no PID)");
                 }
                 break;
+        }
+
+        // Anti-flicker filter: match the camera's banding filter to the local mains
+        // frequency so indoor lighting doesn't flicker in auto-exposure mode.
+        int flicker_ctrl = -1;
+        if (power_line_frequency_ == 0) {
+            flicker_ctrl = V4L2_CID_POWER_LINE_FREQUENCY_DISABLED;
+        } else if (power_line_frequency_ == 50) {
+            flicker_ctrl = V4L2_CID_POWER_LINE_FREQUENCY_50HZ;
+        } else if (power_line_frequency_ == 60) {
+            flicker_ctrl = V4L2_CID_POWER_LINE_FREQUENCY_60HZ;
+        }
+        if (flicker_ctrl < 0) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Invalid power_line_frequency %d (expected 0, 50 or 60), keeping camera default",
+                        power_line_frequency_);
+        } else if (setV4L2Control(V4L2_CID_POWER_LINE_FREQUENCY, flicker_ctrl)) {
+            RCLCPP_INFO(this->get_logger(), "Anti-flicker (power line) filter set to %d Hz", power_line_frequency_);
         }
 
         if (exposure_setting_ >= 0) {

@@ -24,7 +24,7 @@ function procKeyOf(rec) {
 
 /**
  * @param {HTMLElement} parent
- * @param {ReturnType<import("./consoleSource.js").createConsoleSource>} source
+ * @param {ReturnType<typeof import("./consoleSource.js").createConsoleSource>} source
  * @param {{ onSourceClick?: (rec: any) => void }} [opts]
  * @returns {{ destroy: () => void, setScope: (scope: any) => void }}
  */
@@ -44,19 +44,19 @@ export function createLogStream(parent, source, opts) {
   pageTitle.textContent = "logs";
 
   const bar = document.createElement("div");
-  bar.className = "debug-bar";
+  bar.className = "log-bar";
 
   const crumb = document.createElement("div");
   crumb.className = "logs-crumb";
   const scopeLabel = document.createElement("span");
-  scopeLabel.className = "debug-scope mono";
+  scopeLabel.className = "log-scope mono";
   const errBadge = document.createElement("span");
   errBadge.className = "logs-errbadge";
   errBadge.hidden = true;
   crumb.append(scopeLabel, errBadge);
 
   const sevSel = document.createElement("select");
-  sevSel.className = "debug-select";
+  sevSel.className = "log-select";
   for (const [v, label] of [["all", "All levels"], ["info", "Info+"], ["warn", "Warn+"], ["error", "Errors"]]) {
     const o = document.createElement("option");
     o.value = v; o.textContent = label; sevSel.appendChild(o);
@@ -64,36 +64,36 @@ export function createLogStream(parent, source, opts) {
   sevSel.addEventListener("change", () => { filter.minSev = sevSel.value; rerender(); });
 
   const search = document.createElement("input");
-  search.className = "debug-search mono";
+  search.className = "log-search mono";
   search.type = "text";
   search.placeholder = "filter…";
   search.spellcheck = false;
   search.addEventListener("input", () => { filter.text = search.value.trim().toLowerCase(); rerender(); });
 
   const spacer = document.createElement("div");
-  spacer.className = "debug-bar-spacer";
+  spacer.className = "log-bar-spacer";
 
   const count = document.createElement("span");
-  count.className = "debug-count microlabel";
+  count.className = "log-count microlabel";
 
   const rawBtn = document.createElement("button");
-  rawBtn.className = "debug-btn";
+  rawBtn.className = "log-btn";
   rawBtn.type = "button";
   rawBtn.addEventListener("click", () => { raw = !raw; syncRaw(); rerender(); });
 
   const pauseBtn = document.createElement("button");
-  pauseBtn.className = "debug-btn";
+  pauseBtn.className = "log-btn";
   pauseBtn.type = "button";
   pauseBtn.addEventListener("click", () => { paused = !paused; if (!paused) scrollToEnd(); syncPause(); });
 
   const clearBtn = document.createElement("button");
-  clearBtn.className = "debug-btn";
+  clearBtn.className = "log-btn";
   clearBtn.type = "button";
   clearBtn.textContent = "Clear";
   clearBtn.addEventListener("click", () => { buffer = []; list.replaceChildren(); updateCount(); });
 
   const copyBtn = document.createElement("button");
-  copyBtn.className = "debug-btn debug-icon-btn";
+  copyBtn.className = "log-btn log-icon-btn";
   copyBtn.type = "button";
   copyBtn.title = "Copy shown logs";
   copyBtn.innerHTML = ICON_COPY;
@@ -103,7 +103,7 @@ export function createLogStream(parent, source, opts) {
 
   // column header
   const cols = document.createElement("div");
-  cols.className = "debug-cols";
+  cols.className = "log-cols";
   for (const [c, label] of [["time", "Time"], ["level", "Level"], ["source", "Source"], ["msg", "Message"]]) {
     const h = document.createElement("span");
     h.className = `col-${c}`;
@@ -112,7 +112,7 @@ export function createLogStream(parent, source, opts) {
   }
 
   const list = document.createElement("div");
-  list.className = "debug-list mono";
+  list.className = "log-list mono";
 
   parent.append(pageTitle, bar, cols, list);
   syncPause();
@@ -149,7 +149,7 @@ export function createLogStream(parent, source, opts) {
   function makeRow(rec) {
     const sev = recSev(rec);
     const row = document.createElement("div");
-    row.className = `debug-row sev-${sev}`;
+    row.className = `log-row sev-${sev}`;
 
     const time = document.createElement("span");
     time.className = "col-time";
@@ -166,7 +166,7 @@ export function createLogStream(parent, source, opts) {
     src.style.color = sourceColor(source);
     src.title = `${source} — click to show all logs from this source`;
     if (opts && opts.onSourceClick) {
-      src.addEventListener("click", (e) => { e.stopPropagation(); opts.onSourceClick(rec); });
+      src.addEventListener("click", (e) => { e.stopPropagation(); /** @type {(rec: any) => void} */ (opts.onSourceClick)(rec); });
     }
 
     const msg = document.createElement("span");
@@ -203,6 +203,7 @@ export function createLogStream(parent, source, opts) {
   }
   function scrollToEnd() { list.scrollTop = list.scrollHeight; }
 
+  /** @param {any} rec */
   function appendRow(rec) {
     if (!passes(rec)) return;
     const wasBottom = atBottom();
@@ -250,6 +251,7 @@ export function createLogStream(parent, source, opts) {
   }
 
   // ---- ingest -----------------------------------------------------------
+  /** @param {any} rec */
   function push(rec) {
     buffer.push(rec);
     if (buffer.length > BUFFER_MAX) buffer.splice(0, buffer.length - BUFFER_MAX);

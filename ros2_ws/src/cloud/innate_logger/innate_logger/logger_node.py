@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 
@@ -19,8 +20,8 @@ from std_msgs.msg import String
 
 from innate_logger.client import TelemetryClient
 
-DEFAULT_TELEMETRY_URL = "https://logs-v1.innate.bot"
-DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.innate.bot"
+DEFAULT_TELEMETRY_URL = "https://logs.svc.innate.bot"
+DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.svc.innate.bot"
 
 
 class LoggerNode(Node):
@@ -80,10 +81,13 @@ class LoggerNode(Node):
         # ── Subscriptions ───────────────────────────────────────────
         self._latest_battery: BatteryState | None = None
         self._latest_diagnostics: DiagnosticArray | None = None
+        self._robot_id: str | None = None
+        self._mac_address: str | None = None
 
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
         self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diagnostics, 1)
         self.create_subscription(String, "/brain/set_directive", self._on_directive, 10)
+        self.create_subscription(String, "/robot/info", self._on_robot_info, 1)
 
         # Timer for vitals logging
         self.create_timer(self.LOG_INTERVAL, self._log_vitals)
@@ -114,6 +118,27 @@ class LoggerNode(Node):
     def _on_diagnostics(self, msg: DiagnosticArray) -> None:
         self._latest_diagnostics = msg
 
+    def _on_robot_info(self, msg: String) -> None:
+        """Cache robot identity from mars_control's /robot/info.
+
+        Either field can be null or absent — robot_id until the robot is
+        provisioned, device_id when there is no Bluetooth adapter — so keep any
+        previously seen value rather than clearing it.
+        """
+        try:
+            info = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warning("Malformed JSON on /robot/info", throttle_duration_sec=60.0)
+            return
+
+        robot_id = info.get("robot_id")
+        if robot_id:
+            self._robot_id = str(robot_id)
+
+        device_id = info.get("device_id")
+        if device_id:
+            self._mac_address = str(device_id)
+
     def _on_directive(self, msg: String) -> None:
         self.get_logger().info(f"Received directive: {msg.data}")
         self._client.log_directive(msg.data)
@@ -126,6 +151,12 @@ class LoggerNode(Node):
             "commit": self._git_commit,
             "cpu_usage": cpu_usage,
         }
+
+        if self._robot_id is not None:
+            vitals["robot_id"] = self._robot_id
+
+        if self._mac_address is not None:
+            vitals["mac_address"] = self._mac_address
 
         summary = f"cpu {cpu_usage:.0f}%"
 

@@ -7,7 +7,7 @@ Usage::
     from auth_client import AuthProvider, AuthError
 
     auth = AuthProvider(
-        issuer_url="https://auth-v1.innate.bot",
+        issuer_url="https://auth-v1.svc.innate.bot",
         service_key="sk_...",
     )
     token = auth.token          # lazily discovers OIDC + fetches JWT
