@@ -21,7 +21,7 @@ CHALLENGE = Challenge(
         Goal("Wave to check if they respond", SkillDone("wave", guard=Near("robot", "human", 1.5))),
         # The event carries no recipient, so this only verifies an email was
         # sent -- the 911@innate.bot address lives in the brief for the agent.
-        Goal("Email 911 for help", SkillDone("send_email")),
+        Goal("Email 911@innate.bot for help", SkillDone("send_email")),
     ],
     time_limit_s=600,
 )
