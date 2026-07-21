@@ -734,6 +734,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Let the brief/goals be selected so the challenge instructions can be
+     copied into the agent chat (the .overlay default is user-select: none). */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .challenge-title-row {
