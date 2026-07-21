@@ -4466,6 +4466,44 @@ button {
   text-align: center;
 }
 
+/* Run button + favorite star side by side (the star can't nest inside the
+   run <button>, and a mis-tap must never launch the skill). */
+.skills-pop-line {
+  display: flex;
+  align-items: stretch;
+}
+
+.skills-pop-line .skills-pop-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.skills-pop-star {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.skills-pop-star:hover:not(:disabled) {
+  color: var(--text);
+  background: rgb(255 255 255 / 7%);
+}
+
+.skills-pop-star.on {
+  color: var(--accent);
+}
+
+.skills-pop-star:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* "Show all (N more)" / "Show fewer" toggle at the foot of the curated list. */
 .skills-pop-more {
   width: 100%;

@@ -11,8 +11,8 @@ Two axioms, from first principles:
    is `import`, not a second kind of module with a different calling convention.
 2. **Exposure is the consumer's list.** No skill decides where it appears.
    Every surface that shows skills owns an explicit list: an agent has
-   `get_skills()`, the cockpit menu has `DEFAULT_COCKPIT_SKILLS` (plus the
-   active directive's list), and skill code has imports. Author-side
+   `get_skills()`, the operator UIs show the user's robot-persisted favorites
+   (`/brain/favorite_skills`), and skill code has imports. Author-side
    visibility metadata (hidden flags, folders, tags) is explicitly rejected:
    with N surfaces it becomes N annotations on every file, maintained forever,
    and the author is the one person who *doesn't* know what each surface needs.
@@ -83,8 +83,9 @@ picker — not taxonomy.
 
 ## Sequencing
 
-1. (Done, separate change) Curated cockpit menu — consumer-side list, webapp
-   only.
+1. (Done, separate change) Favorite skills — robot-persisted per-user list
+   (`/brain/favorite_skills` + `/brain/set_favorite_skills`) driving the
+   cockpit menu; the mobile app adopts the same topics.
 2. `@skill` decorator + `SkillContext` in `brain_client/skills/`, new skills
    use it.
 3. Migrate shipped skills file-by-file as they're touched; move robot actions

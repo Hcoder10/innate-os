@@ -6,22 +6,21 @@
 // a small form with a Run button. Execution goes through the /execute_skill
 // action (cancelable, with streamed feedback), same as the old panel.
 //
-// The menu is curated, not exhaustive: by default it shows user skills (local/),
-// the shipped DEFAULT_COCKPIT_SKILLS, and — while the brain is active — the
-// current directive's skills from /brain/agent_status. Everything else on the
-// roster stays reachable behind a "Show all" row. See skillVisibility.js.
+// The menu is curated, not exhaustive: it shows the user's favorite skills
+// (starred per row, persisted robot-side on /brain/favorite_skills so the
+// mobile app shares the same list) — or everything until the first star. The
+// rest of the roster stays reachable behind a "Show all" row.
 
 import {
-  AGENT_STATUS_TOPIC,
   AVAILABLE_SKILLS_TOPIC,
   CANCEL_SKILL_SERVICE,
-  DEFAULT_COCKPIT_SKILLS,
   EXECUTE_SKILL_ACTION,
   EXECUTE_SKILL_ACTION_TYPE,
+  FAVORITE_SKILLS_TOPIC,
   PINNED_SKILLS,
+  SET_FAVORITE_SKILLS_TOPIC,
   SKILL_STATUS_UPDATE_TOPIC,
 } from "../constants.js";
-import { isCockpitSkill } from "./skillVisibility.js";
 
 /**
  * @param {HTMLElement} parent The bottom-bar overlay (shared with the TTS bar).
@@ -68,11 +67,10 @@ export function createSkillsMenu(parent, rosClient) {
   /** @type {any[]} */
   let skills = [];
   let signature = "";
-  /** Active directive's skill ids (from /brain/agent_status; empty when the
-   *  brain is idle — mirrors agentState's idle-means-no-directive convention). */
-  let agentSkillIds = new Set();
-  let agentSignature = "";
-  /** "Show all" escape hatch: reveals roster skills the curated view hides. */
+  /** The user's starred skill ids (robot-persisted, /brain/favorite_skills). */
+  let favorites = new Set();
+  let favSignature = "";
+  /** "Show all" escape hatch: reveals roster skills the favorites view hides. */
   let showAll = false;
   /** @type {string | null} */
   let expandedId = null;
@@ -331,9 +329,9 @@ export function createSkillsMenu(parent, rosClient) {
 
   function render() {
     syncActive();
-    const curated = skills.filter((s) => isCockpitSkill(s, DEFAULT_COCKPIT_SKILLS, agentSkillIds));
+    const curated = favoriteSkills(skills, favorites);
     const shown = showAll ? skills : curated;
-    // Collapse a form whose skill just left the view (directive change,
+    // Collapse a form whose skill just left the view (star removed,
     // "Show all" toggled off) — an expanded row must actually be on screen.
     if (expandedId && !shown.some((s) => s.id === expandedId)) expandedId = null;
     const frag = document.createDocumentFragment();
@@ -350,6 +348,23 @@ export function createSkillsMenu(parent, rosClient) {
     const hiddenCount = skills.length - curated.length;
     if (hiddenCount > 0) frag.appendChild(renderShowAllRow(hiddenCount));
     listEl.replaceChildren(frag);
+  }
+
+  /** Star/unstar a skill: optimistic local flip, then publish the whole
+   *  updated list — the robot persists it and the latched echo confirms.
+   *  @param {string} skillId */
+  function toggleFavorite(skillId) {
+    const next = new Set(favorites);
+    if (next.has(skillId)) next.delete(skillId);
+    else next.add(skillId);
+    // First star ever: without favorites the view shows everything, so the
+    // list would collapse to one row mid-browse. Flip to "Show all" so the
+    // rows stay put; "Show fewer" reveals the new curated view when wanted.
+    if (favorites.size === 0 && next.size === 1) showAll = true;
+    favorites = next;
+    favSignature = [...next].sort().join("|");
+    rosClient.publish(SET_FAVORITE_SKILLS_TOPIC, { data: JSON.stringify({ skills: [...next] }) });
+    render();
   }
 
   /** Footer toggle revealing (or re-hiding) the uncurated rest of the roster.
@@ -431,7 +446,22 @@ export function createSkillsMenu(parent, rosClient) {
       startRun(skill);
     });
 
-    row.appendChild(head);
+    // Star sits beside (not inside) the run button — nested buttons are
+    // invalid HTML and would run the skill on a mis-tap.
+    const isFav = favorites.has(skill.id);
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "skills-pop-star" + (isFav ? " on" : "");
+    star.textContent = isFav ? "★" : "☆";
+    star.title = isFav ? "Remove from favorites" : "Add to favorites";
+    star.setAttribute("aria-label", star.title);
+    star.disabled = rosClient.state !== "connected";
+    star.addEventListener("click", () => toggleFavorite(skill.id));
+
+    const line = document.createElement("div");
+    line.className = "skills-pop-line";
+    line.append(head, star);
+    row.appendChild(line);
 
     // Inline status for a parameter-less skill (no form to host it).
     if (!expandable && (running || done)) {
@@ -592,25 +622,22 @@ export function createSkillsMenu(parent, rosClient) {
     if (open) render();
   }, undefined, "brain_messages/msg/AvailableSkills");
 
-  // Active directive's skills (latched + heartbeat). While the brain is active
-  // they join the curated view so an armed agent's skills stay hand-runnable;
-  // idle clears them, mirroring agentState's idle-means-no-directive rule. The
-  // heartbeat re-emits unchanged samples, so skip the re-render (focus steal)
-  // unless membership actually changed.
-  const unsubAgent = rosClient.subscribe(AGENT_STATUS_TOPIC, (msg) => {
+  // The robot's persisted favorites (latched + heartbeat). Also the echo for
+  // our own toggles. The heartbeat re-emits unchanged samples, so skip the
+  // re-render (focus steal) unless membership actually changed.
+  const unsubFavorites = rosClient.subscribe(FAVORITE_SKILLS_TOPIC, (msg) => {
     let payload;
     try {
       payload = JSON.parse(msg?.data ?? "");
     } catch {
       return;
     }
-    if (typeof payload?.brain_active !== "boolean") return;
-    const ids =
-      payload.brain_active && Array.isArray(payload.active_skills) ? payload.active_skills.map(String) : [];
+    if (!Array.isArray(payload?.skills)) return;
+    const ids = payload.skills.map(String);
     const sig = ids.slice().sort().join("|");
-    if (sig === agentSignature) return;
-    agentSignature = sig;
-    agentSkillIds = new Set(ids);
+    if (sig === favSignature) return;
+    favSignature = sig;
+    favorites = new Set(ids);
     if (open) render();
   }, undefined, "std_msgs/msg/String");
 
@@ -651,7 +678,7 @@ export function createSkillsMenu(parent, rosClient) {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKeydown);
       unsubSkills();
-      unsubAgent();
+      unsubFavorites();
       unsubStatus();
       unsubState();
       if (run && !run.done) run.cancel();
@@ -660,12 +687,26 @@ export function createSkillsMenu(parent, rosClient) {
   };
 }
 
-/** "navigate_to_position" → "Navigate To Position". @param {string} id */
-function prettify(id) {
-  return String(id)
-    .split("/")
-    .map((part) => part.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
-    .join(" / ");
+/**
+ * The default menu view: the user's starred skills, or the whole roster until
+ * the first star exists (first-run — an empty menu teaches nothing). Pure and
+ * exported for tests/skillsMenu.test.js.
+ * @param {any[]} skills @param {ReadonlySet<string>} favorites
+ */
+export function favoriteSkills(skills, favorites) {
+  if (favorites.size === 0) return skills;
+  return skills.filter((s) => favorites.has(String(s?.id ?? "")));
+}
+
+/**
+ * "innate-os/navigate_to_position" → "Navigate To Position". Only the last
+ * path segment: the source prefix (innate-os/, local/) is roster plumbing an
+ * operator shouldn't see. @param {string} id
+ */
+export function prettify(id) {
+  const segments = String(id).split("/");
+  const last = segments[segments.length - 1] || String(id);
+  return last.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
@@ -680,13 +721,11 @@ function pinnedRank(skill) {
   return i === -1 ? PINNED_SKILLS.length : i;
 }
 
-/** "pick_and_place/cup" → "Pick And Place / Cup". @param {any} skill */
-function formatName(skill) {
+/** Row label: the roster display name, else the id prettified (path hidden).
+ *  @param {any} skill */
+export function formatName(skill) {
   if (skill?.name) return skill.name;
-  return String(skill?.id ?? "")
-    .split("/")
-    .map((part) => part.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
-    .join(" / ");
+  return prettify(skill?.id ?? "");
 }
 
 /**
