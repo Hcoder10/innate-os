@@ -69,6 +69,11 @@ def get_innate_inputs_dir() -> Path:
     return _workspace() / "inputs"
 
 
+def get_preferences_dir() -> Path:
+    """Robot-local user preferences (gitignored), e.g. favorite skills."""
+    return _workspace() / ".preferences"
+
+
 def get_legacy_root_agents_dir() -> Path:
     """Legacy in-place location $INNATE_OS_ROOT/agents (used through 0.5.x)."""
     return get_innate_os_root() / "agents"

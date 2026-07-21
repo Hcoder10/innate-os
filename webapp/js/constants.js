@@ -164,6 +164,15 @@ export const ARM_STATUS_TOPIC = "/mars/arm/status";
 // Ported from the sim console's config.json `pinnedSkills`.
 export const PINNED_SKILLS = ["navigate with vision", "navigate with position", "wave"];
 
+// The user's favorite skills, persisted on the robot so every client (this
+// webapp, the mobile app) shares one list. The cockpit Skills menu shows
+// favorites by default (or everything until the first star) with the rest
+// behind "Show all". Broadcast is latched + heartbeated String JSON
+// {"skills": [ids]}; a star toggle publishes the whole updated list to the
+// set topic and the broadcast echo confirms it.
+export const FAVORITE_SKILLS_TOPIC = "/brain/favorite_skills";
+export const SET_FAVORITE_SKILLS_TOPIC = "/brain/set_favorite_skills";
+
 // Run one skill directly (brain_messages/action/ExecuteSkill). Goal is
 // {skill_type, inputs} where inputs is a JSON object string; feedback streams
 // {skill_type, feedback, image_b64}; result is {success, message, skill_type,

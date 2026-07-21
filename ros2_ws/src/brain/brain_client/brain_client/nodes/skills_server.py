@@ -31,15 +31,18 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
+from brain_client.common.script_paths import get_preferences_dir
 from brain_client.perception.camera_provider import CameraProvider
 from brain_client.robot.head import HeadInterface
 from brain_client.robot.manipulation import ManipulationInterface
 from brain_client.robot.mobility import MobilityInterface
 from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
+from brain_client.skills.favorites import FavoriteSkillsStore
 from brain_client.skills.invoker import SkillInvoker
 from brain_client.skills.robot_state import RobotStateProvider
 from brain_client.skills.types import RobotStateType, SkillResult, normalize_skill_result
@@ -140,6 +143,23 @@ class SkillsActionServer(Node):
         # same skill don't collapse into one chat entry.
         self._skill_status_pub = self.create_publisher(String, "/brain/skill_status_update", 10)
 
+        # The user's starred skills — robot-persisted so the webapp and mobile
+        # app share one list. Latched broadcast (String JSON {"skills": [ids]});
+        # clients replace the whole list via /brain/set_favorite_skills and the
+        # echo below confirms. Same late-joiner story as the roster: latched +
+        # re-emitted by the heartbeat because rws subscribes after boot.
+        self._favorites = FavoriteSkillsStore(get_preferences_dir() / "favorite_skills.json", self.get_logger())
+        favorites_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
+        self._favorites_pub = self.create_publisher(String, "/brain/favorite_skills", favorites_qos)
+        self._set_favorites_sub = self.create_subscription(
+            String, "/brain/set_favorite_skills", self._on_set_favorite_skills, 10
+        )
+        self._publish_favorites()
+
         # Behavior delegation for physical skills.
         self._behavior_client = ActionClient(self, ExecuteBehavior, "/behavior/execute")
         self._behavior_goal_lock = threading.Lock()
@@ -190,11 +210,31 @@ class SkillsActionServer(Node):
         self.catalog.publish_skills_list()
         self.catalog.start_watcher()
 
-        # Heartbeat: the roster is published once (latched), but the webapp
-        # reaches /brain/available_skills through rws, which subscribes after
-        # boot and never receives the latched sample. Re-emit the cached roster
-        # at a low rate so late-joining clients get it within one interval.
-        self._skills_heartbeat_timer = self.create_timer(3.0, self.catalog.republish_cached)
+        # Heartbeat: the roster and favorites are published once (latched), but
+        # the webapp reaches them through rws, which subscribes after boot and
+        # never receives the latched samples. Re-emit both at a low rate so
+        # late-joining clients get them within one interval.
+        self._skills_heartbeat_timer = self.create_timer(3.0, self._heartbeat)
+
+    def _heartbeat(self) -> None:
+        self.catalog.republish_cached()
+        self._publish_favorites()
+
+    # ================= favorite skills =================
+    def _publish_favorites(self) -> None:
+        self._favorites_pub.publish(String(data=json.dumps({"skills": self._favorites.ids})))
+
+    def _on_set_favorite_skills(self, msg: String) -> None:
+        """Full-list replace from a client star toggle: {"skills": [ids]} (or a bare array)."""
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError as e:
+            self.get_logger().warning(f"Ignoring malformed set_favorite_skills payload: {e}")
+            return
+        ids = payload.get("skills") if isinstance(payload, dict) else payload
+        stored = self._favorites.replace(ids)
+        self.get_logger().info(f"Favorite skills updated ({len(stored)}): {stored}")
+        self._publish_favorites()
 
     # ================= retired skill instances =================
     def _retire_skill_instances(self, instances):
