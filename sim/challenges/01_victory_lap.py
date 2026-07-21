@@ -8,11 +8,11 @@ CHALLENGE = Challenge(
     brief=(
         "Tell the robot some cheerful news in the agent chat (e.g. \"We won the "
         "championship!\"). When it hears the good news, it should celebrate by "
-        "running its victory_lap skill."
+        "running its victory_spin skill."
     ),
     setup=[],
     goals=[
-        Goal("Run a victory lap to celebrate", SkillDone("victory_lap")),
+        Goal("Run a victory lap to celebrate", SkillDone("victory_spin")),
     ],
     time_limit_s=300,
 )
