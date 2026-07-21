@@ -689,8 +689,7 @@ export function createSkillsMenu(parent, rosClient) {
 
 /**
  * The default menu view: the user's starred skills, or the whole roster until
- * the first star exists (first-run — an empty menu teaches nothing). Pure and
- * exported for tests/skillsMenu.test.js.
+ * the first star exists (first-run — an empty menu teaches nothing).
  * @param {any[]} skills @param {ReadonlySet<string>} favorites
  */
 export function favoriteSkills(skills, favorites) {
