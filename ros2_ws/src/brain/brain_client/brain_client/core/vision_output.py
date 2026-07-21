@@ -34,9 +34,11 @@ class VisionOutputHandler:
             self._logger.info("[BrainClient] Received VisionAgentOutput")
             if not self._state.is_brain_active:
                 self._logger.warn("[BrainClient] Brain is not active. Skipping VisionAgentOutput.")
+                self._bounce_dropped_task(msg.payload, "the brain is not active")
                 return
             if not self._state.primitives_registered:
                 self._logger.warn("[BrainClient] Primitives not registered. Skipping VisionAgentOutput.")
+                self._bounce_dropped_task(msg.payload, "skills were mid (re-)registration")
                 return
 
             # HOTFIX: accept next_task with a "name" field by aliasing it to "type".
@@ -53,6 +55,28 @@ class VisionOutputHandler:
             self._handle_output(payload)
         except Exception as e:
             self._logger.error(f"Error processing vision output: {e}. Traceback: {traceback.format_exc()}")
+
+    def _bounce_dropped_task(self, raw_payload, why: str) -> None:
+        """A dropped trigger must never be dropped SILENTLY: the cloud marks
+        the primitive as running when it SENDS the task (optimistically, with
+        no timeout of its own) and only a terminal lifecycle message clears
+        it. Skipping a task without answering pins the agent in "the tool has
+        already been called and has to finish" until a lucky stop_current_task
+        (INN-711 tail — see PR #533 for the sibling never-started paths).
+        Typical hit: a task computed from a pre-stop image landing during a
+        stop, or during a registration round trip."""
+        try:
+            task = (raw_payload or {}).get("next_task") or {}
+            primitive_id = task.get("primitive_id")
+            if not primitive_id:
+                return  # nothing the cloud is waiting on
+            self._runner.report_start_failure(
+                primitive_name=str(task.get("type") or task.get("name") or "unknown"),
+                primitive_id=primitive_id,
+                reason=f"The robot dropped this task: {why}.",
+            )
+        except Exception as e:  # noqa: BLE001 -- best-effort courtesy reply
+            self._logger.warn(f"[BrainClient] Could not report dropped task to the cloud: {e}")
 
     def _handle_output(self, payload: VisionAgentOutput) -> None:
         execute_now = True
