@@ -48,7 +48,9 @@ def _make_lifecycle(state):
     runner = SimpleNamespace(abort_calls=0)
     runner.abort_running = lambda: setattr(runner, "abort_calls", runner.abort_calls + 1)
     lifecycle = BrainLifecycle(
-        SimpleNamespace(get_logger=lambda: FakeLogger(), create_timer=lambda *a: FakeTimer(), destroy_timer=lambda t: None),
+        SimpleNamespace(
+            get_logger=lambda: FakeLogger(), create_timer=lambda *a: FakeTimer(), destroy_timer=lambda t: None
+        ),
         state,
         SimpleNamespace(),
         ws_bridge=SimpleNamespace(send_message=lambda m: None),
