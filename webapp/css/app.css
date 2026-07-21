@@ -4466,6 +4466,25 @@ button {
   text-align: center;
 }
 
+/* "Show all (N more)" / "Show fewer" toggle at the foot of the curated list. */
+.skills-pop-more {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.skills-pop-more:hover {
+  color: var(--text);
+  background: rgb(255 255 255 / 6%);
+}
+
 .skills-pop-row {
   display: flex;
   flex-direction: column;

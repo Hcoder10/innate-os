@@ -164,6 +164,26 @@ export const ARM_STATUS_TOPIC = "/mars/arm/status";
 // Ported from the sim console's config.json `pinnedSkills`.
 export const PINNED_SKILLS = ["navigate with vision", "navigate with position", "wave"];
 
+// Shipped skills the cockpit Skills menu shows by default (exact roster ids).
+// The full roster on AVAILABLE_SKILLS_TOPIC carries every skill on the robot —
+// including building blocks and app-specific skills (chess, email, demos) an
+// operator never launches by hand. Rather than each skill declaring where it
+// belongs, the menu (the consumer) owns its list: it shows these defaults, plus
+// every user skill (local/), plus the active directive's skills from
+// AGENT_STATUS_TOPIC, with a "Show all" escape hatch for the rest. Management
+// surfaces (Datasets, agent skill toggles) still see the full roster.
+// Kept honest by tests/skillVisibility.test.js, which checks every entry
+// against workspace/innate_skills/ on disk.
+export const DEFAULT_COCKPIT_SKILLS = [
+  "innate-os/wave",
+  "innate-os/navigate_with_vision",
+  "innate-os/navigate_to_position",
+  "innate-os/follow_aruco",
+  "innate-os/pick_socks",
+  "innate-os/arm_zero_position",
+  "innate-os/head_emotion",
+];
+
 // Run one skill directly (brain_messages/action/ExecuteSkill). Goal is
 // {skill_type, inputs} where inputs is a JSON object string; feedback streams
 // {skill_type, feedback, image_b64}; result is {success, message, skill_type,

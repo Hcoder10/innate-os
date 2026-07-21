@@ -5,15 +5,23 @@
 // no parameters runs on a single click; a parameterized skill expands inline to
 // a small form with a Run button. Execution goes through the /execute_skill
 // action (cancelable, with streamed feedback), same as the old panel.
+//
+// The menu is curated, not exhaustive: by default it shows user skills (local/),
+// the shipped DEFAULT_COCKPIT_SKILLS, and — while the brain is active — the
+// current directive's skills from /brain/agent_status. Everything else on the
+// roster stays reachable behind a "Show all" row. See skillVisibility.js.
 
 import {
+  AGENT_STATUS_TOPIC,
   AVAILABLE_SKILLS_TOPIC,
   CANCEL_SKILL_SERVICE,
+  DEFAULT_COCKPIT_SKILLS,
   EXECUTE_SKILL_ACTION,
   EXECUTE_SKILL_ACTION_TYPE,
   PINNED_SKILLS,
   SKILL_STATUS_UPDATE_TOPIC,
 } from "../constants.js";
+import { isCockpitSkill } from "./skillVisibility.js";
 
 /**
  * @param {HTMLElement} parent The bottom-bar overlay (shared with the TTS bar).
@@ -60,6 +68,12 @@ export function createSkillsMenu(parent, rosClient) {
   /** @type {any[]} */
   let skills = [];
   let signature = "";
+  /** Active directive's skill ids (from /brain/agent_status; empty when the
+   *  brain is idle — mirrors agentState's idle-means-no-directive convention). */
+  let agentSkillIds = new Set();
+  let agentSignature = "";
+  /** "Show all" escape hatch: reveals roster skills the curated view hides. */
+  let showAll = false;
   /** @type {string | null} */
   let expandedId = null;
   /** Per-skill, per-param string values, kept across re-renders. @type {Map<string, Record<string, string>>} */
@@ -317,18 +331,39 @@ export function createSkillsMenu(parent, rosClient) {
 
   function render() {
     syncActive();
+    const curated = skills.filter((s) => isCockpitSkill(s, DEFAULT_COCKPIT_SKILLS, agentSkillIds));
+    const shown = showAll ? skills : curated;
+    // Collapse a form whose skill just left the view (directive change,
+    // "Show all" toggled off) — an expanded row must actually be on screen.
+    if (expandedId && !shown.some((s) => s.id === expandedId)) expandedId = null;
     const frag = document.createDocumentFragment();
     // A run started elsewhere (agent, CLI, another tab) has no local cancel
     // handle — offer a Stop that goes through /brain/cancel_skill instead.
     if (topicActiveName && !(run && !run.done)) frag.appendChild(renderExternRow());
-    for (const skill of skills) frag.appendChild(renderRow(skill));
+    for (const skill of shown) frag.appendChild(renderRow(skill));
     if (skills.length === 0) {
       const empty = document.createElement("p");
       empty.className = "skills-pop-empty";
       empty.textContent = rosClient.state === "connected" ? "No skills available." : "Not connected.";
       frag.appendChild(empty);
     }
+    const hiddenCount = skills.length - curated.length;
+    if (hiddenCount > 0) frag.appendChild(renderShowAllRow(hiddenCount));
     listEl.replaceChildren(frag);
+  }
+
+  /** Footer toggle revealing (or re-hiding) the uncurated rest of the roster.
+   *  @param {number} hiddenCount */
+  function renderShowAllRow(hiddenCount) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "skills-pop-more";
+    btn.textContent = showAll ? "Show fewer" : `Show all (${hiddenCount} more)`;
+    btn.addEventListener("click", () => {
+      showAll = !showAll;
+      render();
+    });
+    return btn;
   }
 
   /** Banner row for the externally-started run: name + Stop. */
@@ -557,6 +592,28 @@ export function createSkillsMenu(parent, rosClient) {
     if (open) render();
   }, undefined, "brain_messages/msg/AvailableSkills");
 
+  // Active directive's skills (latched + heartbeat). While the brain is active
+  // they join the curated view so an armed agent's skills stay hand-runnable;
+  // idle clears them, mirroring agentState's idle-means-no-directive rule. The
+  // heartbeat re-emits unchanged samples, so skip the re-render (focus steal)
+  // unless membership actually changed.
+  const unsubAgent = rosClient.subscribe(AGENT_STATUS_TOPIC, (msg) => {
+    let payload;
+    try {
+      payload = JSON.parse(msg?.data ?? "");
+    } catch {
+      return;
+    }
+    if (typeof payload?.brain_active !== "boolean") return;
+    const ids =
+      payload.brain_active && Array.isArray(payload.active_skills) ? payload.active_skills.map(String) : [];
+    const sig = ids.slice().sort().join("|");
+    if (sig === agentSignature) return;
+    agentSignature = sig;
+    agentSkillIds = new Set(ids);
+    if (open) render();
+  }, undefined, "std_msgs/msg/String");
+
   // The brain announces every skill run (manual or agent-driven) here. The robot
   // runs one skill at a time, so any terminal status clears the readout.
   const unsubStatus = rosClient.subscribe(SKILL_STATUS_UPDATE_TOPIC, (m) => {
@@ -594,6 +651,7 @@ export function createSkillsMenu(parent, rosClient) {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKeydown);
       unsubSkills();
+      unsubAgent();
       unsubStatus();
       unsubState();
       if (run && !run.done) run.cancel();
