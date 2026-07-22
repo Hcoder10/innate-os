@@ -61,26 +61,36 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(chips);
 
-  // Loading overlay: spinner + staged label instead of a black canvas until
-  // assets and the first world state arrive.
+  // Loading overlay: a progress bar + staged label instead of a black canvas
+  // until assets and the first world state arrive.
   const loading = document.createElement("div");
   loading.style.cssText =
     "position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;" +
-    "justify-content:center;gap:14px;background:#0b0e11;transition:opacity .45s ease;";
-  const spinner = document.createElement("div");
-  spinner.style.cssText =
-    "width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.14);" +
-    "border-top-color:#7dffc4;animation:sim-stage-spin .9s linear infinite;";
-  const spinStyle = document.createElement("style");
-  spinStyle.textContent = "@keyframes sim-stage-spin{to{transform:rotate(1turn)}}";
+    "justify-content:center;gap:12px;background:#0b0e11;transition:opacity .45s ease;";
+  const bar = document.createElement("div");
+  bar.style.cssText =
+    "width:min(280px,60%);height:6px;border-radius:999px;background:rgba(255,255,255,.12);" +
+    "overflow:hidden;transition:background .2s;";
+  const barFill = document.createElement("div");
+  barFill.style.cssText = "height:100%;width:0%;background:#7dffc4;border-radius:999px;transition:width .3s ease;";
+  bar.appendChild(barFill);
+  bar.onmouseenter = () => (bar.style.background = "rgba(255,255,255,.22)");
+  bar.onmouseleave = () => (bar.style.background = "rgba(255,255,255,.12)");
   const loadingLabel = document.createElement("div");
   loadingLabel.style.cssText = "color:rgba(255,255,255,.6);font:500 13px system-ui;";
-  loading.append(spinStyle, spinner, loadingLabel);
+  const readout = document.createElement("div");
+  readout.style.cssText = "color:rgba(255,255,255,.35);font:500 11px ui-monospace,monospace;";
+  loading.append(bar, loadingLabel, readout);
   wrap.appendChild(loading);
 
   const setLoading = (text: string) => (loadingLabel.textContent = text);
+  const mb = (bytes: number) => (bytes / 1e6).toFixed(1);
+  const setProgress = (loaded: number, total: number) => {
+    barFill.style.width = `${total > 0 ? Math.min(100, (loaded / total) * 100) : 0}%`;
+    readout.textContent = `${mb(loaded)} / ${mb(total)} MB`;
+  };
   const failLoading = (text: string) => {
-    spinner.style.display = "none";
+    barFill.style.background = "#ff9f9f";
     loadingLabel.style.color = "#ff9f9f";
     loadingLabel.textContent = text;
   };
@@ -189,12 +199,19 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     }
   };
 
+  // Coarse phase weights until commit 3 wires real byte progress through the
+  // load queue: apartment (~35 MB) then robot (~7 MB).
+  const APT_EST = 35e6;
+  const TOTAL_EST = APT_EST + 7e6;
   (async () => {
     try {
       setLoading("loading apartment…");
+      setProgress(0, TOTAL_EST);
       await scene.loadApartment();
+      setProgress(APT_EST, TOTAL_EST);
       setLoading("loading robot…");
       await scene.loadRobot();
+      setProgress(TOTAL_EST, TOTAL_EST);
       setLoading("connecting to the world…");
       session.stageReady();
       if (!disposed) raf = requestAnimationFrame(loop);
