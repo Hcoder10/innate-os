@@ -209,7 +209,7 @@ def _safe_resolve(path: Path) -> "Path | None":
         return None
 
 
-def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
+async def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
     """Serve a file no-cache. Binary/large assets — and any compressible file over
     _INLINE_MAX_BYTES — stream through FileResponse: sendfile on cleartext, plus
     the native mtime+size ETag, bodyless 304, and Range. Small compressible text
@@ -226,7 +226,8 @@ def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
             headers = {"ETag": etag, "Cache-Control": "no-cache"}
             if request.headers.get("If-None-Match") == etag:
                 return web.Response(status=304, headers=headers)
-            return web.Response(body=path.read_bytes(), headers={**headers, "Content-Type": ct})
+            body = await asyncio.to_thread(path.read_bytes)
+            return web.Response(body=body, headers={**headers, "Content-Type": ct})
     return web.FileResponse(path, headers={"Content-Type": ct, "Cache-Control": "no-cache"})
 
 
@@ -267,7 +268,7 @@ async def static_handler(request: web.Request) -> web.StreamResponse:
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         raise web.HTTPNotFound(text="not found")
-    return _serve_static(request, body_path)
+    return await _serve_static(request, body_path)
 
 
 async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
@@ -278,7 +279,7 @@ async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
         target = _safe_resolve(base / clean[len(prefix) :])
         if target is None or not target.is_file() or not target.is_relative_to(base.resolve()):
             raise web.HTTPNotFound(text="not found")
-        return _serve_static(request, target)
+        return await _serve_static(request, target)
     raise web.HTTPNotFound(text="not found")
 
 
@@ -370,7 +371,7 @@ async def settings_handler(request: web.Request) -> web.StreamResponse:
     return await asyncio.to_thread(settings_get_response)
 
 
-async def _pump(src: web.WebSocketResponse, dst) -> None:
+async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:
     """Relay every frame from src to dst until either side closes."""
     async for msg in src:
         if msg.type == aiohttp.WSMsgType.TEXT:
