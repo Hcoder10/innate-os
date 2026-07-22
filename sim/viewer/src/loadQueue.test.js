@@ -141,4 +141,25 @@ await test("a rejected job frees its slot", async () => {
   assert.equal(ranSecond, true, "the next job ran after the first rejected");
 });
 
+await test("cancel() drops pending jobs but lets in-flight ones finish", async () => {
+  const q = new LoadQueue(1);
+  const g = deferred();
+  let ranFirst = false;
+  let ranSecond = false;
+  const first = q.add(async () => {
+    ranFirst = true;
+    await g.promise;
+  });
+  q.add(async () => {
+    ranSecond = true;
+  }); // pending behind the first (limit 1)
+  await tick();
+  q.cancel();
+  g.resolve();
+  await first;
+  await tick();
+  assert.equal(ranFirst, true, "the in-flight job still finished");
+  assert.equal(ranSecond, false, "the cancelled pending job never ran");
+});
+
 console.log(`\n${passed} passed`);

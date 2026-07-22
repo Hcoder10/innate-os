@@ -200,7 +200,11 @@ def main() -> None:
         # but the viewer's hulls/manifest/sdf were rebuilt above and may be
         # stale in the checkout, and the apartment split was just generated.
         # Only then is the marker's claim true.
-        for rel in ("public/physics/apartment_collisions_v2", "public/physics/apartment_sdf", "public/models/apartment"):
+        for rel in (
+            "public/physics/apartment_collisions_v2",
+            "public/physics/apartment_sdf",
+            "public/models/apartment",
+        ):
             dest = VIEWER / rel
             shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(root / "viewer" / rel, dest)

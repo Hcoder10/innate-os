@@ -55,7 +55,10 @@ export class LoadQueue {
       const run = () => {
         this.#active++;
         const report: ByteReport = (loaded, total) => this.#report(id, loaded, total);
-        job(report)
+        // Promise.resolve().then guards a job that throws *synchronously* -- it
+        // becomes a rejection, so the slot is still released in finally.
+        Promise.resolve()
+          .then(() => job(report))
           .then(resolve, reject)
           .finally(() => {
             this.#active--;
@@ -65,6 +68,12 @@ export class LoadQueue {
       if (this.#active < this.#limit) run();
       else this.#pending.push(run);
     });
+  }
+
+  /** Drop all not-yet-started jobs -- teardown, so an abandoned stage stops
+   * queuing new downloads. In-flight jobs (≤ limit) still finish. */
+  cancel(): void {
+    this.#pending.length = 0;
   }
 
   #report(id: number, loaded: number, total: number): void {

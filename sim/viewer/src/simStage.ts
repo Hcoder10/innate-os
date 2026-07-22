@@ -218,13 +218,14 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       session.stageReady();
       raf = requestAnimationFrame(loop);
       setLoading("loading robot and apartment...");
-      const robot = scene.loadRobot(queue);
-      // Small head start so the robot's STLs get into the shared queue ahead of
-      // the apartment's room GLBs -- not strict, just biases toward robot-first.
-      await new Promise((r) => setTimeout(r, 50));
-      const apartment = scene.loadApartment(queue);
+      // Await once: the robot's STLs are now in the shared queue. Enqueue the
+      // apartment rooms after, so they land behind the robot (deterministic
+      // robot-first, no timing guess). The manifest fetch itself isn't queued.
+      const { done: robotDone } = await scene.loadRobot(queue);
       if (disposed) return;
-      await Promise.all([robot, apartment]);
+      const apartment = scene.loadApartment(queue);
+      // Await twice: the rest of both loads.
+      await Promise.all([robotDone, apartment]);
       if (disposed) return;
       hideLoading();
     } catch (err) {
@@ -236,6 +237,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     audioEl: null, // sim has no robot mic; the pages skip the mic toggle in sim mode
     destroy() {
       disposed = true;
+      queue.cancel(); // stop pulling new downloads for a stage that's gone
       unsubscribe();
       cancelAnimationFrame(raf);
       observer.disconnect();

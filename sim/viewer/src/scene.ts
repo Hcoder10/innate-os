@@ -254,7 +254,7 @@ export class SimScene {
       /* no manifest -- fall through to the monolith */
     }
 
-    if (!manifest) {
+    if (!manifest || !Array.isArray(manifest.rooms)) {
       // Dev-only fallback: a checkout that never ran the split. The published
       // bundle always ships the manifest and never the monolith, so in prod
       // this path only runs if the manifest fetch itself failed -- non-fatal,
@@ -269,12 +269,20 @@ export class SimScene {
       return;
     }
 
+    // Skip a malformed room rather than throwing -- a bad bbox would build a
+    // Box3 from Vector3(undefined) and error the whole (visual-only) session.
+    const rooms = manifest.rooms.filter((room) => {
+      if (isValidRoom(room)) return true;
+      console.warn("[sim-viewer] skipping malformed manifest room:", room);
+      return false;
+    });
+
     // Draw each room's placeholder box immediately, then stream its glb in and
     // swap the box out on arrival -- the layout reads before any bytes land. A
     // room that fails is non-fatal (visual only): log it, drop its box, and let
     // the rest of the apartment and the session carry on.
     await Promise.all(
-      manifest.rooms.map((room) => {
+      rooms.map((room) => {
         const b = room.bbox;
         const box = this.boxOutline(
           new THREE.Box3(
@@ -331,14 +339,18 @@ export class SimScene {
     return seg;
   }
 
-  async loadRobot(queue: LoadQueue): Promise<URDFRobot> {
+  /**
+   * Two-phase load. The returned promise resolves as soon as the URDF is parsed
+   * and every STL job is in the queue -- so a caller can `await loadRobot(...)`
+   * and then enqueue lower-priority work (apartment rooms) knowing it lands
+   * behind the robot. Await the returned `done` for the fully-loaded robot.
+   */
+  async loadRobot(queue: LoadQueue): Promise<{ done: Promise<URDFRobot> }> {
     const loader = new URDFLoader();
     loader.packages = { mars_sim: "/robot" };
 
     // Route each STL through the shared queue (bounded concurrency + byte
-    // progress) instead of URDFLoader's default all-at-once loading. loadAsync
-    // resolves at URDF parse; the meshes attach later via these queued jobs, so
-    // we await their promises before the restyle below (which else misses them).
+    // progress) instead of URDFLoader's default all-at-once loading.
     const meshLoads: Promise<void>[] = [];
     const loadMesh = (
       path: string,
@@ -371,7 +383,12 @@ export class SimScene {
     // The shipped .d.ts omits the `material` arg the runtime actually passes.
     loader.loadMeshCb = loadMesh as unknown as typeof loader.loadMeshCb;
 
-    const robot = await loader.loadAsync(ROBOT_URDF_URL);
+    const robot = await loader.loadAsync(ROBOT_URDF_URL); // loadMeshCb enqueued every STL during parse
+    return { done: this.finishRobot(robot, meshLoads) };
+  }
+
+  /** Attach + restyle the robot once its queued STL meshes have all loaded. */
+  private async finishRobot(robot: URDFRobot, meshLoads: Promise<void>[]): Promise<URDFRobot> {
     await Promise.all(meshLoads);
 
     for (const name of HIDDEN_FRAME_LINKS) {
@@ -585,6 +602,16 @@ export class SimScene {
       cam.updateProjectionMatrix();
     }
   }
+}
+
+/** Runtime guard against a malformed manifest (untrusted JSON): file is a
+ * string and bbox is two arrays of >=3 finite numbers -- else we'd build a Box3
+ * from Vector3(undefined) and get NaN geometry. */
+function isValidRoom(room: unknown): boolean {
+  const r = room as { file?: unknown; bbox?: { min?: unknown; max?: unknown } } | null;
+  const finite3 = (a: unknown): boolean =>
+    Array.isArray(a) && a.length >= 3 && a.slice(0, 3).every((n) => typeof n === "number" && Number.isFinite(n));
+  return typeof r?.file === "string" && finite3(r?.bbox?.min) && finite3(r?.bbox?.max);
 }
 
 /** Walk up the parent chain to the URDFLink a mesh belongs to, returning its name. */
