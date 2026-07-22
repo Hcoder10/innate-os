@@ -305,7 +305,7 @@ async def ws_proxy(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(max_msg_size=0, heartbeat=WS_HEARTBEAT)
     await ws.prepare(request)
     upstream_url = WORLD_STATE_URL if request.path == "/worldstate" else ROSBRIDGE_URL
-    session: aiohttp.ClientSession = request.app["client"]
+    session = request.app[CLIENT]
     try:
         async with session.ws_connect(upstream_url, max_msg_size=0, heartbeat=WS_HEARTBEAT) as upstream:
             tasks = [asyncio.create_task(_pump(ws, upstream)), asyncio.create_task(_pump(upstream, ws))]
@@ -322,12 +322,16 @@ async def ws_proxy(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+# One shared client for the WS-proxy upstreams, keyed with a typed AppKey.
+CLIENT = web.AppKey("client", aiohttp.ClientSession)
+
+
 async def _on_startup(app: web.Application) -> None:
-    app["client"] = aiohttp.ClientSession()
+    app[CLIENT] = aiohttp.ClientSession()
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    await app["client"].close()
+    await app[CLIENT].close()
 
 
 def build_app() -> web.Application:
