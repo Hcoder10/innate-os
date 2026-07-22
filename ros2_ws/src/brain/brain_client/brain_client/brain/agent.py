@@ -143,13 +143,13 @@ class BrainAgent:
         self._events.clear()
 
     # ================= events (executor thread) =================
-    def add_event(self, text: str, image: bytes | None = None) -> None:
+    def add_event(self, text: str, image: bytes | None = None, kind: str = "info") -> None:
         """Queue something that happened; the next turn starts as soon as possible."""
-        self._events.append({"text": text, "image": image})
+        self._events.append({"text": text, "image": image, "kind": kind})
         self._next_turn_due = 0.0
 
     def on_user_message(self, text: str) -> None:
-        self.add_event(f'The user says: "{text}"')
+        self.add_event(f'The user says: "{text}"', kind="user")
 
     def on_custom_input(self, data: dict) -> None:
         device = data.get("input_device", "unknown")
@@ -272,8 +272,15 @@ class BrainAgent:
         if decision.thoughts:
             self._chat.emit("robot_thoughts", _trim_thoughts(decision.thoughts), speak=False)
         speech = _clean_speech(decision.speech)
+        if speech and any(event["kind"] == "user" for event in self._events):
+            # The user said something newer while this turn was thinking —
+            # voicing an answer to the previous moment is how the robot ends
+            # up talking over the conversation. The next turn sees both.
+            self._logger.info(f"[Brain] Speech suppressed (newer user message pending): {speech[:60]!r}")
+            speech = None
         if speech:
-            self._chat.emit("robot", speech)
+            self._chat.emit("robot", speech, speak=False)
+            self._chat.speak(speech, replace_pending=True)
         self._session.add_tool_outcomes([(call, self._execute(call)) for call in decision.calls])
 
     def _execute(self, call) -> str:

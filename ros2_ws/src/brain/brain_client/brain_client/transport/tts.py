@@ -302,7 +302,9 @@ class TTSHandler:
         payload = base64.b64encode(_finalize_wav(wav)).decode("ascii")
         self.tts_audio_pub.publish(String(data=payload))
 
-    def speak_text_async(self, text: str, voice_config: dict[str, Any] | None = None) -> None:
+    def speak_text_async(
+        self, text: str, voice_config: dict[str, Any] | None = None, replace_pending: bool = False
+    ) -> None:
         """
         Queue text to be spoken. Utterances play in order, one at a time;
         nothing is dropped unless the queue is full. Returns immediately.
@@ -310,11 +312,22 @@ class TTSHandler:
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
+            replace_pending: Drop any not-yet-played utterances first. Used for
+                conversational replies, where a newer reply supersedes queued
+                older ones (playing a backlog is what makes the robot talk
+                over the conversation). The currently playing clip finishes.
         """
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping async speech")
             return
         try:
+            if replace_pending:
+                while True:
+                    try:
+                        stale, _ = self._speech_queue.get_nowait()
+                        self.logger.info(f"🔇 Dropping superseded speech: '{stale[:60]}'")
+                    except queue.Empty:
+                        break
             self._speech_queue.put_nowait((text, voice_config))
         except queue.Full:
             self.logger.warning(f"🔇 Speech queue full, dropping: '{text[:60]}'")

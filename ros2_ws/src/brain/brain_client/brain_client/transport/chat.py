@@ -74,6 +74,6 @@ class ChatManager:
     def clear(self) -> None:
         self.history = []
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, replace_pending: bool = False) -> None:
         if self._tts_handler is not None:
-            self._tts_handler.speak_text_async(text)
+            self._tts_handler.speak_text_async(text, replace_pending=replace_pending)
