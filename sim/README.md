@@ -41,14 +41,9 @@ brew install --cask docker
 <details>
 <summary><b>Linux (Ubuntu / Debian / Raspberry Pi OS)</b></summary>
 
-On Ubuntu:
-
-```bash
-sudo apt install docker.io docker-compose-v2
-```
-
-On Debian / Raspberry Pi OS (whose `docker-compose` package is the old v1
-tool), use Docker's own install script instead:
+Use Docker's own install script — it sets up the official apt repo and
+installs Docker plus the Compose v2 plugin, the same way on every
+Debian-family distro:
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
@@ -60,8 +55,10 @@ Then let your user talk to Docker:
 sudo usermod -aG docker $USER && newgrp docker
 ```
 
-Desktop installs already have working OpenGL. On a headless server or VM,
-also install the offscreen rendering libraries:
+Install the rendering libraries. On a headless server or VM these provide
+offscreen rendering; on a desktop with working OpenGL they're mostly already
+present, and the extra software-rendering library is harmless — so it's safe
+to run either way:
 
 ```bash
 sudo apt install libegl1 libgl1 libopengl0 libosmesa6
@@ -95,14 +92,17 @@ Then, from the repository root:
 ./innate-sim up        # starts everything; leave the live dashboard open
 ```
 
-`setup` asks which brain the robot's AI agent should use:
+`setup` asks which brain — the robot's AI agent — to run. The agent is the
+open-source [innate-cloud-agent](https://github.com/innate-inc/innate-cloud-agent);
+the choice is only about *where* it runs:
 
-- **Hosted Innate brain** — uses your Innate service key (it comes with a
-  MARS robot). The full experience, including voice — the robot speaks.
-- **Local brain (Gemini)** — runs the open-source agent on your machine
-  against a [Gemini API key](https://aistudio.google.com/api-keys).
-  Everything works except voice: the web app's speak bar is disabled
-  without a service key.
+- **Local brain (Gemini)** — the default. Clones `innate-cloud-agent` and
+  runs it on your machine against a
+  [Gemini API key](https://aistudio.google.com/api-keys). Everything works
+  except voice: the web app's speak bar is disabled without a service key.
+- **Hosted Innate brain** — the same agent, run on Innate's servers with
+  your Innate service key (it ships with a MARS robot). The full experience,
+  including voice — the robot speaks.
 - **None** — no agent; you can still drive, navigate, and trigger skills
   manually.
 
@@ -124,7 +124,7 @@ If something stops you anyway, we want to hear about it —
 ./innate-sim status      # startup checks + health snapshot
 ./innate-sim logs        # startup logs; `logs os` / `logs agent` follow live
 ./innate-sim sh          # shell into the container; `innate build` rebuilds ros2_ws
-./innate-sim down        # stop
+./innate-sim down        # stop the container + world server (keeps data)
 ./innate-sim clean       # remove containers/volumes (keeps .env + config)
 ```
 
