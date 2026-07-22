@@ -7,6 +7,9 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
 import { LoadQueue, queuedGLB } from "./loadQueue";
@@ -75,6 +78,10 @@ export class SimScene {
   private hullsGroup?: THREE.Group;
   private hullsPromise?: Promise<void>;
   private hullsVisible = false;
+  // Shared fat-line material for room placeholder boxes (LineBasicMaterial's
+  // linewidth is ignored by WebGL). resolution is refreshed each render().
+  private placeholderMat?: LineMaterial;
+  private tmpSize = new THREE.Vector2();
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -261,7 +268,7 @@ export class SimScene {
     // the rest of the apartment and the session carry on.
     await Promise.all(
       manifest.rooms.map((room) => {
-        const box = roomPlaceholder(room.bbox);
+        const box = this.roomPlaceholder(room.bbox);
         group.add(box);
         return queuedGLB(queue, loader, `/models/apartment/${room.file}`)
           .then((root) => {
@@ -271,8 +278,7 @@ export class SimScene {
           .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
           .finally(() => {
             group.remove(box);
-            box.geometry.dispose();
-            (box.material as THREE.Material).dispose();
+            box.geometry.dispose(); // material is shared -- disposed in dispose()
           });
       }),
     );
@@ -292,6 +298,28 @@ export class SimScene {
         else setFrontSide(obj.material);
       }
     });
+  }
+
+  /** A thick wireframe box marking where a room will be, until its glb arrives.
+   * Uses fat lines (LineSegments2) since WebGL ignores LineBasicMaterial width. */
+  private roomPlaceholder(bbox: { min: number[]; max: number[] }): LineSegments2 {
+    if (!this.placeholderMat) {
+      this.placeholderMat = new LineMaterial({ color: 0x3a6b5a, linewidth: 3, transparent: true, opacity: 0.6 });
+      this.placeholderMat.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
+    }
+    const box = new THREE.Box3(
+      new THREE.Vector3(bbox.min[0], bbox.min[1], bbox.min[2]),
+      new THREE.Vector3(bbox.max[0], bbox.max[1], bbox.max[2]),
+    );
+    const size = box.getSize(new THREE.Vector3());
+    const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
+    const edges = new THREE.EdgesGeometry(boxGeo);
+    const geometry = new LineSegmentsGeometry().fromEdgesGeometry(edges);
+    boxGeo.dispose();
+    edges.dispose();
+    const seg = new LineSegments2(geometry, this.placeholderMat);
+    seg.position.copy(box.getCenter(new THREE.Vector3()));
+    return seg;
   }
 
   async loadRobot(queue: LoadQueue): Promise<URDFRobot> {
@@ -477,6 +505,8 @@ export class SimScene {
   render(): void {
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
     if (!robotCam) this.controls.update();
+    // Fat lines need the current drawing-buffer size to size their width in px.
+    this.placeholderMat?.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     this.renderer.render(this.scene, robotCam ?? this.camera);
   }
 
@@ -484,6 +514,7 @@ export class SimScene {
    * stage per visit, and undisposed contexts pile up until the browser kills
    * the oldest (~16), breaking the live view. */
   dispose(): void {
+    this.placeholderMat?.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -540,19 +571,6 @@ export class SimScene {
       cam.updateProjectionMatrix();
     }
   }
-}
-
-/** A faint wireframe box marking where a room will be, until its glb arrives. */
-function roomPlaceholder(bbox: { min: number[]; max: number[] }): THREE.Box3Helper {
-  const box3 = new THREE.Box3(
-    new THREE.Vector3(bbox.min[0], bbox.min[1], bbox.min[2]),
-    new THREE.Vector3(bbox.max[0], bbox.max[1], bbox.max[2]),
-  );
-  const helper = new THREE.Box3Helper(box3, new THREE.Color(0x3a6b5a));
-  const material = helper.material as THREE.LineBasicMaterial;
-  material.transparent = true;
-  material.opacity = 0.35;
-  return helper;
 }
 
 /** Walk up the parent chain to the URDFLink a mesh belongs to, returning its name. */
