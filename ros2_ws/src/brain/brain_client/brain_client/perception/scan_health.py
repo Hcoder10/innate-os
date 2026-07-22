@@ -3,7 +3,7 @@
 """LiDAR scan health: detects when laser scans stop arriving (e.g. lidar unplugged).
 
 Keeps an always-on subscription to the scan topic and records when the last
-message arrived. The orchestrator polls :meth:`stale_problem` from the agent loop to
+message arrived. The brain agent polls :meth:`stale_problem` from its loop tick to
 surface a clear error instead of failing silently when the lidar is
 disconnected (no scans -> AMCL never localizes -> no pose -> agent skips every
 loop with nothing reaching the app).

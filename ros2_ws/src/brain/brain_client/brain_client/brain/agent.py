@@ -1,0 +1,338 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+"""The local brain: a plain agent loop over Gemini with the robot's skills as tools.
+
+This replaces the cloud brain and its WebSocket protocol. Each turn:
+
+    look   — snapshot the camera, pose, running skill, and queued events
+    think  — one Gemini call (on a worker thread, the executor never blocks)
+    act    — speak the reply, start a skill, or stop the running one
+
+Turns run back-to-back when something happened (user spoke, a skill finished)
+and on a slow heartbeat otherwise, so the robot keeps watching the scene.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import queue
+import re
+import threading
+import time
+import uuid
+
+from brain_client.brain.gemini import (
+    STOP_SKILL,
+    WAIT,
+    GeminiSession,
+    build_tools,
+    direct_transport,
+    proxy_transport,
+    tool_name,
+)
+from brain_client.brain.prompt import build_system_prompt
+from brain_client.perception import pose as pose_math
+
+_NAV_TO_POSITION = "innate-os/navigate_to_position"
+
+# A camera frame older than this means the camera feed is broken; don't think on it.
+_FRESH_FRAME_SEC = 3.0
+
+# Thought summaries can run to pages; the chat panel wants a glimpse, not a log.
+_MAX_THOUGHT_CHARS = 600
+
+
+def _trim_thoughts(thoughts: str) -> str:
+    if len(thoughts) <= _MAX_THOUGHT_CHARS:
+        return thoughts
+    return thoughts[:_MAX_THOUGHT_CHARS].rsplit(" ", 1)[0] + " …"
+
+
+def _clean_speech(speech: str | None) -> str | None:
+    """Drop unspeakable output: placeholders and leaked tool-call narration."""
+    if not speech:
+        return None
+    # gemini-3 preview sometimes appends "Calling tool default_api:..." to its text.
+    speech = re.sub(r"Calling tool\b.*", "", speech, flags=re.DOTALL).strip()
+    if not re.search(r"[a-zA-Z0-9]", speech):
+        return None
+    return speech
+
+
+class BrainAgent:
+    def __init__(self, node, state, config, *, camera, pose_tracker, runner, roster, chat, gaze, proxy=None, scan_health=None):
+        self._node = node
+        self._logger = node.get_logger()
+        self._state = state
+        self._config = config
+        self._camera = camera
+        self._pose = pose_tracker
+        self._runner = runner
+        self._roster = roster
+        self._chat = chat
+        self._gaze = gaze
+        self._scan_health = scan_health
+
+        transport, self.backend = self._pick_transport(proxy)
+        self.available = transport is not None
+        self._session = (
+            GeminiSession(
+                transport,
+                model=config.gemini_model,
+                thinking_level=config.gemini_thinking_level,
+                max_history=config.history_max_entries,
+                max_image_turns=config.history_max_image_turns,
+            )
+            if self.available
+            else None
+        )
+
+        self._events: list[dict] = []  # pending {"text", "image"} for the next turn
+        self._turn_in_flight = False
+        self._next_turn_due = 0.0  # monotonic; 0 = turn wanted now
+        self._pose_at_capture = None
+        self._tool_map: dict[str, str] = {}  # gemini function name -> skill id
+        self._error_streak = 0
+        self._lidar_error_reported = False
+        self._activated_at = 0.0
+        self._timer = None
+
+        self._results: queue.SimpleQueue = queue.SimpleQueue()
+        self._result_guard = node.create_guard_condition(self._finish_turn)
+
+    @staticmethod
+    def _pick_transport(proxy):
+        """Prefer the Innate proxy (the managed path); GEMINI_API_KEY is the dev override."""
+        if proxy is not None and proxy.is_available():
+            return proxy_transport(proxy), "innate-proxy"
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if api_key:
+            return direct_transport(api_key), "gemini-direct"
+        return None, "unconfigured"
+
+    # ================= lifecycle =================
+    def start(self) -> None:
+        if not self.available:
+            self._chat.emit_system(
+                "⚠️ The brain has no way to reach Gemini — configure the Innate proxy "
+                "(INNATE_SERVICE_KEY) or set GEMINI_API_KEY in innate-os/.env and restart."
+            )
+        self._activated_at = time.monotonic()
+        self._next_turn_due = 0.0
+        self._error_streak = 0
+        if self._timer is None:
+            self._timer = self._node.create_timer(0.2, self._tick)
+
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._node.destroy_timer(self._timer)
+            self._timer = None
+        self._events.clear()
+
+    def reset(self) -> None:
+        """Forget the conversation (directive switch / brain reset)."""
+        if self._session is not None:
+            self._session.clear()
+        self._events.clear()
+
+    # ================= events (executor thread) =================
+    def add_event(self, text: str, image: bytes | None = None) -> None:
+        """Queue something that happened; the next turn starts as soon as possible."""
+        self._events.append({"text": text, "image": image})
+        self._next_turn_due = 0.0
+
+    def on_user_message(self, text: str) -> None:
+        self.add_event(f'The user says: "{text}"')
+
+    def on_custom_input(self, data: dict) -> None:
+        device = data.get("input_device", "unknown")
+        self.add_event(f"Input from {device}: {json.dumps(data)}")
+
+    def on_skill_event(self, status: str, skill_name: str, detail: str | None = None) -> None:
+        line = f"Skill {skill_name} {status}"
+        if detail:
+            line += f": {detail}"
+        self.add_event(line)
+
+    def on_skill_feedback(self, skill_name: str, feedback: str, image: bytes | None = None) -> None:
+        self.add_event(f"Update from running skill {skill_name}: {feedback}", image=image)
+
+    # ================= the loop =================
+    def _tick(self) -> None:
+        self._check_lidar_health()
+        if not self._state.is_brain_active or not self.available or self._turn_in_flight:
+            return
+        if not self._events and time.monotonic() < self._next_turn_due:
+            return
+        if self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
+            return
+        self._start_turn()
+
+    def _start_turn(self) -> None:
+        text, images = self._observe()
+        user_message = GeminiSession.user_message(text, images)
+        tools = self._build_tools()
+        system = build_system_prompt(self._directive_prompt())
+        self._pose_at_capture = self._pose.current_pose_xyt()
+
+        if self._state.log_everything:
+            self._logger.info(f"[Brain] Turn input:\n{text}")
+
+        self._turn_in_flight = True
+        threading.Thread(
+            target=self._think, args=(self._session.generation, user_message, tools, system), daemon=True
+        ).start()
+
+    def _observe(self) -> tuple[str, list[bytes]]:
+        """Drain pending events and snapshot the world into one turn input."""
+        events, self._events = self._events, []
+
+        status = f"[t+{int(time.monotonic() - self._activated_at)}s]"
+        pose = self._pose.current_pose_xyt()
+        if pose is not None:
+            status += f" pose: x={pose[0]:.2f}m y={pose[1]:.2f}m heading={math.degrees(pose[2]):.0f}°"
+        running = self._state.primitive_running
+        if running:
+            status += f" | running skill: {running['primitive_name']}"
+
+        lines = [status]
+        if running:
+            guidance = self._running_skill_guidance(running.get("skill_id"))
+            if guidance:
+                lines.append(f"(guidance while this skill runs: {guidance})")
+        lines += [f"- {event['text']}" for event in events]
+
+        images = [self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)]
+        arm_jpeg = self._camera.fresh_arm_jpeg(_FRESH_FRAME_SEC)
+        if arm_jpeg is not None:
+            images.append(arm_jpeg)
+            lines.append("(second image is the arm wrist camera)")
+        images += [event["image"] for event in events if event["image"]]
+        return "\n".join(lines), images
+
+    def _think(self, generation, user_message, tools, system) -> None:
+        """Worker thread: just the network call; the result hops back to the executor."""
+        try:
+            response = self._session.generate(user_message, tools, system)
+            self._results.put((generation, user_message, response, None))
+        except Exception as error:  # network/API failure -> paced retry on the executor
+            self._results.put((generation, user_message, None, error))
+        self._result_guard.trigger()
+
+    def _finish_turn(self) -> None:
+        """Guard-condition callback (executor thread): absorb and act on the response."""
+        while True:
+            try:
+                generation, user_message, response, error = self._results.get_nowait()
+            except queue.Empty:
+                return
+            self._turn_in_flight = False
+            if self._session is None or generation != self._session.generation:
+                continue  # directive switched / brain reset while this turn was in flight
+            if error is not None:
+                self._handle_error(error)
+                continue
+            if self._error_streak > 0:
+                self._error_streak = 0
+                self._chat.emit_system("✅ Brain inference recovered.")
+            decision = self._session.absorb(user_message, response)
+            self._apply(decision)
+            interval = (
+                self._config.supervision_turn_interval
+                if self._state.primitive_running
+                else self._config.idle_turn_interval
+            )
+            self._next_turn_due = time.monotonic() + interval
+
+    def _handle_error(self, error: Exception) -> None:
+        self._error_streak += 1
+        self._logger.error(f"[Brain] Gemini call failed ({self._error_streak}x): {error}")
+        if self._error_streak == 1:
+            self._chat.emit_system(f"⚠️ Brain inference failed: {error} — retrying.")
+        self._next_turn_due = time.monotonic() + min(5.0 * self._error_streak, 30.0)
+
+    # ================= acting on a decision =================
+    def _apply(self, decision) -> None:
+        if not self._state.is_brain_active:
+            # Deactivated while thinking: answer the calls so the history stays
+            # valid, but say and do nothing.
+            self._session.add_tool_outcomes([(c, "ignored — the robot was deactivated") for c in decision.calls])
+            return
+        if decision.thoughts:
+            self._chat.emit("robot_thoughts", _trim_thoughts(decision.thoughts), speak=False)
+        speech = _clean_speech(decision.speech)
+        if speech:
+            self._chat.emit("robot", speech)
+        self._session.add_tool_outcomes([(call, self._execute(call)) for call in decision.calls])
+
+    def _execute(self, call) -> str:
+        """Run one tool call; the returned string is the model-facing outcome."""
+        self._logger.info(f"[Brain] Tool call: {call.name}({call.args})")
+        if call.name == WAIT:
+            return "ok"
+        if call.name == STOP_SKILL:
+            if self._runner.has_active_goal:
+                self._runner.cancel_active_goal()
+                return "stopping — you will get an event when it has stopped"
+            return "no skill is running"
+        if self._state.primitive_running is not None:
+            return "rejected — another skill is already running; stop it first"
+
+        skill_id = self._tool_map.get(call.name) or self._state.registry.resolve_skill_id(call.name)
+        if skill_id is None:
+            return f"unknown skill '{call.name}'"
+
+        inputs = self._compensated(skill_id, dict(call.args))
+        self._gaze.pause()
+        self._runner.start_task(skill_id, f"local-{uuid.uuid4().hex[:8]}", inputs)
+        return "started — you will get an event when it finishes"
+
+    def _compensated(self, skill_id: str, inputs: dict) -> dict:
+        """Re-express a local-frame nav goal if the robot moved since the frame was taken."""
+        if skill_id != _NAV_TO_POSITION or not inputs.get("local_frame", False):
+            return inputs
+        current = self._pose.current_pose_xyt()
+        if self._pose_at_capture is None or current is None:
+            return inputs
+        delta = pose_math.compute_pose_delta(self._pose_at_capture, current)
+        return pose_math.adjust_local_nav_command(inputs, delta)
+
+    # ================= helpers =================
+    def _build_tools(self):
+        running = self._state.primitive_running
+        if running is not None:
+            return build_tools([], running["primitive_name"])
+        active_ids = set(self._roster.active_skill_ids())
+        skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
+        self._tool_map = {tool_name(meta["name"]): meta["id"] for meta in skills}
+        return build_tools(skills, None)
+
+    def _directive_prompt(self) -> str | None:
+        directive = self._state.current_directive
+        return directive.get_prompt() if directive is not None else None
+
+    def _running_skill_guidance(self, skill_id: str | None) -> str:
+        stub = self._state.registry.primitives.get(skill_id) if skill_id else None
+        return stub.guidelines_when_running().strip() if stub else ""
+
+    def _check_lidar_health(self) -> None:
+        """Surface a clear chat error when the lidar stops publishing (INN-474)."""
+        if self._scan_health is None or self._config.simulator_mode or self._pose.is_mapfree:
+            self._lidar_error_reported = False
+            return
+        problem = self._scan_health.stale_problem()
+        if problem is not None:
+            if not self._lidar_error_reported:
+                self._lidar_error_reported = True
+                self._logger.error(f"[Brain] LiDAR not responding: {problem}")
+                self._chat.emit_system(
+                    f"⚠️ LiDAR is not responding ({problem}). The robot cannot localize or navigate "
+                    "until it recovers. Check that the LiDAR is connected and spinning."
+                )
+        elif self._lidar_error_reported:
+            self._lidar_error_reported = False
+            self._logger.info("[Brain] LiDAR scan data restored.")
+            self._chat.emit_system("✅ LiDAR is publishing again. Localization should recover shortly.")

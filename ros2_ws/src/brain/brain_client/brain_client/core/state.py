@@ -3,9 +3,8 @@
 """Shared, cross-cutting brain state.
 
 A handful of flags and references are genuinely shared across the brain's
-collaborators (orchestrator, lifecycle, skills, vision-output). Rather than
-scatter them back onto the node as bare attributes, they live here in one named
-place. Each collaborator receives this object and reads/updates the fields it owns.
+collaborators (agent loop, lifecycle, skills). Rather than scatter them onto the
+node as bare attributes, they live here in one named place.
 """
 
 from __future__ import annotations
@@ -19,18 +18,11 @@ from brain_client.skills.registry import SkillRegistry
 class BrainState:
     # --- lifecycle flags ---
     is_brain_active: bool = False
-    ready_for_image: bool = False
-    primitives_registered: bool = False
-    pose_image_started: bool = False
 
     # --- runtime-toggleable logging (via /brain/set_logging_config) ---
     log_everything: bool = False
 
-    # --- registration / reconnection ---
-    token: str = ""
-    pending_reregistration: bool = False
-
-    # --- skill execution (owned by PrimitiveRunner; read by SkillCatalog) ---
+    # --- skill execution (owned by PrimitiveRunner; read by BrainAgent) ---
     primitive_running: dict | None = None
 
     # --- skills + directives ---
@@ -38,9 +30,3 @@ class BrainState:
     directives: dict = field(default_factory=dict)
     current_directive: object | None = None
     active_skill_ids: list[str] | None = None
-
-    # --- pose stamping for local-nav compensation ---
-    pose_at_image_send: tuple[float, float, float] | None = None
-
-    # --- memory positions from the cloud agent posegraph ---
-    memory_positions: list = field(default_factory=list)

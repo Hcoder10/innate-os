@@ -5,41 +5,26 @@
 # Usage: ./scripts/launch-sim-in-tmux.zsh [--detach] [--brain-websocket-uri URI] [--brain-client-version VERSION]
 
 ATTACH=1
-# Precedence: CLI flag > inherited env (compose bakes it) > derived from .env
-# below. An argless in-container `innate restart` must keep the brain wiring
-# rather than fall back to hosted -- and .env is the always-mounted source of
-# truth, so deriving from it is robust even on containers created before the
-# env was baked in.
-BRAIN_WEBSOCKET_URI="${BRAIN_WEBSOCKET_URI:-}"
-BRAIN_CLIENT_VERSION="${BRAIN_CLIENT_VERSION:-}"
+# The brain now runs in-process inside brain_client (local Gemini agent loop);
+# there is no brain websocket. The legacy --brain-websocket-uri and
+# --brain-client-version flags are still accepted (and ignored) so older host
+# launchers keep working.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --detach)
       ATTACH=0
       shift
       ;;
-    --brain-websocket-uri)
+    --brain-websocket-uri|--brain-client-version)
       if [[ $# -lt 2 ]]; then
-        echo "Missing value for --brain-websocket-uri" >&2
+        echo "Missing value for $1" >&2
         exit 2
       fi
-      BRAIN_WEBSOCKET_URI="$2"
+      echo "Note: $1 is obsolete (the brain runs locally in brain_client); ignoring." >&2
       shift 2
       ;;
-    --brain-websocket-uri=*)
-      BRAIN_WEBSOCKET_URI="${1#*=}"
-      shift
-      ;;
-    --brain-client-version)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing value for --brain-client-version" >&2
-        exit 2
-      fi
-      BRAIN_CLIENT_VERSION="$2"
-      shift 2
-      ;;
-    --brain-client-version=*)
-      BRAIN_CLIENT_VERSION="${1#*=}"
+    --brain-websocket-uri=*|--brain-client-version=*)
+      echo "Note: ${1%%=*} is obsolete (the brain runs locally in brain_client); ignoring." >&2
       shift
       ;;
     *)
@@ -48,19 +33,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-# Derive the brain backend from the mounted .env when nothing set it (mirrors
-# the launcher's resolve_brain_websocket_uri): a local Gemini brain -- key set,
-# no hosted service key -- talks to the cloud-agent container; hosted/none
-# leave it empty so brain_client uses its own default.
-if [[ -z "$BRAIN_WEBSOCKET_URI" ]]; then
-  _env_file="${INNATE_OS_ROOT:-$HOME/innate-os}/.env"
-  if [[ -f "$_env_file" ]] \
-    && grep -qE '^GEMINI_API_KEY=.+' "$_env_file" \
-    && ! grep -qE '^INNATE_SERVICE_KEY=.+' "$_env_file"; then
-    BRAIN_WEBSOCKET_URI="ws://cloud-agent:8765"
-  fi
-fi
 
 SESSION_NAME="${INNATE_SIM_TMUX_SESSION:-innate}"
 # Use braces in tmux targets so zsh does not interpret ":foo" as a parameter modifier.
@@ -125,16 +97,7 @@ echo "Started navigation system..."
 settle_after_launch
 # Split and run brain client
 tmux split-window -t "${TMUX_TARGET_PREFIX}:nav-brain" -h
-brain_client_cmd="ros2 launch brain_client brain_client.sim.launch.py"
-if [[ -n "$BRAIN_WEBSOCKET_URI" ]]; then
-  brain_websocket_arg="websocket_uri:=$BRAIN_WEBSOCKET_URI"
-  brain_client_cmd+=" ${(q)brain_websocket_arg}"
-fi
-if [[ -n "$BRAIN_CLIENT_VERSION" ]]; then
-  brain_client_version_arg="client_version:=$BRAIN_CLIENT_VERSION"
-  brain_client_cmd+=" ${(q)brain_client_version_arg}"
-fi
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain.1" "$brain_client_cmd" C-m
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain.1" "ros2 launch brain_client brain_client.sim.launch.py" C-m
 echo "Started brain client..."
 
 # === Window 4: Behavior Server ===
