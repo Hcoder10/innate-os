@@ -6,7 +6,8 @@
   "description": "Three.js SimSession library the Innate webapp embeds to render the simulated MARS over rosbridge",
   "scripts": {
     "build:lib": "vite build --config vite.lib.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node src/loadQueue.test.js"
   },
   "dependencies": {
     "three": "^0.185.0",
