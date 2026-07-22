@@ -486,9 +486,7 @@ def get_config() -> dict[str, object]:
     # brain's cloud-agent owns that host port, so it shifts to 8766 unless the
     # user pinned SIM_FOXGLOVE_PORT. Mirror runtime.py's start-up logic here so
     # the dashboard advertises the address it actually listens on.
-    foxglove_port = os.environ.get("SIM_FOXGLOVE_PORT", "").strip() or (
-        "8766" if mode in LOCAL_MODES else "8765"
-    )
+    foxglove_port = os.environ.get("SIM_FOXGLOVE_PORT", "").strip() or ("8766" if mode in LOCAL_MODES else "8765")
 
     os_repo = require_path(REPO_ROOT, "innate-os repository")
     sim_repo = require_path(REPO_ROOT / "sim", "sim repository")
