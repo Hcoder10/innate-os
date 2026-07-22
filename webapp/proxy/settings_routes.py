@@ -7,44 +7,38 @@ of https_server.py.
 import asyncio
 import json
 
-from websockets.datastructures import Headers
-from websockets.exceptions import ConnectionClosed
-from websockets.http11 import Response
+from aiohttp import WSMsgType, web
 
 
-def settings_get_response() -> Response:
+def settings_get_response() -> web.Response:
     """GET /settings -> the live override values from config/settings.yaml. The
     webapp owns the catalog (knobs/defaults/docs); this only reports what's set."""
     import settings_store
 
     payload = {"overrides": settings_store.read_overrides(), "exists": settings_store.settings_path().is_file()}
-    body = json.dumps(payload).encode()
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
-        body,
-    )
+    return web.json_response(payload, headers={"Cache-Control": "no-cache"})
 
 
-async def settings_ws(connection):
+async def settings_ws(ws: web.WebSocketResponse) -> None:
     """Settings write channel: receive {sets, clears} messages, apply each to
-    config/settings.yaml, and ack. One persistent WS per open Settings page."""
+    config/settings.yaml, and ack. One persistent WS per open Settings page.
+
+    The caller has already prepared the socket; iterating it ends cleanly when
+    the page closes."""
     import settings_store
 
-    try:
-        async for raw in connection:
-            try:
-                req = json.loads(raw)
-                sets = req.get("sets", []) or []
-                clears = req.get("clears", []) or []
-            except (ValueError, AttributeError, TypeError):
-                await connection.send(json.dumps({"ok": False, "message": "malformed request"}))
-                continue
-            try:
-                ok, msg = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
-            except Exception as exc:  # noqa: BLE001 — malformed payload, disk error, etc.
-                ok, msg = False, f"settings update failed: {exc}"
-            await connection.send(json.dumps({"ok": ok, "message": msg}))
-    except ConnectionClosed:
-        pass  # page closed — normal
+    async for msg in ws:
+        if msg.type != WSMsgType.TEXT:
+            continue
+        try:
+            req = json.loads(msg.data)
+            sets = req.get("sets", []) or []
+            clears = req.get("clears", []) or []
+        except (ValueError, AttributeError, TypeError):
+            await ws.send_str(json.dumps({"ok": False, "message": "malformed request"}))
+            continue
+        try:
+            ok, message = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
+        except Exception as exc:  # noqa: BLE001 — malformed payload, disk error, etc.
+            ok, message = False, f"settings update failed: {exc}"
+        await ws.send_str(json.dumps({"ok": ok, "message": message}))

@@ -12,8 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from websockets.datastructures import Headers
-from websockets.http11 import Response
+from aiohttp import web
 
 # Downloaded training-run results larger than this aren't served as a single
 # blob (the log viewer wants text, not gigabytes).
@@ -47,9 +46,8 @@ MAPS_DIR = (Path(_INNATE_OS_ROOT) / "data" / "maps").resolve()
 _MAP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def _plain(status: int, reason: str, text: str) -> Response:
-    body = text.encode()
-    return Response(status, reason, Headers({"Content-Type": "text/plain", "Content-Length": str(len(body))}), body)
+def _plain(status: int, reason: str, text: str) -> web.Response:
+    return web.Response(status=status, reason=reason, body=text.encode(), content_type="text/plain")
 
 
 def _resolve_under_root(rel: str):
@@ -73,53 +71,11 @@ def _safe_resolve(p: Path):
         return None
 
 
-def _parse_range(header, size: int):
-    """Parse a single-range ``Range: bytes=start-end`` header → (start, end)
-    inclusive, or None if absent/unsatisfiable (caller serves 200)."""
-    if not header or not header.startswith("bytes="):
-        return None
-    spec = header[len("bytes=") :].split(",", 1)[0].strip()
-    if "-" not in spec:
-        return None
-    start_s, end_s = spec.split("-", 1)
-    try:
-        if start_s == "":  # suffix range: last N bytes
-            n = int(end_s)
-            if n <= 0:
-                return None
-            start, end = max(0, size - n), size - 1
-        else:
-            start = int(start_s)
-            end = int(end_s) if end_s else size - 1
-    except ValueError:
-        return None
-    if start > end or start >= size:
-        return None
-    return start, min(end, size - 1)
+def episode_response(qs: dict) -> web.StreamResponse:
+    """GET /episode?dir=<skill_dir>&id=<n>&camera=<cam> → episode MP4.
 
-
-def _serve_file_with_range(request, path: Path, content_type: str) -> Response:
-    """Serve a file honoring HTTP Range so <video> can scrub. For a range request
-    we read only the requested bytes from disk (seek + read) rather than slurping
-    the whole file and slicing — episode MP4s can be tens of MB and a scrubbing
-    browser fires many small range reads, so reading the whole file each time is
-    wasteful."""
-    size = path.stat().st_size
-    common = {"Content-Type": content_type, "Accept-Ranges": "bytes", "Cache-Control": "no-cache"}
-    rng = _parse_range(request.headers.get("Range"), size)
-    if rng is None:
-        body = path.read_bytes()
-        return Response(200, "OK", Headers({**common, "Content-Length": str(size)}), body)
-    start, end = rng
-    with open(path, "rb") as fh:
-        fh.seek(start)
-        chunk = fh.read(end - start + 1)
-    headers = Headers({**common, "Content-Length": str(len(chunk)), "Content-Range": f"bytes {start}-{end}/{size}"})
-    return Response(206, "Partial Content", headers, chunk)
-
-
-def episode_response(request, qs: dict) -> Response:
-    """GET /episode?dir=<skill_dir>&id=<n>&camera=<cam> → episode MP4 (Range)."""
+    FileResponse honours Range natively (seek + stream only the requested
+    bytes), so a scrubbing <video> never slurps the whole multi-MB file."""
     base = _resolve_under_root((qs.get("dir") or [""])[0])
     eid = (qs.get("id") or [""])[0]
     cam = (qs.get("camera") or [""])[0]
@@ -128,7 +84,7 @@ def episode_response(request, qs: dict) -> Response:
     mp4 = _safe_resolve(base / "data" / f"episode_{eid}_{cam}.mp4")
     if mp4 is None or not _under_skills_root(mp4) or mp4.suffix != ".mp4" or not mp4.is_file():
         return _plain(404, "Not Found", "no such episode video")
-    return _serve_file_with_range(request, mp4, "video/mp4")
+    return web.FileResponse(mp4, headers={"Content-Type": "video/mp4", "Cache-Control": "no-cache"})
 
 
 def _make_thumb(mp4_path: Path, cache_path: Path, width: int = 240) -> None:
@@ -168,7 +124,7 @@ def _make_thumb(mp4_path: Path, cache_path: Path, width: int = 240) -> None:
 _thumb_locks: dict[str, asyncio.Lock] = {}
 
 
-async def thumb_response(qs: dict) -> Response:
+async def thumb_response(qs: dict) -> web.Response:
     """GET /episode/thumb?dir=<skill_dir>&id=<n>&camera=<cam> → cached JPEG of a
     frame from the episode MP4 (generated on first request, then served static)."""
     base = _resolve_under_root((qs.get("dir") or [""])[0])
@@ -194,11 +150,8 @@ async def thumb_response(qs: dict) -> Response:
         data = await asyncio.to_thread(cache.read_bytes)
     except Exception as err:  # noqa: BLE001
         return _plain(500, "Internal Server Error", f"thumb failed: {err}")
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "image/jpeg", "Content-Length": str(len(data)), "Cache-Control": "max-age=86400"}),
-        data,
+    return web.Response(
+        status=200, body=data, headers={"Content-Type": "image/jpeg", "Cache-Control": "max-age=86400"}
     )
 
 
@@ -224,7 +177,7 @@ def _render_map_png(image_path: Path, max_px: int = 480) -> bytes:
     return buf.tobytes()
 
 
-def map_preview_response(qs: dict) -> Response:
+def map_preview_response(qs: dict) -> web.Response:
     """GET /map/preview?name=<base or file.yaml> → PNG preview of a saved map,
     so the Nav sidebar can show a map without switching to it. The image path
     comes from the map's own yaml (map_saver writes `image: <file>`), fenced to
@@ -257,15 +210,10 @@ def map_preview_response(qs: dict) -> Response:
         data = cached[1]
     except Exception as err:  # noqa: BLE001 — surface a clean 500 to the client
         return _plain(500, "Internal Server Error", f"map preview failed: {err}")
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "image/png", "Content-Length": str(len(data)), "Cache-Control": "no-cache"}),
-        data,
-    )
+    return web.Response(status=200, body=data, headers={"Content-Type": "image/png", "Cache-Control": "no-cache"})
 
 
-def joints_response(qs: dict) -> Response:
+def joints_response(qs: dict) -> web.Response:
     """GET /episode/joints?dir=<skill_dir>&id=<n> → qpos/qvel/timestamps JSON,
     read straight from the (possibly image-stripped) HDF5 — joints are kept."""
     base = _resolve_under_root((qs.get("dir") or [""])[0])
@@ -292,15 +240,12 @@ def joints_response(qs: dict) -> Response:
         payload = json.dumps({"qpos": qpos, "qvel": qvel, "timestamps": ts, "data_frequency": freq}).encode()
     except Exception as err:  # noqa: BLE001 — surface a clean 500 to the client
         return _plain(500, "Internal Server Error", f"failed to read joints: {err}")
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "application/json", "Content-Length": str(len(payload)), "Cache-Control": "no-cache"}),
-        payload,
+    return web.Response(
+        status=200, body=payload, headers={"Content-Type": "application/json", "Cache-Control": "no-cache"}
     )
 
 
-def profile_response(qs: dict) -> Response:
+def profile_response(qs: dict) -> web.Response:
     """GET /episode/profile?dir=<skill_dir>&id=<n> → the episode's persisted
     inference-profile trace (JSONL written by profile_recorder next to the
     HDF5): one context line, then one per-step sample per line. 404 when the
@@ -316,13 +261,8 @@ def profile_response(qs: dict) -> Response:
         data = jsonl.read_bytes()
     except OSError as err:
         return _plain(500, "Internal Server Error", f"failed to read profile: {err}")
-    return Response(
-        200,
-        "OK",
-        Headers(
-            {"Content-Type": "application/x-ndjson", "Content-Length": str(len(data)), "Cache-Control": "no-cache"}
-        ),
-        data,
+    return web.Response(
+        status=200, body=data, headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"}
     )
 
 
@@ -369,7 +309,7 @@ def _failure_excerpt(run_dir) -> str:
     return ""
 
 
-def run_info_response(qs: dict) -> Response:
+def run_info_response(qs: dict) -> web.Response:
     """GET /run/info?dir=<skill_dir>&id=<run_id> → downloaded?/has_checkpoint?/files.
     A run is 'successful' if its downloaded results contain a *_step_*.pth — the
     same check the training node uses to activate a checkpoint."""
@@ -381,9 +321,7 @@ def run_info_response(qs: dict) -> Response:
     if run_dir is None or not _under_skills_root(run_dir) or not run_dir.is_dir():
         # Not downloaded yet (or never will be).
         body = json.dumps({"downloaded": False, "has_checkpoint": False, "files": []}).encode()
-        return Response(
-            200, "OK", Headers({"Content-Type": "application/json", "Content-Length": str(len(body))}), body
-        )
+        return web.Response(status=200, body=body, content_type="application/json")
     files = []
     has_ckpt = False
     truncated = False
@@ -412,15 +350,12 @@ def run_info_response(qs: dict) -> Response:
             "error_excerpt": error_excerpt,
         }
     ).encode()
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
-        body,
+    return web.Response(
+        status=200, body=body, headers={"Content-Type": "application/json", "Cache-Control": "no-cache"}
     )
 
 
-def run_log_response(qs: dict) -> Response:
+def run_log_response(qs: dict) -> web.Response:
     """GET /run/log?dir=<skill_dir>&id=<run_id>&file=<relpath> → a run log file
     as text/plain. Sandboxed to the run directory."""
     base = _resolve_under_root((qs.get("dir") or [""])[0])
@@ -453,11 +388,6 @@ def run_log_response(qs: dict) -> Response:
         data = data[:MAX_LOG_BYTES]
         truncated = b"\n\n[truncated]\n"
     body = data + truncated
-    return Response(
-        200,
-        "OK",
-        Headers(
-            {"Content-Type": "text/plain; charset=utf-8", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}
-        ),
-        body,
+    return web.Response(
+        status=200, body=body, headers={"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache"}
     )
