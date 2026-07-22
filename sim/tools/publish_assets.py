@@ -92,6 +92,19 @@ def stage(root: Path) -> None:
     subprocess.run(["npm", "run", "build:lib"], cwd=VIEWER, check=True)
     shutil.copytree(VIEWER / "dist-lib", root / "viewer" / "dist-lib")
 
+    # Progressive loading: split the apartment glb into per-room files + a
+    # manifest (tools/split-apartment.mjs, pure split -- no re-encode), then
+    # drop the monolith from the bundle. The webapp is its only runtime
+    # consumer, so shipping both would nearly double the apartment's ~31 MB; the
+    # source glb stays in the checkout for re-splitting + export_visual_rooms.py.
+    staged_models = root / "viewer" / "public" / "models"
+    subprocess.run(
+        ["node", "tools/split-apartment.mjs", str(staged_models / "appartement.glb"), str(staged_models / "apartment")],
+        cwd=VIEWER,
+        check=True,
+    )
+    (staged_models / "appartement.glb").unlink()
+
     # CC BY attribution must travel with the distributed material -- this
     # bundle is downloadable without ever seeing the innate-os repo.
     (root / "ATTRIBUTION.md").write_text(ATTRIBUTION + "\n")
@@ -185,8 +198,9 @@ def main() -> None:
 
         # Install the staged viewer/ dirs locally: work/ came from this disk,
         # but the viewer's hulls/manifest/sdf were rebuilt above and may be
-        # stale in the checkout. Only then is the marker's claim true.
-        for rel in ("public/physics/apartment_collisions_v2", "public/physics/apartment_sdf"):
+        # stale in the checkout, and the apartment split was just generated.
+        # Only then is the marker's claim true.
+        for rel in ("public/physics/apartment_collisions_v2", "public/physics/apartment_sdf", "public/models/apartment"):
             dest = VIEWER / rel
             shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(root / "viewer" / rel, dest)

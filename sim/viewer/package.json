@@ -7,13 +7,17 @@
   "scripts": {
     "build:lib": "vite build --config vite.lib.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node src/loadQueue.test.js"
+    "test": "node src/loadQueue.test.js",
+    "split:apartment": "node tools/split-apartment.mjs"
   },
   "dependencies": {
     "three": "^0.185.0",
     "urdf-loader": "^0.13.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.4.0",
+    "@gltf-transform/extensions": "^4.4.0",
+    "@gltf-transform/functions": "^4.4.0",
     "@types/three": "^0.185.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.2"
