@@ -1,19 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Camera capture: the latest main and arm-wrist JPEG frames.
+"""Camera capture: the latest main and arm-wrist JPEG frames, plus head pitch.
 
 Owns the on-demand sensor subscriptions created while the brain is active.
 Frames arrive JPEG-compressed (sensor_msgs/CompressedImage) and are kept as raw
 bytes with an arrival timestamp, so the brain can tell a live feed from a stale
-one (a dead camera otherwise serves its last frame forever).
+one (a dead camera otherwise serves its last frame forever). The head pitch
+(degrees, negative = looking down) is tracked because the pixel->floor
+grounding needs the camera angle at frame-capture time.
 """
 
 from __future__ import annotations
 
+import json
 import time
 
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import String
 
 
 class CameraCapture:
@@ -22,8 +26,10 @@ class CameraCapture:
         self._config = config
         self._image_sub = None
         self._arm_sub = None
+        self._head_sub = None
         self._image: tuple[float, bytes] | None = None  # (monotonic arrival time, jpeg)
         self._arm: tuple[float, bytes] | None = None
+        self.current_head_pitch = 0.0  # degrees; negative = looking down
 
     def start(self) -> None:
         if self._image_sub is not None:
@@ -40,14 +46,15 @@ class CameraCapture:
             self._arm_sub = self._node.create_subscription(
                 CompressedImage, self._config.arm_camera_image_topic, self._on_arm, image_qos
             )
+        self._head_sub = self._node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
 
     def stop(self) -> None:
         # Destroying here is safe only because brain_client_node is spun
         # single-threaded and stop() runs on that spin thread (between callbacks).
-        for sub in (self._image_sub, self._arm_sub):
+        for sub in (self._image_sub, self._arm_sub, self._head_sub):
             if sub is not None:
                 self._node.destroy_subscription(sub)
-        self._image_sub = self._arm_sub = None
+        self._image_sub = self._arm_sub = self._head_sub = None
         self._image = self._arm = None
 
     def _on_image(self, msg: CompressedImage) -> None:
@@ -57,6 +64,12 @@ class CameraCapture:
     def _on_arm(self, msg: CompressedImage) -> None:
         if msg.data:
             self._arm = (time.monotonic(), bytes(msg.data))
+
+    def _on_head(self, msg: String) -> None:
+        try:
+            self.current_head_pitch = float(json.loads(msg.data).get("current_position", 0.0))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.current_head_pitch = 0.0
 
     def fresh_image_jpeg(self, max_age_sec: float) -> bytes | None:
         return _fresh(self._image, max_age_sec)

@@ -216,6 +216,70 @@ def test_generate_sets_thinking_level_when_configured():
     assert captured["generationConfig"]["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "high"}
 
 
+# ---------- visual grounding (pixel -> floor target) ----------
+
+from brain_client.brain import grounding  # noqa: E402
+
+
+def fake_jpeg(width: int, height: int) -> bytes:
+    """Minimal JPEG header: SOI + SOF0 carrying the given dimensions."""
+    return (
+        b"\xff\xd8"
+        + b"\xff\xc0\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x00" * 12
+    )
+
+
+CAM = dict(vertical_fov_deg=80.0, cam_height=0.19663, cam_forward=0.0197)
+FRAME = fake_jpeg(640, 480)
+
+
+def test_jpeg_dimensions_reads_sof():
+    assert grounding.jpeg_dimensions(fake_jpeg(1280, 800)) == (1280, 800)
+    assert grounding.jpeg_dimensions(b"not a jpeg") is None
+
+
+def test_center_pixel_with_head_down_projects_ahead():
+    # Head 10° down, image center: floor hit at cam_forward + h/tan(10°) along +x.
+    x, y = grounding.pixel_to_floor(500, 500, frame_jpeg=FRAME, pitch_deg=-10.0, **CAM)
+    assert abs(x - 1.135) < 0.01
+    assert abs(y) < 1e-6
+
+
+def test_center_pixel_level_camera_is_horizon():
+    assert grounding.pixel_to_floor(500, 500, frame_jpeg=FRAME, pitch_deg=0.0, **CAM) is None
+    # Above the horizon even more so.
+    assert grounding.pixel_to_floor(500, 100, frame_jpeg=FRAME, pitch_deg=0.0, **CAM) is None
+
+
+def test_bottom_edge_is_close_and_left_is_positive_y():
+    x, y = grounding.pixel_to_floor(500, 1000, frame_jpeg=FRAME, pitch_deg=0.0, **CAM)
+    assert abs(x - 0.254) < 0.01
+    left_x, left_y = grounding.pixel_to_floor(250, 900, frame_jpeg=FRAME, pitch_deg=0.0, **CAM)
+    assert left_y > 0  # left half of the image -> +y (robot's left)
+
+
+def test_near_horizon_pixel_is_range_capped():
+    x, y = grounding.pixel_to_floor(500, 510, frame_jpeg=FRAME, pitch_deg=0.0, **CAM)
+    import math
+
+    assert abs(math.hypot(x, y) - grounding.MAX_RANGE_M) < 1e-6
+
+
+def test_approach_goal_stops_short_and_faces_the_point():
+    goal = grounding.approach_goal(2.0, 0.0)
+    assert abs(goal["x"] - (2.0 - grounding.STANDOFF_M)) < 1e-6
+    assert goal["y"] == 0.0
+    assert goal["theta_degrees"] == 0.0
+    assert goal["local_frame"] is True
+    # Point already inside the standoff: no travel, just turn to face it.
+    close = grounding.approach_goal(0.0, 0.2)
+    assert close["x"] == 0.0 and close["y"] == 0.0
+    assert abs(close["theta_degrees"] - 90.0) < 1e-6
+
+
 # ---------- prompt ----------
 
 

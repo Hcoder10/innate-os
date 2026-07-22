@@ -31,6 +31,11 @@ class BrainConfig:
     log_everything: bool
     simulator_mode: bool
 
+    # --- Camera geometry (for pointed-pixel -> floor-target grounding) ---
+    vertical_fov: float  # degrees
+    x_cam: float  # camera forward offset from base_link (m)
+    height_cam: float  # camera height above the floor (m)
+
     # --- Local brain (Gemini) ---
     gemini_model: str
     gemini_thinking_level: str  # "low" | "high"; "" = model default
@@ -89,6 +94,9 @@ class BrainConfig:
             "idle_turn_interval": 3.0,
             "supervision_turn_interval": 5.0,
             "scan_stale_after_sec": 10.0,
+            "vertical_fov": 80.0,
+            "x_cam": 0.0197,
+            "height_cam": 0.19663,
         }
 
         for name, default in {**string_params, **bool_params, **int_params, **double_params}.items():
@@ -116,6 +124,9 @@ class BrainConfig:
             send_arm_camera_image=b("send_arm_camera_image"),
             log_everything=b("log_everything"),
             simulator_mode=b("simulator_mode"),
+            vertical_fov=d("vertical_fov"),
+            x_cam=d("x_cam"),
+            height_cam=d("height_cam"),
             gemini_model=s("gemini_model"),
             gemini_thinking_level=s("gemini_thinking_level"),
             idle_turn_interval=d("idle_turn_interval"),

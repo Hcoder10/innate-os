@@ -34,12 +34,35 @@ import httpx
 
 STOP_SKILL = "stop_current_skill"
 WAIT = "wait"
+GO_TO_POINT = "go_to_point"
 
 # An explicit no-op keeps idle turns clean: without it, models tend to emit
 # placeholder text ("[]", "Empty response") rather than returning nothing.
 _WAIT_DECLARATION = {
     "name": WAIT,
     "description": "Do nothing until the next update. Use when there is nothing new to do or say.",
+}
+
+# Visual navigation grounding: the model points at a floor pixel and the robot
+# projects it into a local navigation goal (brain/grounding.py). Declared only
+# when navigate_to_position is among the active skills — it is the actuator.
+_GO_TO_POINT_DECLARATION = {
+    "name": GO_TO_POINT,
+    "description": (
+        "Drive toward a point you can see in the CURRENT camera frame. Give normalized image "
+        "coordinates (0-1000) of a point ON THE FLOOR: y from the top, x from the left. For an "
+        "object, point at the floor at its base. The robot drives to about 0.35 m short of that "
+        "spot and turns to face it. Prefer this over navigate_to_position for anything you can "
+        "see. Far targets are approached in capped steps — call it again after arriving."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "y": {"type": "INTEGER", "description": "0-1000 from image top"},
+            "x": {"type": "INTEGER", "description": "0-1000 from image left"},
+        },
+        "required": ["y", "x"],
+    },
 }
 
 PROXY_SERVICE = "gemini"
@@ -75,7 +98,7 @@ def tool_name(skill_name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.\-]", "_", skill_name)[:64] or "skill"
 
 
-def build_tools(skills: list[dict], running_skill_name: str | None) -> list[dict]:
+def build_tools(skills: list[dict], running_skill_name: str | None, *, can_go_to_point: bool = False) -> list[dict]:
     """One function declaration per available skill, in a native tools block.
 
     While a skill runs, the robot's only action is stopping it, so the
@@ -90,7 +113,11 @@ def build_tools(skills: list[dict], running_skill_name: str | None) -> list[dict
             ),
         }
         return [{"functionDeclarations": [stop, _WAIT_DECLARATION]}]
-    return [{"functionDeclarations": [*(_declaration(meta) for meta in skills), _WAIT_DECLARATION]}]
+    declarations = [_declaration(meta) for meta in skills]
+    if can_go_to_point:
+        declarations.append(_GO_TO_POINT_DECLARATION)
+    declarations.append(_WAIT_DECLARATION)
+    return [{"functionDeclarations": declarations}]
 
 
 def _declaration(meta: dict) -> dict:

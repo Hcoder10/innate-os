@@ -23,7 +23,9 @@ import threading
 import time
 import uuid
 
+from brain_client.brain import grounding
 from brain_client.brain.gemini import (
+    GO_TO_POINT,
     STOP_SKILL,
     WAIT,
     GeminiSession,
@@ -93,6 +95,8 @@ class BrainAgent:
         self._turn_in_flight = False
         self._next_turn_due = 0.0  # monotonic; 0 = turn wanted now
         self._pose_at_capture = None
+        self._frame_at_capture: bytes | None = None
+        self._pitch_at_capture = 0.0
         self._tool_map: dict[str, str] = {}  # gemini function name -> skill id
         self._error_streak = 0
         self._lidar_error_reported = False
@@ -205,7 +209,11 @@ class BrainAgent:
                 lines.append(f"(guidance while this skill runs: {guidance})")
         lines += [f"- {event['text']}" for event in events]
 
-        images = [self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)]
+        # Snapshot the frame + head pitch together: go_to_point projections must
+        # use the geometry of the exact frame the model pointed into.
+        self._frame_at_capture = self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)
+        self._pitch_at_capture = self._camera.current_head_pitch
+        images = [self._frame_at_capture]
         arm_jpeg = self._camera.fresh_arm_jpeg(_FRESH_FRAME_SEC)
         if arm_jpeg is not None:
             images.append(arm_jpeg)
@@ -280,6 +288,8 @@ class BrainAgent:
             return "no skill is running"
         if self._state.primitive_running is not None:
             return "rejected — another skill is already running; stop it first"
+        if call.name == GO_TO_POINT:
+            return self._go_to_point(call.args)
 
         skill_id = self._tool_map.get(call.name) or self._state.registry.resolve_skill_id(call.name)
         if skill_id is None:
@@ -289,6 +299,42 @@ class BrainAgent:
         self._gaze.pause()
         self._runner.start_task(skill_id, f"local-{uuid.uuid4().hex[:8]}", inputs)
         return "started — you will get an event when it finishes"
+
+    def _go_to_point(self, args: dict) -> str:
+        """Project the pointed-at floor pixel into a local navigate_to_position goal."""
+        nav_id = self._state.registry.resolve_skill_id(_NAV_TO_POSITION)
+        if nav_id is None:
+            return "rejected — navigate_to_position is not available"
+        if self._frame_at_capture is None:
+            return "rejected — no camera frame to ground the point in"
+        try:
+            v_norm, u_norm = float(args["y"]), float(args["x"])
+        except (KeyError, TypeError, ValueError):
+            return "rejected — give integer y and x in 0-1000 image coordinates"
+
+        floor = grounding.pixel_to_floor(
+            u_norm,
+            v_norm,
+            frame_jpeg=self._frame_at_capture,
+            vertical_fov_deg=self._config.vertical_fov,
+            pitch_deg=self._pitch_at_capture,
+            cam_height=self._config.height_cam,
+            cam_forward=self._config.x_cam,
+        )
+        if floor is None:
+            return "rejected — that point is at or above the horizon; point at the floor"
+
+        inputs = self._compensated(nav_id, grounding.approach_goal(*floor))
+        self._logger.info(
+            f"[Brain] go_to_point ({v_norm:.0f},{u_norm:.0f}) -> floor ({floor[0]:.2f}, {floor[1]:.2f})m, "
+            f"goal ({inputs['x']:.2f}, {inputs['y']:.2f}, {inputs['theta_degrees']:.0f}°) pitch={self._pitch_at_capture:.0f}°"
+        )
+        self._gaze.pause()
+        self._runner.start_task(nav_id, f"local-{uuid.uuid4().hex[:8]}", inputs)
+        return (
+            f"driving to the floor point {math.hypot(*floor):.1f}m away (stopping ~{grounding.STANDOFF_M}m short) "
+            "— you will get an event when it finishes"
+        )
 
     def _compensated(self, skill_id: str, inputs: dict) -> dict:
         """Re-express a local-frame nav goal if the robot moved since the frame was taken."""
@@ -308,7 +354,7 @@ class BrainAgent:
         active_ids = set(self._roster.active_skill_ids())
         skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
         self._tool_map = {tool_name(meta["name"]): meta["id"] for meta in skills}
-        return build_tools(skills, None)
+        return build_tools(skills, None, can_go_to_point=_NAV_TO_POSITION in active_ids)
 
     def _directive_prompt(self) -> str | None:
         directive = self._state.current_directive
