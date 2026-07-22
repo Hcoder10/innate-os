@@ -568,7 +568,6 @@ class ModeManager(Node):
 
             node_names = nodes
 
-            failures = []
             for node_name in all_nodes_except_target:
                 # Check if this node should skip cleanup (only deactivate to INACTIVE)
                 if node_name in skip_cleanup_nodes:
@@ -587,50 +586,27 @@ class ModeManager(Node):
                 if not success:
                     self.get_logger().warning(f"Failed to shutdown non-target node {node_name} (continuing)")
 
-            # Phase 1: Configure all nodes in forward order
-            self.get_logger().info(f"Configuring {len(node_names)} nodes for {mode.value} mode")
-            for node_name in node_names:
-                success = transition_node(
-                    self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_INACTIVE, only_up=True
-                )
-                if not success:
-                    failures.append(node_name)
-                    self.get_logger().warning(f"Failed to configure {node_name}, continuing...")
-                    break
-            self.get_logger().info("Configured nodes")
-
-            # Phase 2: Activate nodes in forward order
-            map_load_success = False
-
             # Get nodes that should only be configured (not activated) for this mode
             configure_only = configure_only_nodes.get(mode.value, set())
 
-            self.get_logger().info(f"Activating {len(node_names)} nodes for {mode.value} mode")
-            for node_name in node_names:
-                if node_name in failures:
-                    self.get_logger().warning(f"{node_name} failed configuration. Not proceeding further.")
-                    break  # don't process the rest of the nodes
-
-                # Skip activation for configure-only nodes
-                if node_name in configure_only:
-                    self.get_logger().info(f"Skipping activation for {node_name} (configure-only)")
-                    continue
-
-                success = transition_node(
-                    self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_ACTIVE
-                )
-                if not success:
-                    failures.append(node_name)
-                    self.get_logger().warning(f"Failed to activate {node_name}. Not proceeding further.")
+            # Startup runs in up to two passes. A node can miss the first pass
+            # transiently — most commonly it is stuck in a lifecycle transition
+            # waiting on a peer this very pass brings up (e.g. a costmap's
+            # on_activate blocked on a map publisher), which also makes its
+            # lifecycle services unresponsive. The transitions are idempotent,
+            # so the second pass simply re-runs them after a short settle and
+            # picks up whatever recovered. (Previously the first failure left
+            # the mode down and a manual retry of change_mode succeeded.)
+            map_load_success = False
+            for startup_pass in (1, 2):
+                failures, map_load_success = self._startup_pass(mode, node_names, configure_only)
+                if not failures:
                     break
-
-                # Load map immediately after map server is activated (navigation mode only)
-                if mode == NavigationMode.NAV and "map_server" in node_name and success:
-                    map_load_success = self._load_map_on_server(node_name)
-                    if not map_load_success:
-                        failures.append(f"{node_name}_map_load")
-
-            self.get_logger().info("Activated nodes")
+                if startup_pass == 1:
+                    self.get_logger().warning(
+                        f"{mode.value} startup pass 1 failed on {failures}; retrying once after settle"
+                    )
+                    time.sleep(2.0)
 
             if failures:
                 message = f"{mode.value} mode started with {len(failures)} activation failures: {failures}"
@@ -647,6 +623,63 @@ class ModeManager(Node):
             error_msg = f"Error requesting {mode.value} startup: {str(e)}"
             self.get_logger().error(error_msg)
             return False, error_msg
+
+    def _startup_pass(self, mode: NavigationMode, node_names: list, configure_only: set) -> tuple[list, bool]:
+        """One configure+activate sweep over the mode's nodes.
+
+        Every transition is idempotent (nodes already at/above the target are
+        left alone), so this is safe to run repeatedly. Returns the nodes that
+        failed plus whether the map load succeeded (navigation mode only).
+        """
+        failures = []
+        map_load_success = False
+
+        # Phase 1: Configure all nodes in forward order
+        self.get_logger().info(f"Configuring {len(node_names)} nodes for {mode.value} mode")
+        for node_name in node_names:
+            # Configure-only nodes must land exactly at INACTIVE: a leftover
+            # ACTIVE one (e.g. recovered from a wedged activation) would keep
+            # its costmap running against this mode's stand-in map, spamming
+            # warnings and wasting CPU — so no only_up for them.
+            success = transition_node(
+                self._service_clients,
+                self.get_logger(),
+                node_name,
+                State.PRIMARY_STATE_INACTIVE,
+                only_up=node_name not in configure_only,
+            )
+            if not success:
+                failures.append(node_name)
+                self.get_logger().warning(f"Failed to configure {node_name}, continuing...")
+                break
+        self.get_logger().info("Configured nodes")
+
+        # Phase 2: Activate nodes in forward order
+        self.get_logger().info(f"Activating {len(node_names)} nodes for {mode.value} mode")
+        for node_name in node_names:
+            if node_name in failures:
+                self.get_logger().warning(f"{node_name} failed configuration. Not proceeding further.")
+                break  # don't process the rest of the nodes
+
+            # Skip activation for configure-only nodes
+            if node_name in configure_only:
+                self.get_logger().info(f"Skipping activation for {node_name} (configure-only)")
+                continue
+
+            success = transition_node(self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_ACTIVE)
+            if not success:
+                failures.append(node_name)
+                self.get_logger().warning(f"Failed to activate {node_name}. Not proceeding further.")
+                break
+
+            # Load map immediately after map server is activated (navigation mode only)
+            if mode == NavigationMode.NAV and "map_server" in node_name and success:
+                map_load_success = self._load_map_on_server(node_name)
+                if not map_load_success:
+                    failures.append(f"{node_name}_map_load")
+
+        self.get_logger().info("Activated nodes")
+        return failures, map_load_success
 
     def _lifecycle_watchdog(self):
         """Restore nodes that crashed and respawned mid-session.
