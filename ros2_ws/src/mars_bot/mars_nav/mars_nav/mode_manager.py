@@ -593,19 +593,21 @@ class ModeManager(Node):
             # transiently — most commonly it is stuck in a lifecycle transition
             # waiting on a peer this very pass brings up (e.g. a costmap's
             # on_activate blocked on a map publisher), which also makes its
-            # lifecycle services unresponsive. The second pass simply re-runs
-            # the sweep after a short settle and picks up whatever recovered.
+            # lifecycle services unresponsive. The second pass re-runs the
+            # sweep once the failed nodes have settled back into a primary
+            # state (bounded poll) and picks up whatever recovered.
             # (Previously the first failure left the mode down and a manual
             # retry of change_mode succeeded.)
             # Exception: a map-load failure alone is not retried — the load
             # already retries internally, so a second sweep can't fix it and
             # would only double the time spent holding the mode lock.
             failures, map_load_success = self._startup_pass(mode, node_names, configure_only)
-            if failures and any(not f.endswith("_map_load") for f in failures):
+            failed_nodes = [f for f in failures if not f.endswith("_map_load")]
+            if failed_nodes:
                 self.get_logger().warning(
                     f"{mode.value} startup pass 1 failed on {failures}; retrying once after settle"
                 )
-                time.sleep(2.0)
+                self._wait_for_nodes_to_settle(failed_nodes)
                 failures, map_load_success = self._startup_pass(
                     mode, node_names, configure_only, map_already_loaded=map_load_success
                 )
@@ -697,6 +699,31 @@ class ModeManager(Node):
 
         self.get_logger().info("Activated nodes")
         return failures, map_load_success
+
+    def _wait_for_nodes_to_settle(self, node_names: list, timeout_sec: float = 10.0, poll_sec: float = 0.5) -> None:
+        """Wait for the given nodes to settle into a primary lifecycle state.
+
+        A pass-1 failure usually means the node is wedged mid-transition
+        (e.g. ACTIVATING until a peer's map arrives), with its lifecycle
+        services unresponsive. Rather than guessing a fixed delay, poll
+        get_state until every node answers with a primary state, so the
+        retry pass runs exactly when it can succeed. Bounded by timeout_sec
+        so a permanently dead node can't hold the mode lock long; the retry
+        pass still runs and reports whatever remains broken.
+        """
+
+        def is_settled(node_name: str) -> bool:
+            state = get_node_state(self._service_clients, self.get_logger(), node_name, timeout_sec=2.0)
+            return state is not None and state < State.TRANSITION_STATE_CONFIGURING
+
+        deadline = time.monotonic() + timeout_sec
+        pending = list(node_names)
+        while pending and time.monotonic() < deadline:
+            pending = [n for n in pending if not is_settled(n)]
+            if pending:
+                time.sleep(poll_sec)
+        if pending:
+            self.get_logger().warning(f"Nodes still unsettled after {timeout_sec:.0f}s: {pending}; retrying anyway")
 
     def _lifecycle_watchdog(self):
         """Restore nodes that crashed and respawned mid-session.
