@@ -366,7 +366,9 @@ for unit in \
 done
 
 # snapd: only disable when nothing is installed as a snap (else we'd break it).
-if command -v snap >/dev/null 2>&1 && [ -n "$(snap list 2>/dev/null | tail -n +2)" ]; then
+# Installed snaps are checked on the filesystem, not via `snap list` — the snap
+# CLI socket-activates snapd and waits for it to load state, hanging 30s+.
+if command -v snap >/dev/null 2>&1 && ls /var/lib/snapd/snaps/*.snap >/dev/null 2>&1; then
     log "  Keeping snapd (installed snaps present)"
 else
     disable_unit snapd.service
