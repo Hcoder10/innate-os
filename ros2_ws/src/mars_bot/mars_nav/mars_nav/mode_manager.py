@@ -593,22 +593,22 @@ class ModeManager(Node):
             # transiently — most commonly it is stuck in a lifecycle transition
             # waiting on a peer this very pass brings up (e.g. a costmap's
             # on_activate blocked on a map publisher), which also makes its
-            # lifecycle services unresponsive. The transitions are idempotent,
-            # so the second pass simply re-runs them after a short settle and
-            # picks up whatever recovered. (Previously the first failure left
-            # the mode down and a manual retry of change_mode succeeded.)
-            map_load_success = False
-            for startup_pass in (1, 2):
+            # lifecycle services unresponsive. The second pass simply re-runs
+            # the sweep after a short settle and picks up whatever recovered.
+            # (Previously the first failure left the mode down and a manual
+            # retry of change_mode succeeded.)
+            # Exception: a map-load failure alone is not retried — the load
+            # already retries internally, so a second sweep can't fix it and
+            # would only double the time spent holding the mode lock.
+            failures, map_load_success = self._startup_pass(mode, node_names, configure_only)
+            if failures and any(not f.endswith("_map_load") for f in failures):
+                self.get_logger().warning(
+                    f"{mode.value} startup pass 1 failed on {failures}; retrying once after settle"
+                )
+                time.sleep(2.0)
                 failures, map_load_success = self._startup_pass(
                     mode, node_names, configure_only, map_already_loaded=map_load_success
                 )
-                if not failures:
-                    break
-                if startup_pass == 1:
-                    self.get_logger().warning(
-                        f"{mode.value} startup pass 1 failed on {failures}; retrying once after settle"
-                    )
-                    time.sleep(2.0)
 
             if failures:
                 message = f"{mode.value} mode started with {len(failures)} activation failures: {failures}"
@@ -631,12 +631,15 @@ class ModeManager(Node):
     ) -> tuple[list, bool]:
         """One configure+activate sweep over the mode's nodes.
 
-        Every transition is idempotent (nodes already at/above the target are
-        left alone), so this is safe to run repeatedly. Returns the nodes that
-        failed plus whether the map load succeeded (navigation mode only).
-        Pass map_already_loaded=True on a retry pass to skip reloading a map
-        that a previous pass already loaded (only_up transitions never take
-        the map server back down, so the loaded map persists).
+        Safe to run repeatedly, with two caveats the code below handles:
+        transitions are idempotent (nodes already at/above the target are
+        left alone) EXCEPT configure-only nodes, which are deliberately
+        pulled back down to INACTIVE; and the navigation map load is not a
+        lifecycle transition — pass map_already_loaded=True on a retry pass
+        to skip reloading a map a previous pass already loaded (only_up
+        transitions never take the map server back down, so it persists).
+        Returns the nodes that failed plus whether the map load succeeded
+        (navigation mode only).
         """
         failures = []
         map_load_success = False
@@ -656,9 +659,12 @@ class ModeManager(Node):
                 only_up=node_name not in configure_only,
             )
             if not success:
+                # Keep configuring the rest: a later peer coming up is exactly
+                # what un-wedges a node stuck mid-transition (see two-pass
+                # comment in request_mode_startup), so recovery must not
+                # depend on the wedged node's position in the list.
                 failures.append(node_name)
                 self.get_logger().warning(f"Failed to configure {node_name}, continuing...")
-                break
         self.get_logger().info("Configured nodes")
 
         # Phase 2: Activate nodes in forward order
