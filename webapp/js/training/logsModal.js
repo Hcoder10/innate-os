@@ -10,6 +10,7 @@
 // Error-ish lines are highlighted in both modes.
 
 import { GET_RUN_LOGS_SERVICE } from "../constants.js";
+import { copyText } from "../clipboard.js";
 
 const PREFERRED = ["process_output.jsonl", "daemon.log", "output.log"];
 const ERR_RE = /traceback|error|exception|runtimeerror|cuda error|failed|fatal|killed/i;
@@ -82,7 +83,7 @@ export function createLogsModal(parent, skillDir, runId, opts) {
   else loadFiles();
 
   function copyLogs() {
-    navigator.clipboard.writeText(view.innerText).then(() => {
+    copyText(view.innerText).then(() => {
       copyBtn.innerHTML = ICON_CHECK;
       copyBtn.classList.add("copied");
       setTimeout(() => {

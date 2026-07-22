@@ -7,6 +7,7 @@
 // pre-parsed by the bridge, so there's no text parsing here.
 
 import { recSev, SEV_RANK, clockMs, sourceColor, launchLabel } from "./format.js";
+import { copyText } from "../clipboard.js";
 
 const BUFFER_MAX = 6000;
 const DOM_MAX = 1500;
@@ -188,7 +189,7 @@ export function createLogStream(parent, source, opts) {
 
   function copyLogs() {
     const text = buffer.filter(passes).map(lineText).join("\n");
-    navigator.clipboard.writeText(text).then(() => {
+    copyText(text).then(() => {
       copyBtn.innerHTML = ICON_CHECK;
       copyBtn.classList.add("active");
       setTimeout(() => {
