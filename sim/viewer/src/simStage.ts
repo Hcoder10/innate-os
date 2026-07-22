@@ -217,11 +217,14 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       // (SPA remount) -- else we'd mutate a disposed scene.
       session.stageReady();
       raf = requestAnimationFrame(loop);
-      setLoading("loading robot…");
-      await scene.loadRobot(queue);
+      setLoading("loading robot and apartment...");
+      const robot = scene.loadRobot(queue);
+      // Small head start so the robot's STLs get into the shared queue ahead of
+      // the apartment's room GLBs -- not strict, just biases toward robot-first.
+      await new Promise((r) => setTimeout(r, 50));
+      const apartment = scene.loadApartment(queue);
       if (disposed) return;
-      setLoading("loading apartment…");
-      await scene.loadApartment(queue);
+      await Promise.all([robot, apartment]);
       if (disposed) return;
       hideLoading();
     } catch (err) {
