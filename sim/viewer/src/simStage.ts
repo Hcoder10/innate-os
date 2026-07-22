@@ -62,16 +62,21 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(chips);
 
-  // Loading overlay: a progress bar + staged label instead of a black canvas
-  // until assets and the first world state arrive.
+  // Loading indicator: a translucent scrim across the top of the stage holding
+  // a progress bar -- the canvas shows immediately underneath (robot first,
+  // then rooms stream in), not a full black block. Fades out when the download
+  // finishes. Scrim is pointer-events:none so it never shields the stage; the
+  // bar re-enables pointer events for its hover.
   const loading = document.createElement("div");
   loading.style.cssText =
-    "position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;" +
-    "justify-content:center;gap:12px;background:#0b0e11;transition:opacity .45s ease;";
+    "position:absolute;top:0;left:0;right:0;height:40%;z-index:6;pointer-events:none;" +
+    "display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:min(9%,60px);" +
+    "background:linear-gradient(180deg,rgba(0,0,0,.5) 0%,rgba(0,0,0,.5) 62%,transparent 100%);" +
+    "transition:opacity .5s ease;";
   const bar = document.createElement("div");
   bar.style.cssText =
     "width:min(280px,60%);height:6px;border-radius:999px;background:rgba(255,255,255,.12);" +
-    "overflow:hidden;transition:background .2s;";
+    "overflow:hidden;transition:background .2s;pointer-events:auto;";
   const barFill = document.createElement("div");
   barFill.style.cssText = "height:100%;width:0%;background:#7dffc4;border-radius:999px;transition:width .3s ease;";
   bar.appendChild(barFill);
@@ -104,12 +109,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     // this fallback the invisible overlay stayed and ate every click.
     setTimeout(() => loading.remove(), 700);
   };
-  // Hide only when the session reports frames actually flowing.
+  // The scrim fades when the download finishes (see the load sequence below);
+  // here we only surface load failures.
   const unsubscribe = session.onChange((s) => {
-    if (s.status === "streaming") {
-      hideLoading();
-      unsubscribe();
-    } else if (s.status === "error") {
+    if (s.status === "error") {
       failLoading("simulation view failed to load — see the browser console");
       unsubscribe();
     }
@@ -207,13 +210,16 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   queue.setEstimatedTotal(42e6);
   (async () => {
     try {
-      setLoading("loading apartment…");
-      await scene.loadApartment(queue);
+      // Robot first: reveal the live view as soon as the robot loads and the
+      // first pose arrives (stageReady + gotPose -> streaming), then stream the
+      // apartment in behind the scrim.
       setLoading("loading robot…");
       await scene.loadRobot(queue);
-      setLoading("connecting to the world…");
       session.stageReady();
       if (!disposed) raf = requestAnimationFrame(loop);
+      setLoading("loading apartment…");
+      await scene.loadApartment(queue);
+      hideLoading();
     } catch (err) {
       session.stageError(err);
     }
