@@ -43,6 +43,38 @@ def compute_pose_delta(old_pose: Pose, new_pose: Pose) -> Delta:
     return (delta_forward, delta_lateral, delta_theta)
 
 
+def absolute_to_local_nav_command(inputs: dict, robot_pose: Pose) -> dict:
+    """Re-express an absolute nav goal as a robot-relative ``local_frame`` goal.
+
+    Used in mapfree mode, where no map frame exists: the only absolute frame the
+    agent knows is the one its pose readout uses, so a goal stated there is
+    re-based onto ``robot_pose`` (given in that same frame) and marked
+    ``local_frame=True`` instead of being sent to the inactive map-frame planner.
+
+    Local-frame commands are returned unchanged. The input dict is never mutated.
+    """
+    if inputs.get("local_frame", False):
+        return inputs
+
+    # Same key convention as adjust_local_nav_command: read whichever theta
+    # spelling is present and write back the same one.
+    use_degrees = "theta" not in inputs and "theta_degrees" in inputs
+    goal_theta = math.radians(inputs["theta_degrees"]) if use_degrees else inputs.get("theta", 0.0)
+    goal_pose = (inputs.get("x", 0.0), inputs.get("y", 0.0), goal_theta)
+
+    local_x, local_y, local_theta = compute_pose_delta(robot_pose, goal_pose)
+
+    adjusted = inputs.copy()
+    adjusted["x"] = local_x
+    adjusted["y"] = local_y
+    if use_degrees:
+        adjusted["theta_degrees"] = math.degrees(local_theta)
+    else:
+        adjusted["theta"] = local_theta
+    adjusted["local_frame"] = True
+    return adjusted
+
+
 def adjust_local_nav_command(inputs: dict, delta: Delta) -> dict:
     """Re-express a local-frame navigation target after the robot has moved.
 

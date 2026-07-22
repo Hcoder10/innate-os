@@ -151,6 +151,7 @@ class Nav2Controller:
             return TaskResult.FAILED, (
                 f"the planner found no path to ({goal_x:.2f}, {goal_y:.2f}) in the {goal_frame} frame "
                 "— the goal may be unreachable, blocked, or outside the map"
+                + ("" if local_frame else ", or the robot is not in map navigation mode (no map loaded)")
             )
 
         navigator.goToPose(goal_pose, behavior_tree=behavior_tree)
@@ -273,10 +274,10 @@ class NavigateToPosition(Skill):
 
     def guidelines(self):
         return (
-            "Use when you need to navigate the robot to the specified position "
-            "using provided x, y coordinates (meters), and theta_degrees (yaw) IN DEGREES. "
-            "If local_frame is set to false, it navigates to a specific point in the map."
-            "If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"
+            "Move the robot to a position given x, y (meters) and theta_degrees (yaw IN DEGREES). "
+            "Prefer local_frame=true: coordinates are then relative to where the robot stands now — "
+            "robot at (0,0) facing theta=0, x forward, y left (e.g. turn around: x=0, y=0, theta_degrees=180). "
+            "Use local_frame=false only to reach absolute coordinates in the frame your pose is reported in."
         )
 
     def execute(self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, **legacy):

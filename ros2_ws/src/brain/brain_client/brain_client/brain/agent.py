@@ -344,10 +344,22 @@ class BrainAgent:
         )
 
     def _compensated(self, skill_id: str, inputs: dict) -> dict:
-        """Re-express a local-frame nav goal if the robot moved since the frame was taken."""
-        if skill_id != _NAV_TO_POSITION or not inputs.get("local_frame", False):
+        """Ground a nav goal in the robot's current pose before sending it."""
+        if skill_id != _NAV_TO_POSITION:
             return inputs
         current = self._pose.current_pose_xyt()
+        if not inputs.get("local_frame", False):
+            # In mapfree mode there is no map frame; the only absolute frame
+            # the model knows is its pose readout's (odom). Re-base the goal
+            # onto the robot and run it locally — a map-frame goal would only
+            # die at the inactive map planner.
+            if not self._pose.is_mapfree or current is None:
+                return inputs
+            rebased = pose_math.absolute_to_local_nav_command(inputs, current)
+            self._logger.info(f"[Brain] mapfree: absolute goal re-based to local: {rebased}")
+            return rebased
+        # Local goals are relative to the frame the model saw; re-express them
+        # if the robot moved since that frame was captured.
         if self._pose_at_capture is None or current is None:
             return inputs
         delta = pose_math.compute_pose_delta(self._pose_at_capture, current)
