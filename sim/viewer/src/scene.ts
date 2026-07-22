@@ -12,7 +12,15 @@ import type { URDFRobot } from "urdf-loader";
 import { LoadQueue, queuedGLB } from "./loadQueue";
 
 const APARTMENT_URL = "/models/appartement.glb";
+const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
+
+/** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
+ * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
+interface ApartmentManifest {
+  rooms: { file: string; name: string; bytes: number; bbox: { min: number[]; max: number[] } }[];
+  total: number;
+}
 
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
@@ -218,14 +226,53 @@ export class SimScene {
 
   async loadApartment(queue: LoadQueue): Promise<void> {
     const loader = new GLTFLoader();
-    const root = await queuedGLB(queue, loader, APARTMENT_URL);
-    root.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
+    // One parent group holds every room and carries the Y-up -> Z-up rotation,
+    // so it's applied once; placeholder boxes and rooms attach underneath.
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI / 2;
+    this.scene.add(group);
+
+    let manifest: ApartmentManifest | null = null;
+    try {
+      const res = await fetch(APARTMENT_MANIFEST_URL);
+      if (res.ok) manifest = (await res.json()) as ApartmentManifest;
+    } catch {
+      /* no manifest -- fall through to the monolith */
+    }
+
+    if (!manifest) {
+      // Dev-only fallback: a checkout that never ran the split. The published
+      // bundle always ships the manifest and never the monolith.
+      const root = await queuedGLB(queue, loader, APARTMENT_URL);
+      this.dressRoom(root);
+      group.add(root);
+      return;
+    }
+
+    // Draw each room's placeholder box immediately, then stream its glb in and
+    // swap the box out on arrival -- the layout reads before any bytes land.
+    await Promise.all(
+      manifest.rooms.map((room) => {
+        const box = roomPlaceholder(room.bbox);
+        group.add(box);
+        return queuedGLB(queue, loader, `/models/apartment/${room.file}`, room.file).then((root) => {
+          this.dressRoom(root);
+          group.add(root);
+          group.remove(box);
+          box.geometry.dispose();
+          (box.material as THREE.Material).dispose();
+        });
+      }),
+    );
+  }
+
+  /** Ready a loaded apartment room for the scene: receive shadows and force
+   * FrontSide (the glb ships doubleSided) so walls draw only from inside the
+   * room, giving overview cameras the dollhouse-cutaway look. */
+  private dressRoom(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.receiveShadow = true;
-        // Force FrontSide (the glb ships doubleSided): walls draw only from
-        // inside the room, so overview cameras get the dollhouse-cutaway
-        // look. If winding issues hide geometry, flip to BackSide.
         const setFrontSide = (mat: THREE.Material) => {
           mat.side = THREE.FrontSide;
         };
@@ -233,7 +280,6 @@ export class SimScene {
         else setFrontSide(obj.material);
       }
     });
-    this.scene.add(root);
   }
 
   async loadRobot(queue: LoadQueue): Promise<URDFRobot> {
@@ -482,6 +528,19 @@ export class SimScene {
       cam.updateProjectionMatrix();
     }
   }
+}
+
+/** A faint wireframe box marking where a room will be, until its glb arrives. */
+function roomPlaceholder(bbox: { min: number[]; max: number[] }): THREE.Box3Helper {
+  const box3 = new THREE.Box3(
+    new THREE.Vector3(bbox.min[0], bbox.min[1], bbox.min[2]),
+    new THREE.Vector3(bbox.max[0], bbox.max[1], bbox.max[2]),
+  );
+  const helper = new THREE.Box3Helper(box3, new THREE.Color(0x3a6b5a));
+  const material = helper.material as THREE.LineBasicMaterial;
+  material.transparent = true;
+  material.opacity = 0.35;
+  return helper;
 }
 
 /** Walk up the parent chain to the URDFLink a mesh belongs to, returning its name. */
