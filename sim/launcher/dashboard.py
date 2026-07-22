@@ -844,6 +844,11 @@ def render_status(
         term_width,
     )
     used_lines += 1
+    print_dashboard_line(
+        f"{BOLD}Foxglove:{NC} ws://localhost:{config['foxglove_port']}",
+        term_width,
+    )
+    used_lines += 1
     if config["mode"] in options.local_modes:
         print_dashboard_line(
             f"{BOLD}Local agent:{NC} ws://localhost:{config['cloud_port']}",

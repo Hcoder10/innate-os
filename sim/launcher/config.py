@@ -482,6 +482,14 @@ def get_config() -> dict[str, object]:
 
     mode = resolve_cloud_agent_mode(sim_config, merged_env)
 
+    # Foxglove bridge lives on 8765 (Foxglove Studio's default), but a local
+    # brain's cloud-agent owns that host port, so it shifts to 8766 unless the
+    # user pinned SIM_FOXGLOVE_PORT. Mirror runtime.py's start-up logic here so
+    # the dashboard advertises the address it actually listens on.
+    foxglove_port = os.environ.get("SIM_FOXGLOVE_PORT", "").strip() or (
+        "8766" if mode in LOCAL_MODES else "8765"
+    )
+
     os_repo = require_path(REPO_ROOT, "innate-os repository")
     sim_repo = require_path(REPO_ROOT / "sim", "sim repository")
 
@@ -511,6 +519,7 @@ def get_config() -> dict[str, object]:
         "sim_repo": sim_repo,
         "cloud_repo": cloud_repo,
         "cloud_port": cloud_port,
+        "foxglove_port": foxglove_port,
         "brain_websocket_uri": resolve_brain_websocket_uri(mode, merged_env),
         "brain_client_version": resolve_brain_client_version(os_repo),
         "cloud_image": get_nested_str(sim_config, "cloud_agent", "image") or "",
