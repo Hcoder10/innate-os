@@ -212,16 +212,20 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     try {
       // Robot first: reveal the live view as soon as the robot loads and the
       // first pose arrives (stageReady + gotPose -> streaming), then stream the
-      // apartment in behind the scrim.
+      // apartment in behind the scrim. Bail at each await if the stage was
+      // destroyed mid-load (SPA remount) -- else we'd mutate a disposed scene
+      // and publish a ready session for a view that's already gone.
       setLoading("loading robot…");
       await scene.loadRobot(queue);
+      if (disposed) return;
       session.stageReady();
-      if (!disposed) raf = requestAnimationFrame(loop);
+      raf = requestAnimationFrame(loop);
       setLoading("loading apartment…");
       await scene.loadApartment(queue);
+      if (disposed) return;
       hideLoading();
     } catch (err) {
-      session.stageError(err);
+      if (!disposed) session.stageError(err);
     }
   })();
 

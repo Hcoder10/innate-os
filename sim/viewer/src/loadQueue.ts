@@ -28,8 +28,9 @@ export class LoadQueue {
   #pending: Array<() => void> = [];
   #loaded = 0;
   #estimated = 0; // seeded denominator, before any Content-Length is known
-  #keyLoaded = new Map<string, number>(); // last loaded bytes reported, per job
-  #keyTotal = new Map<string, number>(); // real size once its Content-Length lands
+  #nextId = 0;
+  #jobLoaded = new Map<number, number>(); // last loaded bytes reported, per job
+  #jobTotal = new Map<number, number>(); // real size once its Content-Length lands
 
   constructor(limit = 3, onProgress?: (p: LoadProgress) => void) {
     this.#limit = Math.max(1, limit);
@@ -44,15 +45,16 @@ export class LoadQueue {
 
   /**
    * Enqueue a job; it runs once a slot frees (≤ limit at a time), FIFO. `job`
-   * gets a reporter to feed download progress; `key` identifies the job so
-   * repeated reports (loaders fire onProgress many times per file) accumulate
-   * instead of double-counting.
+   * gets a reporter to feed download progress; each enqueue gets its own id, so
+   * repeated reports (loaders fire onProgress many times) accumulate correctly
+   * even when two jobs fetch the same URL.
    */
-  add<T>(job: (report: ByteReport) => Promise<T>, key: string): Promise<T> {
+  add<T>(job: (report: ByteReport) => Promise<T>): Promise<T> {
+    const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
       const run = () => {
         this.#active++;
-        const report: ByteReport = (loaded, total) => this.#report(key, loaded, total);
+        const report: ByteReport = (loaded, total) => this.#report(id, loaded, total);
         job(report)
           .then(resolve, reject)
           .finally(() => {
@@ -65,17 +67,17 @@ export class LoadQueue {
     });
   }
 
-  #report(key: string, loaded: number, total: number): void {
-    const prev = this.#keyLoaded.get(key) ?? 0;
+  #report(id: number, loaded: number, total: number): void {
+    const prev = this.#jobLoaded.get(id) ?? 0;
     this.#loaded += loaded - prev;
-    this.#keyLoaded.set(key, loaded);
-    if (total > 0) this.#keyTotal.set(key, total);
+    this.#jobLoaded.set(id, loaded);
+    if (total > 0) this.#jobTotal.set(id, total);
     this.#emit();
   }
 
   #emit(): void {
     let known = 0;
-    for (const t of this.#keyTotal.values()) known += t;
+    for (const t of this.#jobTotal.values()) known += t;
     const total = Math.max(this.#estimated, known, this.#loaded);
     this.#onProgress?.({ loaded: this.#loaded, total });
   }
@@ -84,7 +86,7 @@ export class LoadQueue {
 /** Load a GLB through the queue, forwarding its byte progress. Resolves the
  * root Object3D (gltf.scene). The server sends Content-Length, so ev.total is
  * a real size, not 0. */
-export function queuedGLB(queue: LoadQueue, loader: GLTFLoader, url: string, key = url): Promise<Group> {
+export function queuedGLB(queue: LoadQueue, loader: GLTFLoader, url: string): Promise<Group> {
   return queue.add(
     (report) =>
       new Promise<Group>((resolve, reject) =>
@@ -95,6 +97,5 @@ export function queuedGLB(queue: LoadQueue, loader: GLTFLoader, url: string, key
           reject,
         ),
       ),
-    key,
   );
 }

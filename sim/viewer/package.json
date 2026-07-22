@@ -7,8 +7,11 @@
   "scripts": {
     "build:lib": "vite build --config vite.lib.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node src/loadQueue.test.js",
+    "test": "node --experimental-strip-types src/loadQueue.test.js",
     "split:apartment": "node tools/split-apartment.mjs"
+  },
+  "engines": {
+    "node": ">=22.6"
   },
   "dependencies": {
     "three": "^0.185.0",

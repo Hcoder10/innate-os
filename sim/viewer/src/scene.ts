@@ -242,26 +242,38 @@ export class SimScene {
 
     if (!manifest) {
       // Dev-only fallback: a checkout that never ran the split. The published
-      // bundle always ships the manifest and never the monolith.
-      const root = await queuedGLB(queue, loader, APARTMENT_URL);
-      this.dressRoom(root);
-      group.add(root);
+      // bundle always ships the manifest and never the monolith, so in prod
+      // this path only runs if the manifest fetch itself failed -- non-fatal,
+      // the sim just runs without the visual environment (robot still works).
+      try {
+        const root = await queuedGLB(queue, loader, APARTMENT_URL);
+        this.dressRoom(root);
+        group.add(root);
+      } catch (err) {
+        console.error("[sim-viewer] apartment unavailable (no manifest, no monolith):", err);
+      }
       return;
     }
 
     // Draw each room's placeholder box immediately, then stream its glb in and
-    // swap the box out on arrival -- the layout reads before any bytes land.
+    // swap the box out on arrival -- the layout reads before any bytes land. A
+    // room that fails is non-fatal (visual only): log it, drop its box, and let
+    // the rest of the apartment and the session carry on.
     await Promise.all(
       manifest.rooms.map((room) => {
         const box = roomPlaceholder(room.bbox);
         group.add(box);
-        return queuedGLB(queue, loader, `/models/apartment/${room.file}`, room.file).then((root) => {
-          this.dressRoom(root);
-          group.add(root);
-          group.remove(box);
-          box.geometry.dispose();
-          (box.material as THREE.Material).dispose();
-        });
+        return queuedGLB(queue, loader, `/models/apartment/${room.file}`)
+          .then((root) => {
+            this.dressRoom(root);
+            group.add(root);
+          })
+          .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
+          .finally(() => {
+            group.remove(box);
+            box.geometry.dispose();
+            (box.material as THREE.Material).dispose();
+          });
       }),
     );
   }
@@ -316,7 +328,7 @@ export class SimScene {
               (err) => finish(null, err),
             );
           });
-        }, path),
+        }),
       );
     };
     // The shipped .d.ts omits the `material` arg the runtime actually passes.

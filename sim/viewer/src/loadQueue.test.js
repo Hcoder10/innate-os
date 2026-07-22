@@ -1,7 +1,8 @@
 // Tests for loadQueue.ts's LoadQueue -- zero dependencies, plain node:
-//   node src/loadQueue.test.js
-// Only the pure concurrency/progress core is exercised (queuedGLB needs a real
-// GLTFLoader). Node strips the types from the imported .ts at load time.
+//   node --experimental-strip-types src/loadQueue.test.js   (npm test)
+// The flag makes this run on Node 22.6+ (type stripping is unflagged from
+// 22.18). Only the pure concurrency/progress core is exercised (queuedGLB needs
+// a real GLTFLoader).
 
 import assert from "node:assert/strict";
 import { LoadQueue } from "./loadQueue.ts";
@@ -32,13 +33,13 @@ await test("never runs more than `limit` jobs at once", async () => {
   let active = 0;
   let max = 0;
   const gate = deferred();
-  const jobs = [0, 1, 2, 3, 4].map((i) =>
+  const jobs = [0, 1, 2, 3, 4].map(() =>
     q.add(async () => {
       active += 1;
       max = Math.max(max, active);
       await gate.promise;
       active -= 1;
-    }, `k${i}`),
+    }),
   );
   await tick();
   assert.equal(active, 2, "exactly `limit` in flight while the rest wait");
@@ -55,7 +56,7 @@ await test("dequeues in FIFO order", async () => {
     q.add(async () => {
       order.push(i);
       await gates[i].promise;
-    }, `k${i}`),
+    }),
   );
   await tick();
   assert.deepEqual(order, [0], "only the first started");
@@ -69,32 +70,33 @@ await test("dequeues in FIFO order", async () => {
   await Promise.all(jobs);
 });
 
-await test("aggregates loaded/total across keys and dedups repeat reports", async () => {
+await test("aggregates across jobs, dedups repeats, and never conflates two jobs", async () => {
   const seen = [];
   const q = new LoadQueue(3, (p) => seen.push(p));
   const gA = deferred();
   const gB = deferred();
   let repA, repB;
+  // Both jobs fetch the SAME url -- they must still track independently.
   const a = q.add(async (report) => {
     repA = report;
     await gA.promise;
-  }, "a");
+  });
   const b = q.add(async (report) => {
     repB = report;
     await gB.promise;
-  }, "b");
+  });
   await tick();
 
   repA(30, 100);
-  repB(40, 200);
+  repB(40, 100);
   let last = seen[seen.length - 1];
-  assert.equal(last.loaded, 70, "loaded sums both jobs");
-  assert.equal(last.total, 300, "total sums both known sizes");
+  assert.equal(last.loaded, 70, "loaded sums both jobs (not conflated by shared url)");
+  assert.equal(last.total, 200, "total sums both sizes (not one)");
 
-  repA(90, 100); // same key again: replaces, not adds
+  repA(90, 100); // same job again: replaces, not adds
   last = seen[seen.length - 1];
   assert.equal(last.loaded, 130, "dedup: 90 (a) + 40 (b), not 30+90+40");
-  assert.equal(last.total, 300);
+  assert.equal(last.total, 200);
 
   gA.resolve();
   gB.resolve();
@@ -112,7 +114,7 @@ await test("setEstimatedTotal seeds the denominator and acts as a floor", async 
   const job = q.add(async (report) => {
     rep = report;
     await g.promise;
-  }, "a");
+  });
   await tick();
   rep(100, 100); // real size below the estimate
   assert.equal(seen[seen.length - 1].total, 500, "estimate stays the floor until real sizes exceed it");
@@ -122,16 +124,18 @@ await test("setEstimatedTotal seeds the denominator and acts as a floor", async 
 
 await test("a rejected job frees its slot", async () => {
   const q = new LoadQueue(1);
-  const first = q.add(async () => {
-    throw new Error("boom");
-  }, "a").then(
-    () => "resolved",
-    (e) => e.message,
-  );
+  const first = q
+    .add(async () => {
+      throw new Error("boom");
+    })
+    .then(
+      () => "resolved",
+      (e) => e.message,
+    );
   let ranSecond = false;
   const second = q.add(async () => {
     ranSecond = true;
-  }, "b");
+  });
   assert.equal(await first, "boom");
   await second;
   assert.equal(ranSecond, true, "the next job ran after the first rejected");
