@@ -599,7 +599,9 @@ class ModeManager(Node):
             # the mode down and a manual retry of change_mode succeeded.)
             map_load_success = False
             for startup_pass in (1, 2):
-                failures, map_load_success = self._startup_pass(mode, node_names, configure_only)
+                failures, map_load_success = self._startup_pass(
+                    mode, node_names, configure_only, map_already_loaded=map_load_success
+                )
                 if not failures:
                     break
                 if startup_pass == 1:
@@ -624,12 +626,17 @@ class ModeManager(Node):
             self.get_logger().error(error_msg)
             return False, error_msg
 
-    def _startup_pass(self, mode: NavigationMode, node_names: list, configure_only: set) -> tuple[list, bool]:
+    def _startup_pass(
+        self, mode: NavigationMode, node_names: list, configure_only: set, map_already_loaded: bool = False
+    ) -> tuple[list, bool]:
         """One configure+activate sweep over the mode's nodes.
 
         Every transition is idempotent (nodes already at/above the target are
         left alone), so this is safe to run repeatedly. Returns the nodes that
         failed plus whether the map load succeeded (navigation mode only).
+        Pass map_already_loaded=True on a retry pass to skip reloading a map
+        that a previous pass already loaded (only_up transitions never take
+        the map server back down, so the loaded map persists).
         """
         failures = []
         map_load_success = False
@@ -674,9 +681,13 @@ class ModeManager(Node):
 
             # Load map immediately after map server is activated (navigation mode only)
             if mode == NavigationMode.NAV and "map_server" in node_name and success:
-                map_load_success = self._load_map_on_server(node_name)
-                if not map_load_success:
-                    failures.append(f"{node_name}_map_load")
+                if map_already_loaded:
+                    self.get_logger().info(f"Map already loaded on {node_name} in a previous pass; skipping reload")
+                    map_load_success = True
+                else:
+                    map_load_success = self._load_map_on_server(node_name)
+                    if not map_load_success:
+                        failures.append(f"{node_name}_map_load")
 
         self.get_logger().info("Activated nodes")
         return failures, map_load_success
