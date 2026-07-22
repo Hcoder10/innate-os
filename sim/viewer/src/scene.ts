@@ -78,10 +78,12 @@ export class SimScene {
   private hullsGroup?: THREE.Group;
   private hullsPromise?: Promise<void>;
   private hullsVisible = false;
-  // Shared fat-line material for room placeholder boxes (LineBasicMaterial's
+  // Shared fat-line material for placeholder boxes (LineBasicMaterial's
   // linewidth is ignored by WebGL). resolution is refreshed each render().
   private placeholderMat?: LineMaterial;
   private tmpSize = new THREE.Vector2();
+  // Robot-shaped placeholder box, shown at the spawn pose until the STLs load.
+  private robotBox?: LineSegments2;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -116,6 +118,11 @@ export class SimScene {
 
     this.addLights();
     this.addGround();
+    // Robot-sized placeholder box inside robotRoot: hidden with it until the
+    // first pose (spawnAt), then it marks the real spawn spot while the STLs
+    // stream; loadRobot removes it once the meshes are in.
+    this.robotBox = this.boxOutline(new THREE.Box3(new THREE.Vector3(-0.22, -0.22, 0), new THREE.Vector3(0.22, 0.22, 0.75)));
+    this.robotRoot.add(this.robotBox);
     this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
@@ -268,7 +275,13 @@ export class SimScene {
     // the rest of the apartment and the session carry on.
     await Promise.all(
       manifest.rooms.map((room) => {
-        const box = this.roomPlaceholder(room.bbox);
+        const b = room.bbox;
+        const box = this.boxOutline(
+          new THREE.Box3(
+            new THREE.Vector3(b.min[0], b.min[1], b.min[2]),
+            new THREE.Vector3(b.max[0], b.max[1], b.max[2]),
+          ),
+        );
         group.add(box);
         return queuedGLB(queue, loader, `/models/apartment/${room.file}`)
           .then((root) => {
@@ -300,17 +313,13 @@ export class SimScene {
     });
   }
 
-  /** A thick wireframe box marking where a room will be, until its glb arrives.
-   * Uses fat lines (LineSegments2) since WebGL ignores LineBasicMaterial width. */
-  private roomPlaceholder(bbox: { min: number[]; max: number[] }): LineSegments2 {
+  /** A thick wireframe outline of a box, used as a loading placeholder (room or
+   * robot). Fat lines (LineSegments2) since WebGL ignores LineBasicMaterial width. */
+  private boxOutline(box: THREE.Box3): LineSegments2 {
     if (!this.placeholderMat) {
       this.placeholderMat = new LineMaterial({ color: 0x3a6b5a, linewidth: 3, transparent: true, opacity: 0.6 });
       this.placeholderMat.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     }
-    const box = new THREE.Box3(
-      new THREE.Vector3(bbox.min[0], bbox.min[1], bbox.min[2]),
-      new THREE.Vector3(bbox.max[0], bbox.max[1], bbox.max[2]),
-    );
     const size = box.getSize(new THREE.Vector3());
     const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
     const edges = new THREE.EdgesGeometry(boxGeo);
@@ -386,6 +395,11 @@ export class SimScene {
     });
     this.robotRoot.add(robot);
     this.robot = robot;
+    if (this.robotBox) {
+      this.robotRoot.remove(this.robotBox);
+      this.robotBox.geometry.dispose(); // material is shared -- disposed in dispose()
+      this.robotBox = undefined;
+    }
 
     for (const mount of ROBOT_CAMERA_MOUNTS) {
       const frame = robot.frames[mount.frame];

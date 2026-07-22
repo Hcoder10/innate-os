@@ -32,7 +32,7 @@ export class LoadQueue {
   #jobLoaded = new Map<number, number>(); // last loaded bytes reported, per job
   #jobTotal = new Map<number, number>(); // real size once its Content-Length lands
 
-  constructor(limit = 3, onProgress?: (p: LoadProgress) => void) {
+  constructor(limit = 2, onProgress?: (p: LoadProgress) => void) {
     this.#limit = Math.max(1, limit);
     this.#onProgress = onProgress;
   }

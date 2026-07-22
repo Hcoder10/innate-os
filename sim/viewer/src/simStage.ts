@@ -206,20 +206,20 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   // One shared bounded queue drives real byte progress for the whole load;
   // seed an estimate so the bar has a width before Content-Lengths arrive
   // (apartment ~35 MB + robot ~7 MB), refined as real sizes land.
-  const queue = new LoadQueue(3, ({ loaded, total }) => setProgress(loaded, total));
+  const queue = new LoadQueue(2, ({ loaded, total }) => setProgress(loaded, total));
   queue.setEstimatedTotal(42e6);
   (async () => {
     try {
-      // Robot first: reveal the live view as soon as the robot loads and the
-      // first pose arrives (stageReady + gotPose -> streaming), then stream the
-      // apartment in behind the scrim. Bail at each await if the stage was
-      // destroyed mid-load (SPA remount) -- else we'd mutate a disposed scene
-      // and publish a ready session for a view that's already gone.
+      // Start rendering + accept poses right away: the worldstate socket is
+      // already connecting (session.start), so the robot's placeholder box
+      // snaps to its real spawn pose while the STLs stream, then the mesh
+      // replaces it. Bail at each await if the stage was destroyed mid-load
+      // (SPA remount) -- else we'd mutate a disposed scene.
+      session.stageReady();
+      raf = requestAnimationFrame(loop);
       setLoading("loading robot…");
       await scene.loadRobot(queue);
       if (disposed) return;
-      session.stageReady();
-      raf = requestAnimationFrame(loop);
       setLoading("loading apartment…");
       await scene.loadApartment(queue);
       if (disposed) return;
