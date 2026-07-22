@@ -209,26 +209,14 @@ def _safe_resolve(path: Path) -> "Path | None":
         return None
 
 
-async def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
-    """Serve a file no-cache. Binary/large assets — and any compressible file over
-    _INLINE_MAX_BYTES — stream through FileResponse: sendfile on cleartext, plus
-    the native mtime+size ETag, bodyless 304, and Range. Small compressible text
-    (js/css/html/json/svg) is served from memory instead so the compress
-    middleware can gzip it, with the same mtime+size ETag FileResponse would use
-    so revalidation still 304s. FileResponse itself can't be gzipped (it keeps the
-    uncompressed Content-Length, corrupting framing) and binary types are already
-    compressed."""
-    ct = _content_type(path)
-    if ct.startswith(_COMPRESSIBLE):
-        st = path.stat()
-        if st.st_size <= _INLINE_MAX_BYTES:
-            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
-            headers = {"ETag": etag, "Cache-Control": "no-cache"}
-            if request.headers.get("If-None-Match") == etag:
-                return web.Response(status=304, headers=headers)
-            body = await asyncio.to_thread(path.read_bytes)
-            return web.Response(body=body, headers={**headers, "Content-Type": ct})
-    return web.FileResponse(path, headers={"Content-Type": ct, "Cache-Control": "no-cache"})
+def _serve_static(path: Path) -> web.FileResponse:
+    """Serve a file no-cache via FileResponse: sendfile on the cleartext port,
+    native mtime+size ETag, bodyless 304, and Range. Static text isn't gzipped on
+    the fly — FileResponse can't (it keeps the uncompressed Content-Length, which
+    corrupts framing) and on a LAN the webapp JS is tiny; static compression will
+    ride on precompressed .br/.gz siblings once the build emits them (INN-674).
+    Dynamic JSON is still gzipped by compress_middleware, where it earns its keep."""
+    return web.FileResponse(path, headers={"Content-Type": _content_type(path), "Cache-Control": "no-cache"})
 
 
 @web.middleware
@@ -273,7 +261,7 @@ async def static_handler(request: web.Request) -> web.StreamResponse:
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         raise web.HTTPNotFound(text="not found")
-    return await _serve_static(request, body_path)
+    return _serve_static(body_path)
 
 
 async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
@@ -284,7 +272,7 @@ async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
         target = _safe_resolve(base / clean[len(prefix) :])
         if target is None or not target.is_file() or not target.is_relative_to(base.resolve()):
             raise web.HTTPNotFound(text="not found")
-        return await _serve_static(request, target)
+        return _serve_static(target)
     raise web.HTTPNotFound(text="not found")
 
 
