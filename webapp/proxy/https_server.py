@@ -79,6 +79,12 @@ ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 _WORLD_HOST = os.environ.get("VIRTUAL_MARS_REMOTE", "").strip().partition(":")[0] or "127.0.0.1"
 WORLD_STATE_URL = f"ws://{_WORLD_HOST}:8800"
 
+# Ping both legs of every relay so a peer that vanishes without a FIN (a robot's
+# WiFi dropping mid-teleop) is reaped in ~heartbeat seconds instead of lingering
+# until the kernel's TCP timeout and leaking upstream rosbridge subscriptions.
+# The old websockets library defaulted to a 20s ping; aiohttp defaults to none.
+WS_HEARTBEAT = 20.0
+
 
 def _quiet_benign_disconnects() -> None:
     """Drop the traceback aiohttp logs when a client vanishes mid-request —
@@ -182,44 +188,62 @@ _COMPRESSIBLE = (
     "application/xml",
     "image/svg+xml",
 )
+# Cap for what we read into memory and gzip on the event loop (small static text,
+# or an already-built media JSON). Larger compressible files stream via
+# FileResponse uncompressed instead, so a multi-MB read+gzip never stalls the
+# /ws teleop relay (aiohttp gzips synchronously on the loop).
+_INLINE_MAX_BYTES = 1 << 20  # 1 MiB
 
 
 def _content_type(path: Path) -> str:
     return CONTENT_TYPES.get(path.suffix) or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
 
-def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
-    """Serve a file no-cache. Binary/large assets go through FileResponse, which
-    streams them (sendfile on cleartext) and adds the mtime+size ETag, the
-    bodyless 304, and Range natively — and which can't be gzipped anyway
-    (glb/png/mp4 are already compressed; FileResponse keeps the uncompressed
-    Content-Length, so on-the-fly gzip would corrupt framing).
+def _safe_resolve(path: Path) -> "Path | None":
+    """Path.resolve() that returns None instead of raising on illegal bytes — a
+    percent-decoded NUL in the URL, which aiohttp hands us decoded — so malformed
+    input becomes a 404, not a 500 (mirrors media_routes._safe_resolve)."""
+    try:
+        return path.resolve()
+    except (OSError, ValueError):
+        return None
 
-    Compressible text (js/css/html/json/svg — small) is served from memory as a
-    plain Response so the compress middleware *can* gzip it, with the same
-    mtime+size ETag FileResponse would have used, so revalidation still 304s."""
+
+def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
+    """Serve a file no-cache. Binary/large assets — and any compressible file over
+    _INLINE_MAX_BYTES — stream through FileResponse: sendfile on cleartext, plus
+    the native mtime+size ETag, bodyless 304, and Range. Small compressible text
+    (js/css/html/json/svg) is served from memory instead so the compress
+    middleware can gzip it, with the same mtime+size ETag FileResponse would use
+    so revalidation still 304s. FileResponse itself can't be gzipped (it keeps the
+    uncompressed Content-Length, corrupting framing) and binary types are already
+    compressed."""
     ct = _content_type(path)
-    if not ct.startswith(_COMPRESSIBLE):
-        return web.FileResponse(path, headers={"Content-Type": ct, "Cache-Control": "no-cache"})
-    st = path.stat()
-    etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
-    headers = {"ETag": etag, "Cache-Control": "no-cache"}
-    if request.headers.get("If-None-Match") == etag:
-        return web.Response(status=304, headers=headers)
-    return web.Response(body=path.read_bytes(), headers={**headers, "Content-Type": ct})
+    if ct.startswith(_COMPRESSIBLE):
+        st = path.stat()
+        if st.st_size <= _INLINE_MAX_BYTES:
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            headers = {"ETag": etag, "Cache-Control": "no-cache"}
+            if request.headers.get("If-None-Match") == etag:
+                return web.Response(status=304, headers=headers)
+            return web.Response(body=path.read_bytes(), headers={**headers, "Content-Type": ct})
+    return web.FileResponse(path, headers={"Content-Type": ct, "Cache-Control": "no-cache"})
 
 
 @web.middleware
 async def compress_middleware(request: web.Request, handler) -> web.StreamResponse:
     """gzip compressible in-memory 200s when the client accepts it. FileResponse
     is excluded on purpose — it keeps a fixed uncompressed Content-Length, so
-    compressing it corrupts the response framing. 304/206/101 fall through."""
+    compressing it corrupts the response framing. Bodies over _INLINE_MAX_BYTES
+    are left raw so the synchronous gzip can't stall the loop. 304/206/101 fall
+    through."""
     resp = await handler(request)
     if (
         not isinstance(resp, web.FileResponse)
         and resp.status == 200
         and "gzip" in request.headers.get("Accept-Encoding", "")
         and (resp.headers.get("Content-Type") or "").startswith(_COMPRESSIBLE)
+        and (resp.content_length or 0) <= _INLINE_MAX_BYTES
     ):
         resp.enable_compression()
     return resp
@@ -227,7 +251,9 @@ async def compress_middleware(request: web.Request, handler) -> web.StreamRespon
 
 async def static_handler(request: web.Request) -> web.StreamResponse:
     clean = request.path
-    target = (ROOT / clean.lstrip("/")).resolve()
+    target = _safe_resolve(ROOT / clean.lstrip("/"))
+    if target is None:
+        raise web.HTTPNotFound(text="not found")
     if target.is_dir():
         target = target / "index.html"
     body_path = target if target.is_file() else None
@@ -249,8 +275,8 @@ async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
     for prefix, base in SIM_VIEWER_ROUTES.items():
         if not clean.startswith(prefix):
             continue
-        target = (base / clean[len(prefix) :]).resolve()
-        if not target.is_file() or not target.is_relative_to(base.resolve()):
+        target = _safe_resolve(base / clean[len(prefix) :])
+        if target is None or not target.is_file() or not target.is_relative_to(base.resolve()):
             raise web.HTTPNotFound(text="not found")
         return _serve_static(request, target)
     raise web.HTTPNotFound(text="not found")
@@ -337,7 +363,7 @@ async def run_log_handler(request: web.Request) -> web.Response:
 async def settings_handler(request: web.Request) -> web.StreamResponse:
     # A WebSocket upgrade -> the write channel; a plain GET -> the override values.
     if request.headers.get("Upgrade", "").lower() == "websocket":
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT)
         await ws.prepare(request)
         await settings_ws(ws)
         return ws
@@ -359,17 +385,19 @@ async def ws_proxy(request: web.Request) -> web.WebSocketResponse:
     """Bidirectional relay: /ws <-> rosbridge, /worldstate <-> the sim world
     server's observer stream. max_msg_size=0 lifts aiohttp's default cap for the
     large point-cloud / world-state frames."""
-    ws = web.WebSocketResponse(max_msg_size=0)
+    ws = web.WebSocketResponse(max_msg_size=0, heartbeat=WS_HEARTBEAT)
     await ws.prepare(request)
     upstream_url = WORLD_STATE_URL if request.path == "/worldstate" else ROSBRIDGE_URL
     session: aiohttp.ClientSession = request.app["client"]
     try:
-        async with session.ws_connect(upstream_url, max_msg_size=0) as upstream:
+        async with session.ws_connect(upstream_url, max_msg_size=0, heartbeat=WS_HEARTBEAT) as upstream:
             tasks = [asyncio.create_task(_pump(ws, upstream)), asyncio.create_task(_pump(upstream, ws))]
             _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            # gather ALL tasks (finished + cancelled), so a pump whose send failed
+            # on a peer reset doesn't surface as "exception never retrieved".
+            await asyncio.gather(*tasks, return_exceptions=True)
     except Exception as err:  # upstream down — close the client politely
         print(f"ws relay ended: {err}")
     finally:
