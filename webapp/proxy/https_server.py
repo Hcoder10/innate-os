@@ -233,18 +233,23 @@ async def _serve_static(request: web.Request, path: Path) -> web.StreamResponse:
 
 @web.middleware
 async def compress_middleware(request: web.Request, handler) -> web.StreamResponse:
-    """gzip compressible in-memory 200s when the client accepts it. FileResponse
-    is excluded on purpose — it keeps a fixed uncompressed Content-Length, so
-    compressing it corrupts the response framing. Bodies over _INLINE_MAX_BYTES
-    are left raw so the synchronous gzip can't stall the loop. 304/206/101 fall
-    through."""
+    """Let aiohttp gzip compressible in-memory 200s when the client accepts it.
+    Only web.Response is eligible — FileResponse streams from disk with a fixed
+    uncompressed Content-Length (compressing it corrupts framing), and binary or
+    large assets go through it uncompressed. Bodies over _INLINE_MAX_BYTES stay
+    raw: that is aiohttp's own LARGE_BODY_SIZE, above which it wants a
+    zlib_executor to keep the gzip off the loop; at or below it, aiohttp
+    compresses inline by design, a few ms that only lands on a cold load
+    (revalidations are bodyless 304s). 304/206 have no body and fall through."""
     resp = await handler(request)
     if (
-        not isinstance(resp, web.FileResponse)
+        isinstance(resp, web.Response)
         and resp.status == 200
+        and resp.body
+        and not resp.headers.get("Content-Encoding")
         and "gzip" in request.headers.get("Accept-Encoding", "")
         and (resp.headers.get("Content-Type") or "").startswith(_COMPRESSIBLE)
-        and (resp.content_length or 0) <= _INLINE_MAX_BYTES
+        and len(resp.body) <= _INLINE_MAX_BYTES
     ):
         resp.enable_compression()
     return resp
