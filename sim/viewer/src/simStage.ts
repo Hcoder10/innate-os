@@ -5,6 +5,7 @@
 // context and blitted out.
 
 import { SimScene, type CameraView } from "./scene";
+import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
 // One PiP tile refresh per N rendered frames, round-robin: ~30fps per tile
@@ -199,19 +200,17 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     }
   };
 
-  // Coarse phase weights until commit 3 wires real byte progress through the
-  // load queue: apartment (~35 MB) then robot (~7 MB).
-  const APT_EST = 35e6;
-  const TOTAL_EST = APT_EST + 7e6;
+  // One shared bounded queue drives real byte progress for the whole load;
+  // seed an estimate so the bar has a width before Content-Lengths arrive
+  // (apartment ~35 MB + robot ~7 MB), refined as real sizes land.
+  const queue = new LoadQueue(3, ({ loaded, total }) => setProgress(loaded, total));
+  queue.setEstimatedTotal(42e6);
   (async () => {
     try {
       setLoading("loading apartment…");
-      setProgress(0, TOTAL_EST);
-      await scene.loadApartment();
-      setProgress(APT_EST, TOTAL_EST);
+      await scene.loadApartment(queue);
       setLoading("loading robot…");
-      await scene.loadRobot();
-      setProgress(TOTAL_EST, TOTAL_EST);
+      await scene.loadRobot(queue);
       setLoading("connecting to the world…");
       session.stageReady();
       if (!disposed) raf = requestAnimationFrame(loop);

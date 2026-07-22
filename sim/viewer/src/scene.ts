@@ -6,8 +6,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
+import { LoadQueue, queuedGLB } from "./loadQueue";
 
 const APARTMENT_URL = "/models/appartement.glb";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
@@ -214,10 +216,9 @@ export class SimScene {
     this.scene.add(group);
   }
 
-  async loadApartment(): Promise<void> {
+  async loadApartment(queue: LoadQueue): Promise<void> {
     const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(APARTMENT_URL);
-    const root = gltf.scene;
+    const root = await queuedGLB(queue, loader, APARTMENT_URL);
     root.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
@@ -235,18 +236,48 @@ export class SimScene {
     this.scene.add(root);
   }
 
-  async loadRobot(): Promise<URDFRobot> {
-    // loadAsync resolves at URDF parse, but the STL meshes attach later via
-    // this LoadingManager -- wait for onLoad or the restyle below misses them.
-    const manager = new THREE.LoadingManager();
-    const allMeshesLoaded = new Promise<void>((resolve) => {
-      manager.onLoad = () => resolve();
-    });
-
-    const loader = new URDFLoader(manager);
+  async loadRobot(queue: LoadQueue): Promise<URDFRobot> {
+    const loader = new URDFLoader();
     loader.packages = { mars_sim: "/robot" };
+
+    // Route each STL through the shared queue (bounded concurrency + byte
+    // progress) instead of URDFLoader's default all-at-once loading. loadAsync
+    // resolves at URDF parse; the meshes attach later via these queued jobs, so
+    // we await their promises before the restyle below (which else misses them).
+    const meshLoads: Promise<void>[] = [];
+    const loadMesh = (
+      path: string,
+      manager: THREE.LoadingManager,
+      material: THREE.Material,
+      done: (obj: THREE.Object3D | null, err?: unknown) => void,
+    ): void => {
+      meshLoads.push(
+        queue.add((report) => {
+          return new Promise<void>((resolve) => {
+            const finish = (obj: THREE.Object3D | null, err?: unknown) => {
+              done(obj, err);
+              resolve();
+            };
+            if (!/\.stl$/i.test(path)) {
+              console.warn(`[scene] unsupported robot mesh (expected STL): ${path}`);
+              finish(null);
+              return;
+            }
+            new STLLoader(manager).load(
+              path,
+              (geom) => finish(new THREE.Mesh(geom, material ?? new THREE.MeshPhongMaterial())),
+              (ev) => report(ev.loaded, ev.total),
+              (err) => finish(null, err),
+            );
+          });
+        }, path),
+      );
+    };
+    // The shipped .d.ts omits the `material` arg the runtime actually passes.
+    loader.loadMeshCb = loadMesh as unknown as typeof loader.loadMeshCb;
+
     const robot = await loader.loadAsync(ROBOT_URDF_URL);
-    await allMeshesLoaded;
+    await Promise.all(meshLoads);
 
     for (const name of HIDDEN_FRAME_LINKS) {
       const link = robot.links[name];
