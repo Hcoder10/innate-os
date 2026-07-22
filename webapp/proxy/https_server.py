@@ -178,23 +178,6 @@ SIM_VIEWER_ROUTES = {
     "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
 }
 
-# Types worth gzipping on the fly; binary assets (glb, mp4, png, avif) are
-# already compressed and are left to stream (sendfile on cleartext). Matched with
-# str.startswith so charset suffixes ("text/html; charset=utf-8") still count.
-_COMPRESSIBLE = (
-    "text/",
-    "application/json",
-    "application/x-ndjson",
-    "application/xml",
-    "image/svg+xml",
-)
-# Cap for what we read into memory and gzip on the event loop (small static text,
-# or an already-built media JSON). Larger compressible files stream via
-# FileResponse uncompressed instead, so a multi-MB read+gzip never stalls the
-# /ws teleop relay (aiohttp gzips synchronously on the loop).
-_INLINE_MAX_BYTES = 1 << 20  # 1 MiB
-
-
 def _content_type(path: Path) -> str:
     return CONTENT_TYPES.get(path.suffix) or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
@@ -211,36 +194,13 @@ def _safe_resolve(path: Path) -> "Path | None":
 
 def _serve_static(path: Path) -> web.FileResponse:
     """Serve a file no-cache via FileResponse: sendfile on the cleartext port,
-    native mtime+size ETag, bodyless 304, and Range. Static text isn't gzipped on
-    the fly — FileResponse can't (it keeps the uncompressed Content-Length, which
-    corrupts framing) and on a LAN the webapp JS is tiny; static compression will
-    ride on precompressed .br/.gz siblings once the build emits them (INN-674).
-    Dynamic JSON is still gzipped by compress_middleware, where it earns its keep."""
+    native mtime+size ETag, bodyless 304, and Range.
+
+    No on-the-fly gzip anywhere in the server (the compress middleware was
+    removed). TODO(INN-674): bring compression back — static via precompressed
+    .br/.gz build siblings that FileResponse sendfiles, dynamic JSON
+    (joints/logs) via its own path."""
     return web.FileResponse(path, headers={"Content-Type": _content_type(path), "Cache-Control": "no-cache"})
-
-
-@web.middleware
-async def compress_middleware(request: web.Request, handler) -> web.StreamResponse:
-    """Let aiohttp gzip compressible in-memory 200s when the client accepts it.
-    Only web.Response is eligible — FileResponse streams from disk with a fixed
-    uncompressed Content-Length (compressing it corrupts framing), and binary or
-    large assets go through it uncompressed. Bodies over _INLINE_MAX_BYTES stay
-    raw: that is aiohttp's own LARGE_BODY_SIZE, above which it wants a
-    zlib_executor to keep the gzip off the loop; at or below it, aiohttp
-    compresses inline by design, a few ms that only lands on a cold load
-    (revalidations are bodyless 304s). 304/206 have no body and fall through."""
-    resp = await handler(request)
-    if (
-        isinstance(resp, web.Response)
-        and resp.status == 200
-        and resp.body
-        and not resp.headers.get("Content-Encoding")
-        and "gzip" in request.headers.get("Accept-Encoding", "")
-        and (resp.headers.get("Content-Type") or "").startswith(_COMPRESSIBLE)
-        and len(resp.body) <= _INLINE_MAX_BYTES
-    ):
-        resp.enable_compression()
-    return resp
 
 
 async def static_handler(request: web.Request) -> web.StreamResponse:
@@ -408,7 +368,7 @@ async def _on_cleanup(app: web.Application) -> None:
 
 
 def build_app() -> web.Application:
-    app = web.Application(middlewares=[compress_middleware])
+    app = web.Application()
     app.router.add_get("/ws", ws_proxy)
     app.router.add_get("/worldstate", ws_proxy)
     app.router.add_get("/config.json", config_handler)
