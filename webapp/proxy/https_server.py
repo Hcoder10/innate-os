@@ -31,7 +31,6 @@ import shutil
 import ssl
 import subprocess
 import sys
-from email.utils import formatdate, parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -180,88 +179,28 @@ SIM_VIEWER_ROUTES = {
     "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
 }
 
-# The 3D asset trees ship in the pinned sim-assets release (sim/sim-assets.lock)
-# and only change when that lock bumps, so they are worth a real max-age: the SPA
-# remounts the stage on every visit, and revalidating ~63MB across 1300+ files
-# each time costs a round trip per file for an answer that is always "unchanged".
-# /sim-viewer/ is deliberately NOT here — viewer devs rebuild the bundle in place
-# (INNATE_SIM_VIEWER_DEV=1) and must see a rebuild without a hard refresh.
-CACHEABLE_ASSET_PREFIXES = ("/models/", "/robot/", "/physics/")
-ASSET_MAX_AGE_SECONDS = 86400
 
+def file_etag(path: Path) -> str:
+    """A cheap ETag for a file from a single stat(): mtime+size, the validator
+    nginx and Apache use. It changes on any write and costs one stat()
+    regardless of file size.
 
-def _sim_assets_tag() -> str:
-    """The pinned sim-assets release tag, mixed into the 3D assets' ETag.
+    Deliberately NOT a content hash: producing one means reading and digesting
+    the body, so every conditional request paid a full read + SHA-1 of the 34MB
+    apartment glb just to answer a bodyless 304.
 
-    Needed because the bundle is extracted from a tarball that preserves
-    epoch-0 mtimes — 1319 of the 1322 served asset files have mtime 0 — so a
-    bare mtime+size validator degrades to size-only for them, and a refreshed
-    asset whose size happened to match would keep its ETag and be served stale.
-    The tag is a content hash of the whole bundle and changes on every
-    republish, which is the only boundary at which these files can change.
+    ETag-only, no Last-Modified: the browser talks straight to this server (no
+    proxy in between), so If-None-Match always comes back — the date validator
+    would be dead weight and one more clock/timezone edge to get wrong.
 
-    Read from .assets-tag first: it sits next to the extracted bundle under
-    sim/assets, which IS bind-mounted into the sim container, whereas
-    sim-assets.lock (repo root) is NOT — so the lock is only reachable on host
-    dev runs, and relying on it alone silently degraded the ETag to size-only
-    in the container. Both carry the same tag string."""
-    sim = SIM_VIEWER_ROOT.parent
-    try:
-        tag = (sim / "assets" / ".assets-tag").read_text().strip()
-        if tag:
-            return tag
-    except OSError:
-        pass
-    try:
-        return json.loads((sim / "sim-assets.lock").read_text())["tag"]
-    except (OSError, ValueError, KeyError):
-        return "noassets"
-
-
-SIM_ASSETS_TAG = _sim_assets_tag()
-
-
-def cache_validators(path: Path, prefix: str = "") -> tuple[str, str, float]:
-    """ETag + Last-Modified (+ raw mtime) for a file, from a single stat().
-
-    Deliberately NOT a content hash: the body has to be read and digested to
-    produce one, so every conditional request paid a full read + SHA-1 of the
-    34MB apartment glb just to answer a bodyless 304. mtime+size is the same
-    validator nginx and Apache use — it changes on any write, and costs one
-    stat() regardless of file size.
-
-    prefix qualifies the ETag for files whose mtime carries no information (see
-    _sim_assets_tag); app files keep real mtimes and need none."""
+    The sim asset bundle ships mtime-normalised (epoch 0) for a reproducible
+    tag, which would collapse this to size-only; the launcher stamps a real
+    mtime on extraction (see ensure_sim_assets) so it stays a true validator."""
     st = path.stat()
-    etag = f'"{prefix}{"-" if prefix else ""}{st.st_mtime_ns:x}-{st.st_size:x}"'
-    return etag, formatdate(st.st_mtime, usegmt=True), st.st_mtime
+    return f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
 
 
-def client_has_current(etag: str, mtime: float, if_none_match: str, if_modified_since: str) -> bool:
-    """Whether the client's cached copy is still current, per RFC 9110 §13.1.3:
-    If-None-Match wins outright when present, and only in its absence does
-    If-Modified-Since get a say.
-
-    Honouring the date matters because we advertise Last-Modified: a client
-    whose cached ETag was evicted, or a proxy that strips ETags, revalidates
-    with the date alone. Without this it misses the 304 and re-downloads the
-    whole asset — 34MB for the apartment glb."""
-    if if_none_match:
-        return if_none_match == etag
-    if not if_modified_since:
-        return False
-    try:
-        since = parsedate_to_datetime(if_modified_since)
-    except (TypeError, ValueError):
-        return False  # malformed date -> treat as no validator, send the body
-    if since is None:
-        return False
-    # HTTP-dates carry whole seconds, so compare at that resolution: a
-    # sub-second-newer file must not read as modified against its own date.
-    return int(mtime) <= int(since.timestamp())
-
-
-def sim_viewer_response(path: str, if_none_match: str = "", if_modified_since: str = "") -> "Response | None":
+def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
     clean = path.split("?", 1)[0].split("#", 1)[0]
     for prefix, base in SIM_VIEWER_ROUTES.items():
         if not clean.startswith(prefix):
@@ -272,22 +211,21 @@ def sim_viewer_response(path: str, if_none_match: str = "", if_modified_since: s
         # These routes carry the ~35MB apartment glb + robot meshes, re-requested
         # on every page mount now that the SPA router remounts the stage per
         # visit. Validate from stat() and return 304 *before* touching the body,
-        # so an unchanged asset costs a stat instead of a full read.
-        etag, last_modified, mtime = cache_validators(target, prefix=SIM_ASSETS_TAG)
-        cache_control = (
-            f"public, max-age={ASSET_MAX_AGE_SECONDS}" if clean.startswith(CACHEABLE_ASSET_PREFIXES) else "no-cache"
-        )
-        validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": cache_control}
-        if client_has_current(etag, mtime, if_none_match, if_modified_since):
-            return Response(304, "Not Modified", Headers(validators), b"")
+        # so an unchanged asset costs a stat instead of a full read. no-cache (not
+        # max-age): the viewer fetches these at bare, unversioned URLs, so a bundle
+        # bump must be picked up on the next revalidation, not up to a day later.
+        etag = file_etag(target)
+        cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
+        if if_none_match == etag:
+            return Response(304, "Not Modified", Headers(cache_headers), b"")
         body = target.read_bytes()
         ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        headers = Headers({**validators, "Content-Type": ctype, "Content-Length": str(len(body))})
+        headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
         return Response(200, "OK", headers, body)
     return None
 
 
-def static_response(path: str, if_none_match: str = "", if_modified_since: str = "") -> Response:
+def static_response(path: str, if_none_match: str = "") -> Response:
     clean = path.split("?", 1)[0].split("#", 1)[0]
     target = (ROOT / clean.lstrip("/")).resolve()
     if target.is_dir():
@@ -308,13 +246,13 @@ def static_response(path: str, if_none_match: str = "", if_modified_since: str =
     # Cache-Control stays no-cache so a redeploy is always picked up — the
     # browser still revalidates every load, but revalidation is a tiny
     # conditional request that never reads the file.
-    etag, last_modified, mtime = cache_validators(body_path)
-    validators = {"ETag": etag, "Last-Modified": last_modified, "Cache-Control": "no-cache"}
-    if client_has_current(etag, mtime, if_none_match, if_modified_since):
-        return Response(304, "Not Modified", Headers(validators), b"")
+    etag = file_etag(body_path)
+    cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if if_none_match == etag:
+        return Response(304, "Not Modified", Headers(cache_headers), b"")
     body = body_path.read_bytes()
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
-    headers = Headers({**validators, "Content-Type": ctype, "Content-Length": str(len(body))})
+    headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
     return Response(200, "OK", headers, body)
 
 
@@ -379,7 +317,6 @@ async def _dispatch_request(connection, request):
         sim_viewer_response,
         request.path,
         request.headers.get("If-None-Match", ""),
-        request.headers.get("If-Modified-Since", ""),
     )
     if sim_viewer is not None:
         return sim_viewer
@@ -416,7 +353,6 @@ async def _dispatch_request(connection, request):
         static_response,
         request.path,
         request.headers.get("If-None-Match", ""),
-        request.headers.get("If-Modified-Since", ""),
     )
 
 
