@@ -39,7 +39,6 @@ import ssl
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs
 
 import aiohttp
 from aiohttp import web
@@ -278,42 +277,6 @@ async def restart_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
-# The episode/run media builders do blocking disk I/O — reading multi-MB MP4s,
-# h5py decodes, directory walks. Run them off the event loop so a scrubbing
-# browser's back-to-back reads can't stall the rosbridge /ws relay. (episode
-# itself returns a FileResponse that streams on the loop, so it needs no thread.)
-def _qs(request: web.Request) -> dict:
-    return parse_qs(request.query_string)
-
-
-async def episode_handler(request: web.Request) -> web.StreamResponse:
-    return episode_response(_qs(request))
-
-
-async def joints_handler(request: web.Request) -> web.Response:
-    return await asyncio.to_thread(joints_response, _qs(request))
-
-
-async def profile_handler(request: web.Request) -> web.Response:
-    return await asyncio.to_thread(profile_response, _qs(request))
-
-
-async def thumb_handler(request: web.Request) -> web.Response:
-    return await thumb_response(_qs(request))
-
-
-async def map_preview_handler(request: web.Request) -> web.Response:
-    return await asyncio.to_thread(map_preview_response, _qs(request))
-
-
-async def run_info_handler(request: web.Request) -> web.Response:
-    return await asyncio.to_thread(run_info_response, _qs(request))
-
-
-async def run_log_handler(request: web.Request) -> web.Response:
-    return await asyncio.to_thread(run_log_response, _qs(request))
-
-
 async def settings_handler(request: web.Request) -> web.StreamResponse:
     # A WebSocket upgrade -> the write channel; a plain GET -> the override values.
     if request.headers.get("Upgrade", "").lower() == "websocket":
@@ -372,13 +335,13 @@ def build_app() -> web.Application:
     app.router.add_get("/ws", ws_proxy)
     app.router.add_get("/worldstate", ws_proxy)
     app.router.add_get("/config.json", config_handler)
-    app.router.add_get("/episode", episode_handler)
-    app.router.add_get("/episode/joints", joints_handler)
-    app.router.add_get("/episode/profile", profile_handler)
-    app.router.add_get("/episode/thumb", thumb_handler)
-    app.router.add_get("/map/preview", map_preview_handler)
-    app.router.add_get("/run/info", run_info_handler)
-    app.router.add_get("/run/log", run_log_handler)
+    app.router.add_get("/episode", episode_response)
+    app.router.add_get("/episode/joints", joints_response)
+    app.router.add_get("/episode/profile", profile_response)
+    app.router.add_get("/episode/thumb", thumb_response)
+    app.router.add_get("/map/preview", map_preview_response)
+    app.router.add_get("/run/info", run_info_response)
+    app.router.add_get("/run/log", run_log_response)
     app.router.add_get("/settings", settings_handler)
     app.router.add_get("/restart", restart_handler)
     # Prefix routes must precede the catch-all so /models/foo.glb doesn't fall to
