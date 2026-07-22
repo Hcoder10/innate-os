@@ -1328,6 +1328,17 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
                 if not (member.isfile() or member.isdir()):
                     raise StackError(f"unsupported member type in asset bundle: {member.name}")
             tar.extractall(staging)
+        # The published tarball normalises every member to mtime 0 so its content
+        # hash -- and thus the asset tag -- is reproducible (tools/publish_assets.py),
+        # leaving ~all 1300+ files at mtime 0 on disk, which collapses the webapp's
+        # mtime+size ETag to size-only. Stamp one install time so the next bundle
+        # (extracted the same way) flips 0 -> non-zero and the ETag busts.
+        installed_at = time.time()
+        try:
+            for extracted in staging.rglob("*"):
+                os.utime(extracted, (installed_at, installed_at))
+        except OSError as exc:
+            raise StackError(f"Failed to stamp sim asset mtimes under {staging}: {exc}") from exc
         for unit in SIM_ASSET_UNITS:
             src = staging / unit
             if not src.is_dir():

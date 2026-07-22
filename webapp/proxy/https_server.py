@@ -23,7 +23,6 @@ Persist:    launched on boot in the `console-webapp` tmux window
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import mimetypes
@@ -181,6 +180,26 @@ SIM_VIEWER_ROUTES = {
 }
 
 
+def file_etag(path: Path) -> str:
+    """A cheap ETag for a file from a single stat(): mtime+size, the validator
+    nginx and Apache use. It changes on any write and costs one stat()
+    regardless of file size.
+
+    Deliberately NOT a content hash: producing one means reading and digesting
+    the body, so every conditional request paid a full read + SHA-1 of the 34MB
+    apartment glb just to answer a bodyless 304.
+
+    ETag-only, no Last-Modified: the browser talks straight to this server (no
+    proxy in between), so If-None-Match always comes back — the date validator
+    would be dead weight and one more clock/timezone edge to get wrong.
+
+    The sim asset bundle ships mtime-normalised (epoch 0) for a reproducible
+    tag, which would collapse this to size-only; the launcher stamps a real
+    mtime on extraction (see ensure_sim_assets) so it stays a true validator."""
+    st = path.stat()
+    return f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+
+
 def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
     clean = path.split("?", 1)[0].split("#", 1)[0]
     for prefix, base in SIM_VIEWER_ROUTES.items():
@@ -189,17 +208,19 @@ def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None"
         target = (base / clean[len(prefix) :]).resolve()
         if not target.is_file() or not target.is_relative_to(base.resolve()):
             return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-        body = target.read_bytes()
-        # Same ETag/304 revalidation as static_response -- these routes carry
-        # the ~35MB apartment glb + robot meshes, re-requested on every page
-        # mount now that the SPA router remounts the stage per visit.
-        etag = f'"{hashlib.sha1(body).hexdigest()}"'
+        # These routes carry the ~35MB apartment glb + robot meshes, re-requested
+        # on every page mount now that the SPA router remounts the stage per
+        # visit. Validate from stat() and return 304 *before* touching the body,
+        # so an unchanged asset costs a stat instead of a full read. no-cache (not
+        # max-age): the viewer fetches these at bare, unversioned URLs, so a bundle
+        # bump must be picked up on the next revalidation, not up to a day later.
+        etag = file_etag(target)
+        cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
         if if_none_match == etag:
-            return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
+            return Response(304, "Not Modified", Headers(cache_headers), b"")
+        body = target.read_bytes()
         ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        headers = Headers(
-            {"Content-Type": ctype, "Content-Length": str(len(body)), "Cache-Control": "no-cache", "ETag": etag}
-        )
+        headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
         return Response(200, "OK", headers, body)
     return None
 
@@ -220,24 +241,18 @@ def static_response(path: str, if_none_match: str = "") -> Response:
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-    body = body_path.read_bytes()
-    # Content-hash ETag: the first load (and any hard refresh) requests all ~27
-    # modules, but unchanged ones come back as a bodyless 304 instead of a full
-    # re-download. Cache-Control stays no-cache so a redeploy is always picked up
-    # — the browser still revalidates every load, but revalidation is now a tiny
-    # conditional request, not a transfer of the whole file.
-    etag = f'"{hashlib.sha1(body).hexdigest()}"'
+    # The first load (and any hard refresh) requests all ~27 modules, but
+    # unchanged ones come back as a bodyless 304 instead of a full re-download.
+    # Cache-Control stays no-cache so a redeploy is always picked up — the
+    # browser still revalidates every load, but revalidation is a tiny
+    # conditional request that never reads the file.
+    etag = file_etag(body_path)
+    cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
     if if_none_match == etag:
-        return Response(304, "Not Modified", Headers({"ETag": etag, "Cache-Control": "no-cache"}), b"")
+        return Response(304, "Not Modified", Headers(cache_headers), b"")
+    body = body_path.read_bytes()
     ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
-    headers = Headers(
-        {
-            "Content-Type": ctype,
-            "Content-Length": str(len(body)),
-            "Cache-Control": "no-cache",
-            "ETag": etag,
-        }
-    )
+    headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
     return Response(200, "OK", headers, body)
 
 
@@ -298,7 +313,11 @@ async def _dispatch_request(connection, request):
         return None  # proceed with the WebSocket handshake
     if request.path.split("?", 1)[0] == "/config.json":
         return await asyncio.to_thread(config_response)
-    sim_viewer = await asyncio.to_thread(sim_viewer_response, request.path, request.headers.get("If-None-Match", ""))
+    sim_viewer = await asyncio.to_thread(
+        sim_viewer_response,
+        request.path,
+        request.headers.get("If-None-Match", ""),
+    )
     if sim_viewer is not None:
         return sim_viewer
     split = urlsplit(request.path)
@@ -330,7 +349,11 @@ async def _dispatch_request(connection, request):
         if request.headers.get("X-Requested-By", "") != "innate-webapp":
             return _plain(403, "Forbidden", "missing X-Requested-By header")
         return await asyncio.to_thread(restart_response)
-    return await asyncio.to_thread(static_response, request.path, request.headers.get("If-None-Match", ""))
+    return await asyncio.to_thread(
+        static_response,
+        request.path,
+        request.headers.get("If-None-Match", ""),
+    )
 
 
 async def relay(source, sink):
