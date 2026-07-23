@@ -11,6 +11,7 @@
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
+import { getConfig } from "../config.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
 import { createTelemetry } from "../teleop/telemetry.js";
@@ -23,9 +24,7 @@ import { createAgentPanel } from "./agentPanel.js";
 // once on first import (the router's dynamic import awaits it) so the view reads
 // it synchronously.
 /** @type {any} */
-const config = await fetch("/config.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : {}))
-  .catch(() => ({}));
+const config = await getConfig();
 
 // Resolved once at import time (the router's dynamic import awaits it):
 // WebRTC for real robots, the Three.js SimSession in simulation (see

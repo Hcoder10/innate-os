@@ -17,6 +17,7 @@
 
 import { ros } from "./rosClient.js";
 import { initShell } from "./shell.js";
+import { getConfig } from "./config.js";
 
 /**
  * @typedef {{ destroy: () => void }} PageView
@@ -67,9 +68,7 @@ const shell = initShell(navigate);
 // a page whose services have no sim backing.
 const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
 /** @type {Promise<{simControls?: boolean}>} */
-const configPromise = fetch("/config.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : {}))
-  .catch(() => ({}));
+const configPromise = getConfig();
 
 /**
  * Tear down the current page and mount `route`. Pages read their own query
