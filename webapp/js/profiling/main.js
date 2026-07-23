@@ -12,6 +12,7 @@
 // separate Record toggle.
 
 import { ros } from "../rosClient.js";
+import { copyText } from "../clipboard.js";
 import { mountPage } from "../pageMount.js";
 import { INFERENCE_PROFILE_TOPIC } from "../constants.js";
 import { buildRolloutControl } from "./rolloutControl.js";
@@ -304,7 +305,7 @@ async function exportJson(samples, btn) {
 
   const text = JSON.stringify(profile, null, 2);
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     flashBtn(btn, "Copied ✓", "Export JSON");
   } catch {
     downloadText(text, `act-profile-${st.sampleCount}steps.json`);

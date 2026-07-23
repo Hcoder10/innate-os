@@ -313,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     sim_subparsers.add_parser(
         "down",
         prog=f"{CLI_SIM} down",
-        help="Stop the local simulator-backed runtime",
+        help="Stop the running container and world server (keeps data; use `clean` to remove volumes)",
     )
     sim_subparsers.add_parser(
         "assets",

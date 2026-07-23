@@ -410,16 +410,21 @@ def configure_brain_backend(config: dict[str, object]) -> None:
     print()
     print(f"{CYAN}{BOLD}Brain Backend{NC}")
     print(
-        f"{DIM}The brain is the robot's agent. Run it locally with a Gemini key, "
-        f"use Innate's hosted brain with a service key, or run the sim with no agent.{NC}"
+        f"{DIM}The brain is the robot's AI agent. Pick where it runs:\n"
+        f"  - Local: clones the open-source agent\n"
+        f"    (https://github.com/innate-inc/innate-cloud-agent) and runs it on this\n"
+        f"    machine against a Gemini key. Everything works except voice.\n"
+        f"  - Hosted: the same agent, run by Innate on a service key that ships with a\n"
+        f"    MARS robot. Full experience, including the robot's voice.\n"
+        f"  - None: drive, navigate, and trigger skills manually, with no agent.{NC}"
     )
     print()
     default_choice = "1" if has_gemini else ("2" if has_service_key else "3")
     choice = _prompt_choice(
         "Which brain backend?",
         {
-            "1": "Local cloud-agent (Gemini key: get from https://aistudio.google.com/api-keys)",
-            "2": "Hosted Innate brain (service key)",
+            "1": "Local brain (Gemini key: get one at https://aistudio.google.com/api-keys)",
+            "2": "Hosted Innate brain (service key from a MARS robot)",
             "3": "None (run the sim without an agent)",
         },
         default=default_choice,
