@@ -1,0 +1,27 @@
+name: Webapp Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  webapp-proxy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        # aiohttp is the front door itself; numpy/h5py/opencv/pyyaml back the
+        # media happy-paths (the cv2 ones importorskip if a wheel is unavailable).
+        run: pip install aiohttp pytest numpy h5py opencv-python-headless pyyaml
+
+      - name: Run the webapp proxy test bucket
+        # Plugin-free to match the fast-bucket convention (no pytest-asyncio).
+        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q webapp/proxy/test

@@ -18,10 +18,3 @@ ros2_ws/log/
 !workspace/**
 !ci/
 !ci/run_integration_tests.sh
-
-# The webapp front-door proxy (Python) has its own no-ROS pytest bucket in
-# run_integration_tests.sh; bake in just proxy/ (180K, no node_modules).
-!webapp/
-!webapp/proxy/
-!webapp/proxy/**
-webapp/proxy/**/__pycache__/
