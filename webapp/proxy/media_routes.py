@@ -7,7 +7,6 @@ plain-HTTP media listener. Every file access is fenced to the skill roots below
 
 import asyncio
 import fnmatch
-import functools
 import json
 import os
 import re
@@ -15,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from aiohttp import web
+from util import threaded
 
 # Downloaded training-run results larger than this aren't served as a single
 # blob (the log viewer wants text, not gigabytes).
@@ -71,19 +71,6 @@ def _safe_resolve(p: Path):
         return p.resolve()
     except (OSError, ValueError):
         return None
-
-
-def _threaded(build):
-    """Turn a blocking ``(qs) -> Response`` builder into an aiohttp GET handler
-    that runs off the event loop — these do h5py/cv2/dir-walk I/O that would
-    otherwise stall the /ws relay. The query string is parsed on the loop (cheap)
-    and the rest runs in a thread."""
-
-    @functools.wraps(build)
-    async def handler(request: web.Request) -> web.Response:
-        return await asyncio.to_thread(build, parse_qs(request.query_string))
-
-    return handler
 
 
 async def episode_response(request: web.Request) -> web.StreamResponse:
@@ -195,7 +182,7 @@ def _render_map_png(image_path: Path, max_px: int = 480) -> bytes:
     return buf.tobytes()
 
 
-@_threaded
+@threaded
 def map_preview_response(qs: dict) -> web.Response:
     """GET /map/preview?name=<base or file.yaml> → PNG preview of a saved map,
     so the Nav sidebar can show a map without switching to it. The image path
@@ -232,7 +219,7 @@ def map_preview_response(qs: dict) -> web.Response:
     return web.Response(status=200, body=data, headers={"Content-Type": "image/png", "Cache-Control": "no-cache"})
 
 
-@_threaded
+@threaded
 def joints_response(qs: dict) -> web.Response:
     """GET /episode/joints?dir=<skill_dir>&id=<n> → qpos/qvel/timestamps JSON,
     read straight from the (possibly image-stripped) HDF5 — joints are kept."""
@@ -265,7 +252,7 @@ def joints_response(qs: dict) -> web.Response:
     )
 
 
-@_threaded
+@threaded
 def profile_response(qs: dict) -> web.Response:
     """GET /episode/profile?dir=<skill_dir>&id=<n> → the episode's persisted
     inference-profile trace (JSONL written by profile_recorder next to the
@@ -330,7 +317,7 @@ def _failure_excerpt(run_dir) -> str:
     return ""
 
 
-@_threaded
+@threaded
 def run_info_response(qs: dict) -> web.Response:
     """GET /run/info?dir=<skill_dir>&id=<run_id> → downloaded?/has_checkpoint?/files.
     A run is 'successful' if its downloaded results contain a *_step_*.pth — the
@@ -377,7 +364,7 @@ def run_info_response(qs: dict) -> web.Response:
     )
 
 
-@_threaded
+@threaded
 def run_log_response(qs: dict) -> web.Response:
     """GET /run/log?dir=<skill_dir>&id=<run_id>&file=<relpath> → a run log file
     as text/plain. Sandboxed to the run directory."""
