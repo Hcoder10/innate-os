@@ -3,10 +3,10 @@
 // Copyright (c) 2026 Innate Inc
 // Settings page — a guided editor over config/settings.yaml. The catalog (knobs,
 // defaults, docs) lives in catalog.js; this renders a row per knob showing its
-// default and current value, lets you override or reset, and saves over the
-// proxy's /settings WebSocket (which edits settings.yaml surgically, so hand
-// comment/uncomment over SSH keeps working). Doesn't use rosbridge — it talks to
-// the proxy directly (GET /settings to read, /settings WS to write).
+// default and current value, lets you override or reset, and saves via the
+// proxy (which edits settings.yaml surgically, so hand comment/uncomment over
+// SSH keeps working). Doesn't use rosbridge — it talks to the proxy directly:
+// GET /settings.json to read, POST /settings.json to write.
 //
 // Per-row state: a *saved* override (non-default, persisted) shows orange; an
 // *unsaved* edit (differs from what's saved) shows blue. Save is enabled only
@@ -767,7 +767,7 @@ function buildListControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */ e
 async function load() {
   let data;
   try {
-    const res = await fetch("/settings", { cache: "no-store" });
+    const res = await fetch("/settings.json", { cache: "no-store" });
     data = await res.json();
   } catch {
     setStatus("Couldn't read current settings — showing defaults.", "err");
@@ -792,36 +792,16 @@ async function load() {
   setStatus("");
 }
 
-function saveOverWs(/** @type {any} */ payload) {
-  return new Promise((resolve, reject) => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/settings`);
-    let settled = false;
-    const settle = (/** @type {boolean} */ ok, /** @type {any} */ arg) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        ws.close();
-      } catch {
-        /* already closing */
-      }
-      (ok ? resolve : reject)(arg);
-    };
-    // Without this, a half-open socket (upgrade accepted, no reply, never closed)
-    // would leave the promise pending and Save disabled for the page's life.
-    const timer = setTimeout(() => settle(false, new Error("timed out — is the robot reachable?")), 12000);
-    ws.addEventListener("open", () => ws.send(JSON.stringify(payload)));
-    ws.addEventListener("message", (ev) => {
-      try {
-        settle(true, JSON.parse(ev.data));
-      } catch {
-        settle(true, { ok: false, message: "bad response" });
-      }
-    });
-    ws.addEventListener("error", () => settle(false, new Error("connection failed")));
-    ws.addEventListener("close", () => settle(false, new Error("closed before reply")));
+async function savePost(/** @type {any} */ payload) {
+  const res = await fetch("/settings.json", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify(payload),
   });
+  // The proxy answers {ok, message} for both success and a rejected change (400
+  // for a malformed body), so parse and let the caller read res.ok.
+  return res.json();
 }
 
 async function onSave() {
@@ -847,7 +827,7 @@ async function onSave() {
   saveBtn.disabled = true;
   setStatus("Saving…");
   try {
-    const res = await saveOverWs({ sets, clears });
+    const res = await savePost({ sets, clears });
     if (res && res.ok) {
       entries.forEach((e, i) => {
         e.savedOverridden = snapshot[i].overridden;

@@ -15,6 +15,9 @@ opencv-python
 # Networking/API
 pydantic
 websockets
+# aiohttp: the webapp HTTPS front door (webapp/proxy/https_server.py) — static
+# serving, /ws rosbridge relay, and the media/settings endpoints.
+aiohttp
 
 # Data/ML
 h5py

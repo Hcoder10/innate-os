@@ -29,10 +29,13 @@ sim/.venv/
 !scripts/update/setup_repos.sh
 !ros2_ws/src/
 !ros2_ws/src/**
-# Needed by ci/Dockerfile.test (COPY config/ and workspace/).
+# Needed by ci/Dockerfile.test (COPY config/, workspace/, and webapp/proxy/).
 !config/
 !config/**
 !workspace/
 !workspace/**
+!webapp/
+!webapp/proxy/
+!webapp/proxy/**
 __pycache__/
 *.pyc

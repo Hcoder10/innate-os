@@ -10,11 +10,19 @@ teleop) without serving the app from the operator's laptop.
 
 The read-only episode/run media endpoints live in media_routes.py and the
 settings read/write endpoints in settings_routes.py; this module is the server
-itself (TLS, static, dispatch, the /ws relay). It serves the same app on both a
-TLS port (HTTPS) and a cleartext port (HTTP). The secure-origin features
-(WebSerial leader-arm) need HTTPS; the arm panel offers a one-click switch
-rather than an automatic bounce. A self-signed certificate is generated on first
-run (10 years) under ~/.innate-webapp-tls/ via openssl.
+itself (TLS, static, routing, the /ws relay), built on aiohttp. It serves the
+same app on both a TLS port (HTTPS) and a cleartext port (HTTP). The
+secure-origin features (WebSerial leader-arm) need HTTPS; the arm panel offers a
+one-click switch rather than an automatic bounce. A self-signed certificate is
+generated on first run (10 years) under ~/.innate-webapp-tls/ via openssl.
+
+Static files are served with aiohttp's FileResponse: a single stat() yields the
+mtime+size ETag, a matching If-None-Match returns a bodyless 304 before the file
+is read, and Range is honoured. Everything is no-cache — the browser revalidates
+every load, but revalidation is a cheap conditional request. The sim 3D assets
+ship mtime-normalised in a reproducible tarball; the launcher stamps a real mtime
+on extraction (see ensure_sim_assets) so the validator does not degrade to
+size-only. (No on-the-fly compression — see TODO(INN-674).)
 
 Run:        python3 proxy/https_server.py        # https://<robot>:443 + http://<robot>:80
 Persist:    launched on boot in the `console-webapp` tmux window
@@ -22,7 +30,6 @@ Persist:    launched on boot in the `console-webapp` tmux window
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import mimetypes
@@ -32,10 +39,10 @@ import ssl
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
+import aiohttp
+from aiohttp import web
 from media_routes import (
-    _plain,
     episode_response,
     joints_response,
     map_preview_response,
@@ -44,12 +51,7 @@ from media_routes import (
     run_log_response,
     thumb_response,
 )
-from settings_routes import settings_get_response, settings_ws
-from websockets.asyncio.client import connect as ws_connect
-from websockets.asyncio.server import serve
-from websockets.datastructures import Headers
-from websockets.exceptions import ConnectionClosed
-from websockets.http11 import Response
+from settings_routes import settings_apply, settings_get
 
 HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
 # Cleartext HTTP listener serving the SAME app as the TLS front door, so the site
@@ -75,30 +77,25 @@ ROSBRIDGE_URL = "ws://127.0.0.1:9090"
 _WORLD_HOST = os.environ.get("VIRTUAL_MARS_REMOTE", "").strip().partition(":")[0] or "127.0.0.1"
 WORLD_STATE_URL = f"ws://{_WORLD_HOST}:8800"
 
+# Ping both legs of every relay so a peer that vanishes without a FIN (a robot's
+# WiFi dropping mid-teleop) is reaped in ~heartbeat seconds instead of lingering
+# until the kernel's TCP timeout and leaking upstream rosbridge subscriptions.
+# The old websockets library defaulted to a 20s ping; aiohttp defaults to none.
+WS_HEARTBEAT = 20.0
+
 
 def _quiet_benign_disconnects() -> None:
-    """Stop the websockets library from logging a full traceback every time a
-    client drops the TCP connection during the opening handshake (browser
-    reloads, cert-warning preconnects, port scanners). Those raise
-    ConnectionClosed *before* ws_handler runs, so we can't catch them there;
-    instead filter just that exception type out of the library's logs while
-    keeping every other error. Attached to a handler so it also applies to
-    records propagated from per-connection child loggers.
-    """
+    """Drop the traceback aiohttp logs when a client vanishes mid-request —
+    browser reloads, cert-warning preconnects, and port scanners routinely reset
+    the socket, surfacing as ConnectionResetError under 'aiohttp.server'. Filter
+    just those out while keeping every other error."""
 
-    class _DropClosed(logging.Filter):
+    class _DropReset(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
             exc = record.exc_info[1] if record.exc_info else None
-            return not isinstance(exc, ConnectionClosed)
+            return not isinstance(exc, ConnectionResetError)
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-    handler.addFilter(_DropClosed())
-    log = logging.getLogger("websockets")
-    log.handlers.clear()
-    log.addHandler(handler)
-    log.setLevel(logging.WARNING)
-    log.propagate = False
+    logging.getLogger("aiohttp.server").addFilter(_DropReset())
 
 
 def ensure_cert() -> tuple[Path, Path]:
@@ -180,54 +177,36 @@ SIM_VIEWER_ROUTES = {
 }
 
 
-def file_etag(path: Path) -> str:
-    """A cheap ETag for a file from a single stat(): mtime+size, the validator
-    nginx and Apache use. It changes on any write and costs one stat()
-    regardless of file size.
-
-    Deliberately NOT a content hash: producing one means reading and digesting
-    the body, so every conditional request paid a full read + SHA-1 of the 34MB
-    apartment glb just to answer a bodyless 304.
-
-    ETag-only, no Last-Modified: the browser talks straight to this server (no
-    proxy in between), so If-None-Match always comes back — the date validator
-    would be dead weight and one more clock/timezone edge to get wrong.
-
-    The sim asset bundle ships mtime-normalised (epoch 0) for a reproducible
-    tag, which would collapse this to size-only; the launcher stamps a real
-    mtime on extraction (see ensure_sim_assets) so it stays a true validator."""
-    st = path.stat()
-    return f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+def _content_type(path: Path) -> str:
+    return CONTENT_TYPES.get(path.suffix) or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
 
-def sim_viewer_response(path: str, if_none_match: str = "") -> "Response | None":
-    clean = path.split("?", 1)[0].split("#", 1)[0]
-    for prefix, base in SIM_VIEWER_ROUTES.items():
-        if not clean.startswith(prefix):
-            continue
-        target = (base / clean[len(prefix) :]).resolve()
-        if not target.is_file() or not target.is_relative_to(base.resolve()):
-            return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-        # These routes carry the ~35MB apartment glb + robot meshes, re-requested
-        # on every page mount now that the SPA router remounts the stage per
-        # visit. Validate from stat() and return 304 *before* touching the body,
-        # so an unchanged asset costs a stat instead of a full read. no-cache (not
-        # max-age): the viewer fetches these at bare, unversioned URLs, so a bundle
-        # bump must be picked up on the next revalidation, not up to a day later.
-        etag = file_etag(target)
-        cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
-        if if_none_match == etag:
-            return Response(304, "Not Modified", Headers(cache_headers), b"")
-        body = target.read_bytes()
-        ctype = CONTENT_TYPES.get(target.suffix) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
-        return Response(200, "OK", headers, body)
-    return None
+def _safe_resolve(path: Path) -> "Path | None":
+    """Path.resolve() that returns None instead of raising on illegal bytes — a
+    percent-decoded NUL in the URL, which aiohttp hands us decoded — so malformed
+    input becomes a 404, not a 500 (mirrors media_routes._safe_resolve)."""
+    try:
+        return path.resolve()
+    except (OSError, ValueError):
+        return None
 
 
-def static_response(path: str, if_none_match: str = "") -> Response:
-    clean = path.split("?", 1)[0].split("#", 1)[0]
-    target = (ROOT / clean.lstrip("/")).resolve()
+def _serve_static(path: Path) -> web.FileResponse:
+    """Serve a file no-cache via FileResponse: sendfile on the cleartext port,
+    native mtime+size ETag, bodyless 304, and Range.
+
+    No on-the-fly gzip anywhere in the server (the compress middleware was
+    removed). TODO(INN-674): bring compression back — static via precompressed
+    .br/.gz build siblings that FileResponse sendfiles, dynamic JSON
+    (joints/logs) via its own path."""
+    return web.FileResponse(path, headers={"Content-Type": _content_type(path), "Cache-Control": "no-cache"})
+
+
+async def static_handler(request: web.Request) -> web.StreamResponse:
+    clean = request.path
+    target = _safe_resolve(ROOT / clean.lstrip("/"))
+    if target is None:
+        raise web.HTTPNotFound(text="not found")
     if target.is_dir():
         target = target / "index.html"
     body_path = target if target.is_file() else None
@@ -240,23 +219,23 @@ def static_response(path: str, if_none_match: str = "") -> Response:
         body_path = ROOT / "index.html"
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
-        return Response(404, "Not Found", Headers({"Content-Type": "text/plain"}), b"not found")
-    # The first load (and any hard refresh) requests all ~27 modules, but
-    # unchanged ones come back as a bodyless 304 instead of a full re-download.
-    # Cache-Control stays no-cache so a redeploy is always picked up — the
-    # browser still revalidates every load, but revalidation is a tiny
-    # conditional request that never reads the file.
-    etag = file_etag(body_path)
-    cache_headers = {"ETag": etag, "Cache-Control": "no-cache"}
-    if if_none_match == etag:
-        return Response(304, "Not Modified", Headers(cache_headers), b"")
-    body = body_path.read_bytes()
-    ctype = CONTENT_TYPES.get(body_path.suffix) or mimetypes.guess_type(str(body_path))[0] or "application/octet-stream"
-    headers = Headers({**cache_headers, "Content-Type": ctype, "Content-Length": str(len(body))})
-    return Response(200, "OK", headers, body)
+        raise web.HTTPNotFound(text="not found")
+    return _serve_static(body_path)
 
 
-def config_response() -> Response:
+async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
+    clean = request.path
+    for prefix, base in SIM_VIEWER_ROUTES.items():
+        if not clean.startswith(prefix):
+            continue
+        target = _safe_resolve(base / clean[len(prefix) :])
+        if target is None or not target.is_file() or not target.is_relative_to(base.resolve()):
+            raise web.HTTPNotFound(text="not found")
+        return _serve_static(target)
+    raise web.HTTPNotFound(text="not found")
+
+
+async def config_handler(request: web.Request) -> web.Response:
     """Serve config.json with env-driven feature flags overlaid, so a deployment
     can flip flags without editing the committed file (the sim sets
     WEBAPP_SIM_CONTROLS=1)."""
@@ -266,16 +245,10 @@ def config_response() -> Response:
         cfg = {}
     if WEBAPP_SIM_CONTROLS:
         cfg["simControls"] = True
-    body = json.dumps(cfg).encode()
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
-        body,
-    )
+    return web.json_response(cfg, headers={"Cache-Control": "no-cache"})
 
 
-def restart_response() -> Response:
+async def restart_handler(request: web.Request) -> web.Response:
     """GET /restart -> kick off `innate restart` (same as the CLI) so the robot
     comes back with the latest config/settings.yaml. The restart tears down the
     tmux session this proxy runs in, so we spawn it detached with a brief delay —
@@ -287,9 +260,11 @@ def restart_response() -> Response:
     is `innate` not being on PATH — resolve it here and 500 instead of reporting a
     false success, and spawn the absolute path so the detached `bash -c` (which
     sources no rc files) resolves it the same way we just did."""
+    if request.headers.get("X-Requested-By", "") != "innate-webapp":
+        raise web.HTTPForbidden(text="missing X-Requested-By header")
     innate = shutil.which("innate")
     if innate is None:
-        return _plain(500, "Internal Server Error", "restart failed: `innate` not found on PATH")
+        raise web.HTTPInternalServerError(text="restart failed: `innate` not found on PATH")
     try:
         subprocess.Popen(
             ["bash", "-c", f"sleep 1; exec {innate} restart"],
@@ -298,120 +273,99 @@ def restart_response() -> Response:
             start_new_session=True,
         )
     except OSError as err:
-        return _plain(500, "Internal Server Error", f"restart failed: {err}")
-    body = json.dumps({"ok": True}).encode()
-    return Response(
-        200,
-        "OK",
-        Headers({"Content-Type": "application/json", "Content-Length": str(len(body)), "Cache-Control": "no-cache"}),
-        body,
-    )
+        raise web.HTTPInternalServerError(text=f"restart failed: {err}") from err
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
-async def _dispatch_request(connection, request):
-    if request.path in ("/ws", "/worldstate"):
-        return None  # proceed with the WebSocket handshake
-    if request.path.split("?", 1)[0] == "/config.json":
-        return await asyncio.to_thread(config_response)
-    sim_viewer = await asyncio.to_thread(
-        sim_viewer_response,
-        request.path,
-        request.headers.get("If-None-Match", ""),
-    )
-    if sim_viewer is not None:
-        return sim_viewer
-    split = urlsplit(request.path)
-    qs = parse_qs(split.query)
-    # These builders do blocking disk I/O — reading multi-MB MP4s, h5py decodes,
-    # directory walks. Run them off the event loop (to_thread) so a scrubbing
-    # browser's back-to-back range reads can't stall the rosbridge /ws relay.
-    if split.path == "/episode":
-        return await asyncio.to_thread(episode_response, request, qs)
-    if split.path == "/episode/joints":
-        return await asyncio.to_thread(joints_response, qs)
-    if split.path == "/episode/profile":
-        return await asyncio.to_thread(profile_response, qs)
-    if split.path == "/episode/thumb":
-        return await thumb_response(qs)
-    if split.path == "/map/preview":
-        return await asyncio.to_thread(map_preview_response, qs)
-    if split.path == "/run/info":
-        return await asyncio.to_thread(run_info_response, qs)
-    if split.path == "/run/log":
-        return await asyncio.to_thread(run_log_response, qs)
-    if split.path == "/settings":
-        # A WebSocket upgrade -> the write channel handled in ws_handler; a plain
-        # GET -> the current override values.
-        if request.headers.get("Upgrade", "").lower() == "websocket":
-            return None
-        return await asyncio.to_thread(settings_get_response)
-    if split.path == "/restart":
-        if request.headers.get("X-Requested-By", "") != "innate-webapp":
-            return _plain(403, "Forbidden", "missing X-Requested-By header")
-        return await asyncio.to_thread(restart_response)
-    return await asyncio.to_thread(
-        static_response,
-        request.path,
-        request.headers.get("If-None-Match", ""),
-    )
+async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:
+    """Relay every frame from src to dst until either side closes."""
+    async for msg in src:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            await dst.send_str(msg.data)
+        elif msg.type == aiohttp.WSMsgType.BINARY:
+            await dst.send_bytes(msg.data)
+        else:  # CLOSE / CLOSING / ERROR — the iterator is about to stop anyway
+            break
 
 
-async def relay(source, sink):
-    try:
-        async for message in source:
-            await sink.send(message)
-    except ConnectionClosed:
-        pass  # either side going away ends the relay — a normal close, not an error
-
-
-async def ws_handler(connection):
+async def ws_proxy(request: web.Request) -> web.WebSocketResponse:
     """Bidirectional relay: /ws <-> rosbridge, /worldstate <-> the sim world
-    server's observer stream (or the /settings write channel)."""
-    if connection.request.path == "/settings":
-        await settings_ws(connection)
-        return
-    upstream_url = WORLD_STATE_URL if connection.request.path == "/worldstate" else ROSBRIDGE_URL
+    server's observer stream. max_msg_size=0 lifts aiohttp's default cap for the
+    large point-cloud / world-state frames."""
+    ws = web.WebSocketResponse(max_msg_size=0, heartbeat=WS_HEARTBEAT)
+    await ws.prepare(request)
+    upstream_url = WORLD_STATE_URL if request.path == "/worldstate" else ROSBRIDGE_URL
+    session = request.app[CLIENT]
     try:
-        async with ws_connect(upstream_url, max_size=None) as upstream:
-            done, pending = await asyncio.wait(
-                [
-                    asyncio.ensure_future(relay(connection, upstream)),
-                    asyncio.ensure_future(relay(upstream, connection)),
-                ],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+        async with session.ws_connect(upstream_url, max_msg_size=0, heartbeat=WS_HEARTBEAT) as upstream:
+            tasks = [asyncio.create_task(_pump(ws, upstream)), asyncio.create_task(_pump(upstream, ws))]
+            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
-            # Consume every task's result so a relay that ended on a benign client
-            # disconnect (1001 going away) doesn't surface as an asyncio
-            # "Task exception was never retrieved" warning.
-            await asyncio.gather(*done, *pending, return_exceptions=True)
+            # gather ALL tasks (finished + cancelled), so a pump whose send failed
+            # on a peer reset doesn't surface as "exception never retrieved".
+            await asyncio.gather(*tasks, return_exceptions=True)
     except Exception as err:  # upstream down — close the client politely
         print(f"ws relay ended: {err}")
     finally:
-        await connection.close()
+        await ws.close()
+    return ws
 
 
-async def main():
+# One shared client for the WS-proxy upstreams, keyed with a typed AppKey.
+CLIENT = web.AppKey("client", aiohttp.ClientSession)
+
+
+async def _on_startup(app: web.Application) -> None:
+    app[CLIENT] = aiohttp.ClientSession()
+
+
+async def _on_cleanup(app: web.Application) -> None:
+    await app[CLIENT].close()
+
+
+def build_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/ws", ws_proxy)
+    app.router.add_get("/worldstate", ws_proxy)
+    app.router.add_get("/config.json", config_handler)
+    app.router.add_get("/episode", episode_response)
+    app.router.add_get("/episode/joints", joints_response)
+    app.router.add_get("/episode/profile", profile_response)
+    app.router.add_get("/episode/thumb", thumb_response)
+    app.router.add_get("/map/preview", map_preview_response)
+    app.router.add_get("/run/info", run_info_response)
+    app.router.add_get("/run/log", run_log_response)
+    app.router.add_get("/settings.json", settings_get)
+    app.router.add_post("/settings.json", settings_apply)
+    app.router.add_get("/restart", restart_handler)
+    # Prefix routes must precede the catch-all so /models/foo.glb doesn't fall to
+    # the SPA shell — first matching resource wins in add order.
+    for prefix in SIM_VIEWER_ROUTES:
+        app.router.add_get(prefix + "{tail:.*}", sim_viewer_handler)
+    app.router.add_get("/{tail:.*}", static_handler)
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
+    return app
+
+
+async def main() -> None:
     _quiet_benign_disconnects()
     cert, key = ensure_cert()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
-    async with contextlib.AsyncExitStack() as stack:
-        await stack.enter_async_context(
-            serve(ws_handler, "0.0.0.0", HTTPS_PORT, ssl=ctx, process_request=_dispatch_request, max_size=None)
-        )
-        print(
-            f"https front door on https://0.0.0.0:{HTTPS_PORT} "
-            f"(app + /ws -> {ROSBRIDGE_URL} + /worldstate -> {WORLD_STATE_URL})"
-        )
-        if HTTP_PORT:
-            # Same app over cleartext — no auto-upgrade; the arm panel offers a manual HTTPS switch.
-            await stack.enter_async_context(
-                serve(ws_handler, "0.0.0.0", HTTP_PORT, process_request=_dispatch_request, max_size=None)
-            )
-            print(f"http listener on http://0.0.0.0:{HTTP_PORT} (full app)")
-        await asyncio.get_running_loop().create_future()
+    runner = web.AppRunner(build_app(), access_log=None)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", HTTPS_PORT, ssl_context=ctx).start()
+    print(
+        f"https front door on https://0.0.0.0:{HTTPS_PORT} "
+        f"(app + /ws -> {ROSBRIDGE_URL} + /worldstate -> {WORLD_STATE_URL})"
+    )
+    if HTTP_PORT:
+        # Same app over cleartext — no auto-upgrade; the arm panel offers a manual HTTPS switch.
+        await web.TCPSite(runner, "0.0.0.0", HTTP_PORT).start()
+        print(f"http listener on http://0.0.0.0:{HTTP_PORT} (full app)")
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":

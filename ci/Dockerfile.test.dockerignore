@@ -18,3 +18,11 @@ ros2_ws/log/
 !workspace/**
 !ci/
 !ci/run_integration_tests.sh
+
+# The webapp front-door proxy (Python) runs its no-ROS pytest bucket in
+# run_integration_tests.sh. Re-include webapp/ whole (1.3M, no node_modules):
+# a nested !webapp/proxy/** works on newer BuildKit but Cloud Build's prunes the
+# excluded parent dir, so mirror the top-level !ros2_ws/** pattern that works.
+!webapp/
+!webapp/**
+webapp/**/__pycache__/
