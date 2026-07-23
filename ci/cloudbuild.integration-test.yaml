@@ -32,6 +32,10 @@ substitutions:
 options:
   machineType: E2_HIGHCPU_8
   diskSizeGb: "150"
+  # A build with a user-specified service account must pick an explicit logging
+  # config. Logs go only to Cloud Logging (no GCS logs bucket); the GitHub
+  # workflow uses `gcloud beta builds submit`, which can stream from Cloud
+  # Logging (the GA command can only stream from a GCS bucket).
   logging: CLOUD_LOGGING_ONLY
 
 steps:
