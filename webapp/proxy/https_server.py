@@ -18,11 +18,11 @@ generated on first run (10 years) under ~/.innate-webapp-tls/ via openssl.
 
 Static files are served with aiohttp's FileResponse: a single stat() yields the
 mtime+size ETag, a matching If-None-Match returns a bodyless 304 before the file
-is read, Range is honoured, and compressible types are gzipped. Everything is
-no-cache — the browser revalidates every load, but revalidation is a cheap
-conditional request. The sim 3D assets ship mtime-normalised in a reproducible
-tarball; the launcher stamps a real mtime on extraction (see ensure_sim_assets)
-so the validator does not degrade to size-only.
+is read, and Range is honoured. Everything is no-cache — the browser revalidates
+every load, but revalidation is a cheap conditional request. The sim 3D assets
+ship mtime-normalised in a reproducible tarball; the launcher stamps a real mtime
+on extraction (see ensure_sim_assets) so the validator does not degrade to
+size-only. (No on-the-fly compression — see TODO(INN-674).)
 
 Run:        python3 proxy/https_server.py        # https://<robot>:443 + http://<robot>:80
 Persist:    launched on boot in the `console-webapp` tmux window
@@ -42,7 +42,6 @@ from pathlib import Path
 
 import aiohttp
 from aiohttp import web
-
 from media_routes import (
     episode_response,
     joints_response,
@@ -177,6 +176,7 @@ SIM_VIEWER_ROUTES = {
     "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
 }
 
+
 def _content_type(path: Path) -> str:
     return CONTENT_TYPES.get(path.suffix) or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
@@ -273,7 +273,7 @@ async def restart_handler(request: web.Request) -> web.Response:
             start_new_session=True,
         )
     except OSError as err:
-        raise web.HTTPInternalServerError(text=f"restart failed: {err}")
+        raise web.HTTPInternalServerError(text=f"restart failed: {err}") from err
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 

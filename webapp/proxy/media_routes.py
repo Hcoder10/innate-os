@@ -155,9 +155,7 @@ async def thumb_response(request: web.Request) -> web.Response:
         data = await asyncio.to_thread(cache.read_bytes)
     except Exception as err:  # noqa: BLE001
         return _plain(500, "Internal Server Error", f"thumb failed: {err}")
-    return web.Response(
-        status=200, body=data, headers={"Content-Type": "image/jpeg", "Cache-Control": "max-age=86400"}
-    )
+    return web.Response(status=200, body=data, headers={"Content-Type": "image/jpeg", "Cache-Control": "max-age=86400"})
 
 
 # name -> (image mtime_ns, png bytes). Maps only change on save/overwrite, so

@@ -4,9 +4,8 @@
 the security-critical part, so it's tested hardest; the h5py/cv2 happy paths are
 covered where those libs are present. Part of the fast (no-ROS) pytest bucket."""
 
-import pytest
-
 import media_routes
+import pytest
 from conftest import make_app_root, serve, sync
 
 
@@ -99,7 +98,9 @@ async def test_run_log_bounded_read(tmp_path, monkeypatch):
     (run / "huge.log").write_bytes(b"x" * big)
     root = make_app_root(tmp_path)
     async with serve(ROOT=root) as (s, base):
-        body = await (await s.get(base + "/run/log", params={"dir": str(skill), "id": "run", "file": "huge.log"})).read()
+        body = await (
+            await s.get(base + "/run/log", params={"dir": str(skill), "id": "run", "file": "huge.log"})
+        ).read()
     assert len(body) <= media_routes.MAX_LOG_BYTES + len(b"\n\n[truncated]\n")
     assert body.endswith(b"[truncated]\n")
 
