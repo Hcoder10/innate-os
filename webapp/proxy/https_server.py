@@ -94,7 +94,7 @@ def _quiet_benign_disconnects() -> None:
     class _DropReset(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
             exc = record.exc_info[1] if record.exc_info else None
-            return not isinstance(exc, (ConnectionResetError, asyncio.CancelledError))
+            return not isinstance(exc, ConnectionResetError)
 
     logging.getLogger("aiohttp.server").addFilter(_DropReset())
 

@@ -8,7 +8,7 @@ page, so the API lives at /settings.json to leave it free.
 
 import asyncio
 
-from aiohttp import web
+from aiohttp import ContentTypeError, web
 
 
 async def settings_get(request: web.Request) -> web.Response:
@@ -31,7 +31,8 @@ async def settings_apply(request: web.Request) -> web.Response:
         req = await request.json()
         sets = req.get("sets", []) or []
         clears = req.get("clears", []) or []
-    except (ValueError, AttributeError, TypeError):
+    except (ContentTypeError, ValueError, AttributeError, TypeError):
+        # ContentTypeError: wrong/missing Content-Type; ValueError: malformed body.
         return web.json_response({"ok": False, "message": "malformed request"}, status=400)
     try:
         ok, message = await asyncio.to_thread(settings_store.apply_changes, sets, clears)

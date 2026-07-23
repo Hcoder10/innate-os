@@ -149,7 +149,10 @@ async def test_settings_json_post(tmp_path, monkeypatch):
     async with serve(ROOT=root) as (s, base):
         r = await s.post(base + "/settings.json", json={"sets": [{"path": "a", "value": 1}], "clears": ["b"]})
         assert (await r.json()) == {"ok": True, "message": "applied"}
-        # a malformed body -> 400 {ok: false}, not a crash
+        # a malformed body (right Content-Type, bad JSON) -> 400, not a crash
         r2 = await s.post(base + "/settings.json", data="not json", headers={"Content-Type": "application/json"})
         assert r2.status == 400 and (await r2.json())["ok"] is False
+        # a wrong Content-Type -> 400 too (request.json raises ContentTypeError, not ValueError)
+        r3 = await s.post(base + "/settings.json", data="whatever", headers={"Content-Type": "text/plain"})
+        assert r3.status == 400 and (await r3.json())["ok"] is False
     assert seen == [([{"path": "a", "value": 1}], ["b"])]
