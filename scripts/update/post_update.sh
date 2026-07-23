@@ -104,6 +104,22 @@ ensure_log_ownership() {
     fi
 }
 
+# DPkg::Lock::Timeout only covers the dpkg lock, not the lists lock that
+# `apt-get update` takes, so apt fails instantly if e.g. the apt-daily timer
+# is running. Retry until the lock frees up.
+apt_update() {
+    local attempt output
+    for attempt in $(seq 1 60); do
+        # tee streams apt's output live (to stderr and the log); the captured
+        # copy feeds the lock check — only lock contention is worth retrying.
+        output=$(set -o pipefail; apt-get update 2>&1 | tee -a "$LOG_FILE" /dev/stderr) && return 0
+        grep -q "Could not get lock" <<<"$output" || return 1
+        log "  apt lists lock busy (attempt $attempt/60), retrying in 5s..."
+        sleep 5
+    done
+    return 1
+}
+
 log "========================================"
 log "Starting post-update script"
 log "Repository: $REPO_DIR"
@@ -344,40 +360,38 @@ fi
 # -----------------------------------------------------------------------------
 # 0d. Disable desktop/update daemons with no robot function.
 # These ship with the desktop image and only cost RAM + periodic CPU wakeups on
-# a headless robot. Each is disabled only if present (non-fatal); snapd only
-# when no snaps are installed. Reversible via `systemctl enable --now <unit>`.
+# a headless robot. Absent units are ignored (non-fatal); snapd only when no
+# snaps are installed. Reversible via `systemctl enable --now <unit>`.
 # -----------------------------------------------------------------------------
 disable_unit() {
-    local unit="$1"
-    # Skip units not present on this image.
-    [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
-    if systemctl disable --now "$unit" >/dev/null 2>&1; then
-        log "  Disabled $unit"
-    else
-        log "  Could not disable $unit (continuing)"
-    fi
+    # Units absent on this image error individually; the rest are still
+    # disabled and stopped. Non-fatal — errors surface as warnings.
+    systemctl disable --now "$@" 2>&1 >/dev/null | while IFS= read -r line; do
+        log "  WARNING: $line"
+    done
 }
 
 # fwupd is intentionally left enabled — it's the channel for LVFS firmware
 # updates, the one disabled daemon that removes a real capability.
 log "Disabling desktop/update daemons with no robot function..."
-for unit in \
+disable_unit \
     packagekit.service \
     ModemManager.service \
     cups.service cups.socket cups-browsed.service lpd.service \
     colord.service \
     switcheroo-control.service \
     kerneloops.service \
-    ubuntu-advantage.service; do
-    disable_unit "$unit"
-done
+    ubuntu-advantage.service \
+    apt-daily.timer apt-daily-upgrade.timer \
+    unattended-upgrades.service
 
 # snapd: only disable when nothing is installed as a snap (else we'd break it).
-if command -v snap >/dev/null 2>&1 && [ -n "$(snap list 2>/dev/null | tail -n +2)" ]; then
+# Installed snaps are checked on the filesystem, not via `snap list` — the snap
+# CLI socket-activates snapd and waits for it to load state, hanging 30s+.
+if command -v snap >/dev/null 2>&1 && ls /var/lib/snapd/snaps/*.snap >/dev/null 2>&1; then
     log "  Keeping snapd (installed snaps present)"
 else
-    disable_unit snapd.service
-    disable_unit snapd.socket
+    disable_unit snapd.service snapd.socket
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
@@ -612,7 +626,7 @@ fi
         
         # Install ROS2 base
         log "    Updating package lists..."
-        apt-get update || {
+        apt_update || {
             log "    ERROR: Failed to update package lists"
             exit 1
         }
@@ -637,10 +651,13 @@ fi
     # Add git-core PPA for latest git version (if not already added)
     if ! grep -q "git-core/ppa" /etc/apt/sources.list.d/*.list 2>/dev/null; then
         log "  Adding git-core PPA..."
-        add-apt-repository -y ppa:git-core/ppa
+        add-apt-repository -y --no-update ppa:git-core/ppa
     fi
 
-    apt-get update
+    apt_update || {
+        log "  ERROR: Failed to update package lists"
+        exit 1
+    }
 
     # Install all apt dependencies (common + hardware-specific) in one go
     if [ -f "$APT_DEPS_COMMON" ] && [ -f "$APT_DEPS_HARDWARE" ]; then
@@ -660,8 +677,8 @@ fi
     # Remove PulseAudio (conflicts with ALSA-only audio setup)
     if dpkg -l | grep -q "^ii.*pulseaudio "; then
         log "Removing PulseAudio..."
-        apt-get purge -y pulseaudio pulseaudio-utils 2>/dev/null || true
-        apt-get autoremove -y 2>/dev/null || true
+        apt-get -o DPkg::Lock::Timeout=45 purge -y pulseaudio pulseaudio-utils 2>/dev/null || true
+        apt-get -o DPkg::Lock::Timeout=45 autoremove -y 2>/dev/null || true
         log "  PulseAudio removed"
     else
         log "  PulseAudio not installed, skipping removal"
