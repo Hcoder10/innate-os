@@ -52,7 +52,7 @@ from media_routes import (
     run_log_response,
     thumb_response,
 )
-from settings_routes import settings_get_response, settings_ws
+from settings_routes import settings_apply, settings_get
 
 HTTPS_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 443
 # Cleartext HTTP listener serving the SAME app as the TLS front door, so the site
@@ -277,16 +277,6 @@ async def restart_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
-async def settings_handler(request: web.Request) -> web.StreamResponse:
-    # A WebSocket upgrade -> the write channel; a plain GET -> the override values.
-    if request.headers.get("Upgrade", "").lower() == "websocket":
-        ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT)
-        await ws.prepare(request)
-        await settings_ws(ws)
-        return ws
-    return await asyncio.to_thread(settings_get_response)
-
-
 async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:
     """Relay every frame from src to dst until either side closes."""
     async for msg in src:
@@ -346,7 +336,8 @@ def build_app() -> web.Application:
     app.router.add_get("/map/preview", map_preview_response)
     app.router.add_get("/run/info", run_info_response)
     app.router.add_get("/run/log", run_log_response)
-    app.router.add_get("/settings", settings_handler)
+    app.router.add_get("/settings.json", settings_get)
+    app.router.add_post("/settings.json", settings_apply)
     app.router.add_get("/restart", restart_handler)
     # Prefix routes must precede the catch-all so /models/foo.glb doesn't fall to
     # the SPA shell — first matching resource wins in add order.

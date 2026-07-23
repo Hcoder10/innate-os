@@ -1,44 +1,40 @@
-"""Settings read endpoint + write WebSocket channel.
+"""Settings read + write endpoints (GET / POST /settings.json).
 
-Thin HTTP/WS adapters over settings_store, served by https_server.py. Split out
-of https_server.py.
+Thin adapters over settings_store, served by https_server.py. The webapp owns the
+catalog (knobs/defaults/docs); these only report and apply the override values.
+Deliberately not on /settings itself: that path is the SPA route for the settings
+page, so the API lives at /settings.json to leave it free.
 """
 
 import asyncio
-import json
 
-from aiohttp import WSMsgType, web
+from aiohttp import web
 
 
-def settings_get_response() -> web.Response:
-    """GET /settings -> the live override values from config/settings.yaml. The
-    webapp owns the catalog (knobs/defaults/docs); this only reports what's set."""
+async def settings_get(request: web.Request) -> web.Response:
+    """GET /settings.json -> the live override values from config/settings.yaml."""
     import settings_store
 
-    payload = {"overrides": settings_store.read_overrides(), "exists": settings_store.settings_path().is_file()}
-    return web.json_response(payload, headers={"Cache-Control": "no-cache"})
+    def read():
+        return {"overrides": settings_store.read_overrides(), "exists": settings_store.settings_path().is_file()}
+
+    return web.json_response(await asyncio.to_thread(read), headers={"Cache-Control": "no-cache"})
 
 
-async def settings_ws(ws: web.WebSocketResponse) -> None:
-    """Settings write channel: receive {sets, clears} messages, apply each to
-    config/settings.yaml, and ack. One persistent WS per open Settings page.
-
-    The caller has already prepared the socket; iterating it ends cleanly when
-    the page closes."""
+async def settings_apply(request: web.Request) -> web.Response:
+    """POST /settings.json {sets, clears} -> apply each to config/settings.yaml and
+    ack {ok, message}. Serialised under settings_store's lock so two tabs can't
+    clobber each other's read-modify-write."""
     import settings_store
 
-    async for msg in ws:
-        if msg.type != WSMsgType.TEXT:
-            continue
-        try:
-            req = json.loads(msg.data)
-            sets = req.get("sets", []) or []
-            clears = req.get("clears", []) or []
-        except (ValueError, AttributeError, TypeError):
-            await ws.send_str(json.dumps({"ok": False, "message": "malformed request"}))
-            continue
-        try:
-            ok, message = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
-        except Exception as exc:  # noqa: BLE001 — malformed payload, disk error, etc.
-            ok, message = False, f"settings update failed: {exc}"
-        await ws.send_str(json.dumps({"ok": ok, "message": message}))
+    try:
+        req = await request.json()
+        sets = req.get("sets", []) or []
+        clears = req.get("clears", []) or []
+    except (ValueError, AttributeError, TypeError):
+        return web.json_response({"ok": False, "message": "malformed request"}, status=400)
+    try:
+        ok, message = await asyncio.to_thread(settings_store.apply_changes, sets, clears)
+    except Exception as exc:  # noqa: BLE001 — malformed payload, disk error, etc.
+        ok, message = False, f"settings update failed: {exc}"
+    return web.json_response({"ok": ok, "message": message})

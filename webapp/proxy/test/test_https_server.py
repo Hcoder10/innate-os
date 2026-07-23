@@ -6,8 +6,6 @@ overlay, the restart guard, the /ws + /worldstate proxy, and /settings.
 Pins the contract the aiohttp rewrite must keep. Part of the fast (no-ROS)
 pytest bucket."""
 
-import json
-
 from conftest import fake_ws_upstream, make_app_root, serve, sync
 
 
@@ -114,19 +112,30 @@ async def test_ws_proxy_relays(tmp_path):
 
 
 @sync
-async def test_settings_get(tmp_path, monkeypatch):
+async def test_settings_url_serves_app_not_json(tmp_path):
+    # /settings is the SPA route for the settings page; a browser navigation must
+    # get the app shell, not the API JSON (which lives at /settings.json now).
+    root = make_app_root(tmp_path)
+    async with serve(ROOT=root) as (s, base):
+        r = await s.get(base + "/settings")
+        assert r.status == 200
+        assert "SHELL" in await r.text()
+
+
+@sync
+async def test_settings_json_get(tmp_path, monkeypatch):
     import settings_store
 
     monkeypatch.setattr(settings_store, "read_overrides", lambda: {"foo": 1})
     monkeypatch.setattr(settings_store, "settings_path", lambda: tmp_path / "nope.yaml")
     root = make_app_root(tmp_path)
     async with serve(ROOT=root) as (s, base):
-        body = await (await s.get(base + "/settings")).json()
+        body = await (await s.get(base + "/settings.json")).json()
         assert body == {"overrides": {"foo": 1}, "exists": False}
 
 
 @sync
-async def test_settings_ws_write(tmp_path, monkeypatch):
+async def test_settings_json_post(tmp_path, monkeypatch):
     import settings_store
 
     seen = []
@@ -138,11 +147,9 @@ async def test_settings_ws_write(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_store, "apply_changes", fake_apply)
     root = make_app_root(tmp_path)
     async with serve(ROOT=root) as (s, base):
-        async with s.ws_connect(base + "/settings") as ws:
-            await ws.send_str(json.dumps({"sets": [{"path": "a", "value": 1}], "clears": ["b"]}))
-            ack = json.loads((await ws.receive()).data)
-            assert ack == {"ok": True, "message": "applied"}
-            # a malformed frame is answered, not fatal
-            await ws.send_str("not json")
-            assert json.loads((await ws.receive()).data)["ok"] is False
+        r = await s.post(base + "/settings.json", json={"sets": [{"path": "a", "value": 1}], "clears": ["b"]})
+        assert (await r.json()) == {"ok": True, "message": "applied"}
+        # a malformed body -> 400 {ok: false}, not a crash
+        r2 = await s.post(base + "/settings.json", data="not json", headers={"Content-Type": "application/json"})
+        assert r2.status == 400 and (await r2.json())["ok"] is False
     assert seen == [([{"path": "a", "value": 1}], ["b"])]
