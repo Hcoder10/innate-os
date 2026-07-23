@@ -183,11 +183,12 @@ def _render_map_png(image_path: Path, max_px: int = 480) -> bytes:
 
 
 @threaded
-def map_preview_response(qs: dict) -> web.Response:
+def map_preview_response(request: web.Request) -> web.Response:
     """GET /map/preview?name=<base or file.yaml> → PNG preview of a saved map,
     so the Nav sidebar can show a map without switching to it. The image path
     comes from the map's own yaml (map_saver writes `image: <file>`), fenced to
     the maps directory."""
+    qs = parse_qs(request.query_string)
     name = (qs.get("name") or [""])[0]
     if name.endswith(".yaml"):
         name = name[:-5]
@@ -220,9 +221,10 @@ def map_preview_response(qs: dict) -> web.Response:
 
 
 @threaded
-def joints_response(qs: dict) -> web.Response:
+def joints_response(request: web.Request) -> web.Response:
     """GET /episode/joints?dir=<skill_dir>&id=<n> → qpos/qvel/timestamps JSON,
     read straight from the (possibly image-stripped) HDF5 — joints are kept."""
+    qs = parse_qs(request.query_string)
     base = _resolve_under_root((qs.get("dir") or [""])[0])
     eid = (qs.get("id") or [""])[0]
     if base is None or not eid:
@@ -253,11 +255,12 @@ def joints_response(qs: dict) -> web.Response:
 
 
 @threaded
-def profile_response(qs: dict) -> web.Response:
+def profile_response(request: web.Request) -> web.Response:
     """GET /episode/profile?dir=<skill_dir>&id=<n> → the episode's persisted
     inference-profile trace (JSONL written by profile_recorder next to the
     HDF5): one context line, then one per-step sample per line. 404 when the
     episode predates profile recording or wasn't a learned-skill rollout."""
+    qs = parse_qs(request.query_string)
     base = _resolve_under_root((qs.get("dir") or [""])[0])
     eid = (qs.get("id") or [""])[0]
     if base is None or not eid:
@@ -318,10 +321,11 @@ def _failure_excerpt(run_dir) -> str:
 
 
 @threaded
-def run_info_response(qs: dict) -> web.Response:
+def run_info_response(request: web.Request) -> web.Response:
     """GET /run/info?dir=<skill_dir>&id=<run_id> → downloaded?/has_checkpoint?/files.
     A run is 'successful' if its downloaded results contain a *_step_*.pth — the
     same check the training node uses to activate a checkpoint."""
+    qs = parse_qs(request.query_string)
     base = _resolve_under_root((qs.get("dir") or [""])[0])
     rid = (qs.get("id") or [""])[0]
     if base is None or not rid:
@@ -365,9 +369,10 @@ def run_info_response(qs: dict) -> web.Response:
 
 
 @threaded
-def run_log_response(qs: dict) -> web.Response:
+def run_log_response(request: web.Request) -> web.Response:
     """GET /run/log?dir=<skill_dir>&id=<run_id>&file=<relpath> → a run log file
     as text/plain. Sandboxed to the run directory."""
+    qs = parse_qs(request.query_string)
     base = _resolve_under_root((qs.get("dir") or [""])[0])
     rid = (qs.get("id") or [""])[0]
     rel = (qs.get("file") or [""])[0]
