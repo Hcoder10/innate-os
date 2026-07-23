@@ -11,6 +11,7 @@
 
 import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
+import { getConfig } from "../config.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
 import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
@@ -28,9 +29,7 @@ import { createRecordPanel } from "./recordPanel.js";
 const { createSession, createStage } = await robotSessionFactory();
 
 /** @type {any} */
-const config = await fetch("/config.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : {}))
-  .catch(() => ({}));
+const config = await getConfig();
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {

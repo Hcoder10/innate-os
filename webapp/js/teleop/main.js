@@ -12,6 +12,7 @@
 
 import { ros } from "../rosClient.js";
 import { drive } from "../driveController.js";
+import { getConfig } from "../config.js";
 import { WebRtcSession } from "../webrtcSession.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { mountPage } from "../pageMount.js";
@@ -30,9 +31,7 @@ import { createCameraSwitch } from "./cameraSwitch.js";
 // off unless a deployment opts in. Fetched once when this module first loads (the
 // router's dynamic import awaits this), so buildCockpit can read it synchronously.
 /** @type {any} */
-const config = await fetch("/config.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : {}))
-  .catch(() => ({}));
+const config = await getConfig();
 
 // Console debugging hook (also handy alongside the Logging page).
 /** @type {{ ros: typeof ros, drive: typeof drive, session: WebRtcSession | null }} */
