@@ -1078,7 +1078,14 @@ def _build(packages, release=False):
 
     if packages:
         pkg_list = " ".join(packages)
-        colcon_cmd += f" --packages-select {pkg_list}"
+        colcon_cmd += f" --packages-up-to {pkg_list}"
+    else:
+        # Build all of src/, pulling in only the vendored navigation2
+        # packages that src/ actually depends on.
+        colcon_cmd += (
+            " --base-paths src vendor"
+            " --packages-up-to $(colcon list --names-only --base-paths src)"
+        )
 
     mode_label = " (release)" if release else ""
     full_cmd = f"{source_chain} && cd {ROS_WS} && {colcon_cmd}"
