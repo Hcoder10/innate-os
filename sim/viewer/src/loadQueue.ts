@@ -6,7 +6,7 @@
 // aggregated into one overall figure for a single loading bar.
 //
 // The three/DOM imports below are type-only (erased at runtime), so LoadQueue
-// runs in bare node -- see loadQueue.test.ts.
+// has no browser-only dependencies.
 
 import type { GLTF, GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { Group } from "three";
