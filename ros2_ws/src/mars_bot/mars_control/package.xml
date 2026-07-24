@@ -29,7 +29,6 @@
 
   <!-- Internal package dependencies -->
   <depend>mars_msgs</depend>
-  <depend>mars_arm</depend>
   <exec_depend>mars_bringup</exec_depend>
   <exec_depend>rws</exec_depend>
 

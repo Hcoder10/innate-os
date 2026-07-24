@@ -8,26 +8,22 @@
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <!-- Core ROS dependencies -->
-  <depend>rclcpp</depend>
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
 
   <!-- Message dependencies -->
-  <depend>std_msgs</depend>
   <depend>std_srvs</depend>
-  <depend>action_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
 
   <!-- TF dependencies -->
-  <depend>tf2</depend>
   <depend>tf2_ros</depend>
-  <depend>tf2_geometry_msgs</depend>
 
   <!-- Internal package dependencies -->
   <exec_depend>mars_msgs</exec_depend>
@@ -38,14 +34,11 @@
 
   <!-- Python dependencies (installed via pip-requirements.txt and apt-dependencies.txt) -->
   <exec_depend>rosbag2_py</exec_depend>
+  <exec_depend>rosidl_runtime_py</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
-
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>
     <build_type>ament_cmake</build_type>

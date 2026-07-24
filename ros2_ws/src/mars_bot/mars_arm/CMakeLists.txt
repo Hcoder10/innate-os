@@ -13,13 +13,12 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(cv_bridge REQUIRED)
-find_package(OpenCV REQUIRED)
 find_package(dynamixel_sdk REQUIRED)
-find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # Mars messages
 find_package(mars_msgs REQUIRED)
@@ -45,11 +44,13 @@ ament_target_dependencies(arm
   std_srvs
   visualization_msgs
   dynamixel_sdk
-  Eigen3
   mars_msgs
   geometry_msgs
   trajectory_msgs
+  rcl_interfaces
 )
+
+target_link_libraries(arm nlohmann_json::nlohmann_json)
 
 target_include_directories(arm PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

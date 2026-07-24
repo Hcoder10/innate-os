@@ -22,6 +22,7 @@ find_package(pluginlib REQUIRED)
 find_package(angles REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 
 # Include directories
 include_directories(include)
@@ -68,6 +69,7 @@ ament_target_dependencies(null_map_node
   geometry_msgs
   nav_msgs
   tf2_ros
+  lifecycle_msgs
 )
 install(TARGETS null_map_node DESTINATION lib/${PROJECT_NAME})
 

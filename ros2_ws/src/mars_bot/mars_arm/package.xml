@@ -14,7 +14,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-dynamixel-sdk</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
-  <exec_depend>kdl_parser_py</exec_depend>
+  <exec_depend>python3-pykdl</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>mars_bringup</exec_depend>
@@ -32,12 +32,9 @@
   <depend>mars_msgs</depend>
 
   <!-- C++ dependencies -->
-  <depend>cv_bridge</depend>
-  <depend>libopencv-dev</depend>
   <depend>dynamixel_sdk</depend>
-  <depend>libfcl-dev</depend>
-  <depend>eigen</depend>
   <depend>visualization_msgs</depend>
+  <build_depend>nlohmann-json-dev</build_depend>
 
   <!-- Python package dependencies (installed via pip-requirements.txt) -->
 
