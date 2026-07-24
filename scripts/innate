@@ -1073,8 +1073,13 @@ def _build(packages, release=False):
 
     colcon_cmd = "colcon build"
 
+    cmake_args = [
+        "-DCMAKE_C_COMPILER_LAUNCHER=ccache",
+        "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",
+    ]
     if release:
-        colcon_cmd += " --cmake-args -DCMAKE_BUILD_TYPE=Release"
+        cmake_args.append("-DCMAKE_BUILD_TYPE=Release")
+    colcon_cmd += " --cmake-args " + " ".join(cmake_args)
 
     if packages:
         pkg_list = " ".join(packages)
