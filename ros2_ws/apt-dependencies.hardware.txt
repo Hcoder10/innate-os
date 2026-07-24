@@ -33,17 +33,9 @@ nvidia-l4t-dla-compiler
 
 # Navigation / SLAM full stack (sim assembles a trimmed nav stack from the
 # nav2 sub-packages in apt-dependencies.sim.txt)
-ros-humble-navigation2
-ros-humble-nav2-bringup
-ros-humble-nav2-amcl
-ros-humble-nav2-map-server
-ros-humble-nav2-velocity-smoother
-ros-humble-spatio-temporal-voxel-layer
 ros-humble-slam-toolbox-humble-lifecycle
 
 # Manipulation (sim pulls only ros-humble-moveit-msgs)
-ros-humble-moveit
-ros-humble-moveit-ros-move-group
 
 # Real-sensor perception, lidar, point cloud
 ros-humble-rplidar-ros

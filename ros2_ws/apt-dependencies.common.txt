@@ -77,12 +77,6 @@ ros-humble-tf-transformations
 
 # ROS2 Humble packages - Navigation (shared subset; robot-only metas live in
 # apt-dependencies.hardware.txt, sim-only nav pieces in apt-dependencies.sim.txt)
-ros-humble-nav2-simple-commander
-ros-humble-nav2-controller
-ros-humble-nav2-bt-navigator
-ros-humble-nav2-behaviors
-ros-humble-nav2-lifecycle-manager
-
 # ROS2 Humble packages - Vision/Perception
 ros-humble-cv-bridge
 ros-humble-camera-info-manager
@@ -109,3 +103,42 @@ ros-humble-topic-tools
 ros-humble-xacro
 libhdf5-dev
 libopenmpi-dev
+
+
+# rosdep install -ri --from-paths ros2_ws/src -s --skip-keys=slam_toolbox --reinstall
+lcov
+python3-zmq
+libeigen3-dev
+nlohmann-json3-dev
+libomp-dev
+libbenchmark-dev
+libqt5core5a
+libqt5gui5
+libqt5opengl5
+libqt5widgets5
+ros-humble-rviz-default-plugins
+qtbase5-dev
+python3-pytest
+ros-humble-rviz2
+libhdf5-dev
+libopencv-dev
+libnanoflann-dev
+python3-transforms3d
+libgraphicsmagick++1-dev
+graphicsmagick-libmagick-dev-compat
+python3-yaml
+python3-typeshed
+ros-humble-diff-drive-controller
+ros-humble-joint-state-broadcaster
+ros-humble-ros-gz-bridge
+ros-humble-ros-gz-sim
+libgstreamer1.0-dev
+libgstreamer-plugins-base1.0-dev
+gstreamer1.0-plugins-good
+libgstreamer-plugins-good1.0-0
+gstreamer1.0-plugins-bad
+gstreamer1.0-nice
+libceres-dev
+python3-numpy
+python3-pykdl
+libyaml-cpp-dev
