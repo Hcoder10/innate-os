@@ -1,0 +1,4 @@
+[submodule "ros2_ws/vendor/navigation2"]
+	path = ros2_ws/vendor/navigation2
+	url = https://github.com/innate-inc/navigation2.git
+	branch = humble_main
