@@ -21,8 +21,24 @@ const ROBOT_URDF_URL = "/robot/mars.urdf";
 /** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
  * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
 interface ApartmentManifest {
-  rooms: { file: string; name: string; bytes: number; bbox: { min: number[]; max: number[] } }[];
+  rooms: ManifestRoom[];
   total: number;
+}
+interface ManifestRoom {
+  file: string;
+  name: string;
+  bytes: number;
+  bbox: { min: number[]; max: number[] };
+}
+
+/** The apartment's wireframe skeleton: parent group (already in the scene,
+ * carrying the Y-up -> Z-up rotation) plus one placeholder box per room, drawn
+ * from the manifest alone. streamApartment() then swaps boxes for real glbs. */
+export interface ApartmentLayout {
+  group: THREE.Group;
+  rooms: { room: ManifestRoom; box: LineSegments2 }[];
+  /** No manifest: streamApartment falls back to the monolith glb. */
+  monolith: boolean;
 }
 
 // These URDF links carry no real body geometry — just small marker spheres
@@ -34,6 +50,18 @@ const HIDDEN_FRAME_LINKS: string[] = ["ee_link", "head_camera_left", "head_camer
 // Arm links painted orange. Every URDF link actually shares the matt_black
 // material, so we override by link name rather than by material.
 const ORANGE_LINKS = new Set(["link1", "link3", "link5"]);
+
+// Room streaming order: the spaces the operator looks at first load first.
+// Matched as substrings of the room name (from the source glb, Portuguese:
+// "Sala" = living room, "Corredor" = hallway); anything unmatched keeps
+// manifest order behind them. The queue is FIFO (loadQueue.ts), so enqueue
+// order is load order.
+const ROOM_PRIORITY = ["sala", "corredor"];
+function roomPriority(name: string): number {
+  const lower = name.toLowerCase();
+  const i = ROOM_PRIORITY.findIndex((keyword) => lower.includes(keyword));
+  return i === -1 ? ROOM_PRIORITY.length : i;
+}
 
 // Chase-cam framing used when a pose is snapped in (see spawnAt below).
 const CHASE_DISTANCE = 1.8; // meters behind the robot
@@ -84,6 +112,9 @@ export class SimScene {
   private tmpSize = new THREE.Vector2();
   // Robot-shaped placeholder box, shown at the spawn pose until the STLs load.
   private robotBox?: LineSegments2;
+  // Set by the first spawnAt: after that the camera belongs to the robot, and
+  // the layout overview framing must not yank it away.
+  private spawned = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -238,8 +269,13 @@ export class SimScene {
     this.scene.add(group);
   }
 
-  async loadApartment(queue: LoadQueue): Promise<void> {
-    const loader = new GLTFLoader();
+  /**
+   * Phase one of the apartment load: fetch the manifest (a few KB) and draw
+   * every room's placeholder box. Called before any mesh download starts, so
+   * the first frame shows the apartment's wireframe layout instead of an empty
+   * void, and the camera has something real to frame (see frameLayout).
+   */
+  async loadApartmentLayout(): Promise<ApartmentLayout> {
     // One parent group holds every room and carries the Y-up -> Z-up rotation,
     // so it's applied once; placeholder boxes and rooms attach underneath.
     const group = new THREE.Group();
@@ -253,8 +289,41 @@ export class SimScene {
     } catch {
       /* no manifest -- fall through to the monolith */
     }
+    if (!manifest || !Array.isArray(manifest.rooms)) return { group, rooms: [], monolith: true };
 
-    if (!manifest || !Array.isArray(manifest.rooms)) {
+    // Skip a malformed room rather than throwing -- a bad bbox would build a
+    // Box3 from Vector3(undefined) and error the whole (visual-only) session.
+    const rooms = manifest.rooms
+      .filter((room) => {
+        if (isValidRoom(room)) return true;
+        console.warn("[sim-viewer] skipping malformed manifest room:", room);
+        return false;
+      })
+      .map((room) => {
+        const b = room.bbox;
+        const box = this.boxOutline(
+          new THREE.Box3(
+            new THREE.Vector3(b.min[0], b.min[1], b.min[2]),
+            new THREE.Vector3(b.max[0], b.max[1], b.max[2]),
+          ),
+        );
+        group.add(box);
+        return { room, box };
+      });
+    return { group, rooms, monolith: false };
+  }
+
+  /**
+   * Phase two: stream each room's glb through the queue and swap its
+   * placeholder box out on arrival. A room that fails is non-fatal (visual
+   * only): log it, drop its box, and let the rest of the apartment and the
+   * session carry on.
+   */
+  async streamApartment(queue: LoadQueue, layout: ApartmentLayout): Promise<void> {
+    const loader = new GLTFLoader();
+    const { group } = layout;
+
+    if (layout.monolith) {
       // Dev-only fallback: a checkout that never ran the split. The published
       // bundle always ships the manifest and never the monolith, so in prod
       // this path only runs if the manifest fetch itself failed -- non-fatal,
@@ -269,40 +338,52 @@ export class SimScene {
       return;
     }
 
-    // Skip a malformed room rather than throwing -- a bad bbox would build a
-    // Box3 from Vector3(undefined) and error the whole (visual-only) session.
-    const rooms = manifest.rooms.filter((room) => {
-      if (isValidRoom(room)) return true;
-      console.warn("[sim-viewer] skipping malformed manifest room:", room);
-      return false;
-    });
+    const loadRoom = ({ room, box }: ApartmentLayout["rooms"][number]) =>
+      queuedGLB(queue, loader, `/models/apartment/${room.file}`)
+        .then((root) => {
+          this.dressRoom(root);
+          group.add(root);
+        })
+        .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
+        .finally(() => {
+          group.remove(box);
+          box.geometry.dispose(); // material is shared -- disposed in dispose()
+        });
 
-    // Draw each room's placeholder box immediately, then stream its glb in and
-    // swap the box out on arrival -- the layout reads before any bytes land. A
-    // room that fails is non-fatal (visual only): log it, drop its box, and let
-    // the rest of the apartment and the session carry on.
-    await Promise.all(
-      rooms.map((room) => {
-        const b = room.bbox;
-        const box = this.boxOutline(
-          new THREE.Box3(
-            new THREE.Vector3(b.min[0], b.min[1], b.min[2]),
-            new THREE.Vector3(b.max[0], b.max[1], b.max[2]),
-          ),
-        );
-        group.add(box);
-        return queuedGLB(queue, loader, `/models/apartment/${room.file}`)
-          .then((root) => {
-            this.dressRoom(root);
-            group.add(root);
-          })
-          .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
-          .finally(() => {
-            group.remove(box);
-            box.geometry.dispose(); // material is shared -- disposed in dispose()
-          });
-      }),
-    );
+    // Priority rooms (living room, then hallway) load one at a time so they
+    // appear in that order -- with the shared queue running 2 downloads at
+    // once they'd otherwise race, and the living room is the biggest file, so
+    // the smaller hallway would pop in first. The remaining rooms then stream
+    // together behind them.
+    const ordered = [...layout.rooms].sort((a, b) => roomPriority(a.room.name) - roomPriority(b.room.name));
+    const priority = ordered.filter(({ room }) => roomPriority(room.name) < ROOM_PRIORITY.length);
+    const rest = ordered.slice(priority.length);
+    for (const room of priority) await loadRoom(room);
+    await Promise.all(rest.map(loadRoom));
+  }
+
+  /**
+   * Frame the orbit camera on the placeholder layout so the wireframe reads as
+   * an apartment from the first frame. No-op once a real pose has arrived --
+   * spawnAt's chase framing wins; this is only for the pre-pose gap.
+   */
+  frameLayout(layout: ApartmentLayout): void {
+    if (this.spawned || layout.rooms.length === 0) return;
+    const bounds = new THREE.Box3().setFromObject(layout.group);
+    if (bounds.isEmpty()) return;
+
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    // Pull back far enough that the widest horizontal extent fits the vertical
+    // FOV (the horizontal one is wider on any landscape stage), with margin.
+    const fov = (this.camera.fov * Math.PI) / 180;
+    const fit = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * 1.25;
+    // OrbitControls clamps the distance on update(); pick one it will honor.
+    const distance = Math.min(fit, this.controls.maxDistance);
+    const dir = new THREE.Vector3(-1, -1, 0.85).normalize();
+    this.camera.position.copy(center).addScaledVector(dir, distance);
+    this.controls.target.copy(center);
+    this.controls.update();
   }
 
   /** Ready a loaded apartment room for the scene: receive shadows and force
@@ -503,6 +584,7 @@ export class SimScene {
    * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
+    this.spawned = true;
     this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);

@@ -1,5 +1,5 @@
 // Split the apartment glb into one glb per room + a manifest, for the webapp's
-// progressive loader (scene.ts loadApartment). Pure split + prune -- NO texture
+// progressive loader (scene.ts loadApartmentLayout). Pure split + prune -- NO texture
 // re-encode, so total bytes and colors are identical to the monolith. Each room
 // is one node/mesh/material/texture, so the split duplicates nothing.
 //

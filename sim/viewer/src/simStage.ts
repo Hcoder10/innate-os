@@ -62,17 +62,17 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(chips);
 
-  // Loading indicator: a translucent scrim across the top of the stage holding
-  // a progress bar -- the canvas shows immediately underneath (robot first,
-  // then rooms stream in), not a full black block. Fades out when the download
-  // finishes. Scrim is pointer-events:none so it never shields the stage; the
-  // bar re-enables pointer events for its hover.
+  // Loading indicator: a compact pill holding a progress bar, centered just
+  // below the camera thumbnail strip (webapp's .cam-strip pins tiles at the top
+  // edge, ~14px + 120px tall) so the two don't overlap. The canvas shows
+  // immediately underneath (robot first, then rooms stream in), not a full
+  // black block. Fades out when the download finishes. pointer-events:none so
+  // it never shields the stage; the bar re-enables them for its hover.
   const loading = document.createElement("div");
   loading.style.cssText =
-    "position:absolute;top:0;left:0;right:0;height:40%;z-index:6;pointer-events:none;" +
-    "display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:min(9%,60px);" +
-    "background:linear-gradient(180deg,rgba(0,0,0,.5) 0%,rgba(0,0,0,.5) 62%,transparent 100%);" +
-    "transition:opacity .5s ease;";
+    "position:absolute;top:150px;left:50%;transform:translateX(-50%);z-index:6;pointer-events:none;" +
+    "display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;" +
+    "background:rgba(0,0,0,.42);transition:opacity .5s ease;";
   const bar = document.createElement("div");
   bar.style.cssText =
     "width:min(280px,60%);height:6px;border-radius:999px;background:rgba(255,255,255,.12);" +
@@ -217,13 +217,21 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       // (SPA remount) -- else we'd mutate a disposed scene.
       session.stageReady();
       raf = requestAnimationFrame(loop);
+      // The apartment manifest first (a few KB, unqueued): it draws every
+      // room's placeholder box and frames the camera on them, so the first
+      // frames show the apartment's wireframe layout rather than an empty
+      // void while the meshes are still being fetched.
+      setLoading("loading layout...");
+      const layout = await scene.loadApartmentLayout();
+      if (disposed) return;
+      scene.frameLayout(layout);
       setLoading("loading robot and apartment...");
       // Await once: the robot's STLs are now in the shared queue. Enqueue the
       // apartment rooms after, so they land behind the robot (deterministic
-      // robot-first, no timing guess). The manifest fetch itself isn't queued.
+      // robot-first, no timing guess).
       const { done: robotDone } = await scene.loadRobot(queue);
       if (disposed) return;
-      const apartment = scene.loadApartment(queue);
+      const apartment = scene.streamApartment(queue, layout);
       // Await twice: the rest of both loads.
       await Promise.all([robotDone, apartment]);
       if (disposed) return;

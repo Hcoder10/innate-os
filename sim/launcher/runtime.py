@@ -1429,7 +1429,7 @@ def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: boo
 
 def _ensure_apartment_split(viewer: Path, npm: str) -> None:
     """Generate the per-room apartment split + manifest the webapp streams
-    (scene.ts loadApartment). `up` re-extracts public/models from the asset
+    (scene.ts loadApartmentLayout). `up` re-extracts public/models from the asset
     bundle, wiping the split, so regenerate whenever the manifest is missing or
     older than the glb. Non-fatal: without it the 3D view just falls back to the
     single-file apartment."""
