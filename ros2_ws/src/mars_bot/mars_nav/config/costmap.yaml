@@ -54,7 +54,7 @@ local_costmap:
       track_unknown_space: false        # unknown space is treated as FREE in the rolling local costmap
       unknown_cost_value: 255          # unused while track_unknown_space is false
       plugins: [
-        "voxel_layer",
+        # "voxel_layer",
         "obstacle_layer",
         "inflation_layer",
         ]
@@ -149,7 +149,7 @@ mapfree:
         height: 10
         plugins: [ 
           "obstacle_layer", 
-          "voxel_layer",
+          #"voxel_layer",
           "inflation_layer",
           ]
         obstacle_layer:
