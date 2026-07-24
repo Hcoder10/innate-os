@@ -15,6 +15,7 @@ import json
 
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
+from std_srvs.srv import Trigger
 
 from brain_client.skills.lifecycle import PRIMITIVE_LIFECYCLE_STATUSES, decode_substep_feedback
 from brain_client.skills.types import SkillResult
@@ -34,6 +35,9 @@ class PrimitiveRunner:
         self.on_feedback = lambda skill_name, feedback, image=None: None
 
         self.action_client = ActionClient(node, ExecuteSkill, "execute_skill")
+        # Cancels runs this client doesn't own (manual webapp/CLI runs): the
+        # execute_skill action only lets the goal's sender cancel.
+        self._cancel_skill_client = node.create_client(Trigger, "/brain/cancel_skill")
         self._goal_handle = None
 
     # --- public API ---
@@ -84,6 +88,18 @@ class PrimitiveRunner:
         future = self._goal_handle.cancel_goal_async()
         future.add_done_callback(on_done or self._on_cancel_response)
         return future
+
+    def cancel_external(self) -> bool:
+        """Ask the skills server to cancel a run this client didn't start.
+
+        Fire-and-forget: the run's terminal event arrives like any other
+        manual skill event. Returns False if the server is unreachable.
+        """
+        if not self._cancel_skill_client.service_is_ready():
+            self._logger.error("Cannot cancel external skill run: /brain/cancel_skill unavailable")
+            return False
+        self._cancel_skill_client.call_async(Trigger.Request())
+        return True
 
     def abort_running(self) -> None:
         """Stop any running primitive without announcing an interruption (used on reset)."""

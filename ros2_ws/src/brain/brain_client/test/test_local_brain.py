@@ -9,14 +9,14 @@ touches the network in generate(), so everything else is exercised directly
 with a None or capturing transport.
 """
 
-import json
-
 import pytest
 
 from brain_client.brain.gemini import (
     STOP_SKILL,
+    WAIT,
     GeminiSession,
     _decision_from,
+    assign_tool_names,
     build_tools,
     tool_name,
 )
@@ -62,6 +62,26 @@ def test_tool_name_sanitizes_invalid_characters():
     assert tool_name("navigate_to_position") == "navigate_to_position"
     assert tool_name("Wave Hello!") == "Wave_Hello_"
     assert len(tool_name("x" * 100)) == 64
+
+
+def test_assign_tool_names_disambiguates_collisions_and_builtins():
+    colliding = [
+        {"id": "a", "name": "Wave Hello!"},
+        {"id": "b", "name": "Wave Hello?"},  # sanitizes to the same name as 'a'
+        {"id": "c", "name": "wait"},  # shadows the built-in wait tool
+        {"id": "d", "name": "y" * 100},
+        {"id": "e", "name": "y" * 100},  # truncates to the same name as 'd'
+    ]
+    named = assign_tool_names(colliding)
+    names = [name for name, _ in named]
+    assert names[0] == "Wave_Hello_"
+    assert names[1] == "Wave_Hello__2"
+    assert names[2] == "wait_2"
+    assert len(names) == len(set(names)) and WAIT not in names
+    assert all(len(name) <= 64 for name in names)
+    # The declarations use the same disambiguated names.
+    declared = [d["name"] for d in build_tools(colliding, None)[0]["functionDeclarations"]]
+    assert declared[:5] == names
 
 
 def test_build_tools_declares_one_function_per_skill_plus_wait():
@@ -144,6 +164,14 @@ def test_prune_keeps_images_only_in_newest_turns():
     assert any("removed" in p.get("text", "") for p in user_turns[0]["parts"])
 
 
+def test_prune_with_zero_image_turns_strips_every_frame():
+    session = make_session(max_image_turns=0)
+    for i in range(3):
+        session.absorb(user_turn(f"turn {i}", with_image=True), model_response({"text": "ok"}))
+    user_turns = [c for c in session._history if c["role"] == "user"]
+    assert all(images_in(c) == 0 for c in user_turns)
+
+
 def test_prune_caps_history_and_never_starts_on_orphaned_function_response():
     session = make_session(max_history=4)
     for i in range(6):
@@ -178,7 +206,9 @@ def test_clear_bumps_generation_for_stale_turn_detection():
 
 def test_tool_outcomes_are_recorded_as_function_responses():
     session = make_session()
-    decision = session.absorb(user_turn("go", False), model_response(call_part("navigate_to_position", {"x": 1}, "abc")))
+    decision = session.absorb(
+        user_turn("go", False), model_response(call_part("navigate_to_position", {"x": 1}, "abc"))
+    )
     session.add_tool_outcomes([(decision.calls[0], "started")])
     part = session._history[-1]["parts"][0]["functionResponse"]
     assert part["name"] == "navigate_to_position"
@@ -223,13 +253,7 @@ from brain_client.brain import grounding  # noqa: E402
 
 def fake_jpeg(width: int, height: int) -> bytes:
     """Minimal JPEG header: SOI + SOF0 carrying the given dimensions."""
-    return (
-        b"\xff\xd8"
-        + b"\xff\xc0\x00\x11\x08"
-        + height.to_bytes(2, "big")
-        + width.to_bytes(2, "big")
-        + b"\x00" * 12
-    )
+    return b"\xff\xd8" + b"\xff\xc0\x00\x11\x08" + height.to_bytes(2, "big") + width.to_bytes(2, "big") + b"\x00" * 12
 
 
 CAM = dict(vertical_fov_deg=80.0, cam_height=0.19663, cam_forward=0.0197)
@@ -278,6 +302,83 @@ def test_approach_goal_stops_short_and_faces_the_point():
     close = grounding.approach_goal(0.0, 0.2)
     assert close["x"] == 0.0 and close["y"] == 0.0
     assert abs(close["theta_degrees"] - 90.0) < 1e-6
+
+
+# ---------- agent loop (fake node, no network) ----------
+
+import time  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from brain_client.brain.agent import BrainAgent  # noqa: E402
+from brain_client.core.state import BrainState  # noqa: E402
+
+
+def make_agent(monkeypatch) -> tuple[BrainAgent, BrainState]:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a (never-called) transport
+    logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
+    node = SimpleNamespace(
+        get_logger=lambda: logger,
+        create_guard_condition=lambda cb: SimpleNamespace(trigger=lambda: None),
+    )
+    config = SimpleNamespace(
+        gemini_model="m",
+        gemini_thinking_level="",
+        history_max_entries=60,
+        history_max_image_turns=2,
+        idle_turn_interval=3.0,
+        supervision_turn_interval=5.0,
+    )
+    state = BrainState()
+    state.is_brain_active = True
+    camera = SimpleNamespace(
+        fresh_image_jpeg=lambda max_age: JPEG, fresh_arm_jpeg=lambda max_age: None, current_head_pitch=-10.0
+    )
+    pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
+    chat = SimpleNamespace(emit_system=lambda *a, **k: None, emit=lambda *a, **k: None, speak=lambda *a, **k: None)
+    agent = BrainAgent(
+        node,
+        state,
+        config,
+        camera=camera,
+        pose_tracker=pose,
+        runner=SimpleNamespace(),
+        roster=SimpleNamespace(active_skill_ids=lambda: []),
+        chat=chat,
+        gaze=SimpleNamespace(pause=lambda: None),
+    )
+    return agent, state
+
+
+def observed_user_message(agent: BrainAgent) -> dict:
+    text, images = agent._observe()
+    return GeminiSession.user_message(text, images)
+
+
+def test_failed_turn_requeues_its_events_for_the_retry(monkeypatch):
+    agent, state = make_agent(monkeypatch)
+    agent.on_user_message("bring me a snack")
+    user_message = observed_user_message(agent)
+    assert agent._events == []  # drained into the in-flight turn
+
+    agent._results.put((agent._session.generation, user_message, None, RuntimeError("boom")))
+    agent._finish_turn()
+
+    assert [e["text"] for e in agent._events] == ['The user says: "bring me a snack"']
+    assert agent._events_in_turn == []
+    assert agent._next_turn_due > time.monotonic()  # backoff still paces the retry
+    assert agent._session._history == []  # the failed exchange never entered history
+
+
+def test_turn_finishing_after_deactivation_is_dropped_entirely(monkeypatch):
+    agent, state = make_agent(monkeypatch)
+    user_message = observed_user_message(agent)
+    state.is_brain_active = False
+
+    agent._results.put((agent._session.generation, user_message, model_response({"text": "stale"}), None))
+    agent._finish_turn()
+
+    assert agent._session._history == []  # no stale observation survives into the next activation
+    assert agent._turn_in_flight is False
 
 
 # ---------- prompt ----------

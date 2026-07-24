@@ -98,6 +98,27 @@ def tool_name(skill_name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.\-]", "_", skill_name)[:64] or "skill"
 
 
+def assign_tool_names(skills: list[dict]) -> list[tuple[str, dict]]:
+    """Give every skill a unique function name, in roster order.
+
+    Sanitizing/truncating can make two skill names collide (and a skill can
+    shadow a built-in tool); colliding names get a numeric suffix so a call
+    never silently dispatches to the wrong skill.
+    """
+    taken = {STOP_SKILL, WAIT, GO_TO_POINT}
+    named = []
+    for meta in skills:
+        base = name = tool_name(meta["name"])
+        counter = 2
+        while name in taken:
+            suffix = f"_{counter}"
+            name = base[: 64 - len(suffix)] + suffix
+            counter += 1
+        taken.add(name)
+        named.append((name, meta))
+    return named
+
+
 def build_tools(skills: list[dict], running_skill_name: str | None, *, can_go_to_point: bool = False) -> list[dict]:
     """One function declaration per available skill, in a native tools block.
 
@@ -113,21 +134,21 @@ def build_tools(skills: list[dict], running_skill_name: str | None, *, can_go_to
             ),
         }
         return [{"functionDeclarations": [stop, _WAIT_DECLARATION]}]
-    declarations = [_declaration(meta) for meta in skills]
+    declarations = [_declaration(name, meta) for name, meta in assign_tool_names(skills)]
     if can_go_to_point:
         declarations.append(_GO_TO_POINT_DECLARATION)
     declarations.append(_WAIT_DECLARATION)
     return [{"functionDeclarations": declarations}]
 
 
-def _declaration(meta: dict) -> dict:
+def _declaration(name: str, meta: dict) -> dict:
     properties: dict[str, dict] = {}
     required: list[str] = []
     for param_name, spec in (meta.get("inputs") or {}).items():
         properties[param_name] = _param_schema(spec if isinstance(spec, dict) else {})
         if isinstance(spec, dict) and spec.get("required"):
             required.append(param_name)
-    declaration = {"name": tool_name(meta["name"]), "description": meta.get("guidelines") or meta["name"]}
+    declaration = {"name": name, "description": meta.get("guidelines") or meta["name"]}
     if properties:
         declaration["parameters"] = {"type": "OBJECT", "properties": properties, "required": required}
     return declaration
@@ -261,11 +282,13 @@ class GeminiSession:
             history[0].get("role") != "user" or any("functionResponse" in p for p in history[0].get("parts") or [])
         ):
             history.pop(0)
-        # Keep camera frames only in the newest few user turns.
+        # Keep camera frames only in the newest few user turns (none at all if
+        # the configured keep-count is zero or nonsensical).
+        keep = max(self._max_image_turns, 0)
         image_turns = [
             c for c in history if c.get("role") == "user" and any("inlineData" in p for p in c.get("parts") or [])
         ]
-        for content in image_turns[: -self._max_image_turns or None]:
+        for content in image_turns[:-keep] if keep else image_turns:
             content["parts"] = [dict(_FRAME_REMOVED) if "inlineData" in p else p for p in content["parts"]]
 
 
@@ -282,7 +305,9 @@ def _decision_from(response: dict) -> Decision:
         if call is not None:
             args = call.get("args") or {}
             decision.calls.append(
-                ToolCall(name=call.get("name") or "", args=args if isinstance(args, dict) else {}, id=call.get("id") or "")
+                ToolCall(
+                    name=call.get("name") or "", args=args if isinstance(args, dict) else {}, id=call.get("id") or ""
+                )
             )
         elif part.get("text"):
             if part.get("thought"):

@@ -29,10 +29,10 @@ from brain_client.brain.gemini import (
     STOP_SKILL,
     WAIT,
     GeminiSession,
+    assign_tool_names,
     build_tools,
     direct_transport,
     proxy_transport,
-    tool_name,
 )
 from brain_client.brain.prompt import build_system_prompt
 from brain_client.perception import pose as pose_math
@@ -64,7 +64,9 @@ def _clean_speech(speech: str | None) -> str | None:
 
 
 class BrainAgent:
-    def __init__(self, node, state, config, *, camera, pose_tracker, runner, roster, chat, gaze, proxy=None, scan_health=None):
+    def __init__(
+        self, node, state, config, *, camera, pose_tracker, runner, roster, chat, gaze, proxy=None, scan_health=None
+    ):
         self._node = node
         self._logger = node.get_logger()
         self._state = state
@@ -92,6 +94,7 @@ class BrainAgent:
         )
 
         self._events: list[dict] = []  # pending {"text", "image"} for the next turn
+        self._events_in_turn: list[dict] = []  # drained into the in-flight turn; re-queued if it fails
         self._turn_in_flight = False
         self._next_turn_due = 0.0  # monotonic; 0 = turn wanted now
         self._pose_at_capture = None
@@ -169,7 +172,9 @@ class BrainAgent:
         self._check_lidar_health()
         if not self._state.is_brain_active or not self.available or self._turn_in_flight:
             return
-        if not self._events and time.monotonic() < self._next_turn_due:
+        # The due time is authoritative: new events reset it to 0 (add_event),
+        # while events re-queued after an inference failure keep the backoff.
+        if time.monotonic() < self._next_turn_due:
             return
         if self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
             return
@@ -193,6 +198,7 @@ class BrainAgent:
     def _observe(self) -> tuple[str, list[bytes]]:
         """Drain pending events and snapshot the world into one turn input."""
         events, self._events = self._events, []
+        self._events_in_turn = events  # held so a failed turn can give them back
 
         status = f"[t+{int(time.monotonic() - self._activated_at)}s]"
         pose = self._pose.current_pose_xyt()
@@ -238,11 +244,16 @@ class BrainAgent:
             except queue.Empty:
                 return
             self._turn_in_flight = False
-            if self._session is None or generation != self._session.generation:
-                continue  # directive switched / brain reset while this turn was in flight
+            if self._session is None or generation != self._session.generation or not self._state.is_brain_active:
+                # Directive switched, brain reset, or deactivated while this
+                # turn was thinking: drop the whole exchange so the history
+                # carries nothing from a moment that no longer exists.
+                self._events_in_turn = []
+                continue
             if error is not None:
                 self._handle_error(error)
                 continue
+            self._events_in_turn = []
             if self._error_streak > 0:
                 self._error_streak = 0
                 self._chat.emit_system("✅ Brain inference recovered.")
@@ -260,15 +271,15 @@ class BrainAgent:
         self._logger.error(f"[Brain] Gemini call failed ({self._error_streak}x): {error}")
         if self._error_streak == 1:
             self._chat.emit_system(f"⚠️ Brain inference failed: {error} — retrying.")
+        # Give the failed turn's events back to the queue so the retry re-sends
+        # them — a fresh heartbeat observation alone would silently drop the
+        # user's command or a skill result.
+        self._events = self._events_in_turn + self._events
+        self._events_in_turn = []
         self._next_turn_due = time.monotonic() + min(5.0 * self._error_streak, 30.0)
 
     # ================= acting on a decision =================
     def _apply(self, decision) -> None:
-        if not self._state.is_brain_active:
-            # Deactivated while thinking: answer the calls so the history stays
-            # valid, but say and do nothing.
-            self._session.add_tool_outcomes([(c, "ignored — the robot was deactivated") for c in decision.calls])
-            return
         if decision.thoughts:
             self._chat.emit("robot_thoughts", _trim_thoughts(decision.thoughts), speak=False)
         speech = _clean_speech(decision.speech)
@@ -292,6 +303,12 @@ class BrainAgent:
             if self._runner.has_active_goal:
                 self._runner.cancel_active_goal()
                 return "stopping — you will get an event when it has stopped"
+            if self._state.primitive_running is not None:
+                # A run this client didn't start (webapp/CLI manual run): the
+                # skills server's owner-agnostic cancel is the only handle.
+                if self._runner.cancel_external():
+                    return "stopping — you will get an event when it has stopped"
+                return "could not stop it — the skills server is unreachable"
             return "no skill is running"
         if self._state.primitive_running is not None:
             return "rejected — another skill is already running; stop it first"
@@ -372,7 +389,7 @@ class BrainAgent:
             return build_tools([], running["primitive_name"])
         active_ids = set(self._roster.active_skill_ids())
         skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
-        self._tool_map = {tool_name(meta["name"]): meta["id"] for meta in skills}
+        self._tool_map = {name: meta["id"] for name, meta in assign_tool_names(skills)}
         return build_tools(skills, None, can_go_to_point=_NAV_TO_POSITION in active_ids)
 
     def _directive_prompt(self) -> str | None:

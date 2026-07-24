@@ -335,6 +335,20 @@ class BrainClientNode(Node):
         reason = payload.get("reason")
 
         self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
+        # Mirror the run into primitive_running so the brain honors the
+        # one-skill-at-a-time rule (its tools collapse to stop/wait) even for
+        # runs it didn't start. Never clobber a run the brain owns.
+        if status == "running" and self.state.primitive_running is None:
+            self.state.primitive_running = {
+                "primitive_name": primitive_name,
+                "primitive_id": primitive_id,
+                "skill_id": skill_id,
+                "manual": True,
+            }
+        elif status in ("completed", "failed", "interrupted"):
+            running = self.state.primitive_running
+            if running is not None and running.get("manual"):
+                self.state.primitive_running = None
         if self.state.is_brain_active:
             detail = reason or "triggered manually from the app"
             self.brain.add_event(f"The user manually ran skill '{primitive_name}' ({status}): {detail}")
