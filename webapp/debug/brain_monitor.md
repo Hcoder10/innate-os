@@ -1,18 +1,26 @@
 # Brain Monitor
 
 A single-file, zero-dependency dashboard that watches the local Gemini brain
-think in real time. Open [brain_monitor.html](brain_monitor.html) in a browser
-— no build, no server, no CDN.
+think in real time. It ships with the robot's webapp:
 
 ```
-open tools/brain_monitor/brain_monitor.html          # then type the robot host
-brain_monitor.html?host=mars-the-26th.local          # auto-connect
+https://<robot>/debug/brain_monitor.html             # auto-connects to that robot
+```
+
+Served from the robot it talks rosbridge through the webapp's same-origin
+`/ws` proxy (so HTTPS works with no mixed-content trouble). It also runs as a
+plain local file — no build, no server, no CDN:
+
+```
+open webapp/debug/brain_monitor.html                 # then type the robot host
+brain_monitor.html?host=mars-the-26th.local          # connect to another robot
 brain_monitor.html?demo                              # synthetic brain, no robot
 brain_monitor.html?cam=/other/image/topic            # override the live-camera topic
 ```
 
-It connects straight to the robot's rosbridge (`ws://<host>:9090`) speaking the
-rosbridge JSON protocol — no roslib bundle.
+Opened as a file (or with `?host=`) it connects straight to the robot's
+rosbridge (`ws://<host>:9090`) speaking the rosbridge JSON protocol — no
+roslib bundle.
 
 ## What it shows
 

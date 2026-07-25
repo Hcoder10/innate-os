@@ -3,12 +3,14 @@
 <!--
   MARS Brain Monitor — a live window into the local Gemini agent loop.
 
-  Open this file in a browser and point it at a robot running the local brain
-  (rosbridge on :9090). Deep telemetry comes from /brain/trace (published by
+  Served by the robot's webapp: https://<robot>/debug/brain_monitor.html
+  (auto-connects through the same-origin /ws rosbridge proxy). Also works
+  opened as a plain local file — type a robot host and it talks straight to
+  rosbridge on :9090. Deep telemetry comes from /brain/trace (published by
   brain_client's BrainAgent); everything else degrades gracefully to the
   public topics (chat_out, agent_status, skill_status_update, odom, camera).
 
-    brain_monitor.html?host=mars-the-26th.local   auto-connect
+    brain_monitor.html?host=mars-the-26th.local   connect to another robot
     brain_monitor.html?demo                       synthetic brain, no robot
 -->
 <html lang="en">
@@ -391,11 +393,22 @@ function setConn(on) {
   if (!on && !demo.on) setPhase("off");
 }
 
+function wsUrlFor(host) {
+  // Served by the robot's webapp: use the same-origin /ws rosbridge proxy
+  // (mirrors rosClient.js #urlFor) — over HTTPS a plain ws://host:9090 would
+  // be blocked as mixed content. Any other host: straight to rosbridge.
+  if (location.protocol !== "file:" && host === location.hostname) {
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    return `${scheme}://${location.host}/ws`;
+  }
+  return `ws://${host}:9090`;
+}
+
 function connect(host) {
   if (!host) return;
   demo.stop();
   localStorage.setItem("brainmon.host", host);
-  ros.connect(`ws://${host}:9090`);
+  ros.connect(wsUrlFor(host));
 }
 
 ros.subscribe("/brain/trace", "std_msgs/msg/String", m => { const d = J(m); if (d) onTrace(d); });
@@ -813,10 +826,13 @@ $("btn-connect").onclick = () => connect($("host").value.trim());
 $("host").addEventListener("keydown", e => { if (e.key === "Enter") connect($("host").value.trim()); });
 $("btn-demo").onclick = () => demo.on ? (demo.stop(), $("btn-demo").textContent = "Demo") : runDemo();
 
-const savedHost = params.get("host") || localStorage.getItem("brainmon.host") || "";
+// Served from a robot: connect to it without any typing. ?host= overrides
+// (another robot), ?demo skips the robot entirely.
+const servedHost = location.protocol !== "file:" ? location.hostname : "";
+const savedHost = params.get("host") || servedHost || localStorage.getItem("brainmon.host") || "";
 $("host").value = savedHost;
 if (params.has("demo")) runDemo();
-else if (params.get("host")) connect(params.get("host"));
+else if (savedHost && (params.get("host") || servedHost)) connect(savedHost);
 </script>
 </body>
 </html>
