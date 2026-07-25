@@ -9,6 +9,8 @@ touches the network in generate(), so everything else is exercised directly
 with a None or capturing transport.
 """
 
+import json
+
 import pytest
 
 from brain_client.brain.gemini import (
@@ -313,7 +315,7 @@ from brain_client.brain.agent import BrainAgent  # noqa: E402
 from brain_client.core.state import BrainState  # noqa: E402
 
 
-def make_agent(monkeypatch) -> tuple[BrainAgent, BrainState]:
+def make_agent(monkeypatch, trace=None) -> tuple[BrainAgent, BrainState]:
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a (never-called) transport
     logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
     node = SimpleNamespace(
@@ -345,6 +347,7 @@ def make_agent(monkeypatch) -> tuple[BrainAgent, BrainState]:
         roster=SimpleNamespace(active_skill_ids=lambda: []),
         chat=chat,
         gaze=SimpleNamespace(pause=lambda: None),
+        trace=trace,
     )
     return agent, state
 
@@ -379,6 +382,32 @@ def test_turn_finishing_after_deactivation_is_dropped_entirely(monkeypatch):
 
     assert agent._session._history == []  # no stale observation survives into the next activation
     assert agent._turn_in_flight is False
+
+
+def test_trace_reports_the_turn_lifecycle(monkeypatch):
+    traces = []
+    agent, state = make_agent(monkeypatch, trace=lambda payload: traces.append(json.loads(payload)))
+
+    agent.on_user_message("hello")
+    user_message = observed_user_message(agent)
+    agent._results.put((agent._session.generation, user_message, None, RuntimeError("boom")))
+    agent._finish_turn()
+
+    user_message = observed_user_message(agent)
+    agent._results.put((agent._session.generation, user_message, model_response(call_part("wait", {})), None))
+    agent._finish_turn()
+
+    state.is_brain_active = False
+    agent._tick()  # inactive: no turn starts, but the snapshot heartbeat still fires
+
+    events = [t["ev"] for t in traces]
+    assert events == ["event", "turn_error", "turn_end", "snapshot"]
+    assert traces[0]["kind"] == "user"
+    assert traces[1]["streak"] == 1 and traces[1]["backoff"] == 5.0
+    assert traces[2]["calls"] == [{"name": "wait", "args": {}, "outcome": "ok"}]
+    snapshot = traces[3]
+    # History: the user turn, the model turn, and the wait call's functionResponse.
+    assert snapshot["active"] is False and snapshot["backend"] == "gemini-direct" and snapshot["history"] == 3
 
 
 # ---------- prompt ----------

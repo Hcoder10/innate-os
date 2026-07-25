@@ -72,6 +72,9 @@ class BrainClientNode(Node):
         # Brain health for the webapp telemetry widget (topic name kept from the
         # cloud era; the brain is local now, so it reports Gemini readiness).
         self.brain_status_pub = self.create_publisher(String, "/brain/websocket_status", LATCHED_QOS)
+        # Deep agent-loop telemetry (JSON) for the brain monitor dashboard
+        # (tools/brain_monitor): turn lifecycle, tool calls, queue snapshots.
+        self.brain_trace_pub = self.create_publisher(String, "/brain/trace", 10)
         self._agent_status_heartbeat = None
 
         self._proxy = self._init_proxy()
@@ -149,6 +152,7 @@ class BrainClientNode(Node):
             gaze=self.gaze,
             proxy=self._proxy,
             scan_health=self.scan_health,
+            trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
         # Terminal skill results and feedback land in the brain's next turn.
         self.runner.on_event = self.brain.on_skill_event

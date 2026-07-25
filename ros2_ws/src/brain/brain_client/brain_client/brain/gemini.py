@@ -223,6 +223,10 @@ class GeminiSession:
         self._history = []
         self.generation += 1
 
+    @property
+    def history_len(self) -> int:
+        return len(self._history)
+
     @staticmethod
     def user_message(text: str, images: list[bytes]) -> dict:
         parts = [{"text": text}]

@@ -14,6 +14,7 @@ and on a slow heartbeat otherwise, so the robot keeps watching the scene.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -65,7 +66,20 @@ def _clean_speech(speech: str | None) -> str | None:
 
 class BrainAgent:
     def __init__(
-        self, node, state, config, *, camera, pose_tracker, runner, roster, chat, gaze, proxy=None, scan_health=None
+        self,
+        node,
+        state,
+        config,
+        *,
+        camera,
+        pose_tracker,
+        runner,
+        roster,
+        chat,
+        gaze,
+        proxy=None,
+        scan_health=None,
+        trace=None,
     ):
         self._node = node
         self._logger = node.get_logger()
@@ -78,6 +92,7 @@ class BrainAgent:
         self._chat = chat
         self._gaze = gaze
         self._scan_health = scan_health
+        self._trace_sink = trace  # callable(json_str) publishing /brain/trace; None = tracing off
 
         transport, self.backend = self._pick_transport(proxy)
         self.available = transport is not None
@@ -105,6 +120,9 @@ class BrainAgent:
         self._lidar_error_reported = False
         self._activated_at = 0.0
         self._timer = None
+        self._turn_count = 0
+        self._turn_started_at = 0.0
+        self._last_snapshot_at = 0.0
 
         self._results: queue.SimpleQueue = queue.SimpleQueue()
         self._result_guard = node.create_guard_condition(self._finish_turn)
@@ -145,11 +163,24 @@ class BrainAgent:
             self._session.clear()
         self._events.clear()
 
+    # ================= trace (the monitor's window into the loop) =================
+    def _trace(self, event: str, **fields) -> None:
+        """Publish one JSON telemetry event on /brain/trace (no-op when unwired).
+
+        Everything here runs on the executor thread; the worker thread never
+        traces directly — its results are traced when they land in
+        :meth:`_finish_turn`.
+        """
+        if self._trace_sink is None:
+            return
+        self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
+
     # ================= events (executor thread) =================
     def add_event(self, text: str, image: bytes | None = None, kind: str = "info") -> None:
         """Queue something that happened; the next turn starts as soon as possible."""
         self._events.append({"text": text, "image": image, "kind": kind})
         self._next_turn_due = 0.0
+        self._trace("event", kind=kind, text=text, image=image is not None)
 
     def on_user_message(self, text: str) -> None:
         self.add_event(f'The user says: "{text}"', kind="user")
@@ -170,6 +201,7 @@ class BrainAgent:
     # ================= the loop =================
     def _tick(self) -> None:
         self._check_lidar_health()
+        self._snapshot()
         if not self._state.is_brain_active or not self.available or self._turn_in_flight:
             return
         # The due time is authoritative: new events reset it to 0 (add_event),
@@ -189,6 +221,18 @@ class BrainAgent:
 
         if self._state.log_everything:
             self._logger.info(f"[Brain] Turn input:\n{text}")
+
+        self._turn_count += 1
+        self._turn_started_at = time.monotonic()
+        self._trace(
+            "turn_start",
+            turn=self._turn_count,
+            input=text,
+            images=len(images),
+            tools=[d["name"] for d in tools[0]["functionDeclarations"]],
+            history=self._session.history_len,
+            frame=base64.b64encode(self._frame_at_capture).decode(),
+        )
 
         self._turn_in_flight = True
         threading.Thread(
@@ -244,11 +288,13 @@ class BrainAgent:
             except queue.Empty:
                 return
             self._turn_in_flight = False
+            latency = time.monotonic() - self._turn_started_at
             if self._session is None or generation != self._session.generation or not self._state.is_brain_active:
                 # Directive switched, brain reset, or deactivated while this
                 # turn was thinking: drop the whole exchange so the history
                 # carries nothing from a moment that no longer exists.
                 self._events_in_turn = []
+                self._trace("turn_dropped", turn=self._turn_count, latency=round(latency, 2))
                 continue
             if error is not None:
                 self._handle_error(error)
@@ -258,13 +304,23 @@ class BrainAgent:
                 self._error_streak = 0
                 self._chat.emit_system("✅ Brain inference recovered.")
             decision = self._session.absorb(user_message, response)
-            self._apply(decision)
+            outcomes = self._apply(decision)
             interval = (
                 self._config.supervision_turn_interval
                 if self._state.primitive_running
                 else self._config.idle_turn_interval
             )
             self._next_turn_due = time.monotonic() + interval
+            self._trace(
+                "turn_end",
+                turn=self._turn_count,
+                latency=round(latency, 2),
+                thoughts=decision.thoughts,
+                speech=decision.speech,
+                calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
+                history=self._session.history_len,
+                next_in=round(interval, 1),
+            )
 
     def _handle_error(self, error: Exception) -> None:
         self._error_streak += 1
@@ -276,10 +332,34 @@ class BrainAgent:
         # user's command or a skill result.
         self._events = self._events_in_turn + self._events
         self._events_in_turn = []
-        self._next_turn_due = time.monotonic() + min(5.0 * self._error_streak, 30.0)
+        backoff = min(5.0 * self._error_streak, 30.0)
+        self._next_turn_due = time.monotonic() + backoff
+        self._trace("turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff)
+
+    def _snapshot(self) -> None:
+        """Trace the loop's live state once a second (the monitor's heartbeat)."""
+        if self._trace_sink is None or time.monotonic() - self._last_snapshot_at < 1.0:
+            return
+        self._last_snapshot_at = time.monotonic()
+        running = self._state.primitive_running
+        self._trace(
+            "snapshot",
+            active=self._state.is_brain_active,
+            backend=self.backend,
+            model=self._config.gemini_model,
+            turn=self._turn_count,
+            in_flight=self._turn_in_flight,
+            thinking_for=round(time.monotonic() - self._turn_started_at, 1) if self._turn_in_flight else 0,
+            queued=[{"kind": e["kind"], "text": e["text"][:200]} for e in self._events],
+            next_in=max(0.0, round(self._next_turn_due - time.monotonic(), 1)),
+            streak=self._error_streak,
+            running=running["primitive_name"] if running else None,
+            history=self._session.history_len if self._session else 0,
+            uptime=round(time.monotonic() - self._activated_at, 0) if self._state.is_brain_active else 0,
+        )
 
     # ================= acting on a decision =================
-    def _apply(self, decision) -> None:
+    def _apply(self, decision) -> list:
         if decision.thoughts:
             self._chat.emit("robot_thoughts", _trim_thoughts(decision.thoughts), speak=False)
         speech = _clean_speech(decision.speech)
@@ -292,7 +372,9 @@ class BrainAgent:
         if speech:
             self._chat.emit("robot", speech, speak=False)
             self._chat.speak(speech, replace_pending=True)
-        self._session.add_tool_outcomes([(call, self._execute(call)) for call in decision.calls])
+        outcomes = [(call, self._execute(call)) for call in decision.calls]
+        self._session.add_tool_outcomes(outcomes)
+        return outcomes
 
     def _execute(self, call) -> str:
         """Run one tool call; the returned string is the model-facing outcome."""
