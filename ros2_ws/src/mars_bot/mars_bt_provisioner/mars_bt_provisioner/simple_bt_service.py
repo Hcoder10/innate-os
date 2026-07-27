@@ -38,6 +38,16 @@ logger = logging.getLogger("BLE_Server")
 SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 CHARACTERISTIC_UUID = "abcdef01-1234-5678-1234-56789abcdef0"
 
+# BlueZ truncates each notification to ATT_MTU-3 bytes, so any response larger
+# than the negotiated MTU must be split across notifications. Chunks carry raw
+# JSON fragments; the app buffers incoming notifications until the accumulated
+# bytes parse as JSON. 182 is exactly ATT_MTU-3 for the 185 iOS negotiates by
+# default: every payload that arrived intact before chunking still goes out as
+# a single byte-identical notification, so clients that don't reassemble are
+# strictly no worse off. Android clients must request an MTU >= 185 or chunks
+# get truncated on the air (as all large payloads already were).
+NOTIFY_CHUNK_SIZE = 182
+
 # Path to the helper script for restarting services (adjust if moved)
 RESTART_SCRIPT_PATH = "/usr/local/bin/restart_robot_networking.sh"
 
@@ -105,14 +115,22 @@ class BleProvisionerServer:
 
     # --- Thread-safe BLE helpers ---
 
+    def _notify_chunked(self, characteristic, response):
+        """Send *response* (dict) as one or more <=NOTIFY_CHUNK_SIZE notifications."""
+        payload = bytes(json.dumps(response), "utf-8")
+        chunks = [payload[i : i + NOTIFY_CHUNK_SIZE] for i in range(0, len(payload), NOTIFY_CHUNK_SIZE)]
+        for chunk in chunks:
+            characteristic.set_value(list(chunk))
+        if len(chunks) > 1:
+            logger.info(f"Notification sent in {len(chunks)} chunks ({len(payload)} bytes)")
+
     def _send_notification_threadsafe(self, response):
         """Schedule a BLE notification on the GLib main loop (safe from any thread)."""
 
         def _do_send():
             if self._ble_characteristic and self._ble_characteristic.is_notifying:
                 try:
-                    response_bytes = bytes(json.dumps(response), "utf-8")
-                    self._ble_characteristic.set_value(list(response_bytes))
+                    self._notify_chunked(self._ble_characteristic, response)
                     logger.info(f"Async notification sent: {response}")
                 except Exception as e:
                     logger.error(f"Error sending async notification: {e}")
@@ -139,9 +157,9 @@ class BleProvisionerServer:
                 if success:
                     if enable_autoconnect_on_success:
                         nmcli_set_autoconnect(ssid, True)
-                    logger.info(f"Background connect to '{ssid}' succeeded, waiting for stabilisation…")
-                    time.sleep(5)
-                    self._trigger_service_restart()
+                    # Notify the phone before the IP-stabilisation wait and the
+                    # service restarts: those take 15-45 s and the app only
+                    # needs to know the WiFi connection succeeded.
                     self._send_notification_threadsafe(
                         {
                             "command": command,
@@ -149,6 +167,9 @@ class BleProvisionerServer:
                             "message": f"Connected to {ssid}",
                         }
                     )
+                    logger.info(f"Background connect to '{ssid}' succeeded, waiting for stabilisation…")
+                    time.sleep(5)
+                    self._trigger_service_restart()
                 else:
                     logger.error(f"Background connect to '{ssid}' failed: {msg_or_err}")
                     self._send_notification_threadsafe(
@@ -340,8 +361,7 @@ class BleProvisionerServer:
         if response and self._ble_characteristic and self._ble_characteristic.is_notifying:
             logger.info(f"Sending notification response: {response}")
             try:
-                response_bytes = bytes(json.dumps(response), "utf-8")
-                self._ble_characteristic.set_value(list(response_bytes))
+                self._notify_chunked(self._ble_characteristic, response)
             except Exception as e:
                 logger.error(f"Error sending notification: {e}")
 
