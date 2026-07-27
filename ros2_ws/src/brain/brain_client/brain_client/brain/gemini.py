@@ -216,11 +216,21 @@ class GeminiSession:
         self._max_history = max_history
         self._max_image_turns = max_image_turns
         self._history: list[dict] = []
-        # Bumped by clear(); the agent discards turns started under an older generation.
+        # Bumped by clear() and invalidate(); the agent discards turns started
+        # under an older generation.
         self.generation = 0
 
     def clear(self) -> None:
         self._history = []
+        self.generation += 1
+
+    def invalidate(self) -> None:
+        """Orphan any in-flight turn without touching the history.
+
+        Used on brain deactivation: the conversation survives a stop/start
+        cycle, but a turn that was thinking when the brain stopped must not
+        be absorbed if it lands after a quick reactivation.
+        """
         self.generation += 1
 
     @property

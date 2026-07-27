@@ -321,6 +321,8 @@ def make_agent(monkeypatch, trace=None) -> tuple[BrainAgent, BrainState]:
     node = SimpleNamespace(
         get_logger=lambda: logger,
         create_guard_condition=lambda cb: SimpleNamespace(trigger=lambda: None),
+        create_timer=lambda period, cb: SimpleNamespace(cancel=lambda: None),
+        destroy_timer=lambda timer: None,
     )
     config = SimpleNamespace(
         gemini_model="m",
@@ -381,6 +383,21 @@ def test_turn_finishing_after_deactivation_is_dropped_entirely(monkeypatch):
     agent._finish_turn()
 
     assert agent._session._history == []  # no stale observation survives into the next activation
+    assert agent._turn_in_flight is False
+
+
+def test_stop_invalidates_in_flight_turn_across_quick_reactivation(monkeypatch):
+    agent, state = make_agent(monkeypatch)
+    user_message = observed_user_message(agent)
+    generation = agent._session.generation
+
+    agent.stop()  # deactivated while the turn was thinking...
+    agent.start()  # ...and reactivated before the response landed
+
+    agent._results.put((generation, user_message, model_response({"text": "stale"}), None))
+    agent._finish_turn()
+
+    assert agent._session._history == []  # the previous activation's turn is never absorbed
     assert agent._turn_in_flight is False
 
 

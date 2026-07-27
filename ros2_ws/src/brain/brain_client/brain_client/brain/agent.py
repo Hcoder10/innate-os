@@ -156,6 +156,11 @@ class BrainAgent:
             self._node.destroy_timer(self._timer)
             self._timer = None
         self._events.clear()
+        if self._session is not None:
+            # A turn still thinking belongs to this activation: invalidate it
+            # so _finish_turn drops it even if the brain is reactivated before
+            # the response lands.
+            self._session.invalidate()
 
     def reset(self) -> None:
         """Forget the conversation (directive switch / brain reset)."""

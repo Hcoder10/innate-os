@@ -115,8 +115,16 @@ class PrimitiveRunner:
 
         Skips the local /brain/skill_status_update echo — the action server
         publishes "interrupted" itself once the cancellation actually lands.
+
+        A manual (webapp/CLI) run is not the brain's to stop: it keeps running
+        on the skills server, so its mirrored state is kept too — a reactivated
+        brain still honors one-skill-at-a-time, and the run's own terminal
+        event clears it (that handler is always on).
         """
-        if self._state.primitive_running and self._goal_handle:
+        running = self._state.primitive_running
+        if running and running.get("manual"):
+            return
+        if running and self._goal_handle:
             self._goal_handle.cancel_goal_async()  # fire-and-forget
             self._goal_handle = None
         self._state.primitive_running = None
