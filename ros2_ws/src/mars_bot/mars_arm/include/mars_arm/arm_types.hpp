@@ -7,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 
 namespace mars_arm {
@@ -73,13 +72,6 @@ inline GainProfile parseGainsArray(const std::vector<int64_t>& arr) {
         g.ff2 = std::clamp(static_cast<int>(arr[4]), 0, kMaxGain);
     return g;
 }
-
-// Per-motor stress tracking for overload protection
-struct MotorStressTracker {
-    double score = 0.0;                                    // accumulated stress score
-    bool in_cooldown = false;                              // currently resting?
-    std::chrono::steady_clock::time_point cooldown_until;  // when to re-enable
-};
 
 struct TimingAccumulator {
     const char* name = "";

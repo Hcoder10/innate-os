@@ -53,9 +53,6 @@ class MarsArmNode : public rclcpp::Node {
     void recordLoopTiming(std::array<std::chrono::steady_clock::time_point, 9>& ts);
     std::vector<int> applyLimitsAndConvertToEncoder(std::vector<double>& command_data);
 
-    // ── Motor stress protection (arm_control.cpp) ───────────────────────
-    void updateMotorStress(double dt, const std::vector<int>& loads);
-
     // ── Service & topic callbacks (arm_services.cpp) ────────────────────
     void armCommandCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
     void armTorqueOnCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -168,15 +165,6 @@ class MarsArmNode : public rclcpp::Node {
     int gs_cycle_counter_ = 0;
     GainMode gain_mode_{GainMode::TELEOP};
     GainMode last_applied_gain_mode_{GainMode::TELEOP};
-
-    // Motor stress protection (overload cooldown)
-    // Leaky integrator: score += (A * |PWM| - C) * dt, clamped >= 0
-    std::array<MotorStressTracker, 7> stress_trackers_;
-    bool stress_enabled_{false};       // master enable for leaky integrator
-    double stress_threshold_{100.0};   // score at which cooldown triggers
-    double stress_cooldown_sec_{2.0};  // how long to rest (seconds)
-    double stress_multiplier_{1.0};    // A: multiplier on |load|
-    double stress_leak_{0.0};          // C: constant leak rate
 
     // Control loop timing instrumentation
     std::array<TimingAccumulator, 10> timing_stats_{{TimingAccumulator{"total"}, TimingAccumulator{"lock_wait"},
