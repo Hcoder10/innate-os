@@ -20,6 +20,7 @@
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -47,6 +48,26 @@ constexpr double MAX_ANGULAR = 1.0;  // rad/s
 // Car-like steering inversion while reversing is the `reverse_steering` ROS
 // parameter (default off); the app's Dev tab toggles it live via set_parameters.
 constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
+
+// Drive smoothing. /joystick only sets a target; a fixed-rate timer ramps the
+// published twist toward it, so the motors never see a step. With these
+// defaults a full-stick step takes 0.80 s to reach 0.4 m/s and 0.44 s to come
+// back to rest (0.68 s / 0.48 s for a full-stick turn) -- decel is deliberately
+// 2.5x accel because stopping has to stay responsive.
+constexpr double SMOOTHING_RATE = 50.0;    // Hz, /cmd_vel_teleop republish rate
+constexpr double SMOOTHING_TAU = 0.06;     // s, first-order lag time constant
+constexpr double MAX_ACCEL = 0.6;          // m/s^2
+constexpr double MAX_DECEL = 1.5;          // m/s^2
+constexpr double MAX_ANGULAR_ACCEL = 2.0;  // rad/s^2
+constexpr double MAX_ANGULAR_DECEL = 4.0;  // rad/s^2
+// Kept under the mux's 0.5 s teleop window so a dropped link ramps down under
+// our own decel limit rather than being cut to zero by the mux. Comfortably
+// above the app/webapp 150 ms joystick heartbeat.
+constexpr double INPUT_TIMEOUT = 0.4;    // s
+constexpr double SETTLE_EPSILON = 1e-3;  // m/s and rad/s; below this we snap to the target
+// Manual-drive speed mode: multiplies the motion_control caps, so it can lower
+// the configured maximum but never exceed it. The app/webapp set it live.
+constexpr double SPEED_SCALE = 1.0;
 }  // namespace joy_tuning
 
 /**
@@ -397,6 +418,18 @@ class AppControl : public rclcpp::Node {
         // Drive-speed caps; settings.yaml's /** motion_control overrides these, else joy_tuning defaults.
         this->declare_parameter("motion_control.max_speed", joy_tuning::MAX_LINEAR);
         this->declare_parameter("motion_control.max_angular_speed", joy_tuning::MAX_ANGULAR);
+        // Speed mode (slow / medium / fast) -- the app and webapp write this live through
+        // set_parameters. It scales the caps above, so it can only ever slow the robot down.
+        this->declare_parameter("motion_control.speed_scale", joy_tuning::SPEED_SCALE);
+        // Teleop ramp tuning. Only this node declares drive_smoothing.*, so a settings.yaml
+        // `/**` override reaches the app joystick without touching the USB gamepad node.
+        this->declare_parameter("drive_smoothing.rate", joy_tuning::SMOOTHING_RATE);
+        this->declare_parameter("drive_smoothing.tau", joy_tuning::SMOOTHING_TAU);
+        this->declare_parameter("drive_smoothing.max_accel", joy_tuning::MAX_ACCEL);
+        this->declare_parameter("drive_smoothing.max_decel", joy_tuning::MAX_DECEL);
+        this->declare_parameter("drive_smoothing.max_angular_accel", joy_tuning::MAX_ANGULAR_ACCEL);
+        this->declare_parameter("drive_smoothing.max_angular_decel", joy_tuning::MAX_ANGULAR_DECEL);
+        this->declare_parameter("drive_smoothing.input_timeout", joy_tuning::INPUT_TIMEOUT);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -419,6 +452,15 @@ class AppControl : public rclcpp::Node {
 
         // Publisher for robot info
         robot_info_pub_ = this->create_publisher<std_msgs::msg::String>("/robot/info", 10);
+
+        // Fixed-rate drive smoother. It has to be its own timer rather than work done in
+        // joystick_callback: /joystick arrives irregularly (150 ms heartbeat when the stick
+        // is held, up to ~60 Hz while it moves), so integrating against message arrivals
+        // would make the ramp rate depend on how fast the user's thumb happens to be moving.
+        const double smoothing_rate = std::max(1.0, this->get_parameter("drive_smoothing.rate").as_double());
+        drive_smoother_timer_ = this->create_wall_timer(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / smoothing_rate)),
+            std::bind(&AppControl::drive_smoother_callback, this));
 
         // Timer for publishing robot info
         robot_info_timer_ = this->create_wall_timer(1000ms, std::bind(&AppControl::publish_robot_info_callback, this));
@@ -666,27 +708,117 @@ class AppControl : public rclcpp::Node {
         return sign * curved;
     }
 
+    /** Manual-drive speed mode as a multiplier on the motion_control caps, clamped to 0.05-1.0. */
+    double drive_speed_scale() {
+        return std::clamp(this->get_parameter("motion_control.speed_scale").as_double(), 0.05, 1.0);
+    }
+
+    /**
+     * Advance one velocity axis toward `target` by `dt`, bounded by an acceleration limit
+     * and smoothed by a first-order lag of time constant `tau`.
+     *
+     * The requested rate (target - current) / tau is the lag; clamping it to the accel
+     * limit is the slew. Far from the target the clamp dominates and the axis ramps at
+     * constant acceleration; close to it the lag takes over and rounds the corner off, so
+     * there is no jerk step at either end of the ramp. Deceleration gets its own, larger
+     * limit -- coming to a stop has to stay responsive.
+     */
+    static double step_axis(double current, double target, double max_accel, double max_decel, double tau, double dt) {
+        const bool decelerating = std::abs(target) < std::abs(current) || current * target < 0.0;
+        const double limit = decelerating ? max_decel : max_accel;
+
+        const double rate = std::clamp((target - current) / tau, -limit, limit);
+        double next = current + rate * dt;
+
+        // Euler integration can step past the target and the lag never quite arrives at it.
+        // Clamp both ways so the axis settles exactly, which is what lets the timer below
+        // recognise "stopped" and fall silent.
+        next = (target >= current) ? std::min(next, target) : std::max(next, target);
+        if (std::abs(next - target) < joy_tuning::SETTLE_EPSILON) {
+            next = target;
+        }
+        return next;
+    }
+
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
         double shaped_x = apply_curve(msg->x);  // steering
         double shaped_y = apply_curve(msg->y);  // throttle
 
-        double linear = shaped_y * this->get_parameter("motion_control.max_speed").as_double();
-        double angular = -shaped_x * this->get_parameter("motion_control.max_angular_speed").as_double();
+        // Scale after the response curve, never before: scaling the raw axis would push the
+        // whole stick range down toward the deadband and cost most of its resolution (at
+        // 0.35x, full stick lands at 0.35 and the quadratic curve turns that into ~7% speed).
+        const double scale = drive_speed_scale();
+        double linear = shaped_y * this->get_parameter("motion_control.max_speed").as_double() * scale;
+        double angular = -shaped_x * this->get_parameter("motion_control.max_angular_speed").as_double() * scale;
 
         if (this->get_parameter("reverse_steering").as_bool() && linear < 0.0) {
             // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
-            double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
+            // The ramp scales with the speed mode so the blend still completes at full reverse stick.
+            double blend = std::min(1.0, -linear / (joy_tuning::REVERSE_STEER_RAMP * scale));
             angular *= (1.0 - 2.0 * blend);
         }
 
+        // Publishing belongs to drive_smoother_callback; this only moves the target it ramps toward.
+        target_linear_ = linear;
+        target_angular_ = angular;
+        last_joystick_time_ = this->now().seconds();
+        drive_active_ = true;
+    }
+
+    /**
+     * Ramp the published teleop twist toward the joystick target at a fixed rate.
+     *
+     * Runs continuously but publishes only while driving: teleop is the top priority in
+     * the cmd_vel mux, so streaming zeros forever would pin the slot and starve skills and
+     * nav. Once the robot has settled at rest this goes quiet until the next /joystick
+     * message, preserving the "silent when idle" contract the mux arbitration relies on.
+     */
+    void drive_smoother_callback() {
+        const double now = this->now().seconds();
+        const bool input_fresh =
+            (now - last_joystick_time_) < this->get_parameter("drive_smoothing.input_timeout").as_double();
+
+        // Stale input (app backgrounded, Wi-Fi drop) is a stop request, not a hold: ramp
+        // down under our own decel limit instead of letting the mux's window expire into a
+        // hard zero, or the motor deadman latch the last command for half a second.
+        const double target_linear = input_fresh ? target_linear_ : 0.0;
+        const double target_angular = input_fresh ? target_angular_ : 0.0;
+
+        const bool at_rest =
+            target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0;
+        if (!drive_active_ && at_rest) {
+            return;
+        }
+
+        // Nominal rather than measured dt: if the node stalls, a short dt understates the
+        // ramp, which errs toward gentler motion.
+        const double dt = 1.0 / std::max(1.0, this->get_parameter("drive_smoothing.rate").as_double());
+        const double tau = std::max(1e-3, this->get_parameter("drive_smoothing.tau").as_double());
+        // Limits scale with the speed mode so time-to-top-speed stays roughly constant
+        // across modes: slow mode is a lower ceiling, not a snappier ramp.
+        const double scale = drive_speed_scale();
+
+        smoothed_linear_ = step_axis(smoothed_linear_, target_linear,
+                                     this->get_parameter("drive_smoothing.max_accel").as_double() * scale,
+                                     this->get_parameter("drive_smoothing.max_decel").as_double() * scale, tau, dt);
+        smoothed_angular_ =
+            step_axis(smoothed_angular_, target_angular,
+                      this->get_parameter("drive_smoothing.max_angular_accel").as_double() * scale,
+                      this->get_parameter("drive_smoothing.max_angular_decel").as_double() * scale, tau, dt);
+
         geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = linear;
+        twist_msg.linear.x = smoothed_linear_;
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-        twist_msg.angular.z = angular;
+        twist_msg.angular.z = smoothed_angular_;
         cmd_vel_pub_->publish(twist_msg);
+
+        // That publish was the settling zero, so the next tick can stop publishing.
+        if (target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0) {
+            drive_active_ = false;
+        }
     }
 
     /**
@@ -756,6 +888,9 @@ class AppControl : public rclcpp::Node {
             data_to_publish_dict["color_variant"] = robot_info.value("color_variant", "black");
             data_to_publish_dict["volume_percent"] = robot_info.value("volume_percent", 80);
             data_to_publish_dict["microphone_enabled"] = robot_info.value("microphone_enabled", true);
+            // Speed mode is global robot state, so every client (app and webapp) mirrors it
+            // from here rather than trusting its own last write.
+            data_to_publish_dict["drive_speed_scale"] = drive_speed_scale();
 
             // Read minimum_app_version from os_config.json
             if (app_config_.contains("minimum_app_version")) {
@@ -1074,6 +1209,16 @@ class AppControl : public rclcpp::Node {
     // Timers
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
     rclcpp::TimerBase::SharedPtr hostname_sync_timer_;
+    rclcpp::TimerBase::SharedPtr drive_smoother_timer_;
+
+    // Drive smoother state. Only touched from joystick_callback and drive_smoother_callback,
+    // which the single-threaded executor serialises, so no locking is needed.
+    double target_linear_ = 0.0;
+    double target_angular_ = 0.0;
+    double smoothed_linear_ = 0.0;
+    double smoothed_angular_ = 0.0;
+    double last_joystick_time_ = 0.0;
+    bool drive_active_ = false;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

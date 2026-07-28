@@ -1283,6 +1283,54 @@ button {
   font-size: 9px;
 }
 
+/* ---- speed modes ----------------------------------------------------------- */
+
+.speed-modes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sm-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.sm-group {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+}
+
+.sm-btn {
+  padding: 6px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-strong);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.sm-btn:last-child {
+  border-bottom: 0;
+}
+
+.sm-btn:hover {
+  color: var(--text);
+}
+
+.sm-btn.on {
+  background: var(--accent-faint);
+  color: var(--accent);
+}
+
 /* ---- head tilt ------------------------------------------------------------ */
 
 .head-tilt {

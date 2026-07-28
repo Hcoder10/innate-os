@@ -20,6 +20,7 @@ import { createVideoStage, createAudioToggle } from "./videoStage.js";
 import { createJoystick } from "./joystick.js";
 import { createKeyboardDrive, createWasdChips } from "./keyboardDrive.js";
 import { createHeadTilt } from "./headTilt.js";
+import { createSpeedModes } from "./speedModes.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
@@ -83,6 +84,7 @@ function buildCockpit(root) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
   }
   parts.push(
+    createSpeedModes(rightRail, ros),
     createHeadTilt(rightRail, ros),
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),

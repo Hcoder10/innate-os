@@ -31,6 +31,9 @@
 #     motion_control:               # teleop / manual driving
 #       max_speed: 0.4              # m/s, top translational speed
 #       max_angular_speed: 1.0      # rad/s, top rotational speed
+#       speed_scale: 1.0            # speed-mode multiplier on the two caps above, (0, 1].
+#                                   # The app/webapp speed picker writes this live; setting
+#                                   # it here only changes what the robot boots into.
 #     nav:                          # autonomous (nav2)
 #       max_speed: 0.45             # m/s, top translational speed
 #       max_angular_speed: 0.6      # rad/s, top rotational speed
@@ -45,6 +48,23 @@
 #   ros__parameters:
 #     joystick:
 #       slow_mode_factor: 0.25      # speed multiplier while the slow-mode button is held
+
+# ── Teleop: drive smoothing (app / webapp joystick) ───────────────────
+# The app joystick sets a target and mars_app ramps /cmd_vel_teleop toward it, so the
+# motors never see a step. Raise the accel limits for a more immediate robot, lower them
+# for a gentler one. Decel is separate from accel on purpose — keep it the larger of the
+# two so stopping stays responsive. These knobs are the app path only; the USB gamepad
+# has its own limits under joystick_controller above.
+# mars_app:
+#   ros__parameters:
+#     drive_smoothing:
+#       rate: 50.0                  # Hz, /cmd_vel_teleop republish rate while driving
+#       tau: 0.06                   # s, first-order lag; higher = softer, more lag
+#       max_accel: 0.6              # m/s^2, speeding up
+#       max_decel: 1.5              # m/s^2, slowing down
+#       max_angular_accel: 2.0      # rad/s^2, turning harder
+#       max_angular_decel: 4.0      # rad/s^2, straightening out
+#       input_timeout: 0.4          # s without a joystick message before ramping to a stop
 
 # ── Battery thresholds + safety speed clamp (bringup) ─────────────────
 # bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling

@@ -137,6 +137,7 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         # /**
         "motion_control.max_speed",
         "motion_control.max_angular_speed",
+        "motion_control.speed_scale",
         "nav.max_speed",
         "nav.max_angular_speed",
         "inflation_layer.inflation_radius",
@@ -148,6 +149,14 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "max_jerk",
         # joystick_controller
         "joystick.slow_mode_factor",
+        # mars_app (teleop drive smoothing)
+        "drive_smoothing.rate",
+        "drive_smoothing.tau",
+        "drive_smoothing.max_accel",
+        "drive_smoothing.max_decel",
+        "drive_smoothing.max_angular_accel",
+        "drive_smoothing.max_angular_decel",
+        "drive_smoothing.input_timeout",
         # main_camera_driver
         "fps",
         "target_brightness",
