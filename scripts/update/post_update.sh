@@ -708,7 +708,14 @@ fi
         # Install Jetson-optimized PyTorch separately with ONLY the Jetson index
         # pip prefers manylinux wheels over platform-specific wheels, so we CANNOT
         # have PyPI as a fallback when installing torch or it will grab the CPU wheel
-        JETSON_INDEX="https://pypi.jetson-ai-lab.io/jp6/cu126"
+        #
+        # The URL MUST end in /+simple/ -- that is the PEP 503 index devpi serves.
+        # Without it pip scrapes the browsable web UI, which 404s for anything the
+        # index doesn't host itself: torch resolves by luck, but its pure-python
+        # deps (sympy, networkx, jinja2, pillow...) 404 and the install dies. On
+        # /+simple/ devpi proxies PyPI for those while still shadowing torch,
+        # torchvision and torchaudio with the Jetson aarch64 wheels.
+        JETSON_INDEX="https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/"
         TORCH_VERSION="2.8.0"
         TORCHVISION_VERSION="0.23.0"
         
