@@ -68,6 +68,8 @@ constexpr double SETTLE_EPSILON = 1e-3;  // m/s and rad/s; below this we snap to
 // Manual-drive speed mode: multiplies the motion_control caps, so it can lower
 // the configured maximum but never exceed it. The app/webapp set it live.
 constexpr double SPEED_SCALE = 1.0;
+// None of the knobs above means "unlimited" at zero -- see smoothing_param(), which
+// substitutes these same defaults for a non-positive override.
 }  // namespace joy_tuning
 
 /**
@@ -457,9 +459,13 @@ class AppControl : public rclcpp::Node {
         // joystick_callback: /joystick arrives irregularly (150 ms heartbeat when the stick
         // is held, up to ~60 Hz while it moves), so integrating against message arrivals
         // would make the ramp rate depend on how fast the user's thumb happens to be moving.
-        const double smoothing_rate = std::max(1.0, this->get_parameter("drive_smoothing.rate").as_double());
+        // Read once and cached: the timer period can't change after construction, so the
+        // callback integrates against this same dt rather than re-reading the parameter.
+        // drive_smoothing.rate is therefore a startup knob; the rest are live-tunable.
+        const double smoothing_rate = smoothing_param("drive_smoothing.rate", joy_tuning::SMOOTHING_RATE);
+        smoothing_dt_ = 1.0 / smoothing_rate;
         drive_smoother_timer_ = this->create_wall_timer(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / smoothing_rate)),
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
             std::bind(&AppControl::drive_smoother_callback, this));
 
         // Timer for publishing robot info
@@ -714,6 +720,33 @@ class AppControl : public rclcpp::Node {
     }
 
     /**
+     * Read a smoothing tunable, falling back to its compiled default if the configured
+     * value is non-positive.
+     *
+     * Every drive_smoothing knob is a rate or a limit that the ramp divides by or clamps
+     * to, so zero doesn't "remove a restriction" -- it breaks the smoother. A zero decel
+     * limit is the dangerous one: step_axis would clamp every ramp-down step to zero, so
+     * the last nonzero command would be republished forever while holding the top-priority
+     * teleop mux slot -- a robot that will not stop. Elsewhere in settings.yaml 0 *does*
+     * mean "disabled" (mars_arm's max_jerk), so writing it here by analogy is an easy
+     * mistake to make.
+     *
+     * Substituting the default rather than clamping to a small epsilon is deliberate: an
+     * epsilon decel limit is not a runaway but still takes minutes to stop, which is no
+     * more usable. A bad config should degrade to working behaviour, loudly.
+     */
+    double smoothing_param(const char* name, double fallback) {
+        const double value = this->get_parameter(name).as_double();
+        if (value > 0.0) {
+            return value;
+        }
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+                             "%s must be positive (got %.3f); using %.3f. Zero does not disable this limit.", name,
+                             value, fallback);
+        return fallback;
+    }
+
+    /**
      * Advance one velocity axis toward `target` by `dt`, bounded by an acceleration limit
      * and smoothed by a first-order lag of time constant `tau`.
      *
@@ -776,7 +809,7 @@ class AppControl : public rclcpp::Node {
     void drive_smoother_callback() {
         const double now = this->now().seconds();
         const bool input_fresh =
-            (now - last_joystick_time_) < this->get_parameter("drive_smoothing.input_timeout").as_double();
+            (now - last_joystick_time_) < smoothing_param("drive_smoothing.input_timeout", joy_tuning::INPUT_TIMEOUT);
 
         // Stale input (app backgrounded, Wi-Fi drop) is a stop request, not a hold: ramp
         // down under our own decel limit instead of letting the mux's window expire into a
@@ -790,21 +823,25 @@ class AppControl : public rclcpp::Node {
             return;
         }
 
-        // Nominal rather than measured dt: if the node stalls, a short dt understates the
-        // ramp, which errs toward gentler motion.
-        const double dt = 1.0 / std::max(1.0, this->get_parameter("drive_smoothing.rate").as_double());
-        const double tau = std::max(1e-3, this->get_parameter("drive_smoothing.tau").as_double());
+        // Nominal dt, and specifically the dt the timer was actually built with: the timer
+        // period is fixed at construction, so recomputing dt from a live drive_smoothing.rate
+        // would change the integration step without changing the callback cadence and silently
+        // scale the real acceleration. Nominal rather than measured because if the node
+        // stalls, a short dt understates the ramp, which errs toward gentler motion.
+        const double dt = smoothing_dt_;
+        const double tau = smoothing_param("drive_smoothing.tau", joy_tuning::SMOOTHING_TAU);
         // Limits scale with the speed mode so time-to-top-speed stays roughly constant
         // across modes: slow mode is a lower ceiling, not a snappier ramp.
         const double scale = drive_speed_scale();
 
-        smoothed_linear_ = step_axis(smoothed_linear_, target_linear,
-                                     this->get_parameter("drive_smoothing.max_accel").as_double() * scale,
-                                     this->get_parameter("drive_smoothing.max_decel").as_double() * scale, tau, dt);
-        smoothed_angular_ =
-            step_axis(smoothed_angular_, target_angular,
-                      this->get_parameter("drive_smoothing.max_angular_accel").as_double() * scale,
-                      this->get_parameter("drive_smoothing.max_angular_decel").as_double() * scale, tau, dt);
+        smoothed_linear_ =
+            step_axis(smoothed_linear_, target_linear,
+                      smoothing_param("drive_smoothing.max_accel", joy_tuning::MAX_ACCEL) * scale,
+                      smoothing_param("drive_smoothing.max_decel", joy_tuning::MAX_DECEL) * scale, tau, dt);
+        smoothed_angular_ = step_axis(
+            smoothed_angular_, target_angular,
+            smoothing_param("drive_smoothing.max_angular_accel", joy_tuning::MAX_ANGULAR_ACCEL) * scale,
+            smoothing_param("drive_smoothing.max_angular_decel", joy_tuning::MAX_ANGULAR_DECEL) * scale, tau, dt);
 
         geometry_msgs::msg::Twist twist_msg;
         twist_msg.linear.x = smoothed_linear_;
@@ -1219,6 +1256,8 @@ class AppControl : public rclcpp::Node {
     double smoothed_angular_ = 0.0;
     double last_joystick_time_ = 0.0;
     bool drive_active_ = false;
+    // Integration step, fixed to the period the smoother timer was created with.
+    double smoothing_dt_ = 1.0 / joy_tuning::SMOOTHING_RATE;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

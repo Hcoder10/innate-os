@@ -55,6 +55,12 @@
 # for a gentler one. Decel is separate from accel on purpose — keep it the larger of the
 # two so stopping stays responsive. These knobs are the app path only; the USB gamepad
 # has its own limits under joystick_controller above.
+#
+# Unlike max_jerk above, 0 does NOT mean "disabled" for any knob here — every one is a
+# rate or a limit that the ramp divides by or clamps to, so 0 breaks the smoother rather
+# than removing a restriction. Non-positive values are floored to a small positive number.
+# `rate` is read once at startup (it fixes the timer period); the rest are live-tunable
+# through set_parameters without a restart.
 # mars_app:
 #   ros__parameters:
 #     drive_smoothing:
