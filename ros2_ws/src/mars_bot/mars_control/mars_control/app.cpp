@@ -714,9 +714,24 @@ class AppControl : public rclcpp::Node {
         return sign * curved;
     }
 
-    /** Manual-drive speed mode as a multiplier on the motion_control caps, clamped to 0.05-1.0. */
+    /**
+     * Manual-drive speed mode as a multiplier on the motion_control caps, clamped to
+     * 0.05-1.0.
+     *
+     * The finite check is not redundant: std::clamp passes NaN straight through (neither
+     * comparison is true for NaN), and this scales the joystick target, so a NaN here
+     * would reach the published twist and land on the motor driver as a NaN velocity.
+     * Any client can write this parameter, so it is validated rather than trusted.
+     */
     double drive_speed_scale() {
-        return std::clamp(this->get_parameter("motion_control.speed_scale").as_double(), 0.05, 1.0);
+        const double value = this->get_parameter("motion_control.speed_scale").as_double();
+        if (!std::isfinite(value)) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+                                 "motion_control.speed_scale must be finite (got %.3f); using %.3f.", value,
+                                 joy_tuning::SPEED_SCALE);
+            return joy_tuning::SPEED_SCALE;
+        }
+        return std::clamp(value, 0.05, 1.0);
     }
 
     /**
@@ -734,15 +749,23 @@ class AppControl : public rclcpp::Node {
      * Substituting the default rather than clamping to a small epsilon is deliberate: an
      * epsilon decel limit is not a runaway but still takes minutes to stop, which is no
      * more usable. A bad config should degrade to working behaviour, loudly.
+     *
+     * Non-finite values are rejected for the same reason. YAML parses `.inf` and `.nan`,
+     * and infinity is the other spelling of "turn this off": an infinite input_timeout
+     * keeps a dropped joystick link fresh forever, so the smoother would republish the
+     * last nonzero target and hold the mux slot indefinitely -- the same runaway by a
+     * different route. An infinite tau latches identically. Anyone genuinely wanting a
+     * near-unlimited knob can write a large finite number.
      */
     double smoothing_param(const char* name, double fallback) {
         const double value = this->get_parameter(name).as_double();
-        if (value > 0.0) {
+        if (std::isfinite(value) && value > 0.0) {
             return value;
         }
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
-                             "%s must be positive (got %.3f); using %.3f. Zero does not disable this limit.", name,
-                             value, fallback);
+                             "%s must be finite and positive (got %.3f); using %.3f. Neither 0 nor inf disables "
+                             "this limit.",
+                             name, value, fallback);
         return fallback;
     }
 
