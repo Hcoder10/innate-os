@@ -40,12 +40,16 @@ CHARACTERISTIC_UUID = "abcdef01-1234-5678-1234-56789abcdef0"
 
 # BlueZ truncates each notification to ATT_MTU-3 bytes, so any response larger
 # than the negotiated MTU must be split across notifications. Chunks carry raw
-# JSON fragments; the app buffers incoming notifications until the accumulated
-# bytes parse as JSON. 182 is exactly ATT_MTU-3 for the 185 iOS negotiates by
-# default: every payload that arrived intact before chunking still goes out as
-# a single byte-identical notification, so clients that don't reassemble are
-# strictly no worse off. Android clients must request an MTU >= 185 or chunks
-# get truncated on the air (as all large payloads already were).
+# JSON fragments and every message ends with a "\n" terminator (JSON.dumps
+# never emits a raw newline): the app buffers notifications until it sees the
+# newline, parses the line, and on parse failure drops it and resyncs at the
+# next newline — so one truncated or garbled message can't poison the buffer
+# for every response after it. JSON.parse tolerates the trailing newline, so
+# clients that treat a single notification as a whole response still work.
+# 182 is exactly ATT_MTU-3 for the 185 iOS negotiates by default. Android
+# clients must request an MTU >= 185 or chunks get truncated on the air (as
+# all large payloads already were) — truncation now surfaces as a dropped
+# message instead of a wedged session.
 NOTIFY_CHUNK_SIZE = 182
 
 # Path to the helper script for restarting services (adjust if moved)
@@ -116,8 +120,8 @@ class BleProvisionerServer:
     # --- Thread-safe BLE helpers ---
 
     def _notify_chunked(self, characteristic, response):
-        """Send *response* (dict) as one or more <=NOTIFY_CHUNK_SIZE notifications."""
-        payload = bytes(json.dumps(response), "utf-8")
+        """Send *response* (dict) as newline-terminated <=NOTIFY_CHUNK_SIZE notifications."""
+        payload = bytes(json.dumps(response), "utf-8") + b"\n"
         chunks = [payload[i : i + NOTIFY_CHUNK_SIZE] for i in range(0, len(payload), NOTIFY_CHUNK_SIZE)]
         for chunk in chunks:
             characteristic.set_value(list(chunk))
@@ -287,7 +291,13 @@ class BleProvisionerServer:
         command = data.get("command")
         logger.info(f"Handling {command} command")
 
-        success, ssids, error_msg = nmcli_scan_for_visible_ssids()
+        # Force a fresh sweep: this is the one path where the user explicitly
+        # asked for scan results, and a hotspot enabled seconds ago won't be in
+        # NM's cache — --rescan auto would return the same stale list on every
+        # retap for ~30 s. The internal pre-connect scans keep the softer auto
+        # mode; here the app shows a scanning state, so the ~13 s sweep is the
+        # freshness the user asked for.
+        success, ssids, error_msg = nmcli_scan_for_visible_ssids(force_rescan=True)
 
         if success:
             return {"command": command, "status": "success", "visible_ssids": ssids}

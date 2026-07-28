@@ -424,7 +424,8 @@ def nmcli_scan_for_visible_ssids(timeout=30, force_rescan=False):
     with at most ~30 s of lag. The timeout leaves headroom over the
     worst-case sweep.
 
-    force_rescan: request a fresh sweep regardless of cache age — for the
+    force_rescan: request a fresh sweep regardless of cache age — for
+    user-initiated scan_wifi (fresh results are the whole point) and the
     activation retry path, where a stale cache is the suspected cause of
     the failure and re-reading it would make the retry pointless.
     """

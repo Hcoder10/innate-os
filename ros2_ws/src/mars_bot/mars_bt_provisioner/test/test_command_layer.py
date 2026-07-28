@@ -88,13 +88,15 @@ class TestScanWifi:
         # Deduplicated
         assert len([s for s in resp["visible_ssids"] if s == "OfficeNet"]) == 1
 
-        # Verify the actual nmcli invocation uses --rescan auto and sudo
+        # Verify the actual nmcli invocation uses sudo and forces a sweep:
+        # user-initiated scans must surface a hotspot enabled seconds ago,
+        # which --rescan auto's cache reuse would miss (internal scans stay auto)
         scan_call = [c for c in mock_run.call_args_list if any("wifi" in str(a) and "rescan" in str(a) for a in c.args)]
         assert len(scan_call) >= 1
         args = scan_call[-1]
         cmd_list = args[0][0]  # first positional arg
         assert "--rescan" in cmd_list
-        assert "auto" in cmd_list
+        assert "yes" in cmd_list
         assert args[1].get("use_sudo") is True or (
             "use_sudo" in (args[1] if len(args) > 1 else {}) and args[1]["use_sudo"]
         )
@@ -522,7 +524,9 @@ class TestNotificationChunking:
     BlueZ truncates each notification to ATT_MTU-3 bytes, so a get_status
     with a handful of saved profiles (>182 bytes on iOS) used to arrive as
     unparseable truncated JSON. The server now emits <=NOTIFY_CHUNK_SIZE
-    fragments that the app concatenates until they parse.
+    fragments terminated by a newline: the app buffers until the newline,
+    parses the line, and drops it on parse failure — resyncing at the next
+    newline instead of a corrupt buffer poisoning every later response.
     """
 
     def _sent_bytes(self, server):
@@ -559,14 +563,20 @@ class TestNotificationChunking:
         # Every individual notification fits the chunk budget
         for c in server._ble_characteristic.set_value.call_args_list:
             assert len(c.args[0]) <= simple_bt_service.NOTIFY_CHUNK_SIZE
-        # It took more than one notification, and the concatenation is the
-        # complete response — exactly what the app reassembles
+        # It took more than one notification, the message carries its newline
+        # terminator (the app's framing boundary), and the concatenation is
+        # the complete response — exactly what the app reassembles
         assert len(server._ble_characteristic.set_value.call_args_list) > 1
+        assert sent.endswith(b"\n")
         assert json.loads(sent.decode("utf-8")) == resp
 
     @patch.object(nmcli_utils, "_run_nmcli")
     def test_small_response_stays_single_notification(self, mock_run):
-        """Responses that fit one MTU still arrive whole (old-app compatible)."""
+        """Responses that fit one MTU still arrive whole (old-app compatible).
+
+        The trailing newline is the framing terminator; JSON.parse tolerates
+        it, so clients that parse a single notification as-is keep working.
+        """
         mock_run.return_value = (False, None, "Wi-Fi is disabled")
         server = _make_server()
 
@@ -574,7 +584,9 @@ class TestNotificationChunking:
 
         calls = server._ble_characteristic.set_value.call_args_list
         assert len(calls) == 1
-        assert json.loads(bytes(calls[0].args[0]).decode("utf-8")) == resp
+        sent = bytes(calls[0].args[0])
+        assert sent.endswith(b"\n")
+        assert json.loads(sent.decode("utf-8")) == resp
 
 
 # ---------------------------------------------------------------------------
