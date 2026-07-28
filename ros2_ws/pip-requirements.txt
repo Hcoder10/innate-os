@@ -6,7 +6,9 @@
 # Available indexes: jp6/cu126, jp6/cu128, jp6/cu129
 # See: https://pypi.jetson-ai-lab.io/
 # NOTE: torch is installed separately in post_update.sh with --index-url to ensure CUDA wheels
---extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+# The /+simple/ suffix is required -- it is the PEP 503 index; the bare URL is the
+# browsable web UI and 404s for anything the index doesn't host itself
+--extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/
 
 # Core
 numpy<2
