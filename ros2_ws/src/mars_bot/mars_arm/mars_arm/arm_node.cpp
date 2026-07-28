@@ -80,21 +80,11 @@ MarsArmNode::MarsArmNode() : Node("mars_arm") {
     this->declare_parameter("baud_rate", 1000000);
     this->declare_parameter("control_frequency", 100.0);
     this->declare_parameter("trajectory_rate_hz", 30.0);
-    this->declare_parameter("max_jerk", 0.0);             // rad/s³, 0 = disabled
-    this->declare_parameter("stress_enabled", false);     // enable/disable leaky integrator
-    this->declare_parameter("stress_threshold", 100.0);   // score to trigger cooldown
-    this->declare_parameter("stress_cooldown_sec", 2.0);  // seconds to rest
-    this->declare_parameter("stress_multiplier", 1.0);    // A in leaky integrator: A*|PWM| - C
-    this->declare_parameter("stress_leak", 0.0);          // C in leaky integrator: A*|PWM| - C
+    this->declare_parameter("max_jerk", 0.0);  // rad/s³, 0 = disabled
     this->declare_parameter("joints", std::vector<std::string>{});
 
     int baud_rate = this->get_parameter("baud_rate").as_int();
     control_frequency_ = this->get_parameter("control_frequency").as_double();
-    stress_enabled_ = this->get_parameter("stress_enabled").as_bool();
-    stress_threshold_ = this->get_parameter("stress_threshold").as_double();
-    stress_cooldown_sec_ = this->get_parameter("stress_cooldown_sec").as_double();
-    stress_multiplier_ = this->get_parameter("stress_multiplier").as_double();
-    stress_leak_ = this->get_parameter("stress_leak").as_double();
     auto joint_names_param = this->get_parameter("joints").as_string_array();
 
     // Load joint configurations from sub-parameters (nav2 style)

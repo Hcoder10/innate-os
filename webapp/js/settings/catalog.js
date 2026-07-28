@@ -93,7 +93,6 @@ export const CATALOG = [
     section: "Arm",
     knobs: [
       { path: ["mars_arm", P, "max_jerk"], label: "Max jerk", default: 150.0, type: "float", unit: "rad/s³", doc: "Trajectory jerk limit (0 disables)" },
-      { path: ["mars_arm", P, "stress_enabled"], label: "Motor stress protection", default: false, type: "bool", doc: "Motor-protection cooldown" },
     ],
   },
   {

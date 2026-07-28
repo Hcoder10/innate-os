@@ -7,23 +7,6 @@
     max_jerk: 150.0  # rad/s³ jerk limit for trajectories (0 = disabled)
 
     # =============================================================
-    # Dynamixel Failure Leaky Integrator Config
-    # =============================================================
-    # Score accumulates per-motor each tick:
-    #   score += (A * |load| - C) * dt    (clamped >= 0)
-    # When score >= threshold, torque is disabled for cooldown_sec.
-    #
-    # A (stress_multiplier): scales the raw load value (PWM % or mA)
-    # C (stress_leak):       constant drain — score decays when load is low
-    #
-    # Example: A=1.0, C=50.0 means load must exceed 50 to accumulate.
-    stress_enabled: false         # master enable (false = disabled)
-    stress_threshold: 100.0       # score to trigger cooldown
-    stress_cooldown_sec: 2.0      # seconds of torque-off rest
-    stress_multiplier: 1.0        # A: multiplier on |load|
-    stress_leak: 0.0              # C: constant leak rate
-
-    # =============================================================
     # Joint Configuration for Mars Arm (nav2-style)
     # =============================================================
     # List of joints, then each joint's parameters as a sub-map.
