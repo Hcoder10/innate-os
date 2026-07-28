@@ -17,12 +17,13 @@ REQUIRED_CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
 ROBOT_COLORS = ("white", "black")
 RobotColor = Literal["white", "black"]
 
-# Handicap: White starts without the a1 rook (no queenside castling)
-HANDICAP_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/1NBQKBNR w Kkq - 0 1"
+# Six-piece demo position: Black to move.
+# White: Kh8, Qa7, Ph7. Black: Kf8, Qe8, Pd5.
+DEMO_START_FEN = "4qk1K/Q6P/8/3p4/8/8/8/8 b - - 0 1"
 
 
 class ResetChessGame(Skill):
-    """Reset the chess game state to the standard starting position."""
+    """Reset the chess game state to the configured demo position."""
 
     def __init__(self, logger):
         super().__init__(logger)
@@ -33,7 +34,7 @@ class ResetChessGame(Skill):
 
     def guidelines(self):
         return (
-            "Reset the chess game to the starting position. "
+            "Reset the chess game to the configured six-piece demo position. "
             "Requires board calibration to be present first. "
             "Clears the move history and sets the board to the initial FEN. "
             "Optionally pass robot_color ('white' or 'black') to set which side the robot plays."
@@ -67,7 +68,7 @@ class ResetChessGame(Skill):
 
     def execute(self, robot_color: RobotColor = "white"):
         """
-        Reset game state to starting position.
+        Reset game state to the configured demo position.
 
         Args:
             robot_color: Which side the robot plays ('white' or 'black').
@@ -82,10 +83,10 @@ class ResetChessGame(Skill):
             return msg, SkillResult.FAILURE
 
         state = {
-            "fen": HANDICAP_FEN,
+            "fen": DEMO_START_FEN,
             "move_history": [],
             "last_detected_move": None,
-            "turn": "white",
+            "turn": "black",
             "robot_color": robot_color,
         }
 
@@ -94,7 +95,7 @@ class ResetChessGame(Skill):
         except Exception as e:
             return f"Failed to write game state: {e}", SkillResult.FAILURE
 
-        msg = f"Game reset to starting position. Robot plays {robot_color}."
+        msg = f"Game reset to the six-piece demo position. Black to move; robot plays {robot_color}."
         self.logger.info(f"[ResetChessGame] {msg}")
         self._send_feedback(msg)
         return msg, SkillResult.SUCCESS

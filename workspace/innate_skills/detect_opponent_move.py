@@ -32,8 +32,10 @@ from brain_client.skills.types import (
 # ── Paths ─────────────────────────────────────────────────────────────
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 
-# Handicap: White starts without the a1 rook (no queenside castling)
-HANDICAP_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/1NBQKBNR w Kkq - 0 1"
+# Six-piece demo position: Black to move.
+# White: Kh8, Qa7, Ph7. Black: Kf8, Qe8, Pd5.
+DEMO_START_FEN = "4qk1K/Q6P/8/3p4/8/8/8/8 b - - 0 1"
+GEMINI_MODEL = "gemini-3.6-flash"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 DATA_DIR = Path.home() / "innate-os/data/detect_move"
 ROBOT_COLORS = ("white", "black")
@@ -165,12 +167,12 @@ class DetectOpponentMove(Skill):
             return None
 
     def _init_game_state(self, robot_color: str) -> dict:
-        """Create a fresh game state with the handicap starting position."""
+        """Create a fresh game state with the configured demo position."""
         state = {
-            "fen": HANDICAP_FEN,
+            "fen": DEMO_START_FEN,
             "move_history": [],
             "last_detected_move": None,
-            "turn": "white",
+            "turn": "black",
             "robot_color": robot_color,
         }
         GAME_STATE_FILE.write_text(json.dumps(state, indent=2))
@@ -323,11 +325,11 @@ class DetectOpponentMove(Skill):
 
         try:
             response = self.gemini_client.models.generate_content(
-                model="gemini-3.1-pro-preview",
+                model=GEMINI_MODEL,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                    thinking_config=types.ThinkingConfig(thinking_level="medium"),
                 ),
             )
             result = json.loads(response.text.strip())
@@ -365,11 +367,11 @@ class DetectOpponentMove(Skill):
 
         try:
             response = self.gemini_client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model=GEMINI_MODEL,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    thinking_config=types.ThinkingConfig(thinking_budget=512),
+                    thinking_config=types.ThinkingConfig(thinking_level="low"),
                 ),
             )
             result = json.loads(response.text.strip())

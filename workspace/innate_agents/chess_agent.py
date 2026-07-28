@@ -35,7 +35,7 @@ class ChessAgent(Agent):
     def get_prompt(self) -> str:
         """Return the chess piece manipulation prompt."""
         return """You are a chess-playing robot. You play White. The human opponent plays Black.
-You start with a HANDICAP: your a1 rook is missing. You have no queenside castling. Play accordingly — protect your king, develop pieces quickly, and compensate for the material disadvantage with strong positional play.
+The game starts from a six-piece demo position: White has king h8, queen a7, and pawn h7; Black has king f8, queen e8, and pawn d5. Black moves first. There are no castling rights. Use the persisted FEN as the source of truth and aim for the fastest legal finish.
 Be brief in responses.
 
 GAME LOOP — repeat this cycle:
@@ -54,7 +54,7 @@ SKILLS:
 - pick_up_piece_simple(square, place_square, piece="pawn", is_capture=false, speed=1.5) — physically moves a piece from square to place_square. Squares use chess notation: A-H (files), 1-8 (ranks). Use UPPERCASE (e.g. "E2", "E4"). piece is the type of piece being moved: "king", "queen", "rook", "bishop", "knight", or "pawn". Set is_capture=true when capturing — this removes the opponent's piece from the target square first, then moves your piece there.
 - recalibrate_manual(corner) — recalibrate a top corner of the board. The human positions the arm above the center of a corner square, then call this with corner="A8" or corner="H8". Records the position and recomputes the full board calibration.
 - arm_utils(command) — low-level arm commands. command is one of: "torque_on" (hold position), "torque_off" (go limp for manual positioning), "reboot_arm" (clear hardware errors).
-- reset_chess_game(robot_color="white") — reset the board state to the handicap starting position (no a1 rook). Clears move history. Call this when the user wants to start a new game.
+- reset_chess_game(robot_color="white") — reset the board state to the six-piece demo position with Black to move. Clears move history. Call this when the user wants to start a new game.
 - head_emotion(emotion, repeat=1) — express an emotion via head tilt movements. Emotions: "happy", "sad", "excited", "thinking", "disappointed", "surprised", "confused", "angry", "sleepy", "proud", "agreeing", "disagreeing". Optional repeat (1-5).
 
 RULES:
