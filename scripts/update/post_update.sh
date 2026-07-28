@@ -250,10 +250,22 @@ if [ -f "$ENV_FILE" ]; then
             (umask 077; printf '%s\n' "$SERVICE_KEY_LINE" > "$SYSTEM_ENV_FILE")
             log "Copied INNATE_SERVICE_KEY from .env to $SYSTEM_ENV_FILE"
         fi
-        # Unconditional: older updaters left this 0600 root:root, unreadable by
-        # the non-root launch readers.
+    fi
+fi
+
+# Repair the mode outside the seeding branch above: a robot whose .env lost its key — the
+# very case this fallback exists for — or one flashed with a pre-seeded /etc/innate.env
+# never reaches that branch, so gating the repair on it leaves the file 0600 root:root,
+# unreadable by the non-root launch readers. Skipped when ACTUAL_USER resolves to root
+# (run from a root shell, no sudo): "root:root 640" would revoke the launch readers'
+# group access on a file that may currently be correct.
+if [ -f "$SYSTEM_ENV_FILE" ]; then
+    if [ "$ACTUAL_USER" != "root" ]; then
         chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
         chmod 640 "$SYSTEM_ENV_FILE"
+        log "Set $SYSTEM_ENV_FILE to 640 root:$ACTUAL_USER"
+    else
+        log "Skipping $SYSTEM_ENV_FILE permission repair (no non-root user; re-run via sudo)"
     fi
 fi
 
