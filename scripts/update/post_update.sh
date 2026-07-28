@@ -110,9 +110,16 @@ ensure_log_ownership() {
 apt_update() {
     local attempt output
     for attempt in $(seq 1 60); do
-        # tee streams apt's output live (to stderr and the log); the captured
-        # copy feeds the lock check — only lock contention is worth retrying.
-        output=$(set -o pipefail; apt-get update 2>&1 | tee -a "$LOG_FILE" /dev/stderr) && return 0
+        # Capture apt's output (appended to the log) for the lock check — only
+        # lock contention is worth retrying. Echoed to stderr via fd 2 rather
+        # than tee'd to /dev/stderr: under systemd fd 2 is a journald socket,
+        # which tee cannot re-open (ENXIO), failing the pipeline even when apt
+        # succeeded.
+        if output=$(set -o pipefail; apt-get update 2>&1 | tee -a "$LOG_FILE"); then
+            printf '%s\n' "$output" >&2
+            return 0
+        fi
+        printf '%s\n' "$output" >&2
         grep -q "Could not get lock" <<<"$output" || return 1
         log "  apt lists lock busy (attempt $attempt/60), retrying in 5s..."
         sleep 5
