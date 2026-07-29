@@ -13,9 +13,8 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
-from innate_proxy import ProxyClient
-
 from brain_client.common.logging import UniversalLogger
+from innate_proxy import ProxyClient
 
 
 class InputDeviceType(Enum):
