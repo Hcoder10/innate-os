@@ -6212,3 +6212,58 @@ button {
     border-top: 1px solid var(--hairline);
   }
 }
+
+/* ---- experiments panel (nav page) ---- */
+.exp-rec-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.exp-name {
+  flex: 1; min-width: 0;
+  background: var(--well, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--hairline, #444);
+  border-radius: 6px; color: inherit;
+  font: inherit; font-size: 0.85rem; padding: 0.3rem 0.55rem;
+}
+.exp-record {
+  border: 1px solid var(--hairline, #444); border-radius: 6px;
+  background: none; color: inherit; font: inherit; font-size: 0.85rem;
+  padding: 0.3rem 0.7rem; cursor: pointer; white-space: nowrap;
+}
+.exp-record.is-recording { border-color: #C0453C; color: #C0453C; }
+.exp-export {
+  border: none; background: none; color: inherit; opacity: 0.65;
+  font: inherit; font-size: 0.78rem; cursor: pointer; padding: 0;
+}
+.exp-export:hover { opacity: 1; }
+.exp-status { font-size: 0.78rem; opacity: 0.75; margin-bottom: 0.4rem; }
+.exp-list { display: flex; flex-direction: column; gap: 0.15rem; }
+.exp-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0; }
+.exp-swatch { width: 1.1em; height: 0.3em; border-radius: 2px; flex: none; }
+.exp-row-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 0.85rem;
+}
+.exp-row-meta { flex: 1; text-align: right; font-size: 0.72rem; opacity: 0.6; white-space: nowrap; }
+.exp-eye, .exp-del {
+  border: none; background: none; color: inherit; cursor: pointer;
+  font-size: 0.85rem; padding: 0 0.15rem; opacity: 0.7; flex: none;
+}
+.exp-eye:hover, .exp-del:hover { opacity: 1; }
+.exp-del:hover { color: #C0453C; }
+.exp-cfg-row { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; }
+.exp-cfg-label { font-size: 0.72rem; opacity: 0.6; margin-right: 0.15rem; }
+.exp-az {
+  border: 1px solid var(--hairline, #444); border-radius: 6px;
+  background: none; color: inherit; font: inherit; font-size: 0.78rem;
+  padding: 0.15rem 0.55rem; cursor: pointer; opacity: 0.75;
+}
+.exp-az:hover { opacity: 1; }
+.exp-az.is-active { opacity: 1; border-color: #2E7DD1; color: #2E7DD1; }
+.exp-az-custom {
+  width: 3.2rem; min-width: 0;
+  background: var(--well, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--hairline, #444); border-radius: 6px;
+  color: inherit; font: inherit; font-size: 0.78rem;
+  padding: 0.15rem 0.35rem; margin-left: 0.15rem;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.exp-az-custom::-webkit-outer-spin-button,
+.exp-az-custom::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

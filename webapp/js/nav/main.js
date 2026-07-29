@@ -31,6 +31,7 @@ import { createNavStore } from "./navStore.js";
 import { createMapsPanel } from "./mapsPanel.js";
 import { createMappingSession } from "./mappingSession.js";
 import { createNavPanels } from "./panels.js";
+import { createExperimentsPanel } from "./experiments.js";
 import { createNavPlots } from "./plots.js";
 import { createDriveKit } from "./driveKit.js";
 import { dismissAllConfirms } from "./confirm.js";
@@ -134,6 +135,36 @@ function buildView(root) {
   clearTrailBtn.addEventListener("click", () => map.clearTrail());
   chips.appendChild(clearTrailBtn);
 
+  // Manual drive: mounts the same teleop kit the mapping flow uses (joystick,
+  // WASD, camera PiP, head tilt) without needing to be in mapping mode.
+  // Mapping owns the kit while active, so this chip locks out during mapping.
+  const driveBtn = document.createElement("button");
+  driveBtn.type = "button";
+  driveBtn.className = "layer-chip layer-chip-action";
+  driveBtn.textContent = "Drive";
+  driveBtn.title = "Show teleop controls (joystick + WASD + camera)";
+  /** @type {{ destroy: () => void } | null} */
+  let manualKit = null;
+  let manualGen = 0;
+  function setManualDrive(on) {
+    const gen = ++manualGen;
+    driveBtn.classList.toggle("is-on", on);
+    if (on) {
+      createDriveKit(scene).then((kit) => {
+        if (gen !== manualGen) kit.destroy(); // toggled off (or mapping) while mounting
+        else manualKit = kit;
+      });
+    } else {
+      manualKit?.destroy();
+      manualKit = null;
+    }
+  }
+  driveBtn.addEventListener("click", () => {
+    if (driveBtn.disabled) return;
+    setManualDrive(!driveBtn.classList.contains("is-on"));
+  });
+  chips.appendChild(driveBtn);
+
   const legend = createLegend(scene, chipEls);
 
   /** @param {string} key @param {boolean} on */
@@ -161,6 +192,8 @@ function buildView(root) {
     legend.setHidden(mapping); // the drive kit's overlays own the scene corners
     const gen = ++kitGen;
     clearTrailBtn.disabled = mapping;
+    driveBtn.disabled = mapping;
+    if (mapping) setManualDrive(false); // mapping mounts its own kit
     if (mapping) {
       savedLayers = {};
       for (const [key, chip] of chipEls) {
@@ -209,12 +242,14 @@ function buildView(root) {
   // rolling plots. Each in its own host so no module's teardown can clear
   // another's DOM.
   const mapsHost = document.createElement("div");
+  const expHost = document.createElement("div");
   const readoutHost = document.createElement("div");
   const plotHost = document.createElement("div");
-  side.append(mapsHost, readoutHost, plotHost);
+  side.append(mapsHost, expHost, readoutHost, plotHost);
 
   const parts = [
     createMapsPanel(mapsHost, store),
+    createExperimentsPanel(expHost, store, map),
     createMappingSession(scene, store),
     createNavPanels(readoutHost, store),
     createNavPlots(plotHost),
@@ -226,6 +261,8 @@ function buildView(root) {
       // confirm orphaned by navigation floats over the next page.
       dismissAllConfirms();
       kitGen++; // cancel any in-flight drive-kit mount
+      manualGen++;
+      manualKit?.destroy();
       driveKit?.destroy();
       for (const part of parts) part.destroy();
       unsubStore();

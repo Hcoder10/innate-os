@@ -254,6 +254,13 @@ export function createMap(root, opts = {}) {
   let localGrid = null;
   /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
   const trail = [];
+  // Experiment recordings: an in-flight capture (same breadcrumb rules as the
+  // trail) plus saved runs drawn as overlays for side-by-side comparison.
+  /** @type {Array<{ x: number, y: number }> | null} */
+  let recPoints = null;
+  let recColor = "#2E7DD1";
+  /** @type {Array<{ color: string, points: Array<{ x: number, y: number }>, visible: boolean }>} */
+  let recordings = [];
   /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf", () => void>>} live layer subscriptions */
   const layerUnsubs = {};
 
@@ -455,6 +462,13 @@ export function createMap(root, opts = {}) {
         if (trail.length > TRAIL_MAX_POINTS) trail.shift();
       }
     }
+    if (recPoints && pose) {
+      const last = recPoints[recPoints.length - 1];
+      const step = last ? Math.hypot(pose.x - last.x, pose.y - last.y) : Infinity;
+      if (recPoints.length === 0 || step > TRAIL_MIN_STEP_M) {
+        recPoints.push({ x: pose.x, y: pose.y });
+      }
+    }
     draw();
   }
 
@@ -614,6 +628,30 @@ export function createMap(root, opts = {}) {
       ctx.drawImage(localOff, 0, 0, localGrid.width * cellPx, localGrid.height * cellPx);
       ctx.restore();
     }
+
+    // Saved experiment runs, then the in-flight capture on top: split a
+    // segment wherever consecutive points jump (relocalization, not motion).
+    const strokeRun = (/** @type {Array<{x:number,y:number}>} */ pts, /** @type {string} */ color, dashed = false) => {
+      if (pts.length < 2) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2 * dpr();
+      ctx.lineJoin = "round";
+      ctx.setLineDash(dashed ? [6 * dpr(), 4 * dpr()] : []);
+      ctx.beginPath();
+      let prev = null;
+      for (const p of pts) {
+        const { px, py } = worldToCanvas(p.x, p.y);
+        if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > TRAIL_JUMP_M) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+        prev = p;
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    for (const rec of recordings) {
+      if (rec.visible) strokeRun(rec.points, rec.color);
+    }
+    if (recPoints) strokeRun(recPoints, recColor, true);
 
     if (layers.trail && trail.length >= 2) {
       ctx.strokeStyle = MAP_COLORS.trail;
@@ -1064,6 +1102,27 @@ export function createMap(root, opts = {}) {
     /** Drop the breadcrumb trail — points from a previous map are meaningless in the new map's frame. */
     clearTrail() {
       trail.length = 0;
+      draw();
+    },
+    /** Begin capturing an experiment run (drawn dashed while live). @param {string} color */
+    startRecording(color) {
+      recColor = color;
+      recPoints = [];
+      draw();
+    },
+    /** Finish the capture and hand back the map-frame points. */
+    stopRecording() {
+      const pts = recPoints ?? [];
+      recPoints = null;
+      draw();
+      return pts;
+    },
+    recordingPointCount() {
+      return recPoints ? recPoints.length : 0;
+    },
+    /** Replace the saved-run overlays. @param {Array<{ color: string, points: Array<{x:number,y:number}>, visible: boolean }>} list */
+    setRecordings(list) {
+      recordings = list;
       draw();
     },
     /**
