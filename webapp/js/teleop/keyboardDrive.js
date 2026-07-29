@@ -3,11 +3,22 @@
 // Copyright (c) 2026 Innate Inc
 // Keyboard drive: WASD/arrows with ramping, so taps nudge and holds glide.
 //
-// W/↑ = forward, S/↓ = back, A/← = left, D/→ = right. Opposing keys cancel,
-// the combined vector is clamped to unit magnitude, Shift scales to 0.75 for
-// precision work. A 50 ms tick ramps toward the target (~350 ms up, ~150 ms
-// down); when no keys are held and the vector decays below epsilon the loop
-// stops and the source disengages (DriveController emits the single zero).
+// W/↑ = forward, S/↓ = back, A/← = left, D/→ = right. Opposing keys cancel and
+// Shift scales to 0.75 for precision work. A 50 ms tick ramps toward the target
+// (~350 ms up, ~150 ms down); when no keys are held and the vector decays below
+// epsilon the loop stops and the source disengages (DriveController emits the
+// single zero).
+//
+// Axes are gated independently, so W+A is (-1, 1) and holding a turn key costs no
+// throttle. Normalising the diagonal onto the unit circle instead cost 29% of the
+// forward axis, which the robot's quadratic response curve then turned into 57% of
+// the speed — and it bought nothing, because scaling both axes equally leaves the
+// turn radius unchanged. It only made the same arc slower.
+//
+// The ramp is polar: magnitude and heading move independently, so the vector turns
+// rather than having x and y race each other. Ramping the axes separately dropped y
+// in one tick while x crawled up over 250 ms, leaving a hole where the robot had
+// shed throttle but had not begun turning — which read as a stall mid-corner.
 //
 // Guards: key repeats ignored, typing contexts (TTS bar) ignored, arrows
 // preventDefault'ed so the page never scrolls, and blur / hidden-tab clears
@@ -19,6 +30,21 @@ const RAMP_UP_MS = 350;
 const RAMP_DOWN_MS = 150;
 const PRECISION_SCALE = 0.75;
 const EPSILON = 0.02;
+// Heading slew, expressed like the ramps above: ms to sweep a half turn. The
+// W -> W+A corner is 45 deg, so it lands in ~125 ms.
+const ANGLE_RAMP_MS = 500;
+const ANGLE_STEP = Math.PI * (TICK_MS / ANGLE_RAMP_MS);
+// Past a quarter turn, rotating there would sweep the stick through headings the
+// operator never asked for -- releasing A and pressing D is a half turn, and
+// arcing it would drive full-speed forward or backward on the way past. Bleed the
+// magnitude to zero instead and re-emerge on the new heading. (Holding A and D
+// together is already safe: targetVector cancels them to the origin.)
+const REORIENT_MAX_ANGLE = Math.PI / 2;
+
+/** Per-axis limit. The diagonal target is sqrt(2) long, and a polar sweep between two
+ *  corners bulges outside the square, so recomposed axes need clamping — mars_app's
+ *  response curve does not bound its input and would amplify y > 1 past max_speed. */
+const clampAxis = (v) => Math.max(-1, Math.min(1, v));
 
 /** @type {Map<string, "up" | "down" | "left" | "right">} */
 const KEY_DIRS = new Map([
@@ -73,19 +99,14 @@ export function createKeyboardDrive(driveController) {
   }
 
   function targetVector() {
-    let tx = (held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0);
-    let ty = (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0);
-    const mag = Math.hypot(tx, ty);
-    if (mag > 1) {
-      tx /= mag;
-      ty /= mag;
-    }
+    const tx = (held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0);
+    const ty = (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0);
     const scale = shift ? PRECISION_SCALE : 1;
     return { x: tx * scale, y: ty * scale };
   }
 
   /**
-   * Move one axis toward its target by the ramp rate for this tick.
+   * Move the vector's magnitude toward its target by the ramp rate for this tick.
    * @param {number} current
    * @param {number} target
    */
@@ -97,10 +118,41 @@ export function createKeyboardDrive(driveController) {
     return current + Math.sign(delta) * step;
   }
 
+  /**
+   * Shortest signed rotation from one heading to another, wrapped to [-pi, pi] so
+   * a sweep never takes the long way round.
+   * @param {number} from
+   * @param {number} to
+   */
+  function angleDelta(from, to) {
+    return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  }
+
   function tick() {
     const target = targetVector();
-    vx = approach(vx, target.x);
-    vy = approach(vy, target.y);
+    const targetMag = Math.hypot(target.x, target.y);
+    const currentMag = Math.hypot(vx, vy);
+
+    // A zero-length vector has no heading. Coming off rest, adopt the target's
+    // straight away so the ramp is pure magnitude; heading for the origin, keep
+    // the current one so we decay in a straight line rather than spinning to a
+    // heading that carries no speed anyway.
+    const heading = currentMag >= EPSILON ? Math.atan2(vy, vx) : Math.atan2(target.y, target.x);
+    const targetHeading = targetMag >= EPSILON ? Math.atan2(target.y, target.x) : heading;
+    const delta = angleDelta(heading, targetHeading);
+
+    let nextMag;
+    let nextHeading;
+    if (Math.abs(delta) > REORIENT_MAX_ANGLE) {
+      nextMag = approach(currentMag, 0);
+      nextHeading = heading;
+    } else {
+      nextMag = approach(currentMag, targetMag);
+      nextHeading = heading + Math.max(-ANGLE_STEP, Math.min(ANGLE_STEP, delta));
+    }
+
+    vx = clampAxis(nextMag * Math.cos(nextHeading));
+    vy = clampAxis(nextMag * Math.sin(nextHeading));
 
     if (held.size === 0 && Math.hypot(vx, vy) < EPSILON) {
       stopLoop();

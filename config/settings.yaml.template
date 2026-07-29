@@ -51,26 +51,31 @@
 
 # ── Teleop: drive smoothing (app / webapp joystick) ───────────────────
 # The app joystick sets a target and mars_app ramps /cmd_vel_teleop toward it, so the
-# motors never see a step. Raise the accel limits for a more immediate robot, lower them
-# for a gentler one. Decel is separate from accel on purpose — keep it the larger of the
-# two so stopping stays responsive. These knobs are the app path only; the USB gamepad
-# has its own limits under joystick_controller above.
+# motors never see a step. This is the app path only; the USB gamepad has its own limits
+# under joystick_controller above.
 #
-# Unlike max_jerk above, 0 does NOT mean "disabled" for any knob here — every one is a
-# rate or a limit that the ramp divides by or clamps to, so 0 breaks the smoother rather
-# than removing a restriction. Non-positive values are floored to a small positive number.
-# `rate` is read once at startup (it fixes the timer period); the rest are live-tunable
-# through set_parameters without a restart.
+# Keep time_constant >= max_deceleration / (2 * max_jerk), and likewise for the angular
+# pair, or the robot arrives at rest still braking and kicks after it has stopped.
+#
+# Unlike mars_arm's max_jerk above, 0 does NOT mean "disabled" here — every knob is divided
+# by or clamped to, so 0 breaks the ramp. Non-positive and non-finite values fall back to
+# the compiled default and are logged. `rate` is read once at startup; the rest are
+# live-tunable through set_parameters.
 # mars_app:
 #   ros__parameters:
 #     drive_smoothing:
-#       rate: 50.0                  # Hz, /cmd_vel_teleop republish rate while driving
-#       tau: 0.06                   # s, first-order lag; higher = softer, more lag
-#       max_accel: 0.6              # m/s^2, speeding up
-#       max_decel: 1.5              # m/s^2, slowing down
-#       max_angular_accel: 2.0      # rad/s^2, turning harder
-#       max_angular_decel: 4.0      # rad/s^2, straightening out
-#       input_timeout: 0.4          # s without a joystick message before ramping to a stop
+#       rate: 50.0                       # Hz, /cmd_vel_teleop republish rate while driving
+#       time_constant: 0.10              # s, first-order lag; higher = softer, more lag
+#       max_acceleration: 0.6            # m/s^2, speeding up
+#       max_deceleration: 1.2            # m/s^2, slowing down; keep above max_acceleration
+#       max_angular_acceleration: 2.0    # rad/s^2, turning harder
+#       max_angular_deceleration: 3.0    # rad/s^2, straightening out
+#       max_jerk: 10.0                   # m/s^3, how fast the accel limits may change
+#       max_angular_jerk: 25.0           # rad/s^3, same for the angular pair
+#       settle_epsilon: 0.02             # m/s and rad/s, snap to target below this. Floor
+#                                        # set by the wire: bringup sends int(v * 100), so
+#                                        # 0.01 is one count. Does not scale with speed mode.
+#       input_timeout: 0.4               # s without a joystick message before ramping to a stop
 
 # ── Battery thresholds + safety speed clamp (bringup) ─────────────────
 # bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling
