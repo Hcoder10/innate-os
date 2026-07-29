@@ -1,28 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Skill-facing odometry state.
-
-MARS is a differential-drive base on flat ground, so its pose is fully
-described by (x, y, yaw) — skills get that directly instead of the raw ROS
-Odometry message with its quaternion orientation. This module is ROS-free on
-purpose; contexts without rclpy should import it from here directly (the
-`innate` namespace, where it is also exported, pulls in ROS-dependent skill
-types).
-"""
+"""Skill-facing odometry state. ROS-free on purpose. MARS is a differential-
+drive base on flat ground, so its pose is fully (x, y, yaw)."""
 
 import math
-import warnings
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
+from brain_client.skills.dictcompat import LegacyMapping
+
 
 @dataclass(frozen=True)
-class Odometry:
+class Odometry(LegacyMapping):
     """A 2D odometry snapshot: pose in the odom frame plus body velocities.
 
-    Injected for ``RobotState(RobotStateType.LAST_ODOM)`` and refreshed at
-    50 Hz while a skill runs.
+    Read ambiently via ``self.odom`` while a skill runs — each read converts
+    the newest /odom message. Also injected for legacy ``RobotState``
+    descriptors.
     """
 
     x: float
@@ -77,52 +72,11 @@ class Odometry:
         return (self.x, self.y)
 
     # --- legacy dict compatibility ---------------------------------------
-    # LAST_ODOM injected a raw-message dict from 0.3.0 through 0.6.x, so old
-    # skill files use dict-style access: odom["theta_degrees"], .get(), `in`,
-    # iteration, .keys()/.items()/.values(). The full read-only mapping
-    # protocol is provided so that code behaves exactly as it did on the real
-    # dict. Soft-deprecated (each call warns to nudge authors to the
-    # attributes) but kept as a permanent compatibility layer -- there is no
-    # scheduled removal, old skills keep working indefinitely. Do not delete.
+    # LAST_ODOM injected a raw-message dict from 0.3.0 through 0.6.x; the
+    # LegacyMapping mixin keeps that access working (see dictcompat.py).
+    # Do not delete.
 
-    def __getitem__(self, key):
-        return self._legacy_mapping()[key]
-
-    def __iter__(self):
-        return iter(self._legacy_mapping())
-
-    def __len__(self) -> int:
-        return len(self._legacy_mapping())
-
-    def __bool__(self) -> bool:
-        # without this, __len__ would define truthiness -- making the
-        # documented `if self.odom:` None-check fire the deprecation warning
-        return True
-
-    def get(self, key, default=None):
-        return self._legacy_mapping().get(key, default)
-
-    def __contains__(self, key) -> bool:
-        return key in self._legacy_mapping()
-
-    def keys(self):
-        return self._legacy_mapping().keys()
-
-    def items(self):
-        return self._legacy_mapping().items()
-
-    def values(self):
-        return self._legacy_mapping().values()
-
-    def _legacy_mapping(self) -> dict:
-        warnings.warn(
-            "dict-style odometry access is deprecated; use the Odometry "
-            "attributes instead (odom.x, odom.theta_degrees, ...) or odom.raw "
-            "for the full message",
-            DeprecationWarning,
-            stacklevel=3,  # past the dunder/method that called us, at user code
-        )
-        return self._legacy_dict
+    _legacy_hint = "the Odometry attributes (odom.x, odom.theta_degrees, ...) or odom.raw for the full message"
 
     @cached_property
     def _legacy_dict(self) -> dict:

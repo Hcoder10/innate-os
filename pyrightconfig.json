@@ -1,0 +1,24 @@
+{
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux",
+  // Scoped to the tree that is actually clean under standard mode: the skills
+  // API and the skills written against it. Unscoped, pyright checks all 291
+  // files in the repo and reports ~230 real diagnostics from code that was
+  // never typed — burying the ones a skill author needs to see. Add paths
+  // here as they get cleaned (test/ and the rest of ros2_ws are not yet).
+  "include": [
+    "ros2_ws/src/brain/brain_client/brain_client/skills",
+    "ros2_ws/src/brain/brain_client/innate",
+    "workspace/innate_skills"
+  ],
+  "extraPaths": [
+    "ros2_ws/src/brain/brain_client",
+    "ros2_ws/src/cloud/clients/proxy-client",
+    "ros2_ws/install/brain_client/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/brain_messages/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/innate_cloud_msgs/local/lib/python3.10/dist-packages",
+    "ros2_ws/install/mars_msgs/local/lib/python3.10/dist-packages",
+    "/opt/ros/humble/lib/python3.10/site-packages",
+    "/opt/ros/humble/local/lib/python3.10/dist-packages"
+  ]
+}

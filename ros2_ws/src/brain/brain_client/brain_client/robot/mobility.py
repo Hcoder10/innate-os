@@ -139,3 +139,128 @@ class MobilityInterface:
         else:
             self.logger.error(f"MobilityInterface: rotation failed with {result}")
             return False
+
+    # --- base primitives ---
+    # Skills call these as methods: self.mobility.rotate_by(...), .drive(...).
+
+    def stop(self):
+        self.send_cmd_vel(0.0, 0.0, 0.1)
+
+    def _ride_out(self, duration, cancelled):
+        """Sleep through an open-loop motion, stopping the base early on cancel."""
+        deadline = time.time() + duration
+        while time.time() < deadline:
+            if cancelled is not None and cancelled():
+                self.stop()
+                return
+            time.sleep(0.05)
+
+    @staticmethod
+    def odom_xyt(odom):
+        """(x, y, theta) from nested dict or flat dataclass, or None."""
+        if odom is None:
+            return None
+        try:
+            if isinstance(odom, dict):
+                p = odom["pose"]["pose"]["position"]
+                return (float(p["x"]), float(p["y"]), math.radians(float(odom["theta_degrees"])))
+            return (float(odom.x), float(odom.y), float(odom.theta))
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+    @staticmethod
+    def servo_vel(err_px, gain, v_min, v_max, deadband_px):
+        """Pixel P-servo axis: gain per 100 px, clamp to [v_min, v_max], 0 in deadband."""
+        if abs(err_px) <= deadband_px:
+            return 0.0
+        v = max(-v_max, min(v_max, -gain / 100.0 * err_px))
+        return math.copysign(v_min, v) if abs(v) < v_min else v
+
+    def rotate_by(
+        self,
+        get_xyt,
+        angle,
+        *,
+        kp=1.2,
+        wz_max=0.5,
+        wz_min=0.15,
+        tol=math.radians(2.5),
+        timeout=12.0,
+        cancelled=None,
+        logger=None,
+    ):
+        """Rotate in place by `angle` rad, closed on odometry yaw (open-loop if
+        get_xyt yields None). cancelled: optional predicate polled each loop —
+        when it turns true the base stops and the function returns early.
+        """
+        logger = logger or self.logger
+        xyt = get_xyt()
+        if xyt is None:
+            logger.warning("[mobility] no odom — open-loop rotate")
+            self.send_cmd_vel(0.0, math.copysign(0.35, angle), abs(angle) / 0.35)
+            self._ride_out(abs(angle) / 0.35 + 0.4, cancelled)
+            return
+        target = xyt[2] + angle
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if cancelled is not None and cancelled():
+                break
+            xyt = get_xyt()
+            if xyt is None:
+                break
+            err = math.atan2(math.sin(target - xyt[2]), math.cos(target - xyt[2]))
+            if abs(err) < tol:
+                break
+            wz = max(-wz_max, min(wz_max, kp * err))
+            if abs(wz) < wz_min:
+                wz = math.copysign(wz_min, wz)
+            self.send_cmd_vel(0.0, wz, 0.15)
+            if cancelled is not None and cancelled():
+                break  # a brake hook may have fired between the check and the send
+            time.sleep(0.08)
+        self.stop()
+
+    def drive(
+        self,
+        get_xyt,
+        dist,
+        *,
+        kp=0.3,
+        v_max=0.10,
+        v_min=0.04,
+        tol=0.015,
+        timeout=15.0,
+        cancelled=None,
+        logger=None,
+    ):
+        """Drive straight by `dist` m, closed on odometry position (open-loop if
+        get_xyt yields None). cancelled: optional predicate polled each loop —
+        when it turns true the base stops and the function returns early.
+        """
+        logger = logger or self.logger
+        if abs(dist) < tol:
+            return
+        xyt = get_xyt()
+        if xyt is None:
+            logger.warning("[mobility] no odom — open-loop drive")
+            self.send_cmd_vel(math.copysign(0.08, dist), 0.0, abs(dist) / 0.08)
+            self._ride_out(abs(dist) / 0.08 + 0.4, cancelled)
+            return
+        x0, y0 = xyt[0], xyt[1]
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if cancelled is not None and cancelled():
+                break
+            xyt = get_xyt()
+            if xyt is None:
+                break
+            gone = math.hypot(xyt[0] - x0, xyt[1] - y0)
+            err = abs(dist) - gone
+            if err < tol:
+                break
+            v = math.copysign(max(v_min, min(v_max, kp * err)), dist)
+            self.send_cmd_vel(v, 0.0, 0.15)
+            if cancelled is not None and cancelled():
+                break  # a brake hook may have fired between the check and the send
+            time.sleep(0.08)
+        self.stop()

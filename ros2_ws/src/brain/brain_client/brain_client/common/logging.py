@@ -9,8 +9,6 @@ and provides a universal Logger class that works with ROS loggers and regular lo
 
 import os
 
-from launch.actions import SetEnvironmentVariable
-
 
 def _env_flag(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -95,6 +93,13 @@ def get_logging_env_vars():
     Returns:
         list: A list of SetEnvironmentVariable actions.
     """
+    # Lazy: importing `launch` swaps the global logger class to LaunchLogger
+    # (propagate=False) as an import side effect, which silently breaks stdlib
+    # log propagation (and pytest's caplog) for every logger created afterwards.
+    # Only launch files call this, and there `launch` is already loaded — the
+    # import must not ride along with UniversalLogger into non-launch code.
+    from launch.actions import SetEnvironmentVariable
+
     # Default to the standard format (inherit RCUTILS_CONSOLE_OUTPUT_FORMAT from
     # the environment — see config/dds/setup_dds.zsh) so brain_client's lines
     # carry their node name and timestamp like every other node, and the

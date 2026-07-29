@@ -48,18 +48,10 @@ def test_cancel_before_execute_survives_reset():
     assert skill._cancelled is True
 
 
-def test_begin_run_clears_stale_latch_from_previous_run():
+def test_begin_run_latches_cancel_from_goal_handle():
+    # cancel landed before _begin_run (before the instance even existed): the
+    # goal's persistent cancel status latches it at run start.
     skill = LegacyPatternSkill()
-    skill.cancel()  # previous run was cancelled
-    skill._begin_run(_goal_handle(False))
-    assert skill._cancelled is False
-
-
-def test_begin_run_recovers_cancel_from_goal_handle():
-    # cancel landed before _begin_run: the latch was set then cleared, but the
-    # goal's persistent cancel status re-latches it.
-    skill = LegacyPatternSkill()
-    skill.cancel()
     skill._begin_run(_goal_handle(True))
     assert skill._cancelled is True
 
@@ -103,5 +95,3 @@ def test_latch_works_without_super_init():
     skill._begin_run(_goal_handle(False))
     Skill.cancel(skill)
     assert skill._cancelled is True
-    skill._begin_run(_goal_handle(False))
-    assert skill._cancelled is False

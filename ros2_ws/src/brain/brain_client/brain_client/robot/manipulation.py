@@ -10,6 +10,7 @@ This interface allows skills to:
 3. Get current end-effector pose (forward kinematics)
 """
 
+import math
 import threading
 import time
 
@@ -21,6 +22,18 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
+
+
+class ArmUnhealthy(RuntimeError):
+    """Servo brownout/refusal — abort, don't continue limp."""
+
+
+class ArmFailed(RuntimeError):
+    """Joint/cartesian command rejected or did not complete."""
+
+
+class ArmCancelled(Exception):
+    """Caller-supplied cancel check fired mid-wait."""
 
 
 class ManipulationInterface:
@@ -179,6 +192,12 @@ class ManipulationInterface:
         if self._active:
             self._arm_state = msg
 
+    @property
+    def last_fk_pose(self) -> PoseStamped | None:
+        """The latest cached /fk_pose message, or None. No spin, no warning —
+        for high-rate ambient reads (RobotStateProvider.current_arm)."""
+        return self._fk_pose
+
     def get_current_end_effector_pose(self) -> dict | None:
         """
         Get the current end-effector pose in Cartesian space.
@@ -297,7 +316,9 @@ class ManipulationInterface:
         self.logger.error(f"[ManipulationInterface] IK solution timeout after {timeout}s ({iteration} iterations)")
         return None
 
-    def move_to_joint_positions(self, joint_positions: list[float], duration: int = 3, blocking: bool = False) -> bool:
+    def move_to_joint_positions(
+        self, joint_positions: list[float], duration: float = 3.0, blocking: bool = False
+    ) -> bool:
         """
         Move the arm to specified joint positions using smooth trajectory.
 
@@ -351,7 +372,7 @@ class ManipulationInterface:
         roll: float = 0.0,
         pitch: float = 0.0,
         yaw: float = 0.0,
-        duration: int = 3,
+        duration: float = 3.0,
         ik_timeout: float = 2.0,
         blocking: bool = False,
         gripper_position: float | None = None,
@@ -616,3 +637,125 @@ class ManipulationInterface:
 
         positions[5] = self.GRIPPER_CLOSED - abs(strength)
         return self.move_to_joint_positions(positions, duration=duration, blocking=blocking)
+
+    # --- arm primitives ---
+    # Skills call these as methods: self.manipulation.go(...), .move_checked(...).
+
+    # Grasp reach box (base_link m).
+    REACH_X = (0.22, 0.40)
+    REACH_Y = (-0.10, 0.10)
+
+    # joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
+    # Folded rest with j4 lifted so the gripper clears the floor (verified live:
+    # ee_link z ~0.042 m). j1/j2 clamp to their limits, so this is what the arm
+    # actually reaches and holds.
+    REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+    ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    @classmethod
+    def clamp_reach(cls, x, y):
+        return (max(cls.REACH_X[0], min(cls.REACH_X[1], x)), max(cls.REACH_Y[0], min(cls.REACH_Y[1], y)))
+
+    def ee_xyz(self):
+        """FK end-effector (x,y,z), or None."""
+        pose = self.get_current_end_effector_pose()
+        try:
+            p = pose["position"]
+            return (float(p["x"]), float(p["y"]), float(p["z"]))
+        except (KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def gripper_j6(joint_states):
+        """Gripper joint j6, or None."""
+        try:
+            return joint_states.position[5] if joint_states else None
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+    @staticmethod
+    def with_gripper(joints, j6):
+        """Copy of joints with j6 set (no-op if j6 is None)."""
+        out = list(joints)
+        if j6 is not None:
+            out[5] = float(j6)
+        return out
+
+    @classmethod
+    def rest_joints(cls, joint_states=None, keep_gripper=True):
+        """Joint target for the folded rest pose."""
+        if keep_gripper:
+            return cls.with_gripper(cls.REST, cls.gripper_j6(joint_states))
+        return list(cls.REST)
+
+    def go(self, joints, duration=3.0, *, times=1, pause=0.3, is_cancelled=None, logger=None):
+        """Move to joint positions. Raises ArmFailed / ArmCancelled.
+
+        ``times`` + ``pause`` repeat the move so the arm can settle (pick
+        teardown). With ``is_cancelled``, the move is non-blocking and polled
+        so a skill cancel can abort the wait; otherwise each move blocks for
+        ``duration``.
+        """
+        logger = logger or self.logger
+        joints = list(joints)
+        blocking = is_cancelled is None
+        for i in range(times):
+            logger.info(f"[arm] joints {[round(j, 3) for j in joints]} over {duration}s")
+            ok = self.move_to_joint_positions(joint_positions=joints, duration=duration, blocking=blocking)
+            if not ok:
+                raise ArmFailed("Failed to send arm command")
+            if is_cancelled is not None:
+                t0 = time.time()
+                while time.time() - t0 < duration:
+                    if is_cancelled():
+                        raise ArmCancelled("Arm motion cancelled")
+                    time.sleep(0.1)
+            if pause and i + 1 < times:
+                time.sleep(pause)
+
+    def recover(self, logger=None):
+        """Reboot servos + torque on (clears overcurrent trip / brownout)."""
+        (logger or self.logger).warning("[arm] recovering (reboot + torque on)")
+        self.reboot_servos()
+        time.sleep(2.0)
+        self.torque_on()
+        time.sleep(0.5)
+
+    def move_checked(self, x, y, z, pitch, duration=1.5, tol_xy=0.05, tol_z=0.10, gripper=None, logger=None):
+        """Cartesian move; verify FK within per-axis tolerances, recover+retry once, else raise.
+
+        tol_z is looser than tol_xy on purpose: a z shortfall usually means the
+        fingers met the object/floor early (expected while descending), while xy
+        error means the grasp is off target.
+
+        ``gripper``: j6 command to hold through the move. Pass the grip goal
+        when moving with an object in the fingers — the default (None) re-seeds
+        j6 from the measured position, and under current-based position control
+        (mode 5) the standing position error IS the grip force, so re-seeding
+        it releases the object.
+        """
+        logger = logger or self.logger
+        for attempt in (1, 2):
+            ok = self.move_to_cartesian_pose(
+                x=x,
+                y=y,
+                z=z,
+                roll=0.0,
+                pitch=pitch,
+                yaw=0.0,
+                duration=duration,
+                blocking=True,
+                gripper_position=gripper,
+            )
+            cur = self.ee_xyz()
+            err_xy = math.hypot(cur[0] - x, cur[1] - y) if cur is not None else None
+            err_z = abs(cur[2] - z) if cur is not None else None
+            if ok and err_xy is not None and err_z is not None and err_xy <= tol_xy and err_z <= tol_z:
+                return True
+            logger.warning(
+                f"[arm] not tracking (ok={ok} err_xy={err_xy} err_z={err_z}) — "
+                f"{'recovering' if attempt == 1 else 'giving up'}"
+            )
+            if attempt == 1:
+                self.recover(logger)
+        raise ArmUnhealthy(f"arm failed to reach ({x:.2f},{y:.2f},{z:.2f})")

@@ -1,33 +1,57 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+import inspect
 import json
 import os
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from enum import Enum
+from functools import cache
 from pathlib import Path
-from typing import Any
+from types import GeneratorType, UnionType  # stdlib `types`, not this module
+from typing import TYPE_CHECKING, Any, Generic, NoReturn, TypeVar, Union, get_args, get_origin, overload
 
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from brain_client.common.dynamic_loader import class_name_to_snake_case
 from brain_client.common.logging import UniversalLogger
 
-# brain_client_node plays text published here (see transport/tts.py) and
-# reports playback on the status topic, which say(wait=True) watches.
+if TYPE_CHECKING:
+    from brain_client.skills.invoker import SkillInvoker
+
+T = TypeVar("T")
+
+# What execute() may return; the optional third element is a structured
+# payload chaining callers read back as SkillOutput.data.
+SkillReturn = Union[None, str, "tuple[str, SkillResult]", "tuple[str, SkillResult, Any]"]
+
 TTS_TOPIC = "/brain/tts"
 TTS_STATUS_TOPIC = "/tts/is_playing"
 
 
 class SkillResult(Enum):
-    """
-    Enum representing the possible results of a skill execution.
-    """
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"
 
-    SUCCESS = "success"  # The skill completed successfully
-    FAILURE = "failure"  # The skill failed to complete
-    CANCELLED = "cancelled"  # The skill was cancelled before completion
+
+class SkillFailed(Exception):
+    """A composed skill reported FAILURE. Raised by Skill.__call__ and fail()."""
+
+
+class SkillCancelled(BaseException):
+    """A composed skill was cancelled; unwinds the routine.
+
+    BaseException, not Exception — same reasoning as asyncio.CancelledError:
+    a skill's broad ``except Exception`` (around a Gemini call, file IO, a
+    chained child) must never swallow a cancellation. Catch it explicitly
+    only to clean up, and re-raise.
+    """
 
 
 class SkillOutput(str):
@@ -42,8 +66,14 @@ class SkillOutput(str):
         return output
 
 
-def normalize_skill_result(result) -> tuple[SkillOutput, "SkillResult"]:
-    """Turn execute()'s (message, status[, data]) into (SkillOutput, status)."""
+def normalize_skill_result(result, skill_name: str = "Skill") -> tuple[SkillOutput, "SkillResult"]:
+    """Turn any SkillReturn form into (SkillOutput, status)."""
+    if result is None:
+        return SkillOutput(f"{skill_name} completed"), SkillResult.SUCCESS
+    if isinstance(result, SkillOutput):
+        return result, SkillResult.SUCCESS  # forwarded child output: keep .data
+    if isinstance(result, str):
+        return SkillOutput(result), SkillResult.SUCCESS
     if isinstance(result, (tuple, list)) and len(result) == 3:
         message, status, data = result
         return SkillOutput(message, data), status
@@ -52,47 +82,41 @@ def normalize_skill_result(result) -> tuple[SkillOutput, "SkillResult"]:
 
 
 class RobotStateType(Enum):
-    """
-    Enum representing the types of robot state a skill might require.
-    """
-
     LAST_MAIN_CAMERA_IMAGE_B64 = "last_main_camera_image_b64"
     LAST_WRIST_CAMERA_IMAGE_B64 = "last_wrist_camera_image_b64"
+    LAST_DEPTH_IMAGE = "last_depth_image"
     LAST_ODOM = "last_odom"
     LAST_MAP = "last_map"
     LAST_HEAD_POSITION = "last_head_position"
     LAST_JOINT_STATES = "last_joint_states"
     LAST_BATTERY = "last_battery"
+    LAST_POSE = "last_pose"
+    LAST_LIDAR = "last_lidar"
+    LAST_ARM = "last_arm"
 
 
 class InterfaceType(Enum):
-    """
-    Enum representing the types of interfaces a skill might require.
-    """
-
     MANIPULATION = "manipulation"
     MOBILITY = "mobility"
     HEAD = "head"
 
 
 class SkillStorage:
-    """Persistent per-skill key-value store: a JSON file with dict access.
-
-    Values must be JSON-serializable. Loaded lazily; writes are atomic
-    (tmp file + os.replace).
-    """
+    """Persistent per-skill key-value store: a JSON file with dict access."""
 
     def __init__(self, path: str | Path):
         self._path = Path(path)
-        self._data: dict | None = None
+        self._data: dict[str, Any] | None = None
 
-    def _load(self) -> dict:
-        if self._data is None:
+    def _load(self) -> dict[str, Any]:
+        data = self._data
+        if data is None:
             try:
-                self._data = json.loads(self._path.read_text())
+                data = json.loads(self._path.read_text())
             except (FileNotFoundError, json.JSONDecodeError):
-                self._data = {}
-        return self._data
+                data = {}
+            self._data = data
+        return data
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,129 +143,575 @@ class SkillStorage:
 
 
 def _storage_dir() -> Path:
-    # same INNATE_OS_ROOT resolution as common/script_paths.py
     root = Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
     return root / "workspace" / "skill_storage"
 
 
-class RobotState:
+class _Injected:
+    """Descriptor plumbing shared by RobotState and Interface: the injected
+    value is stored on the instance under a private name, None until set."""
+
+    _attr_prefix = "_injected_"
+
+    def __init__(self, required: bool = False):
+        self.required = required
+        self._attr_name: str = ""  # set by __set_name__ before any access
+
+    def __set_name__(self, owner: type, name: str):
+        self._attr_name = f"{self._attr_prefix}{name}"
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        if obj is None:
+            return self
+        return getattr(obj, self._attr_name, None)
+
+    def __set__(self, obj: Any, value: Any):
+        setattr(obj, self._attr_name, value)
+
+
+class RobotState(_Injected):
+    """Descriptor behind robot-state declarations (``odom: Odometry``).
+
+    A required (non-``| None``) state is guaranteed before execute(); the run
+    fails if no message arrives. Legacy explicit declarations
+    (``odom = RobotState(RobotStateType.LAST_ODOM)``) keep the old
+    tolerate-None behavior.
     """
-    Descriptor for declaring and accessing robot state in skills.
 
-    Usage:
-        class MySkill(Skill):
-            image = RobotState(RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64)
-            odom = RobotState(RobotStateType.LAST_ODOM)
+    _attr_prefix = "_robot_state_"
 
-            def execute(self):
-                if self.image:  # Access state directly
-                    ...
-    """
-
-    def __init__(self, state_type: RobotStateType):
+    def __init__(self, state_type: RobotStateType, required: bool = False):
+        super().__init__(required)
         self.state_type = state_type
-        self._attr_name: str | None = None
-
-    def __set_name__(self, owner: type, name: str):
-        """Called when the descriptor is assigned to a class attribute."""
-        self._attr_name = f"_robot_state_{name}"
-
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        """Get the current state value."""
-        if obj is None:
-            return self
-        return getattr(obj, self._attr_name, None)
-
-    def __set__(self, obj: Any, value: Any):
-        """Set the state value."""
-        setattr(obj, self._attr_name, value)
 
 
-class Interface:
-    """
-    Descriptor for declaring and accessing interfaces in skills.
+class Camera(RobotState):
+    """Descriptor behind camera-feed declarations (``image: MainImage``).
 
-    Usage:
-        class MySkill(Skill):
-            mobility = Interface(InterfaceType.MOBILITY)
-            head = Interface(InterfaceType.HEAD)
-
-            def execute(self):
-                self.mobility.rotate(0.5)  # Use interface directly
+    Cameras must be declared: the server starts them per run — frame encoding
+    is too expensive to keep warm. A required camera fails the run if no frame
+    arrives within the grace; an optional (``| None``) one never delays the
+    start — wait in execute() (``self.wait_for(lambda: self.image)``).
     """
 
-    def __init__(self, interface_type: InterfaceType):
+    def __init__(self, feed: RobotStateType, required: bool = True):
+        if feed not in _camera_feed_keys():
+            raise ValueError(
+                "Not a camera feed; declare cameras via annotations — image: MainImage / WristImage / DepthMap"
+            )
+        super().__init__(feed, required=required)
+
+
+class Interface(_Injected):
+    """Descriptor behind interface declarations (``mobility: Mobility``).
+
+    Declaring is requiring: the run fails up front when a declared interface
+    is unavailable; ``| None`` makes it best effort instead. Legacy explicit
+    declarations (``head = Interface(InterfaceType.HEAD)``) keep the old
+    tolerate-None behavior.
+    """
+
+    _attr_prefix = "_interface_"
+
+    def __init__(self, interface_type: InterfaceType, required: bool = False):
+        super().__init__(required)
         self.interface_type = interface_type
-        self._attr_name: str | None = None
+
+
+class SubSkill(_Injected):
+    """Descriptor behind sub-skill declarations (``gripper_open: GripperOpen``).
+
+    Composition runs the class you see: for each run the child is constructed
+    and wired like a root skill (same run node, interfaces, feeds, invoker,
+    feedback) and shares the parent's cancel latch, then sits on the attribute
+    as a callable — ``self.gripper_open(percent=50)`` raises SkillFailed /
+    SkillCancelled instead of returning a status. Override by subclassing the
+    parent and re-declaring the attribute with your class — never by name
+    shadowing. Note: a shared cancel unwinds children via the latch
+    (``cancelled`` / ``check_cancelled``) and fires ``on_cancel`` hooks down
+    the wired tree; a child's ``cancel()`` *override* is only invoked when
+    that child is the run's root skill.
+    """
+
+    _attr_prefix = "_subskill_"
+
+    def __init__(self, skill_class: "type[Skill]"):
+        super().__init__(required=True)
+        self.skill_class = skill_class
+
+
+class _BoundPhysicalSkill:
+    """A declared physical skill, bound to the run's invoker at wire time."""
+
+    def __init__(self, skill_id: str, invoker):
+        self._skill_id = skill_id
+        self._invoker = invoker
+
+    def __call__(self, *, timeout: float | None = None, **inputs) -> "SkillOutput":
+        """Same contract as calling a code sub-skill: output on success,
+        SkillFailed / SkillCancelled otherwise."""
+        message, status = self._invoker.run(self._skill_id, timeout=timeout, **inputs)
+        if status is SkillResult.CANCELLED:
+            raise SkillCancelled(str(message))
+        if status is not SkillResult.SUCCESS:
+            raise SkillFailed(str(message))
+        return message
+
+
+class PhysicalSkill(_Injected):
+    """Declaration for a physical skill — a trained or recorded policy
+    (``pick_socks = PhysicalSkill("pick_socks")``).
+
+    Physical skills are data (metadata.json + a checkpoint), so there is no
+    class to import and the id is the only handle. Declaring one still puts it
+    in the dependency block with everything else, gives the same call shape as
+    a code sub-skill (``self.pick_socks(timeout=60)``), and moves an unknown-id
+    error to run start instead of mid-routine.
+    """
+
+    _attr_prefix = "_physical_skill_"
+
+    def __init__(self, skill_id: str):
+        super().__init__(required=True)
+        self.skill_id = skill_id
+
+
+class resource(Generic[T]):  # noqa: N801 — decorator, lowercase like property/cached_property
+    """An expensive object a skill owns, built on first access and cached for
+    the run. A generator factory tears down below its ``yield`` at run end:
+
+        @resource
+        def controller(self) -> Iterator[Nav2Controller]:
+            c = Nav2Controller(self)
+            yield c
+            c.destroy()
+
+    A plain ``return`` declares no teardown. Returning or yielding None means
+    "unavailable": nothing is cached, and the next access retries.
+    """
+
+    @overload
+    def __init__(self, factory: Callable[[Any], Iterator[T]]) -> None: ...
+    @overload
+    def __init__(self, factory: Callable[[Any], T]) -> None: ...
+    def __init__(self, factory):
+        self._factory = factory
+        self._name = getattr(factory, "__name__", "resource")
+        self.__doc__ = factory.__doc__
 
     def __set_name__(self, owner: type, name: str):
-        """Called when the descriptor is assigned to a class attribute."""
-        self._attr_name = f"_interface_{name}"
+        self._name = name
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        """Get the interface instance."""
+    @property
+    def _gen_key(self) -> str:
+        return f"_resource_gen_{self._name}"
+
+    def __get__(self, obj, objtype=None) -> T:
         if obj is None:
-            return self
-        return getattr(obj, self._attr_name, None)
+            return self  # pyright: ignore[reportReturnType] — class access yields the descriptor
+        # non-data descriptor: after the first build the instance-dict entry
+        # wins the lookup (cached_property's trick); release() pops to re-arm
+        if self._name not in obj.__dict__:
+            produced = self._factory(obj)
+            if isinstance(produced, GeneratorType):
+                value = next(produced)
+                if value is None:
+                    produced.close()
+                    return None  # pyright: ignore[reportReturnType] — factories yielding T | None bind T to the optional
+                obj.__dict__[self._gen_key] = produced
+            else:
+                value = produced
+                if value is None:
+                    return None  # pyright: ignore[reportReturnType] — factories returning T | None bind T to the optional
+            obj.__dict__[self._name] = value
+        return obj.__dict__[self._name]
 
-    def __set__(self, obj: Any, value: Any):
-        """Set the interface instance."""
-        setattr(obj, self._attr_name, value)
+    def release(self, obj, logger) -> None:
+        """Resume the factory generator past its yield so its teardown runs."""
+        value = obj.__dict__.pop(self._name, None)
+        gen = obj.__dict__.pop(self._gen_key, None)
+        if value is None or gen is None:
+            return
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+        except (Exception, SkillCancelled) as e:
+            # SkillCancelled (a BaseException) included: teardown running
+            # after a cancelled run may trip a cancel check, and that must
+            # not unwind past the run's finalization (the goal would never
+            # terminate and the roster would show the skill running forever).
+            if logger is not None:
+                logger.error(f"releasing resource '{self._name}' failed: {e}")
+        else:
+            gen.close()
+            if logger is not None:
+                logger.error(f"resource '{self._name}': factory yields more than once")
+
+
+@dataclass(frozen=True)
+class _FeedSpec:
+    """One declarable feed — THE per-feed table; everything below derives
+    from these rows. Adding a feed is one row plus its RobotStateType member
+    and its getter/subscription in RobotStateProvider."""
+
+    skill_type: type  # the annotation type authors declare
+    descriptor: type  # Interface / Camera / RobotState — minted for the annotation
+    key: "RobotStateType | InterfaceType"
+    author_name: str  # the type name as authors write it (the innate export)
+    hints: tuple[str, ...]  # attribute names that suggest this feed (typo help)
+    label: str = ""  # states: human-readable name in run-failure messages
+    grace_s: float | None = None  # states: required-feed warmup bound; None = default
+
+
+@cache
+def _feed_specs() -> "tuple[_FeedSpec, ...]":
+    # imported lazily: the interface classes pull ROS/Nav2 modules
+    from brain_client.robot.head import HeadInterface
+    from brain_client.robot.manipulation import ManipulationInterface
+    from brain_client.robot.mobility import MobilityInterface
+    from brain_client.skills.arm import Arm
+    from brain_client.skills.battery import Battery
+    from brain_client.skills.head import HeadState
+    from brain_client.skills.image import DepthMap, MainImage, WristImage
+    from brain_client.skills.joint_states import JointStates
+    from brain_client.skills.lidar import Lidar
+    from brain_client.skills.map import Map
+    from brain_client.skills.odometry import Odometry
+    from brain_client.skills.pose import Pose
+
+    main = RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64
+    wrist = RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64
+    return (
+        _FeedSpec(ManipulationInterface, Interface, InterfaceType.MANIPULATION, "Manipulation", ("manipulation",)),
+        _FeedSpec(MobilityInterface, Interface, InterfaceType.MOBILITY, "Mobility", ("mobility",)),
+        _FeedSpec(HeadInterface, Interface, InterfaceType.HEAD, "Head", ("head",)),
+        # cameras start per run (and sim renders on demand) — longer grace
+        _FeedSpec(MainImage, Camera, main, "MainImage", ("image", "main_image"), "main camera", grace_s=3.0),
+        _FeedSpec(WristImage, Camera, wrist, "WristImage", ("wrist_image",), "wrist camera", grace_s=3.0),
+        _FeedSpec(
+            DepthMap,
+            Camera,
+            RobotStateType.LAST_DEPTH_IMAGE,
+            "DepthMap",
+            ("depth", "depth_image"),
+            "depth camera",
+            grace_s=3.0,
+        ),
+        _FeedSpec(Odometry, RobotState, RobotStateType.LAST_ODOM, "Odometry", ("odom",), "odometry"),
+        _FeedSpec(Pose, RobotState, RobotStateType.LAST_POSE, "Pose", ("pose",), "map pose"),
+        # battery publishes at ~0.2 Hz — the default grace would always miss it
+        _FeedSpec(Battery, RobotState, RobotStateType.LAST_BATTERY, "Battery", ("battery",), "battery", grace_s=6.0),
+        _FeedSpec(Lidar, RobotState, RobotStateType.LAST_LIDAR, "Lidar", ("lidar",), "lidar"),
+        _FeedSpec(Arm, RobotState, RobotStateType.LAST_ARM, "Arm", ("arm",), "arm pose"),
+        _FeedSpec(Map, RobotState, RobotStateType.LAST_MAP, "Map", ("map",), "map"),
+        _FeedSpec(
+            JointStates, RobotState, RobotStateType.LAST_JOINT_STATES, "JointStates", ("joint_states",), "joint states"
+        ),
+        _FeedSpec(
+            HeadState, RobotState, RobotStateType.LAST_HEAD_POSITION, "HeadState", ("head_position",), "head position"
+        ),
+    )
+
+
+@cache
+def _feed_types() -> dict:
+    """Annotated type -> (descriptor class, feed enum)."""
+    return {spec.skill_type: (spec.descriptor, spec.key) for spec in _feed_specs()}
+
+
+@cache
+def _feed_attr_hints() -> "dict[str, str]":
+    """Attribute name -> annotation type name, for typo-help messages."""
+    return {hint: spec.author_name for spec in _feed_specs() for hint in spec.hints}
+
+
+@cache
+def _state_labels() -> dict:
+    return {spec.key: spec.label for spec in _feed_specs() if spec.label}
+
+
+@cache
+def _camera_feed_keys() -> frozenset:
+    return frozenset(spec.key for spec in _feed_specs() if spec.descriptor is Camera)
+
+
+# required-feed warmup bound when the spec row has no override
+_DEFAULT_STATE_GRACE_S = 2.0
+
+
+@cache
+def _state_grace_s() -> dict:
+    return {spec.key: spec.grace_s for spec in _feed_specs() if spec.grace_s is not None}
+
+
+def _own_annotations(cls) -> dict:
+    """The class's own annotations, string forms resolved (PEP 563).
+
+    ``inspect.get_annotations`` evaluates all-or-nothing; retry per name so
+    one typo costs only its own declaration. Entries that still fail stay
+    strings and surface through the ``_declaration_issues`` warnings.
+    """
+    try:
+        return inspect.get_annotations(cls, eval_str=True)
+    except Exception:
+        module = sys.modules.get(getattr(cls, "__module__", ""), None)
+        cls_globals = getattr(module, "__dict__", {})
+        cls_locals = dict(vars(cls))
+        annotations = {}
+        for name, annotation in cls.__dict__.get("__annotations__", {}).items():
+            if isinstance(annotation, str):
+                try:
+                    annotation = eval(annotation, cls_globals, cls_locals)  # noqa: S307 — mirrors inspect
+                except Exception:
+                    pass
+            annotations[name] = annotation
+        return annotations
+
+
+def _split_optional(annotation):
+    """(base_type, is_optional) — unwraps ``T | None`` / ``Optional[T]``."""
+    if get_origin(annotation) in (Union, UnionType):
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0], True
+    return annotation, False
+
+
+def _materialize_feed_annotations(cls) -> None:
+    """Mint the matching descriptor for each bare feed annotation
+    (``mobility: Mobility``; ``| None`` = optional). A ``= None`` class
+    default (``image: MainImage | None = None`` — a natural authoring idiom)
+    counts as an optional declaration, not as opting out of injection.
+    Suspicious annotations land on ``cls._declaration_issues`` and the
+    loader logs them."""
+    issues: list[str] = []
+    cls._declaration_issues = issues  # always this class's own, never inherited
+    # An annotation with a non-None class value (a legacy explicit descriptor,
+    # a real default) is not a bare declaration; `= None` still declares.
+    bare = {
+        name: annotation
+        for name, annotation in _own_annotations(cls).items()
+        if name not in cls.__dict__ or cls.__dict__[name] is None
+    }
+    if not bare:
+        return
+    feed_types = _feed_types()
+    for name, annotation in bare.items():
+        if isinstance(annotation, str):
+            issues.append(
+                f"{cls.__name__}.{name}: annotation {annotation!r} does not resolve — if this is a "
+                "feed declaration, import the type; nothing will be injected for it."
+            )
+            continue
+        resolved, optional = _split_optional(annotation)
+        if isinstance(resolved, type) and issubclass(resolved, Skill) and resolved is not Skill:
+            if optional:
+                # The feed rule (`| None` = best effort) does not extend to
+                # composition: a declared sub-skill is always wired and its
+                # requirements gate the run. Say so, or the author only finds
+                # out when the parent fails up front on the child's feeds.
+                issues.append(
+                    f"{cls.__name__}.{name}: `| None` has no effect on a sub-skill declaration — "
+                    f"{resolved.__name__} is always wired and required. For a best-effort dependency, "
+                    "dispatch by id at run time (self.skills.run(...))."
+                )
+            descriptor = SubSkill(resolved)
+            setattr(cls, name, descriptor)
+            descriptor.__set_name__(cls, name)
+            continue
+        if resolved is Skill:
+            issues.append(
+                f"{cls.__name__}.{name}: annotate with a concrete Skill subclass to compose it "
+                "(`gripper_open: GripperOpen`); bare `Skill` declares nothing."
+            )
+            continue
+        entry = feed_types.get(resolved) if isinstance(resolved, type) else None
+        if entry is None:
+            hint = _feed_attr_hints().get(name)
+            if hint is not None:
+                resolved_name = getattr(resolved, "__name__", repr(resolved))
+                issues.append(
+                    f"{cls.__name__}.{name}: annotated with {resolved_name}, which is not a feed "
+                    f"type — did you mean `{name}: {hint}`? Nothing will be injected for it."
+                )
+            continue
+        descriptor_cls, feed = entry
+        # a `= None` default reads as "may be None" even without `| None`
+        descriptor = descriptor_cls(feed, required=not optional and name not in cls.__dict__)
+        setattr(cls, name, descriptor)
+        # setattr after class creation skips the implicit __set_name__ hook
+        descriptor.__set_name__(cls, name)
+
+
+def _index_feed_declarations(cls) -> None:
+    """Precompute the class's ``{name: descriptor}`` maps (first definition
+    in MRO wins) — update_robot_state runs at 50 Hz, so the MRO walk happens
+    once here and the hot path reads a dict."""
+    states: dict[str, RobotState] = {}
+    interfaces: dict[str, Interface] = {}
+    subskills: dict[str, SubSkill] = {}
+    physicals: dict[str, PhysicalSkill] = {}
+    for klass in cls.__mro__:
+        for name, attr in vars(klass).items():
+            if isinstance(attr, RobotState) and name not in states:
+                states[name] = attr
+            elif isinstance(attr, Interface) and name not in interfaces:
+                interfaces[name] = attr
+            elif isinstance(attr, SubSkill) and name not in subskills:
+                subskills[name] = attr
+            elif isinstance(attr, PhysicalSkill) and name not in physicals:
+                physicals[name] = attr
+    cls._feed_states = states
+    cls._feed_interfaces = interfaces
+    cls._feed_subskills = subskills
+    cls._feed_physical_skills = physicals
 
 
 class Skill(ABC):
     # Stamped by the loader to "shipped" or "user" based on origin directory.
     source: str = "user"
 
+    # Every subclass registers itself here at definition time, PyTorch-style:
+    # defining a Skill is what makes the robot know it — no file scanning.
+    # Keyed by (module, qualname) so a re-import of the same module replaces
+    # its own entries. Abstract/private classes are filtered at *collect*
+    # time (registered_skills in workspace_import.py), not here —
+    # __abstractmethods__ is not populated yet when __init_subclass__ runs.
+    _registry: "dict[tuple[str, str], type[Skill]]" = {}
+
+    # Precomputed by __init_subclass__ (see _index_feed_declarations); the
+    # base class itself declares nothing.
+    _feed_states: "dict[str, RobotState]" = {}
+    _feed_interfaces: "dict[str, Interface]" = {}
+    _feed_subskills: "dict[str, SubSkill]" = {}
+    _feed_physical_skills: "dict[str, PhysicalSkill]" = {}
+
     def __init__(self, logger):
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
         self.node: Node | None = None
         self._feedback_callback = None
         self._cancel_latch()
-        # SkillInvoker for running other skills from execute(); injected by the
-        # skills server before each run (see invoker.py and innate/skills.py).
-        self.skills = None
+        # injected by the server before each run (see invoker.py)
+        self.skills: SkillInvoker | None = None
         self._say_publisher = None
         self._tts_status_sub = None
-        self._tts_playing = None  # last /tts/is_playing value ("true"/"false")
+        self._tts_playing = None  # last /tts/is_playing value
         self._storage = None
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        _materialize_feed_annotations(cls)
+        _index_feed_declarations(cls)
+        Skill._registry[(cls.__module__, cls.__qualname__)] = cls
+
+    # hidden from type checkers on purpose: a visible __getattr__ makes every
+    # attribute legal, so typos would only fail on the robot
+    if not TYPE_CHECKING:
+
+        def __getattr__(self, name: str):
+            hint = _feed_attr_hints().get(name)
+            if hint is not None:
+                raise AttributeError(
+                    f"'{type(self).__name__}' has no '{name}': declare it on the class with a type "
+                    f"annotation — `{name}: {hint}` (append ` | None` to tolerate it being unavailable)."
+                )
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute {name!r}")
+
     @property
-    @abstractmethod
-    def name(self):
-        """
-        The name of the skill.
-        Must be defined by every subclass.
-        """
-        pass
+    def name(self) -> str:
+        """The snake_case class name, which must equal the filename stem.
+        Override only when the two legitimately differ."""
+        return class_name_to_snake_case(type(self).__name__)
 
     @abstractmethod
-    def execute(self, *args, **kwargs):
-        """
-        Execute the skill.
-
-        Subclasses must implement this method.
-        Returns (result_message, result_status) where result_status is a
-        SkillResult enum value; an optional third element is a structured
-        payload chaining callers receive as ``.data`` (see SkillOutput).
-        """
+    def execute(self, *args, **kwargs) -> SkillReturn:
         pass
+
+    def __call__(self, **inputs) -> SkillOutput:
+        """Run this skill as a step of the caller: composition's call form.
+
+        PyTorch's __call__/forward split: authors implement execute(); calling
+        the instance runs it with the invoker's contract — success returns the
+        SkillOutput, FAILURE raises SkillFailed, CANCELLED raises
+        SkillCancelled. Only meaningful on a wired instance (a declared
+        sub-skill, or the run root the server built).
+        """
+        # on_cancel hooks registered during this call expire with it: a wired
+        # sub-skill instance is reused across calls, so without the truncation
+        # every execute()'s `self.on_cancel(self._stop)` would stack up — N
+        # calls, N firings on one cancel — and a hook capturing per-call state
+        # (a goal handle) would fire long after its run ended.
+        hooks = vars(self).setdefault("_cancel_hooks", [])
+        registered_before_call = len(hooks)
+        try:
+            result = self.execute(**inputs)
+        finally:
+            del hooks[registered_before_call:]
+        output, status = normalize_skill_result(result, self.name)
+        if status is SkillResult.CANCELLED:
+            raise SkillCancelled(str(output))
+        if status is not SkillResult.SUCCESS:
+            raise SkillFailed(str(output))
+        return output
+
+    def wire_subskills(self, wire_child: "Callable[[type[Skill]], Skill]", _seen: frozenset = frozenset()) -> None:
+        """Construct and attach every declared sub-skill, recursively.
+
+        ``wire_child`` builds a fully wired instance of a class (run node,
+        interfaces, invoker, feedback) — the server supplies it. This method
+        owns what composition adds: sharing the parent's cancel latch so one
+        cancel unwinds the whole tree, recursion, and the cycle guard.
+        Cycles can't normally be declared (an annotation needs the class
+        object, which a circular import prevents), so the guard is defensive.
+        """
+        for name, physical in self._feed_physical_skills.items():
+            if self.skills is None:
+                raise RuntimeError(
+                    f"{type(self).__name__}.{name} declares physical skill "
+                    f"'{physical.skill_id}' but no invoker is available"
+                )
+            if self.skills.find(physical.skill_id) is None:
+                raise RuntimeError(
+                    f"{type(self).__name__}.{name}: no skill with id '{physical.skill_id}' — "
+                    "check the name, or the policy may still be in training"
+                )
+            setattr(self, name, _BoundPhysicalSkill(physical.skill_id, self.skills))
+        seen = _seen | {type(self)}
+        for name, descriptor in self._feed_subskills.items():
+            if descriptor.skill_class in seen:
+                raise RuntimeError(
+                    f"Skill composition cycle: {descriptor.skill_class.__name__} is declared by its own descendant"
+                )
+            child = wire_child(descriptor.skill_class)
+            vars(child)["_cancel_event"] = self._cancel_latch()
+            child.wire_subskills(wire_child, seen)
+            setattr(self, name, child)
+
+    def _wired_children(self) -> "list[Skill]":
+        return [child for name in self._feed_subskills if (child := getattr(self, name, None)) is not None]
+
+    def fail(self, message: str) -> NoReturn:
+        """End the run as a FAILURE with ``message``."""
+        raise SkillFailed(message)
 
     def _cancel_latch(self) -> threading.Event:
-        """The cancel event, created lazily — some skills skip super().__init__()."""
-        latch = self.__dict__.get("_cancel_event")
+        # created lazily — some skills skip super().__init__()
+        latch = vars(self).get("_cancel_event")
         if latch is None:
-            latch = self.__dict__.setdefault("_cancel_event", threading.Event())
+            latch = vars(self).setdefault("_cancel_event", threading.Event())
         return latch
 
     @property
-    def _cancelled(self) -> bool:
-        """Whether cancellation was requested for the current run.
+    def cancelled(self) -> bool:
+        """True once cancellation was requested for the run."""
+        return self._cancel_latch().is_set()
 
-        Latches True and ignores False: skills reset the flag at execute()
-        entry, which would wipe a cancel that raced goal startup. Only the
-        server re-arms it between runs (_begin_run).
-        """
+    # Legacy write-shim only — read via `cancelled`. It latches True and
+    # ignores False: fleet skills reset `self._cancelled = False` at execute()
+    # entry, which would wipe a cancel that raced goal startup.
+    @property
+    def _cancelled(self) -> bool:
         return self._cancel_latch().is_set()
 
     @_cancelled.setter
@@ -249,61 +719,101 @@ class Skill(ABC):
         if value:
             self._cancel_latch().set()
 
+    def check_cancelled(self) -> None:
+        """Raise SkillCancelled if a cancel landed — call at loop checkpoints."""
+        if self._cancelled:
+            raise SkillCancelled(f"{self.name} cancelled")
+
+    def wait_for(self, read: Callable[[], T | None], timeout: float = 2.0, poll: float = 0.02) -> T | None:
+        """Block until ``read()`` returns non-None (or ``timeout`` passes ->
+        None). Raises SkillCancelled if the run is cancelled while waiting."""
+        deadline = time.monotonic() + timeout
+        while True:
+            value = read()
+            if value is not None:
+                return value
+            if time.monotonic() >= deadline:
+                return None
+            self.check_cancelled()
+            time.sleep(poll)
+
+    def on_cancel(self, callback) -> None:
+        """Register a zero-arg hook fired (on the cancelling thread) the
+        moment a cancel lands — stop motion immediately instead of waiting
+        for the next cancelled poll. A hook registered inside a composed
+        call (``self.child(...)``) lives only for that call (see
+        ``__call__``); on a run root it lives for the run."""
+        vars(self).setdefault("_cancel_hooks", []).append(callback)
+
     def _begin_run(self, goal_handle=None):
-        """Server hook: re-arm the latch for a fresh run, recovering a cancel
-        that already landed from the goal's persistent cancel status."""
-        latch = self._cancel_latch()
-        latch.clear()
+        """Server hook: latch a cancel that landed before the run started."""
         try:
             if goal_handle is not None and goal_handle.is_cancel_requested:
-                latch.set()
+                self._cancel_latch().set()
         except Exception:
             pass  # duck-typed handles without cancel status
 
-    def cancel(self):
-        """
-        Cancel the execution of the skill. Safe to call at any time; returns
-        a message describing the result.
-
-        The default latches self._cancelled and stops the child skill running
-        via self.skills. Override it to stop work of your own — and if you
-        also chain children, call self.skills.cancel() too.
-        """
+    def cancel(self) -> None:
+        """Latch self.cancelled, fire the on_cancel hooks, and stop any
+        running child. Override only when a hook can't express the teardown
+        — and if you chain children, call self.skills.cancel() too."""
         self._cancel_latch().set()
-        if getattr(self, "skills", None) is not None:
-            return self.skills.cancel()
-        return "Cancellation requested"
+        self._fire_cancel_hooks()
+        skills = getattr(self, "skills", None)
+        if skills is not None:
+            skills.cancel()
 
-    def shutdown(self):  # noqa: B027
-        """Release resources this instance owns. Called when the server retires
-        it — reloads replace instances, and a retired one is never used again.
+    def _fire_cancel_hooks(self) -> None:
+        """Fire this instance's on_cancel hooks, then the wired children's —
+        a composed child registers its brake hook (`self.on_cancel(self._stop)`)
+        on ITSELF, and only the root's cancel() is ever invoked, so without
+        the walk a child mid-`self.move(...)` would coast until its next
+        cancelled poll instead of braking immediately."""
+        for hook in list(vars(self).get("_cancel_hooks", [])):
+            try:
+                hook()
+            except (Exception, SkillCancelled) as e:
+                # SkillCancelled is a BaseException, so it must be named here:
+                # a hook that calls a composed child during a cancel raises it
+                # (the shared latch is already set), and it must not abort the
+                # remaining hooks or unwind the server's cancel dispatch.
+                self.logger.error(f"[{self.name}] on_cancel hook failed: {e}")
+        for child in self._wired_children():
+            child._fire_cancel_hooks()
 
-        Override to destroy ROS nodes/entities the skill itself created (e.g.
-        Nav2 BasicNavigator nodes): a dropped instance is cyclic garbage whose
-        graph entities otherwise linger until an eventual gen-2 GC pass, so
-        every reload leaks subscriptions and memory. Leave entities created on
-        the shared server node alone — destroying entities under a spinning
-        executor is unsafe (see #497).
-        """
+    def shutdown(self):
+        """Release every ``@resource`` this instance built, at run end.
+        Entities on ``self.node`` need no cleanup here — the run's throwaway
+        node is destroyed wholesale right after this returns (#497)."""
+        for cls in type(self).__mro__:
+            for attr in vars(cls).values():
+                if isinstance(attr, resource):
+                    attr.release(self, getattr(self, "logger", None))
+        for child in self._wired_children():
+            child.shutdown()
 
     @property
     def storage(self) -> SkillStorage:
-        """Persistent per-skill key-value store (survives restarts), backed by
-        workspace/skill_storage/<skill_name>.json."""
+        """Persistent per-skill key-value store (survives restarts)."""
         if self._storage is None:
             self._storage = SkillStorage(_storage_dir() / f"{self.name}.json")
         return self._storage
 
     def say(self, text: str, wait: bool = False) -> None:
-        """
-        Speak text through the robot's voice. Fire-and-forget by default;
-        with ``wait=True`` it blocks until playback ends (best effort — it
-        watches the TTS playback status). No-op if speech isn't available.
-        """
+        """Speak through the robot's voice; ``wait=True`` blocks until
+        playback ends (best effort). No-op if speech isn't available."""
         if not text or self.node is None:
             return
         if self._say_publisher is None:
             self._say_publisher = self.node.create_publisher(String, TTS_TOPIC, 10)
+            # fresh publisher every run — wait briefly for the TTS engine to
+            # match, or the run's first utterance is dropped. A cancel skips
+            # the wait: dropped speech beats a delayed Stop.
+            deadline = time.time() + 1.0
+            while self._say_publisher.get_subscription_count() == 0 and time.time() < deadline:
+                if self.cancelled:
+                    break
+                time.sleep(0.02)
         if wait and self._tts_status_sub is None:
             self._tts_status_sub = self.node.create_subscription(String, TTS_STATUS_TOPIC, self._on_tts_status, 10)
         self._say_publisher.publish(String(data=text))
@@ -314,105 +824,101 @@ class Skill(ABC):
         self._tts_playing = msg.data
 
     def _wait_for_speech_end(self, text: str) -> None:
-        # wait for playback to start; if it never does (TTS off, muted)
-        # don't hang the skill
+        # if playback never starts (TTS off, muted), don't hang the skill
         deadline = time.time() + 15.0
         while self._tts_playing != "true":
             if time.time() > deadline:
                 return
             time.sleep(0.05)
-        # then wait for it to finish; budget scales with utterance length
+        # finish budget scales with utterance length
         deadline = time.time() + max(30.0, 0.1 * len(text))
         while self._tts_playing == "true" and time.time() < deadline:
             time.sleep(0.05)
 
     def update_robot_state(self, **kwargs):
-        """
-        Update the skill with the latest robot state.
-        Automatically populates RobotState descriptors defined on the class.
-        Subclasses can override this to add custom handling.
-        """
-        # Auto-populate RobotState descriptors
-        for name, descriptor in self._get_robot_state_descriptors().items():
+        for name, descriptor in self._feed_states.items():
             state_key = descriptor.state_type.value
             if state_key in kwargs:
                 setattr(self, name, kwargs[state_key])
+        for child in self._wired_children():
+            child.update_robot_state(**kwargs)
 
-    def clear_robot_state(self):
-        """
-        Reset all RobotState descriptors to None.
+    def declared_robot_state_types(self) -> list[RobotStateType]:
+        """Every declared state feed, required or optional, sub-skills included."""
+        types = [desc.state_type for desc in self._feed_states.values()]
+        for child in self._wired_children():
+            types.extend(child.declared_robot_state_types())
+        return list(dict.fromkeys(types))
 
-        Skill instances are singletons, so values from a previous run would
-        otherwise read as fresh sensor data on the next one. The skills
-        server calls this before each run.
-        """
-        for name in self._get_robot_state_descriptors():
-            setattr(self, name, None)
-
-    def get_required_robot_states(self) -> list[RobotStateType]:
-        """
-        Declare the robot states required by this skill.
-        Automatically collects from RobotState descriptors defined on the class.
-        """
-        return [desc.state_type for desc in self._get_robot_state_descriptors().values()]
-
-    def _get_robot_state_descriptors(self) -> dict[str, "RobotState"]:
-        """Collect all RobotState descriptors from the class."""
-        descriptors = {}
-        for cls in type(self).__mro__:
-            for name, attr in vars(cls).items():
-                if isinstance(attr, RobotState) and name not in descriptors:
-                    descriptors[name] = attr
-        return descriptors
-
-    def get_required_interfaces(self) -> list[InterfaceType]:
-        """
-        Declare the interfaces required by this skill.
-        Automatically collects from Interface descriptors defined on the class.
-        """
-        return [desc.interface_type for desc in self._get_interface_descriptors().values()]
-
-    def _get_interface_descriptors(self) -> dict[str, "Interface"]:
-        """Collect all Interface descriptors from the class."""
-        descriptors = {}
-        for cls in type(self).__mro__:
-            for name, attr in vars(cls).items():
-                if isinstance(attr, Interface) and name not in descriptors:
-                    descriptors[name] = attr
-        return descriptors
+    def declared_interface_types(self) -> list[InterfaceType]:
+        """Every declared interface, required or optional."""
+        return [desc.interface_type for desc in self._feed_interfaces.values()]
 
     def inject_interface(self, interface_type: InterfaceType, interface_instance):
-        """Inject an interface instance into the skill."""
-        for name, descriptor in self._get_interface_descriptors().items():
+        for name, descriptor in self._feed_interfaces.items():
             if descriptor.interface_type == interface_type:
                 setattr(self, name, interface_instance)
                 return True
         return False
 
-    def guidelines(self):
-        """
-        Optionally provide guidelines for this skill.
-        Subclasses may override this method if guidelines are available.
-        """
+    def missing_required_interfaces(self) -> list[str]:
+        """Declared required interfaces still None — the server fails the run
+        up front when non-empty."""
+        missing = [
+            descriptor.interface_type.value
+            for name, descriptor in self._feed_interfaces.items()
+            if descriptor.required and getattr(self, name) is None
+        ]
+        for child in self._wired_children():
+            missing.extend(child.missing_required_interfaces())
+        return list(dict.fromkeys(missing))
+
+    def required_robot_state_types(self) -> "list[RobotStateType]":
+        types = [d.state_type for d in self._feed_states.values() if d.required]
+        for child in self._wired_children():
+            types.extend(child.required_robot_state_types())
+        return list(dict.fromkeys(types))
+
+    def missing_required_robot_states(self) -> list[str]:
+        """Labels of declared required states still None — the server fails
+        the run up front when non-empty after the warmup wait."""
+        missing = [
+            _state_labels().get(descriptor.state_type, descriptor.state_type.value)
+            for name, descriptor in self._feed_states.items()
+            if descriptor.required and getattr(self, name) is None
+        ]
+        for child in self._wired_children():
+            missing.extend(child.missing_required_robot_states())
+        return list(dict.fromkeys(missing))
+
+    def describe_feeds(self) -> str:
+        """Every declared feed for load-time logs, ``?`` marking optional:
+        ``mobility, image, battery?``."""
+        parts = [
+            name + ("" if descriptor.required else "?")
+            for group in (self._feed_interfaces, self._feed_states)
+            for name, descriptor in group.items()
+        ]
+        return ", ".join(parts)
+
+    def guidelines(self) -> str | None:
+        """What the agent reads to decide when to call this skill; defaults
+        to the class docstring."""
+        doc = type(self).__dict__.get("__doc__")
+        return inspect.cleandoc(doc) if doc else None
+
+    def guidelines_when_running(self) -> str | None:
         return None
 
-    def guidelines_when_running(self):
-        """
-        Optionally provide guidelines for this skill when it is running.
-        Subclasses may override this method if guidelines are available.
-        """
-        return None
-
-    def set_feedback_callback(self, callback):
-        """Sets the feedback callback function."""
-        self._feedback_callback = callback
-        self.logger.debug(f"Feedback callback set for skill {self.name}.")
-
-    def _send_feedback(self, message: str, image_b64: str = None):
-        """Sends feedback if the callback is set, optionally with an image."""
+    def feedback(self, message: str, image_b64: str | None = None) -> None:
+        """Stream a progress update to whoever launched the skill."""
         self.logger.info(f"Skill feedback [{self.name}]: {message}")
         if self._feedback_callback:
             try:
                 self._feedback_callback(message, image_b64)
             except Exception as e:
                 self.logger.error(f"Error sending feedback for skill {self.name}: {e}")
+
+    def set_feedback_callback(self, callback: Callable[[str, str | None], None]) -> None:
+        self._feedback_callback = callback
+        self.logger.debug(f"Feedback callback set for skill {self.name}.")

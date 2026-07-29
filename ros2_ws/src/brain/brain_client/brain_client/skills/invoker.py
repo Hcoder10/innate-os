@@ -1,21 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""self.skills.run(...) — lets one skill run others, in order.
-
-Children reuse the same server execution paths as a top-level skill, so any
-kind of skill (python, learned, replay) works. They run on the parent's goal:
-each child's start/finish is tagged onto the parent's feedback stream and
-decoded back into a per-step status by PrimitiveRunner._on_feedback.
-"""
+"""self.skills.run(...) — lets one skill run others, in order. Children run
+on the parent's goal; their start/finish is tagged onto the parent's feedback
+stream and decoded back by PrimitiveRunner."""
 
 from __future__ import annotations
 
-import inspect
 import threading
 import uuid
 
 from brain_client.skills.lifecycle import encode_substep_feedback
-from brain_client.skills.types import SkillResult
+from brain_client.skills.types import SkillCancelled, SkillResult
 
 _STEP_EVENT = {
     SkillResult.SUCCESS: "completed",
@@ -27,41 +22,46 @@ _STEP_EVENT = {
 class SkillInvoker:
     """Runs child skills on behalf of a parent skill's execute_skill goal."""
 
-    def __init__(self, server, goal_handle, publish_feedback):
+    def __init__(self, server, goal_handle, publish_feedback, run_node):
         self._server = server
         self._goal_handle = goal_handle
         self._publish_feedback = publish_feedback
+        # children live on the top-level run's node; entities die with it
+        self._run_node = run_node
         self._logger = server.get_logger()
         self._cancelled = False
-        # guards cancel() against re-entry: a child's default cancel() delegates
-        # right back to the invoker that is cancelling it.
+        # a child's default cancel() delegates right back to the invoker
+        # cancelling it — guard against the re-entry. The thread identity
+        # tells that re-entry (same thread, mid-_cancel_active_child) apart
+        # from a genuine Stop arriving on another thread.
         self._cancelling = False
+        self._cancelling_thread = None
         self._active_code_skill = None
         self._active_physical_skill = None
 
     def run(self, skill_id, *, timeout=None, **inputs):
-        """Run one child skill to completion. Returns (message, SkillResult).
-
-        Accepts a full catalog id ("innate-os/wave") or a bare name ("wave");
-        bare names try local/ before innate-os/. A child still running when
-        ``timeout`` (seconds) expires is cancelled and reported as a FAILURE,
-        without cancelling the rest of the routine.
-        """
+        """Run one child to completion; returns (message, SkillResult). A
+        child outliving ``timeout`` seconds is cancelled and reported as a
+        FAILURE without cancelling the rest of the routine."""
         if self._cancelled:
             return "Routine cancelled", SkillResult.CANCELLED
 
         skill_id, code, physical = self._resolve(skill_id)
-        if code is None and physical is None:
-            self._logger.error(f"[invoker] unknown skill '{skill_id}'")
-            return f"Unknown skill '{skill_id}'", SkillResult.FAILURE
-
         if code is not None:
-            problem = self._invalid_inputs(code[1], skill_id, inputs)
+            problem = self._invalid_inputs(code, skill_id, inputs)
             if problem:
                 self._logger.error(f"[invoker] {problem}")
                 return problem, SkillResult.FAILURE
-
-        name = code[1].name if code else physical["metadata"].get("name", skill_id)
+            name = code.display_name
+        elif physical is not None:
+            name = physical.metadata.get("name", skill_id)
+        else:
+            load_error = self._server.catalog.get_load_error(skill_id)
+            if load_error:
+                self._logger.error(f"[invoker] skill '{skill_id}' failed to load: {load_error}")
+                return f"Skill '{skill_id}' failed to load: {load_error}", SkillResult.FAILURE
+            self._logger.error(f"[invoker] unknown skill '{skill_id}'")
+            return f"Unknown skill '{skill_id}'", SkillResult.FAILURE
         step_id = uuid.uuid4().hex
         self._logger.info(f"[invoker] running '{skill_id}' inputs={inputs} timeout={timeout}")
         self._step(step_id, name, skill_id, "running")
@@ -72,13 +72,20 @@ class SkillInvoker:
 
             def _expire():
                 timed_out.set()
-                self._cancel_active_child()
+                # Scope the cancel to THIS call's subtree. When the timed-out
+                # child is physical, _active_code_skill (if any) is the code
+                # skill that dispatched it — an ancestor, not the child — and
+                # cancelling it would unwind the very routine the timeout is
+                # documented not to cancel. A code child's descendants (deeper
+                # code, a physical it delegated to) are fair game: execution
+                # is strictly nested, so anything active below it is its own.
+                self._cancel_active_child(include_code=code is not None)
 
             watchdog = threading.Timer(timeout, _expire)
             watchdog.start()
         try:
             if code is not None:
-                message, status = self._run_code(code[1], skill_id, inputs)
+                message, status = self._run_code(code, skill_id, inputs)
             else:
                 message, status = self._run_physical(skill_id, physical)
         except Exception as e:
@@ -106,25 +113,39 @@ class SkillInvoker:
         return message, status
 
     def cancel(self):
-        """Stop the routine: the child running right now, and every step after it.
-
-        Call from the parent skill's cancel(). The timeout watchdog instead uses
-        _cancel_active_child directly so it never marks the whole routine cancelled.
-        """
+        """Stop the routine: the running child and every step after it. The
+        timeout watchdog uses _cancel_active_child directly so it never marks
+        the whole routine cancelled."""
         if self._cancelling:
-            return "Routine cancelled"  # re-entered from the child we're cancelling
+            if threading.current_thread() is self._cancelling_thread:
+                return "Routine cancelled"  # re-entered from the child we're cancelling
+            # a Stop racing the watchdog's child-cancel: the child is already
+            # being cancelled, but the routine itself must still latch
+            self._cancelled = True
+            return "Routine cancelled"
         self._cancelled = True
         return self._cancel_active_child()
 
-    def _cancel_active_child(self):
+    def _cancel_active_child(self, include_code=True):
+        """Cancel the running children. ``include_code=False`` is the timeout
+        watchdog for a physical child: the active code skill (if any) is the
+        one that DISPATCHED that child — cancelling it would unwind the
+        routine the timeout must not cancel — so only the behavior goal is
+        touched. The physical cancel always runs here (not via the code
+        skill's own cancel()): its forward to invoker.cancel() re-enters on
+        this thread and no-ops."""
         if self._cancelling:
             return "Routine cancelled"
+        self._cancelling_thread = threading.current_thread()
         self._cancelling = True
         try:
-            if self._active_code_skill is not None:
+            if include_code and self._active_code_skill is not None:
                 try:
                     self._active_code_skill.cancel()
-                except Exception as e:
+                except (Exception, SkillCancelled) as e:
+                    # SkillCancelled (a BaseException) included: a child's
+                    # cancel() override may raise it, and the physical-goal
+                    # cancel below must still be dispatched.
                     self._logger.error(f"[invoker] error cancelling child: {e}")
             if self._active_physical_skill is not None:
                 self._server._request_behavior_goal_cancel(self._goal_handle, self._active_physical_skill)
@@ -133,22 +154,33 @@ class SkillInvoker:
             self._cancelling = False
 
     @staticmethod
-    def _invalid_inputs(skill, skill_id, inputs):
-        """An error message if inputs don't fit execute()'s signature, else None."""
-        try:
-            signature = inspect.signature(skill.execute)
-        except (TypeError, ValueError):
-            return None  # can't introspect — let the call itself decide
-        try:
-            signature.bind(**inputs)
+    def _invalid_inputs(entry, skill_id, inputs):
+        """An error message if inputs don't fit the harvested schema, else
+        None — checked before an instance exists."""
+        missing = [name for name, spec in entry.inputs.items() if spec.get("required") and name not in inputs]
+        unknown = [] if entry.accepts_extra_inputs else [name for name in inputs if name not in entry.inputs]
+        if not missing and not unknown:
             return None
-        except TypeError as e:
-            expected = ", ".join(p for p in signature.parameters if p != "self") or "no inputs"
-            return f"Invalid inputs for '{skill_id}': {e}. Expected: ({expected})"
+        problems = []
+        if missing:
+            problems.append(f"missing required: {', '.join(missing)}")
+        if unknown:
+            problems.append(f"unexpected: {', '.join(unknown)}")
+        expected = ", ".join(entry.inputs) or "no inputs"
+        return f"Invalid inputs for '{skill_id}': {'; '.join(problems)}. Expected: ({expected})"
+
+    def find(self, skill_id: str) -> str | None:
+        """The resolved id for ``skill_id``, or None if no such skill.
+
+        Used at wire time to fail a declared physical skill up front rather
+        than mid-routine.
+        """
+        resolved, code, physical = self._resolve(skill_id)
+        return resolved if (code is not None or physical is not None) else None
 
     def _resolve(self, skill_id):
         """Look skill_id up in the catalog. Returns (resolved_id, code_entry, physical_entry)."""
-        candidates = [skill_id] if "/" in skill_id else [f"local/{skill_id}", f"innate-os/{skill_id}"]
+        candidates = self._server.catalog.bare_id_candidates(skill_id)
         for candidate in candidates:
             code = self._server.catalog.get_code_skill(candidate)
             if code is not None:
@@ -158,28 +190,25 @@ class SkillInvoker:
                 return candidate, None, physical
         return skill_id, None, None
 
-    def _run_code(self, skill, skill_id, inputs):
-        skill.set_feedback_callback(self._publish_feedback)
-        skill.skills = self  # a child can chain too
+    def _run_code(self, entry, skill_id, inputs):
+        skill = self._server._instantiate_for_run(entry, self._run_node, self, self._publish_feedback)
         # save/restore, not clear: in a nested chain A→B→C the slot must hand
         # back to B when C ends, or cancel() can no longer reach B
         prev = self._active_code_skill
         self._active_code_skill = skill
         try:
-            return self._server._run_code_skill_body(skill, skill_id, inputs, self._goal_handle)
+            return self._server._run_code_skill_body(skill, entry, skill_id, inputs, self._goal_handle)
         finally:
             self._active_code_skill = prev
+            self._server._dispose_run_instance(skill)
 
     def _run_physical(self, skill_id, physical):
         prev = self._active_physical_skill
         self._active_physical_skill = skill_id
         try:
-            success, message, success_type, _finalize = self._server._run_physical_skill(
-                self._goal_handle, skill_id, physical
-            )
+            return self._server._run_physical_skill(self._goal_handle, skill_id, physical)
         finally:
             self._active_physical_skill = prev
-        return message, SkillResult(success_type)
 
     def _step(self, step_id, name, skill_id, event, reason=None, output=None):
         self._publish_feedback(
