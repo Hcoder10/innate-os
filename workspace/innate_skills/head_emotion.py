@@ -6,9 +6,9 @@ Head Emotion Skill - Express emotions through vertical head (tilt) movements.
 """
 
 import time
-from typing import Literal
+from typing import Literal, cast
 
-from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from innate import Head, Skill, SkillResult, SkillReturn
 
 # Each pose is (angle_degrees, duration_seconds). Duration is the time to
 # interpolate from the previous pose to this one.
@@ -90,50 +90,30 @@ EmotionName = Literal[
 
 
 class HeadEmotion(Skill):
-    """Express emotions through vertical head tilt movements."""
+    """Express an emotion through head tilt movements."""
 
-    head = Interface(InterfaceType.HEAD)
+    head: Head
 
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-
-    @property
-    def name(self):
-        return "head_emotion"
-
-    def guidelines(self):
-        emotion_list = ", ".join(f"'{e}'" for e in EMOTIONS)
+    def guidelines(self) -> str:
+        # generated from EMOTIONS so adding one can't desync the prose
         return (
-            "Express an emotion through head tilt movements. "
-            f"Requires 'emotion' parameter, one of: {emotion_list}. "
+            "Express an emotion through head tilt movements. Requires 'emotion' "
+            f"parameter, one of: {', '.join(repr(name) for name in EMOTIONS)}. "
             "Optionally pass 'repeat' (int, default 1) to loop the animation."
         )
 
-    def execute(self, emotion: EmotionName, repeat: int = 1):
-        """
-        Play a head-tilt animation for the given emotion.
-
-        Args:
-            emotion: One of the supported emotion names.
-            repeat: Number of times to play the animation (default 1).
-        """
-        self._cancelled = False
-
-        if self.head is None:
-            return "Head interface not available", SkillResult.FAILURE
-
-        emotion = emotion.strip().lower()
+    def execute(self, emotion: EmotionName, repeat: int = 1) -> SkillReturn:
+        emotion = cast(EmotionName, emotion.strip().lower())
         if emotion not in EMOTIONS:
             available = ", ".join(sorted(EMOTIONS))
-            return f"Unknown emotion '{emotion}'. Available: {available}", SkillResult.FAILURE
+            self.fail(f"Unknown emotion '{emotion}'. Available: {available}")
 
         repeat = max(1, min(int(repeat), 5))
         entry = EMOTIONS[emotion]
         sequence = entry["sequence"]
 
         self.logger.info(f"[HeadEmotion] Playing '{emotion}' ({entry['description']}) x{repeat}")
-        self._send_feedback(f"Expressing: {emotion}")
+        self.feedback(f"Expressing: {emotion}")
 
         interpolation_rate = 30.0  # Hz
         dt = 1.0 / interpolation_rate
@@ -141,12 +121,12 @@ class HeadEmotion(Skill):
         for r in range(repeat):
             current_angle = 0.0
             for target_angle, duration in sequence:
-                if self._cancelled:
+                if self.cancelled:
                     self.head.set_position(0)
                     return "Cancelled", SkillResult.CANCELLED
                 steps = max(1, int(round(duration * interpolation_rate)))
                 for i in range(1, steps + 1):
-                    if self._cancelled:
+                    if self.cancelled:
                         self.head.set_position(0)
                         return "Cancelled", SkillResult.CANCELLED
                     t = i / steps
@@ -162,8 +142,4 @@ class HeadEmotion(Skill):
 
         msg = f"Expressed '{emotion}' ({entry['description']})"
         self.logger.info(f"[HeadEmotion] {msg}")
-        return msg, SkillResult.SUCCESS
-
-    def cancel(self):
-        self._cancelled = True
-        return "Head emotion cancelled"
+        return msg

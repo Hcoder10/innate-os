@@ -1,38 +1,29 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+"""
+Retrieve Emails Skill - retrieve recent emails from an IMAP server.
+Retrieves email titles and content from the configured email account.
+"""
+
 import email
 import imaplib
 from email.header import decode_header
 
-from brain_client.skills.types import Skill, SkillResult
+from innate import Skill, SkillFailed, SkillReturn
+
+# Email server configuration - using same credentials as send_email
+IMAP_SERVER = "imap.gmail.com"  # Gmail IMAP server
+IMAP_PORT = 993
+EMAIL_ADDRESS = ""  # Configure email address
+EMAIL_PASSWORD = ""  # Configure app password
 
 
 class RetrieveEmails(Skill):
-    """
-    Primitive for retrieving recent emails from an IMAP server.
-    This retrieves email titles and content from the configured email account.
-    """
-
-    def __init__(self, logger):
-        self.logger = logger
-        # Email server configuration - using same credentials as send_email
-        self.imap_server = "imap.gmail.com"  # Gmail IMAP server
-        self.imap_port = 993
-        self.email = ""  # Configure email address
-        self.password = ""  # Configure app password
-
-    @property
-    def name(self):
-        return "retrieve_emails"
-
-    def guidelines(self):
-        return (
-            "Use to retrieve recent emails from the configured email account. "
-            "Provide the number of emails to retrieve (default is 5). "
-            "Returns email subjects and content. This should be used when you need "
-            "to check for recent messages or respond to incoming communications."
-        )
+    """Use to retrieve recent emails from the configured email account.
+    Provide the number of emails to retrieve (default is 5). Returns email
+    subjects and content. This should be used when you need to check for
+    recent messages or respond to incoming communications."""
 
     def _decode_header_value(self, value):
         """
@@ -113,17 +104,7 @@ class RetrieveEmails(Skill):
 
         return content.strip()
 
-    def execute(self, count: int = 5):
-        """
-        Retrieves the most recent emails from the configured IMAP server.
-
-        Args:
-            count (int): Number of recent emails to retrieve (default: 5, max: 20)
-
-        Returns:
-            tuple: (result_message, result_status) where result_status is a
-                   PrimitiveResult enum value
-        """
+    def execute(self, count: int = 5) -> SkillReturn:
         # Limit the count to prevent overwhelming responses
         count = min(max(1, count), 20)
 
@@ -131,8 +112,8 @@ class RetrieveEmails(Skill):
 
         try:
             # Connect to the IMAP server
-            mail = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-            mail.login(self.email, self.password)
+            mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+            mail.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
 
             # Select the INBOX
             mail.select("INBOX")
@@ -143,7 +124,7 @@ class RetrieveEmails(Skill):
             if status != "OK":
                 self.logger.error("Failed to search emails")
                 mail.logout()
-                return "Failed to search emails", SkillResult.FAILURE
+                self.fail("Failed to search emails")
 
             # Get message IDs
             email_ids = messages[0].split()
@@ -151,7 +132,7 @@ class RetrieveEmails(Skill):
             if not email_ids:
                 self.logger.info("No emails found in inbox")
                 mail.logout()
-                return "No emails found in inbox", SkillResult.SUCCESS
+                return "No emails found in inbox"
 
             # Get the most recent emails (last 'count' emails)
             recent_email_ids = email_ids[-count:]
@@ -168,7 +149,11 @@ class RetrieveEmails(Skill):
                         continue
 
                     # Parse the email
-                    msg = email.message_from_bytes(msg_data[0][1])
+                    payload = msg_data[0]
+                    if not isinstance(payload, tuple):
+                        self.logger.warning(f"Unexpected fetch payload for email {email_id}")
+                        continue
+                    msg = email.message_from_bytes(payload[1])
 
                     # Extract email information
                     subject = self._decode_header_value(msg.get("Subject", "No Subject"))
@@ -196,7 +181,7 @@ class RetrieveEmails(Skill):
             mail.logout()
 
             if not emails_info:
-                return "No emails could be retrieved", SkillResult.FAILURE
+                self.fail("No emails could be retrieved")
 
             # Format the result message
             result_lines = [f"Retrieved {len(emails_info)} recent email(s):\n"]
@@ -213,28 +198,16 @@ class RetrieveEmails(Skill):
 
             self.logger.info(f"\033[92m[BrainClient] Successfully retrieved {len(emails_info)} emails\033[0m")
 
-            return result_message, SkillResult.SUCCESS
+            return result_message
 
+        except SkillFailed:
+            raise  # our own fail() above — don't re-wrap it below
         except imaplib.IMAP4.error as e:
             error_msg = f"IMAP error: {str(e)}"
             self.logger.error(error_msg)
-            return error_msg, SkillResult.FAILURE
+            self.fail(error_msg)
 
         except Exception as e:
             error_msg = f"Failed to retrieve emails: {str(e)}"
             self.logger.error(error_msg)
-            return error_msg, SkillResult.FAILURE
-
-    def cancel(self):
-        """
-        Cancel the email retrieval operation.
-
-        Since email retrieval is typically a quick operation that completes almost
-        instantly, this method doesn't do much. It's implemented to satisfy the
-        Primitive interface.
-
-        Returns:
-            str: A message describing the cancellation result.
-        """
-        self.logger.info("\033[91m[BrainClient] Email retrieval operation cannot be canceled once started\033[0m")
-        return "Email retrieval is an atomic operation that cannot be canceled once started"
+            self.fail(error_msg)

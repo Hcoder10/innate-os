@@ -7,14 +7,13 @@ Recalibrate Manual Skill - Human positions the arm above a top corner square
 using square geometry with the other top corner held fixed.
 """
 
-import base64
 import json
 import math
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
-from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from innate import Manipulation, Skill, SkillReturn, WristImage
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CAPTURES_DIR = Path.home() / "innate-os/captures/corners"
@@ -22,28 +21,15 @@ CalibrationCorner = Literal["A8", "H8"]
 
 
 class RecalibrateManual(Skill):
-    """Record the arm's current position as a top corner (A8 or H8),
-    keep the other top corner from existing calibration, and recompute
-    all four corners using square geometry."""
+    """Manually recalibrate one top corner of the chessboard. The human
+    positions the arm above the center of A8 or H8, then this skill records
+    the position and recomputes the full board calibration using square
+    geometry. Requires 'corner' parameter: 'A8' or 'H8'."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
-    image = RobotState(RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64)
-
-    def __init__(self, logger):
-        super().__init__(logger)
-
-    @property
-    def name(self):
-        return "recalibrate_manual"
-
-    def guidelines(self):
-        return (
-            "Manually recalibrate one top corner of the chessboard. "
-            "The human positions the arm above the center of A8 or H8, "
-            "then this skill records the position and recomputes the full "
-            "board calibration using square geometry. "
-            "Requires 'corner' parameter: 'A8' or 'H8'."
-        )
+    manipulation: Manipulation
+    # best effort: only used for the debug snapshot — a missing wrist frame
+    # must not abort the calibration recompute itself
+    image: WristImage | None
 
     def _load_calibration(self):
         if not CALIBRATION_FILE.exists():
@@ -90,7 +76,7 @@ class RecalibrateManual(Skill):
         )
         return updated
 
-    def _save_corner_image(self, corner: str, pos: dict):
+    def _save_corner_image(self, corner: str):
         """Save the latest wrist camera frame as a corner snapshot."""
         if not self.image:
             self.logger.warning("[RecalibrateManual] No wrist camera image available to save")
@@ -99,24 +85,15 @@ class RecalibrateManual(Skill):
             CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = CAPTURES_DIR / f"manual_{corner}_{ts}.jpg"
-            path.write_bytes(base64.b64decode(self.image))
+            path.write_bytes(self.image.jpeg)
             self.logger.info(f"[RecalibrateManual] Corner image saved: {path}")
         except Exception as e:
             self.logger.warning(f"[RecalibrateManual] Failed to save corner image: {e}")
 
-    def execute(self, corner: CalibrationCorner):
-        """
-        Record current arm FK position as a top corner and recompute full board.
-
-        Args:
-            corner: 'A8' (top_left) or 'H8' (top_right)
-        """
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
-
-        corner = corner.upper().strip()
+    def execute(self, corner: CalibrationCorner) -> SkillReturn:
+        corner = cast(CalibrationCorner, corner.upper().strip())
         if corner not in ("A8", "H8"):
-            return f"Invalid corner '{corner}'. Must be 'A8' or 'H8'.", SkillResult.FAILURE
+            self.fail(f"Invalid corner '{corner}'. Must be 'A8' or 'H8'.")
 
         calibration = self._load_calibration()
         if calibration is None:
@@ -135,7 +112,7 @@ class RecalibrateManual(Skill):
         # Read current arm position
         fk_pose = self.manipulation.get_current_end_effector_pose()
         if not fk_pose:
-            return "Could not get current arm position", SkillResult.FAILURE
+            self.fail("Could not get current arm position")
 
         pos = fk_pose["position"]
         new_pos = (pos["x"], pos["y"])
@@ -143,10 +120,10 @@ class RecalibrateManual(Skill):
 
         position_str = f"X={pos['x']:.4f}, Y={pos['y']:.4f}, Z={pos['z']:.4f}"
         self.logger.info(f"[RecalibrateManual] Recording {corner} at {position_str}")
-        self._send_feedback(f"Recording {corner} at {position_str}")
+        self.feedback(f"Recording {corner} at {position_str}")
 
         # Save snapshot
-        self._save_corner_image(corner, pos)
+        self._save_corner_image(corner)
 
         # If the other top corner is missing, save only this corner
         if other_key not in calibration:
@@ -155,15 +132,15 @@ class RecalibrateManual(Skill):
                 CALIBRATION_FILE.write_text(json.dumps(calibration, indent=2))
                 self.logger.info(f"[RecalibrateManual] Calibration saved to {CALIBRATION_FILE}")
             except Exception as e:
-                return f"Failed to save calibration: {e}", SkillResult.FAILURE
+                self.fail(f"Failed to save calibration: {e}")
 
             msg = (
                 f"Recorded {corner} at {position_str}. "
                 f"Other corner {other_name} not yet recorded — record it to compute full board."
             )
             self.logger.info(f"[RecalibrateManual] {msg}")
-            self._send_feedback(msg)
-            return msg, SkillResult.SUCCESS
+            self.feedback(msg)
+            return msg
 
         # Build the two top corners
         other = calibration[other_key]
@@ -186,7 +163,7 @@ class RecalibrateManual(Skill):
             CALIBRATION_FILE.write_text(json.dumps(updated, indent=2))
             self.logger.info(f"[RecalibrateManual] Calibration saved to {CALIBRATION_FILE}")
         except Exception as e:
-            return f"Failed to save calibration: {e}", SkillResult.FAILURE
+            self.fail(f"Failed to save calibration: {e}")
 
         # Report
         side_x = new_h8[0] - new_a8[0]
@@ -199,8 +176,5 @@ class RecalibrateManual(Skill):
             f"Board side={side_len * 100:.1f}cm."
         )
         self.logger.info(f"[RecalibrateManual] {msg}")
-        self._send_feedback(msg)
-        return msg, SkillResult.SUCCESS
-
-    def cancel(self):
-        return "Recalibrate manual cannot be cancelled"
+        self.feedback(msg)
+        return msg

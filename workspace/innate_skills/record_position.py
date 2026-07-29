@@ -5,13 +5,12 @@
 Record Position Skill - Record current arm FK position, save to file, and send as feedback.
 """
 
-import base64
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
-from brain_client.skills.types import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+from innate import Manipulation, Skill, SkillReturn, WristImage
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CORNER_CAPTURES_DIR = Path("/home/jetson1/innate-os/captures/corners")
@@ -20,43 +19,24 @@ VALID_CORNERS = ("top_left", "top_right", "bottom_right", "bottom_left")
 
 
 class RecordPosition(Skill):
-    """Record current arm position, save to calibration file, and send as feedback."""
+    """Record the current arm position for a board corner. Requires 'corner'
+    parameter: 'top_left', 'top_right', 'bottom_right', or 'bottom_left'.
+    Saves to calibration file and returns coordinates."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
-    image = RobotState(RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64)
+    manipulation: Manipulation
+    # best effort: only used for the debug snapshot — a missing wrist frame
+    # must not abort recording the calibration point itself
+    image: WristImage | None
 
-    def __init__(self, logger):
-        super().__init__(logger)
-
-    @property
-    def name(self):
-        return "record_position"
-
-    def guidelines(self):
-        return (
-            "Record the current arm position for a board corner. "
-            "Requires 'corner' parameter: 'top_left', 'top_right', 'bottom_right', or 'bottom_left'. "
-            "Saves to calibration file and returns coordinates."
-        )
-
-    def execute(self, corner: BoardCorner):
-        """
-        Record and save current FK position for a corner.
-
-        Args:
-            corner: One of 'top_left', 'top_right', 'bottom_right', 'bottom_left'
-        """
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
-
-        corner = corner.lower().replace("-", "_").replace(" ", "_")
+    def execute(self, corner: BoardCorner) -> SkillReturn:
+        corner = cast(BoardCorner, corner.lower().replace("-", "_").replace(" ", "_"))
         if corner not in VALID_CORNERS:
-            return f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}", SkillResult.FAILURE
+            self.fail(f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}")
 
         fk_pose = self.manipulation.get_current_end_effector_pose()
 
         if not fk_pose:
-            return "Could not get current position", SkillResult.FAILURE
+            self.fail("Could not get current position")
 
         pos = fk_pose["position"]
 
@@ -72,15 +52,15 @@ class RecordPosition(Skill):
         calibration[corner] = {"x": pos["x"], "y": pos["y"], "z": pos["z"]}
         CALIBRATION_FILE.write_text(json.dumps(calibration, indent=2))
 
-        self._save_corner_image(corner, pos)
+        self._save_corner_image(corner)
 
         position_str = f"X={pos['x']:.4f}, Y={pos['y']:.4f}, Z={pos['z']:.4f}"
-        self._send_feedback(f"RECORDED {corner.upper()}: {position_str}")
+        self.feedback(f"RECORDED {corner.upper()}: {position_str}")
         self.logger.info(f"Saved {corner} to {CALIBRATION_FILE}")
 
-        return f"{corner} recorded: {position_str}", SkillResult.SUCCESS
+        return f"{corner} recorded: {position_str}"
 
-    def _save_corner_image(self, corner: str, pos: dict):
+    def _save_corner_image(self, corner: str):
         """Save the latest wrist camera frame as a corner snapshot."""
         if not self.image:
             self.logger.warning("No wrist camera image available to save")
@@ -89,11 +69,7 @@ class RecordPosition(Skill):
             CORNER_CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = CORNER_CAPTURES_DIR / f"corner_{corner}_{ts}.jpg"
-            path.write_bytes(base64.b64decode(self.image))
+            path.write_bytes(self.image.jpeg)
             self.logger.info(f"Corner image saved: {path}")
         except Exception as e:
             self.logger.warning(f"Failed to save corner image: {e}")
-
-    def cancel(self):
-        """Nothing to cancel."""
-        return "Record position cannot be cancelled"

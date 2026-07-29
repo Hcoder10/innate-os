@@ -1,48 +1,57 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import RobotState, RobotStateType, Skill, SkillFailed, SkillResult
-from innate.skills import arm_zero_position, head_emotion, move_straight, pick_socks, turn_in_place
+from innate_skills.arm_zero_position import ArmZeroPosition
+from innate_skills.head_emotion import HeadEmotion
+from innate_skills.move_straight import MoveStraight
+from innate_skills.turn_in_place import TurnInPlace
+
+from innate import Battery, Skill, SkillResult, SkillReturn
 
 
 class RunRoutineDemo(Skill):
-    """Demo of a chained routine: skills are imported functions, calls block,
-    failures raise SkillFailed, and each call is its own step in the app."""
+    """Run the demo routine: talk, emote, shuffle, turn, and try to pick a
+    sock. Use when the user asks for the demo."""
 
-    battery = RobotState(RobotStateType.LAST_BATTERY)
+    battery: Battery | None  # nice to have — the demo runs without a reading
 
-    @property
-    def name(self):
-        return "run_routine_demo"
+    # Sub-skills compose like PyTorch modules: declare the class you want,
+    # call the attribute. The declared class is what runs — override by
+    # subclassing and re-declaring, not by file naming.
+    arm_zero: ArmZeroPosition
+    emote: HeadEmotion
+    move: MoveStraight
+    turn: TurnInPlace
 
-    def guidelines(self):
-        return (
-            "Run the demo routine: talk, emote, shuffle, turn, and try to pick a "
-            "sock. Use when the user asks for the demo."
-        )
-
-    def execute(self):
+    def execute(self) -> SkillReturn:
         runs = self.storage.get("runs", 0) + 1
         self.storage["runs"] = runs
 
-        arm_zero_position()
-        head_emotion(emotion="excited")
+        self.arm_zero()
+        self.emote(emotion="excited")
         self.say(f"Demo number {runs}. Watch this.", wait=True)
 
         for distance in (0.2, -0.2):
-            move_straight(distance=distance)
+            self.move(distance=distance)
 
-        turn = turn_in_place(angle_degrees=90)
+        turn = self.turn(angle_degrees=90)
         self.say(f"I turned {turn.data.turned_degrees:.0f} degrees.")
-        turn_in_place(angle_degrees=-90, timeout=20)
+        self.turn(angle_degrees=-90)
 
-        try:
-            pick_socks(timeout=60)  # learned policy, same call shape
-        except SkillFailed:
-            head_emotion(emotion="disappointed")
-            self.say("No socks today.")
+        # pick_socks is a trained policy the repo ships only metadata for.
+        # Declaring it (PhysicalSkill) makes it a hard dependency checked at
+        # wire time, which would fail the whole demo on a robot whose policy
+        # is absent or still training — dispatch by id at run time instead
+        # and degrade to "no socks", as the routine always has.
+        if self.skills is not None:
+            _msg, status = self.skills.run("pick_socks", timeout=60)
+            if status is SkillResult.CANCELLED:
+                return "Demo cancelled", SkillResult.CANCELLED
+            if status is not SkillResult.SUCCESS:
+                self.emote(emotion="disappointed")
+                self.say("No socks today.")
 
         if self.battery:
-            self.say(f"Battery at {self.battery['percentage']:.0%}.")
-        head_emotion(emotion="proud")
+            self.say(f"Battery at {self.battery.percentage:.0%}.")
+        self.emote(emotion="proud")
         self.say("All done!")
-        return "Demo complete", SkillResult.SUCCESS
+        return "Demo complete"

@@ -5,72 +5,39 @@
 Arm Utils Skill - Torque on, torque off, or reboot the arm servos.
 """
 
-from typing import Literal
+from typing import Literal, cast
 
-from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from innate import Manipulation, Skill, SkillReturn
 
 VALID_COMMANDS = ("torque_on", "torque_off", "reboot_arm")
 ArmCommand = Literal["torque_on", "torque_off", "reboot_arm"]
 
 
 class ArmUtils(Skill):
-    """Utility commands for the arm: enable/disable torque or reboot servos."""
+    """Utility skill for low-level arm commands. Requires 'command' parameter:
+    'torque_on', 'torque_off', or 'reboot_arm'. torque_on enables motor torque
+    so the arm holds position. torque_off disables torque so the arm goes limp
+    (for manual positioning). reboot_arm reboots all Dynamixel servos to clear
+    hardware errors."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
+    manipulation: Manipulation
 
-    def __init__(self, logger):
-        super().__init__(logger)
-
-    @property
-    def name(self):
-        return "arm_utils"
-
-    def guidelines(self):
-        return (
-            "Utility skill for low-level arm commands. "
-            "Requires 'command' parameter: 'torque_on', 'torque_off', or 'reboot_arm'. "
-            "torque_on enables motor torque so the arm holds position. "
-            "torque_off disables torque so the arm goes limp (for manual positioning). "
-            "reboot_arm reboots all Dynamixel servos to clear hardware errors."
-        )
-
-    def execute(self, command: ArmCommand):
-        """
-        Execute an arm utility command.
-
-        Args:
-            command: 'torque_on', 'torque_off', or 'reboot_arm'
-        """
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
-
-        command = command.strip().lower()
+    def execute(self, command: ArmCommand) -> SkillReturn:
+        command = cast(ArmCommand, command.strip().lower())
         if command not in VALID_COMMANDS:
-            return (
-                f"Invalid command '{command}'. Must be one of: {', '.join(VALID_COMMANDS)}.",
-                SkillResult.FAILURE,
-            )
+            self.fail(f"Invalid command '{command}'. Must be one of: {', '.join(VALID_COMMANDS)}.")
 
         if command == "torque_on":
-            success = self.manipulation.torque_on()
-            if success:
-                return "Arm torque enabled", SkillResult.SUCCESS
-            return "Failed to enable arm torque", SkillResult.FAILURE
+            if not self.manipulation.torque_on():
+                self.fail("Failed to enable arm torque")
+            return "Arm torque enabled"
 
         if command == "torque_off":
-            success = self.manipulation.torque_off()
-            if success:
-                return "Arm torque disabled (arm is limp)", SkillResult.SUCCESS
-            return "Failed to disable arm torque", SkillResult.FAILURE
+            if not self.manipulation.torque_off():
+                self.fail("Failed to disable arm torque")
+            return "Arm torque disabled (arm is limp)"
 
         # reboot_arm
-        success = self.manipulation.reboot_servos()
-        if success:
-            return (
-                "Arm servos rebooted and reinitialized; torque is disabled. Run torque_on before moving.",
-                SkillResult.SUCCESS,
-            )
-        return "Failed to reboot arm servos", SkillResult.FAILURE
-
-    def cancel(self):
-        return "Arm utils cannot be cancelled"
+        if not self.manipulation.reboot_servos():
+            self.fail("Failed to reboot arm servos")
+        return "Arm servos rebooted and reinitialized; torque is disabled. Run torque_on before moving."

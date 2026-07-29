@@ -8,29 +8,17 @@ Arm Circle Motion Skill - Move arm in a circular pattern.
 import math
 import time
 
-from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from innate import Manipulation, Skill, SkillResult, SkillReturn
 
 
 class ArmCircleMotion(Skill):
-    """Move the arm in a circular motion pattern."""
+    """Move the arm in a circular motion pattern. The circle is traced in the YZ
+    plane (vertical) while maintaining a constant X position. You can specify the
+    center position, radius, number of loops, and speed. A good default center
+    position is x=0.2, y=-0.05, z=0.2 (roughly in front of the robot with arm
+    extended)."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
-
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-
-    @property
-    def name(self):
-        return "arm_circle_motion"
-
-    def guidelines(self):
-        return (
-            "Move the arm in a circular motion pattern. The circle is traced in the YZ plane "
-            "(vertical) while maintaining a constant X position. You can specify the center position, "
-            "radius, number of loops, and speed. A good default center position is x=0.2, y=-0.05, z=0.2 "
-            "(roughly in front of the robot with arm extended)."
-        )
+    manipulation: Manipulation
 
     def execute(
         self,
@@ -41,24 +29,7 @@ class ArmCircleMotion(Skill):
         num_loops: int = 1,
         points_per_loop: int = 16,
         duration_per_point: float = 0.5,
-    ):
-        """
-        Move arm in a circular pattern.
-
-        Args:
-            center_x: X coordinate of circle center (forward from base), default 0.2m
-            center_y: Y coordinate of circle center (left from base), default -0.5m
-            center_z: Z height to maintain during circle, default 0.2m
-            radius: Radius of the circle in meters, default 0.1m
-            num_loops: Number of complete circles to trace, default 1
-            points_per_loop: Number of waypoints per circle (more = smoother), default 16
-            duration_per_point: Time to move between each waypoint in seconds, default 0.5s
-        """
-        self._cancelled = False
-
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
-
+    ) -> SkillReturn:
         # Get current orientation to maintain during circle motion
         current_orientation = self.manipulation.get_current_orientation_rpy()
         if current_orientation is None:
@@ -86,12 +57,12 @@ class ArmCircleMotion(Skill):
         )
 
         if not success:
-            return "Failed to move to start position", SkillResult.FAILURE
+            self.fail("Failed to move to start position")
 
         # Wait for initial move
         time.sleep(1.2)
 
-        if self._cancelled:
+        if self.cancelled:
             return "Circle motion cancelled", SkillResult.CANCELLED
 
         # Trace the circle(s)
@@ -99,7 +70,7 @@ class ArmCircleMotion(Skill):
             self.logger.info(f"Starting loop {loop + 1}/{num_loops}")
 
             for i in range(points_per_loop):
-                if self._cancelled:
+                if self.cancelled:
                     return "Circle motion cancelled", SkillResult.CANCELLED
 
                 # Calculate angle for this point (start from top, go clockwise)
@@ -128,9 +99,4 @@ class ArmCircleMotion(Skill):
                 time.sleep(duration_per_point)
 
         self.logger.info("Circle motion completed successfully")
-        return f"Completed {num_loops} circular loop(s)", SkillResult.SUCCESS
-
-    def cancel(self):
-        """Cancel the circular motion."""
-        self._cancelled = True
-        return "Circle motion cancelled"
+        return f"Completed {num_loops} circular loop(s)"

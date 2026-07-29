@@ -1,58 +1,36 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+"""
+Send Email Skill - emergency email notifications.
+This is a simplified version that logs the email content rather than actually
+sending. In a production environment, you would configure proper SMTP settings.
+"""
+
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from brain_client.skills.types import Skill, SkillResult
+from innate import Skill, SkillReturn
+
+DEFAULT_RECIPIENTS = ["axel@innate.bot", "vignesh@innate.bot"]
+# Email server configuration
+SMTP_SERVER = "smtp.gmail.com"  # Example using Gmail
+SMTP_PORT = 587
+SENDER_EMAIL = "axel@innate.bot"  # Replace with robot's email
+SENDER_PASSWORD = ""  # Use app password for Gmail
 
 
 class SendEmail(Skill):
-    """
-    Primitive for sending emails for emergency notifications.
-    This is a simplified version that logs the email content rather than actually
-    sending. In a production environment, you would configure proper SMTP settings.
-    """
+    """Use to send an emergency email notification. Provide a subject and
+    message. You can optionally provide a list of recipients, otherwise it
+    will be sent to the default list. This should be used when a potential
+    emergency is detected and assistance might be required."""
 
-    def __init__(self, logger):
-        self.logger = logger
-        self.default_recipients = ["axel@innate.bot", "vignesh@innate.bot"]
-        # Email server configuration
-        self.smtp_server = "smtp.gmail.com"  # Example using Gmail
-        self.smtp_port = 587
-        self.sender_email = "axel@innate.bot"  # Replace with robot's email
-        self.password = ""  # Use app password for Gmail
-
-    @property
-    def name(self):
-        return "send_email"
-
-    def guidelines(self):
-        return (
-            "Use to send an emergency email notification. Provide a subject and "
-            "message. You can optionally provide a list of recipients, otherwise "
-            "it will be sent to the default list. This should be used when a "
-            "potential emergency is detected and assistance might be required."
-        )
-
-    def execute(self, subject: str, message: str, recipients: list[str] | str = None):
-        """
-        Sends an email to the specified recipient(s) (or default list if none provided).
-
-        Args:
-            subject (str): Email subject line
-            message (str): Email body content
-            recipients (list[str] | str, optional): Email recipient or list of recipients.
-                                     Defaults to the default list if not specified.
-
-        Returns:
-            tuple: (result_message, result_status) where result_status is a
-                   PrimitiveResult enum value
-        """
+    def execute(self, subject: str, message: str, recipients: list[str] | str | None = None) -> SkillReturn:
         current_recipients = []
         if recipients is None:
-            current_recipients = self.default_recipients
+            current_recipients = DEFAULT_RECIPIENTS
         elif isinstance(recipients, str):
             current_recipients = [recipients]
         else:
@@ -60,7 +38,7 @@ class SendEmail(Skill):
 
         if not current_recipients:
             self.logger.error("No recipients specified for email.")
-            return "No recipients specified for email.", SkillResult.FAILURE
+            self.fail("No recipients specified for email.")
 
         recipients_str = ", ".join(current_recipients)
 
@@ -72,43 +50,29 @@ class SendEmail(Skill):
         )
 
         self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
-        return f"Email sent to {recipients_str}", SkillResult.SUCCESS
+        return f"Email sent to {recipients_str}"
 
         # Just pretending here it worked for sure.
 
         try:
             # Create message
             msg = MIMEMultipart()
-            msg["From"] = self.sender_email
+            msg["From"] = SENDER_EMAIL
             msg["To"] = recipients_str
             msg["Subject"] = subject
             msg.attach(MIMEText(message, "plain"))
 
             # Connect to server and send
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
             server.starttls()
-            server.login(self.sender_email, self.password)
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.send_message(msg)
             server.quit()
 
             # Log success message
             self.logger.info(f"\033[92m[BrainClient] Emergency email sent to {recipients_str}\033[0m")
-            return f"Email sent to {recipients_str}", SkillResult.SUCCESS
+            return f"Email sent to {recipients_str}"
 
         except Exception as e:
             self.logger.error(f"Failed to send email: {str(e)}")
-            return f"Failed to send email: {str(e)}", SkillResult.FAILURE
-
-    def cancel(self):
-        """
-        Cancel the email sending operation.
-
-        Since email sending is typically a quick operation that completes almost
-        instantly, this method doesn't do much. It's implemented to satisfy the
-        Primitive interface.
-
-        Returns:
-            str: A message describing the cancellation result.
-        """
-        self.logger.info("\033[91m[BrainClient] Email sending operation cannot be canceled once started\033[0m")
-        return "Email sending is an atomic operation that cannot be canceled once started"
+            self.fail(f"Failed to send email: {str(e)}")

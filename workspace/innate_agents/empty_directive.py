@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agent_types import Agent
+from brain_client.agents.types import Agent
 
 
 class EmptyDirective(Agent):

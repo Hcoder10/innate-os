@@ -1,16 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Follow ArUco Skill -- lock onto the first ArUco marker seen through the main
-camera and follow it with the base, steering by the marker's pixel position and
-keeping distance from its apparent size. Seeing the stop marker (id 4) ends the
-follow. No obstacle avoidance."""
-
-import base64
 import time
 
 import cv2
 import numpy as np
-from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
+
+from innate import MainImage, Mobility, Skill, SkillResult, SkillReturn
 
 # Must match the dictionary the tags were printed with (ids 0-4, DICT_4X4_50).
 # The calibration ChArUco boards use DICT_4X4_250 -- a different dictionary.
@@ -47,10 +42,24 @@ LOST_GRACE_FRAMES = 5  # ramp down this many missed frames before a hard stop
 
 
 class FollowAruco(Skill):
-    """Follow the first ArUco marker seen until the stop marker appears."""
+    """Follow a person or object carrying an ArUco tag."""
 
-    mobility = Interface(InterfaceType.MOBILITY)
-    image = RobotState(RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64)
+    mobility: Mobility
+    # ``| None``: the required-feed grace (3 s) is too tight for a cold camera
+    # (sim renders first frames on demand); execute() waits up to 5 s itself
+    # before giving up, as the pre-annotation skill did.
+    image: MainImage | None
+
+    def guidelines(self) -> str:
+        # generated from LOCK_IDS/STOP_ID so retuning them can't desync the prose
+        ids = ", ".join(str(i) for i in sorted(LOCK_IDS))
+        return (
+            f"Follow a person or object carrying an ArUco tag (DICT_4X4_50, ids {ids}). "
+            "The robot waits until it sees one, locks onto that id, says 'Locked in', and "
+            "then drives to keep that marker centered and about 0.35m away. Showing "
+            f"marker id {STOP_ID} stops the follow. Runs until the stop marker is seen or the "
+            "skill is cancelled. No obstacle avoidance -- use in clear space."
+        )
 
     def __init__(self, logger):
         super().__init__(logger)
@@ -63,38 +72,23 @@ class FollowAruco(Skill):
         self._cmd_angular = 0.0
         self._last_cmd_time = None
 
-    @property
-    def name(self):
-        return "follow_aruco"
-
-    def guidelines(self):
-        return (
-            "Follow a person or object carrying an ArUco tag (DICT_4X4_50, ids 0-3). "
-            "The robot waits until it sees one, locks onto that id, says 'Locked in', and "
-            "then drives to keep that marker centered and about 0.35m away. Showing "
-            f"marker id {STOP_ID} stops the follow. Runs until the stop marker is seen "
-            "or the skill is cancelled. No obstacle avoidance -- use in clear space."
-        )
-
-    def execute(self):
-        if self.mobility is None:
-            return "Mobility interface not available", SkillResult.FAILURE
-        if not self._wait_for_frame():
+    def execute(self) -> SkillReturn:
+        self.on_cancel(self._stop)  # brake now, not at the next loop poll
+        if self.wait_for(lambda: self.image, timeout=5.0) is None:
             return "No camera image available", SkillResult.FAILURE
-
         locked_id = None
         lock_candidate = None
         lock_streak = 0
         stop_streak = 0
         lost_frames = 0
-        while not self._cancelled:
+        while not self.cancelled:
             markers = self._detect_markers()
 
             stop_streak = stop_streak + 1 if STOP_ID in markers else 0
             if stop_streak >= STOP_CONFIRM_FRAMES:
                 self._stop()
                 self.say("Stopping")
-                return f"Stop marker (id {STOP_ID}) seen, follow ended", SkillResult.SUCCESS
+                return f"Stop marker (id {STOP_ID}) seen, follow ended"
 
             if locked_id is None:
                 seen = next((i for i in markers if i in LOCK_IDS), None)
@@ -103,7 +97,7 @@ class FollowAruco(Skill):
                 if seen is not None and lock_streak >= LOCK_CONFIRM_FRAMES:
                     locked_id = seen
                     self.say("Locked in")
-                    self._send_feedback(f"Locked onto marker id {locked_id}")
+                    self.feedback(f"Locked onto marker id {locked_id}")
                 else:
                     time.sleep(LOOP_PERIOD)
                     continue
@@ -127,11 +121,6 @@ class FollowAruco(Skill):
         self._stop()
         return "Follow cancelled", SkillResult.CANCELLED
 
-    def cancel(self):
-        self._cancelled = True
-        self._stop()
-        return "Follow cancelled"
-
     def _detect_markers(self) -> dict:
         """Detected markers in the current frame as {id: quad of 4 (x, y) corners}."""
         frame = self._current_frame()
@@ -144,10 +133,10 @@ class FollowAruco(Skill):
         return {int(marker_id): quad.reshape(4, 2) for marker_id, quad in zip(ids.flatten(), corners, strict=True)}
 
     def _current_frame(self):
-        b64 = self.image
-        if not b64:
+        frame = self.image
+        if not frame:
             return None
-        data = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
+        data = np.frombuffer(frame.jpeg, dtype=np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
 
     def _drive_toward(self, quad) -> None:
@@ -181,6 +170,10 @@ class FollowAruco(Skill):
         return filtered + MEAS_SMOOTHING * (measurement - filtered)
 
     def _send_cmd(self, linear, angular) -> None:
+        # A cancel mid-iteration already braked via the on_cancel hook;
+        # re-commanding here would undo it until the next loop check.
+        if self.cancelled:
+            return
         # Slew-limit toward the requested velocities so the base accelerates
         # and decelerates gradually. The step scales with real elapsed time, so
         # a slow loop iteration doesn't silently lower the slew rate. dt is
@@ -193,19 +186,10 @@ class FollowAruco(Skill):
         self._cmd_angular += float(np.clip(angular - self._cmd_angular, -ANGULAR_SLEW * dt, ANGULAR_SLEW * dt))
         self.mobility.send_cmd_vel(linear_x=self._cmd_linear, angular_z=self._cmd_angular, duration=CMD_DURATION)
 
-    def _wait_for_frame(self, timeout: float = 5.0) -> bool:
-        deadline = time.time() + timeout
-        while self.image is None and not self._cancelled:
-            if time.time() > deadline:
-                return False
-            time.sleep(0.05)
-        return True
-
     def _stop(self):
         self._offset_filtered = None
         self._size_error_filtered = None
         self._cmd_linear = 0.0
         self._cmd_angular = 0.0
         self._last_cmd_time = None
-        if self.mobility is not None:
-            self.mobility.send_cmd_vel(linear_x=0.0, angular_z=0.0)
+        self.mobility.send_cmd_vel(linear_x=0.0, angular_z=0.0)

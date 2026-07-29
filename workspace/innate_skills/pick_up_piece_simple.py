@@ -18,19 +18,22 @@ orientation, skipping the relay handoff.
 import json
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
+from innate import Manipulation, Skill, SkillResult, SkillReturn
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 PieceType = Literal["king", "queen", "rook", "bishop", "knight", "pawn"]
 
 
 class PickUpPieceSimple(Skill):
-    """Pick up a chess piece and place it on another square using calibration
-    positions only.  No vision correction, no base driving."""
+    """Pick up a piece from one square and place it on another without using
+    Gemini vision or base driving.  Uses arm orientation changes to reach all
+    ranks.  Parameters: square (source, e.g. 'E2'), place_square (target,
+    e.g. 'E4'), piece (str, e.g. 'pawn'), is_capture (bool, True if capturing
+    an opponent piece), speed (float)."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
+    manipulation: Manipulation
 
     # Orientation constants
     FIXED_ROLL = 0.0
@@ -71,23 +74,7 @@ class PickUpPieceSimple(Skill):
     DISCARD_SQUARES_RIGHT = 2  # how many square-widths right of H
     DISCARD_RANK = 4.5  # midpoint between rank 4 and 5
 
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-        self._speed = 1.0
-
-    @property
-    def name(self):
-        return "pick_up_piece_simple"
-
-    def guidelines(self):
-        return (
-            "Pick up a piece from one square and place it on another without "
-            "using Gemini vision or base driving.  Uses arm orientation changes "
-            "to reach all ranks.  Parameters: square (source, e.g. 'E2'), "
-            "place_square (target, e.g. 'E4'), piece (str, e.g. 'pawn'), "
-            "is_capture (bool, True if capturing an opponent piece), speed (float)."
-        )
+    TALL_PIECES = {"king", "queen"}
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -165,7 +152,7 @@ class PickUpPieceSimple(Skill):
 
     def _move_arm(self, x, y, z, pitch, yaw, duration, blocking=True, gripper_position=None):
         """Move arm to pose and optionally wait. Returns True on success."""
-        kwargs = dict(
+        kwargs: dict[str, Any] = dict(
             x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), blocking=blocking
         )
         if gripper_position is not None:
@@ -229,13 +216,13 @@ class PickUpPieceSimple(Skill):
             z = from_z + (to_z - from_z) * frac
             dur = seg_durs[i - 1]
             self.logger.info(f"[PickUpPieceSimple] {direction} step {i}/{n} -> z={z:.3f}m ({dur:.2f}s)")
-            kwargs = dict(x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=dur)
+            kwargs: dict[str, Any] = dict(x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=dur)
             if gripper_position is not None:
                 kwargs["gripper_position"] = gripper_position
             if not self.manipulation.move_to_cartesian_pose(**kwargs):
                 return f"Failed at {direction.lower()} step {i}/{n} z={z:.3f}m"
             time.sleep(dur)
-            if self._cancelled:
+            if self.cancelled:
                 return "Cancelled"
         return None
 
@@ -361,19 +348,19 @@ class PickUpPieceSimple(Skill):
         air_dur = 2.0 / (self.PHASE_AIR * caution)
 
         # Move above source at safe height (FAST – in the air)
-        self._send_feedback(f"Moving above {src_label}...")
+        self.feedback(f"Moving above {src_label}...")
         if not self._move_arm(src_x, src_y, safe_height, src_pitch, src_yaw, air_dur):
             return f"Failed to move above {src_label}"
-        if self._cancelled:
+        if self.cancelled:
             return "Cancelled"
 
         # Open gripper and wait for it to fully open before descending
-        self._send_feedback("Opening gripper...")
+        self.feedback("Opening gripper...")
         self.manipulation.open_gripper(self.GRIPPER_OPEN_PERCENT)
         self._gripper_wait(1.5)
 
         # Descend to pick height (PROGRESSIVE – fast top, slow near board)
-        self._send_feedback(f"Descending to pick from {src_label}...")
+        self.feedback(f"Descending to pick from {src_label}...")
         err = self._vertical_move(
             src_x, src_y, safe_height, pick_height, src_pitch, src_yaw, gripper_position=open_grip, caution=caution
         )
@@ -381,30 +368,30 @@ class PickUpPieceSimple(Skill):
             return f"Pick descent failed: {err}"
 
         # Grab (NEUTRAL – gripper waits are never rushed)
-        self._send_feedback("Grabbing piece...")
+        self.feedback("Grabbing piece...")
         self.manipulation.close_gripper(strength=self.GRIPPER_CLOSE_STRENGTH, blocking=True)
         self._gripper_wait(2.0)
         grip_position = closed_grip
 
         # Lift to safe height (FAST – lifting via PHASE_LIFT)
-        self._send_feedback("Lifting piece...")
+        self.feedback("Lifting piece...")
         err = self._vertical_move(
             src_x, src_y, pick_height, safe_height, src_pitch, src_yaw, gripper_position=grip_position, caution=caution
         )
         if err:
             return f"Lift failed: {err}"
-        if self._cancelled:
+        if self.cancelled:
             return "Cancelled"
 
         # Move above destination at safe height (FAST – in the air)
-        self._send_feedback(f"Moving above {dst_label}...")
+        self.feedback(f"Moving above {dst_label}...")
         if not self._move_arm(dst_x, dst_y, safe_height, dst_pitch, dst_yaw, air_dur, gripper_position=grip_position):
             return f"Failed to move above {dst_label}"
-        if self._cancelled:
+        if self.cancelled:
             return "Cancelled"
 
         # Descend to place height (PROGRESSIVE)
-        self._send_feedback(f"Descending to place on {dst_label}...")
+        self.feedback(f"Descending to place on {dst_label}...")
         err = self._vertical_move(
             dst_x, dst_y, safe_height, pick_height, dst_pitch, dst_yaw, gripper_position=grip_position, caution=caution
         )
@@ -412,12 +399,12 @@ class PickUpPieceSimple(Skill):
             return f"Place descent failed: {err}"
 
         # Release (NEUTRAL)
-        self._send_feedback("Releasing piece...")
+        self.feedback("Releasing piece...")
         self.manipulation.open_gripper(self.GRIPPER_OPEN_PERCENT)
         self._gripper_wait(1.5)
 
         # Lift to safe height (FAST)
-        self._send_feedback("Lifting after place...")
+        self.feedback("Lifting after place...")
         err = self._vertical_move(
             dst_x, dst_y, pick_height, safe_height, dst_pitch, dst_yaw, gripper_position=open_grip, caution=caution
         )
@@ -428,8 +415,6 @@ class PickUpPieceSimple(Skill):
 
     # ── Main logic ────────────────────────────────────────────────────
 
-    TALL_PIECES = {"king", "queen"}
-
     def execute(
         self,
         square: str,
@@ -437,46 +422,22 @@ class PickUpPieceSimple(Skill):
         piece: PieceType = "pawn",
         is_capture: bool = False,
         speed: float = 1.0,
-    ):
-        """
-        Pick up a piece from square and place it on place_square.
-
-        If is_capture is True, first removes the opponent's piece from
-        place_square to a discard zone (right of column H, near rank 4-5),
-        then moves our piece from square to place_square.
-
-        When a move crosses the rank 6/7 boundary the arm cannot reach
-        ranks 7-8 with a vertical gripper, so we relay through an
-        intermediary square on rank 5: place the piece there, reorient
-        the gripper (tilted ~0.48 rad for 7-8, vertical for 1-6), then
-        pick up again and continue to the destination.
-
-        Args:
-            square: Source square in chess notation (e.g. 'A4')
-            place_square: Target square (e.g. 'D5')
-            piece: Piece type ('king', 'queen', 'rook', 'bishop', 'knight', 'pawn')
-            is_capture: If True, remove opponent piece from place_square first
-            speed: Speed multiplier (1.0 = normal)
-        """
+    ) -> SkillReturn:
         self._speed = max(0.1, min(speed, 3.0))
-        self._cancelled = False
-
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
 
         # Safety: ensure arm starts from a safe pose (lifts first if low)
         self._go_to_safe_pose()
 
         calibration = self._load_calibration()
         if calibration is None:
-            return "No calibration data found. Run board calibration first.", SkillResult.FAILURE
+            self.fail("No calibration data found. Run board calibration first.")
 
         src_pos = self._square_to_position(square, calibration)
         if src_pos is None:
-            return f"Invalid source square '{square}'", SkillResult.FAILURE
+            self.fail(f"Invalid source square '{square}'")
         dst_pos = self._square_to_position(place_square, calibration)
         if dst_pos is None:
-            return f"Invalid target square '{place_square}'", SkillResult.FAILURE
+            self.fail(f"Invalid target square '{place_square}'")
 
         src_x, src_y, src_board_z = src_pos
         dst_x, dst_y, dst_board_z = dst_pos
@@ -497,7 +458,7 @@ class PickUpPieceSimple(Skill):
         if is_capture:
             discard_pos = self._discard_position(calibration)
             if discard_pos is None:
-                return "Failed to compute discard position", SkillResult.FAILURE
+                self.fail("Failed to compute discard position")
             disc_x, disc_y, disc_z = discard_pos
             # Use short pick height for captured piece (we don't know its type)
             cap_pick_height = self.HEIGHT_PICK_SHORT + dst_board_z
@@ -510,7 +471,7 @@ class PickUpPieceSimple(Skill):
                 f"[PickUpPieceSimple] Capture: removing piece from {place_square} "
                 f"to discard ({disc_x:.4f},{disc_y:.4f},z={disc_z:.4f})"
             )
-            self._send_feedback(f"Capturing: removing piece from {place_square}...")
+            self.feedback(f"Capturing: removing piece from {place_square}...")
 
             # If target square is in ranks 7-8, use tilted approach
             cap_rank = int(place_square[1])
@@ -532,8 +493,8 @@ class PickUpPieceSimple(Skill):
             )
             if err:
                 self._go_to_safe_pose()
-                return f"Capture discard failed: {err}", SkillResult.FAILURE
-            if self._cancelled:
+                self.fail(f"Capture discard failed: {err}")
+            if self.cancelled:
                 self._go_to_safe_pose()
                 return "Cancelled", SkillResult.CANCELLED
 
@@ -544,7 +505,7 @@ class PickUpPieceSimple(Skill):
             # ── Two-step relay through intermediary ──
             relay_sq, relay_pos = self._relay_position(square, place_square, calibration)
             if relay_pos is None:
-                return "Failed to compute relay position", SkillResult.FAILURE
+                self.fail("Failed to compute relay position")
             relay_x, relay_y, relay_board_z = relay_pos
             relay_pick_height = base_pick_height + relay_board_z
 
@@ -556,7 +517,7 @@ class PickUpPieceSimple(Skill):
             # Tilted caution if source is rank 7-8
             leg1_tilted = src_rank >= 7
             src_pick_height = base_pick_height + src_board_z
-            self._send_feedback(f"Relay leg 1: {square} -> {relay_sq}")
+            self.feedback(f"Relay leg 1: {square} -> {relay_sq}")
             err = self._do_pick_place(
                 src_x,
                 src_y,
@@ -574,15 +535,15 @@ class PickUpPieceSimple(Skill):
             )
             if err:
                 self._go_to_safe_pose()
-                return f"Relay leg 1 failed: {err}", SkillResult.FAILURE
-            if self._cancelled:
+                self.fail(f"Relay leg 1 failed: {err}")
+            if self.cancelled:
                 self._go_to_safe_pose()
                 return "Cancelled", SkillResult.CANCELLED
 
             # Leg 2: pick from relay, place at destination (destination orientation)
             # Tilted caution if destination is rank 7-8
             leg2_tilted = dst_rank >= 7
-            self._send_feedback(f"Relay leg 2: {relay_sq} -> {place_square}")
+            self.feedback(f"Relay leg 2: {relay_sq} -> {place_square}")
             err = self._do_pick_place(
                 relay_x,
                 relay_y,
@@ -600,7 +561,7 @@ class PickUpPieceSimple(Skill):
             )
             if err:
                 self._go_to_safe_pose()
-                return f"Relay leg 2 failed: {err}", SkillResult.FAILURE
+                self.fail(f"Relay leg 2 failed: {err}")
         else:
             # ── Direct move (no orientation change needed) ──
             # Ranks 5-6 <-> 7-8: use tilted orientation for both ends
@@ -628,18 +589,14 @@ class PickUpPieceSimple(Skill):
             )
             if err:
                 self._go_to_safe_pose()
-                return f"Move failed: {err}", SkillResult.FAILURE
+                self.fail(f"Move failed: {err}")
 
         # ── Return to safe pose ──
-        self._send_feedback("Returning to safe pose...")
+        self.feedback("Returning to safe pose...")
         if not self._go_to_safe_pose():
             self.logger.warning("[PickUpPieceSimple] Failed to reach safe pose after move")
-            self._send_feedback("Warning: failed to reach safe pose")
+            self.feedback("Warning: failed to reach safe pose")
 
         msg = f"Moved piece from {square} to {place_square}"
-        self._send_feedback(msg)
-        return msg, SkillResult.SUCCESS
-
-    def cancel(self):
-        self._cancelled = True
-        return "Pick up piece simple cancelled"
+        self.feedback(msg)
+        return msg

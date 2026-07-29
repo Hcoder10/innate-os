@@ -16,7 +16,7 @@ from action_msgs.msg import GoalStatus
 from innate_cloud_msgs.action import NavigateInstruction
 from rclpy.action import ActionClient
 
-from brain_client.skills.types import Skill, SkillResult
+from innate import Skill, SkillResult, SkillReturn, resource
 
 # Human-readable labels for the integer action codes returned by the server.
 _ACTION_LABELS = {
@@ -27,90 +27,87 @@ _ACTION_LABELS = {
 }
 
 
+class _NavigateClient:
+    """The UniNavid action client, built on first use.
+
+    No explicit teardown (it defines no close/destroy/shutdown for @resource
+    to call): the client lives on the run's throwaway node and dies with it
+    at run end.
+    """
+
+    def __init__(self, skill: Skill):
+        self._client = ActionClient(skill.node, NavigateInstruction, "/navigate_instruction")
+
+    def wait_for_server(self, timeout_sec: float) -> bool:
+        return self._client.wait_for_server(timeout_sec=timeout_sec)
+
+    def send_goal_async(self, goal, feedback_callback=None):
+        return self._client.send_goal_async(goal, feedback_callback=feedback_callback)
+
+
 class NavigateWithVision(Skill):
-    """Send text navigation instructions to the UniNavid cloud service."""
+    """Use when you want the robot to navigate using camera vision and a
+    natural-language instruction (e.g. 'walk to the red chair and stop').
+    The instruction is sent to the UniNavid cloud service which streams
+    back movement commands until the goal is reached.
+    Requires param 'instruction' (str).
+    Some other examples of instructions are 'move to the nearest sofa and then stop', 'follow the human wearing black pants'."""
 
     def __init__(self, logger):
         super().__init__(logger)
-        self._action_client: ActionClient | None = None
-        self._goal_handle = None
-        self._cancel_requested = threading.Event()
         self._last_feedback_action: int | None = None
         self._last_feedback_stops: int = 0
 
-    # ── Skill interface ───────────────────────────────────────────────────────
-
-    @property
-    def name(self):
-        return "navigate_with_vision"
-
-    def guidelines(self):
-        return (
-            "Use when you want the robot to navigate using camera vision and a "
-            "natural-language instruction (e.g. 'walk to the red chair and stop'). "
-            "The instruction is sent to the UniNavid cloud service which streams "
-            "back movement commands until the goal is reached. "
-            "Requires param 'instruction' (str)."
-            "Some other examples of instructions are 'move to the nearest sofa and then stop', 'follow the human wearing black pants'."
-        )
+    @resource
+    def client(self) -> _NavigateClient:
+        return _NavigateClient(self)
 
     # ── Execution ─────────────────────────────────────────────────────────────
 
-    def execute(self, instruction: str):
-        """Send *instruction* to UniNavid and block until the goal finishes.
-
-        Args:
-            instruction: A natural-language navigation command,
-                         e.g. ``"walk to the red chair and stop"``.
-
-        Returns:
-            tuple: ``(result_message, SkillResult)``
-        """
+    def execute(self, instruction: str) -> SkillReturn:
+        """Send *instruction* to UniNavid and block until the goal finishes."""
         if not self.node:
             msg = "Navigation skill has no ROS node and cannot execute."
             self.logger.error(msg)
-            self._send_feedback(msg)
-            return msg, SkillResult.FAILURE
-
-        self._cancel_requested.clear()
-
-        # Lazily create the action client (same pattern as PhysicalSkill)
-        if self._action_client is None:
-            self._action_client = ActionClient(self.node, NavigateInstruction, "/navigate_instruction")
+            self.feedback(msg)
+            self.fail(msg)
 
         self.logger.info(f"[NavigateWithVision] Instruction: {instruction!r}")
-        self._send_feedback(f"Sending instruction: {instruction}")
+        self.feedback(f"Sending instruction: {instruction}")
 
         # ── Wait for the action server ────────────────────────────────────────
-        if not self._action_client.wait_for_server(timeout_sec=10.0):
+        if not self.client.wait_for_server(timeout_sec=10.0):
             msg = "Navigation server is not available. Please try again."
             self.logger.error(msg)
-            self._send_feedback(msg)
-            return msg, SkillResult.FAILURE
+            self.feedback(msg)
+            self.fail(msg)
 
         # ── Send goal ─────────────────────────────────────────────────────────
         goal_msg = NavigateInstruction.Goal()
         goal_msg.instruction = instruction
 
-        goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
+        goal_future = self.client.send_goal_async(goal_msg, feedback_callback=self._on_feedback)
 
         if not self._wait_for_future(goal_future, timeout_sec=10.0):
             msg = "Navigation goal timed out waiting for acceptance."
             self.logger.error(msg)
-            self._send_feedback(msg)
-            return msg, SkillResult.FAILURE
+            self.feedback(msg)
+            self.fail(msg)
 
-        self._goal_handle = goal_future.result()
-        if not self._goal_handle.accepted:
+        goal_handle = goal_future.result()
+        if goal_handle is None or not goal_handle.accepted:
             msg = "Navigation goal was rejected."
             self.logger.info(msg)
-            self._send_feedback(msg)
-            return msg, SkillResult.FAILURE
+            self.feedback(msg)
+            self.fail(msg)
+
+        # A cancel must reach the action server immediately, not at the next poll.
+        self.on_cancel(goal_handle.cancel_goal_async)
 
         self.logger.info("Goal accepted — waiting for result …")
-        self._send_feedback("Navigation started, waiting for completion …")
+        self.feedback("Navigation started, waiting for completion …")
 
-        result_future = self._goal_handle.get_result_async()
+        result_future = goal_handle.get_result_async()
 
         # Wait for the result WITHOUT re-spinning self.node — the skills_server's
         # dedicated executor already services the result/feedback callbacks. Register
@@ -123,9 +120,9 @@ class NavigateWithVision(Skill):
         result_ready = threading.Event()
         result_future.add_done_callback(lambda _future: result_ready.set())
         while not result_ready.wait(timeout=0.25):
-            if self._cancel_requested.is_set():
+            if self.cancelled:
                 self.logger.info("Cancel requested — forwarding to action server")
-                self._goal_handle.cancel_goal_async()
+                goal_handle.cancel_goal_async()
                 # Wait for the server to acknowledge the cancel.
                 result_ready.wait(timeout=10.0)
                 break
@@ -133,32 +130,29 @@ class NavigateWithVision(Skill):
         if not result_future.done():
             msg = "Navigation timed out."
             self.logger.error(msg)
-            self._send_feedback(msg)
-            self._goal_handle = None
-            return msg, SkillResult.FAILURE
+            self.feedback(msg)
+            self.fail(msg)
 
         result_response = result_future.result()
         status = result_response.status
         result = result_response.result
 
-        self._goal_handle = None
-
         if status == GoalStatus.STATUS_SUCCEEDED:
             msg = result.message or "Navigation completed"
             self.logger.info(f"Goal succeeded: {msg}")
-            self._send_feedback(msg)
-            return msg, SkillResult.SUCCESS
+            self.feedback(msg)
+            return msg
 
         if status in (GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED):
             msg = result.message or "Navigation canceled"
             self.logger.info(f"Goal canceled/aborted: {msg}")
-            self._send_feedback(msg)
+            self.feedback(msg)
             return msg, SkillResult.CANCELLED
 
         msg = result.message or "Navigation ended unexpectedly."
         self.logger.warning(msg)
-        self._send_feedback(msg)
-        return msg, SkillResult.FAILURE
+        self.feedback(msg)
+        self.fail(msg)
 
     # ── Future waiting (no node re-spin) ──────────────────────────────────────
 
@@ -197,14 +191,4 @@ class NavigateWithVision(Skill):
         self._last_feedback_stops = fb.consecutive_stops
 
         if action_changed or stops_milestone:
-            self._send_feedback(text)
-
-    # ── Cancellation ──────────────────────────────────────────────────────────
-
-    def cancel(self):
-        """Request cancellation of the running navigation goal."""
-        self.logger.info("[NavigateWithVision] Cancel requested")
-        self._cancel_requested.set()
-        if self._goal_handle is not None:
-            self._goal_handle.cancel_goal_async()
-        return "Cancellation requested for navigate_with_vision"
+            self.feedback(text)

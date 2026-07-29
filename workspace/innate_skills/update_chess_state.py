@@ -13,45 +13,27 @@ from pathlib import Path
 
 import chess
 
-from brain_client.skills.types import Skill, SkillResult
+from innate import Skill, SkillReturn
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 
 
 class UpdateChessState(Skill):
-    """Validate a UCI move and apply it to the persisted game state."""
+    """Apply a chess move (UCI notation, e.g. 'e2e4') to the game state.
+    Validates the move is legal, updates the FEN and move history in
+    ~/chess_game_state.json. Call this after every move — both the robot's
+    own moves and detected opponent moves."""
 
-    def __init__(self, logger):
-        super().__init__(logger)
-
-    @property
-    def name(self):
-        return "update_chess_state"
-
-    def guidelines(self):
-        return (
-            "Apply a chess move (UCI notation, e.g. 'e2e4') to the game state. "
-            "Validates the move is legal, updates the FEN and move history in "
-            "~/chess_game_state.json. Call this after every move — both the "
-            "robot's own moves and detected opponent moves."
-        )
-
-    def execute(self, move_uci: str):
-        """
-        Validate and apply a UCI move to the game state.
-
-        Args:
-            move_uci: Move in UCI notation (e.g. 'e2e4', 'd7d5', 'e1g1').
-        """
+    def execute(self, move_uci: str) -> SkillReturn:
         move_uci = move_uci.strip().lower()
 
         # Load current state
         if not GAME_STATE_FILE.exists():
-            return "No game state found. Call reset_chess_game first.", SkillResult.FAILURE
+            self.fail("No game state found. Call reset_chess_game first.")
         try:
             state = json.loads(GAME_STATE_FILE.read_text())
         except Exception as e:
-            return f"Failed to load game state: {e}", SkillResult.FAILURE
+            self.fail(f"Failed to load game state: {e}")
 
         fen = state.get("fen", chess.STARTING_FEN)
         move_history = list(state.get("move_history", []))
@@ -62,14 +44,11 @@ class UpdateChessState(Skill):
         try:
             move = chess.Move.from_uci(move_uci)
         except ValueError:
-            return f"Invalid UCI notation: '{move_uci}'", SkillResult.FAILURE
+            self.fail(f"Invalid UCI notation: '{move_uci}'")
 
         if move not in board.legal_moves:
             legal = [m.uci() for m in board.legal_moves]
-            return (
-                f"Move {move_uci} is not legal. Legal moves: {legal}",
-                SkillResult.FAILURE,
-            )
+            self.fail(f"Move {move_uci} is not legal. Legal moves: {legal}")
 
         # Apply
         san = board.san(move)
@@ -89,7 +68,7 @@ class UpdateChessState(Skill):
         try:
             GAME_STATE_FILE.write_text(json.dumps(new_state, indent=2))
         except Exception as e:
-            return f"Failed to save game state: {e}", SkillResult.FAILURE
+            self.fail(f"Failed to save game state: {e}")
 
         # Check for game-ending conditions
         status = ""
@@ -103,8 +82,5 @@ class UpdateChessState(Skill):
 
         msg = f"Applied {san} ({move_uci}). Turn: {turn}. FEN: {new_fen}{status}"
         self.logger.info(f"[UpdateChessState] {msg}")
-        self._send_feedback(msg)
-        return msg, SkillResult.SUCCESS
-
-    def cancel(self):
-        return "Update cannot be cancelled"
+        self.feedback(msg)
+        return msg

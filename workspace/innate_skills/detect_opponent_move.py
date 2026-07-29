@@ -10,24 +10,16 @@ and asks Gemini to identify which legal move was played.  The board state
 is persisted in ~/chess_game_state.json.
 """
 
-import base64
 import json
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import chess
 from google import genai
 from google.genai import types
 
-from brain_client.skills.types import (
-    Interface,
-    InterfaceType,
-    RobotState,
-    RobotStateType,
-    Skill,
-    SkillResult,
-)
+from innate import Head, Image, MainImage, Manipulation, Skill, SkillResult, SkillReturn, WristImage, resource
 
 # ── Paths ─────────────────────────────────────────────────────────────
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
@@ -70,12 +62,19 @@ def _fen_to_ascii(fen: str) -> str:
 
 
 class DetectOpponentMove(Skill):
-    """Detect the opponent's last move using Gemini vision + FEN state."""
+    """Detect the opponent's last chess move. The robot positions its wrist
+    camera above the board, captures images from both the main and wrist
+    cameras, then asks Gemini which legal move was played. The board state
+    (FEN) is stored in ~/chess_game_state.json. Optionally pass
+    robot_color='white' or 'black' to set perspective."""
 
-    manipulation = Interface(InterfaceType.MANIPULATION)
-    head = Interface(InterfaceType.HEAD)
-    main_image = RobotState(RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64)
-    wrist_image = RobotState(RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64)
+    manipulation: Manipulation
+    head: Head | None
+    # ``| None``: detection degrades to whichever camera is live (every use is
+    # guarded); execute() fails only when BOTH are absent. Required would fail
+    # the whole run up front the moment one camera is offline.
+    main_image: MainImage | None
+    wrist_image: WristImage | None
 
     # Observation pose: X/Y come from board calibration; Z and angles are fixed
     OBS_Z = 0.18
@@ -92,19 +91,18 @@ class DetectOpponentMove(Skill):
 
     def __init__(self, logger):
         super().__init__(logger)
-        self._cancelled = False
-        self._init_gemini()
         self._load_board_center()
 
-    def _init_gemini(self):
+    @resource
+    def gemini_client(self):
+        # Lazy: built on the first chess run, not at skill discovery.
         env_vars = _load_env_file(Path(__file__).parent / ".env.scan")
         api_key = env_vars.get("GEMINI_API_KEY", "")
-        self.gemini_client = None
-        if api_key and api_key != "your_gemini_api_key_here":
-            self.gemini_client = genai.Client(api_key=api_key)
-            self.logger.info("[DetectOpponentMove] Gemini configured")
-        else:
+        if not api_key or api_key == "your_gemini_api_key_here":
             self.logger.warning("[DetectOpponentMove] GEMINI_API_KEY not set in .env.scan")
+            return None
+        self.logger.info("[DetectOpponentMove] Gemini configured")
+        return genai.Client(api_key=api_key)
 
     def _load_board_center(self):
         """Compute board centre X/Y from calibration corners.
@@ -136,21 +134,6 @@ class DetectOpponentMove(Skill):
             )
         except Exception as e:
             self.logger.warning(f"[DetectOpponentMove] Unreadable board calibration ({e}) — re-run board calibration")
-
-    # ── Metadata ──────────────────────────────────────────────────────
-
-    @property
-    def name(self):
-        return "detect_opponent_move"
-
-    def guidelines(self):
-        return (
-            "Detect the opponent's last chess move. The robot positions its "
-            "wrist camera above the board, captures images from both the main "
-            "and wrist cameras, then asks Gemini which legal move was played. "
-            "The board state (FEN) is stored in ~/chess_game_state.json. "
-            "Optionally pass robot_color='white' or 'black' to set perspective."
-        )
 
     # ── State persistence ─────────────────────────────────────────────
 
@@ -194,7 +177,7 @@ class DetectOpponentMove(Skill):
             self.head.set_position(self.HEAD_TILT_DOWN)
             time.sleep(0.5)
 
-        self._send_feedback("Moving arm to observation pose...")
+        self.feedback("Moving arm to observation pose...")
         success = self.manipulation.move_to_cartesian_pose(
             x=self.obs_x,
             y=self.obs_y,
@@ -226,7 +209,7 @@ class DetectOpponentMove(Skill):
 
     # ── Image capture ─────────────────────────────────────────────────
 
-    def _capture_images(self) -> tuple:
+    def _capture_images(self) -> tuple[MainImage | None, WristImage | None]:
         """Grab latest main + wrist camera images.
 
         Returns (main_b64, wrist_b64). Either may be None.
@@ -241,9 +224,9 @@ class DetectOpponentMove(Skill):
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             ts = int(time.time())
             if main_b64:
-                (DATA_DIR / f"main_{ts}.jpg").write_bytes(base64.b64decode(main_b64))
+                (DATA_DIR / f"main_{ts}.jpg").write_bytes(main_b64.jpeg)
             if wrist_b64:
-                (DATA_DIR / f"wrist_{ts}.jpg").write_bytes(base64.b64decode(wrist_b64))
+                (DATA_DIR / f"wrist_{ts}.jpg").write_bytes(wrist_b64.jpeg)
         except Exception as e:
             self.logger.warning(f"[DetectOpponentMove] Failed to save captures: {e}")
 
@@ -271,16 +254,16 @@ class DetectOpponentMove(Skill):
 
     # ── Debug helpers ──────────────────────────────────────────────────
 
-    def _save_gemini_inputs(self, label: str, prompt: str, main_b64: str | None, wrist_b64: str | None):
+    def _save_gemini_inputs(self, label: str, prompt: str, main_b64: Image | None, wrist_b64: Image | None) -> None:
         """Save the prompt and images sent to Gemini for debugging."""
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             ts = int(time.time())
             (DATA_DIR / f"{label}_prompt_{ts}.txt").write_text(prompt)
             if main_b64:
-                (DATA_DIR / f"{label}_main_{ts}.jpg").write_bytes(base64.b64decode(main_b64))
+                (DATA_DIR / f"{label}_main_{ts}.jpg").write_bytes(main_b64.jpeg)
             if wrist_b64:
-                (DATA_DIR / f"{label}_wrist_{ts}.jpg").write_bytes(base64.b64decode(wrist_b64))
+                (DATA_DIR / f"{label}_wrist_{ts}.jpg").write_bytes(wrist_b64.jpeg)
             self.logger.info(f"[DetectOpponentMove] Saved {label} inputs to {DATA_DIR}")
         except Exception as e:
             self.logger.warning(f"[DetectOpponentMove] Failed to save {label} inputs: {e}")
@@ -296,11 +279,16 @@ class DetectOpponentMove(Skill):
 
     # ── Gemini calls ──────────────────────────────────────────────────
 
-    def _ask_gemini_detect_move(self, board_context: str, main_b64: str | None, wrist_b64: str | None) -> dict | None:
+    def _ask_gemini_detect_move(
+        self, board_context: str, main_b64: Image | None, wrist_b64: Image | None
+    ) -> dict | None:
         """Stage 1: Ask Gemini which move was played.
 
         Returns parsed dict {move_uci, confidence, reasoning} or None.
         """
+        if self.gemini_client is None:
+            return None
+
         prompt = (
             "You are analyzing a physical chess board to detect the opponent's last move.\n\n"
             f"{board_context}\n"
@@ -314,9 +302,9 @@ class DetectOpponentMove(Skill):
             '"reasoning": "brief explanation"}'
         )
 
-        contents = [prompt]
+        contents: list[Any] = [prompt]
         if wrist_b64:
-            contents.append(types.Part.from_bytes(data=base64.b64decode(wrist_b64), mime_type="image/jpeg"))
+            contents.append(types.Part.from_bytes(data=wrist_b64.jpeg, mime_type="image/jpeg"))
 
         # Save what we're sending to Gemini for debugging
         self._save_gemini_inputs("stage1", prompt, None, wrist_b64)
@@ -330,7 +318,7 @@ class DetectOpponentMove(Skill):
                     thinking_config=types.ThinkingConfig(thinking_budget=1024),
                 ),
             )
-            result = json.loads(response.text.strip())
+            result = json.loads((response.text or "").strip())
             self.logger.info(f"[DetectOpponentMove] Stage 1 result: {result}")
             self._save_gemini_response("stage1", result)
             return result
@@ -339,12 +327,15 @@ class DetectOpponentMove(Skill):
             return None
 
     def _ask_gemini_confirm(
-        self, board_context: str, candidates: list, main_b64: str | None, wrist_b64: str | None
+        self, board_context: str, candidates: list, main_b64: Image | None, wrist_b64: Image | None
     ) -> dict | None:
         """Stage 2: Disambiguation when stage 1 had low confidence.
 
         Narrows the candidate list and asks Gemini to pick one.
         """
+        if self.gemini_client is None:
+            return None
+
         prompt = (
             "You are analyzing a physical chess board to confirm which move was played.\n\n"
             f"{board_context}\n"
@@ -356,9 +347,9 @@ class DetectOpponentMove(Skill):
             '"reasoning": "brief explanation"}'
         )
 
-        contents = [prompt]
+        contents: list[Any] = [prompt]
         if wrist_b64:
-            contents.append(types.Part.from_bytes(data=base64.b64decode(wrist_b64), mime_type="image/jpeg"))
+            contents.append(types.Part.from_bytes(data=wrist_b64.jpeg, mime_type="image/jpeg"))
 
         # Save what we're sending to Gemini for debugging
         self._save_gemini_inputs("stage2", prompt, None, wrist_b64)
@@ -372,7 +363,7 @@ class DetectOpponentMove(Skill):
                     thinking_config=types.ThinkingConfig(thinking_budget=512),
                 ),
             )
-            result = json.loads(response.text.strip())
+            result = json.loads((response.text or "").strip())
             self.logger.info(f"[DetectOpponentMove] Stage 2 result: {result}")
             self._save_gemini_response("stage2", result)
             return result
@@ -382,64 +373,54 @@ class DetectOpponentMove(Skill):
 
     # ── Main execute ──────────────────────────────────────────────────
 
-    def execute(self, robot_color: RobotColor = "white"):
-        """
-        Detect the opponent's last move.
-
-        Args:
-            robot_color: 'white' or 'black' — which side the robot plays.
-                         On first call, initialises the game state.
-        """
-        self._cancelled = False
-        robot_color = robot_color.strip().lower()
+    def execute(self, robot_color: RobotColor = "white") -> SkillReturn:
+        robot_color = cast(RobotColor, robot_color.strip().lower())
         if robot_color not in ROBOT_COLORS:
-            return f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.", SkillResult.FAILURE
+            self.fail(f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.")
 
-        if self.manipulation is None:
-            return "Manipulation interface not available", SkillResult.FAILURE
         if self.gemini_client is None:
-            return "Gemini not configured (check .env.scan)", SkillResult.FAILURE
+            self.fail("Gemini not configured (check .env.scan)")
 
         # ── 1. Load or initialise game state ──
         state = self._load_game_state()
         if state is None:
-            self._send_feedback("No game state found — initialising new game.")
+            self.feedback("No game state found — initialising new game.")
             state = self._init_game_state(robot_color)
 
         fen = state["fen"]
         robot_color = state.get("robot_color", robot_color)
 
         self.logger.info(f"[DetectOpponentMove] Current FEN: {fen}")
-        self._send_feedback(f"Current board state loaded. Turn: {state.get('turn', '?')}")
+        self.feedback(f"Current board state loaded. Turn: {state.get('turn', '?')}")
 
         # ── 2. Move arm to observation pose ──
         if not self._move_to_observation_pose():
-            return "Failed to move arm to observation pose", SkillResult.FAILURE
-        if self._cancelled:
+            self.fail("Failed to move arm to observation pose")
+        if self.cancelled:
             return "Cancelled", SkillResult.CANCELLED
 
         # ── 3. Capture images ──
-        self._send_feedback("Capturing images...")
+        self.feedback("Capturing images...")
         main_b64, wrist_b64 = self._capture_images()
 
         if not main_b64 and not wrist_b64:
             self._go_to_safe_pose()
-            return "No camera images available", SkillResult.FAILURE
+            self.fail("No camera images available")
 
         # ── 4. Build board context ──
         board_context, legal_moves, board = self._build_board_context(fen)
 
         if not legal_moves:
             self._go_to_safe_pose()
-            return "No legal moves — game may be over", SkillResult.SUCCESS
+            return "No legal moves — game may be over"
 
         # ── 5. Stage 1: Ask Gemini ──
-        self._send_feedback(f"Asking Gemini to identify the move ({len(legal_moves)} legal moves)...")
+        self.feedback(f"Asking Gemini to identify the move ({len(legal_moves)} legal moves)...")
         result = self._ask_gemini_detect_move(board_context, main_b64, wrist_b64)
 
         if result is None:
             self._go_to_safe_pose()
-            return "Gemini failed to analyse the board", SkillResult.FAILURE
+            self.fail("Gemini failed to analyse the board")
 
         move_uci = result.get("move_uci", "")
         confidence = float(result.get("confidence", 0.0))
@@ -449,7 +430,7 @@ class DetectOpponentMove(Skill):
 
         # ── 6. Stage 2: Confirm if low confidence ──
         if confidence < self.CONFIDENCE_THRESHOLD and move_uci in legal_moves:
-            self._send_feedback(f"Low confidence ({confidence:.0%}) on {move_uci}. Running confirmation...")
+            self.feedback(f"Low confidence ({confidence:.0%}) on {move_uci}. Running confirmation...")
             # Build candidate list: the detected move + a few neighbours
             candidates = [move_uci]
             for m in legal_moves:
@@ -475,10 +456,7 @@ class DetectOpponentMove(Skill):
         # ── 7. Validate move is legal (but don't apply — agent calls update_chess_state) ──
         if move_uci not in legal_moves:
             self._go_to_safe_pose()
-            return (
-                f"Detected move {move_uci} is not legal. Legal moves: {legal_moves}",
-                SkillResult.FAILURE,
-            )
+            self.fail(f"Detected move {move_uci} is not legal. Legal moves: {legal_moves}")
 
         san = board.san(chess.Move.from_uci(move_uci))
 
@@ -490,9 +468,5 @@ class DetectOpponentMove(Skill):
             f"Confidence: {confidence:.0%}. {reasoning}. "
             f'Call update_chess_state(move_uci="{move_uci}") to apply it.'
         )
-        self._send_feedback(msg)
-        return msg, SkillResult.SUCCESS
-
-    def cancel(self):
-        self._cancelled = True
-        return "Move detection cancelled"
+        self.feedback(msg)
+        return msg

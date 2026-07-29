@@ -3,6 +3,7 @@
 import math
 import threading
 import time
+from collections.abc import Iterator
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
@@ -10,12 +11,15 @@ from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.duration import Duration
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
-from tf2_ros import TransformException
+
+# TransformException is re-exported from the compiled tf2_py module, which
+# pyright cannot introspect.
+from tf2_ros import TransformException  # pyright: ignore[reportAttributeAccessIssue]
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from brain_client.common.geometry import quaternion_to_yaw
-from brain_client.skills.types import Skill, SkillResult
+from innate import Skill, SkillResult, SkillReturn, resource
 
 # Frame local (robot-relative) goals are resolved into before being sent to
 # Nav2. Must match the mapfree costmap's global_frame (mars_nav costmap.yaml).
@@ -31,7 +35,7 @@ def resolve_local_goal(base_x, base_y, base_yaw, x, y, theta):
 
 
 class Nav2Controller:
-    def __init__(self, logger, primitive):
+    def __init__(self, skill):
         """
         Initialize the Nav2Controller by creating a BasicNavigator instance
         """
@@ -39,7 +43,7 @@ class Nav2Controller:
         self.navigator = BasicNavigator(namespace="")
         self.navigator_mapfree = BasicNavigator(namespace="mapfree")
         self.navigator_navigation = BasicNavigator(namespace="navigation")
-        self.logger = logger
+        self.logger = skill.logger
         # Add a cancellation flag
         self._cancel_requested = threading.Event()
 
@@ -47,7 +51,7 @@ class Nav2Controller:
         # self.cmd_vel_pub = self.navigator.create_publisher(
         #     Twist, '/cmd_vel', 10
         # )
-        self._send_feedback = primitive._send_feedback
+        self._send_feedback = skill.feedback
 
         # TF listener used to resolve local goals into LOCAL_GOAL_FIXED_FRAME
         self.tf_buffer = Buffer()
@@ -68,8 +72,10 @@ class Nav2Controller:
         """
         navigator = self.navigator
         clock = navigator.get_clock()
-        deadline = clock.now() + Duration(seconds=timeout_sec)
-        min_stamp = clock.now() - Duration(seconds=max_age_sec)
+        # rclpy's Duration accepts float seconds; its unannotated default makes
+        # pyright infer int.
+        deadline = clock.now() + Duration(seconds=timeout_sec)  # pyright: ignore[reportArgumentType]
+        min_stamp = clock.now() - Duration(seconds=max_age_sec)  # pyright: ignore[reportArgumentType]
         while clock.now() < deadline:
             rclpy.spin_once(navigator, timeout_sec=0.05)
             try:
@@ -263,23 +269,21 @@ class Nav2Controller:
 
 
 class NavigateToPosition(Skill):
-    def __init__(self, logger):
-        self.nav2_controller = Nav2Controller(logger, self)
-        self.logger = logger
+    """Use when you need to navigate the robot to the specified position
+    using provided x, y coordinates (meters), and theta_degrees (yaw) IN DEGREES.
+    If local_frame is set to false, it navigates to a specific point in the map.
+    If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"""
 
-    @property
-    def name(self):
-        return "navigate_to_position"
+    # Built on first use; the code after the yield runs when the run ends.
+    @resource
+    def controller(self) -> Iterator[Nav2Controller]:
+        controller = Nav2Controller(self)
+        yield controller
+        controller.destroy()
 
-    def guidelines(self):
-        return (
-            "Use when you need to navigate the robot to the specified position "
-            "using provided x, y coordinates (meters), and theta_degrees (yaw) IN DEGREES. "
-            "If local_frame is set to false, it navigates to a specific point in the map."
-            "If local_frame is set to true, it navigates locally, where the robot is currently (0,0)"
-        )
-
-    def execute(self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, **legacy):
+    def execute(
+        self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, **legacy
+    ) -> SkillReturn:
         # The tool schema speaks theta_degrees, but the cloud agent and the
         # pose-adjustment pipeline speak `theta` in radians (the same keys the
         # robot's pose payload uses). The alias lives in **legacy so schema
@@ -293,7 +297,13 @@ class NavigateToPosition(Skill):
             f"Initiating navigation to position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
         )
 
-        result, detail = self.nav2_controller.go_to_position(x, y, theta, local_frame)
+        controller = self.controller
+        self.on_cancel(controller.cancel_navigation)
+        # A cancel during controller construction fired before the hook
+        # existed — re-check the latch so it isn't silently ignored.
+        self.check_cancelled()
+
+        result, detail = controller.go_to_position(x, y, theta, local_frame)
 
         # Check if the navigation was canceled
         if result == TaskResult.CANCELED:
@@ -303,21 +313,9 @@ class NavigateToPosition(Skill):
             self.logger.info(
                 f"Navigation complete. Arrived at position: x={x}, y={y}, theta_degrees={theta_degrees}, local_frame={local_frame}"
             )
-            return f"Reached position ({x}, {y}, {theta_degrees} deg)", SkillResult.SUCCESS
+            return f"Reached position ({x}, {y}, {theta_degrees} deg)"
         else:
             goal_desc = f"({x}, {y}, {theta_degrees} deg, {'local' if local_frame else 'map'} frame)"
             message = f"Navigation to {goal_desc} failed: {detail}"
             self.logger.info(message)
-            return message, SkillResult.FAILURE
-
-    def cancel(self):
-        """
-        Cancels the current navigation task.
-        """
-        self.logger.debug("Canceling navigation task")
-        self.nav2_controller.cancel_navigation()
-        return "Navigation canceled"
-
-    def shutdown(self):
-        """Destroy this instance's navigator nodes when the server retires it."""
-        self.nav2_controller.destroy()
+            self.fail(message)
