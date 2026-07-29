@@ -110,6 +110,10 @@ void Dynamixel::setCurrentLimit(int motor_id, int current_limit) {
     writeRegister(motor_id, ADDR_CURRENT_LIMIT, current_limit, 2, "set current limit");
 }
 
+void Dynamixel::setGoalCurrent(int motor_id, int goal_current) {
+    writeRegister(motor_id, ADDR_GOAL_CURRENT, goal_current, 2, "set goal current");
+}
+
 void Dynamixel::setP(int motor_id, int p) {
     writeRegister(motor_id, POSITION_P, p, 2, "set P gain");
 }
