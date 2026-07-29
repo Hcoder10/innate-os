@@ -15,16 +15,21 @@
 #   <repo>/skills/*                        -> <repo>/workspace/custom_skills/
 #   <repo>/primitives/**/*.{h5,pt,pth}     -> <repo>/workspace/innate_skills/<rel>
 #   <repo>/inputs/*                        -> <repo>/workspace/inputs/
+#   ~/agents/*                             -> <repo>/workspace/custom_agents/
+#   ~/skills/*                             -> <repo>/workspace/custom_skills/
 #   <repo>/maps/*                          -> <repo>/data/maps/
 #   <repo>/.last_mode                      -> <repo>/data/.last_mode
 #   <repo>/.last_map                       -> <repo>/data/.last_map
 #
-# Home-directory skills/agents (~/skills, ~/agents) are NOT handled here; they
-# are migrated at brain startup by
-# brain_client.script_paths.migrate_legacy_home_directories().
+# The home-dir lanes (~/skills, ~/agents) were scanned in place through 0.6.x;
+# 0.7 loads only from workspace/, so they are migrated here rather than left to
+# stop loading silently. custom_skills/custom_agents keeps their ids unchanged
+# (local/<name>).
 #
 # Optional env: MIGRATE_CHOWN_USER — when set and running as root, moved files
 # are chowned to this user (best-effort). Unset (e.g. in CI) => no chown.
+# Optional env: MIGRATE_HOME — home dir to migrate the ~/ lanes from; defaults
+# to $HOME. post_update.sh passes ACTUAL_HOME so sudo doesn't scan /root.
 
 # Log via the host script's log() *function* if defined (post_update.sh), else
 # stdout. Uses `declare -F` so we don't accidentally match an external `log`
@@ -72,11 +77,10 @@ _mig_move() {
     fi
 }
 
-# Move every child of <repo>/$old_rel into <repo>/workspace/$new_rel.
-_migrate_dir_into_workspace() {
-    local repo="$1" old_rel="$2" new_rel="$3"
-    local old_path="$repo/$old_rel"
-    local new_path="$repo/workspace/$new_rel"
+# Move every child of $old_path into $new_path. $old_label is what the logs
+# call the source ("skills/", "~/skills/").
+_migrate_path_into_workspace() {
+    local old_path="$1" new_path="$2" old_label="$3" new_rel="$4"
     [ -d "$old_path" ] || return 0
 
     shopt -s dotglob nullglob
@@ -84,7 +88,7 @@ _migrate_dir_into_workspace() {
     shopt -u dotglob nullglob
 
     if [ ${#items[@]} -gt 0 ]; then
-        _mig_log "Migrating $old_rel/ -> workspace/$new_rel/"
+        _mig_log "Migrating $old_label/ -> workspace/$new_rel/"
         _mig_mkdir "$new_path"
         local item name
         for item in "${items[@]}"; do
@@ -93,11 +97,32 @@ _migrate_dir_into_workspace() {
                 rm -rf "$item"
                 continue
             fi
-            _mig_move "$item" "$new_path/$name" "$old_rel/$name -> workspace/$new_rel/$name"
+            _mig_move "$item" "$new_path/$name" "$old_label/$name -> workspace/$new_rel/$name"
         done
     fi
 
-    rmdir "$old_path" 2>/dev/null && _mig_log "Removed empty $old_rel/" || true
+    rmdir "$old_path" 2>/dev/null && _mig_log "Removed empty $old_label/" || true
+}
+
+# Move every child of <repo>/$old_rel into <repo>/workspace/$new_rel.
+_migrate_dir_into_workspace() {
+    local repo="$1" old_rel="$2" new_rel="$3"
+    _migrate_path_into_workspace "$repo/$old_rel" "$repo/workspace/$new_rel" "$old_rel" "$new_rel"
+}
+
+# Same, for the home-dir lanes (~/skills, ~/agents). These were scanned in
+# place through 0.6.x and are not scanned at all as of 0.7, so without this
+# their content would silently stop loading. MIGRATE_HOME is the *invoking
+# user's* home (post_update.sh passes ACTUAL_HOME): under sudo, $HOME is
+# /root and the real content would be missed.
+_migrate_home_dir_into_workspace() {
+    local repo="$1" home_rel="$2" new_rel="$3"
+    local home="${MIGRATE_HOME:-${HOME:-}}"
+    [ -n "$home" ] || return 0
+    # INNATE_OS_ROOT=~ collapses ~/skills onto <repo>/skills, already migrated
+    # above by the repo-relative pass; skip so it isn't reported twice.
+    [ "$home" != "$repo" ] || return 0
+    _migrate_path_into_workspace "$home/$home_rel" "$repo/workspace/$new_rel" "~/$home_rel" "$new_rel"
 }
 
 # Move trained-model files out of the legacy primitives/ tree into innate_skills,
@@ -165,6 +190,8 @@ run_user_data_migrations() {
     _migrate_dir_into_workspace "$repo" directives custom_agents
     _migrate_dir_into_workspace "$repo" skills     custom_skills
     _migrate_dir_into_workspace "$repo" inputs     inputs
+    _migrate_home_dir_into_workspace "$repo" agents custom_agents
+    _migrate_home_dir_into_workspace "$repo" skills custom_skills
     _migrate_primitives_models  "$repo"
     _migrate_nav_state          "$repo"
 }

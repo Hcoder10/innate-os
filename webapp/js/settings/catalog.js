@@ -168,12 +168,4 @@ export const CATALOG = [
       { path: ["uninavid_node", P, "poll_period_sec"], label: "Poll period", default: 0.02, type: "float", unit: "s", doc: "Action-loop poll interval" },
     ],
   },
-  {
-    section: "Extra agent / skill directories",
-    note: "Scan agents/skills from extra absolute paths, on top of the built-in workspace dirs. Paths are scanned in place (never created); in a Docker/sim setup they must also be mounted into the container.",
-    knobs: [
-      { path: ["script_paths", P, "extra_agent_dirs"], label: "Extra agent dirs", default: [], type: "list", doc: "Absolute paths scanned for agents" },
-      { path: ["script_paths", P, "extra_skill_dirs"], label: "Extra skill dirs", default: [], type: "list", doc: "Absolute paths scanned for skills" },
-    ],
-  },
 ];

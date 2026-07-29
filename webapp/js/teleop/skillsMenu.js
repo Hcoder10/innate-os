@@ -350,8 +350,34 @@ export function createSkillsMenu(parent, rosClient) {
     return row;
   }
 
+  /** A skill whose file failed to load: not runnable, shows the error instead. @param {any} skill */
+  function renderBrokenRow(skill) {
+    const row = document.createElement("div");
+    row.className = "skills-pop-row";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "skills-pop-item";
+    head.disabled = true;
+    head.title = skill.load_error;
+    const dot = document.createElement("span");
+    dot.className = "skills-pop-type-dot broken";
+    dot.title = "Failed to load";
+    const name = document.createElement("span");
+    name.className = "skills-pop-name";
+    name.textContent = formatName(skill);
+    head.append(dot, name);
+    const status = document.createElement("div");
+    status.className = "skills-pop-status error";
+    const txt = document.createElement("span");
+    txt.textContent = skill.load_error;
+    status.appendChild(txt);
+    row.append(head, status);
+    return row;
+  }
+
   /** @param {any} skill */
   function renderRow(skill) {
+    if (skill.load_error) return renderBrokenRow(skill);
     const expandable = hasParams(skill);
     const isExpanded = expandable && expandedId === skill.id;
     const running = !!run && run.skillId === skill.id && !run.done;
@@ -549,7 +575,9 @@ export function createSkillsMenu(parent, rosClient) {
       .map((entry) => entry.s);
     // The roster is latched and republishes on any change; avoid a re-render
     // (which would steal focus mid-typing) unless the set actually changed.
-    const sig = next.map((s) => s.id).join("|");
+    // load_error is part of the signature: a skill breaking (or its error
+    // changing) must repaint even though the id set is identical.
+    const sig = next.map((s) => s.id + (s.load_error ? `!${s.load_error}` : "")).join("|");
     if (sig === signature) return;
     signature = sig;
     skills = next;

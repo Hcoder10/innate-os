@@ -4531,6 +4531,11 @@ button {
   background: var(--type-digital);
 }
 
+/* A skill file that failed to load — row is disabled, error shown inline. */
+.skills-pop-type-dot.broken {
+  background: var(--danger);
+}
+
 .skills-pop-tail {
   flex: 0 0 auto;
   font-size: 13px;

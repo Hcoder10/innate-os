@@ -54,7 +54,6 @@ To tune something, **uncomment a whole stanza** (the `node:`, `ros__parameters:`
 | `navigation_grid_localizer` | `max_score_threshold`, `max_range`, `auto_localize_timeout` | `0.3`, `12.0`, `30.0` |
 | `brain_client_node` | `cartesia_voice_id` (TTS voice), `vertical_fov`, `pose_image_interval`, `scan_stale_after_sec`, `send_depth`, `send_arm_camera_image`, `log_everything`, STT/transcribe models | see template |
 | `uninavid_node` (VLN) | `forward_speed`, `turn_speed`, `cmd_duration_sec`, `image_send_hz`, `consecutive_stops_to_complete`, `cmd_publish_hz`, `poll_period_sec` | `0.3` / `0.8`, rest see template |
-| `script_paths` | `extra_agent_dirs`, `extra_skill_dirs` (extra dirs scanned on top of `workspace/`) | `[]` |
 
 > **Driving caps vs the safety clamp.** `motion_control` is the *driving feel* cap: the
 > joystick, keyboard, and app drive joystick all ship the same `0.4` m/s / `1.0` rad/s

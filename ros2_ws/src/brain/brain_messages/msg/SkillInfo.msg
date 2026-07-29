@@ -10,3 +10,4 @@ bool in_training                # True if skill is still in training (missing ch
 int32 episode_count             # Number of recorded episodes (0 for code skills)
 string directory                # Absolute path to skill directory (empty for code skills)
 bool wheeled                    # Replay skills: True if the base moved during the recording
+string load_error               # Non-empty: the file failed to load and this is the error; the skill is not runnable
