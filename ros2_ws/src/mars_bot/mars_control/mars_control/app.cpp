@@ -8,6 +8,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -57,19 +58,45 @@ constexpr double TIME_CONSTANT = 0.10;        // s, first-order lag
 constexpr double MAX_ACCELERATION = 0.6;      // m/s^2
 constexpr double MAX_DECELERATION = 1.2;      // m/s^2, larger so stopping stays responsive
 constexpr double MAX_ANGULAR_ACCELERATION = 2.0;  // rad/s^2
-constexpr double MAX_ANGULAR_DECELERATION = 3.0;  // rad/s^2
+// Angular decel and jerk run much harder than the linear pair: a slow yaw ramp-down keeps
+// turning after the operator has stopped asking, which reads as the robot refusing to
+// straighten. At 3.0 / 25.0 releasing a full-rate turn swept 12 deg; these sweep ~7.
+constexpr double MAX_ANGULAR_DECELERATION = 6.0;  // rad/s^2
 // How fast the accel limits themselves may change. Without this the accel -> decel
 // handover is a step and the chassis is kicked into the stop.
 // Keep time_constant >= max_deceleration / (2 * max_jerk) on both axes, or the axis
 // arrives at rest still braking and that torque is cut in one tick.
 constexpr double MAX_JERK = 10.0;          // m/s^3
-constexpr double MAX_ANGULAR_JERK = 25.0;  // rad/s^3
+constexpr double MAX_ANGULAR_JERK = 100.0;  // rad/s^3
 // Under the mux's 0.5 s teleop window, above the app's 150 ms heartbeat, so a dropped
 // link ramps down under our own decel limit instead of being cut to zero by the mux.
 constexpr double INPUT_TIMEOUT = 0.4;  // s
 // Snap to the target below this. A hardware floor: bringup sends int(v * 100), so 0.01
 // is one wire count and anything finer is motion the motors cannot express.
 constexpr double SETTLE_EPSILON = 0.02;  // m/s and rad/s, == 2 wire counts
+
+// Heading hold. Closes the yaw loop that nothing else closes: the drive wheels track their
+// RPM setpoints while the robot still yaws, because the caster applies an external torque
+// that wheel-level control cannot see. Measured at 28 deg/m driving forward, ~10x less in
+// reverse -- the asymmetry of a caster that leads one way and trails the other.
+//
+// Proportional only. It does not null the disturbance, it bounds it: unbounded drift
+// becomes a small standing offset (drift / gain), with no integrator to wind up. Feedback
+// is /odom's IMU heading, quantised to 0.01 rad by the I2C link, which is fine for a term
+// that integrates and hopeless for one that differentiates -- hence no D.
+constexpr double HEADING_GAIN = 3.0;            // rad/s of correction per rad of error
+constexpr double HEADING_MAX_CORRECTION = 0.3;  // rad/s, ~30% of max_angular_speed
+// Seconds of memory. The target bleeds toward the measured heading at this rate, so the
+// loop resists being turned now but does not restore heading lost earlier -- the operator
+// corrects their own overshoot. Residual drift is roughly disturbance / (1 + gain * leak),
+// so longer memory rejects better but takes longer to forget. 0 disables the bleed and
+// makes this an absolute heading lock.
+constexpr double HEADING_LEAK = 1.0;  // s
+constexpr double HEADING_DEADBAND = 0.01;       // rad, one odom quantum; stops chattering
+constexpr double HEADING_SLEW = 2.0;            // rad/s^2, so engaging is not a step
+constexpr double HEADING_STRAIGHT_YAW = 0.05;   // rad/s, below this we count as straight
+constexpr double HEADING_MIN_SPEED = 0.05;      // m/s, above this we are actually moving
+constexpr double HEADING_FEEDBACK_TIMEOUT = 0.3;  // s, stale /odom disengages the hold
 // Manual-drive speed mode: multiplies the motion_control caps, so it can lower
 // the configured maximum but never exceed it. The app/webapp set it live.
 constexpr double SPEED_SCALE = 1.0;
@@ -439,6 +466,11 @@ class AppControl : public rclcpp::Node {
         this->declare_parameter("drive_smoothing.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK);
         this->declare_parameter("drive_smoothing.settle_epsilon", joy_tuning::SETTLE_EPSILON);
         this->declare_parameter("drive_smoothing.input_timeout", joy_tuning::INPUT_TIMEOUT);
+        // Heading hold. Gain 0 disables it, which is why these are not read through
+        // smoothing_param -- zero is a legitimate value here, not a broken one.
+        this->declare_parameter("heading_hold.gain", joy_tuning::HEADING_GAIN);
+        this->declare_parameter("heading_hold.max_correction", joy_tuning::HEADING_MAX_CORRECTION);
+        this->declare_parameter("heading_hold.leak", joy_tuning::HEADING_LEAK);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -448,6 +480,11 @@ class AppControl : public rclcpp::Node {
         // Subscribe to joystick messages (Vector3)
         joystick_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
             "/joystick", 10, std::bind(&AppControl::joystick_callback, this, std::placeholders::_1));
+
+        // Heading feedback. /odom's x,y are dead-reckoned from commanded speeds and are
+        // useless as feedback, but its orientation is genuine IMU heading from the MCU.
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/odom", rclcpp::SensorDataQoS(), std::bind(&AppControl::odom_callback, this, std::placeholders::_1));
 
         // Subscribe to leader positions messages (Int32MultiArray)
         leader_sub_ = this->create_subscription<std_msgs::msg::Int32MultiArray>(
@@ -786,9 +823,119 @@ class AppControl : public rclcpp::Node {
         return next;
     }
 
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        const auto& q = msg->pose.pose.orientation;
+        odom_yaw_ = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+        odom_yaw_time_ = this->now().seconds();
+    }
+
+    /** Shortest signed rotation from `from` to `to`, wrapped to [-pi, pi]. */
+    static double angle_difference(double from, double to) {
+        return std::atan2(std::sin(to - from), std::cos(to - from));
+    }
+
+    /**
+     * Stretch a round stick gate onto a square one, keeping direction and radial proportion.
+     *
+     * Touch and on-screen sticks clamp to a circle, so a full-deflection diagonal is only
+     * 0.71 on each axis -- and apply_curve squares each axis independently, turning that
+     * into 43% of both throttle and steering. Holding a turn cost more than half the speed,
+     * while leaving the turn radius unchanged, so it only made the same arc slower. The
+     * keyboard gates its axes independently and never had this; this brings the sticks in
+     * line rather than leaving the two input paths behaving differently.
+     *
+     * Axis-aligned input is untouched (scale is exactly 1), and apply_curve clamps, so the
+     * keyboard's already-square vector passes through unchanged.
+     */
+    static void square_stick(double& x, double& y) {
+        const double largest = std::max(std::abs(x), std::abs(y));
+        if (largest < 1e-6 || !std::isfinite(largest)) {
+            return;
+        }
+        const double scale = std::hypot(x, y) / largest;
+        x *= scale;
+        y *= scale;
+    }
+
+    /**
+     * Yaw correction to add to the published twist while driving straight.
+     *
+     * Engages on the *requested* yaw reaching zero, not the smoothed one. Testing the
+     * smoothed value meant the hold stayed disengaged for the whole ramp-down after a turn
+     * -- 460 ms and 12 deg of rotation -- and then latched the heading it had drifted to,
+     * adopting the overshoot as its target. Latching on the request instead captures the
+     * heading the operator stopped turning at, so the residual is corrected rather than
+     * accepted.
+     *
+     * The latch drops whenever a turn is requested, the robot reverses (the caster flips,
+     * so the old target means nothing), it stops, or /odom goes stale.
+     *
+     * Applied after the smoother, deliberately, so the smoother's lag is not inside the
+     * feedback loop. It is slew-limited because nothing else would stop it stepping when
+     * the hold engages or drops out.
+     */
+    double heading_hold_correction(double linear, double requested_angular, double now, double dt) {
+        const double gain = this->get_parameter("heading_hold.gain").as_double();
+        const double max_correction = this->get_parameter("heading_hold.max_correction").as_double();
+
+        const double drive_sign = (linear >= 0.0) ? 1.0 : -1.0;
+
+        // An explicit turn request releases the correction outright rather than slewing it
+        // out. The correction had been opposing the caster, and easing it away over
+        // HEADING_SLEW cancels roughly the first 150 ms of the turn just asked for -- the
+        // turn ramps in at max_angular_acceleration over about the same time, so the two
+        // sum to nothing and the robot reads as ignoring the stick. Stepping it to zero is
+        // safe here precisely because a much larger commanded turn is arriving on top.
+        if (std::abs(requested_angular) >= joy_tuning::HEADING_STRAIGHT_YAW) {
+            heading_latched_ = false;
+            heading_correction_ = 0.0;
+            heading_drive_sign_ = drive_sign;
+            return 0.0;
+        }
+
+        const bool usable = std::isfinite(gain) && gain > 0.0 && std::isfinite(max_correction) &&
+                            max_correction > 0.0 && (now - odom_yaw_time_) < joy_tuning::HEADING_FEEDBACK_TIMEOUT &&
+                            std::abs(linear) > joy_tuning::HEADING_MIN_SPEED && drive_sign == heading_drive_sign_;
+        heading_drive_sign_ = drive_sign;
+
+        double target = 0.0;
+        if (!usable) {
+            heading_latched_ = false;
+        } else if (!heading_latched_) {
+            heading_target_ = odom_yaw_;
+            heading_latched_ = true;
+        } else {
+            // Bleed the target toward the measured heading, so the hold only remembers the
+            // last `leak` seconds. Without this it is an absolute lock: it drags the robot
+            // back to wherever the turn ended long after the operator has moved on, which is
+            // not wanted -- an operator corrects their own overshoot. It also let the error
+            // grow unbounded while the caster pushed, until the correction sat saturated.
+            // What survives is the part we do want: resistance to being turned *now*.
+            const double leak = this->get_parameter("heading_hold.leak").as_double();
+            if (std::isfinite(leak) && leak > 0.0) {
+                heading_target_ += angle_difference(heading_target_, odom_yaw_) * std::min(1.0, dt / leak);
+            }
+            // /odom yaw and published angular.z share a sign: measured over 1274 ticks,
+            // commanding +49 deg/s yields +52 deg/s and -54 yields -53, so the two agree to
+            // within 5%. Reversing this term makes the loop positive feedback.
+            const double error = angle_difference(odom_yaw_, heading_target_);
+            if (std::abs(error) > joy_tuning::HEADING_DEADBAND) {
+                target = std::clamp(gain * error, -max_correction, max_correction);
+            }
+        }
+
+        const double step = joy_tuning::HEADING_SLEW * dt;
+        heading_correction_ += std::clamp(target - heading_correction_, -step, step);
+        return heading_correction_;
+    }
+
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
-        double shaped_x = apply_curve(msg->x);  // steering
-        double shaped_y = apply_curve(msg->y);  // throttle
+        double stick_x = msg->x;  // steering
+        double stick_y = msg->y;  // throttle
+        square_stick(stick_x, stick_y);
+
+        double shaped_x = apply_curve(stick_x);
+        double shaped_y = apply_curve(stick_y);
 
         // Scale after the curve, never before: scaling the raw axis pushes the stick range
         // down toward the deadband and costs most of its resolution.
@@ -856,17 +1003,21 @@ class AppControl : public rclcpp::Node {
             smoothing_param("drive_smoothing.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK) * scale, time_constant,
             dt, settle);
 
+        const double correction = heading_hold_correction(smoothed_linear_, target_angular, now, dt);
+
         geometry_msgs::msg::Twist twist_msg;
         twist_msg.linear.x = smoothed_linear_;
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-        twist_msg.angular.z = smoothed_angular_;
+        twist_msg.angular.z = smoothed_angular_ + correction;
         cmd_vel_pub_->publish(twist_msg);
 
-        // That publish was the settling zero, so the next tick can stop publishing.
-        if (target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0) {
+        // That publish was the settling zero, so the next tick can stop publishing. The
+        // correction has to be spent too, or we would fall silent still holding one.
+        if (target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0 &&
+            correction == 0.0) {
             drive_active_ = false;
         }
     }
@@ -1249,6 +1400,7 @@ class AppControl : public rclcpp::Node {
     // Subscribers
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr joystick_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
     // Publishers
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
@@ -1272,6 +1424,14 @@ class AppControl : public rclcpp::Node {
     double rate_angular_ = 0.0;
     double last_joystick_time_ = 0.0;
     bool drive_active_ = false;
+    // Heading hold. odom_yaw_ is written from the /odom callback, which the single-threaded
+    // executor serialises against the smoother timer.
+    double odom_yaw_ = 0.0;
+    double odom_yaw_time_ = 0.0;
+    double heading_target_ = 0.0;
+    double heading_correction_ = 0.0;
+    double heading_drive_sign_ = 0.0;
+    bool heading_latched_ = false;
     // Integration step, fixed to the period the smoother timer was created with.
     double smoothing_dt_ = 1.0 / joy_tuning::SMOOTHING_RATE;
 

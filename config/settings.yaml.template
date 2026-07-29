@@ -69,9 +69,11 @@
 #       max_acceleration: 0.6            # m/s^2, speeding up
 #       max_deceleration: 1.2            # m/s^2, slowing down; keep above max_acceleration
 #       max_angular_acceleration: 2.0    # rad/s^2, turning harder
-#       max_angular_deceleration: 3.0    # rad/s^2, straightening out
+#       max_angular_deceleration: 6.0    # rad/s^2, straightening out. Runs harder than the
+#                                        # linear pair: a slow yaw ramp keeps turning after
+#                                        # the operator stopped asking.
 #       max_jerk: 10.0                   # m/s^3, how fast the accel limits may change
-#       max_angular_jerk: 25.0           # rad/s^3, same for the angular pair
+#       max_angular_jerk: 100.0          # rad/s^3, same for the angular pair
 #       settle_epsilon: 0.02             # m/s and rad/s, snap to target below this. Floor
 #                                        # set by the wire: bringup sends int(v * 100), so
 #                                        # 0.01 is one count. Does not scale with speed mode.
