@@ -483,6 +483,10 @@ class AppControl : public rclcpp::Node {
         this->declare_parameter("heading_hold.gain", joy_tuning::HEADING_GAIN);
         this->declare_parameter("heading_hold.max_correction", joy_tuning::HEADING_MAX_CORRECTION);
         this->declare_parameter("heading_hold.leak", joy_tuning::HEADING_LEAK);
+        this->declare_parameter("heading_hold.min_speed", joy_tuning::HEADING_MIN_SPEED);
+        this->declare_parameter("heading_hold.straight_yaw", joy_tuning::HEADING_STRAIGHT_YAW);
+        this->declare_parameter("heading_hold.deadband", joy_tuning::HEADING_DEADBAND);
+        this->declare_parameter("heading_hold.slew", joy_tuning::HEADING_SLEW);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -894,9 +898,18 @@ class AppControl : public rclcpp::Node {
      * feedback loop. It is slew-limited because nothing else would stop it stepping when
      * the hold engages or drops out.
      */
+    /** Non-negative heading_hold tunable. Unlike smoothing_param, 0 is legitimate here --
+     *  a zero deadband or engage threshold means "always", not "broken". */
+    double heading_param(const char* name, double fallback) {
+        const double value = this->get_parameter(name).as_double();
+        return (std::isfinite(value) && value >= 0.0) ? value : fallback;
+    }
+
     double heading_hold_correction(double linear, double requested_angular, double now, double dt) {
         const double gain = this->get_parameter("heading_hold.gain").as_double();
         const double max_correction = this->get_parameter("heading_hold.max_correction").as_double();
+        const double straight_yaw = heading_param("heading_hold.straight_yaw", joy_tuning::HEADING_STRAIGHT_YAW);
+        const double min_speed = heading_param("heading_hold.min_speed", joy_tuning::HEADING_MIN_SPEED);
 
         const double drive_sign = (linear >= 0.0) ? 1.0 : -1.0;
 
@@ -906,7 +919,7 @@ class AppControl : public rclcpp::Node {
         // turn ramps in at max_angular_acceleration over about the same time, so the two
         // sum to nothing and the robot reads as ignoring the stick. Stepping it to zero is
         // safe here precisely because a much larger commanded turn is arriving on top.
-        if (std::abs(requested_angular) >= joy_tuning::HEADING_STRAIGHT_YAW) {
+        if (std::abs(requested_angular) >= straight_yaw) {
             heading_latched_ = false;
             heading_correction_ = 0.0;
             heading_drive_sign_ = drive_sign;
@@ -915,7 +928,7 @@ class AppControl : public rclcpp::Node {
 
         const bool usable = std::isfinite(gain) && gain > 0.0 && std::isfinite(max_correction) &&
                             max_correction > 0.0 && (now - odom_yaw_time_) < joy_tuning::HEADING_FEEDBACK_TIMEOUT &&
-                            std::abs(linear) > joy_tuning::HEADING_MIN_SPEED && drive_sign == heading_drive_sign_;
+                            std::abs(linear) > min_speed && drive_sign == heading_drive_sign_;
         heading_drive_sign_ = drive_sign;
 
         double target = 0.0;
@@ -939,12 +952,12 @@ class AppControl : public rclcpp::Node {
             // commanding +49 deg/s yields +52 deg/s and -54 yields -53, so the two agree to
             // within 5%. Reversing this term makes the loop positive feedback.
             const double error = angle_difference(odom_yaw_, heading_target_);
-            if (std::abs(error) > joy_tuning::HEADING_DEADBAND) {
+            if (std::abs(error) > heading_param("heading_hold.deadband", joy_tuning::HEADING_DEADBAND)) {
                 target = std::clamp(gain * error, -max_correction, max_correction);
             }
         }
 
-        const double step = joy_tuning::HEADING_SLEW * dt;
+        const double step = heading_param("heading_hold.slew", joy_tuning::HEADING_SLEW) * dt;
         heading_correction_ += std::clamp(target - heading_correction_, -step, step);
         return heading_correction_;
     }

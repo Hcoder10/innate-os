@@ -97,6 +97,10 @@ export const CATALOG = [
       { path: ["mars_app", P, "heading_hold", "gain"], label: "Gain", default: 3.0, type: "float", doc: "Correction per unit of heading error. 0 disables the loop", live: "/mars_app" },
       { path: ["mars_app", P, "heading_hold", "leak"], label: "Memory", default: 0.5, type: "float", unit: "s", doc: "How long it remembers a heading. Longer rejects drift better but takes longer to forget; 0 makes it an absolute heading lock", live: "/mars_app" },
       { path: ["mars_app", P, "heading_hold", "max_correction"], label: "Correction ceiling", default: 0.3, type: "float", unit: "rad/s", doc: "Most it may steer on its own", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "min_speed"], label: "Engage above", default: 0.05, type: "float", unit: "m/s", doc: "Stays off below this speed — heading means little while creeping. A gentle acceleration limit means you cross it later, leaving longer uncorrected at the start of a move", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "straight_yaw"], label: "Straight threshold", default: 0.05, type: "float", unit: "rad/s", doc: "Requested turn rate below which you count as driving straight; above it the hold releases immediately", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "deadband"], label: "Error deadband", default: 0.01, type: "float", unit: "rad", doc: "Heading error to ignore. One unit of the robot's heading resolution, so below this the loop would chatter", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "slew"], label: "Engage rate", default: 2.0, type: "float", unit: "rad/s²", doc: "How fast the correction itself may change, so engaging and dropping out are not steps", live: "/mars_app" },
     ],
   },
   {
