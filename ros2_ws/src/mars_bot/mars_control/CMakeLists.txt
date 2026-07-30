@@ -17,6 +17,7 @@ find_package(ament_cmake_python REQUIRED)
 find_package(mars_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(brain_messages REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -36,6 +37,7 @@ ament_target_dependencies(app.cpp
   rclcpp
   geometry_msgs
   nav_msgs
+  brain_messages
   std_msgs
   std_srvs
   mars_msgs

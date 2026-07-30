@@ -9,6 +9,7 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <brain_messages/msg/recorder_status.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -77,6 +78,16 @@ constexpr double INPUT_TIMEOUT = 0.4;  // s
 // is one wire count and anything finer is motion the motors cannot express.
 constexpr double SETTLE_EPSILON = 0.01;  // m/s and rad/s, == 1 wire count
 
+// Speed policy: some robot activities want a different default speed than whatever the
+// operator last picked. Mapping wants care; episode recording wants repeatability.
+//
+// Applied on *entry* only, never enforced while there -- if the operator deliberately picks
+// another mode mid-map, yanking them back would be worse than not helping. On exit the
+// previous value is restored, but only if it is still the one we set: if the operator (or
+// another client -- speed_scale is global) changed it since, that choice is theirs to keep.
+constexpr const char* MAPPING_MODE_SCALE_ID = "slow";
+constexpr const char* RECORDING_SCALE_ID = "medium";
+
 // Heading hold. Closes the yaw loop that nothing else closes: the drive wheels track their
 // RPM setpoints while the robot still yaws, because the caster applies an external torque
 // that wheel-level control cannot see. Measured at 28 deg/m driving forward, ~10x less in
@@ -120,6 +131,16 @@ constexpr std::array<SpeedMode, 4> SPEED_MODES{
  * the robot published and cannot invent one. Adding a faster mode is a robot-side change,
  * and bringup's `safety` clamp is still the hard ceiling at the motors regardless.
  */
+/** Scale of a preset by id, or 0 if there is no such mode. */
+inline double scale_for_mode(const char* id) {
+    for (const auto& mode : SPEED_MODES) {
+        if (std::string(mode.id) == id) {
+            return mode.scale;
+        }
+    }
+    return 0.0;
+}
+
 constexpr double max_speed_scale() {
     double largest = 0.0;
     for (const auto& mode : SPEED_MODES) {
@@ -515,6 +536,22 @@ class AppControl : public rclcpp::Node {
         joystick_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
             "/joystick", 10, std::bind(&AppControl::joystick_callback, this, std::placeholders::_1));
 
+        // Speed policy inputs. Both are robot state, so the policy lives here rather than in
+        // each client: it then holds for the webapp and the mobile app alike, and survives a
+        // client disconnecting part-way through a map.
+        nav_mode_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "/nav/current_mode", rclcpp::QoS(10).transient_local(), [this](const std_msgs::msg::String::SharedPtr msg) {
+                nav_mode_ = msg->data;
+                apply_speed_policy();
+            });
+        recorder_sub_ = this->create_subscription<brain_messages::msg::RecorderStatus>(
+            "/brain/recorder/status", 10, [this](const brain_messages::msg::RecorderStatus::SharedPtr msg) {
+                // "active" alone only means the recorder node is up; an episode is in progress
+                // only once it also names one. Same test as profile_recorder_node.py.
+                recording_ = (msg->status == "active" && !msg->episode_number.empty());
+                apply_speed_policy();
+            });
+
         // Heading feedback. /odom's x,y are dead-reckoned from commanded speeds and are
         // useless as feedback, but its orientation is genuine IMU heading from the MCU.
         odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
@@ -857,6 +894,58 @@ class AppControl : public rclcpp::Node {
             applied_rate = 0.0;
         }
         return next;
+    }
+
+    /** Preset the current robot activity wants, or 0 when nothing applies. */
+    double policy_scale() const {
+        if (nav_mode_ == "mapping") {
+            return joy_tuning::scale_for_mode(joy_tuning::MAPPING_MODE_SCALE_ID);
+        }
+        if (recording_) {
+            return joy_tuning::scale_for_mode(joy_tuning::RECORDING_SCALE_ID);
+        }
+        return 0.0;
+    }
+
+    /**
+     * Nudge speed_scale when the robot enters or leaves an activity with a preferred speed.
+     *
+     * Only ever acts on a *transition*, so an operator who picks a different mode mid-map
+     * keeps it. And it only restores what it set: speed_scale is global, so another client
+     * may have changed it meanwhile, and clobbering that would be worse than leaving the
+     * robot slow.
+     */
+    void apply_speed_policy() {
+        const double desired = policy_scale();
+        if (desired == policy_desired_) {
+            return;  // no transition
+        }
+        const double previous_desired = policy_desired_;
+        policy_desired_ = desired;
+
+        const double current = this->get_parameter("motion_control.speed_scale").as_double();
+        if (policy_owns_scale_ && std::abs(current - previous_desired) > 1e-9) {
+            policy_owns_scale_ = false;  // someone else moved it; it is theirs now
+        }
+
+        if (!policy_owns_scale_) {
+            if (desired == 0.0) {
+                return;  // nothing to enter, nothing of ours to restore
+            }
+            policy_restore_scale_ = current;  // entering afresh: remember what to give back
+            policy_owns_scale_ = true;
+        }
+
+        const double next = (desired > 0.0) ? desired : policy_restore_scale_;
+        if (desired == 0.0) {
+            policy_owns_scale_ = false;
+        }
+        if (std::abs(next - current) < 1e-9) {
+            return;
+        }
+        this->set_parameter(rclcpp::Parameter("motion_control.speed_scale", next));
+        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f",
+                    desired > 0.0 ? (nav_mode_ == "mapping" ? "mapping" : "recording") : "idle", next);
     }
 
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -1467,6 +1556,8 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr joystick_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr nav_mode_sub_;
+    rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
 
     // Publishers
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
@@ -1498,6 +1589,13 @@ class AppControl : public rclcpp::Node {
     double heading_correction_ = 0.0;
     double heading_drive_sign_ = 0.0;
     bool heading_latched_ = false;
+    // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
+    // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
+    std::string nav_mode_;
+    bool recording_ = false;
+    double policy_desired_ = 0.0;
+    double policy_restore_scale_ = 1.0;
+    bool policy_owns_scale_ = false;
     // Integration step, fixed to the period the smoother timer was created with.
     double smoothing_dt_ = joy_tuning::CONTROL_DT;
 
