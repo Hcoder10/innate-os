@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+from innate_skills.email.send_email import SendEmail
+from innate_skills.navigate_to_position import NavigateToPosition
+
 from brain_client.agents.types import Agent
 
 
@@ -21,12 +24,9 @@ class SecurityGuardAgent(Agent):
     def display_icon(self) -> str:
         return "assets/security_guard.png"
 
-    def get_skills(self) -> list[str]:
-        """Return the list of skill IDs this directive can use"""
-        return [
-            "innate-os/navigate_to_position",
-            "innate-os/send_email",
-        ]
+    def get_skills(self) -> list:
+        """Return the skills this directive can use"""
+        return [NavigateToPosition, SendEmail]
 
     def get_inputs(self) -> list[str]:
         """Enable microphone input to hear user"""

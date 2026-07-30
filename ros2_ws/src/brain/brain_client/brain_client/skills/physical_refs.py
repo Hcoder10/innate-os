@@ -97,7 +97,9 @@ def write_refs(package_dir: str | Path, content: str, logger) -> None:
         except OSError:
             pass
         package_dir.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name("__init__.py.tmp")
+        # pid in the tmp name: the skills server and brain_client both write
+        # this file, and a shared tmp path would let them interleave
+        tmp = target.with_name(f"__init__.py.{os.getpid()}.tmp")
         tmp.write_text(content)
         os.replace(tmp, target)
         logger.info(f"Regenerated physical skill refs at {target}")

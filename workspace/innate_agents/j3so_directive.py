@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+from innate_skills.navigate_to_position import NavigateToPosition
+
 from brain_client.agents.types import Agent
 
 
@@ -21,11 +23,9 @@ class J3SOAgent(Agent):
     def display_icon(self) -> str:
         return "assets/j3so.png"
 
-    def get_skills(self) -> list[str]:
-        """Return the list of skill IDs this directive can use"""
-        return [
-            "innate-os/navigate_to_position",
-        ]
+    def get_skills(self) -> list:
+        """Return the skills this directive can use"""
+        return [NavigateToPosition]
 
     def get_inputs(self) -> list[str]:
         """This directive needs microphone input to hear user"""

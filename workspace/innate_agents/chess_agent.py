@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+from innate_skills.arm.arm_utils import ArmUtils
+from innate_skills.chess.detect_opponent_move import DetectOpponentMove
+from innate_skills.chess.pick_up_piece_simple import PickUpPieceSimple
+from innate_skills.chess.recalibrate_manual import RecalibrateManual
+from innate_skills.chess.reset_chess_game import ResetChessGame
+from innate_skills.chess.update_chess_state import UpdateChessState
+from innate_skills.head_emotion import HeadEmotion
+
 from brain_client.agents.types import Agent
 
 
@@ -16,16 +24,16 @@ class ChessAgent(Agent):
     def display_name(self) -> str:
         return "(BETA) Chess Agent"
 
-    def get_skills(self) -> list[str]:
+    def get_skills(self) -> list:
         """Return piece manipulation skills."""
         return [
-            "innate-os/pick_up_piece_simple",
-            "innate-os/detect_opponent_move",
-            "innate-os/update_chess_state",
-            "innate-os/recalibrate_manual",
-            "innate-os/arm_utils",
-            "innate-os/reset_chess_game",
-            "innate-os/head_emotion",
+            PickUpPieceSimple,
+            DetectOpponentMove,
+            UpdateChessState,
+            RecalibrateManual,
+            ArmUtils,
+            ResetChessGame,
+            HeadEmotion,
         ]
 
     def get_inputs(self) -> list[str]:

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+from innate_skills.chess.record_position import RecordPosition
+
 from brain_client.agents.types import Agent
 
 
@@ -16,9 +18,9 @@ class BoardCalibrationAgent(Agent):
     def display_name(self) -> str:
         return "Board Calibration Agent"
 
-    def get_skills(self) -> list[str]:
+    def get_skills(self) -> list:
         """Return position recording skill."""
-        return ["innate-os/record_position"]
+        return [RecordPosition]
 
     def get_inputs(self) -> list[str]:
         """Enable microphone input."""

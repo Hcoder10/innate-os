@@ -14,7 +14,13 @@ from brain_client.agents.loader import AgentLoader
 from brain_client.common.script_paths import (
     ensure_user_directories,
     get_agent_directories,
+    get_workspace_dir,
 )
+from brain_client.skills.physical_refs import render_refs, write_refs
+
+# roster types that are physical skills (data, no code class) — these are what
+# the generated physical_skills package covers
+_PHYSICAL_TYPES = frozenset({"learned", "replay", "eval", "physical"})
 
 
 def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tuple[dict[str, Any], Any | None]:
@@ -35,6 +41,13 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
     # Ensure custom dirs exist. Agents are scanned from workspace/custom_agents
     # and, if present, ~/agents (in place — never moved).
     ensure_user_directories()
+
+    # Agent files may `from physical_skills import X`, so make sure the
+    # generated package matches this roster before importing them. The skills
+    # server writes it too (on every publish); write_refs content-compares, so
+    # whichever runs second is a no-op. Doing it here as well means agent
+    # loading never depends on the two processes' ordering.
+    _regenerate_physical_refs(logger, skills_dict)
 
     agents_directories = [str(p) for p in get_agent_directories()]
 
@@ -64,3 +77,13 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
         logger.error("No agents loaded! This will cause issues.")
 
     return agents, default_agent
+
+
+def _regenerate_physical_refs(logger, skills_dict: dict[str, Any] | None) -> None:
+    """Write workspace/physical_skills/ from the roster metadata. Skipped when
+    no roster is available (nothing to generate from — an existing package is
+    left alone rather than emptied)."""
+    if not skills_dict:
+        return
+    entries = [meta for meta in skills_dict.values() if meta.get("type") in _PHYSICAL_TYPES]
+    write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), logger)

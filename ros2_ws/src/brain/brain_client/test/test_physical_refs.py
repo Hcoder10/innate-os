@@ -74,6 +74,28 @@ def test_write_refs_skips_identical_content(tmp_path):
     assert target.read_text() == render_refs(ENTRIES[:1])
 
 
+def test_regenerate_from_roster_covers_only_physical_skills(tmp_path, monkeypatch):
+    """Agent loading regenerates the package from the roster, so it never
+    depends on the skills server having published first."""
+    from brain_client.agents import initializer
+
+    monkeypatch.setattr(initializer, "get_workspace_dir", lambda: tmp_path)
+    roster = {
+        "innate-os/wave": {"id": "innate-os/wave", "type": "replay", "guidelines": "", "episode_count": 1},
+        "local/pick-socks": {"id": "local/pick-socks", "type": "learned", "guidelines": "", "episode_count": 2},
+        "innate-os/turn": {"id": "innate-os/turn", "type": "code", "guidelines": "", "episode_count": 0},
+    }
+    initializer._regenerate_physical_refs(logging.getLogger("test"), roster)
+    source = (tmp_path / "physical_skills" / "__init__.py").read_text()
+    assert "class Wave(TrainedSkill)" in source
+    assert "class PickSocks(TrainedSkill)" in source
+    assert "Turn" not in source  # code skills have their own class to import
+
+    # no roster (skills server never answered): leave any existing package alone
+    initializer._regenerate_physical_refs(logging.getLogger("test"), None)
+    assert (tmp_path / "physical_skills" / "__init__.py").read_text() == source
+
+
 def test_agent_skill_ids_accepts_trained_skill_refs():
     from brain_client.agents.types import Agent
 
