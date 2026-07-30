@@ -10,7 +10,7 @@ import math
 
 import _driver_pkg  # noqa: F401
 from mars_sim_driver import world
-from mars_sim_driver.core import VirtualMars
+from mars_sim_driver.core import VirtualMars, joint2_min_target
 
 OUT_DIR = world.default_assets_dir() / "virtual_mars_test"
 
@@ -45,6 +45,28 @@ def main() -> None:
 
     assert abs(sim.head_pitch_deg()) < 5.0
     print(f"head pitch: {sim.head_pitch_deg():.1f} deg")
+
+    # Body guard: while joint1's target crosses the front arc, joint2 may not
+    # stay folded past -0.5 (arm_control.cpp's floor) -- the arm ducks under
+    # the head. Ramp math first, then the symptom that matters: a teleop-like
+    # streamed joint1 sweep from home across the front must not jam.
+    assert joint2_min_target(-1.4, -1.57) == -1.57  # outside the arc: full range
+    assert joint2_min_target(0.0, -1.57) == -0.25  # front arc: duck
+    assert abs(joint2_min_target(1.125, -1.57) - (-0.91)) < 1e-9  # mid-ramp
+    assert joint2_min_target(1.25, -1.57) == -1.57
+    home_j1 = world.ARM_HOME["joint1"]
+    for leg_target in (-1.4, home_j1):  # across the front and back
+        start = sim.joint_positions()["joint1"]
+        for i in range(1, 41):  # ~0.07 rad per 100ms, teleop cadence
+            sim.set_joint_target("joint1", start + (leg_target - start) * i / 40)
+            sim.step(0.1)
+        sim.step(3.0)
+        p = sim.joint_positions()
+        assert abs(p["joint1"] - leg_target) < 0.15, (
+            f"joint1 stalled at {p['joint1']:.2f} sweeping to {leg_target:.2f}"
+        )
+    print(f"joint2 body guard: front-arc sweep ok both ways (j2 back at {p['joint2']:+.2f})")
+    sim.reset()
 
     depth = sim.render_depth("main")
     center = float(depth[depth.shape[0] // 2, depth.shape[1] // 2])

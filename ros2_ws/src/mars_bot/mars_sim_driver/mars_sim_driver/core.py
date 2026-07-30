@@ -44,6 +44,30 @@ KP_JOINT = 50.0
 KD_JOINT = 1.0
 EFFORT_LIMIT = 50.0  # N*m
 
+# arm_control.cpp's "intelligent joint limits": when joint1 swings the arm
+# across the robot's front arc, joint2 may not stay folded up (negative =
+# arm up) -- the arm must duck under the head instead of sweeping through
+# it. Ramps back to the full range at the arc's edges. The real floor is
+# -0.5, but the simplified collision boxes (chassis + shoulder link are
+# both bounding boxes) overlap by up to 19mm at -0.5 where the real parts
+# clear, so the sim ducks to -0.25, the shallowest pose that clears.
+JOINT2_GUARD_MIN = -0.25
+
+
+def joint2_min_target(joint1_target: float, full_min: float) -> float:
+    """joint2 target floor for a given joint1 target -- the same piecewise
+    ramp as arm_control.cpp applyLimitsAndConvertToEncoder, with the sim's
+    joint range lower bound as the full limit."""
+    if joint1_target < -1.35 or joint1_target >= 1.25:
+        return full_min
+    if joint1_target < -1.0:
+        t = -(joint1_target + 1.0) / 0.35
+    elif joint1_target < 1.0:
+        t = 0.0
+    else:
+        t = (joint1_target - 1.0) / 0.25
+    return JOINT2_GUARD_MIN + t * (full_min - JOINT2_GUARD_MIN)
+
 
 def encode_jpeg(rgb: np.ndarray) -> bytes:
     buf = io.BytesIO()
@@ -225,6 +249,7 @@ class VirtualMars:
         for name, home in ARM_HOME.items():
             jid = self.model.joint(f"robot_{name}").id
             self._joints[name] = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid], home)
+        self._joint2_full_min = float(self.model.jnt_range[self.model.joint("robot_joint2").id][0])
         mimic_name, mimic_source, mimic_mult = world.MIMIC_JOINT
         jid = self.model.joint(f"robot_{mimic_name}").id
         self._mimic = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid], mimic_source, mimic_mult)
@@ -300,7 +325,12 @@ class VirtualMars:
         d.xfrc_applied[self._base_id, 1] = force_forward * sin + force_lateral * cos
         d.xfrc_applied[self._base_id, 5] = torque_yaw
 
-        for qadr, dadr, target in self._joints.values():
+        # Re-clamp joint2 every step from the current joint1 target, like the
+        # real node re-clamps every control cycle from the latest command.
+        j2_min = joint2_min_target(self._joints["joint1"][2], self._joint2_full_min)
+        for name, (qadr, dadr, target) in self._joints.items():
+            if name == "joint2":
+                target = max(target, j2_min)
             torque = KP_JOINT * (target - d.qpos[qadr]) - KD_JOINT * d.qvel[dadr]
             d.qfrc_applied[dadr] = max(-EFFORT_LIMIT, min(EFFORT_LIMIT, torque))
         mq, md, source, mult = self._mimic
