@@ -49,35 +49,49 @@
 #     joystick:
 #       slow_mode_factor: 0.25      # speed multiplier while the slow-mode button is held
 
-# ── Teleop: drive smoothing (app / webapp joystick) ───────────────────
-# The app joystick sets a target and mars_app ramps /cmd_vel_teleop toward it, so the
-# motors never see a step. This is the app path only; the USB gamepad has its own limits
-# under joystick_controller above.
+# ── Teleop: drive ramps (app / webapp joystick) ───────────────────────
+# Scoped to mars_app, not `/**`: the speed *caps* above are shared by every manual input
+# (app, gamepad, keyboard) because "how fast a human may drive" is one number, but the
+# ramps are not. joystick_controller declares the same key names for its own smoother, so
+# a `/**` override would retune the gamepad too.
 #
-# Keep time_constant >= max_deceleration / (2 * max_jerk), and likewise for the angular
-# pair, or the robot arrives at rest still braking and kicks after it has stopped.
+# The caps are the ceiling, these are the rate of approach to it.
 #
-# Unlike mars_arm's max_jerk above, 0 does NOT mean "disabled" here — every knob is divided
-# by or clamped to, so 0 breaks the ramp. Non-positive and non-finite values fall back to
-# the compiled default and are logged. `rate` is read once at startup; the rest are
-# live-tunable through set_parameters.
+# Keep speed_time_constant >= max_deceleration / (2 * max_jerk), and the angular triple
+# likewise, or the robot arrives at rest still braking and kicks after it has stopped.
+#
+# settle_epsilon is a hardware floor, not a numerical one: bringup sends int(v * 100), so
+# 0.01 is one wire count and anything finer is motion the motors cannot express. It is the
+# one knob here that does NOT scale with speed mode.
+#
+# Unlike mars_arm's max_jerk below, 0 does NOT mean "disabled" — every knob is divided by
+# or clamped to, so 0 breaks the ramp. Non-positive and non-finite values fall back to the
+# compiled default and are logged. `dt` is read once at startup; the rest are live-tunable
+# through set_parameters.
 # mars_app:
 #   ros__parameters:
-#     drive_smoothing:
-#       rate: 50.0                       # Hz, /cmd_vel_teleop republish rate while driving
-#       time_constant: 0.10              # s, first-order lag; higher = softer, more lag
-#       max_acceleration: 0.6            # m/s^2, speeding up
-#       max_deceleration: 1.2            # m/s^2, slowing down; keep above max_acceleration
-#       max_angular_acceleration: 2.0    # rad/s^2, turning harder
-#       max_angular_deceleration: 6.0    # rad/s^2, straightening out. Runs harder than the
-#                                        # linear pair: a slow yaw ramp keeps turning after
-#                                        # the operator stopped asking.
-#       max_jerk: 10.0                   # m/s^3, how fast the accel limits may change
-#       max_angular_jerk: 100.0          # rad/s^3, same for the angular pair
-#       settle_epsilon: 0.02             # m/s and rad/s, snap to target below this. Floor
-#                                        # set by the wire: bringup sends int(v * 100), so
-#                                        # 0.01 is one count. Does not scale with speed mode.
-#       input_timeout: 0.4               # s without a joystick message before ramping to a stop
+#     motion_control:
+#       dt: 0.02                    # s, smoother tick (0.02 = 50 Hz). Startup only.
+#       speed_time_constant: 0.40   # s, first-order lag, linear; higher = softer
+#       angular_speed_time_constant: 0.10   # s, same for yaw, separate so the angular
+#                                   # ramp can be tightened without changing linear feel
+#       max_acceleration: 0.1       # m/s^2, speeding up
+#       max_deceleration: 1.2       # m/s^2, slowing down; keep above max_acceleration
+#       max_angular_acceleration: 2.0       # rad/s^2, turning harder
+#       max_angular_deceleration: 6.0       # rad/s^2, straightening out; runs harder than
+#                                   # the linear pair, a slow yaw ramp keeps turning after
+#                                   # the operator stopped asking
+#       max_jerk: 10.0              # m/s^3, how fast the accel limits may change
+#       max_angular_jerk: 100.0     # rad/s^3, same for the angular pair
+#       settle_epsilon: 0.01        # m/s and rad/s, snap to target below this
+#       input_timeout: 0.4          # s without a joystick message before ramping to a stop
+#     # Heading hold — resists being turned off-course while driving straight. Does not
+#     # restore heading lost earlier; the operator corrects their own overshoot. Residual
+#     # drift is roughly disturbance / (1 + gain * leak).
+#     heading_hold:
+#       gain: 3.0                   # rad/s of correction per rad of error; 0 disables
+#       leak: 0.5                   # s of memory; 0 makes it an absolute heading lock
+#       max_correction: 0.3         # rad/s ceiling on the correction
 
 # ── Battery thresholds + safety speed clamp (bringup) ─────────────────
 # bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling
@@ -90,7 +104,7 @@
 #       warning_percentage: 20      # low-battery warning level (%)
 #       critical_percentage: 10     # critical-battery level (%)
 #     safety:
-#       max_speed: 0.4              # m/s, hard /cmd_vel linear ceiling at the motors
+#       max_speed: 0.8              # m/s, hard /cmd_vel linear ceiling at the motors
 #       max_angular_speed: 2.5      # rad/s, hard /cmd_vel angular ceiling at the motors
 
 # ── Arm ───────────────────────────────────────────────────────────────

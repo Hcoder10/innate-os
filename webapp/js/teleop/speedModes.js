@@ -26,15 +26,32 @@ const OPTIMISTIC_HOLD_MS = 1500;
 /**
  * Nearest preset to a raw scale, so a value set outside this picker (settings.yaml,
  * the mobile app, a hand-written set_parameters) still lights a sensible button.
+ * @param {{id: string, label: string, scale: number}[]} modes
  * @param {number} scale
- * @returns {(typeof SPEED_MODES)[number]}
  */
-function modeForScale(scale) {
-  let best = SPEED_MODES[0];
-  for (const mode of SPEED_MODES) {
+function modeForScale(modes, scale) {
+  let best = modes[0];
+  for (const mode of modes) {
     if (Math.abs(mode.scale - scale) < Math.abs(best.scale - scale)) best = mode;
   }
   return best;
+}
+
+/**
+ * The robot publishes the preset table, so it is the single source of truth for what the
+ * picker offers and a new mode does not need a client release. Anything malformed, or a
+ * robot predating the field, falls back to the built-in table.
+ * @param {unknown} raw
+ * @returns {{id: string, label: string, scale: number}[] | null}
+ */
+function parseModes(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const parsed = raw.filter(
+    (m) =>
+      m && typeof m.id === "string" && typeof m.label === "string" && typeof m.scale === "number" &&
+      Number.isFinite(m.scale) && m.scale > 0 && m.scale <= 1,
+  );
+  return parsed.length === raw.length ? parsed : null;
 }
 
 /**
@@ -72,7 +89,14 @@ export function createSpeedModes(parent, rosClient) {
     }
   }
 
-  for (const mode of SPEED_MODES) {
+  /** @type {{id: string, label: string, scale: number}[]} */
+  let modes = [...SPEED_MODES];
+
+  /** Rebuild the buttons for the current table. Cheap, and only runs when it changes. */
+  function renderButtons() {
+    buttons.clear();
+    group.replaceChildren();
+    for (const mode of modes) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "sm-btn";
@@ -105,8 +129,11 @@ export function createSpeedModes(parent, rosClient) {
     });
     buttons.set(mode.id, button);
     group.appendChild(button);
+    }
+    if (selectedId) paint(selectedId);
   }
 
+  renderButtons();
   wrap.appendChild(group);
   parent.appendChild(wrap);
 
@@ -124,8 +151,15 @@ export function createSpeedModes(parent, rosClient) {
       // Absent on robot software without speed modes — leave the picker blank
       // rather than guessing a mode the robot may not honour.
       if (typeof info.drive_speed_scale !== "number") return;
+
+      const reported = parseModes(info.drive_speed_modes);
+      if (reported && JSON.stringify(reported) !== JSON.stringify(modes)) {
+        modes = reported;
+        renderButtons();
+      }
+
       if (performance.now() < optimisticUntil) return;
-      paint(modeForScale(info.drive_speed_scale).id);
+      paint(modeForScale(modes, info.drive_speed_scale).id);
     },
     undefined,
     "std_msgs/msg/String",

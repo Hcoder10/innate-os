@@ -202,6 +202,9 @@ interface RobotInfo {
   /** Live manual-drive speed multiplier (0–1] on the motion_control caps. Absent
    * on robot software without speed modes. */
   drive_speed_scale?: number;
+  /** The presets the robot offers, so clients don't each carry their own copy.
+   * Absent on robot software predating it; clients fall back to a built-in table. */
+  drive_speed_modes?: { id: string; label: string; scale: number }[];
 }
 
 /** JSON payload carried inside /mars/head/current_position's std_msgs/String. */

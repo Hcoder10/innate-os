@@ -38,6 +38,11 @@
  * @property {number} [step] Slider step (defaults to 1).
  * @property {{value: string, label: string}[]} [options]  For a string knob: render a
  *   <select> of these choices instead of a free-text field.
+ * @property {string} [live]  Node to push this knob to with set_parameters after saving,
+ *   so it applies without a restart. Set ONLY where the running node re-reads the
+ *   parameter (mars_app reads its drive knobs every tick). Nodes that copy a parameter
+ *   into a field at construction — bringup's safety clamp, the camera driver, nav2's
+ *   launch-time remap — must be left off, or the UI would claim an effect it did not have.
  */
 
 /** @typedef {{ section: string, note?: string, knobs: Knob[] }} Group */
@@ -62,17 +67,43 @@ export const CATALOG = [
     section: "Driving speed",
     note: "Manual (teleop) and autonomous (nav) are capped independently. Neither is the hard ceiling — the safety clamp below is.",
     knobs: [
-      { path: ["/**", P, "motion_control", "max_speed"], label: "Manual max speed", default: 0.4, type: "float", unit: "m/s", doc: "Top translational speed for teleop / manual driving" },
-      { path: ["/**", P, "motion_control", "max_angular_speed"], label: "Manual max turn", default: 1.0, type: "float", unit: "rad/s", doc: "Top rotational speed for teleop / manual driving" },
+      { path: ["/**", P, "motion_control", "max_speed"], label: "Manual max speed", default: 0.4, type: "float", unit: "m/s", doc: "Top translational speed for teleop / manual driving", live: "/mars_app" },
+      { path: ["/**", P, "motion_control", "max_angular_speed"], label: "Manual max turn", default: 1.0, type: "float", unit: "rad/s", doc: "Top rotational speed for teleop / manual driving", live: "/mars_app" },
       { path: ["/**", P, "nav", "max_speed"], label: "Autonomous max speed", default: 0.45, type: "float", unit: "m/s", doc: "Top translational speed for autonomous nav2" },
       { path: ["/**", P, "nav", "max_angular_speed"], label: "Autonomous max turn", default: 0.6, type: "float", unit: "rad/s", doc: "Top rotational speed for autonomous nav2" },
+    ],
+  },
+  {
+    section: "Drive feel (app / webapp joystick)",
+    note: "How quickly the robot approaches the caps above. App teleop only — the USB gamepad has its own smoother. All apply immediately except the tick rate.",
+    knobs: [
+      { path: ["mars_app", P, "motion_control", "max_acceleration"], label: "Linear acceleration", default: 0.1, type: "float", unit: "m/s²", doc: "How hard it speeds up", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_deceleration"], label: "Linear deceleration", default: 1.2, type: "float", unit: "m/s²", doc: "How hard it slows down; keep above acceleration so stopping stays responsive", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "speed_time_constant"], label: "Linear smoothing lag", default: 0.40, type: "float", unit: "s", doc: "First-order lag on speed; higher is softer with a longer tail", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_angular_acceleration"], label: "Angular acceleration", default: 2.0, type: "float", unit: "rad/s²", doc: "How hard it starts turning", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_angular_deceleration"], label: "Angular deceleration", default: 6.0, type: "float", unit: "rad/s²", doc: "How hard it stops turning. A slow yaw ramp keeps turning after you stop asking", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "angular_speed_time_constant"], label: "Angular smoothing lag", default: 0.10, type: "float", unit: "s", doc: "First-order lag on yaw, separate so turning can be tightened without changing straight-line feel", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_jerk"], label: "Linear jerk limit", default: 10.0, type: "float", unit: "m/s³", doc: "How fast the acceleration limits may themselves change. Keep smoothing lag >= deceleration / (2 x jerk), or the robot kicks after it stops", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_angular_jerk"], label: "Angular jerk limit", default: 100.0, type: "float", unit: "rad/s³", doc: "Same for the angular pair", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "settle_epsilon"], label: "Stop threshold", default: 0.01, type: "float", unit: "m/s", doc: "Snap straight to zero below this instead of easing down. A hardware floor: the motors are commanded in whole units of 0.01, so anything finer is motion they cannot express, and lingering there makes their speed loop hunt", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "input_timeout"], label: "Input timeout", default: 0.4, type: "float", unit: "s", doc: "Silence from the controller before ramping to a stop", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "dt"], label: "Smoother tick", default: 0.02, type: "float", unit: "s", doc: "Control period (0.02 = 50 Hz). Fixes the timer, so this one needs a restart" },
+    ],
+  },
+  {
+    section: "Heading hold",
+    note: "Resists being turned off-course while driving straight. Does not restore heading lost earlier — you correct your own overshoot.",
+    knobs: [
+      { path: ["mars_app", P, "heading_hold", "gain"], label: "Gain", default: 3.0, type: "float", doc: "Correction per unit of heading error. 0 disables the loop", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "leak"], label: "Memory", default: 0.5, type: "float", unit: "s", doc: "How long it remembers a heading. Longer rejects drift better but takes longer to forget; 0 makes it an absolute heading lock", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "max_correction"], label: "Correction ceiling", default: 0.3, type: "float", unit: "rad/s", doc: "Most it may steer on its own", live: "/mars_app" },
     ],
   },
   {
     section: "Safety clamp (at the motors)",
     note: "The hardware ceiling every velocity source passes through. Keep these ≥ the driving caps above.",
     knobs: [
-      { path: ["bringup", P, "safety", "max_speed"], label: "Hard max speed", default: 0.4, type: "float", unit: "m/s", doc: "Hard /cmd_vel linear ceiling at the motors" },
+      { path: ["bringup", P, "safety", "max_speed"], label: "Hard max speed", default: 0.8, type: "float", unit: "m/s", doc: "Hard /cmd_vel linear ceiling at the motors" },
       { path: ["bringup", P, "safety", "max_angular_speed"], label: "Hard max turn", default: 2.5, type: "float", unit: "rad/s", doc: "Hard /cmd_vel angular ceiling at the motors" },
     ],
   },

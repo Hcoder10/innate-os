@@ -34,6 +34,9 @@ let cleanups = [];
  * @property {*} value Current form value.
  * @property {boolean} savedOverridden  Last-saved (on-disk) state.
  * @property {*} savedValue
+ * @property {boolean} [savedWasOverridden]  State before the in-flight save, so the
+ *   live-apply pass can tell which knobs actually moved.
+ * @property {*} [savedWasValue]
  * @property {() => void} render  Push value + overridden state into the DOM control.
  * @property {HTMLElement} row
  */
@@ -804,6 +807,78 @@ async function savePost(/** @type {any} */ payload) {
   return res.json();
 }
 
+/** rcl_interfaces/msg/ParameterType. Only the types the catalog can mark `live`. */
+const PARAM_TYPE = { bool: 1, int: 2, float: 3, string: 4 };
+
+/**
+ * Push saved knobs to their running node so they take effect without a restart.
+ *
+ * Only knobs the catalog marks `live` are sent — a node that copied the parameter into a
+ * field at construction would accept the write and go on using the old value, and claiming
+ * "applied" there would be worse than telling the operator to restart.
+ *
+ * Cleared knobs are pushed too, at their catalog default: reverting an override has to
+ * reach the robot as well, or "reset" would only take effect on the next restart.
+ *
+ * @param {{overridden: boolean, value: any}[]} snapshot
+ * @returns {Promise<{applied: number, failed: number, restart: number}>}
+ */
+async function applyLive(snapshot) {
+  /** @type {Map<string, {name: string, value: any, type: string}[]>} */
+  const byNode = new Map();
+  let restart = 0;
+
+  entries.forEach((e, i) => {
+    const knob = e.knob;
+    const changed =
+      snapshot[i].overridden !== e.savedWasOverridden ||
+      (snapshot[i].overridden && !valuesEqual(knob, snapshot[i].value, e.savedWasValue));
+    if (!changed) return;
+    if (!knob.live) {
+      restart++;
+      return;
+    }
+    const type = PARAM_TYPE[knob.type];
+    if (!type) {
+      restart++;
+      return;
+    }
+    // path is [node, "ros__parameters", ...groups, key]; the ROS name is the dotted tail.
+    const name = knob.path.slice(2).join(".");
+    const value = snapshot[i].overridden ? snapshot[i].value : knob.default;
+    const list = byNode.get(knob.live) || [];
+    list.push({ name, value, type: knob.type });
+    byNode.set(knob.live, list);
+  });
+
+  let applied = 0;
+  let failed = 0;
+  for (const [node, params] of byNode) {
+    try {
+      const res = await ros.callService(`${node}/set_parameters`, {
+        parameters: params.map((p) => ({
+          name: p.name,
+          value: {
+            type: PARAM_TYPE[p.type],
+            bool_value: p.type === "bool" ? Boolean(p.value) : false,
+            integer_value: p.type === "int" ? Number(p.value) : 0,
+            double_value: p.type === "float" ? Number(p.value) : 0,
+            string_value: p.type === "string" ? String(p.value) : "",
+          },
+        })),
+      });
+      // The service resolves even when a node rejects a value, so read each result.
+      const results = res?.results || [];
+      results.forEach((r) => (r?.successful === false ? failed++ : applied++));
+      if (!results.length) failed += params.length;
+    } catch (err) {
+      console.warn(`Live-apply to ${node} failed:`, err);
+      failed += params.length;
+    }
+  }
+  return { applied, failed, restart };
+}
+
 async function onSave() {
   const sets = [];
   const clears = [];
@@ -812,6 +887,11 @@ async function onSave() {
   // field edited during the WS round-trip would be mis-marked as saved while
   // the file holds the older value.
   const snapshot = entries.map((e) => ({ overridden: e.overridden, value: e.value }));
+  // What was saved *before* this write, so applyLive only pushes knobs that moved.
+  entries.forEach((e) => {
+    e.savedWasOverridden = e.savedOverridden;
+    e.savedWasValue = e.savedValue;
+  });
   for (const e of entries) {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
@@ -834,7 +914,12 @@ async function onSave() {
         e.savedValue = snapshot[i].value;
       });
       recompute();
-      setStatus("Saved — restart the robot to apply.", "ok");
+      const { applied, failed, restart } = await applyLive(snapshot);
+      const parts = [];
+      if (applied) parts.push(`${applied} applied now`);
+      if (restart) parts.push(`${restart} need${restart === 1 ? "s" : ""} a restart`);
+      if (failed) parts.push(`${failed} could not be applied live`);
+      setStatus(parts.length ? `Saved — ${parts.join(", ")}.` : "Saved.", failed ? "err" : "ok");
     } else {
       setStatus("Save failed: " + ((res && res.message) || "unknown error"), "err");
       recompute();
