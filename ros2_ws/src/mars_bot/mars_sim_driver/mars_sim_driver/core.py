@@ -47,14 +47,10 @@ EFFORT_LIMIT = 50.0  # N*m
 # arm_control.cpp's "intelligent joint limits": when joint1 swings the arm
 # across the robot's front arc, joint2 may not stay folded up (negative =
 # arm up) -- the arm must duck under the head instead of sweeping through
-# it. Ramps back to the full range at the arc's edges. Two deliberate
-# deviations from the real node: the floor is -0.25 instead of -0.5
-# (the simplified collision boxes -- chassis + shoulder link are both
-# bounding boxes -- overlap by up to 19mm at -0.5 where the real parts
-# clear; -0.25 is the shallowest pose that clears), and the ramps' outer
-# endpoint is the sim's joint range lower bound rather than the real
-# node's -config_max (-1.22) -- same floor inside the arc, slightly
-# gentler ramp at the edges.
+# it. Ramps back to the full range at the arc's edges. The real floor is
+# -0.5, but the simplified collision boxes (chassis + shoulder link are
+# both bounding boxes) overlap by up to 19mm at -0.5 where the real parts
+# clear, so the sim ducks to -0.25, the shallowest pose that clears.
 JOINT2_GUARD_MIN = -0.25
 
 
