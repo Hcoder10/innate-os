@@ -47,9 +47,10 @@ def main() -> None:
     print(f"head pitch: {sim.head_pitch_deg():.1f} deg")
 
     # Body guard: while joint1's target crosses the front arc, joint2 may not
-    # stay folded past -0.5 (arm_control.cpp's floor) -- the arm ducks under
-    # the head. Ramp math first, then the symptom that matters: a teleop-like
-    # streamed joint1 sweep from home across the front must not jam.
+    # stay folded past the guard floor (-0.25 here; arm_control.cpp uses -0.5,
+    # see JOINT2_GUARD_MIN) -- the arm ducks under the head. Ramp math first,
+    # then the symptom that matters: a teleop-like streamed joint1 sweep from
+    # home across the front must actually duck and must not jam.
     assert joint2_min_target(-1.4, -1.57) == -1.57  # outside the arc: full range
     assert joint2_min_target(0.0, -1.57) == -0.25  # front arc: duck
     assert abs(joint2_min_target(1.125, -1.57) - (-0.91)) < 1e-9  # mid-ramp
@@ -57,14 +58,19 @@ def main() -> None:
     home_j1 = world.ARM_HOME["joint1"]
     for leg_target in (-1.4, home_j1):  # across the front and back
         start = sim.joint_positions()["joint1"]
+        ducked = -math.inf  # highest joint2 seen while crossing the arc center
         for i in range(1, 41):  # ~0.07 rad per 100ms, teleop cadence
-            sim.set_joint_target("joint1", start + (leg_target - start) * i / 40)
+            tgt = start + (leg_target - start) * i / 40
+            sim.set_joint_target("joint1", tgt)
             sim.step(0.1)
+            if abs(tgt) < 0.5:
+                ducked = max(ducked, sim.joint_positions()["joint2"])
         sim.step(3.0)
         p = sim.joint_positions()
         assert abs(p["joint1"] - leg_target) < 0.15, (
             f"joint1 stalled at {p['joint1']:.2f} sweeping to {leg_target:.2f}"
         )
+        assert ducked > -0.4, f"joint2 never ducked crossing the arc (highest {ducked:.2f})"
     print(f"joint2 body guard: front-arc sweep ok both ways (j2 back at {p['joint2']:+.2f})")
     sim.reset()
 
