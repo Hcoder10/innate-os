@@ -57,7 +57,7 @@ constexpr double CONTROL_DT = 0.02;  // s, smoother tick == 50 Hz; matches motio
 // Per axis, so the angular ramp can be tightened without changing linear feel.
 constexpr double SPEED_TIME_CONSTANT = 0.40;          // s, first-order lag, linear
 constexpr double ANGULAR_SPEED_TIME_CONSTANT = 0.10;  // s, first-order lag, angular
-constexpr double MAX_ACCELERATION = 0.1;              // m/s^2
+constexpr double MAX_ACCELERATION = 0.2;              // m/s^2
 constexpr double MAX_DECELERATION = 1.2;      // m/s^2, larger so stopping stays responsive
 constexpr double MAX_ANGULAR_ACCELERATION = 2.0;  // rad/s^2
 // Angular decel and jerk run much harder than the linear pair: a slow yaw ramp-down keeps
@@ -86,18 +86,18 @@ constexpr double SETTLE_EPSILON = 0.01;  // m/s and rad/s, == 1 wire count
 // becomes a small standing offset (drift / gain), with no integrator to wind up. Feedback
 // is /odom's IMU heading, quantised to 0.01 rad by the I2C link, which is fine for a term
 // that integrates and hopeless for one that differentiates -- hence no D.
-constexpr double HEADING_GAIN = 3.0;            // rad/s of correction per rad of error
-constexpr double HEADING_MAX_CORRECTION = 0.3;  // rad/s, ~30% of max_angular_speed
+constexpr double HEADING_GAIN = 5.0;            // rad/s of correction per rad of error
+constexpr double HEADING_MAX_CORRECTION = 1.0;  // rad/s, the full manual turn rate
 // Seconds of memory. The target bleeds toward the measured heading at this rate, so the
 // loop resists being turned now but does not restore heading lost earlier -- the operator
 // corrects their own overshoot. Residual drift is roughly disturbance / (1 + gain * leak),
 // so longer memory rejects better but takes longer to forget. 0 disables the bleed and
 // makes this an absolute heading lock.
-constexpr double HEADING_LEAK = 0.5;  // s
+constexpr double HEADING_LEAK = 0.2;  // s
 constexpr double HEADING_DEADBAND = 0.01;       // rad, one odom quantum; stops chattering
 constexpr double HEADING_SLEW = 2.0;            // rad/s^2, so engaging is not a step
 constexpr double HEADING_STRAIGHT_YAW = 0.05;   // rad/s, below this we count as straight
-constexpr double HEADING_MIN_SPEED = 0.05;      // m/s, above this we are actually moving
+constexpr double HEADING_MIN_SPEED = 0.01;      // m/s, above this we are actually moving
 constexpr double HEADING_FEEDBACK_TIMEOUT = 0.3;  // s, stale /odom disengages the hold
 // Manual-drive speed mode: multiplies the motion_control caps, so it can lower
 // the configured maximum but never exceed it. The app/webapp set it live.
