@@ -109,11 +109,16 @@ class SkillRepository:
         # but it makes construction deterministic when workspace modules are
         # already cached (tests, re-instantiation) — same path as reload_all.
         self._evict_workspace_modules()
-        self._code_skills, code_broken = self._load_code_skills()
-        self._logger.info(f"Successfully loaded {len(self._code_skills)} code skills")
+        # Physical first, refs second, code last: skills `from physical_skills
+        # import X`, and on a fresh workspace that package doesn't exist until
+        # we write it — importing code first would roster every such skill
+        # broken for the whole first pass.
         self._physical_skills, self._in_training_skills, physical_broken = self._load_physical_skills(
             self._skills_directories
         )
+        self._refresh_physical_refs(self._physical_skills, self._in_training_skills)
+        self._code_skills, code_broken = self._load_code_skills()
+        self._logger.info(f"Successfully loaded {len(self._code_skills)} code skills")
         self._broken_skills = {**code_broken, **physical_broken}
         self._logger.info(f"Successfully loaded {len(self._physical_skills)} physical skills")
         self._logger.info(f"Found {len(self._in_training_skills)} in-training skills")
@@ -418,8 +423,10 @@ class SkillRepository:
         self._logger.info("Reloading skills...")
         self._skills_directories = self._resolve_skills_directories()
         self._evict_workspace_modules()
-        new_code_skills, code_broken = self._load_code_skills()
+        # Physical before code, refs in between — see __init__ for why.
         new_physical, new_in_training, physical_broken = self._load_physical_skills(self._skills_directories)
+        self._refresh_physical_refs(new_physical, new_in_training)
+        new_code_skills, code_broken = self._load_code_skills()
         with self._skills_lock:
             self._code_skills = new_code_skills
             self._physical_skills = new_physical
@@ -807,6 +814,22 @@ class SkillRepository:
             # whichever was seen first is already in deduped; append the newcomer
             deduped.append(skill)
         return deduped
+
+    def _refresh_physical_refs(
+        self, physical: dict[str, PhysicalSkillEntry], in_training: dict[str, PhysicalSkillEntry]
+    ) -> None:
+        """Regenerate the refs from freshly loaded entries — the pre-pass run
+        before each code-skill import (see __init__). publish_skills_list
+        writes them again from the roster; the content-compare in write_refs
+        makes the second write a no-op."""
+        infos = []
+        for snapshot in (physical, in_training):
+            for skill_id, entry in snapshot.items():
+                try:
+                    infos.append(self._build_physical_skill_info(skill_id, entry))
+                except Exception as e:
+                    self._logger.error(f"Skipping physical skill '{skill_id}' in physical refs: {e}")
+        self._write_physical_refs(infos)
 
     def _write_physical_refs(self, physical_infos: list[SkillInfo]) -> None:
         """Regenerate workspace/physical_skills/ — the typed refs agents and

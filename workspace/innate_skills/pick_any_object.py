@@ -283,8 +283,9 @@ class PickAnyObject(Skill):
         u, v = seed_px
         grid = vision.grid_pts(u, v)
         in_box = 0
-        t0 = time.time()
-        while time.time() - t0 < FOLLOW_TIMEOUT_S:
+        (cu, cv), _half, accept = self._sweet_box()
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < FOLLOW_TIMEOUT_S:
             # Only track NEW frames: the camera runs slower than this loop,
             # and a stale frame re-tracked would count one observation twice.
             img = self.main_image
@@ -307,7 +308,6 @@ class PickAnyObject(Skill):
                 self.mobility.stop()
                 return "lost", None
 
-            (cu, cv), _half, accept = self._sweet_box()
             if _inside_box((u, v), cu, cv, accept):
                 in_box += 1
                 self.mobility.stop()
@@ -409,8 +409,8 @@ class PickAnyObject(Skill):
 
     def _next_wrist_hsv(self, last_b64, timeout=1.5):
         """Wait for a new wrist frame -> (hsv|None, b64)."""
-        t0 = time.time()
-        while time.time() - t0 < timeout:
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
             img = self.wrist_image
             if img and img != last_b64:
                 hsv = vision.b64_to_hsv(img)
@@ -461,13 +461,17 @@ class PickAnyObject(Skill):
         if not tracker.ok:
             return self._wrist_done(tx, ty, z, "not seen")
 
-        deadline = time.time() + WRIST_ALIGN_TIMEOUT_S
+        deadline = time.monotonic() + WRIST_ALIGN_TIMEOUT_S
         streak = 0  # verified matches since the arm last moved
         centered = 0  # consecutive matches INSIDE the box
         stalled = 0  # consecutive steps eaten by the reach clamp
         reason = "reached stop z"
         while z > p["wrist_stop_z"] + 1e-6:
-            if time.time() > deadline:
+            # Explicit cancel point: with a fresh frame already buffered (the
+            # common case after each blocking move) _next_wrist_hsv returns
+            # without ever sleeping, so a Stop would ride the whole descent.
+            self.check_cancelled()
+            if time.monotonic() > deadline:
                 reason = "timeout"
                 break
             hsv, raw = self._next_wrist_hsv(raw)
@@ -630,6 +634,7 @@ class PickAnyObject(Skill):
         # The twist winds FABRIC onto the fingers; on a rigid shell it helps
         # eject the object. Gemini's grip_strength doubles as the hardness signal.
         soft = self._grip_strength is None or self._grip_strength >= SOFT_GRIP_MIN
+        lifted = False
         try:
             if soft:
                 j = self._arm_joints()
@@ -640,12 +645,19 @@ class PickAnyObject(Skill):
             j = self._arm_joints()
             j[1] = max(-1.4, j[1] - p["lift_rad"])
             j[5] = grip
-            self.manipulation.move_to_joint_positions(joint_positions=j, duration=2.0, blocking=True)
+            # move_to_joint_positions reports failure by returning False, not
+            # raising — a silently skipped lift would leave the EE at floor_z
+            # for _grasp_verified's 0.15 m backup drive.
+            lifted = self.manipulation.move_to_joint_positions(joint_positions=j, duration=2.0, blocking=True)
             time.sleep(0.3)
         except LookupError:
+            pass
+        if not lifted:
             # gripper=grip, never the default: the default re-seeds j6 from the
             # measured (stalled) position, zeroing the grip preload — the
-            # object would drop out mid-lift.
+            # object would drop out mid-lift. move_checked verifies by FK and
+            # recover-retries, so the arm is confirmed off the floor (or the
+            # run fails cleanly and teardown carries with the grip kept).
             self.manipulation.move_checked(
                 x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10, gripper=grip, logger=self.logger
             )
