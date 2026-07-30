@@ -35,9 +35,9 @@ nvidia-l4t-dla-compiler
 # nav2 sub-packages in apt-dependencies.sim.txt)
 ros-humble-navigation2
 ros-humble-nav2-bringup
-ros-humble-nav2-amcl
-ros-humble-nav2-map-server
-ros-humble-nav2-velocity-smoother
+ros-humble-innate-nav2-amcl
+ros-humble-innate-nav2-map-server
+ros-humble-innate-nav2-velocity-smoother
 ros-humble-spatio-temporal-voxel-layer
 ros-humble-slam-toolbox-humble-lifecycle
 
