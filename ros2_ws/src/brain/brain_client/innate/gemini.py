@@ -7,9 +7,8 @@
 
 import json
 
-from innate_proxy import ProxyClient
-
 from brain_client.skills.types import cancellable_sleep
+from innate_proxy import ProxyClient
 
 SERVICE = "gemini"
 ENDPOINT = "/v1/chat/completions"

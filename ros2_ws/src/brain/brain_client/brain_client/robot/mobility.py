@@ -176,7 +176,9 @@ class Mobility:
         v = max(-v_max, min(v_max, -gain / 100.0 * err_px))
         return math.copysign(v_min, v) if abs(v) < v_min else v
 
-    def rotate_by(self, get_xyt, angle, *, kp=1.2, wz_max=0.5, wz_min=0.15, tol=math.radians(2.5), timeout=12.0, logger=None):
+    def rotate_by(
+        self, get_xyt, angle, *, kp=1.2, wz_max=0.5, wz_min=0.15, tol=math.radians(2.5), timeout=12.0, logger=None
+    ):
         """Rotate in place by `angle` rad, closed on odometry yaw (open-loop
         if get_xyt yields None)."""
         logger = logger or self.logger

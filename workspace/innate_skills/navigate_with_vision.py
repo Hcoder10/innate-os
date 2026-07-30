@@ -104,4 +104,6 @@ class NavigateWithVision(Skill):
         action_changed = fb.latest_action != self._last_feedback_action and fb.latest_action != 0
         self._last_feedback_action = fb.latest_action
         if action_changed:
-            self.feedback(f"Action: {action_label} | Consecutive stops: {fb.consecutive_stops}/{fb.max_consecutive_stops}")
+            self.feedback(
+                f"Action: {action_label} | Consecutive stops: {fb.consecutive_stops}/{fb.max_consecutive_stops}"
+            )

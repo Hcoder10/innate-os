@@ -262,7 +262,9 @@ class DetectOpponentMove(Skill):
             return "No legal moves — game may be over"
 
         self.feedback(f"Asking Gemini to identify the move ({len(legal_moves)} legal moves)...")
-        result = self._ask_gemini("stage1", "gemini-3.1-pro-preview", 1024, self._detect_prompt(board_context), wrist_b64)
+        result = self._ask_gemini(
+            "stage1", "gemini-3.1-pro-preview", 1024, self._detect_prompt(board_context), wrist_b64
+        )
         if result is None:
             self.fail("Gemini failed to analyse the board")
 
@@ -273,7 +275,9 @@ class DetectOpponentMove(Skill):
         if confidence < self.CONFIDENCE_THRESHOLD and move_uci in legal_moves:
             self.feedback(f"Low confidence ({confidence:.0%}) on {move_uci}. Running confirmation...")
             candidates = [move_uci]
-            candidates += [m for m in legal_moves if m != move_uci and (m[:2] == move_uci[:2] or m[2:4] == move_uci[2:4])]
+            candidates += [
+                m for m in legal_moves if m != move_uci and (m[:2] == move_uci[:2] or m[2:4] == move_uci[2:4])
+            ]
             candidates += [m for m in legal_moves if m not in candidates]
             result2 = self._ask_gemini(
                 "stage2", "gemini-3-flash-preview", 512, self._confirm_prompt(board_context, candidates[:8]), wrist_b64

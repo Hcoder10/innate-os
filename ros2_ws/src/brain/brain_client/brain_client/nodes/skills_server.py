@@ -534,7 +534,9 @@ class SkillsActionServer(Node):
 
             if result_wait_state == "server_unavailable":
                 self.get_logger().error(f"Behavior server became unavailable while running '{skill_type}'")
-                return SkillOutput("Behavior server became unavailable while waiting for result", status=SkillResult.FAILURE)
+                return SkillOutput(
+                    "Behavior server became unavailable while waiting for result", status=SkillResult.FAILURE
+                )
 
             behavior_result = result_future.result().result
             if behavior_result.success:

@@ -11,7 +11,6 @@ import math
 import re
 import time
 
-
 from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy
 from innate import (
     Head,
@@ -737,9 +736,7 @@ class PickAnyObject(Skill):
         try:
             self.head.set_position(int(round(self._p["tilt_deg"])))
             # Fold to rest so the arm doesn't occlude the head camera.
-            self.manipulation.go(
-                self.manipulation.rest_joints(self.joint_states), duration=3.0, logger=self.logger
-            )
+            self.manipulation.go(self.manipulation.rest_joints(self.joint_states), duration=3.0, logger=self.logger)
 
             self.say(f"Looking for {prompt}.")
             xy = self._search(prompt)

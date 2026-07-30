@@ -302,7 +302,9 @@ class PickUpPieceSimple(Skill):
     def _move_piece(self, square, place_square, piece, is_capture, calibration, src_pos, dst_pos):
         src_x, src_y, src_board_z = src_pos
         dst_x, dst_y, dst_board_z = dst_pos
-        base_pick_height = self.HEIGHT_PICK_TALL if piece.strip().lower() in self.TALL_PIECES else self.HEIGHT_PICK_SHORT
+        base_pick_height = (
+            self.HEIGHT_PICK_TALL if piece.strip().lower() in self.TALL_PIECES else self.HEIGHT_PICK_SHORT
+        )
         src_pitch, src_yaw = self._orientation_for_square(square)
         dst_pitch, dst_yaw = self._orientation_for_square(place_square)
         src_rank, dst_rank = int(square[1]), int(place_square[1])
