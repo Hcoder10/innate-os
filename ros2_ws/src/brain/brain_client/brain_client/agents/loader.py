@@ -118,7 +118,7 @@ class AgentLoader(DynamicLoader):
     def create_agent_instances(
         self,
         agent_classes: dict[str, tuple[type[Agent], Path]],
-        available_skills: dict[str, any] | None = None,
+        available_skills: dict[str, dict] | None = None,
     ) -> dict[str, Agent]:
         """
         Create instances of agent classes.
@@ -163,9 +163,6 @@ class AgentLoader(DynamicLoader):
             agent_instance: The agent instance
             agents_directory: Path to the agents directory
         """
-        # Initialize the attribute for storing base64 icon data
-        agent_instance.display_icon_data = None
-
         if not agent_instance.display_icon or not agents_directory:
             return
 
@@ -179,7 +176,7 @@ class AgentLoader(DynamicLoader):
             except Exception as e:
                 self.logger.warning(f"Failed to load icon for agent '{agent_instance.id}': {e}")
 
-    def _validate_agent_skills(self, agent_instance: Agent, available_skills: dict[str, any]) -> None:
+    def _validate_agent_skills(self, agent_instance: Agent, available_skills: dict[str, dict]) -> None:
         """
         Validates that all skills referenced by an agent have corresponding
         skill files available.

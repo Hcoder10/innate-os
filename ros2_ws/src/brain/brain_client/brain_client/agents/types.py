@@ -10,7 +10,10 @@ Base class and types for robot agents.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union
 
+from brain_client.common.script_paths import Source
+
 if TYPE_CHECKING:
+    from brain_client.inputs.types import InputDevice
     from brain_client.skills.types import Skill, TrainedSkill
 
 # What get_skills() may list: the Skill class itself for code skills, the
@@ -18,6 +21,10 @@ if TYPE_CHECKING:
 # error or rename is caught by the editor, not at runtime on the robot), or
 # an id string.
 SkillRef = Union["type[Skill]", "type[TrainedSkill]", str]
+
+# What get_inputs() may list: the InputDevice class itself (typed, same
+# rationale as SkillRef) or a device-name string.
+InputRef = Union["type[InputDevice]", str]
 
 
 class Agent(ABC):
@@ -31,7 +38,11 @@ class Agent(ABC):
 
     # Stamped by the loader to "shipped" or "user" based on origin directory.
     # Subclasses must not set this themselves.
-    source: str = "user"
+    source: Source = "user"
+
+    # Stamped by the loader: the display_icon file base64-encoded, when the
+    # agent declares one and it loads.
+    display_icon_data: str | None = None
 
     @property
     @abstractmethod
@@ -119,18 +130,44 @@ class Agent(ABC):
         """
         return None
 
-    def get_inputs(self) -> list[str]:
+    def get_inputs(self) -> list[InputRef]:
         """
-        Returns a list of input device names that should be active
-        when this directive is running.
+        Returns the input devices that should be active when this agent is
+        running. Prefer the InputDevice class over its name string::
+
+            from inputs.micro_input import MicroInput
+
+            def get_inputs(self):
+                return [MicroInput]
+
+        Name strings (e.g. "micro") are equivalent; they are matched exactly
+        against each device's registered name.
 
         Subclasses can override this method to specify required inputs.
         Default: return empty list (no input devices required).
-
-        Example:
-            return ["micro", "camera"]
         """
         return []
+
+    def input_names(self) -> list[str]:
+        """get_inputs() normalized to device-name strings — the only form the
+        input manager consumes. A class resolves through input_name_for_class,
+        the same derivation the loader registers it under, so a class
+        reference and its name are interchangeable."""
+        # lazy: keeps this module importable without the input framework
+        from brain_client.inputs.types import InputDevice, input_name_for_class
+
+        names = []
+        for ref in self.get_inputs():
+            if isinstance(ref, str):
+                names.append(ref)
+            elif isinstance(ref, type) and issubclass(ref, InputDevice):
+                names.append(input_name_for_class(ref))
+            else:
+                raise TypeError(
+                    f"{type(self).__name__}.get_inputs() entries must be InputDevice classes "
+                    f"or device-name strings, got {ref!r}"
+                )
+        return names
 
     def uses_gaze(self) -> bool:
         """

@@ -81,7 +81,7 @@ class BrainLifecycle:
         if not directive or not self._state.is_brain_active:
             return
         try:
-            required_inputs = directive.get_inputs()
+            required_inputs = directive.input_names()
             self._active_inputs_pub.publish(String(data=json.dumps({"inputs": required_inputs})))
             if required_inputs:
                 self._logger.info(f"🔌 Activated inputs for directive '{directive.id}': {required_inputs}")

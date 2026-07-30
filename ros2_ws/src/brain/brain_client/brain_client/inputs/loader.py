@@ -11,7 +11,7 @@ from specified directories. Similar to primitive_loader.py and directive_loader.
 from pathlib import Path
 
 from brain_client.common.dynamic_loader import DynamicLoader
-from brain_client.inputs.types import InputDevice
+from brain_client.inputs.types import InputDevice, input_name_for_class
 
 
 class InputLoader(DynamicLoader):
@@ -81,12 +81,9 @@ class InputLoader(DynamicLoader):
             return False
 
     def _get_name(self, input_class: type[InputDevice]) -> str:
-        """Gets the input device name by creating a temporary instance."""
-        try:
-            return input_class().name
-        except Exception as e:
-            self.logger.debug(f"Could not get name from input device {input_class.__name__}: {e}")
-            return self._fallback_name(input_class)
+        """The device's registered name — shared with Agent.input_names(), so
+        a typed class reference in get_inputs() resolves identically."""
+        return input_name_for_class(input_class)
 
     def create_input_instances(self, input_classes: dict[str, type[InputDevice]], logger) -> dict[str, InputDevice]:
         """

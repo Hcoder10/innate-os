@@ -13,6 +13,7 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
+from brain_client.common.dynamic_loader import class_name_to_snake_case
 from brain_client.common.logging import UniversalLogger
 from innate_proxy import ProxyClient
 
@@ -264,3 +265,14 @@ class InputDevice(ABC):
             Description string
         """
         return self.name
+
+
+def input_name_for_class(cls: type[InputDevice]) -> str:
+    """The name a device class registers under: the instance ``name`` when the
+    class instantiates cleanly, else snake_case(ClassName) minus the ``Input``
+    suffix. The loader resolves through this too, so a class reference and its
+    name string are interchangeable."""
+    try:
+        return cls().name
+    except Exception:
+        return class_name_to_snake_case(cls.__name__, strip_suffixes=("Input",))

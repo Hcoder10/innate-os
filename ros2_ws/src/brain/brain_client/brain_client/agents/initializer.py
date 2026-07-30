@@ -8,9 +8,8 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
-from typing import Any
-
 from brain_client.agents.loader import AgentLoader
+from brain_client.agents.types import Agent
 from brain_client.common.script_paths import (
     ensure_user_directories,
     get_agent_directories,
@@ -23,7 +22,7 @@ from brain_client.skills.physical_refs import render_refs, write_refs
 _PHYSICAL_TYPES = frozenset({"learned", "replay", "eval", "physical"})
 
 
-def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tuple[dict[str, Any], Any | None]:
+def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tuple[dict[str, Agent], Agent | None]:
     """
     Initialize all agents using dynamic loading.
 
@@ -79,7 +78,7 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
     return agents, default_agent
 
 
-def _regenerate_physical_refs(logger, skills_dict: dict[str, Any] | None) -> None:
+def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> None:
     """Write workspace/physical_skills/ from the roster metadata. Skipped when
     no roster is available (nothing to generate from — an existing package is
     left alone rather than emptied)."""

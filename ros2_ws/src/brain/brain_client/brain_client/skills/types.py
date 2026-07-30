@@ -21,6 +21,7 @@ from std_msgs.msg import String
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
 from brain_client.common.logging import UniversalLogger
+from brain_client.common.script_paths import Source
 
 if TYPE_CHECKING:
     from brain_client.skills.invoker import SkillInvoker
@@ -685,7 +686,7 @@ def _index_feed_declarations(cls) -> None:
 
 class Skill(ABC):
     # Stamped by the loader to "shipped" or "user" based on origin directory.
-    source: str = "user"
+    source: Source = "user"
 
     # Every subclass registers itself here at definition time, PyTorch-style:
     # defining a Skill is what makes the robot know it — no file scanning.
