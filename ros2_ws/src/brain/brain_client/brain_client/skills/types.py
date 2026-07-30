@@ -318,6 +318,28 @@ class SubSkill(_Injected):
         self.skill_class = skill_class
 
 
+class TrainedSkill:
+    """Base of the generated classes in the ``physical_skills`` package — a
+    typed handle on one of this robot's physical skills (a trained policy or
+    recorded demonstration: data, with no code class of its own).
+
+    Never subclass this by hand; the skill catalog regenerates the package
+    whenever the robot's physical skills change. Reference the generated
+    class anywhere a skill id goes::
+
+        from physical_skills import PickSocks
+
+        class TidyAgent(Agent):
+            def get_skills(self):
+                return [NavigateToPosition, PickSocks]
+
+        class TidyUp(Skill):
+            pick: PickSocks  # same call shape as a code sub-skill
+    """
+
+    skill_id: str = ""
+
+
 class _BoundPhysicalSkill:
     """A declared physical skill, bound to the run's invoker at wire time."""
 
@@ -349,8 +371,10 @@ class PhysicalSkill(_Injected):
 
     _attr_prefix = "_physical_skill_"
 
-    def __init__(self, skill_id: str):
+    def __init__(self, skill_id: "str | type[TrainedSkill]"):
         super().__init__(required=True)
+        if isinstance(skill_id, type):
+            skill_id = skill_id.skill_id
         self.skill_id = skill_id
 
 
@@ -595,6 +619,19 @@ def _materialize_feed_annotations(cls) -> None:
                     "dispatch by id at run time (self.skills.run(...))."
                 )
             descriptor = SubSkill(resolved)
+            setattr(cls, name, descriptor)
+            descriptor.__set_name__(cls, name)
+            continue
+        if isinstance(resolved, type) and issubclass(resolved, TrainedSkill) and resolved is not TrainedSkill:
+            # a generated physical-skill ref: same declaration shape as a code
+            # sub-skill, materialized as the PhysicalSkill descriptor
+            if optional:
+                issues.append(
+                    f"{cls.__name__}.{name}: `| None` has no effect on a physical-skill declaration — "
+                    f"{resolved.__name__} is always required. For a best-effort dependency, "
+                    "dispatch by id at run time (self.skills.run(...))."
+                )
+            descriptor = PhysicalSkill(resolved.skill_id)
             setattr(cls, name, descriptor)
             descriptor.__set_name__(cls, name)
             continue

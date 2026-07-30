@@ -37,6 +37,7 @@ from brain_client.common.script_paths import (
 )
 from brain_client.skills.hot_reload_watcher import HotReloadWatcher
 from brain_client.skills.physical import get_episode_count, shutdown_quietly, validate_physical_skill
+from brain_client.skills.physical_refs import render_refs, write_refs
 from brain_client.skills.replay_conversion import recording_action_to_replay
 from brain_client.skills.workspace_import import (
     import_workspace_packages,
@@ -705,12 +706,17 @@ class SkillRepository:
                 )
             )
 
+        physical_infos = []
         for snapshot in (physical_skills_snapshot, in_training_skills_snapshot):
             for skill_id, entry in snapshot.items():
                 try:
-                    skills.append(self._build_physical_skill_info(skill_id, entry))
+                    info = self._build_physical_skill_info(skill_id, entry)
                 except Exception as e:
                     self._logger.error(f"Skipping physical skill '{skill_id}' in available_skills: {e}")
+                    continue
+                skills.append(info)
+                physical_infos.append(info)
+        self._write_physical_refs(physical_infos)
 
         # Broken skills ride the roster too — the UI shows them with their error
         # instead of them silently vanishing. Consumers that run or register
@@ -801,6 +807,22 @@ class SkillRepository:
             # whichever was seen first is already in deduped; append the newcomer
             deduped.append(skill)
         return deduped
+
+    def _write_physical_refs(self, physical_infos: list[SkillInfo]) -> None:
+        """Regenerate workspace/physical_skills/ — the typed refs agents and
+        skills import instead of id strings. Content-compared inside, so an
+        unchanged roster writes nothing (and can't loop the file watcher)."""
+        entries = [
+            {
+                "id": info.id,
+                "guidelines": info.guidelines,
+                "type": info.type,
+                "episode_count": info.episode_count,
+                "in_training": info.in_training,
+            }
+            for info in physical_infos
+        ]
+        write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), self._logger)
 
     def republish_cached(self) -> None:
         """Re-emit the last published roster, no rebuild — the heartbeat for

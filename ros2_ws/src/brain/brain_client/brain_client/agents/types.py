@@ -11,12 +11,13 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
-    from brain_client.skills.types import Skill
+    from brain_client.skills.types import Skill, TrainedSkill
 
-# What get_skills() may list: the Skill class itself (typed — an import error
-# or rename is caught by the editor, not at runtime on the robot), or an id
-# string. Physical skills are data with no class, so they stay ids.
-SkillRef = Union["type[Skill]", str]
+# What get_skills() may list: the Skill class itself for code skills, the
+# generated TrainedSkill ref for physical skills (both typed — an import
+# error or rename is caught by the editor, not at runtime on the robot), or
+# an id string.
+SkillRef = Union["type[Skill]", "type[TrainedSkill]", str]
 
 
 class Agent(ABC):
@@ -54,16 +55,17 @@ class Agent(ABC):
     def get_skills(self) -> list[SkillRef]:
         """
         Returns the skills that should be available when this agent is
-        active. Prefer the Skill class itself for code skills::
+        active. Prefer classes: the Skill itself for code skills, the
+        generated ref (``physical_skills`` package) for physical skills::
 
             from innate_skills.navigate_to_position import NavigateToPosition
+            from physical_skills import PickSocks
 
             def get_skills(self):
-                return [NavigateToPosition, "local/pick_socks"]
+                return [NavigateToPosition, PickSocks]
 
-        Id strings (e.g. "innate-os/navigate_to_position") are equivalent —
-        and the only form for physical skills, which have no class. Ids are
-        matched exactly against each available skill's id during
+        Id strings (e.g. "innate-os/navigate_to_position") are equivalent.
+        Ids are matched exactly against each available skill's id during
         registration — not by display name.
 
         Subclasses must implement this method.
@@ -76,18 +78,21 @@ class Agent(ABC):
         resolves through skill_id_for_class, the same derivation the catalog
         uses to id it, so a class reference and its id are interchangeable."""
         # lazy: keeps this module importable without the skill framework
-        from brain_client.skills.types import Skill
+        from brain_client.skills.types import Skill, TrainedSkill
         from brain_client.skills.workspace_import import skill_id_for_class
 
         ids = []
         for ref in self.get_skills():
             if isinstance(ref, str):
                 ids.append(ref)
+            elif isinstance(ref, type) and issubclass(ref, TrainedSkill):
+                ids.append(ref.skill_id)
             elif isinstance(ref, type) and issubclass(ref, Skill):
                 ids.append(skill_id_for_class(ref))
             else:
                 raise TypeError(
-                    f"{type(self).__name__}.get_skills() entries must be Skill classes or skill-id strings, got {ref!r}"
+                    f"{type(self).__name__}.get_skills() entries must be Skill classes, "
+                    f"physical_skills refs, or skill-id strings, got {ref!r}"
                 )
         return ids
 

@@ -58,6 +58,7 @@ from brain_client.skills.types import (
     SkillOutput,
     SkillResult,
     SkillReturn,
+    TrainedSkill,
     resource,
 )
 from brain_client.state.arm import Arm
@@ -92,6 +93,7 @@ __all__ = [
     "SkillOutput",
     "SkillResult",
     "SkillReturn",
+    "TrainedSkill",
     "WristImage",
     "resource",
 ]

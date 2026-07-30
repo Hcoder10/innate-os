@@ -72,6 +72,9 @@ NON_PACKAGE_DIR_NAMES = frozenset(
         "skill_storage",
         "agents",
         "skills",
+        # generated TrainedSkill refs (see skills/physical_refs.py) — importable
+        # like any workspace package, but never scanned for skills
+        "physical_skills",
     }
 )
 
