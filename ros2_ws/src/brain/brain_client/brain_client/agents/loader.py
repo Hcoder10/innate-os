@@ -16,6 +16,7 @@ from pathlib import Path
 from brain_client.agents.types import Agent
 from brain_client.common.dynamic_loader import DynamicLoader
 from brain_client.common.script_paths import classify_source
+from brain_client.skills.workspace_import import ensure_import_roots
 
 
 class AgentLoader(DynamicLoader):
@@ -25,6 +26,13 @@ class AgentLoader(DynamicLoader):
 
     base_class = Agent
     name_suffixes = ("Agent", "Directive")
+
+    def __init__(self, logger):
+        super().__init__(logger)
+        # Agent files may reference skill classes directly
+        # (`from innate_skills.navigate_to_position import NavigateToPosition`),
+        # so workspace packages must be importable in this process too.
+        ensure_import_roots()
 
     def _iter_candidate_files(self, directory: Path) -> list[Path]:
         # Look for Python files (excluding __init__.py, types.py, and _-prefixed)
@@ -184,7 +192,7 @@ class AgentLoader(DynamicLoader):
             Warning if a skill is not found (logged, not raised)
         """
         try:
-            agent_skills = agent_instance.get_skills()
+            agent_skills = agent_instance.skill_ids()
             missing_skills = []
 
             for skill_name in agent_skills:

@@ -147,7 +147,7 @@ class SkillCatalog:
         current_skill_ids = (
             self._state.active_skill_ids
             if self._state.active_skill_ids is not None
-            else list(self._state.current_directive.get_skills())
+            else list(self._state.current_directive.skill_ids())
         )
         current_skill_set = set(current_skill_ids)
         return [skill_id for skill_id in self.available_skill_ids() if skill_id in current_skill_set]

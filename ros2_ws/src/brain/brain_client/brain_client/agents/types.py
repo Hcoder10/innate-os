@@ -8,6 +8,15 @@ Base class and types for robot agents.
 """
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from brain_client.skills.types import Skill
+
+# What get_skills() may list: the Skill class itself (typed — an import error
+# or rename is caught by the editor, not at runtime on the robot), or an id
+# string. Physical skills are data with no class, so they stay ids.
+SkillRef = Union["type[Skill]", str]
 
 
 class Agent(ABC):
@@ -42,16 +51,45 @@ class Agent(ABC):
         pass
 
     @abstractmethod
-    def get_skills(self) -> list[str]:
+    def get_skills(self) -> list[SkillRef]:
         """
-        Returns a list of skill IDs that should be available
-        when this agent is active (e.g. "innate-os/navigate_to_position"
-        or "local/wave-hello"). IDs are matched exactly against each
-        available skill's id during registration — not by display name.
+        Returns the skills that should be available when this agent is
+        active. Prefer the Skill class itself for code skills::
+
+            from innate_skills.navigate_to_position import NavigateToPosition
+
+            def get_skills(self):
+                return [NavigateToPosition, "local/pick_socks"]
+
+        Id strings (e.g. "innate-os/navigate_to_position") are equivalent —
+        and the only form for physical skills, which have no class. Ids are
+        matched exactly against each available skill's id during
+        registration — not by display name.
 
         Subclasses must implement this method.
         """
         pass
+
+    def skill_ids(self) -> list[str]:
+        """get_skills() normalized to id strings — the only form the rest of
+        the system (registration, cloud agent, webapp) ever consumes. A class
+        resolves through skill_id_for_class, the same derivation the catalog
+        uses to id it, so a class reference and its id are interchangeable."""
+        # lazy: keeps this module importable without the skill framework
+        from brain_client.skills.types import Skill
+        from brain_client.skills.workspace_import import skill_id_for_class
+
+        ids = []
+        for ref in self.get_skills():
+            if isinstance(ref, str):
+                ids.append(ref)
+            elif isinstance(ref, type) and issubclass(ref, Skill):
+                ids.append(skill_id_for_class(ref))
+            else:
+                raise TypeError(
+                    f"{type(self).__name__}.get_skills() entries must be Skill classes or skill-id strings, got {ref!r}"
+                )
+        return ids
 
     @abstractmethod
     def get_prompt(self) -> str | None:
