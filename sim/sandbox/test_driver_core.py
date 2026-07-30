@@ -62,9 +62,7 @@ def main() -> None:
             sim.step(0.1)
         sim.step(3.0)
         p = sim.joint_positions()
-        assert abs(p["joint1"] - leg_target) < 0.15, (
-            f"joint1 stalled at {p['joint1']:.2f} sweeping to {leg_target:.2f}"
-        )
+        assert abs(p["joint1"] - leg_target) < 0.15, f"joint1 stalled at {p['joint1']:.2f} sweeping to {leg_target:.2f}"
     print(f"joint2 body guard: front-arc sweep ok both ways (j2 back at {p['joint2']:+.2f})")
     sim.reset()
 
