@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass
 
-from brain_client.skills.dictcompat import LegacyMapping
+from brain_client.state.dictcompat import LegacyMapping
 
 
 @dataclass(frozen=True)

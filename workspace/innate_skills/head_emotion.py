@@ -1,14 +1,8 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""
-Head Emotion Skill - Express emotions through vertical head (tilt) movements.
-"""
-
-import time
 from typing import Literal, cast
 
-from innate import Head, Skill, SkillResult, SkillReturn
+from innate import Head, Skill, SkillReturn
 
 # Each pose is (angle_degrees, duration_seconds). Duration is the time to
 # interpolate from the previous pose to this one.
@@ -88,6 +82,8 @@ EmotionName = Literal[
     "disagreeing",
 ]
 
+INTERPOLATION_RATE_HZ = 30.0
+
 
 class HeadEmotion(Skill):
     """Express an emotion through head tilt movements."""
@@ -95,7 +91,6 @@ class HeadEmotion(Skill):
     head: Head
 
     def guidelines(self) -> str:
-        # generated from EMOTIONS so adding one can't desync the prose
         return (
             "Express an emotion through head tilt movements. Requires 'emotion' "
             f"parameter, one of: {', '.join(repr(name) for name in EMOTIONS)}. "
@@ -105,41 +100,26 @@ class HeadEmotion(Skill):
     def execute(self, emotion: EmotionName, repeat: int = 1) -> SkillReturn:
         emotion = cast(EmotionName, emotion.strip().lower())
         if emotion not in EMOTIONS:
-            available = ", ".join(sorted(EMOTIONS))
-            self.fail(f"Unknown emotion '{emotion}'. Available: {available}")
+            self.fail(f"Unknown emotion '{emotion}'. Available: {', '.join(sorted(EMOTIONS))}")
 
         repeat = max(1, min(int(repeat), 5))
         entry = EMOTIONS[emotion]
-        sequence = entry["sequence"]
-
-        self.logger.info(f"[HeadEmotion] Playing '{emotion}' ({entry['description']}) x{repeat}")
         self.feedback(f"Expressing: {emotion}")
 
-        interpolation_rate = 30.0  # Hz
-        dt = 1.0 / interpolation_rate
+        dt = 1.0 / INTERPOLATION_RATE_HZ
+        try:
+            for r in range(repeat):
+                current_angle = 0.0
+                for target_angle, duration in entry["sequence"]:
+                    steps = max(1, int(round(duration * INTERPOLATION_RATE_HZ)))
+                    for i in range(1, steps + 1):
+                        interp = current_angle + (target_angle - current_angle) * i / steps
+                        self.head.set_position(int(round(interp)))
+                        self.sleep(dt)
+                    current_angle = float(target_angle)
+                if r < repeat - 1:
+                    self.sleep(0.2)
+        finally:
+            self.head.set_position(0)
 
-        for r in range(repeat):
-            current_angle = 0.0
-            for target_angle, duration in sequence:
-                if self.cancelled:
-                    self.head.set_position(0)
-                    return "Cancelled", SkillResult.CANCELLED
-                steps = max(1, int(round(duration * interpolation_rate)))
-                for i in range(1, steps + 1):
-                    if self.cancelled:
-                        self.head.set_position(0)
-                        return "Cancelled", SkillResult.CANCELLED
-                    t = i / steps
-                    interp = current_angle + (target_angle - current_angle) * t
-                    self.head.set_position(int(round(interp)))
-                    time.sleep(dt)
-                current_angle = float(target_angle)
-            if r < repeat - 1:
-                time.sleep(0.2)
-
-        # Return to neutral
-        self.head.set_position(0)
-
-        msg = f"Expressed '{emotion}' ({entry['description']})"
-        self.logger.info(f"[HeadEmotion] {msg}")
-        return msg
+        return f"Expressed '{emotion}' ({entry['description']})"

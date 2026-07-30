@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """
-ManipulationInterface - Provides IK and arm control capabilities to skills.
+Manipulation - Provides IK and arm control capabilities to skills.
 
 This interface allows skills to:
 1. Request inverse kinematics solutions for Cartesian poses
@@ -32,16 +32,14 @@ class ArmFailed(RuntimeError):
     """Joint/cartesian command rejected or did not complete."""
 
 
-class ArmCancelled(Exception):
-    """Caller-supplied cancel check fired mid-wait."""
-
-
-class ManipulationInterface:
+class Manipulation:
     """
     Interface for arm manipulation using IK and joint control.
 
-    This class provides high-level methods for skills to control the arm
-    without needing to know the details of ROS topics and services.
+    Injected as ``self.manipulation`` when a skill declares
+    ``manipulation: Manipulation``; the framework constructs it. Provides
+    high-level methods for skills to control the arm without needing to know
+    the details of ROS topics and services.
     """
 
     def __init__(self, node: Node, logger, lazy: bool = False):
@@ -100,13 +98,13 @@ class ManipulationInterface:
         self._torque_off_client = self.node.create_client(Trigger, "/mars/arm/torque_off")
         self._reboot_servos_client = self.node.create_client(Trigger, "/mars/arm/reboot")
 
-        self.logger.info("ManipulationInterface initialized")
+        self.logger.info("Manipulation initialized")
 
     def _spin_executor(self, executor):
         try:
             executor.spin()
         except Exception as e:
-            self.logger.error(f"[ManipulationInterface] Executor stopped unexpectedly: {e}")
+            self.logger.error(f"[Manipulation] Executor stopped unexpectedly: {e}")
 
     def start(self):
         """Enable arm-state feeds: spin up the private executor and create the
@@ -306,14 +304,14 @@ class ManipulationInterface:
 
                     # Validate that we received a non-empty solution
                     if len(joint_positions) == 0:
-                        self.logger.error("[ManipulationInterface] IK solver returned empty solution (IK failed)")
+                        self.logger.error("[Manipulation] IK solver returned empty solution (IK failed)")
                         return None
 
                     return joint_positions
 
                 iteration += 1
 
-        self.logger.error(f"[ManipulationInterface] IK solution timeout after {timeout}s ({iteration} iterations)")
+        self.logger.error(f"[Manipulation] IK solution timeout after {timeout}s ({iteration} iterations)")
         return None
 
     def move_to_joint_positions(
@@ -334,17 +332,17 @@ class ManipulationInterface:
             self.logger.error(f"Expected 6 joint positions, got {len(joint_positions)}")
             return False
         if self._torque_enabled is False:
-            self.logger.error("[ManipulationInterface] Arm torque is disabled")
+            self.logger.error("[Manipulation] Arm torque is disabled")
             return False
 
         # Ensure GotoJS client is available
         if self._goto_js_client is None:
-            self.logger.error("[ManipulationInterface] GotoJS v2 client is not initialized")
+            self.logger.error("[Manipulation] GotoJS v2 client is not initialized")
             return False
 
         # Non-blocking check for service readiness
         if not self._goto_js_client.service_is_ready():
-            self.logger.error("[ManipulationInterface] GotoJS v2 service is not ready")
+            self.logger.error("[Manipulation] GotoJS v2 service is not ready")
             return False
 
         # Build request
@@ -359,7 +357,7 @@ class ManipulationInterface:
             if blocking and not self._await_motion_result(future, "GotoJS v2", duration + 1.0):
                 return False
         except Exception as e:
-            self.logger.error(f"[ManipulationInterface] Exception calling GotoJS v2: {e}")
+            self.logger.error(f"[Manipulation] Exception calling GotoJS v2: {e}")
             return False
 
         return True
@@ -444,10 +442,10 @@ class ManipulationInterface:
             True if successful, False otherwise.
         """
         if len(poses) < 2:
-            self.logger.error("[ManipulationInterface] Need at least 2 poses for trajectory")
+            self.logger.error("[Manipulation] Need at least 2 poses for trajectory")
             return False
         if self._torque_enabled is False:
-            self.logger.error("[ManipulationInterface] Arm torque is disabled")
+            self.logger.error("[Manipulation] Arm torque is disabled")
             return False
 
         # Resolve gripper position once
@@ -471,7 +469,7 @@ class ManipulationInterface:
                 timeout=ik_timeout,
             )
             if joints is None:
-                self.logger.error(f"[ManipulationInterface] IK failed for trajectory pose {i}: {p}")
+                self.logger.error(f"[Manipulation] IK failed for trajectory pose {i}: {p}")
                 return False
             # Append gripper (IK returns 5 joints)
             if len(joints) == 5:
@@ -480,10 +478,10 @@ class ManipulationInterface:
 
         # Check service readiness
         if self._goto_js_traj_client is None:
-            self.logger.error("[ManipulationInterface] GotoJSTrajectory client not initialized")
+            self.logger.error("[Manipulation] GotoJSTrajectory client not initialized")
             return False
         if not self._goto_js_traj_client.service_is_ready():
-            self.logger.error("[ManipulationInterface] GotoJSTrajectory service not ready")
+            self.logger.error("[Manipulation] GotoJSTrajectory service not ready")
             return False
 
         # Build flat waypoint array and segment durations
@@ -509,7 +507,7 @@ class ManipulationInterface:
             if not self._await_motion_result(future, "GotoJSTrajectory", total_time + 5.0):
                 return False
         except Exception as e:
-            self.logger.error(f"[ManipulationInterface] Exception calling GotoJSTrajectory: {e}")
+            self.logger.error(f"[Manipulation] Exception calling GotoJSTrajectory: {e}")
             return False
 
         return True
@@ -517,21 +515,21 @@ class ManipulationInterface:
     def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
         """Block on a motion-service future; return True iff it completed successfully."""
         if not self._wait_for_future(future, timeout_sec=timeout_sec):
-            self.logger.error(f"[ManipulationInterface] {name} call timed out")
+            self.logger.error(f"[Manipulation] {name} call timed out")
             return False
         result = future.result()
         if result is None:
-            self.logger.error(f"[ManipulationInterface] {name} call timed out")
+            self.logger.error(f"[Manipulation] {name} call timed out")
             return False
         if not result.success:
-            self.logger.error(f"[ManipulationInterface] {name} returned failure")
+            self.logger.error(f"[Manipulation] {name} returned failure")
             return False
         return True
 
     def _call_trigger(self, client, action_name: str, success_msg: str, timeout_sec: float = 2.0) -> bool:
         """Call a std_srvs/Trigger service, log the outcome, and return whether it succeeded."""
         if not client.service_is_ready():
-            self.logger.error(f"[ManipulationInterface] {action_name} service not ready")
+            self.logger.error(f"[Manipulation] {action_name} service not ready")
             return False
 
         try:
@@ -581,20 +579,15 @@ class ManipulationInterface:
     # Gripper position constants (radians)
     GRIPPER_CLOSED = 0.0
     GRIPPER_OPEN = 0.85
+    # Below this j6 the claw is still (tripped) shut after an open command.
+    GRIPPER_SHUT_J6 = 0.10
+    # Squeezing past the closed stop by more than this overcurrent-trips the
+    # servo on a real object (0.7 and 0.8 both tripped on hardware; recovery
+    # needs a reboot).
+    GRIPPER_MAX_STRENGTH = 0.6
 
-    def open_gripper(self, percent: float = 100.0, duration: float = 0.5, blocking: bool = False) -> bool:
-        """
-        Open the gripper (joint6).
-
-        Args:
-            percent: How open to make the gripper, 0-100% (default 100% = fully open)
-            duration: Time for gripper motion
-            blocking: If True, block until motion completes
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Get current joint positions
+    def _command_gripper(self, j6: float, duration: float, blocking: bool) -> bool:
+        """Send a joint command that moves only the gripper to ``j6``."""
         if self._arm_state is None:
             self.logger.error("No arm state available")
             return False
@@ -605,38 +598,58 @@ class ManipulationInterface:
         if len(positions) < 6:
             positions.extend([0.0] * (6 - len(positions)))
 
-        # Clamp percent to 0-100
-        percent = max(0.0, min(100.0, percent))
-
-        # Interpolate between closed and open based on percent
-        positions[5] = self.GRIPPER_CLOSED + (self.GRIPPER_OPEN - self.GRIPPER_CLOSED) * (percent / 100.0)
+        positions[5] = j6
         return self.move_to_joint_positions(positions, duration=duration, blocking=blocking)
+
+    def open_gripper(self, percent: float = 100.0, duration: float = 0.5, blocking: bool = False) -> bool:
+        """
+        Open the gripper (joint6).
+
+        When blocking, verifies the claw actually opened — the servo can
+        overcurrent-trip and stay shut — and reboots + retries once if not.
+
+        Args:
+            percent: How open to make the gripper, 0-100% (default 100% = fully open)
+            duration: Time for gripper motion
+            blocking: If True, block until motion completes and verify the claw opened
+
+        Returns:
+            True if successful, False otherwise
+        """
+        percent = max(0.0, min(100.0, percent))
+        target = self.GRIPPER_CLOSED + (self.GRIPPER_OPEN - self.GRIPPER_CLOSED) * (percent / 100.0)
+        for attempt in (1, 2):
+            if not self._command_gripper(target, duration, blocking):
+                return False
+            # Can only verify a blocking move, and only when the target itself
+            # clears the shut threshold.
+            if not blocking or target < self.GRIPPER_SHUT_J6:
+                return True
+            self.spin_node_to_refresh_topics(count=5, timeout_sec=0.01)
+            j6 = self.gripper_j6(self._arm_state)
+            if j6 is None or j6 >= self.GRIPPER_SHUT_J6:
+                return True
+            if attempt == 1:
+                self.logger.warning(f"Gripper did not open (j6={j6:.3f}); rebooting servos, then retrying")
+                self.recover()
+        self.logger.error("Gripper did not open (servo tripped shut)")
+        return False
 
     def close_gripper(self, strength: float = 0.0, duration: float = 0.5, blocking: bool = False) -> bool:
         """
         Close the gripper (joint6).
 
         Args:
-            strength: Additional radians to close beyond 0.0 (e.g. 0.1 = close to -0.1 rad)
+            strength: Additional radians to close beyond 0.0 for a firmer grip
+                (e.g. 0.1 = close to -0.1 rad). Clamped to GRIPPER_MAX_STRENGTH.
             duration: Time for gripper motion
             blocking: If True, block until motion completes
 
         Returns:
             True if successful, False otherwise
         """
-        # Get current joint positions
-        if self._arm_state is None:
-            self.logger.error("No arm state available")
-            return False
-
-        self.spin_node_to_refresh_topics(count=5, timeout_sec=0.01)
-
-        positions = list(self._arm_state.position)
-        if len(positions) < 6:
-            positions.extend([0.0] * (6 - len(positions)))
-
-        positions[5] = self.GRIPPER_CLOSED - abs(strength)
-        return self.move_to_joint_positions(positions, duration=duration, blocking=blocking)
+        strength = min(abs(strength), self.GRIPPER_MAX_STRENGTH)
+        return self._command_gripper(self.GRIPPER_CLOSED - strength, duration, blocking)
 
     # --- arm primitives ---
     # Skills call these as methods: self.manipulation.go(...), .move_checked(...).
@@ -688,28 +701,18 @@ class ManipulationInterface:
             return cls.with_gripper(cls.REST, cls.gripper_j6(joint_states))
         return list(cls.REST)
 
-    def go(self, joints, duration=3.0, *, times=1, pause=0.3, is_cancelled=None, logger=None):
-        """Move to joint positions. Raises ArmFailed / ArmCancelled.
-
+    def go(self, joints, duration=3.0, *, times=1, pause=0.3, logger=None):
+        """Move to joint positions, blocking for each move. Raises ArmFailed.
         ``times`` + ``pause`` repeat the move so the arm can settle (pick
-        teardown). With ``is_cancelled``, the move is non-blocking and polled
-        so a skill cancel can abort the wait; otherwise each move blocks for
-        ``duration``.
-        """
+        teardown). Deliberately not cancel-interruptible: an arm move is a
+        short atomic commitment, and this must stay safe in teardown paths
+        that run after a cancel."""
         logger = logger or self.logger
         joints = list(joints)
-        blocking = is_cancelled is None
         for i in range(times):
             logger.info(f"[arm] joints {[round(j, 3) for j in joints]} over {duration}s")
-            ok = self.move_to_joint_positions(joint_positions=joints, duration=duration, blocking=blocking)
-            if not ok:
+            if not self.move_to_joint_positions(joint_positions=joints, duration=duration, blocking=True):
                 raise ArmFailed("Failed to send arm command")
-            if is_cancelled is not None:
-                t0 = time.time()
-                while time.time() - t0 < duration:
-                    if is_cancelled():
-                        raise ArmCancelled("Arm motion cancelled")
-                    time.sleep(0.1)
             if pause and i + 1 < times:
                 time.sleep(pause)
 

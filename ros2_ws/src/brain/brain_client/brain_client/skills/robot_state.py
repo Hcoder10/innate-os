@@ -19,16 +19,16 @@ from sensor_msgs.msg import BatteryState, JointState, LaserScan
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
-from brain_client.skills.arm import Arm
-from brain_client.skills.battery import Battery
-from brain_client.skills.head import HeadState
-from brain_client.skills.image import DepthMap, MainImage, WristImage
-from brain_client.skills.joint_states import JointStates
-from brain_client.skills.lidar import Lidar
-from brain_client.skills.map import Map
-from brain_client.skills.odometry import Odometry
-from brain_client.skills.pose import Pose
 from brain_client.skills.types import _DEFAULT_STATE_GRACE_S, InterfaceType, RobotStateType, _state_grace_s
+from brain_client.state.arm import Arm
+from brain_client.state.battery import Battery
+from brain_client.state.head import HeadState
+from brain_client.state.image import DepthMap, MainImage, WristImage
+from brain_client.state.joint_states import JointStates
+from brain_client.state.lidar import Lidar
+from brain_client.state.map import Map
+from brain_client.state.odometry import Odometry
+from brain_client.state.pose import Pose
 
 
 class RobotStateProvider:

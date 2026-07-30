@@ -16,5 +16,12 @@
 - `hot_reload.py` — full/selective reload coordination and the file-watcher queue.
 - `loader.py` / `cli_bridge.py` / `hot_reload_watcher.py` — skill loading + CLI
   bridge + the filesystem watcher.
-- `types.py` — the public `Skill` / `SkillResult` SDK base classes that user skills
-  in `workspace/` import. Keep this import path stable.
+- `types.py` — the public `Skill` / `SkillOutput` / `SkillResult` SDK base classes
+  that user skills in `workspace/` import. Keep this import path stable. The return
+  contract: `execute()` returns the message str (or `SkillOutput(message, data)`,
+  or None); `self.fail(message)` fails the run. Legacy `(message, SkillResult)`
+  tuple returns are deprecated but still normalize.
+
+The skill-facing state snapshot types (`Odometry`, `Pose`, `Battery`, ...) are
+not framework code and live in `../state/` — ROS-free dataclasses converted
+per-message from the live feeds.

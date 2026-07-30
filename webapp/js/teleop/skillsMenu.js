@@ -62,6 +62,8 @@ export function createSkillsMenu(parent, rosClient) {
   let signature = "";
   /** @type {string | null} */
   let expandedId = null;
+  /** Folder sections the user collapsed (by group path). @type {Set<string>} */
+  const collapsedGroups = new Set();
   /** Per-skill, per-param string values, kept across re-renders. @type {Map<string, Record<string, string>>} */
   const inputValues = new Map();
   /** Last/in-flight run. `done` marks the terminal state. @type {{ skillId: string, cancel: () => void, text: string, error: boolean, canceling: boolean, done: boolean } | null} */
@@ -321,7 +323,17 @@ export function createSkillsMenu(parent, rosClient) {
     // A run started elsewhere (agent, CLI, another tab) has no local cancel
     // handle — offer a Stop that goes through /brain/cancel_skill instead.
     if (topicActiveName && !(run && !run.done)) frag.appendChild(renderExternRow());
-    for (const skill of skills) frag.appendChild(renderRow(skill));
+    // Root skills flat first (pinned order preserved), then one collapsible
+    // section per folder (SkillInfo.group), folders alphabetical.
+    for (const skill of skills) {
+      if (!skill.group) frag.appendChild(renderRow(skill));
+    }
+    for (const [group, members] of groupedSkills()) {
+      frag.appendChild(renderGroupHeader(group, members.length));
+      if (!collapsedGroups.has(group)) {
+        for (const skill of members) frag.appendChild(renderRow(skill));
+      }
+    }
     if (skills.length === 0) {
       const empty = document.createElement("p");
       empty.className = "skills-pop-empty";
@@ -329,6 +341,42 @@ export function createSkillsMenu(parent, rosClient) {
       frag.appendChild(empty);
     }
     listEl.replaceChildren(frag);
+  }
+
+  /** Grouped skills as [group, members][] with folders alphabetical; members
+   *  keep the pinned/roster order of `skills`. @returns {[string, any[]][]} */
+  function groupedSkills() {
+    /** @type {Map<string, any[]>} */
+    const groups = new Map();
+    for (const skill of skills) {
+      const group = typeof skill.group === "string" ? skill.group : "";
+      if (!group) continue;
+      const members = groups.get(group) ?? [];
+      members.push(skill);
+      groups.set(group, members);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }
+
+  /** Section header for one folder: click toggles collapse. @param {string} group @param {number} count */
+  function renderGroupHeader(group, count) {
+    const collapsed = collapsedGroups.has(group);
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "skills-pop-group";
+    const name = document.createElement("span");
+    name.className = "skills-pop-group-name";
+    name.textContent = prettify(group);
+    const tail = document.createElement("span");
+    tail.className = "skills-pop-tail mono";
+    tail.textContent = collapsed ? `${count} ›` : "▾";
+    head.append(name, tail);
+    head.addEventListener("click", () => {
+      if (collapsed) collapsedGroups.delete(group);
+      else collapsedGroups.add(group);
+      render();
+    });
+    return head;
   }
 
   /** Banner row for the externally-started run: name + Stop. */
@@ -575,9 +623,9 @@ export function createSkillsMenu(parent, rosClient) {
       .map((entry) => entry.s);
     // The roster is latched and republishes on any change; avoid a re-render
     // (which would steal focus mid-typing) unless the set actually changed.
-    // load_error is part of the signature: a skill breaking (or its error
-    // changing) must repaint even though the id set is identical.
-    const sig = next.map((s) => s.id + (s.load_error ? `!${s.load_error}` : "")).join("|");
+    // load_error and group are part of the signature: a skill breaking (or
+    // moving folders) must repaint even though the id set is identical.
+    const sig = next.map((s) => s.id + ":" + (s.group || "") + (s.load_error ? `!${s.load_error}` : "")).join("|");
     if (sig === signature) return;
     signature = sig;
     skills = next;

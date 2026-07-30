@@ -19,6 +19,11 @@
     "ros2_ws/install/innate_cloud_msgs/local/lib/python3.10/dist-packages",
     "ros2_ws/install/mars_msgs/local/lib/python3.10/dist-packages",
     "/opt/ros/humble/lib/python3.10/site-packages",
-    "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    "/opt/ros/humble/local/lib/python3.10/dist-packages",
+    // System site-packages (pydantic, etc.). Needed when the language server
+    // has no usable interpreter and would otherwise only see the paths above.
+    "/usr/local/lib/python3.10/dist-packages",
+    "/usr/lib/python3/dist-packages",
+    "/usr/lib/python3.10/dist-packages"
   ]
 }

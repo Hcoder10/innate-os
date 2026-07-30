@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-from brain_client.skills.dictcompat import LegacyMapping
+from brain_client.state.dictcompat import LegacyMapping
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,6 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""
-Arm Move To XYZ Skill - Move arm to a Cartesian position using IK.
-"""
-
-import time
-
-from innate import Manipulation, Skill, SkillResult, SkillReturn
+from innate import Manipulation, Skill, SkillReturn
 
 
 class ArmMoveToXYZ(Skill):
@@ -29,17 +22,8 @@ class ArmMoveToXYZ(Skill):
         duration: int = 3,
     ) -> SkillReturn:
         self.logger.info(f"Moving arm to XYZ ({x}, {y}, {z}) with RPY ({roll}, {pitch}, {yaw}) over {duration}s")
-
         if not self.manipulation.move_to_cartesian_pose(
-            x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, duration=duration
+            x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, duration=duration, blocking=True
         ):
             self.fail("Failed to solve IK or send arm command")
-
-        # Wait for motion to complete (with cancellation check)
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            if self.cancelled:
-                return "Arm motion cancelled", SkillResult.CANCELLED
-            time.sleep(0.1)
-
         return f"Arm moved to ({x}, {y}, {z})"

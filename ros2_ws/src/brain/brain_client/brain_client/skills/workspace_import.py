@@ -52,7 +52,7 @@ def ensure_import_roots() -> None:
 
     The root makes ``workspace.*`` imports resolve (compat with existing
     skills); workspace/ itself makes packages importable by bare name
-    (``from innate_skills import arm_utils``, ``import custom_skills.geometry``).
+    (``from innate_skills import move_straight``, ``import custom_skills.geometry``).
     """
     for path in (str(get_innate_os_root()), str(get_workspace_dir())):
         if path not in sys.path:

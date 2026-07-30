@@ -2,6 +2,7 @@
 # Information about a single skill (code or physical)
 string id                       # Deterministic identifier: "innate-os/<basename>" or "local/<basename>"
 string name                     # Cosmetic display name (also used as LLM tool name — must be unique)
+string group                    # Folder path inside the skill package ("" = root, "chess", "chess/openings") — for UI grouping only
 string type                     # "code", "learned", "replay", "poses"
 string guidelines               # Agent guidelines for when to use this skill
 string guidelines_when_running  # Agent guidelines while the skill is running

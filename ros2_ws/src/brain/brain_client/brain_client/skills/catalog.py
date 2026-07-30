@@ -65,6 +65,7 @@ class CodeSkillEntry:
     display_name: str
     skill_class: type
     source: str  # "shipped" | "user" — stamped onto each run's instance
+    group: str  # folder path inside the package ("" = root) — UI grouping only
     guidelines: str
     guidelines_when_running: str
     inputs: dict  # {param: schema} from execute()'s signature
@@ -269,6 +270,8 @@ class SkillRepository:
                 display_name=display_name,
                 skill_class=skill_class,
                 source=classify_source(src_path),
+                # the folder IS the group: innate_skills.chess.x -> "chess"
+                group="/".join(skill_class.__module__.split(".")[1:-1]),
                 guidelines=self._safe_skill_string(skill_id, instance, "guidelines"),
                 guidelines_when_running=self._safe_skill_string(skill_id, instance, "guidelines_when_running"),
                 inputs=inputs,
@@ -695,6 +698,7 @@ class SkillRepository:
                     skill_id=skill_id,
                     name=entry.display_name,
                     skill_type="code",
+                    group=entry.group,
                     guidelines=entry.guidelines,
                     guidelines_when_running=entry.guidelines_when_running,
                     inputs_json=entry.inputs_json,
@@ -712,11 +716,16 @@ class SkillRepository:
         # instead of them silently vanishing. Consumers that run or register
         # skills skip any entry with a non-empty load_error.
         for skill_id, error in broken_skills_snapshot.items():
+            # A broken module in a subfolder rosters as "<ns>/chess.foo":
+            # show it as "foo" grouped under "chess", like its healthy peers.
+            dotted = skill_id.split("/", 1)[-1]
+            group, _, leaf = dotted.rpartition(".")
             skills.append(
                 self._build_skill_info(
                     skill_id=skill_id,
-                    name=skill_id.split("/", 1)[-1],
+                    name=leaf,
                     skill_type="broken",
+                    group=group.replace(".", "/"),
                     guidelines="",
                     guidelines_when_running="",
                     inputs_json="{}",
@@ -808,6 +817,7 @@ class SkillRepository:
         guidelines: str,
         guidelines_when_running: str,
         inputs_json: str,
+        group: str = "",
         in_training: bool = False,
         episode_count: int = 0,
         directory: str = "",
@@ -818,6 +828,7 @@ class SkillRepository:
         msg.id = skill_id or ""
         msg.name = name or ""
         msg.type = skill_type or ""
+        msg.group = group or ""
         msg.guidelines = guidelines or ""
         msg.guidelines_when_running = guidelines_when_running or ""
         msg.inputs_json = inputs_json or ""
@@ -944,6 +955,7 @@ class SkillRepository:
             "id": skill.id,
             "name": skill.name,
             "type": skill.type,
+            "group": skill.group,
             "inputs": inputs,
             "guidelines": skill.guidelines,
             "guidelines_when_running": skill.guidelines_when_running,

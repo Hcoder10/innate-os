@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """Pick an object from the floor by text prompt.
@@ -12,11 +11,8 @@ import math
 import re
 import time
 
-from innate_skills.arm_rest_position import ArmRestPosition
-from innate_skills.gripper_close import GripperClose
-from innate_skills.gripper_open import GripperOpen
 
-from brain_client.robot.manipulation import ArmCancelled, ArmFailed, ArmUnhealthy
+from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy
 from innate import (
     Head,
     JointStates,
@@ -25,9 +21,7 @@ from innate import (
     Mobility,
     Odometry,
     Skill,
-    SkillCancelled,
     SkillFailed,
-    SkillResult,
     SkillReturn,
     WristImage,
     resource,
@@ -36,102 +30,78 @@ from innate import (
 from innate import gemini as gemlib
 from innate.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
 
-# Hardware constants (not live-tunable).
-GRIPPER_EMPTY_J6 = -0.085  # open/empty gripper
+GRIPPER_EMPTY_J6 = -0.085
 VERIFY_BACKUP_M = 0.15
-# Clamp for Gemini's per-object grip_strength (see the _detect_px prompt).
-# Since the gripper moved to a hardware current cap, this no longer sets any
-# force — it only serves as the soft/rigid signal for the fabric twist.
+# Clamp for Gemini's per-object grip_strength. Grip force lives in hardware
+# (current cap); this only serves as the soft/rigid signal for the fabric twist.
 GRIP_STRENGTH_RANGE = (0.30, 0.60)
-
-# Gemini grip_strength at/above this = fabric-like: gets the fabric twist.
 SOFT_GRIP_MIN = 0.5
 
 # Post-pick carry pose (j1-5). j6 comes from close_strength, not this pose.
-# j2 = -0.50, not the recorded -0.5031: the coupling limit at j1~0.05 clamps
-# to -0.500 and anything past it makes the arm node log the clamp forever.
+# j2 = -0.50: the coupling limit at j1~0.05 clamps past it and logs forever.
 CARRY_ARM = [0.0537, -0.50, 0.4157, 0.9434, -0.0077]
 
-# Pick parameters, tuned on hardware. Fixed at load.
+# Pick parameters, tuned on hardware.
 PARAMS = {
     # FIND / LOCALIZE
-    "tilt_deg": -20.0,  # head pitch (negative = down); head servo range is -40..70 (HEAD_MIN/MAX_DEG)
-    "settle_s": 1.2,  # settle before a frame
-    # POSITION
-    "sweet_x": 0.37,  # pick-box range in base_link (m) — the
-    #   base parks the object this far ahead, so it also
-    #   sets how far forward the grasp reaches
-    #   (sweet_x - grasp_x_off) and how high the box sits
-    #   on the image (~5 px per cm at tilt_deg=-20). Hard
-    #   ceiling is 0.43: past that the grasp target
-    #   exceeds REACH_X and the reach clamp lands the
-    #   fingers short of the object. Kept back from
-    #   that edge: grasping at the 0.40 reach ceiling
-    #   stalls the wrist servo and over-torques the
-    #   shoulder (servo 2 overload); 0.37 grasps at ~0.34.
-    "box_y": 0.0,  # pick-box lateral offset (m)
-    "box_half_px": 40.0,  # outer box half-width (px)
-    "accept_frac": 0.5,  # inner accept box as fraction of outer
-    "box_steps": 6.0,  # max follow / re-detect attempts
-    "bearing_go_deg": 4.0,  # stepwise: turn above this
-    "follow_gain_ang": 0.3,  # rad/s per 100 px
-    "follow_gain_lin": 0.06,  # m/s per 100 px
-    # base odometry
+    "tilt_deg": -20.0,
+    "settle_s": 1.2,
+    # POSITION. sweet_x ceiling is 0.43 (reach clamp); 0.37 grasps at ~0.34 —
+    # grasping at the 0.40 reach edge stalls the wrist and overloads servo 2.
+    "sweet_x": 0.37,
+    "box_y": 0.0,
+    "box_half_px": 40.0,
+    "accept_frac": 0.5,
+    "box_steps": 6.0,
+    "bearing_go_deg": 4.0,
+    "follow_gain_ang": 0.3,
+    "follow_gain_lin": 0.06,
     "rot_tol_deg": 2.5,
     "rot_kp": 1.2,
     "rot_wz_max": 0.5,
-    "rot_wz_min": 0.15,  # below this motors don't move
+    "rot_wz_min": 0.15,
     "drive_tol_m": 0.015,
     "drive_kp": 0.3,
     "drive_v_max": 0.10,
     "drive_v_min": 0.04,
     # WRIST ALIGN (0 wrist_steps = blind grasp)
-    "wrist_steps": 2.0,  # Gemini looks (seed + re-seeds)
-    "wrist_stop_z": 0.05,  # hand off to blind ladder (was 0.04; leave a bit more air)
+    "wrist_steps": 2.0,
+    "wrist_stop_z": 0.05,
     "wrist_z_step": 0.01,
     "wrist_move_s": 0.5,
-    "wrist_pitch": 0.82,  # match WRIST_SEARCH_ARM camera pitch
-    "wrist_box_u": 320.0,  # wrist goal pixel
-    # Below image center (240): the wrist cam sits above the fingertips, so
-    # mid-frame aims short of them. 380 is the hardware-tuned parallax bias
-    # (started at 300; hardware runs kept landing behind the object).
+    "wrist_pitch": 0.82,
+    "wrist_box_u": 320.0,
+    # Below image center: the wrist cam sits above the fingertips, so
+    # mid-frame aims short of them. 380 is the hardware-tuned parallax bias.
     "wrist_box_v": 380.0,
     "wrist_half_px": 60.0,
-    "wrist_kx": -0.04,  # m/100px v-error (signed; flip if diverges)
-    "wrist_ky": -0.04,  # m/100px u-error; gains at z=0.15, scale w/ height
+    "wrist_kx": -0.04,
+    "wrist_ky": -0.04,
     "wrist_step_max": 0.04,
     "wrist_settle_s": 0.8,
     # GRASP
-    "grasp_x_off": 0.03,  # fingertips ahead of ee_link
+    "grasp_x_off": 0.03,
     "hover_z": 0.15,
     "hover_s": 2.0,
     "descend_z1": 0.10,
     "descend_z2": 0.07,
     "descend_z3": 0.045,
-    # ee_link target — not fingertip height. 0.01 dug into carpet: the
-    # cartesian rung fails, recover() reboots the arm, and the grasp aborts.
+    # ee_link target, not fingertip height. 0.01 dug into carpet and aborted.
     "floor_z": 0.03,
     "descend_s": 1.2,
-    "descend_abort_z": 0.12,  # EE still above this => limp, abort
+    "descend_abort_z": 0.12,
     "arm_pitch": 1.30,
-    # Grip force lives in HARDWARE now: servo 6 runs current-based position
-    # control (arm_config.yaml control_mode 5, current_limit in mA), so a
-    # deep close command squeezes any object at that constant, safe force —
-    # the position error no longer sets the force and cannot overload the
-    # servo. close_strength is just the close depth (how far the command
-    # goes past any object; also the empty-close depth). Note gripper_close.py
-    # puts the hardware ceiling at 0.6: above that the servo trips and needs
-    # a reboot to clear.
+    # close_strength is close depth, not force (servo 6 runs current-based
+    # position control); above 0.6 the servo trips and needs a reboot.
     "close_strength": 0.60,
     "close_s": 1.5,
     "close_settle_s": 0.8,
-    "close_lift_m": 0.01,  # un-press before closing: the
-    #   descent parks the fingers pressed into the floor; a small
-    #   lift lets them close around the object, not drag it
-    "twist_rad": 0.6,  # wind fabric onto fingers
+    # Un-press before closing: the descent parks the fingers pressed into the
+    # floor; a small lift lets them close around the object, not drag it.
+    "close_lift_m": 0.01,
+    "twist_rad": 0.6,
     "lift_rad": 0.6,
 }
-
 
 FOLLOW_TIMEOUT_S = 20.0
 WRIST_ALIGN_TIMEOUT_S = 60.0
@@ -182,45 +152,29 @@ class PickAnyObject(Skill):
     manipulation: Manipulation
     mobility: Mobility
     head: Head
-    # ``| None`` — best effort, every read is guarded: positioning falls back
+    # `| None` — best effort, every read is guarded: positioning falls back
     # to stepwise re-detection without head frames, the wrist stage degrades
-    # to the blind grasp without wrist frames, and the interface readers
-    # tolerate missing odom/joint states.
+    # to the blind grasp without wrist frames.
     main_image: MainImage | None
     wrist_image: WristImage | None
     joint_states: JointStates | None
     odom: Odometry | None
 
-    # composed sub-skills: the declared class is what runs
-    gripper_open: GripperOpen
-    gripper_close: GripperClose
-    arm_rest: ArmRestPosition
-
     def __init__(self, logger):
         super().__init__(logger)
         self._p = PARAMS
-        self._grip_strength = None  # Gemini's hardness rating; set on detection
+        self._grip_strength = None
         self._holding = False  # fingers committed on an object this run
 
     @resource
     def _proxy(self):
-        # Innate Gemini proxy client; None if no credentials. Lazy: built on
-        # the first vision call.
         return gemlib.make_client()
-
-    def _checkpoint(self):
-        """Raise out of the run if a cancel latched. Failures raise
-        SkillFailed / SkillCancelled and unwind to execute's handlers —
-        no None-as-failure plumbing. Deliberately NOT called during
-        close/twist/lift: once the fingers commit, aborting mid-grip
-        would drag the object on the way home."""
-        self.check_cancelled()
 
     def _detect_px(self, prompt):
         """Head frame -> best grasp pixel, or None. Also records Gemini's
-        per-object grip_strength (self._grip_strength) for the close."""
-        self._stop_base()
-        time.sleep(self._p["settle_s"])
+        per-object grip_strength for the close."""
+        self.mobility.stop()
+        self.sleep(self._p["settle_s"])
         img = self.main_image
         if not img:
             return None
@@ -240,7 +194,6 @@ class PickAnyObject(Skill):
             "squeezing them harder stalls the gripper servo. "
             "Empty list if not present.",
             logger=self.logger,
-            cancelled=lambda: self.cancelled,
         )
         px = vision.parse_det_px(text)
         grip = vision.parse_det_grip(text)
@@ -260,42 +213,36 @@ class PickAnyObject(Skill):
         return xy, px
 
     def _localize_retry(self, prompt):
-        """_localize_px with one retry: a single "not visible" is noise, not
-        absence — Gemini can deny an object on one look and match it again
-        on the next."""
+        """One retry: a single "not visible" is noise, not absence."""
         xy, px = self._localize_px(prompt)
         if px is None:
             xy, px = self._localize_px(prompt)
         return xy, px
 
-    def _stop_base(self):
-        self.mobility.stop()
+    def _odom_xyt(self):
+        return self.mobility.odom_xyt(self.odom)
 
     def _rotate_by(self, angle):
         self.mobility.rotate_by(
-            lambda: self.mobility.odom_xyt(self.odom),
+            self._odom_xyt,
             angle,
             kp=self._p["rot_kp"],
             wz_max=self._p["rot_wz_max"],
             wz_min=self._p["rot_wz_min"],
             tol=math.radians(self._p["rot_tol_deg"]),
-            cancelled=lambda: self.cancelled,
             logger=self.logger,
         )
-        self._checkpoint()  # rotate_by returns early on cancel — unwind here
 
     def _drive(self, dist):
         self.mobility.drive(
-            lambda: self.mobility.odom_xyt(self.odom),
+            self._odom_xyt,
             dist,
             kp=self._p["drive_kp"],
             v_max=self._p["drive_v_max"],
             v_min=self._p["drive_v_min"],
             tol=self._p["drive_tol_m"],
-            cancelled=lambda: self.cancelled,
             logger=self.logger,
         )
-        self._checkpoint()  # drive returns early on cancel — unwind here
 
     def _rest_arm(self, keep_grip):
         """Best-effort teardown: carry if holding, else fold to rest. Never
@@ -310,7 +257,6 @@ class PickAnyObject(Skill):
     def _search(self, prompt):
         """Scan: straight, right 30°, left 60°. First hit wins. (+yaw=left)"""
         for i, turn in enumerate((0.0, -math.radians(30), math.radians(60))):
-            self._checkpoint()
             if turn:
                 if i == 1:
                     self.say("Scanning around for it.")
@@ -324,16 +270,13 @@ class PickAnyObject(Skill):
         """(center_px, outer_half, accept_half). Stop only inside accept."""
         c = floor_to_pixel(self._p["sweet_x"], self._p["box_y"], self._p["tilt_deg"])
         if c is None or not (0 <= c[0] < IMG_W and 0 <= c[1] < IMG_H):
-            # behind the camera plane or projected outside the frame — bad
-            # tilt_deg/sweet_x params; assert would vanish under -O
             raise SkillFailed("pick box off-image — check tilt_deg/sweet_x")
         half = self._p["box_half_px"]
         return (c[0], c[1]), half, half * self._p["accept_frac"]
 
     def _follow_into_box(self, seed_px):
         """Optical-flow base servo into pick box. No Gemini.
-        Returns ('in_box'|'lost'|'timeout'|'noframe', px|None).
-        """
+        Returns ('in_box'|'lost'|'timeout'|'noframe', px|None)."""
         raw = self.main_image
         prev = vision.b64_to_gray(raw) if raw else None
         if prev is None:
@@ -343,39 +286,35 @@ class PickAnyObject(Skill):
         in_box = 0
         t0 = time.time()
         while time.time() - t0 < FOLLOW_TIMEOUT_S:
-            self._checkpoint()
-            # Only track NEW frames (cf. _next_wrist_hsv): the camera runs
-            # slower than this loop, and a stale frame re-decoded and re-tracked
-            # is wasted CPU — and would let the in_box streak count one real
-            # observation three times.
+            # Only track NEW frames: the camera runs slower than this loop,
+            # and a stale frame re-tracked would count one observation twice.
             img = self.main_image
             if not img or img == raw:
-                time.sleep(0.03)
+                self.sleep(0.03)
                 continue
             gray = vision.b64_to_gray(img)
             raw = img
             if gray is None:
-                time.sleep(0.03)
+                self.sleep(0.03)
                 continue
             tracked = vision.track_point(prev, gray, grid)
             prev = gray
             if tracked is None:
-                self._stop_base()
+                self.mobility.stop()
                 return "lost", None
             u, v = tracked
             grid = vision.grid_pts(u, v)
             if not (0 <= u < IMG_W and 0 <= v < IMG_H):
-                self._stop_base()
+                self.mobility.stop()
                 return "lost", None
 
             (cu, cv), _half, accept = self._sweet_box()
-            inside = _inside_box((u, v), cu, cv, accept)
-            if inside:
+            if _inside_box((u, v), cu, cv, accept):
                 in_box += 1
-                self._stop_base()
+                self.mobility.stop()
                 if in_box >= 3:
                     return "in_box", (u, v)
-                time.sleep(0.03)
+                self.sleep(0.03)
                 continue
             in_box = 0
 
@@ -387,14 +326,8 @@ class PickAnyObject(Skill):
                 v - cv, self._p["follow_gain_lin"], self._p["drive_v_min"], self._p["drive_v_max"], accept
             )
             self.mobility.send_cmd_vel(vx, wz, 0.15)
-            if self.cancelled:
-                # the on_cancel brake fired between the loop checkpoint and
-                # the send, which re-commanded motion — undo it and unwind
-                # now, not at the next checkpoint
-                self._stop_base()
-                self._checkpoint()
-            time.sleep(0.03)
-        self._stop_base()
+            self.sleep(0.03)
+        self.mobility.stop()
         return "timeout", None
 
     def _position_failed(self, prompt):
@@ -408,9 +341,8 @@ class PickAnyObject(Skill):
 
         seed = floor_to_pixel(xy[0], xy[1], self._p["tilt_deg"])
         for _attempt in range(int(self._p["box_steps"])):
-            self._checkpoint()
             if seed is None:
-                seed = self._detect_px(prompt) or self._detect_px(prompt)  # one miss is noise — retry once
+                seed = self._detect_px(prompt) or self._detect_px(prompt)
                 if seed is None:
                     self._position_failed(prompt)
             result, _pt = self._follow_into_box(seed)
@@ -435,7 +367,6 @@ class PickAnyObject(Skill):
         target_range = math.hypot(self._p["sweet_x"], self._p["box_y"])
         px = floor_to_pixel(xy[0], xy[1], self._p["tilt_deg"])
         for _step in range(int(self._p["box_steps"])):
-            self._checkpoint()
             if px is None:
                 xy, px = self._localize_retry(prompt)
                 if px is None:
@@ -455,10 +386,9 @@ class PickAnyObject(Skill):
         self._position_failed(prompt)
 
     # GRASP: search pose -> seed -> servo down -> blind push -> close/twist/lift
-    # (wrist_steps=0 skips to blind hover + push)
     def _wrist_seed(self, prompt):
         """Wrist Gemini box -> (center_px, box) or (None, None)."""
-        time.sleep(self._p["wrist_settle_s"])
+        self.sleep(self._p["wrist_settle_s"])
         img = self.wrist_image
         text = (
             gemlib.ask_image(
@@ -470,7 +400,6 @@ class PickAnyObject(Skill):
                 '{"box_2d":[ymin,xmin,ymax,xmax]} normalized 0-1000, best first, '
                 "each box TIGHT around its object. Empty list if not visible.",
                 logger=self.logger,
-                cancelled=lambda: self.cancelled,
             )
             if img
             else None
@@ -483,18 +412,15 @@ class PickAnyObject(Skill):
         """Wait for a new wrist frame -> (hsv|None, b64)."""
         t0 = time.time()
         while time.time() - t0 < timeout:
-            self._checkpoint()
             img = self.wrist_image
             if img and img != last_b64:
                 hsv = vision.b64_to_hsv(img)
                 if hsv is not None:
                     return hsv, img
-            time.sleep(0.04)
+            self.sleep(0.04)
         return None, last_b64
 
     def _wrist_done(self, x, y, z, reason):
-        """Log the exit reason; the (x, y, z) grasp target for every
-        _wrist_descend return."""
         self.logger.info(f"[PickAnyObject] wrist stage: {reason} (z={z:.3f})")
         return x, y, z
 
@@ -527,7 +453,7 @@ class PickAnyObject(Skill):
         px, box = self._wrist_seed(prompt)
         if px is None:
             return self._wrist_done(tx, ty, z, "not seen")
-        x, y = (ee[0], ee[1]) if ee else (tx, ty)  # servo from the real pose
+        x, y = (ee[0], ee[1]) if ee else (tx, ty)
 
         hsv, raw = self._next_wrist_hsv(None)
         if hsv is None:
@@ -542,7 +468,6 @@ class PickAnyObject(Skill):
         stalled = 0  # consecutive steps eaten by the reach clamp
         reason = "reached stop z"
         while z > p["wrist_stop_z"] + 1e-6:
-            self._checkpoint()
             if time.time() > deadline:
                 reason = "timeout"
                 break
@@ -564,7 +489,7 @@ class PickAnyObject(Skill):
                 if tracker is None:
                     reason = fail
                     break
-                px = tracker.guess  # the re-seed detection is this frame's fix
+                px = tracker.guess
             streak += 1
 
             err_u = px[0] - p["wrist_box_u"]
@@ -579,7 +504,6 @@ class PickAnyObject(Skill):
             stepped_down = centered >= 2
             if stepped_down:
                 z = max(p["wrist_stop_z"], z - p["wrist_z_step"])
-                # descent barely moves a centered pixel: guess stays px
             else:
                 # Gains tuned at z=0.15; scale with camera height.
                 s = (z + WRIST_CAM_ABOVE_EE) / (0.15 + WRIST_CAM_ABOVE_EE)
@@ -587,28 +511,24 @@ class PickAnyObject(Skill):
                 step_x = max(-cap, min(cap, p["wrist_kx"] / 100.0 * err_v * s))
                 step_y = max(-cap, min(cap, p["wrist_ky"] / 100.0 * err_u * s))
                 nx, ny = self.manipulation.clamp_reach(x + step_x, y + step_y)
-                # The reach clamp can eat the whole step (object parked at the
-                # edge of the reach box, so the pixel error can never close).
-                # Without this exit the servo re-commands the same clamped pose
-                # until the timeout — dipping the arm every move and eventually
-                # tripping move_checked recovery. Hand off to the blind push.
+                # The reach clamp can eat the whole step (object at the edge of
+                # the reach box) — hand off to the blind push instead of
+                # re-commanding the same clamped pose until timeout.
                 if math.hypot(nx - x, ny - y) < 0.25 * math.hypot(step_x, step_y):
                     stalled += 1
                     if stalled >= 3:
                         reason = "reach limit"
                         break
-                    continue  # same clamped pose — don't re-command it
+                    continue
                 stalled = 0
                 x, y = nx, ny
-                # feed-forward: expect the blob at the box center next frame
                 tracker.guess = (p["wrist_box_u"], p["wrist_box_v"])
             self.manipulation.move_checked(
                 x, y, z, pitch=p["wrist_pitch"], duration=p["wrist_move_s"], logger=self.logger
             )
             if stepped_down:
-                # A pure z-hop barely shifts the view: keep the centered
-                # verdict and ask for just one fresh confirming frame, so
-                # hops chain instead of re-earning 2+2 frames each time.
+                # A pure z-hop barely shifts the view: one fresh confirming
+                # frame is enough, so hops chain instead of re-earning 2+2.
                 streak = 1
             else:
                 streak = 0
@@ -619,31 +539,26 @@ class PickAnyObject(Skill):
     def _goto_search_pose(self, bearing):
         """WRIST_SEARCH_ARM aimed at bearing; pins IK to elbow-up branch.
 
-        j6 commands GRIPPER_OPEN (what gripper_open itself commands at 100%)
-        instead of echoing a live j6 read: right after the chained gripper_open
-        child the parent's joint_states snapshot is one 50 Hz tick stale, and
-        re-commanding it would close the just-opened gripper."""
+        j6 commands GRIPPER_OPEN instead of echoing a live j6 read: right
+        after the gripper open the joint_states snapshot is one tick
+        stale, and re-commanding it would close the just-opened gripper."""
         a = WRIST_SEARCH_ARM
         pose = [bearing, a[1], a[2], self._p["wrist_pitch"] - a[1] - a[2], a[4], self.manipulation.GRIPPER_OPEN]
-        self.manipulation.go(pose, duration=self._p["hover_s"], is_cancelled=lambda: self.cancelled, logger=self.logger)
-        time.sleep(0.3)
+        self.manipulation.go(pose, duration=self._p["hover_s"], logger=self.logger)
+        self.sleep(0.3)
 
     def _open_gripper_checked(self):
-        """Open gripper (the skill handles trip recovery). False if still shut."""
-        try:
-            self.gripper_open()
-        except SkillFailed:
-            return False
-        return True
+        """Open gripper (the interface reboots + retries a tripped servo).
+        False if still shut."""
+        self.manipulation.torque_on()
+        return self.manipulation.open_gripper(duration=1.0, blocking=True)
 
     def _push_to_floor(self, x, y, z_from):
         """Blind descent to floor as ONE multi-waypoint trajectory — the
-        rung-by-rung version decelerated to a stop at every rung and looked
-        choppy. Contact just stalls the final segments; abort if still high.
-        No mid-descent cancel any more: the whole glide is a few seconds and
-        the fingers commit right after anyway."""
+        rung-by-rung version decelerated at every rung and looked choppy.
+        Contact just stalls the final segments; abort if still high."""
         p = self._p
-        self._checkpoint()
+        self.check_cancelled()
         rungs = [z for z in (p["descend_z1"], p["descend_z2"], p["descend_z3"], p["floor_z"]) if z < z_from - 1e-6]
         if rungs:
             if len(rungs) >= 2:  # the trajectory service needs >= 2 waypoints
@@ -651,7 +566,7 @@ class PickAnyObject(Skill):
                 ok = self.manipulation.move_cartesian_trajectory(
                     poses,
                     segment_duration=p["descend_s"],
-                    gripper_position=self.manipulation.GRIPPER_OPEN,  # held open; skip the stale-actual read
+                    gripper_position=self.manipulation.GRIPPER_OPEN,
                 )
             else:
                 ok = self.manipulation.move_to_cartesian_pose(
@@ -666,9 +581,9 @@ class PickAnyObject(Skill):
                 )
             if not ok:
                 self.manipulation.recover(self.logger)
-        # This guard effectively covers the blind path only: after a wrist
-        # align the EE already starts near wrist_stop_z, well below the abort
-        # height — a limp arm there is caught by _grasp_verified instead.
+        # Covers the blind path only: after a wrist align the EE already
+        # starts below the abort height — a limp arm there is caught by
+        # _grasp_verified instead.
         ee = self.manipulation.ee_xyz()
         if ee is not None and ee[2] > p["descend_abort_z"]:
             self.manipulation.recover(self.logger)
@@ -683,15 +598,12 @@ class PickAnyObject(Skill):
         return list(js.position[:6])
 
     def _close_twist_lift(self, x, y):
-        """Close, joint-space twist+lift (IK would unwind j5). Grip force is
-        the gripper servo's hardware current cap (current-based position
-        control, arm_config.yaml): the deep close command stalls on the
-        object and squeezes continuously at that constant, safe force, so no
-        software stall detection or force loops are needed. Closing on air
-        reaches ~GRIPPER_EMPTY_J6 instead, which _grasp_verified's j6 check
-        catches."""
+        """Close, joint-space twist+lift (IK would unwind j5). Uses time.sleep
+        on purpose: the fingers have committed, and a cancel must not unwind
+        mid-grip — the run finishes this and the teardown carries the object.
+        Closing on air reaches ~GRIPPER_EMPTY_J6, which _grasp_verified's j6
+        check catches."""
         p = self._p
-        # Un-press first so the fingers close around the object, not into it.
         if p["close_lift_m"] > 0:
             ee = self.manipulation.ee_xyz()
             if ee is not None:
@@ -705,7 +617,8 @@ class PickAnyObject(Skill):
                     duration=0.5,
                     blocking=True,
                 )
-        self.gripper_close(strength=p["close_strength"], duration=p["close_s"])
+        if not self.manipulation.close_gripper(strength=p["close_strength"], duration=p["close_s"], blocking=True):
+            raise ArmUnhealthy("gripper would not close")
         # Fingers have committed: from here teardown must fold with the grip
         # kept, not open over the floor mid-carry — only a verified miss
         # clears the flag. Set here, not after _grasp_at returns: an exception
@@ -715,9 +628,8 @@ class PickAnyObject(Skill):
         time.sleep(p["close_settle_s"])
 
         grip = -p["close_strength"]
-        # The twist exists to wind FABRIC onto the fingers; on a rigid shell
-        # it just rotates the grip against the floor and helps eject the
-        # object. Gemini's grip_strength doubles as the hardness signal.
+        # The twist winds FABRIC onto the fingers; on a rigid shell it helps
+        # eject the object. Gemini's grip_strength doubles as the hardness signal.
         soft = self._grip_strength is None or self._grip_strength >= SOFT_GRIP_MIN
         try:
             if soft:
@@ -731,16 +643,16 @@ class PickAnyObject(Skill):
             j[5] = grip
             self.manipulation.move_to_joint_positions(joint_positions=j, duration=2.0, blocking=True)
             time.sleep(0.3)
-        except LookupError:  # joint states missing/short
+        except LookupError:
             # gripper=grip, never the default: the default re-seeds j6 from the
-            # measured (stalled) position, zeroing the mode-5 grip preload —
-            # the object would drop out mid-lift.
+            # measured (stalled) position, zeroing the grip preload — the
+            # object would drop out mid-lift.
             self.manipulation.move_checked(
                 x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10, gripper=grip, logger=self.logger
             )
 
     def _grasp_at(self, prompt, xy):
-        """Full grasp at floor xy (base_link). Reads self._p params."""
+        """Full grasp at floor xy (base_link)."""
         p = self._p
         x, y = self.manipulation.clamp_reach(xy[0] - p["grasp_x_off"], xy[1])
 
@@ -754,22 +666,18 @@ class PickAnyObject(Skill):
             self.manipulation.move_checked(x, y, z, pitch=p["arm_pitch"], duration=p["hover_s"], logger=self.logger)
 
         self._push_to_floor(x, y, z)
-        self._checkpoint()  # last exit before the fingers commit
+        self.check_cancelled()  # last exit before the fingers commit
         self._close_twist_lift(x, y)
 
     def _grasp_verified(self, prompt):
         """Back up, then check floor clear + gripper not open. Gemini gets both
         cameras: the wrist view can show the object in the fingers, so a held
-        object isn't mistaken for a dropped one — including one still gripped
-        but touching the floor, which counts as grabbed."""
+        object isn't mistaken for a dropped one."""
         self._drive(-VERIFY_BACKUP_M)
-        time.sleep(self._p["settle_s"])
+        self.sleep(self._p["settle_s"])
         j6 = self.manipulation.gripper_j6(self.joint_states)
         main_img, wrist_img = self.main_image, self.wrist_image
         images = [img for img in (main_img, wrist_img) if img]
-        # Label each image by the camera that actually supplied it: with the
-        # head feed down, image 1 IS the wrist view, and calling it a
-        # floor-facing head camera would misread a held object as dropped.
         labels = []
         if main_img:
             labels.append(f"Image {len(labels) + 1} is the head camera looking at the floor.")
@@ -790,7 +698,6 @@ class PickAnyObject(Skill):
                 "the gripper. Answer YES only if the object is on the floor "
                 "free of the gripper. Answer only YES or NO.",
                 logger=self.logger,
-                cancelled=lambda: self.cancelled,
             )
             if images
             else None
@@ -822,18 +729,17 @@ class PickAnyObject(Skill):
     def execute(self, prompt: str = "the sock") -> SkillReturn:
         """Pick up `prompt` from the floor."""
         if self._proxy is None:
-            return "Innate proxy not configured (INNATE_SERVICE_KEY)", SkillResult.FAILURE
+            self.fail("Innate proxy not configured (INNATE_SERVICE_KEY)")
 
-        # Stop the base the instant a cancel lands (the base cancel() also
-        # forwards the cancel to whichever chained child skill is running).
-        self.on_cancel(self._stop_base)
-
-        self._grip_strength = None  # singleton: don't carry the last run's object
+        # Per-run reset: don't carry the last run's object or grip rating.
+        self._grip_strength = None
         self._holding = False
         try:
             self.head.set_position(int(round(self._p["tilt_deg"])))
-            # Rest arm first so it doesn't occlude the head camera.
-            self.arm_rest()
+            # Fold to rest so the arm doesn't occlude the head camera.
+            self.manipulation.go(
+                self.manipulation.rest_joints(self.joint_states), duration=3.0, logger=self.logger
+            )
 
             self.say(f"Looking for {prompt}.")
             xy = self._search(prompt)
@@ -847,18 +753,15 @@ class PickAnyObject(Skill):
                 self.say("I couldn't get a grip on it.")
                 raise SkillFailed(f"Grasp missed — '{prompt}' is still on the floor (verified after backing up)")
             self.say("Got it.")
-            return (
-                f"Picked up '{prompt}' (verified: floor clear after backing up)",
-                SkillResult.SUCCESS,
-            )
-        except (SkillCancelled, ArmCancelled):
-            return "Pick cancelled", SkillResult.CANCELLED
-        except (SkillFailed, ArmFailed) as e:
-            return str(e), SkillResult.FAILURE
+            return f"Picked up '{prompt}' (verified: floor clear after backing up)"
+        except ArmFailed as e:
+            # A clean arm give-up is a skill failure, not a crash. SkillFailed
+            # and SkillCancelled propagate untouched — the framework owns them.
+            self.fail(str(e))
         except ArmUnhealthy as e:
             self.say("My arm isn't responding properly, stopping.")
-            return f"Arm servo failure: {e}", SkillResult.FAILURE
+            self.fail(f"Arm servo failure: {e}")
         finally:
-            self._stop_base()
+            self.mobility.stop()
             self._rest_arm(keep_grip=self._holding)
-            self.head.set_position(0)  # non-None: required interface, server-enforced
+            self.head.set_position(0)

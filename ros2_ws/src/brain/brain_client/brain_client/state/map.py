@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from brain_client.skills.dictcompat import LegacyMapping
+from brain_client.state.dictcompat import LegacyMapping
 
 
 @dataclass(frozen=True)

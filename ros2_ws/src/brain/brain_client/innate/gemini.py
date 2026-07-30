@@ -6,9 +6,10 @@
 """
 
 import json
-import time
 
 from innate_proxy import ProxyClient
+
+from brain_client.skills.types import cancellable_sleep
 
 SERVICE = "gemini"
 ENDPOINT = "/v1/chat/completions"
@@ -21,16 +22,12 @@ def make_client():
     return client if client.is_available() else None
 
 
-def ask_image(client, images_b64, question, logger=None, retries=3, cancelled=None):
+def ask_image(client, images_b64, question, logger=None, retries=3):
     """JPEG(s) + question -> reply text. None if no client / all retries fail.
     images_b64: one base64 string or a list of them — sent in order, so the
-    question can refer to them as image 1, image 2, ... Robot frames are
-    640x480 JPEGs, ~100 KB each (~133 KB base64), at most two per call, so
-    they go inline as data URLs; a file-upload API would only add a round
-    trip and upload lifecycle for frames used once and discarded.
-    cancelled: optional predicate checked before each attempt and through the
-    backoff — when it turns true the call gives up (returns None) instead of
-    riding out up to retries x proxy-timeout with a Stop pending."""
+    question can refer to them as image 1, image 2, ... Frames go inline as
+    data URLs (640x480 JPEGs, at most two per call). Raises SkillCancelled
+    between attempts if the run is cancelled."""
     if client is None:
         return None
     if isinstance(images_b64, str):
@@ -43,8 +40,7 @@ def ask_image(client, images_b64, question, logger=None, retries=3, cancelled=No
         "messages": [{"role": "user", "content": content}],
     }
     for attempt in range(retries):
-        if cancelled is not None and cancelled():
-            return None
+        cancellable_sleep(0)
         try:
             with client.request_stream(
                 SERVICE,
@@ -59,9 +55,5 @@ def ask_image(client, images_b64, question, logger=None, retries=3, cancelled=No
             if logger:
                 logger.warning(f"[gemini] vision call failed (try {attempt + 1}/{retries}): {e}")
             if attempt < retries - 1:
-                deadline = time.time() + 2.0 * (attempt + 1)
-                while time.time() < deadline:
-                    if cancelled is not None and cancelled():
-                        return None
-                    time.sleep(0.1)
+                cancellable_sleep(2.0 * (attempt + 1))
     return None

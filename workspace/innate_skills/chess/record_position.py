@@ -1,10 +1,5 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""
-Record Position Skill - Record current arm FK position, save to file, and send as feedback.
-"""
-
 import json
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +19,7 @@ class RecordPosition(Skill):
     Saves to calibration file and returns coordinates."""
 
     manipulation: Manipulation
-    # best effort: only used for the debug snapshot — a missing wrist frame
-    # must not abort recording the calibration point itself
-    image: WristImage | None
+    image: WristImage | None  # debug snapshot only; missing frame must not abort
 
     def execute(self, corner: BoardCorner) -> SkillReturn:
         corner = cast(BoardCorner, corner.lower().replace("-", "_").replace(" ", "_"))
@@ -34,21 +27,16 @@ class RecordPosition(Skill):
             self.fail(f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}")
 
         fk_pose = self.manipulation.get_current_end_effector_pose()
-
         if not fk_pose:
             self.fail("Could not get current position")
-
         pos = fk_pose["position"]
 
-        # Load existing calibration or create new
         calibration = {}
         if CALIBRATION_FILE.exists():
             try:
                 calibration = json.loads(CALIBRATION_FILE.read_text())
             except Exception:
                 calibration = {}
-
-        # Save corner position
         calibration[corner] = {"x": pos["x"], "y": pos["y"], "z": pos["z"]}
         CALIBRATION_FILE.write_text(json.dumps(calibration, indent=2))
 
@@ -56,20 +44,15 @@ class RecordPosition(Skill):
 
         position_str = f"X={pos['x']:.4f}, Y={pos['y']:.4f}, Z={pos['z']:.4f}"
         self.feedback(f"RECORDED {corner.upper()}: {position_str}")
-        self.logger.info(f"Saved {corner} to {CALIBRATION_FILE}")
-
         return f"{corner} recorded: {position_str}"
 
     def _save_corner_image(self, corner: str):
-        """Save the latest wrist camera frame as a corner snapshot."""
         if not self.image:
             self.logger.warning("No wrist camera image available to save")
             return
         try:
             CORNER_CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = CORNER_CAPTURES_DIR / f"corner_{corner}_{ts}.jpg"
-            path.write_bytes(self.image.jpeg)
-            self.logger.info(f"Corner image saved: {path}")
+            (CORNER_CAPTURES_DIR / f"corner_{corner}_{ts}.jpg").write_bytes(self.image.jpeg)
         except Exception as e:
             self.logger.warning(f"Failed to save corner image: {e}")

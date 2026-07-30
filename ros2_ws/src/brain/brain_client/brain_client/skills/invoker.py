@@ -10,7 +10,7 @@ import threading
 import uuid
 
 from brain_client.skills.lifecycle import encode_substep_feedback
-from brain_client.skills.types import SkillCancelled, SkillResult
+from brain_client.skills.types import SkillCancelled, SkillOutput, SkillResult
 
 _STEP_EVENT = {
     SkillResult.SUCCESS: "completed",
@@ -39,19 +39,21 @@ class SkillInvoker:
         self._active_code_skill = None
         self._active_physical_skill = None
 
-    def run(self, skill_id, *, timeout=None, **inputs):
-        """Run one child to completion; returns (message, SkillResult). A
-        child outliving ``timeout`` seconds is cancelled and reported as a
-        FAILURE without cancelling the rest of the routine."""
+    def run(self, skill_id, *, timeout=None, **inputs) -> SkillOutput:
+        """Run one child to completion; returns a SkillOutput whose status is
+        SUCCESS or FAILURE. A child outliving ``timeout`` seconds is
+        cancelled and reported as a FAILURE without cancelling the rest of
+        the routine. A cancelled routine raises SkillCancelled instead of
+        returning, so callers never handle CANCELLED themselves."""
         if self._cancelled:
-            return "Routine cancelled", SkillResult.CANCELLED
+            raise SkillCancelled("Routine cancelled")
 
         skill_id, code, physical = self._resolve(skill_id)
         if code is not None:
             problem = self._invalid_inputs(code, skill_id, inputs)
             if problem:
                 self._logger.error(f"[invoker] {problem}")
-                return problem, SkillResult.FAILURE
+                return SkillOutput(problem, status=SkillResult.FAILURE)
             name = code.display_name
         elif physical is not None:
             name = physical.metadata.get("name", skill_id)
@@ -59,9 +61,9 @@ class SkillInvoker:
             load_error = self._server.catalog.get_load_error(skill_id)
             if load_error:
                 self._logger.error(f"[invoker] skill '{skill_id}' failed to load: {load_error}")
-                return f"Skill '{skill_id}' failed to load: {load_error}", SkillResult.FAILURE
+                return SkillOutput(f"Skill '{skill_id}' failed to load: {load_error}", status=SkillResult.FAILURE)
             self._logger.error(f"[invoker] unknown skill '{skill_id}'")
-            return f"Unknown skill '{skill_id}'", SkillResult.FAILURE
+            return SkillOutput(f"Unknown skill '{skill_id}'", status=SkillResult.FAILURE)
         step_id = uuid.uuid4().hex
         self._logger.info(f"[invoker] running '{skill_id}' inputs={inputs} timeout={timeout}")
         self._step(step_id, name, skill_id, "running")
@@ -85,32 +87,34 @@ class SkillInvoker:
             watchdog.start()
         try:
             if code is not None:
-                message, status = self._run_code(code, skill_id, inputs)
+                output = self._run_code(code, skill_id, inputs)
             else:
-                message, status = self._run_physical(skill_id, physical)
+                output = self._run_physical(skill_id, physical)
         except Exception as e:
             self._logger.error(f"[invoker] '{skill_id}' raised: {e}")
             self._step(step_id, name, skill_id, "failed", reason=str(e))
-            return str(e), SkillResult.FAILURE
+            return SkillOutput(str(e), status=SkillResult.FAILURE)
         finally:
             if watchdog is not None:
                 watchdog.cancel()
 
-        if timed_out.is_set() and status is SkillResult.CANCELLED:
+        if timed_out.is_set() and output.status is SkillResult.CANCELLED:
             # only this child timed out, not the routine — report a step
             # failure so later steps still run
-            message, status = f"'{skill_id}' timed out after {timeout}s", SkillResult.FAILURE
+            output = SkillOutput(f"'{skill_id}' timed out after {timeout}s", status=SkillResult.FAILURE)
 
         self._step(
             step_id,
             name,
             skill_id,
-            _STEP_EVENT.get(status, "completed"),
-            reason=message if status is SkillResult.FAILURE else None,
-            output=message if status is SkillResult.SUCCESS else None,
+            _STEP_EVENT.get(output.status, "completed"),
+            reason=output.message if output.status is SkillResult.FAILURE else None,
+            output=output.message if output.status is SkillResult.SUCCESS else None,
         )
-        self._cancelled = self._cancelled or status is SkillResult.CANCELLED
-        return message, status
+        if output.status is SkillResult.CANCELLED:
+            self._cancelled = True
+            raise SkillCancelled(output.message)
+        return output
 
     def cancel(self):
         """Stop the routine: the running child and every step after it. The

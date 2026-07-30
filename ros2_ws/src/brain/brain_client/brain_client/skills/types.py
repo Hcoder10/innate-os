@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -26,9 +27,11 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-# What execute() may return; the optional third element is a structured
-# payload chaining callers read back as SkillOutput.data.
-SkillReturn = Union[None, str, "tuple[str, SkillResult]", "tuple[str, SkillResult, Any]"]
+# What execute() may return: the result message (SkillOutput to attach a
+# structured payload for chaining callers), or None. Failure is self.fail();
+# cancellation is the framework's. Legacy (message, SkillResult[, data])
+# tuples still normalize at runtime but are deprecated.
+SkillReturn = Union[None, str, "SkillOutput"]
 
 TTS_TOPIC = "/brain/tts"
 TTS_STATUS_TOPIC = "/tts/is_playing"
@@ -54,31 +57,106 @@ class SkillCancelled(BaseException):
     """
 
 
-class SkillOutput(str):
-    """A skill's output message (a plain str), with an optional structured
-    payload on .data — the third element of an execute() return, if any."""
-
-    data: Any = None
-
-    def __new__(cls, message: str, data: Any = None):
-        output = super().__new__(cls, message)
-        output.data = data
-        return output
+# The active run's cancel latch. One skill runs at a time (the server's
+# execution slot enforces it), so module state is exact: the server swaps
+# this around each execute(), and interface helpers block on it so their
+# loops unwind on cancel without any plumbing from the skill.
+_run_cancel = threading.Event()
 
 
-def normalize_skill_result(result, skill_name: str = "Skill") -> tuple[SkillOutput, "SkillResult"]:
-    """Turn any SkillReturn form into (SkillOutput, status)."""
+def swap_run_cancel(event: "threading.Event | None") -> threading.Event:
+    global _run_cancel
+    previous = _run_cancel
+    _run_cancel = event if event is not None else threading.Event()
+    return previous
+
+
+def cancellable_sleep(seconds: float) -> None:
+    """time.sleep that raises SkillCancelled the moment the run is cancelled."""
+    if _run_cancel.wait(seconds):
+        raise SkillCancelled("cancelled")
+
+
+class SkillOutput:
+    """The result of a skill run: the message, the status (a SkillResult, not
+    a string), and an optional structured payload for chaining callers.
+
+    ``str(output)`` and f-strings give the message; ``output.ok`` is the
+    success check. Unpacking as the legacy ``(message, status)`` tuple still
+    works but is deprecated.
+    """
+
+    __slots__ = ("message", "data", "status")
+
+    def __init__(self, message: str, data: Any = None, status: "SkillResult" = SkillResult.SUCCESS):
+        self.message = str(message)
+        self.data = data
+        self.status = status
+
+    @property
+    def ok(self) -> bool:
+        return self.status is SkillResult.SUCCESS
+
+    def __str__(self) -> str:
+        return self.message
+
+    def __repr__(self) -> str:
+        data = f", data={self.data!r}" if self.data is not None else ""
+        return f"SkillOutput({self.message!r}, status={self.status.value}{data})"
+
+    def __iter__(self):
+        # legacy `message, status = ...` unpacking, from when results were tuples
+        _warn_once(
+            "unpack",
+            "Unpacking a skill result as (message, status) is deprecated — "
+            "use output.message / output.status / output.ok.",
+        )
+        yield self.message
+        yield self.status
+
+
+# Deprecation keys already warned about, once per process.
+_deprecation_warned: set[str] = set()
+
+
+def _warn_once(key: str, message: str, logger=None) -> None:
+    if key in _deprecation_warned:
+        return
+    _deprecation_warned.add(key)
+    if logger is not None:
+        logger.warning(message)
+    else:
+        warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+
+def normalize_skill_result(result, skill_name: str = "Skill", logger=None) -> SkillOutput:
+    """Turn any execute() return into a SkillOutput.
+
+    Legacy (message, SkillResult[, data]) tuples still normalize, with a
+    once-per-skill deprecation warning; anything else raises SkillFailed so
+    the author sees the contract as the run's failure message.
+    """
     if result is None:
-        return SkillOutput(f"{skill_name} completed"), SkillResult.SUCCESS
+        return SkillOutput(f"{skill_name} completed")
     if isinstance(result, SkillOutput):
-        return result, SkillResult.SUCCESS  # forwarded child output: keep .data
+        return result  # forwarded child output: keep .data and .status
     if isinstance(result, str):
-        return SkillOutput(result), SkillResult.SUCCESS
-    if isinstance(result, (tuple, list)) and len(result) == 3:
-        message, status, data = result
-        return SkillOutput(message, data), status
-    message, status = result
-    return SkillOutput(message), status
+        return SkillOutput(result)
+    if isinstance(result, (tuple, list)) and len(result) in (2, 3) and isinstance(result[1], SkillResult):
+        _warn_once(
+            f"return:{skill_name}",
+            f"{skill_name}.execute() returned a (message, SkillResult) tuple — deprecated. "
+            "Return the message str on success (SkillOutput(message, data) to attach a payload); "
+            "call self.fail(message) to fail. Cancellation is the framework's.",
+            logger,
+        )
+        message, status = result[0], result[1]
+        data = result[2] if len(result) == 3 else None
+        return SkillOutput(message, data, status)
+    raise SkillFailed(
+        f"{skill_name}.execute() returned {type(result).__name__} — return a str, "
+        "SkillOutput(message, data), or None; call self.fail(message) to fail."
+    )
 
 
 class RobotStateType(Enum):
@@ -250,12 +328,12 @@ class _BoundPhysicalSkill:
     def __call__(self, *, timeout: float | None = None, **inputs) -> "SkillOutput":
         """Same contract as calling a code sub-skill: output on success,
         SkillFailed / SkillCancelled otherwise."""
-        message, status = self._invoker.run(self._skill_id, timeout=timeout, **inputs)
-        if status is SkillResult.CANCELLED:
-            raise SkillCancelled(str(message))
-        if status is not SkillResult.SUCCESS:
-            raise SkillFailed(str(message))
-        return message
+        output = self._invoker.run(self._skill_id, timeout=timeout, **inputs)
+        if output.status is SkillResult.CANCELLED:
+            raise SkillCancelled(output.message)
+        if not output.ok:
+            raise SkillFailed(output.message)
+        return output
 
 
 class PhysicalSkill(_Injected):
@@ -367,25 +445,25 @@ class _FeedSpec:
 @cache
 def _feed_specs() -> "tuple[_FeedSpec, ...]":
     # imported lazily: the interface classes pull ROS/Nav2 modules
-    from brain_client.robot.head import HeadInterface
-    from brain_client.robot.manipulation import ManipulationInterface
-    from brain_client.robot.mobility import MobilityInterface
-    from brain_client.skills.arm import Arm
-    from brain_client.skills.battery import Battery
-    from brain_client.skills.head import HeadState
-    from brain_client.skills.image import DepthMap, MainImage, WristImage
-    from brain_client.skills.joint_states import JointStates
-    from brain_client.skills.lidar import Lidar
-    from brain_client.skills.map import Map
-    from brain_client.skills.odometry import Odometry
-    from brain_client.skills.pose import Pose
+    from brain_client.robot.head import Head
+    from brain_client.robot.manipulation import Manipulation
+    from brain_client.robot.mobility import Mobility
+    from brain_client.state.arm import Arm
+    from brain_client.state.battery import Battery
+    from brain_client.state.head import HeadState
+    from brain_client.state.image import DepthMap, MainImage, WristImage
+    from brain_client.state.joint_states import JointStates
+    from brain_client.state.lidar import Lidar
+    from brain_client.state.map import Map
+    from brain_client.state.odometry import Odometry
+    from brain_client.state.pose import Pose
 
     main = RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64
     wrist = RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64
     return (
-        _FeedSpec(ManipulationInterface, Interface, InterfaceType.MANIPULATION, "Manipulation", ("manipulation",)),
-        _FeedSpec(MobilityInterface, Interface, InterfaceType.MOBILITY, "Mobility", ("mobility",)),
-        _FeedSpec(HeadInterface, Interface, InterfaceType.HEAD, "Head", ("head",)),
+        _FeedSpec(Manipulation, Interface, InterfaceType.MANIPULATION, "Manipulation", ("manipulation",)),
+        _FeedSpec(Mobility, Interface, InterfaceType.MOBILITY, "Mobility", ("mobility",)),
+        _FeedSpec(Head, Interface, InterfaceType.HEAD, "Head", ("head",)),
         # cameras start per run (and sim renders on demand) — longer grace
         _FeedSpec(MainImage, Camera, main, "MainImage", ("image", "main_image"), "main camera", grace_s=3.0),
         _FeedSpec(WristImage, Camera, wrist, "WristImage", ("wrist_image",), "wrist camera", grace_s=3.0),
@@ -648,11 +726,11 @@ class Skill(ABC):
             result = self.execute(**inputs)
         finally:
             del hooks[registered_before_call:]
-        output, status = normalize_skill_result(result, self.name)
-        if status is SkillResult.CANCELLED:
-            raise SkillCancelled(str(output))
-        if status is not SkillResult.SUCCESS:
-            raise SkillFailed(str(output))
+        output = normalize_skill_result(result, self.name, logger=self.logger)
+        if output.status is SkillResult.CANCELLED:
+            raise SkillCancelled(output.message)
+        if not output.ok:
+            raise SkillFailed(output.message)
         return output
 
     def wire_subskills(self, wire_child: "Callable[[type[Skill]], Skill]", _seen: frozenset = frozenset()) -> None:
@@ -719,8 +797,16 @@ class Skill(ABC):
         if value:
             self._cancel_latch().set()
 
+    def sleep(self, seconds: float) -> None:
+        """time.sleep for skill code: wakes and raises SkillCancelled the
+        moment a cancel lands. Sleeping is the only cancel point a loop
+        needs — write the loop as if cancel didn't exist."""
+        if self._cancel_latch().wait(seconds):
+            raise SkillCancelled(f"{self.name} cancelled")
+
     def check_cancelled(self) -> None:
-        """Raise SkillCancelled if a cancel landed — call at loop checkpoints."""
+        """Raise SkillCancelled if a cancel landed — for the rare checkpoint
+        that has no sleep (e.g. right before an irreversible commit)."""
         if self._cancelled:
             raise SkillCancelled(f"{self.name} cancelled")
 
@@ -734,15 +820,16 @@ class Skill(ABC):
                 return value
             if time.monotonic() >= deadline:
                 return None
-            self.check_cancelled()
-            time.sleep(poll)
+            self.sleep(poll)
 
     def on_cancel(self, callback) -> None:
         """Register a zero-arg hook fired (on the cancelling thread) the
-        moment a cancel lands — stop motion immediately instead of waiting
-        for the next cancelled poll. A hook registered inside a composed
-        call (``self.child(...)``) lives only for that call (see
-        ``__call__``); on a run root it lives for the run."""
+        moment a cancel lands. Rarely needed: braking the base is automatic
+        (see ``_halt_interfaces``) — use this only to forward the cancel to
+        an external goal (``self.on_cancel(handle.cancel_goal_async)``).
+        A hook registered inside a composed call (``self.child(...)``) lives
+        only for that call (see ``__call__``); on a run root it lives for
+        the run."""
         vars(self).setdefault("_cancel_hooks", []).append(callback)
 
     def _begin_run(self, goal_handle=None):
@@ -754,14 +841,31 @@ class Skill(ABC):
             pass  # duck-typed handles without cancel status
 
     def cancel(self) -> None:
-        """Latch self.cancelled, fire the on_cancel hooks, and stop any
-        running child. Override only when a hook can't express the teardown
-        — and if you chain children, call self.skills.cancel() too."""
+        """Latch self.cancelled, fire the on_cancel hooks, halt motion, and
+        stop any running child. Override only when a hook can't express the
+        teardown — and if you chain children, call self.skills.cancel() too."""
         self._cancel_latch().set()
         self._fire_cancel_hooks()
+        self._halt_interfaces()
         skills = getattr(self, "skills", None)
         if skills is not None:
             skills.cancel()
+
+    def _halt_interfaces(self) -> None:
+        """Call halt() on every injected interface that has one, children
+        included — the framework brake: the server fires this on cancel and
+        again at run end, so commanded motion never outlives a run and
+        skills don't write brake hooks or trailing stops."""
+        for name in self._feed_interfaces:
+            halt = getattr(getattr(self, name, None), "halt", None)
+            if halt is None:
+                continue
+            try:
+                halt()
+            except Exception as e:
+                self.logger.error(f"[{self.name}] halting {name} failed: {e}")
+        for child in self._wired_children():
+            child._halt_interfaces()
 
     def _fire_cancel_hooks(self) -> None:
         """Fire this instance's on_cancel hooks, then the wired children's —

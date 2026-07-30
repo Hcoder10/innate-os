@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 from functools import cached_property
 
-from brain_client.skills.dictcompat import LegacyMapping
+from brain_client.state.dictcompat import LegacyMapping
 
 
 @dataclass(frozen=True)

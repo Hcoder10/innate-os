@@ -31,6 +31,7 @@ def _metadata_from_msg(msg: AvailableSkills) -> list[dict]:
             "id": s.id,
             "name": s.name,
             "type": s.type,
+            "group": s.group,
             "guidelines": s.guidelines,
             "guidelines_when_running": s.guidelines_when_running,
             "inputs": json.loads(s.inputs_json) if s.inputs_json else {},

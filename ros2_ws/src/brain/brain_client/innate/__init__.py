@@ -30,19 +30,26 @@ the run up front if none arrives — so no None guards are needed; ``| None``
 (``head: Head | None``) makes it best effort instead, injected when available
 and None otherwise. Reading an undeclared feed raises, and your editor flags
 it before you ship.
+
+execute() returns the run's result: the message str, or
+``SkillOutput(message, data)`` to attach a structured payload for chaining
+callers, or None. Call ``self.fail(message)`` to end the run as a failure.
+Callers of other skills get that SkillOutput back — ``out = self.turn(...)``
+then ``out.message`` / ``out.data`` / ``out.ok``, with ``out.status`` a
+SkillResult enum, never a bare string. (Legacy ``(message, SkillResult)``
+tuple returns still work but are deprecated.)
+
+Cancellation is the framework's job, not yours. Use ``self.sleep(seconds)``
+instead of ``time.sleep`` and write loops as if cancel didn't exist: every
+blocking framework call (``self.sleep``, ``self.wait_for``, sub-skill calls,
+interface helpers) raises SkillCancelled the moment a Stop lands, the base
+is braked automatically, and the run reports CANCELLED. ``try/finally`` in
+execute() is your cleanup hook; ``self.on_cancel(...)`` exists only to
+forward a cancel to an external action goal.
 """
 
 from typing import TYPE_CHECKING
 
-from brain_client.skills.arm import Arm
-from brain_client.skills.battery import Battery
-from brain_client.skills.head import HeadState
-from brain_client.skills.image import DepthMap, Image, MainImage, WristImage
-from brain_client.skills.joint_states import JointStates
-from brain_client.skills.lidar import Lidar
-from brain_client.skills.map import Map
-from brain_client.skills.odometry import Odometry
-from brain_client.skills.pose import Pose
 from brain_client.skills.types import (
     PhysicalSkill,
     Skill,
@@ -53,6 +60,15 @@ from brain_client.skills.types import (
     SkillReturn,
     resource,
 )
+from brain_client.state.arm import Arm
+from brain_client.state.battery import Battery
+from brain_client.state.head import HeadState
+from brain_client.state.image import DepthMap, Image, MainImage, WristImage
+from brain_client.state.joint_states import JointStates
+from brain_client.state.lidar import Lidar
+from brain_client.state.map import Map
+from brain_client.state.odometry import Odometry
+from brain_client.state.pose import Pose
 
 __all__ = [
     "Arm",
@@ -82,17 +98,16 @@ __all__ = [
 
 # The interface classes pull ROS/Nav2 modules, so they resolve lazily
 # (PEP 562): `from innate import Mobility` imports them on first use only.
-# Type checkers can't follow __getattr__, so they read the aliases below —
-# the names, and the classes behind them, are identical either way.
+# Type checkers can't follow __getattr__, so they read the imports below.
 if TYPE_CHECKING:
-    from brain_client.robot.head import HeadInterface as Head
-    from brain_client.robot.manipulation import ManipulationInterface as Manipulation
-    from brain_client.robot.mobility import MobilityInterface as Mobility
+    from brain_client.robot.head import Head
+    from brain_client.robot.manipulation import Manipulation
+    from brain_client.robot.mobility import Mobility
 
 _LAZY_INTERFACES = {
-    "Mobility": ("brain_client.robot.mobility", "MobilityInterface"),
-    "Manipulation": ("brain_client.robot.manipulation", "ManipulationInterface"),
-    "Head": ("brain_client.robot.head", "HeadInterface"),
+    "Mobility": ("brain_client.robot.mobility", "Mobility"),
+    "Manipulation": ("brain_client.robot.manipulation", "Manipulation"),
+    "Head": ("brain_client.robot.head", "Head"),
 }
 
 

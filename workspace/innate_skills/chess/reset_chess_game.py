@@ -1,10 +1,5 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""
-Reset Chess Game Skill - Resets the board state to the starting position.
-"""
-
 import json
 from pathlib import Path
 from typing import Literal, cast
@@ -28,40 +23,21 @@ class ResetChessGame(Skill):
     to set which side the robot plays."""
 
     def _is_calibrated(self) -> bool:
-        """Return True when board calibration JSON exists and has all four corners."""
-        if not CALIBRATION_FILE.exists():
-            return False
-
         try:
             calibration = json.loads(CALIBRATION_FILE.read_text())
+            for corner in REQUIRED_CORNERS:
+                for axis in "xyz":
+                    float(calibration[corner][axis])
+            return True
         except Exception:
             return False
-
-        if not isinstance(calibration, dict):
-            return False
-
-        for corner in REQUIRED_CORNERS:
-            pos = calibration.get(corner)
-            if not isinstance(pos, dict):
-                return False
-            try:
-                float(pos["x"])
-                float(pos["y"])
-                float(pos["z"])
-            except Exception:
-                return False
-
-        return True
 
     def execute(self, robot_color: RobotColor = "white") -> SkillReturn:
         robot_color = cast(RobotColor, robot_color.strip().lower())
         if robot_color not in ROBOT_COLORS:
             self.fail(f"Invalid robot_color '{robot_color}'. Must be 'white' or 'black'.")
         if not self._is_calibrated():
-            msg = "Board is not calibrated. Run board calibration first, then reset the chess game."
-            self.logger.warning(f"[ResetChessGame] {msg}")
-            self.feedback(msg)
-            self.fail(msg)
+            self.fail("Board is not calibrated. Run board calibration first, then reset the chess game.")
 
         state = {
             "fen": HANDICAP_FEN,
@@ -70,13 +46,11 @@ class ResetChessGame(Skill):
             "turn": "white",
             "robot_color": robot_color,
         }
-
         try:
             GAME_STATE_FILE.write_text(json.dumps(state, indent=2))
         except Exception as e:
             self.fail(f"Failed to write game state: {e}")
 
         msg = f"Game reset to starting position. Robot plays {robot_color}."
-        self.logger.info(f"[ResetChessGame] {msg}")
         self.feedback(msg)
         return msg

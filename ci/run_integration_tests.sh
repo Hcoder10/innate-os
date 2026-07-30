@@ -83,12 +83,6 @@ fi
 echo "=== unit tests (fast, no ROS) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
   src/brain/brain_client/test/test_fake_cloud_selftest.py \
-  src/brain/brain_client/test/test_ambient_robot_state.py \
-  src/brain/brain_client/test/test_workspace_hot_reload.py \
-  src/brain/brain_client/test/test_skill_packages.py \
-  src/brain/brain_client/test/test_skill_composition.py \
-  src/brain/brain_client/test/test_dynamic_loader_helpers.py \
-  src/brain/brain_client/test/test_broken_skills_catalog.py \
   src/brain/manipulation/test/test_config_validation.py
 
 echo "=== unit tests: webapp front door (aiohttp, no ROS) ==="

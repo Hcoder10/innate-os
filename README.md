@@ -167,9 +167,7 @@ Helpers work like normal Python: any `.py` in your skills folder that doesn't de
     <td width="50%" valign="top">
       <strong>Code skill</strong> — call the mobility interface to move forward.<br>
       Saved as <code>workspace/custom_skills/move_forward.py</code>:
-      <pre lang="python">import time
-
-from innate import Mobility, Skill, SkillResult, SkillReturn
+      <pre lang="python">from innate import Mobility, Skill, SkillReturn
 
 
 class MoveForward(Skill):
@@ -181,19 +179,15 @@ class MoveForward(Skill):
         speed = 0.2  # m/s
         duration = distance_m / speed
         self.mobility.send_cmd_vel(linear_x=speed, duration=duration)
-
-        stop_at = time.time() + duration
-        while True:
-            remaining = stop_at - time.time()
-            if not remaining > 0:
-                break
-            if self.cancelled:
-                self.mobility.stop()
-                return "Move cancelled", SkillResult.CANCELLED
-            time.sleep(min(0.05, remaining))
-
+        self.sleep(duration)    # like time.sleep, but a Stop unwinds it
         return f"Moved forward {distance_m} m"
 </pre>
+      The return value is the run's result message; call
+      <code>self.fail(message)</code> to end the run as a failure.
+      Cancellation is the framework's job: <code>self.sleep</code> (and every
+      blocking framework call) raises the moment a Stop lands, the base is
+      braked automatically, and the run reports CANCELLED — skills carry no
+      cancel code.
     </td>
   </tr>
 </table>
