@@ -31,7 +31,10 @@
 #     motion_control:               # teleop / manual driving
 #       max_speed: 0.4              # m/s, top translational speed
 #       max_angular_speed: 1.0      # rad/s, top rotational speed
-#       speed_scale: 1.0            # speed-mode multiplier on the two caps above, (0, 1].
+#       speed_scale: 1.0            # speed-mode multiplier on the two caps above. Clamped to
+#                                   # the range the robot's own preset table spans — currently
+#                                   # 0.35 (Slow) to 2.0 (Mad), so above 1.0 it exceeds these
+#                                   # caps and bringup's safety clamp becomes the real ceiling.
 #                                   # The app/webapp speed picker writes this live; setting
 #                                   # it here only changes what the robot boots into.
 #     nav:                          # autonomous (nav2)

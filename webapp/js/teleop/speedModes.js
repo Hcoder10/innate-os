@@ -41,6 +41,11 @@ function modeForScale(modes, scale) {
  * The robot publishes the preset table, so it is the single source of truth for what the
  * picker offers and a new mode does not need a client release. Anything malformed, or a
  * robot predating the field, falls back to the built-in table.
+ *
+ * No upper bound on scale: a mode may exceed 1.0 and so exceed the configured caps (that
+ * is what "Mad" is). The robot clamps writes to its own table's largest entry, so the
+ * ceiling is enforced there rather than here — a client that second-guessed it would just
+ * refuse to render modes the robot legitimately offers, which is how this was missed.
  * @param {unknown} raw
  * @returns {{id: string, label: string, scale: number}[] | null}
  */
@@ -49,7 +54,7 @@ function parseModes(raw) {
   const parsed = raw.filter(
     (m) =>
       m && typeof m.id === "string" && typeof m.label === "string" && typeof m.scale === "number" &&
-      Number.isFinite(m.scale) && m.scale > 0 && m.scale <= 1,
+      Number.isFinite(m.scale) && m.scale > 0,
   );
   return parsed.length === raw.length ? parsed : null;
 }
