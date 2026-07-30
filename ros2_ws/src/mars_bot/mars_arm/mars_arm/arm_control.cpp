@@ -129,6 +129,13 @@ void MarsArmNode::controlTimerCallback() {
                 if (idle_s > kScheduledHoldTimeoutS && unloaded) {
                     gain_mode_ = GainMode::TELEOP;
                     RCLCPP_INFO(this->get_logger(), "Gain mode -> TELEOP (idle %.1fs, arm unloaded)", idle_s);
+                } else if (idle_s > kScheduledHoldTimeoutS && loads.size() <= 2) {
+                    // A short state read leaves the load unknown; staying stiff is
+                    // the safe call, but say so — silently holding scheduled gains
+                    // is exactly what ran joint 2 up to 70 C.
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 30000,
+                                         "Idle gain decay blocked: no shoulder/elbow load reading — holding "
+                                         "scheduled (stiff) gains");
                 }
             }
 

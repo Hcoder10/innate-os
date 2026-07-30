@@ -966,15 +966,20 @@ class Skill(ABC):
         self._tts_playing = msg.data
 
     def _wait_for_speech_end(self, text: str) -> None:
+        # A cancel abandons the wait (best effort, like the rest of say():
+        # no raise — teardown paths speak after the latch is set). Without
+        # the check a Stop would ride out the full budget below.
         # if playback never starts (TTS off, muted), don't hang the skill
-        deadline = time.time() + 15.0
+        deadline = time.monotonic() + 15.0
         while self._tts_playing != "true":
-            if time.time() > deadline:
+            if self.cancelled or time.monotonic() > deadline:
                 return
             time.sleep(0.05)
         # finish budget scales with utterance length
-        deadline = time.time() + max(30.0, 0.1 * len(text))
-        while self._tts_playing == "true" and time.time() < deadline:
+        deadline = time.monotonic() + max(30.0, 0.1 * len(text))
+        while self._tts_playing == "true" and time.monotonic() < deadline:
+            if self.cancelled:
+                return
             time.sleep(0.05)
 
     def update_robot_state(self, **kwargs):

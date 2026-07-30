@@ -17,10 +17,6 @@ from brain_client.common.script_paths import (
 )
 from brain_client.skills.physical_refs import render_refs, write_refs
 
-# roster types that are physical skills (data, no code class) — these are what
-# the generated physical_skills package covers
-_PHYSICAL_TYPES = frozenset({"learned", "replay", "eval", "physical"})
-
 
 def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tuple[dict[str, Agent], Agent | None]:
     """
@@ -84,5 +80,10 @@ def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> No
     left alone rather than emptied)."""
     if not skills_dict:
         return
-    entries = [meta for meta in skills_dict.values() if meta.get("type") in _PHYSICAL_TYPES]
+    # Everything on the roster that isn't a code skill is a physical skill
+    # (learned/replay/eval/poses/...; broken entries never reach the registry).
+    # This must mirror catalog._write_physical_refs exactly: an allowlist that
+    # disagreed made the two writers regenerate each other's file forever,
+    # each write triggering the watcher's full reload.
+    entries = [meta for meta in skills_dict.values() if meta.get("type") != "code"]
     write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), logger)
