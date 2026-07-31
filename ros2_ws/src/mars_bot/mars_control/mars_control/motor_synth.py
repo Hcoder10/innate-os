@@ -33,9 +33,8 @@ The character on top of the bare stack:
   so pulling away overshoots and coming to rest glides down.
 * A spin-up chirp on startup -- the whine rising from below into idle, the
   way a machine sounds when it wakes.
-* Tire screech on hard turns. Cornering past a threshold brings in a squeal
-  that wanders in pitch over a band of slip noise, stuttering as the tread
-  grabs and lets go -- the drift cue. Gentle steering stays silent.
+* Tire screech on hard turns: a squeal wandering in pitch over slip noise,
+  stuttering as the tread grabs and lets go. Gentle steering stays silent.
 """
 
 from __future__ import annotations
@@ -57,6 +56,9 @@ PARTIALS: tuple[tuple[float, float], ...] = (
     (6.0, 0.07),
     (7.3, 0.13),
 )
+
+SCREECH_PARTIALS: tuple[tuple[float, float], ...] = ((1.0, 1.00), (2.0, 0.45), (3.0, 0.20))
+"""Squeal is reedy, not a whistle: a fundamental with strong harmonics."""
 
 TREMOLO_RATIO = 12.0
 """The brush flutter sits at whine frequency / this: ~15 Hz at idle rising to
@@ -124,16 +126,13 @@ class MotorConfig:
     screech_level: float = 0.55
     """Tire screech loudness when cornering flat out. Zero removes it."""
     screech_hz: float = 1100.0
-    """Fundamental of the squeal. Recordings of real squeal put the energy
-    around 0.7-1.3 kHz with harmonics above -- tread blocks stick-slipping --
-    and the harmonics land right in this speaker's sweet spot."""
+    """Squeal fundamental. Real squeal sits around 0.7-1.3 kHz."""
     max_yaw_rate: float = 2.0
     """Commanded yaw in rad/s that counts as cornering flat out. Matches Mad
-    mode's turn rate (motion_control's 1.0 rad/s cap at Mad's 2x scale)."""
+    mode's turn cap (motion_control's 1.0 rad/s at Mad's 2x scale)."""
     screech_min_turn: float = 0.4
-    """Fraction of max_yaw_rate below which turning stays silent. Steering
-    corrections and gentle arcs should not squeal -- the screech is a reward
-    for really throwing it into a corner."""
+    """Fraction of max_yaw_rate below which turning stays silent, so steering
+    corrections and gentle arcs do not squeal."""
 
     startup_seconds: float = 0.9
     """Length of the spin-up chirp played by ``trigger_startup()``."""
@@ -266,8 +265,8 @@ class MotorSynth:
         # below the speaker's ~160 Hz floor, wasting amp headroom there.
         self._growl_kernel = _bandpass_kernel(sample_rate, 240.0, 700.0, taps=255)
         self._growl_tail = np.zeros(len(self._growl_kernel) - 1)
-        # Slip noise: the hiss of rubber scrubbing sideways, banded around the
-        # squeal so tone and noise read as one sound rather than two layers.
+        # Slip noise, banded around the squeal so tone and noise read as one
+        # sound rather than two layers.
         self._screech_kernel = _bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7)
         self._screech_tail = np.zeros(NOISE_TAPS - 1)
 
@@ -281,18 +280,15 @@ class MotorSynth:
         self._load_smooth = 0.0
         """Load eased over ~80 ms so the growl swells in and out instead of
         gating on and off with every /cmd_vel edge."""
-        self._screech_phases = np.zeros(3)  # one per squeal partial
+        self._screech_phases = np.zeros(len(SCREECH_PARTIALS))
         self._screech_drift = 0.0
-        """Where the squeal's pitch has wandered to, as a fraction of
-        screech_hz. A random walk, not a vibrato: real squeal drifts and
-        lurches as grip changes, it does not warble on a metronome."""
+        """Pitch offset as a fraction of screech_hz. A random walk, not a
+        vibrato: real squeal lurches as grip changes rather than warbling on
+        a metronome."""
         self._screech_pitch = 1.0
         self._screech_judder_phase_a = 0.0
         self._screech_judder_phase_b = 0.0
         self._screech_smooth = 0.0
-        """Cornering intensity with a fast attack and a slower release, so the
-        squeal bites as the turn starts and trails off out of the corner
-        instead of chopping with the stick."""
         self._screech_gain = 0.0
         self._frequency = self.cfg.base_hz
         self._startup_elapsed = self.cfg.startup_seconds
@@ -348,18 +344,16 @@ class MotorSynth:
         # above the silence gate so the startup is never swallowed.
         target_gain *= max(startup_progress, 0.05) ** 0.7
 
-        # Cornering intensity: silent below the threshold, then swelling to
-        # full squeal at max yaw. The shaping exponent keeps the onset region
-        # quiet so the screech arrives with the corner, not the first nudge.
+        # Cornering intensity: silent below the threshold, swelling to full
+        # squeal at max yaw.
         turn_frac = min(abs(self._turn) / cfg.max_yaw_rate, 1.0) if cfg.max_yaw_rate > 0 else 0.0
         bite = max(turn_frac - cfg.screech_min_turn, 0.0) / max(1.0 - cfg.screech_min_turn, 1e-6)
-        # Fast attack, slower release: bites turning in, trails off out of
-        # the corner instead of chopping with the stick.
+        # Fast attack, slower release, so it bites turning in and trails off
+        # out of the corner instead of chopping with the stick.
         tau = 0.05 if bite > self._screech_smooth else 0.22
         self._screech_smooth += (bite - self._screech_smooth) * min(dt / tau, 1.0)
         if self._screech_smooth < 1e-3:
-            # Snap the exponential tail to its target so the release actually
-            # ends instead of asymptoting, letting the silence gate close.
+            # Snap the tail down, or it asymptotes and the gate never closes.
             self._screech_smooth = bite
         screech_target = (self.volume if self.enabled else 0.0) * cfg.screech_level * self._screech_smooth**1.4
 
@@ -427,46 +421,38 @@ class MotorSynth:
         return (np.tanh(mix * 1.6) * 0.85).astype(np.float32)
 
     def _screech(self, frames: int, steps: np.ndarray, target: float):
-        """Tire squeal, built the way the real thing is heard: a harmonic
-        stack (not a whistle -- squeal is reedy), a pitch that wanders as
-        grip changes, and a stutter as the tread grabs and lets go."""
+        """Tire squeal: a harmonic stack whose pitch wanders as grip changes,
+        over slip noise, stuttering as the tread grabs and lets go."""
         gain = np.linspace(self._screech_gain, target, frames)
         self._screech_gain = target
         if target <= 1e-5 and gain[0] <= 1e-5:
             return 0.0
 
-        cfg = self.cfg
         dt = frames / self.sample_rate
-        # Pitch wander: a mean-reverting random walk, held to a few percent.
-        # This is the biggest single realism win over a sine vibrato -- a
-        # periodic waver sounds like a synth patch, a drifting lurch sounds
-        # like rubber responding to a floor.
         self._screech_drift += -self._screech_drift * (dt / 0.15) + 0.11 * math.sqrt(dt) * float(
             self._rng.standard_normal()
         )
         self._screech_drift = min(max(self._screech_drift, -0.08), 0.08)
         pitch = np.linspace(self._screech_pitch, 1.0 + self._screech_drift, frames)
         self._screech_pitch = 1.0 + self._screech_drift
-        tone_hz = cfg.screech_hz * pitch
+        tone_hz = self.cfg.screech_hz * pitch
 
-        # The stack: squeal spectra show a fundamental with strong upper
-        # harmonics; the pure sine of a first attempt read as a test tone.
         tone = np.zeros(frames)
-        for index, (ratio, amplitude) in enumerate(((1.0, 1.00), (2.0, 0.45), (3.0, 0.20))):
+        weight_sum = 0.0
+        for index, (ratio, amplitude) in enumerate(SCREECH_PARTIALS):
             phase = self._screech_phases[index] + 2.0 * np.pi * np.cumsum(tone_hz * ratio) / self.sample_rate
             self._screech_phases[index] = float(phase[-1] % (2.0 * np.pi))
             tone += amplitude * np.sin(phase)
-        tone /= 1.65
+            weight_sum += amplitude
+        tone /= weight_sum
 
         padded = np.concatenate([self._screech_tail, self._rng.standard_normal(frames)])
         self._screech_tail = padded[-(NOISE_TAPS - 1) :]
         slip = np.convolve(padded, self._screech_kernel, mode="valid")
 
-        # The stutter: grab-and-release around 30 Hz, two detuned modulators
-        # beating so it rolls instead of ticking (the growl's trick). Depth
-        # falls with cornering intensity -- at the edge of grip the squeal
-        # chatters and breaks up, at full slip it hardens into a sustained
-        # howl, which is exactly how a real corner progresses.
+        # Grab-and-release stutter, two detuned modulators beating so it rolls
+        # rather than ticking. Shallower the harder the corner: at the edge of
+        # grip the squeal chatters, at full slip it hardens into a howl.
         depth = 0.65 - 0.35 * self._screech_smooth
         phase_a = self._screech_judder_phase_a + 2.0 * np.pi * 29.0 * steps
         phase_b = self._screech_judder_phase_b + 2.0 * np.pi * (29.0 * 1.83) * steps

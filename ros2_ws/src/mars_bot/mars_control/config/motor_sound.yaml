@@ -49,14 +49,12 @@
 
       rolling_level: 0.14         # bearing and wheel noise, scaled by speed
 
-      # Tire screech on hard turns: a squeal that wanders in pitch over slip
-      # noise, stuttering as the tread grabs and lets go. Swells in once
-      # commanded yaw passes screech_min_turn (as a fraction of max_yaw_rate)
-      # and peaks at max_yaw_rate. Gentle steering stays silent; set
-      # screech_level to 0 to remove it entirely.
+      # Tire screech on hard turns. Swells in once commanded yaw passes
+      # screech_min_turn (a fraction of max_yaw_rate) and peaks at
+      # max_yaw_rate; screech_level 0 removes it entirely.
       screech_level: 0.55
       screech_hz: 1100.0          # squeal fundamental; real squeal sits around 0.7-1.3 kHz
-      max_yaw_rate: 2.0           # rad/s that counts as cornering flat out (Mad's turn cap)
+      max_yaw_rate: 2.0           # rad/s counting as cornering flat out (Mad's turn cap)
       screech_min_turn: 0.40
 
       startup_seconds: 0.9        # spin-up chirp on entering Mad mode
