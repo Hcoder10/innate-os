@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -733,6 +734,25 @@ class AppControl : public rclcpp::Node {
     }
 
     /**
+     * Ramp knob bounded at the point of use, not just in validate_parameters.
+     *
+     * settings.yaml is read by declare_parameter at startup, before the callback is
+     * registered, so a file override never passes through validation. Bounding here covers
+     * every path — file, live write, and anything that bypasses both. Clamping rather than
+     * falling back to the compiled default keeps the operator's intent: they asked for the
+     * gentlest stop available, so give them the gentlest safe one.
+     */
+    double bounded_param(const char* name, double fallback, double lo, double hi) {
+        const double value = smoothing_param(name, fallback);
+        const double bounded = std::clamp(value, lo, hi);
+        if (bounded != value) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "%s is %.6f; using %.3f (limit %g-%g).",
+                                 name, value, bounded, lo, hi);
+        }
+        return bounded;
+    }
+
+    /**
      * Preset the current activity wants, or 0 when none applies.
      *
      * Mapping is absent deliberately: mode_manager early-returns on a change_mode request for
@@ -932,8 +952,11 @@ class AppControl : public rclcpp::Node {
      */
     void drive_smoother_callback() {
         const double now = this->now().seconds();
+        // Capped at the mux window here too: a settings.yaml override skips validation, and
+        // a long timeout keeps republishing the retained target while it has not expired.
         const bool input_fresh =
-            (now - last_joystick_time_) < smoothing_param("motion_control.input_timeout", drive::INPUT_TIMEOUT);
+            (now - last_joystick_time_) <
+            bounded_param("motion_control.input_timeout", drive::INPUT_TIMEOUT, 0.0, drive::MUX_TELEOP_WINDOW);
 
         // Stale input is a stop request, not a hold: ramp down under our own limit rather than
         // let the mux window expire into a hard zero.
@@ -958,9 +981,15 @@ class AppControl : public rclcpp::Node {
 
         // Mad states its accelerations outright; every other mode scales them.
         const bool mad = drive::is_mad_scale(scale);
-        const double linear_decel = smoothing_param("motion_control.max_deceleration", drive::MAX_DECELERATION) * scale;
+        // Floored before the speed-mode scale, which cancels out of the stop time: the cap
+        // and the deceleration scale together, so 0.05 is an 8 s stop in every mode.
+        const double linear_decel = bounded_param("motion_control.max_deceleration", drive::MAX_DECELERATION,
+                                                  drive::MIN_DECELERATION, std::numeric_limits<double>::infinity()) *
+                                    scale;
         const double angular_decel =
-            smoothing_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION) * scale;
+            bounded_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION,
+                          drive::MIN_DECELERATION, std::numeric_limits<double>::infinity()) *
+            scale;
         const drive::AxisLimits linear_limits{
             mad ? smoothing_param("mad.max_acceleration", drive::MAD_MAX_ACCELERATION)
                 : smoothing_param("motion_control.max_acceleration", drive::MAX_ACCELERATION) * scale,
