@@ -58,6 +58,18 @@ std::vector<std::vector<double>> MarsArmNode::computeCubicSplineTrajectory(const
 
 bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_positions, double trajectory_time,
                                            GainMode trajectory_gain_mode) {
+    // Block the idle gain decay for the whole call, and stamp the quiet
+    // period's start on every exit path (validation failures included —
+    // harmless, it just delays the decay one timeout).
+    trajectory_executing_ = true;
+    struct HoldGuard {
+        MarsArmNode* n;
+        ~HoldGuard() {
+            n->last_trajectory_end_ = std::chrono::steady_clock::now();
+            n->trajectory_executing_ = false;
+        }
+    } hold_guard{this};
+
     // Switch gains for trajectory execution
     if (gain_mode_ != trajectory_gain_mode) {
         gain_mode_ = trajectory_gain_mode;
@@ -92,6 +104,18 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
         return false;
     }
 
+    // Gripper (servo 6, current-based position control): spline from the last
+    // COMMANDED goal, not the measured position. When gripping, the servo
+    // stalls short of its goal and that standing position error IS the grip
+    // force — re-seeding the goal at the measured position zeroes the error
+    // and drops the object at the start of every arm move.
+    {
+        std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
+        if (has_target_) {
+            current_positions[5] = latest_target_[5];
+        }
+    }
+
     // Use simple cubic spline planning (fast, smooth trajectory)
     RCLCPP_INFO(this->get_logger(), "Planning with cubic spline for 6-DOF arm (including gripper)...");
     const double dt = 1.0 / this->get_parameter("trajectory_rate_hz").as_double();
@@ -118,6 +142,12 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
     for (size_t i = 0; i < interpolated_trajectory.size(); ++i) {
         const auto& point = interpolated_trajectory[i];
 
+        // Re-assert per waypoint: the idle decay's check-then-write can pass
+        // its checks just before trajectory_executing_ went true and then
+        // stomp the mode after the switch above — without this the whole
+        // trajectory would run on soft teleop gains.
+        gain_mode_ = trajectory_gain_mode;
+
         // Send command via the control loop's pass-through path
         {
             std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
@@ -135,17 +165,28 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
 
     RCLCPP_INFO(this->get_logger(), "Trajectory execution complete");
 
-    // Restore teleop gains after trajectory completes
-    if (gain_mode_ != GainMode::TELEOP) {
-        gain_mode_ = GainMode::TELEOP;
-        RCLCPP_INFO(this->get_logger(), "Gain mode -> TELEOP (trajectory finished)");
-    }
-
+    // Deliberately KEEP the trajectory's gain mode for the hold: dropping to
+    // the soft teleop gains here made the arm sag under gravity between the
+    // stepped moves a skill sends (visible limp-snap-limp). The control loop
+    // decays it back to teleop after kScheduledHoldTimeoutS of quiet (the
+    // HoldGuard above stamps the quiet period) so an idle arm is not held
+    // stiff — that overheated joint 2 — and teleop also reclaims its gains
+    // immediately via armCommandCallback.
     return true;
 }
 
 bool MarsArmNode::planAndExecuteMultiWaypointTrajectory(const std::vector<std::vector<double>>& waypoints,
                                                         const std::vector<double>& segment_durations) {
+    // See planAndExecuteTrajectory: block the idle gain decay while executing.
+    trajectory_executing_ = true;
+    struct HoldGuard {
+        MarsArmNode* n;
+        ~HoldGuard() {
+            n->last_trajectory_end_ = std::chrono::steady_clock::now();
+            n->trajectory_executing_ = false;
+        }
+    } hold_guard{this};
+
     // Switch to scheduled gains for planned trajectories
     if (gain_mode_ != GainMode::SCHEDULED) {
         gain_mode_ = GainMode::SCHEDULED;
@@ -205,6 +246,9 @@ bool MarsArmNode::planAndExecuteMultiWaypointTrajectory(const std::vector<std::v
     for (size_t i = 0; i < full_trajectory.size(); ++i) {
         const auto& point = full_trajectory[i];
 
+        // Re-assert per waypoint — see planAndExecuteTrajectory
+        gain_mode_ = GainMode::SCHEDULED;
+
         {
             std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
             for (size_t j = 0; j < 6 && j < point.size(); ++j) {
@@ -220,12 +264,8 @@ bool MarsArmNode::planAndExecuteMultiWaypointTrajectory(const std::vector<std::v
 
     RCLCPP_INFO(this->get_logger(), "Multi-waypoint trajectory execution complete");
 
-    // Restore teleop gains after trajectory completes
-    if (gain_mode_ != GainMode::TELEOP) {
-        gain_mode_ = GainMode::TELEOP;
-        RCLCPP_INFO(this->get_logger(), "Gain mode -> TELEOP (multi-waypoint trajectory finished)");
-    }
-
+    // Deliberately KEEP scheduled gains for the hold (see the single-target
+    // version above) — the control loop decays them after a quiet period.
     return true;
 }
 
@@ -261,7 +301,17 @@ void MarsArmNode::armGotoJSTrajectoryCallback(const std::shared_ptr<mars_msgs::s
     {
         std::lock_guard<std::mutex> lock(joint_state_mutex_);
         if (!latest_joint_positions_.empty()) {
-            waypoints.insert(waypoints.begin(), latest_joint_positions_);
+            std::vector<double> start = latest_joint_positions_;
+            // Gripper starts from the last COMMANDED goal (see
+            // planAndExecuteTrajectory): seeding it at the measured stall
+            // position would zero the grip preload.
+            {
+                std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
+                if (has_target_ && start.size() >= 6) {
+                    start[5] = latest_target_[5];
+                }
+            }
+            waypoints.insert(waypoints.begin(), start);
             if (!durations.empty()) {
                 durations.insert(durations.begin(), durations[0]);
             } else {
