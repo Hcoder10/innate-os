@@ -32,6 +32,11 @@ constexpr double MAX_ANGULAR_ACCELERATION = 2.0;      // rad/s^2
 constexpr double MAX_ANGULAR_DECELERATION = 6.0;      // rad/s^2
 constexpr double MAX_JERK = 10.0;                     // m/s^3
 constexpr double MAX_ANGULAR_JERK = 100.0;            // rad/s^3
+// Deceleration is the one ramp knob whose floor matters: it alone bounds how long a stop
+// takes, and the stale-input ramp republishes at 50 Hz the whole way down, holding the
+// mux's top-priority teleop slot. 0.05 still allows an 8 s stop from full speed; below it
+// the robot can stay in the slot long enough to lock out skills and navigation.
+constexpr double MIN_DECELERATION = 0.05;  // m/s^2 and rad/s^2
 
 constexpr double INPUT_TIMEOUT = 0.4;      // s
 constexpr double MUX_TELEOP_WINDOW = 0.5;  // s, cmd_vel_mux's freshness window; INPUT_TIMEOUT's ceiling

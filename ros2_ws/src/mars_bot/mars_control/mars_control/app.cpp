@@ -840,6 +840,12 @@ class AppControl : public rclcpp::Node {
                 result.reason = name + " must be greater than 0";
                 return result;
             }
+            if ((name == "motion_control.max_deceleration" || name == "motion_control.max_angular_deceleration") &&
+                value < drive::MIN_DECELERATION) {
+                result.successful = false;
+                result.reason = name + " must be >= 0.05; below that a stop holds the teleop mux slot for minutes";
+                return result;
+            }
             if (is_hold && value < 0.0) {
                 result.successful = false;
                 result.reason = name + " must not be negative";
