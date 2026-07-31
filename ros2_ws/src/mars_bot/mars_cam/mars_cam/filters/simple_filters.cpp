@@ -143,11 +143,12 @@ void StereoDepthEstimator::clampByDepth(cv::Mat& img, float f, float t) {
             }
         }
     }
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                         "depth_clamp: f=%.2f t=%.5f | min_depth=%.3fm -> max_d=%.1f | max_depth=%.1fm -> min_d=%.1f | "
-                         "disp_range=[%.2f, %.2f] | killed: %d near + %d far / %d valid",
-                         f, abs_t, min_depth_meters_, max_d, max_depth_meters_, min_d, d_min_seen, d_max_seen,
-                         killed_near, killed_far, total_valid);
+    RCLCPP_DEBUG_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "depth_clamp: f=%.2f t=%.5f | min_depth=%.3fm -> max_d=%.1f | max_depth=%.1fm -> min_d=%.1f | "
+        "disp_range=[%.2f, %.2f] | killed: %d near + %d far / %d valid",
+        f, abs_t, min_depth_meters_, max_d, max_depth_meters_, min_d, d_min_seen, d_max_seen, killed_near, killed_far,
+        total_valid);
 }
 
 // =============================================================================
