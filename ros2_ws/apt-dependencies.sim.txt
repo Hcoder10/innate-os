@@ -53,4 +53,4 @@ ros-humble-innate-nav2-smac-planner
 # Innate's lifecycle build of slam_toolbox: mode_manager must be able to
 # deactivate SLAM in navigation mode or it clobbers /map.
 ros-humble-slam-toolbox-humble-lifecycle
-ros-humble-spatio-temporal-voxel-layer
+ros-humble-innate-spatio-temporal-voxel-layer
