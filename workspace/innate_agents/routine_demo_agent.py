@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agents.types import Agent
+from innate_skills.run_routine_demo import RunRoutineDemo
+from inputs.micro_input import MicroInput
+
+from brain_client.agents.types import Agent, InputRef, SkillRef
 
 
 class RoutineDemoAgent(Agent):
@@ -14,11 +17,11 @@ class RoutineDemoAgent(Agent):
     def display_name(self) -> str:
         return "(Demo) Skill Routine"
 
-    def get_skills(self) -> list[str]:
-        return ["innate-os/run_routine_demo"]
+    def get_skills(self) -> list[SkillRef]:
+        return [RunRoutineDemo]
 
-    def get_inputs(self) -> list[str]:
-        return ["micro"]
+    def get_inputs(self) -> list[InputRef]:
+        return [MicroInput]
 
     def get_prompt(self) -> str:
         return (

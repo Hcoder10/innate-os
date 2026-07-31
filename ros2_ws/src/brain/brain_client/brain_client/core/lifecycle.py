@@ -81,7 +81,7 @@ class BrainLifecycle:
         if not directive or not self._state.is_brain_active:
             return
         try:
-            required_inputs = directive.get_inputs()
+            required_inputs = directive.input_names()
             self._active_inputs_pub.publish(String(data=json.dumps({"inputs": required_inputs})))
             if required_inputs:
                 self._logger.info(f"🔌 Activated inputs for directive '{directive.id}': {required_inputs}")
@@ -200,7 +200,7 @@ class BrainLifecycle:
             self._logger.error(f"Unknown directive: {name}")
             return
         self._state.current_directive = self._state.directives[name]
-        self._state.active_skill_ids = list(self._state.current_directive.get_skills())
+        self._state.active_skill_ids = list(self._state.current_directive.skill_ids())
         self._logger.info(f"Activated directive: {name}")
         self._chat.clear()
         self._ws.send_message(MessageIn(type=MessageInType.RESET, payload={"memory_state": "clear"}))
