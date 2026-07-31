@@ -1283,6 +1283,58 @@ button {
   font-size: 9px;
 }
 
+/* ---- speed modes ----------------------------------------------------------- */
+
+.speed-modes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sm-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
+  color: rgb(231 231 234 / 72%);
+}
+
+.sm-group {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+}
+
+.sm-btn {
+  padding: 6px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-strong);
+  background: transparent;
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
+  color: rgb(231 231 234 / 72%);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.sm-btn:last-child {
+  border-bottom: 0;
+}
+
+.sm-btn:hover {
+  color: var(--text);
+}
+
+.sm-btn.on {
+  background: var(--accent-faint);
+  color: var(--accent);
+}
+
 /* ---- head tilt ------------------------------------------------------------ */
 
 .head-tilt {
@@ -1294,7 +1346,9 @@ button {
 
 .ht-label {
   font-size: 9px;
-  color: var(--muted);
+  /* Same rail as the speed picker, same problem: plain grey washes out over a
+     bright camera view. Kept in step so the rail reads as one control group. */
+  color: rgb(231 231 234 / 72%);
 }
 
 .ht-track {

@@ -34,8 +34,12 @@ let cleanups = [];
  * @property {*} value Current form value.
  * @property {boolean} savedOverridden  Last-saved (on-disk) state.
  * @property {*} savedValue
+ * @property {boolean} [savedWasOverridden]  State before the in-flight save, so the
+ *   live-apply pass can tell which knobs actually moved.
+ * @property {*} [savedWasValue]
  * @property {() => void} render  Push value + overridden state into the DOM control.
  * @property {HTMLElement} row
+ * @property {HTMLElement} [errEl]  Out-of-range message; absent on non-numeric knobs.
  */
 /** @type {Entry[]} */
 const entries = [];
@@ -85,6 +89,11 @@ const STYLE = `
 .set-row:hover { background: rgba(255,255,255,.025); }
 .set-row.saved { border-color: rgba(224,145,58,.45); background: rgba(224,145,58,.07); }
 .set-row.dirty { border-color: rgba(117,105,253,.6); background: rgba(64,31,251,.10); }
+.set-row.invalid { border-color: rgba(233,86,86,.7); background: rgba(233,86,86,.10); }
+.set-row.invalid input.set-num { border-color: rgba(233,86,86,.8); }
+.set-err { font-size: 12px; color: #e95656; }
+.set-err:empty { display: none; }
+.set-dirty.set-bad { color: #e95656; }
 .set-info { flex: 1 1 240px; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
@@ -95,9 +104,9 @@ const STYLE = `
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl input[type=checkbox] { width: 18px; height: 18px; }
 .set-unit { color: var(--muted, #8a90a0); font-size: 12px; width: 34px; }
-.set-default { color: var(--muted, #8a90a0); font-size: 12px; width: 96px; text-align: right; }
+.set-default { color: var(--muted, #8a90a0); font-size: 12px; min-width: 96px; text-align: right; white-space: nowrap; }
 .set-reset { font-size: 12px; background: none; border: none; color: var(--primary, #7569FD); cursor: pointer; padding: 4px; visibility: hidden; }
-.set-row.saved .set-reset, .set-row.dirty .set-reset { visibility: visible; }
+.set-row.saved .set-reset, .set-row.dirty .set-reset, .set-row.invalid .set-reset { visibility: visible; }
 .set-bar { flex: none; display: flex; align-items: center; gap: 14px;
   padding: 12px 28px; background: var(--panel, #111114); border-top: 1px solid var(--hairline, #2a2f3a); }
 .set-save { padding: 9px 20px; border-radius: 9px; border: none; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
@@ -187,7 +196,11 @@ function defaultLabel(/** @type {import("./catalog.js").Knob} */ knob) {
     const opt = knob.options.find((o) => o.value === knob.default);
     if (opt) return "default " + opt.label;
   }
-  return "default " + String(knob.default);
+  const range =
+    knob.min !== undefined && knob.max !== undefined && !knob.slider
+      ? ` (${knob.min}–${knob.max})`
+      : "";
+  return "default " + String(knob.default) + range;
 }
 
 /**
@@ -201,6 +214,24 @@ function coerceLoaded(/** @type {import("./catalog.js").Knob} */ knob, /** @type
   return String(v);
 }
 
+/**
+ * Why this value can't be saved, or "" if it can.
+ *
+ * The robot rejects out-of-range drive knobs outright (mars_app's on_set_parameters), so
+ * without this the save would appear to succeed and the robot would keep the old value.
+ * Bounds are the absurd limits, not tuning advice — the point is to keep a typo like
+ * 0.000001 m/s² of deceleration, which takes days to stop, out of the file.
+ */
+function boundsError(/** @type {Entry} */ e) {
+  const knob = e.knob;
+  if (knob.type !== "int" && knob.type !== "float") return "";
+  const v = Number(e.value);
+  if (!Number.isFinite(v)) return "must be a number";
+  if (knob.min !== undefined && v < knob.min) return `must be at least ${knob.min}`;
+  if (knob.max !== undefined && v > knob.max) return `must be at most ${knob.max}`;
+  return "";
+}
+
 /** Has this entry changed since the last save? */
 function isDirty(/** @type {Entry} */ e) {
   if (e.overridden !== e.savedOverridden) return true;
@@ -210,15 +241,27 @@ function isDirty(/** @type {Entry} */ e) {
 /** Repaint every row + the section dots + the footer (dirty count, Save enabled). */
 function recompute() {
   let dirty = 0;
+  let bad = 0;
   for (const e of entries) {
     const d = isDirty(e);
     if (d) dirty++;
-    e.row.classList.toggle("dirty", d);
+    // Only flag a knob the operator has actually touched: a bound tightened after a value
+    // was already saved shouldn't light up rows nobody is editing.
+    const err = d ? boundsError(e) : "";
+    if (err) bad++;
+    e.row.classList.toggle("dirty", d && !err);
+    e.row.classList.toggle("invalid", Boolean(err));
     e.row.classList.toggle("saved", !d && e.overridden);
+    if (e.errEl) e.errEl.textContent = err;
   }
   for (const s of sections) s.dot.classList.toggle("show", s.entries.some(isDirty));
-  dirtyEl.textContent = dirty ? `${dirty} unsaved change${dirty === 1 ? "" : "s"}` : "";
-  saveBtn.disabled = dirty === 0;
+  dirtyEl.textContent = bad
+    ? `${bad} value${bad === 1 ? "" : "s"} out of range`
+    : dirty
+      ? `${dirty} unsaved change${dirty === 1 ? "" : "s"}`
+      : "";
+  dirtyEl.classList.toggle("set-bad", bad > 0);
+  saveBtn.disabled = dirty === 0 || bad > 0;
   resetAllBtn.disabled = !entries.some((e) => e.overridden);
 }
 
@@ -541,8 +584,8 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
 /** Checkbox / slider / text / number control (bool, bounded numeric, string, number). */
 function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */ entry) {
   const knob = entry.knob;
-  // A numeric knob with a known hard maximum renders as a slider so the ceiling is visible.
-  const isSlider = (knob.type === "int" || knob.type === "float") && knob.max !== undefined;
+  const isSlider =
+    (knob.type === "int" || knob.type === "float") && knob.slider === true && knob.max !== undefined;
 
   if (knob.type === "bool") {
     const input = document.createElement("input");
@@ -666,6 +709,13 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       entry.overridden = true;
       recompute();
     });
+
+    if (knob.min !== undefined || knob.max !== undefined) {
+      const err = document.createElement("span");
+      err.className = "set-err";
+      entry.errEl = err;
+      ctl.appendChild(err);
+    }
   }
 
   const unit = document.createElement("span");
@@ -804,6 +854,78 @@ async function savePost(/** @type {any} */ payload) {
   return res.json();
 }
 
+/** rcl_interfaces/msg/ParameterType. Only the types the catalog can mark `live`. */
+const PARAM_TYPE = { bool: 1, int: 2, float: 3, string: 4 };
+
+/**
+ * Push saved knobs to their running node so they take effect without a restart.
+ *
+ * Only knobs the catalog marks `live` are sent — a node that copied the parameter into a
+ * field at construction would accept the write and go on using the old value, and claiming
+ * "applied" there would be worse than telling the operator to restart.
+ *
+ * Cleared knobs are pushed too, at their catalog default: reverting an override has to
+ * reach the robot as well, or "reset" would only take effect on the next restart.
+ *
+ * @param {{overridden: boolean, value: any}[]} snapshot
+ * @returns {Promise<{applied: number, failed: number, restart: number}>}
+ */
+async function applyLive(snapshot) {
+  /** @type {Map<string, {name: string, value: any, type: string}[]>} */
+  const byNode = new Map();
+  let restart = 0;
+
+  entries.forEach((e, i) => {
+    const knob = e.knob;
+    const changed =
+      snapshot[i].overridden !== e.savedWasOverridden ||
+      (snapshot[i].overridden && !valuesEqual(knob, snapshot[i].value, e.savedWasValue));
+    if (!changed) return;
+    if (!knob.live) {
+      restart++;
+      return;
+    }
+    const type = PARAM_TYPE[knob.type];
+    if (!type) {
+      restart++;
+      return;
+    }
+    // path is [node, "ros__parameters", ...groups, key]; the ROS name is the dotted tail.
+    const name = knob.path.slice(2).join(".");
+    const value = snapshot[i].overridden ? snapshot[i].value : knob.default;
+    const list = byNode.get(knob.live) || [];
+    list.push({ name, value, type: knob.type });
+    byNode.set(knob.live, list);
+  });
+
+  let applied = 0;
+  let failed = 0;
+  for (const [node, params] of byNode) {
+    try {
+      const res = await ros.callService(`${node}/set_parameters`, {
+        parameters: params.map((p) => ({
+          name: p.name,
+          value: {
+            type: PARAM_TYPE[p.type],
+            bool_value: p.type === "bool" ? Boolean(p.value) : false,
+            integer_value: p.type === "int" ? Number(p.value) : 0,
+            double_value: p.type === "float" ? Number(p.value) : 0,
+            string_value: p.type === "string" ? String(p.value) : "",
+          },
+        })),
+      });
+      // The service resolves even when a node rejects a value, so read each result.
+      const results = res?.results || [];
+      results.forEach((r) => (r?.successful === false ? failed++ : applied++));
+      if (!results.length) failed += params.length;
+    } catch (err) {
+      console.warn(`Live-apply to ${node} failed:`, err);
+      failed += params.length;
+    }
+  }
+  return { applied, failed, restart };
+}
+
 async function onSave() {
   const sets = [];
   const clears = [];
@@ -812,6 +934,11 @@ async function onSave() {
   // field edited during the WS round-trip would be mis-marked as saved while
   // the file holds the older value.
   const snapshot = entries.map((e) => ({ overridden: e.overridden, value: e.value }));
+  // What was saved *before* this write, so applyLive only pushes knobs that moved.
+  entries.forEach((e) => {
+    e.savedWasOverridden = e.savedOverridden;
+    e.savedWasValue = e.savedValue;
+  });
   for (const e of entries) {
     if (e.overridden) sets.push({ path: e.knob.path, value: e.value, type: e.knob.type });
     else clears.push(e.knob.path);
@@ -834,7 +961,12 @@ async function onSave() {
         e.savedValue = snapshot[i].value;
       });
       recompute();
-      setStatus("Saved — restart the robot to apply.", "ok");
+      const { applied, failed, restart } = await applyLive(snapshot);
+      const parts = [];
+      if (applied) parts.push(`${applied} applied now`);
+      if (restart) parts.push(`${restart} need${restart === 1 ? "s" : ""} a restart`);
+      if (failed) parts.push(`${failed} could not be applied live`);
+      setStatus(parts.length ? `Saved — ${parts.join(", ")}.` : "Saved.", failed ? "err" : "ok");
     } else {
       setStatus("Save failed: " + ((res && res.message) || "unknown error"), "err");
       recompute();

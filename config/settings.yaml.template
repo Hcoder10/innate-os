@@ -31,6 +31,12 @@
 #     motion_control:               # teleop / manual driving
 #       max_speed: 0.4              # m/s, top translational speed
 #       max_angular_speed: 1.0      # rad/s, top rotational speed
+#       speed_scale: 1.0            # speed-mode multiplier on the two caps above. Clamped to
+#                                   # the range the robot's own preset table spans — currently
+#                                   # 0.35 (Slow) to 2.0 (Mad), so above 1.0 it exceeds these
+#                                   # caps and bringup's safety clamp becomes the real ceiling.
+#                                   # The app/webapp speed picker writes this live; setting
+#                                   # it here only changes what the robot boots into.
 #     nav:                          # autonomous (nav2)
 #       max_speed: 0.45             # m/s, top translational speed
 #       max_angular_speed: 0.6      # rad/s, top rotational speed
@@ -46,6 +52,68 @@
 #     joystick:
 #       slow_mode_factor: 0.25      # speed multiplier while the slow-mode button is held
 
+# ── Teleop: drive ramps (app / webapp joystick) ───────────────────────
+# Scoped to mars_app, not `/**`: the speed *caps* above are shared by every manual input
+# (app, gamepad, keyboard) because "how fast a human may drive" is one number, but the
+# ramps are not. joystick_controller declares the same key names for its own smoother, so
+# a `/**` override would retune the gamepad too.
+#
+# The caps are the ceiling, these are the rate of approach to it.
+#
+# The jerk limits are a floor, not a target: each is raised to at least
+# max_deceleration / (2 * time_constant) for its axis, because below that the robot arrives
+# at rest still braking and kicks after it has stopped. Set them higher to allow a snappier
+# change of acceleration; setting them lower has no effect. Not offered in the Settings
+# page for that reason — the relation is not something three independent fields can hold.
+#
+# settle_epsilon is a hardware floor, not a numerical one: bringup sends int(v * 100), so
+# 0.01 is one wire count and anything finer is motion the motors cannot express. It is the
+# one knob here that does NOT scale with speed mode.
+#
+# Unlike mars_arm's max_jerk below, 0 does NOT mean "disabled" — every knob is divided by
+# or clamped to, so 0 breaks the ramp. Non-positive and non-finite values fall back to the
+# compiled default and are logged. `dt` is read once at startup; the rest are live-tunable
+# through set_parameters.
+# mars_app:
+#   ros__parameters:
+#     motion_control:
+#       dt: 0.02                    # s, smoother tick (0.02 = 50 Hz). Startup only.
+#       speed_time_constant: 0.40   # s, first-order lag, linear; higher = softer
+#       angular_speed_time_constant: 0.10   # s, same for yaw, separate so the angular
+#                                   # ramp can be tightened without changing linear feel
+#       max_acceleration: 0.2       # m/s^2, speeding up
+#       max_deceleration: 1.2       # m/s^2, slowing down; keep above max_acceleration
+#       max_angular_acceleration: 2.0       # rad/s^2, turning harder
+#       max_angular_deceleration: 6.0       # rad/s^2, straightening out; runs harder than
+#                                   # the linear pair, a slow yaw ramp keeps turning after
+#                                   # the operator stopped asking
+#       max_jerk: 10.0              # m/s^3, floor on how fast the accel limits may change
+#       max_angular_jerk: 100.0     # rad/s^3, same for the angular pair
+#       settle_epsilon: 0.01        # m/s and rad/s, snap to target below this
+#       input_timeout: 0.4          # s without a joystick message before ramping to a stop
+#     # Heading hold — resists being turned off-course while driving straight. Does not
+#     # restore heading lost earlier; the operator corrects their own overshoot. Residual
+#     # drift is roughly disturbance / (1 + gain * leak).
+#     heading_hold:
+#       gain: 5.0                   # rad/s of correction per rad of error; 0 disables
+#       leak: 0.2                   # s of memory; 0 makes it an absolute heading lock
+#       max_correction: 1.0         # rad/s ceiling on the correction
+#       min_speed: 0.01             # m/s below which the hold stays off — heading is
+#                                   # meaningless while creeping. Raise the acceleration
+#                                   # limit and this is crossed sooner
+#       straight_yaw: 0.05          # rad/s of requested yaw below which we count as
+#                                   # driving straight; above it the hold releases
+#       deadband: 0.01              # rad of heading error to ignore. One /odom quantum,
+#                                   # so below this the loop would chatter on the wire
+#       slew: 2.0                   # rad/s^2 limit on the correction itself, so engaging
+#                                   # and dropping out are not steps
+#     # Mad Mars states its accelerations outright instead of scaling them. Every other
+#     # mode is a multiplier on the caps, which works while modes differ only in how fast
+#     # they go — but Mad Mars wants 2.0 where scaling gives 0.4, and 3.0 where it gives 4.0.
+#     mad:
+#       max_acceleration: 2.0       # m/s^2, replaces the scaled limit in Mad mode
+#       max_angular_acceleration: 3.0   # rad/s^2, likewise
+
 # ── Battery thresholds + safety speed clamp (bringup) ─────────────────
 # bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling
 # every velocity source (teleop, nav2, brain) passes through. It is a backstop, not the
@@ -57,7 +125,7 @@
 #       warning_percentage: 20      # low-battery warning level (%)
 #       critical_percentage: 10     # critical-battery level (%)
 #     safety:
-#       max_speed: 0.4              # m/s, hard /cmd_vel linear ceiling at the motors
+#       max_speed: 0.8              # m/s, hard /cmd_vel linear ceiling at the motors
 #       max_angular_speed: 2.5      # rad/s, hard /cmd_vel angular ceiling at the motors
 
 # ── Arm ───────────────────────────────────────────────────────────────

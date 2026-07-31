@@ -18,6 +18,10 @@ import {
   NAV_AVAILABLE_MAPS_TOPIC,
   NAV_CHANGE_MAP_SERVICE,
   NAV_CHANGE_MODE_SERVICE,
+  PARAMETER_DOUBLE,
+  SET_PARAMETERS_SERVICE,
+  SPEED_MODES,
+  SPEED_SCALE_PARAM,
   NAV_CURRENT_MAP_TOPIC,
   NAV_CURRENT_MODE_TOPIC,
   NAV_DELETE_MAP_SERVICE,
@@ -76,6 +80,31 @@ export function createNavStore() {
    * @param {string} service @param {object} args @param {string} doing
    * @returns {Promise<boolean>}
    */
+  /**
+   * Drop to the Slow preset when a mapping run starts. Mapping wants care, and the
+   * default speed is easy to forget about.
+   *
+   * Done here rather than on the robot because mode_manager early-returns on a
+   * change_mode request for the mode it is already in, so starting a second map emits
+   * no state change and there is nothing for the robot to key on. mars_app does apply
+   * the same policy on a genuine mode transition; this covers the case it cannot see.
+   * The robot-side event is the better fix and should replace this.
+   *
+   * Best-effort: a failure here must not fail the mapping run, and older robot software
+   * has no such parameter at all.
+   */
+  async function setSlowForMapping() {
+    const slow = SPEED_MODES.find((m) => m.id === "slow");
+    if (!slow) return;
+    try {
+      await ros.callService(SET_PARAMETERS_SERVICE, {
+        parameters: [{ name: SPEED_SCALE_PARAM, value: { type: PARAMETER_DOUBLE, double_value: slow.scale } }],
+      });
+    } catch (err) {
+      console.warn("Could not set Slow speed for mapping:", err);
+    }
+  }
+
   async function call(service, args, doing) {
     // destroyed: the page is gone, but a caller may still resolve later (a
     // confirm dialog orphaned by navigation) — never command the robot then.
@@ -131,8 +160,10 @@ export function createNavStore() {
       return () => listeners.delete(cb);
     },
 
-    startMapping() {
-      return call(NAV_CHANGE_MODE_SERVICE, { mode: "mapping" }, "Starting mapping");
+    async startMapping() {
+      const ok = await call(NAV_CHANGE_MODE_SERVICE, { mode: "mapping" }, "Starting mapping");
+      if (ok) void setSlowForMapping();
+      return ok;
     },
 
     /** @param {string} mode "navigation" | "mapfree" */
