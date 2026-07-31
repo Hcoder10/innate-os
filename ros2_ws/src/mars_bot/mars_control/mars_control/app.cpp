@@ -1000,9 +1000,27 @@ class AppControl : public rclcpp::Node {
                 result.reason = name + " must be finite";
                 return result;
             }
+            // speed_scale is clamped to the published preset range at use, so accepting a
+            // value outside it would report a mode the robot is not in. dt is read once to
+            // build the timer, so a later write changes what is reported without changing
+            // the integration step. Refuse both rather than acknowledge a value that does
+            // not control the robot.
+            if (name == "motion_control.speed_scale") {
+                if (value < 0.05 || value > joy_tuning::max_speed_scale()) {
+                    result.successful = false;
+                    result.reason = "motion_control.speed_scale must be within the published preset range";
+                    return result;
+                }
+                continue;
+            }
+            if (name == "motion_control.dt" && std::abs(value - smoothing_dt_) > 1e-9) {
+                result.successful = false;
+                result.reason = "motion_control.dt fixes the control timer at startup; restart to change it";
+                return result;
+            }
             // heading_hold's thresholds may legitimately be 0, meaning "always"; every ramp
             // knob is divided by or clamped to, so 0 breaks it rather than removing a limit.
-            if (is_ramp && name != "motion_control.speed_scale" && value <= 0.0) {
+            if (is_ramp && value <= 0.0) {
                 result.successful = false;
                 result.reason = name + " must be greater than 0";
                 return result;
