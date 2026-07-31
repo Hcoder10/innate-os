@@ -75,6 +75,9 @@ constexpr double MAX_ANGULAR_JERK = 100.0;  // rad/s^3
 // Under the mux's 0.5 s teleop window, above the app's 150 ms heartbeat, so a dropped
 // link ramps down under our own decel limit instead of being cut to zero by the mux.
 constexpr double INPUT_TIMEOUT = 0.4;  // s
+// cmd_vel_mux.py's freshness window for /cmd_vel_teleop. INPUT_TIMEOUT must stay under it,
+// so this is the hard ceiling any override is held to.
+constexpr double MUX_TELEOP_WINDOW = 0.5;  // s
 // Snap to the target below this. A hardware floor: bringup sends int(v * 100), so 0.01
 // is one wire count and anything finer is motion the motors cannot express.
 constexpr double SETTLE_EPSILON = 0.01;  // m/s and rad/s, == 1 wire count
@@ -1030,12 +1033,15 @@ class AppControl : public rclcpp::Node {
                 result.reason = name + " must not be negative";
                 return result;
             }
-            // A long input_timeout is the dangerous direction: the smoother keeps treating
-            // the last target as fresh, so the robot carries on driving that much longer
-            // after the operator stops. Bound it well under the mux's own 0.5 s window.
-            if (name == "motion_control.input_timeout" && value > 2.0) {
+            // A long input_timeout is the dangerous direction: while it has not expired the
+            // smoother keeps republishing the retained target at 50 Hz, which both drives the
+            // robot and refreshes the top-priority mux slot, so a dropped link keeps moving
+            // for that long before the ramp-down even begins. The ceiling is the mux's own
+            // 0.5 s teleop window, which is the constraint INPUT_TIMEOUT is documented
+            // against: past it we would be holding the slot longer than the mux would have.
+            if (name == "motion_control.input_timeout" && value > joy_tuning::MUX_TELEOP_WINDOW) {
                 result.successful = false;
-                result.reason = "motion_control.input_timeout must be <= 2.0 s";
+                result.reason = "motion_control.input_timeout must be <= 0.5 s, the cmd_vel mux's teleop window";
                 return result;
             }
         }

@@ -86,7 +86,7 @@ export const CATALOG = [
       { path: ["mars_app", P, "motion_control", "max_jerk"], label: "Linear jerk limit", default: 10.0, type: "float", unit: "m/s³", doc: "How fast the acceleration limits may themselves change. Keep smoothing lag >= deceleration / (2 x jerk), or the robot kicks after it stops", live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "max_angular_jerk"], label: "Angular jerk limit", default: 100.0, type: "float", unit: "rad/s³", doc: "Same for the angular pair", live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "settle_epsilon"], label: "Stop threshold", default: 0.01, type: "float", unit: "m/s", doc: "Snap straight to zero below this instead of easing down. A hardware floor: the motors are commanded in whole units of 0.01, so anything finer is motion they cannot express, and lingering there makes their speed loop hunt", live: "/mars_app" },
-      { path: ["mars_app", P, "motion_control", "input_timeout"], label: "Input timeout", default: 0.4, type: "float", unit: "s", doc: "Silence from the controller before ramping to a stop", live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "input_timeout"], label: "Input timeout", default: 0.4, type: "float", unit: "s", doc: "Silence from the controller before ramping to a stop. Capped at the cmd_vel mux's 0.5 s teleop window — beyond that a dropped link keeps the robot moving on the last command", min: 0.05, max: 0.5, step: 0.05, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "dt"], label: "Smoother tick", default: 0.02, type: "float", unit: "s", doc: "Control period (0.02 = 50 Hz). Fixes the timer, so this one needs a restart" },
     ],
   },
