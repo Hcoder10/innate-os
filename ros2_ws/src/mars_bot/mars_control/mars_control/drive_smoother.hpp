@@ -152,20 +152,10 @@ class HeadingHold {
     bool latched_ = false;
 };
 
-/** Ramp state for both axes, plus the heading hold that rides on the angular one. */
+/** Ramp state for both axes, plus the heading hold that rides on the angular one. The node
+ *  owns the targets; this holds only what has to survive between ticks. */
 class DriveSmoother {
    public:
-    void set_target(double linear, double angular) {
-        target_linear_ = linear;
-        target_angular_ = angular;
-    }
-    double target_linear() const {
-        return target_linear_;
-    }
-    double target_angular() const {
-        return target_angular_;
-    }
-
     double linear() const {
         return linear_;
     }
@@ -187,8 +177,6 @@ class DriveSmoother {
     }
 
    private:
-    double target_linear_ = 0.0;
-    double target_angular_ = 0.0;
     double linear_ = 0.0;
     double angular_ = 0.0;
     double linear_rate_ = 0.0;

@@ -934,9 +934,7 @@ class AppControl : public rclcpp::Node {
         const double target_linear = input_fresh ? target_linear_ : 0.0;
         const double target_angular = input_fresh ? target_angular_ : 0.0;
 
-        const bool at_rest =
-            target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0;
-        if (!drive_active_ && at_rest) {
+        if (!drive_active_ && target_linear == 0.0 && target_angular == 0.0 && smoother_.at_rest()) {
             return;
         }
 
@@ -966,8 +964,6 @@ class AppControl : public rclcpp::Node {
             smoothing_param("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK) * scale, angular_tc, settle};
 
         smoother_.step(target_linear, target_angular, linear_limits, angular_limits, dt);
-        smoothed_linear_ = smoother_.linear();
-        smoothed_angular_ = smoother_.angular();
 
         const drive::HeadingTuning heading_tuning{
             this->get_parameter("heading_hold.gain").as_double(),
@@ -978,21 +974,20 @@ class AppControl : public rclcpp::Node {
             heading_param("heading_hold.straight_yaw", drive::HEADING_STRAIGHT_YAW),
             heading_param("heading_hold.min_speed", drive::HEADING_MIN_SPEED)};
         const double correction =
-            smoother_.heading().correction(smoothed_linear_, target_angular, now, dt, heading_tuning);
+            smoother_.heading().correction(smoother_.linear(), target_angular, now, dt, heading_tuning);
 
         geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = smoothed_linear_;
+        twist_msg.linear.x = smoother_.linear();
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-        twist_msg.angular.z = smoothed_angular_ + correction;
+        twist_msg.angular.z = smoother_.angular() + correction;
         cmd_vel_pub_->publish(twist_msg);
 
         // That publish was the settling zero, so the next tick can stop publishing. The
         // correction has to be spent too, or we would fall silent still holding one.
-        if (target_linear == 0.0 && target_angular == 0.0 && smoothed_linear_ == 0.0 && smoothed_angular_ == 0.0 &&
-            correction == 0.0) {
+        if (target_linear == 0.0 && target_angular == 0.0 && smoother_.at_rest() && correction == 0.0) {
             drive_active_ = false;
         }
     }
@@ -1401,13 +1396,8 @@ class AppControl : public rclcpp::Node {
     double target_linear_ = 0.0;
     double target_angular_ = 0.0;
     drive::DriveSmoother smoother_;
-    double smoothed_linear_ = 0.0;
-    double smoothed_angular_ = 0.0;
-    // Acceleration carried between ticks so the jerk limit has something to slew from.
     double last_joystick_time_ = 0.0;
     bool drive_active_ = false;
-    // Heading hold. odom_yaw_ is written from the /odom callback, which the single-threaded
-    // executor serialises against the smoother timer.
     // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
     // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
     bool recording_ = false;
