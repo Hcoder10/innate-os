@@ -111,7 +111,7 @@ class MotorSoundNode(Node):
                 ("motor_sound.growl_noise_level", 0.20),
                 ("motor_sound.rolling_level", 0.14),
                 ("motor_sound.screech_level", 0.55),
-                ("motor_sound.screech_hz", 2300.0),
+                ("motor_sound.screech_hz", 1100.0),
                 ("motor_sound.max_yaw_rate", 2.0),
                 ("motor_sound.screech_min_turn", 0.4),
                 ("motor_sound.startup_seconds", 0.9),
