@@ -75,7 +75,7 @@ double step_axis(double current, double target, double& applied_rate, const Axis
 }
 
 double HeadingHold::correction(double linear, double requested_angular, double now, double dt,
-                              const HeadingTuning& tuning) {
+                               const HeadingTuning& tuning) {
     const double drive_sign = (linear >= 0.0) ? 1.0 : -1.0;
 
     // A turn request releases the correction outright rather than slewing it out. Easing it

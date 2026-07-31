@@ -16,9 +16,9 @@ namespace mars_control::drive {
 
 // Stick shaping.
 constexpr double DEADZONE = 0.15;
-constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
-constexpr double MAX_LINEAR = 0.4;   // m/s
-constexpr double MAX_ANGULAR = 1.0;  // rad/s
+constexpr double EXPONENT = 2.0;             // quadratic; 1.0 = linear
+constexpr double MAX_LINEAR = 0.4;           // m/s
+constexpr double MAX_ANGULAR = 1.0;          // rad/s
 constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s, blend width for `reverse_steering`
 
 // Ramp defaults. Same lag-plus-slew shape as JoystickAxis in joystick.py, with
@@ -128,7 +128,7 @@ struct HeadingTuning {
  * earlier — an operator corrects their own overshoot.
  */
 class HeadingHold {
-  public:
+   public:
     void set_measured(double yaw, double stamp) {
         yaw_ = yaw;
         yaw_stamp_ = stamp;
@@ -143,7 +143,7 @@ class HeadingHold {
      */
     double correction(double linear, double requested_angular, double now, double dt, const HeadingTuning& tuning);
 
-  private:
+   private:
     double yaw_ = 0.0;
     double yaw_stamp_ = 0.0;
     double target_ = 0.0;
@@ -154,27 +154,39 @@ class HeadingHold {
 
 /** Ramp state for both axes, plus the heading hold that rides on the angular one. */
 class DriveSmoother {
-  public:
+   public:
     void set_target(double linear, double angular) {
         target_linear_ = linear;
         target_angular_ = angular;
     }
-    double target_linear() const { return target_linear_; }
-    double target_angular() const { return target_angular_; }
+    double target_linear() const {
+        return target_linear_;
+    }
+    double target_angular() const {
+        return target_angular_;
+    }
 
-    double linear() const { return linear_; }
-    double angular() const { return angular_; }
+    double linear() const {
+        return linear_;
+    }
+    double angular() const {
+        return angular_;
+    }
 
     /** Ramp one tick toward the given targets. */
     void step(double target_linear, double target_angular, const AxisLimits& linear_limits,
               const AxisLimits& angular_limits, double dt);
 
-    HeadingHold& heading() { return heading_; }
+    HeadingHold& heading() {
+        return heading_;
+    }
 
     /** True once both axes have settled at rest, so the caller can fall silent. */
-    bool at_rest() const { return linear_ == 0.0 && angular_ == 0.0; }
+    bool at_rest() const {
+        return linear_ == 0.0 && angular_ == 0.0;
+    }
 
-  private:
+   private:
     double target_linear_ = 0.0;
     double target_angular_ = 0.0;
     double linear_ = 0.0;
