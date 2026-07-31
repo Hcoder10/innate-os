@@ -48,7 +48,13 @@
       ax_max: 0.3                       # accel limit for linear x
       ay_min: 0.0                       # differential drive - no lateral acceleration
       ay_max: 0.0                       # differential drive - no lateral acceleration
-      az_max: 0.5                       # angular acceleration limit
+      # Angular acceleration limit. Deliberately near-zero: the clamp leaves
+      # the sequence's first element free, so this degrades MPPI into an
+      # adaptive constant-curvature follower (steering updates freely each
+      # cycle; within-plan wiggle is forbidden). On our high-latency base this
+      # tracked far straighter than 0.5/2.0 and was field-validated on
+      # doorways and tight turns (R7-27, 2026-07).
+      az_max: 0.01
       
       # Sampling standard deviations
       vx_std: 0.2                       # Forward velocity sampling std
