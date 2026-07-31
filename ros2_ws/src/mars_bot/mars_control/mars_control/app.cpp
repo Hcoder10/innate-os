@@ -7,6 +7,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
+
+#include "drive_smoother.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -41,129 +43,6 @@ using namespace std::chrono_literals;
 namespace mars_control {
 
 // Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
-namespace joy_tuning {
-// Defaults match the original pre-tuning feel: 15% deadband, quadratic
-// response, 0.4 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
-constexpr double DEADZONE = 0.15;
-constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
-constexpr double MAX_LINEAR = 0.4;   // m/s
-constexpr double MAX_ANGULAR = 1.0;  // rad/s
-// Car-like steering inversion while reversing is the `reverse_steering` ROS
-// parameter (default off); the app's Dev tab toggles it live via set_parameters.
-constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
-
-// Drive smoothing. /joystick only sets a target; a fixed-rate timer ramps the published
-// twist toward it, so the motors never see a step. Same lag-plus-slew shape as
-// JoystickAxis::update in joystick.py, with deceleration and jerk limited separately.
-constexpr double CONTROL_DT = 0.02;  // s, smoother tick == 50 Hz; matches motion_control.yaml
-// Per axis, so the angular ramp can be tightened without changing linear feel.
-constexpr double SPEED_TIME_CONSTANT = 0.40;          // s, first-order lag, linear
-constexpr double ANGULAR_SPEED_TIME_CONSTANT = 0.10;  // s, first-order lag, angular
-constexpr double MAX_ACCELERATION = 0.2;              // m/s^2
-constexpr double MAX_DECELERATION = 1.2;              // m/s^2, larger so stopping stays responsive
-constexpr double MAX_ANGULAR_ACCELERATION = 2.0;      // rad/s^2
-// Angular decel and jerk run much harder than the linear pair: a slow yaw ramp-down keeps
-// turning after the operator has stopped asking, which reads as the robot refusing to
-// straighten. At 3.0 / 25.0 releasing a full-rate turn swept 12 deg; these sweep ~7.
-constexpr double MAX_ANGULAR_DECELERATION = 6.0;  // rad/s^2
-// How fast the accel limits themselves may change. Without this the accel -> decel
-// handover is a step and the chassis is kicked into the stop.
-// Keep time_constant >= max_deceleration / (2 * max_jerk) on both axes, or the axis
-// arrives at rest still braking and that torque is cut in one tick.
-constexpr double MAX_JERK = 10.0;           // m/s^3
-constexpr double MAX_ANGULAR_JERK = 100.0;  // rad/s^3
-// Under the mux's 0.5 s teleop window, above the app's 150 ms heartbeat, so a dropped
-// link ramps down under our own decel limit instead of being cut to zero by the mux.
-constexpr double INPUT_TIMEOUT = 0.4;  // s
-// cmd_vel_mux.py's freshness window for /cmd_vel_teleop. INPUT_TIMEOUT must stay under it,
-// so this is the hard ceiling any override is held to.
-constexpr double MUX_TELEOP_WINDOW = 0.5;  // s
-// Snap to the target below this. A hardware floor: bringup sends int(v * 100), so 0.01
-// is one wire count and anything finer is motion the motors cannot express.
-constexpr double SETTLE_EPSILON = 0.01;  // m/s and rad/s, == 1 wire count
-
-// Speed policy: some robot activities want a different default speed than whatever the
-// operator last picked. Mapping wants care; episode recording wants repeatability.
-//
-// Applied on *entry* only, never enforced while there -- if the operator deliberately picks
-// another mode mid-map, yanking them back would be worse than not helping. On exit the
-// previous value is restored, but only if it is still the one we set: if the operator (or
-// another client -- speed_scale is global) changed it since, that choice is theirs to keep.
-// Mad is the one mode whose limits are absolute rather than scaled. Everything else is a
-// multiplier on the caps, which works while the modes differ only in how fast they go --
-// but Mad wants 2.0 m/s^2 where scaling gives 0.4, and 3.0 rad/s^2 where scaling gives 4.0.
-// One ratio cannot be both above and below, so these are stated outright.
-constexpr double MAD_MAX_ACCELERATION = 2.0;          // m/s^2
-constexpr double MAD_MAX_ANGULAR_ACCELERATION = 3.0;  // rad/s^2
-constexpr const char* MAD_MODE_ID = "mad";
-
-constexpr const char* RECORDING_SCALE_ID = "medium";
-
-// Heading hold. Closes the yaw loop that nothing else closes: the drive wheels track their
-// RPM setpoints while the robot still yaws, because the caster applies an external torque
-// that wheel-level control cannot see. Measured at 28 deg/m driving forward, ~10x less in
-// reverse -- the asymmetry of a caster that leads one way and trails the other.
-//
-// Proportional only. It does not null the disturbance, it bounds it: unbounded drift
-// becomes a small standing offset (drift / gain), with no integrator to wind up. Feedback
-// is /odom's IMU heading, quantised to 0.01 rad by the I2C link, which is fine for a term
-// that integrates and hopeless for one that differentiates -- hence no D.
-constexpr double HEADING_GAIN = 5.0;            // rad/s of correction per rad of error
-constexpr double HEADING_MAX_CORRECTION = 1.0;  // rad/s, the full manual turn rate
-// Seconds of memory. The target bleeds toward the measured heading at this rate, so the
-// loop resists being turned now but does not restore heading lost earlier -- the operator
-// corrects their own overshoot. Residual drift is roughly disturbance / (1 + gain * leak),
-// so longer memory rejects better but takes longer to forget. 0 disables the bleed and
-// makes this an absolute heading lock.
-constexpr double HEADING_LEAK = 0.2;              // s
-constexpr double HEADING_DEADBAND = 0.01;         // rad, one odom quantum; stops chattering
-constexpr double HEADING_SLEW = 2.0;              // rad/s^2, so engaging is not a step
-constexpr double HEADING_STRAIGHT_YAW = 0.05;     // rad/s, below this we count as straight
-constexpr double HEADING_MIN_SPEED = 0.01;        // m/s, above this we are actually moving
-constexpr double HEADING_FEEDBACK_TIMEOUT = 0.3;  // s, stale /odom disengages the hold
-// Manual-drive speed mode: multiplies the motion_control caps, so it can lower
-// the configured maximum but never exceed it. The app/webapp set it live.
-constexpr double SPEED_SCALE = 1.0;
-// The presets the pickers offer, published on /robot/info so both clients render the same
-// set without each carrying its own copy.
-struct SpeedMode {
-    const char* id;
-    const char* label;
-    double scale;
-};
-constexpr std::array<SpeedMode, 4> SPEED_MODES{
-    {{"slow", "Slow", 0.35}, {"medium", "Med", 0.65}, {"fast", "Fast", 1.0}, {"mad", "Mad", 2.0}}};
-
-/**
- * The largest scale the robot itself offers.
- *
- * The clamp below uses this rather than a literal 1.0, which is what keeps the safety
- * property intact now that a mode exceeds the configured caps: a client picks among modes
- * the robot published and cannot invent one. Adding a faster mode is a robot-side change,
- * and bringup's `safety` clamp is still the hard ceiling at the motors regardless.
- */
-/** Scale of a preset by id, or 0 if there is no such mode. */
-inline double scale_for_mode(const char* id) {
-    for (const auto& mode : SPEED_MODES) {
-        if (std::string(mode.id) == id) {
-            return mode.scale;
-        }
-    }
-    return 0.0;
-}
-
-constexpr double max_speed_scale() {
-    double largest = 0.0;
-    for (const auto& mode : SPEED_MODES) {
-        if (mode.scale > largest) {
-            largest = mode.scale;
-        }
-    }
-    return largest;
-}
-// None of the knobs above means "unlimited" at zero -- see smoothing_param(), which
-// substitutes these same defaults for a non-positive override.
-}  // namespace joy_tuning
 
 /**
  * Check if running inside a Docker container.
@@ -511,26 +390,26 @@ class AppControl : public rclcpp::Node {
         // the app's Dev tab toggles it at runtime through set_parameters.
         this->declare_parameter("reverse_steering", false);
         // Drive-speed caps; settings.yaml's /** motion_control overrides these, else joy_tuning defaults.
-        this->declare_parameter("motion_control.max_speed", joy_tuning::MAX_LINEAR);
-        this->declare_parameter("motion_control.max_angular_speed", joy_tuning::MAX_ANGULAR);
+        this->declare_parameter("motion_control.max_speed", drive::MAX_LINEAR);
+        this->declare_parameter("motion_control.max_angular_speed", drive::MAX_ANGULAR);
         // Speed mode (slow / medium / fast); the app and webapp write it live via set_parameters.
-        this->declare_parameter("motion_control.speed_scale", joy_tuning::SPEED_SCALE);
+        this->declare_parameter("motion_control.speed_scale", drive::SPEED_SCALE);
         // Teleop ramp tuning. Only this node declares motion_control.*, so a settings.yaml
         // `/**` override reaches the app joystick without touching the USB gamepad node.
-        this->declare_parameter("motion_control.dt", joy_tuning::CONTROL_DT);
-        this->declare_parameter("motion_control.speed_time_constant", joy_tuning::SPEED_TIME_CONSTANT);
-        this->declare_parameter("motion_control.angular_speed_time_constant", joy_tuning::ANGULAR_SPEED_TIME_CONSTANT);
-        this->declare_parameter("motion_control.max_acceleration", joy_tuning::MAX_ACCELERATION);
-        this->declare_parameter("motion_control.max_deceleration", joy_tuning::MAX_DECELERATION);
-        this->declare_parameter("motion_control.max_angular_acceleration", joy_tuning::MAX_ANGULAR_ACCELERATION);
-        this->declare_parameter("motion_control.max_angular_deceleration", joy_tuning::MAX_ANGULAR_DECELERATION);
-        this->declare_parameter("motion_control.max_jerk", joy_tuning::MAX_JERK);
-        this->declare_parameter("motion_control.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK);
-        this->declare_parameter("motion_control.settle_epsilon", joy_tuning::SETTLE_EPSILON);
-        this->declare_parameter("motion_control.input_timeout", joy_tuning::INPUT_TIMEOUT);
+        this->declare_parameter("motion_control.dt", drive::CONTROL_DT);
+        this->declare_parameter("motion_control.speed_time_constant", drive::SPEED_TIME_CONSTANT);
+        this->declare_parameter("motion_control.angular_speed_time_constant", drive::ANGULAR_SPEED_TIME_CONSTANT);
+        this->declare_parameter("motion_control.max_acceleration", drive::MAX_ACCELERATION);
+        this->declare_parameter("motion_control.max_deceleration", drive::MAX_DECELERATION);
+        this->declare_parameter("motion_control.max_angular_acceleration", drive::MAX_ANGULAR_ACCELERATION);
+        this->declare_parameter("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION);
+        this->declare_parameter("motion_control.max_jerk", drive::MAX_JERK);
+        this->declare_parameter("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK);
+        this->declare_parameter("motion_control.settle_epsilon", drive::SETTLE_EPSILON);
+        this->declare_parameter("motion_control.input_timeout", drive::INPUT_TIMEOUT);
         // Mad-mode absolutes, used in place of the scaled limits while that mode is selected.
-        this->declare_parameter("mad.max_acceleration", joy_tuning::MAD_MAX_ACCELERATION);
-        this->declare_parameter("mad.max_angular_acceleration", joy_tuning::MAD_MAX_ANGULAR_ACCELERATION);
+        this->declare_parameter("mad.max_acceleration", drive::MAD_MAX_ACCELERATION);
+        this->declare_parameter("mad.max_angular_acceleration", drive::MAD_MAX_ANGULAR_ACCELERATION);
 
         // Registered after every declare_parameter: the callback fires on declaration too,
         // and a compiled default that failed its own check would abort construction.
@@ -538,13 +417,13 @@ class AppControl : public rclcpp::Node {
             [this](const std::vector<rclcpp::Parameter>& params) { return validate_parameters(params); });
         // Heading hold. Gain 0 disables it, which is why these are not read through
         // smoothing_param -- zero is a legitimate value here, not a broken one.
-        this->declare_parameter("heading_hold.gain", joy_tuning::HEADING_GAIN);
-        this->declare_parameter("heading_hold.max_correction", joy_tuning::HEADING_MAX_CORRECTION);
-        this->declare_parameter("heading_hold.leak", joy_tuning::HEADING_LEAK);
-        this->declare_parameter("heading_hold.min_speed", joy_tuning::HEADING_MIN_SPEED);
-        this->declare_parameter("heading_hold.straight_yaw", joy_tuning::HEADING_STRAIGHT_YAW);
-        this->declare_parameter("heading_hold.deadband", joy_tuning::HEADING_DEADBAND);
-        this->declare_parameter("heading_hold.slew", joy_tuning::HEADING_SLEW);
+        this->declare_parameter("heading_hold.gain", drive::HEADING_GAIN);
+        this->declare_parameter("heading_hold.max_correction", drive::HEADING_MAX_CORRECTION);
+        this->declare_parameter("heading_hold.leak", drive::HEADING_LEAK);
+        this->declare_parameter("heading_hold.min_speed", drive::HEADING_MIN_SPEED);
+        this->declare_parameter("heading_hold.straight_yaw", drive::HEADING_STRAIGHT_YAW);
+        this->declare_parameter("heading_hold.deadband", drive::HEADING_DEADBAND);
+        this->declare_parameter("heading_hold.slew", drive::HEADING_SLEW);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -555,8 +434,7 @@ class AppControl : public rclcpp::Node {
         joystick_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
             "/joystick", 10, std::bind(&AppControl::joystick_callback, this, std::placeholders::_1));
 
-        // An episode starting is a real event on the wire, so this policy lives here rather
-        // than in each client and holds for the webapp and the mobile app alike.
+        // An episode starting is a real event, so the policy lives here and covers both clients.
         recorder_sub_ = this->create_subscription<brain_messages::msg::RecorderStatus>(
             "/brain/recorder/status", 10, [this](const brain_messages::msg::RecorderStatus::SharedPtr msg) {
                 // "active" alone only means the recorder node is up; an episode is in progress
@@ -587,7 +465,7 @@ class AppControl : public rclcpp::Node {
         // /joystick arrives irregularly, so integrating on message arrival would tie the ramp
         // rate to how fast the operator moves the stick. The period is fixed here, which makes
         // motion_control.rate a startup knob; the rest are live-tunable.
-        smoothing_dt_ = smoothing_param("motion_control.dt", joy_tuning::CONTROL_DT);
+        smoothing_dt_ = smoothing_param("motion_control.dt", drive::CONTROL_DT);
         drive_smoother_timer_ = this->create_wall_timer(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
             std::bind(&AppControl::drive_smoother_callback, this));
@@ -825,42 +703,23 @@ class AppControl : public rclcpp::Node {
         return _cached_update_available;
     }
 
-    /** Apply deadband and a power-law (joy_tuning::EXPONENT) response curve to a [-1, 1] axis. */
-    double apply_curve(double value, double deadband = joy_tuning::DEADZONE) {
-        // /joystick is an open topic and the curve amplifies, so an out-of-range axis would
-        // scale straight past motion_control.max_speed. Bound it before shaping.
-        value = std::isfinite(value) ? std::clamp(value, -1.0, 1.0) : 0.0;
-        if (std::abs(value) < deadband) {
-            return 0.0;
-        }
-
-        double sign = (value > 0) ? 1.0 : -1.0;
-        double normalized = (std::abs(value) - deadband) / (1.0 - deadband);
-        double curved = std::pow(normalized, joy_tuning::EXPONENT);
-
-        return sign * curved;
-    }
-
-    /** Speed-mode multiplier on the motion_control caps, clamped to the range the robot's own
-     *  preset table spans. Above 1.0 it exceeds the configured caps -- that is what the "Mad"
-     *  mode is -- so the ceiling comes from the published presets rather than being open-ended.
-     *  Any client can write this, and std::clamp passes NaN through, so the finite check is not
-     *  redundant. */
+    /** Speed-mode multiplier, clamped to the published preset range — Mad exceeds 1.0, so the
+     *  ceiling comes from the table rather than a literal. std::clamp passes NaN through, hence
+     *  the finite check. */
     double drive_speed_scale() {
         const double value = this->get_parameter("motion_control.speed_scale").as_double();
         if (!std::isfinite(value)) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
                                  "motion_control.speed_scale must be finite (got %.3f); using %.3f.", value,
-                                 joy_tuning::SPEED_SCALE);
-            return joy_tuning::SPEED_SCALE;
+                                 drive::SPEED_SCALE);
+            return drive::SPEED_SCALE;
         }
-        return std::clamp(value, 0.05, joy_tuning::max_speed_scale());
+        return std::clamp(value, 0.05, drive::max_speed_scale());
     }
 
-    /** Read a drive_smoothing tunable, falling back to its default unless finite and positive.
-     *  Every knob here is divided by or clamped to, so 0 breaks the ramp rather than removing a
-     *  limit -- a zero deceleration limit would republish the last command forever while holding
-     *  the top-priority mux slot. Note 0 *does* mean "disabled" for mars_arm's max_jerk. */
+    /** Ramp tunable, falling back to its default unless finite and positive. Every knob here is
+     *  divided by or clamped to, so 0 breaks the ramp rather than removing a limit. (0 *does*
+     *  mean "disabled" for mars_arm's max_jerk.) */
     double smoothing_param(const char* name, double fallback) {
         const double value = this->get_parameter(name).as_double();
         if (std::isfinite(value) && value > 0.0) {
@@ -874,70 +733,25 @@ class AppControl : public rclcpp::Node {
     }
 
     /**
-     * Advance one velocity axis toward `target` by `dt`: a first-order lag of `time_constant`,
-     * clamped to an acceleration limit, with the acceleration itself slewed at `max_jerk`.
+     * Preset the current activity wants, or 0 when none applies.
      *
-     * Far from the target the clamp dominates and the axis ramps at constant acceleration;
-     * close to it the lag rounds the corner off. `applied_rate` carries the acceleration
-     * across calls, so the accel -> decel handover on stick release is continuous instead of
-     * a step. Deceleration gets its own, larger limit.
-     */
-    static double step_axis(double current, double target, double& applied_rate, double max_acceleration,
-                            double max_deceleration, double max_jerk, double time_constant, double dt,
-                            double settle_epsilon) {
-        const bool decelerating = std::abs(target) < std::abs(current) || current * target < 0.0;
-        const double limit = decelerating ? max_deceleration : max_acceleration;
-
-        const double requested_rate = std::clamp((target - current) / time_constant, -limit, limit);
-        const double max_rate_step = max_jerk * dt;
-        applied_rate += std::clamp(requested_rate - applied_rate, -max_rate_step, max_rate_step);
-
-        double next = current + applied_rate * dt;
-
-        // Euler integration can step past the target, and the lag never quite arrives at it.
-        // Settling exactly is what lets the timer recognise "stopped" and fall silent. Clear
-        // the carried acceleration too, so the next move starts from rest.
-        const bool overshot = (target >= current) ? next > target : next < target;
-        if (overshot) {
-            next = target;
-            applied_rate = 0.0;
-        }
-        if (std::abs(next - target) < settle_epsilon) {
-            next = target;
-            applied_rate = 0.0;
-        }
-        return next;
-    }
-
-    /** True when speed_scale sits on the Mad preset, whose limits are absolute not scaled. */
-    static bool mad_mode_active(double scale) {
-        const double mad = joy_tuning::scale_for_mode(joy_tuning::MAD_MODE_ID);
-        return mad > 0.0 && std::abs(scale - mad) < 1e-6;
-    }
-
-    /**
-     * Preset the current robot activity wants, or 0 when nothing applies.
-     *
-     * Mapping is deliberately absent. mode_manager early-returns on a change_mode request
-     * for the mode it is already in, so starting a second map produces no transition to key
-     * on; the clients set Slow from the map-recording screen instead. A mapping branch here
-     * would also mask this one -- mapping mode persists until someone switches back to
-     * navigation, so a robot left in it could never let a recording reach Medium.
+     * Mapping is absent deliberately: mode_manager early-returns on a change_mode request for
+     * the mode it is already in, so a second map produces no transition to key on — the
+     * clients handle it. A mapping branch would also mask this one, since mapping mode
+     * persists until someone switches back.
      */
     double policy_scale() const {
         if (recording_) {
-            return joy_tuning::scale_for_mode(joy_tuning::RECORDING_SCALE_ID);
+            return drive::scale_for_mode(drive::RECORDING_SCALE_ID);
         }
         return 0.0;
     }
 
     /**
-     * Nudge speed_scale when the robot enters or leaves an activity with a preferred speed.
+     * Nudge speed_scale on entering or leaving an activity with a preferred speed.
      *
-     * Only ever acts on a *transition*, so an operator who picks a different mode mid-map
-     * keeps it. And it only restores what it set: speed_scale is global, so another client
-     * may have changed it meanwhile, and clobbering that would be worse than leaving the
-     * robot slow.
+     * Acts only on a transition, so an operator who picks another mode mid-activity keeps it,
+     * and restores only what it set — speed_scale is global and another client may have moved it.
      */
     void apply_speed_policy() {
         const double desired = policy_scale();
@@ -975,12 +789,10 @@ class AppControl : public rclcpp::Node {
     /**
      * Reject drive tunables that would misbehave, at the point they are set.
      *
-     * Without this the node accepts anything: smoothing_param quietly substitutes the
-     * compiled default, so the caller sees success and a later `param get` reports a value
-     * that is not the one controlling the robot. The speed caps do not even have that
-     * fallback -- a negative max_speed inverts the joystick and a non-finite one reaches
-     * the published twist. Refusing the write keeps what the robot reports and what it does
-     * in agreement, which matters now the settings page can set these live.
+     * Otherwise the node accepts anything and smoothing_param substitutes the default, so
+     * `param get` reports a value that is not controlling the robot. The speed caps have no
+     * such fallback: a negative max_speed inverts the joystick, a non-finite one reaches the
+     * twist.
      */
     rcl_interfaces::msg::SetParametersResult validate_parameters(const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
@@ -1009,7 +821,7 @@ class AppControl : public rclcpp::Node {
             // the integration step. Refuse both rather than acknowledge a value that does
             // not control the robot.
             if (name == "motion_control.speed_scale") {
-                if (value < 0.05 || value > joy_tuning::max_speed_scale()) {
+                if (value < 0.05 || value > drive::max_speed_scale()) {
                     result.successful = false;
                     result.reason = "motion_control.speed_scale must be within the published preset range";
                     return result;
@@ -1039,7 +851,7 @@ class AppControl : public rclcpp::Node {
             // for that long before the ramp-down even begins. The ceiling is the mux's own
             // 0.5 s teleop window, which is the constraint INPUT_TIMEOUT is documented
             // against: past it we would be holding the slot longer than the mux would have.
-            if (name == "motion_control.input_timeout" && value > joy_tuning::MUX_TELEOP_WINDOW) {
+            if (name == "motion_control.input_timeout" && value > drive::MUX_TELEOP_WINDOW) {
                 result.successful = false;
                 result.reason = "motion_control.input_timeout must be <= 0.5 s, the cmd_vel mux's teleop window";
                 return result;
@@ -1050,45 +862,8 @@ class AppControl : public rclcpp::Node {
 
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
         const auto& q = msg->pose.pose.orientation;
-        odom_yaw_ = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-        odom_yaw_time_ = this->now().seconds();
-    }
-
-    /** Shortest signed rotation from `from` to `to`, wrapped to [-pi, pi]. */
-    static double angle_difference(double from, double to) {
-        return std::atan2(std::sin(to - from), std::cos(to - from));
-    }
-
-    /**
-     * Stretch a round stick gate onto a square one, keeping direction and radial proportion.
-     *
-     * Touch and on-screen sticks clamp to a circle, so a full-deflection diagonal is only
-     * 0.71 on each axis -- and apply_curve squares each axis independently, turning that
-     * into 43% of both throttle and steering. Holding a turn cost more than half the speed,
-     * while leaving the turn radius unchanged, so it only made the same arc slower. The
-     * keyboard gates its axes independently and never had this; this brings the sticks in
-     * line rather than leaving the two input paths behaving differently.
-     *
-     * Axis-aligned input is untouched (scale is exactly 1), and apply_curve clamps, so the
-     * keyboard's already-square vector passes through unchanged.
-     */
-    static void square_stick(double& x, double& y) {
-        const double largest = std::max(std::abs(x), std::abs(y));
-        const double magnitude = std::hypot(x, y);
-        if (largest < 1e-6 || !std::isfinite(magnitude)) {
-            return;
-        }
-        // Only stretch input that came from a round gate. A circular stick can never exceed
-        // magnitude 1, so anything above that was already square-gated -- the keyboard, which
-        // sends (-1, 1) on a diagonal. Stretching that too would push it past the corner and
-        // apply_curve would clamp it back, which is invisible at full deflection but silently
-        // erases Shift precision mode: (-0.75, 0.75) became (-1.06, 1.06) and clamped to full.
-        if (magnitude > 1.0 + 1e-6) {
-            return;
-        }
-        const double scale = magnitude / largest;
-        x *= scale;
-        y *= scale;
+        smoother_.heading().set_measured(std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+                                         this->now().seconds());
     }
 
     /**
@@ -1108,77 +883,19 @@ class AppControl : public rclcpp::Node {
      * feedback loop. It is slew-limited because nothing else would stop it stepping when
      * the hold engages or drops out.
      */
-    /** Non-negative heading_hold tunable. Unlike smoothing_param, 0 is legitimate here --
-     *  a zero deadband or engage threshold means "always", not "broken". */
+    /** Non-negative heading_hold tunable — unlike the ramps, 0 means "always", not "broken". */
     double heading_param(const char* name, double fallback) {
         const double value = this->get_parameter(name).as_double();
         return (std::isfinite(value) && value >= 0.0) ? value : fallback;
     }
 
-    double heading_hold_correction(double linear, double requested_angular, double now, double dt) {
-        const double gain = this->get_parameter("heading_hold.gain").as_double();
-        const double max_correction = this->get_parameter("heading_hold.max_correction").as_double();
-        const double straight_yaw = heading_param("heading_hold.straight_yaw", joy_tuning::HEADING_STRAIGHT_YAW);
-        const double min_speed = heading_param("heading_hold.min_speed", joy_tuning::HEADING_MIN_SPEED);
-
-        const double drive_sign = (linear >= 0.0) ? 1.0 : -1.0;
-
-        // An explicit turn request releases the correction outright rather than slewing it
-        // out. The correction had been opposing the caster, and easing it away over
-        // HEADING_SLEW cancels roughly the first 150 ms of the turn just asked for -- the
-        // turn ramps in at max_angular_acceleration over about the same time, so the two
-        // sum to nothing and the robot reads as ignoring the stick. Stepping it to zero is
-        // safe here precisely because a much larger commanded turn is arriving on top.
-        if (std::abs(requested_angular) >= straight_yaw) {
-            heading_latched_ = false;
-            heading_correction_ = 0.0;
-            heading_drive_sign_ = drive_sign;
-            return 0.0;
-        }
-
-        const bool usable = std::isfinite(gain) && gain > 0.0 && std::isfinite(max_correction) &&
-                            max_correction > 0.0 && (now - odom_yaw_time_) < joy_tuning::HEADING_FEEDBACK_TIMEOUT &&
-                            std::abs(linear) > min_speed && drive_sign == heading_drive_sign_;
-        heading_drive_sign_ = drive_sign;
-
-        double target = 0.0;
-        if (!usable) {
-            heading_latched_ = false;
-        } else if (!heading_latched_) {
-            heading_target_ = odom_yaw_;
-            heading_latched_ = true;
-        } else {
-            // Bleed the target toward the measured heading, so the hold only remembers the
-            // last `leak` seconds. Without this it is an absolute lock: it drags the robot
-            // back to wherever the turn ended long after the operator has moved on, which is
-            // not wanted -- an operator corrects their own overshoot. It also let the error
-            // grow unbounded while the caster pushed, until the correction sat saturated.
-            // What survives is the part we do want: resistance to being turned *now*.
-            const double leak = this->get_parameter("heading_hold.leak").as_double();
-            if (std::isfinite(leak) && leak > 0.0) {
-                heading_target_ += angle_difference(heading_target_, odom_yaw_) * std::min(1.0, dt / leak);
-            }
-            // /odom yaw and published angular.z share a sign: measured over 1274 ticks,
-            // commanding +49 deg/s yields +52 deg/s and -54 yields -53, so the two agree to
-            // within 5%. Reversing this term makes the loop positive feedback.
-            const double error = angle_difference(odom_yaw_, heading_target_);
-            if (std::abs(error) > heading_param("heading_hold.deadband", joy_tuning::HEADING_DEADBAND)) {
-                target = std::clamp(gain * error, -max_correction, max_correction);
-            }
-        }
-
-        const double step = heading_param("heading_hold.slew", joy_tuning::HEADING_SLEW) * dt;
-        heading_correction_ += std::clamp(target - heading_correction_, -step, step);
-        return heading_correction_;
-    }
-
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
         double stick_x = msg->x;  // steering
         double stick_y = msg->y;  // throttle
-        square_stick(stick_x, stick_y);
+        drive::square_stick(stick_x, stick_y);
 
-        double shaped_x = apply_curve(stick_x);
-        double shaped_y = apply_curve(stick_y);
+        double shaped_x = drive::apply_curve(stick_x);
+        double shaped_y = drive::apply_curve(stick_y);
 
         // Scale after the curve, never before: scaling the raw axis pushes the stick range
         // down toward the deadband and costs most of its resolution.
@@ -1189,7 +906,7 @@ class AppControl : public rclcpp::Node {
         if (this->get_parameter("reverse_steering").as_bool() && linear < 0.0) {
             // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
             // The ramp scales with the speed mode so the blend still completes at full reverse stick.
-            double blend = std::min(1.0, -linear / (joy_tuning::REVERSE_STEER_RAMP * scale));
+            double blend = std::min(1.0, -linear / (drive::REVERSE_STEER_RAMP * scale));
             angular *= (1.0 - 2.0 * blend);
         }
 
@@ -1210,10 +927,10 @@ class AppControl : public rclcpp::Node {
     void drive_smoother_callback() {
         const double now = this->now().seconds();
         const bool input_fresh =
-            (now - last_joystick_time_) < smoothing_param("motion_control.input_timeout", joy_tuning::INPUT_TIMEOUT);
+            (now - last_joystick_time_) < smoothing_param("motion_control.input_timeout", drive::INPUT_TIMEOUT);
 
-        // Stale input (app backgrounded, Wi-Fi drop) is a stop request, not a hold: ramp down
-        // under our own limit rather than let the mux window expire into a hard zero.
+        // Stale input is a stop request, not a hold: ramp down under our own limit rather than
+        // let the mux window expire into a hard zero.
         const double target_linear = input_fresh ? target_linear_ : 0.0;
         const double target_angular = input_fresh ? target_angular_ : 0.0;
 
@@ -1223,40 +940,45 @@ class AppControl : public rclcpp::Node {
             return;
         }
 
-        // The dt the timer was built with, not a live re-read: motion_control.rate fixes the
-        // callback cadence at construction, so recomputing it here would scale the real
-        // acceleration without changing how often we run.
+        // The dt the timer was built with: recomputing it live would scale real acceleration
+        // without changing how often we run.
         const double dt = smoothing_dt_;
-        const double speed_tc = smoothing_param("motion_control.speed_time_constant", joy_tuning::SPEED_TIME_CONSTANT);
+        const double speed_tc = smoothing_param("motion_control.speed_time_constant", drive::SPEED_TIME_CONSTANT);
         const double angular_tc =
-            smoothing_param("motion_control.angular_speed_time_constant", joy_tuning::ANGULAR_SPEED_TIME_CONSTANT);
+            smoothing_param("motion_control.angular_speed_time_constant", drive::ANGULAR_SPEED_TIME_CONSTANT);
         // Limits scale with the speed mode, so slow mode is a lower ceiling, not a snappier ramp.
         const double scale = drive_speed_scale();
         // Not scaled: this one is a floor set by the wire, which quantises to int(v * 100)
         // regardless of speed mode.
-        const double settle = smoothing_param("motion_control.settle_epsilon", joy_tuning::SETTLE_EPSILON);
+        const double settle = smoothing_param("motion_control.settle_epsilon", drive::SETTLE_EPSILON);
 
         // Mad states its accelerations outright; every other mode scales them.
-        const bool mad = mad_mode_active(scale);
-        const double linear_accel =
-            mad ? smoothing_param("mad.max_acceleration", joy_tuning::MAD_MAX_ACCELERATION)
-                : smoothing_param("motion_control.max_acceleration", joy_tuning::MAX_ACCELERATION) * scale;
-        const double angular_accel =
-            mad ? smoothing_param("mad.max_angular_acceleration", joy_tuning::MAD_MAX_ANGULAR_ACCELERATION)
-                : smoothing_param("motion_control.max_angular_acceleration", joy_tuning::MAX_ANGULAR_ACCELERATION) *
-                      scale;
+        const bool mad = drive::is_mad_scale(scale);
+        const drive::AxisLimits linear_limits{
+            mad ? smoothing_param("mad.max_acceleration", drive::MAD_MAX_ACCELERATION)
+                : smoothing_param("motion_control.max_acceleration", drive::MAX_ACCELERATION) * scale,
+            smoothing_param("motion_control.max_deceleration", drive::MAX_DECELERATION) * scale,
+            smoothing_param("motion_control.max_jerk", drive::MAX_JERK) * scale, speed_tc, settle};
+        const drive::AxisLimits angular_limits{
+            mad ? smoothing_param("mad.max_angular_acceleration", drive::MAD_MAX_ANGULAR_ACCELERATION)
+                : smoothing_param("motion_control.max_angular_acceleration", drive::MAX_ANGULAR_ACCELERATION) * scale,
+            smoothing_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION) * scale,
+            smoothing_param("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK) * scale, angular_tc, settle};
 
-        smoothed_linear_ =
-            step_axis(smoothed_linear_, target_linear, rate_linear_, linear_accel,
-                      smoothing_param("motion_control.max_deceleration", joy_tuning::MAX_DECELERATION) * scale,
-                      smoothing_param("motion_control.max_jerk", joy_tuning::MAX_JERK) * scale, speed_tc, dt, settle);
-        smoothed_angular_ = step_axis(
-            smoothed_angular_, target_angular, rate_angular_, angular_accel,
-            smoothing_param("motion_control.max_angular_deceleration", joy_tuning::MAX_ANGULAR_DECELERATION) * scale,
-            smoothing_param("motion_control.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK) * scale, angular_tc, dt,
-            settle);
+        smoother_.step(target_linear, target_angular, linear_limits, angular_limits, dt);
+        smoothed_linear_ = smoother_.linear();
+        smoothed_angular_ = smoother_.angular();
 
-        const double correction = heading_hold_correction(smoothed_linear_, target_angular, now, dt);
+        const drive::HeadingTuning heading_tuning{
+            this->get_parameter("heading_hold.gain").as_double(),
+            this->get_parameter("heading_hold.max_correction").as_double(),
+            this->get_parameter("heading_hold.leak").as_double(),
+            heading_param("heading_hold.deadband", drive::HEADING_DEADBAND),
+            heading_param("heading_hold.slew", drive::HEADING_SLEW),
+            heading_param("heading_hold.straight_yaw", drive::HEADING_STRAIGHT_YAW),
+            heading_param("heading_hold.min_speed", drive::HEADING_MIN_SPEED)};
+        const double correction =
+            smoother_.heading().correction(smoothed_linear_, target_angular, now, dt, heading_tuning);
 
         geometry_msgs::msg::Twist twist_msg;
         twist_msg.linear.x = smoothed_linear_;
@@ -1342,16 +1064,12 @@ class AppControl : public rclcpp::Node {
             data_to_publish_dict["color_variant"] = robot_info.value("color_variant", "black");
             data_to_publish_dict["volume_percent"] = robot_info.value("volume_percent", 80);
             data_to_publish_dict["microphone_enabled"] = robot_info.value("microphone_enabled", true);
-            // Speed mode is global robot state, so every client (app and webapp) mirrors it
-            // from here rather than trusting its own last write.
+            // Global robot state, so clients mirror it rather than trusting their last write.
             data_to_publish_dict["drive_speed_scale"] = drive_speed_scale();
-            // ...and the presets themselves, so the robot is the single source of truth for
-            // what the pickers offer. Previously each client carried its own copy of the
-            // table with a "keep in sync" comment, which meant adding a mode needed two
-            // client releases to stay consistent. Clients that predate this fall back to
-            // their built-in table.
+            // ...and the presets, so the robot is the single source of truth for what the
+            // pickers offer. Older clients fall back to their built-in table.
             data_to_publish_dict["drive_speed_modes"] = json::array();
-            for (const auto& mode : joy_tuning::SPEED_MODES) {
+            for (const auto& mode : drive::SPEED_MODES) {
                 data_to_publish_dict["drive_speed_modes"].push_back(
                     {{"id", mode.id}, {"label", mode.label}, {"scale", mode.scale}});
             }
@@ -1682,21 +1400,14 @@ class AppControl : public rclcpp::Node {
     // which the single-threaded executor serialises, so no locking is needed.
     double target_linear_ = 0.0;
     double target_angular_ = 0.0;
+    drive::DriveSmoother smoother_;
     double smoothed_linear_ = 0.0;
     double smoothed_angular_ = 0.0;
     // Acceleration carried between ticks so the jerk limit has something to slew from.
-    double rate_linear_ = 0.0;
-    double rate_angular_ = 0.0;
     double last_joystick_time_ = 0.0;
     bool drive_active_ = false;
     // Heading hold. odom_yaw_ is written from the /odom callback, which the single-threaded
     // executor serialises against the smoother timer.
-    double odom_yaw_ = 0.0;
-    double odom_yaw_time_ = 0.0;
-    double heading_target_ = 0.0;
-    double heading_correction_ = 0.0;
-    double heading_drive_sign_ = 0.0;
-    bool heading_latched_ = false;
     // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
     // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
     bool recording_ = false;
@@ -1704,7 +1415,7 @@ class AppControl : public rclcpp::Node {
     double policy_restore_scale_ = 1.0;
     bool policy_owns_scale_ = false;
     // Integration step, fixed to the period the smoother timer was created with.
-    double smoothing_dt_ = joy_tuning::CONTROL_DT;
+    double smoothing_dt_ = drive::CONTROL_DT;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

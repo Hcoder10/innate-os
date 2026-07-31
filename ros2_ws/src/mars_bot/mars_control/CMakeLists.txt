@@ -26,7 +26,7 @@ find_package(yaml-cpp REQUIRED)
 # ============================================================================
 # C++ Executable: app.cpp
 # ============================================================================
-add_executable(app.cpp mars_control/app.cpp)
+add_executable(app.cpp mars_control/app.cpp mars_control/drive_smoother.cpp)
 
 target_link_libraries(app.cpp
   nlohmann_json::nlohmann_json
