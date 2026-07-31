@@ -67,6 +67,7 @@ class MotorSoundNode(Node):
         # is needed -- which matters, because blocking the audio thread on a
         # lock would produce dropouts.
         self._commanded_speed = 0.0
+        self._commanded_turn = 0.0
         self._acceleration = 0.0
         self._commanded_at = 0.0
 
@@ -109,6 +110,10 @@ class MotorSoundNode(Node):
                 ("motor_sound.growl_depth", 0.5),
                 ("motor_sound.growl_noise_level", 0.20),
                 ("motor_sound.rolling_level", 0.14),
+                ("motor_sound.screech_level", 0.55),
+                ("motor_sound.screech_hz", 2300.0),
+                ("motor_sound.max_yaw_rate", 2.0),
+                ("motor_sound.screech_min_turn", 0.4),
                 ("motor_sound.startup_seconds", 0.9),
                 ("motor_sound.idle_level", 0.12),
                 ("motor_sound.sample_rate", 48000),
@@ -133,6 +138,10 @@ class MotorSoundNode(Node):
             growl_depth=float(params["growl_depth"].value),
             growl_noise_level=float(params["growl_noise_level"].value),
             rolling_level=float(params["rolling_level"].value),
+            screech_level=float(params["screech_level"].value),
+            screech_hz=float(params["screech_hz"].value),
+            max_yaw_rate=float(params["max_yaw_rate"].value),
+            screech_min_turn=float(params["screech_min_turn"].value),
             startup_seconds=float(params["startup_seconds"].value),
             idle_level=float(params["idle_level"].value),
             volume=float(params["volume"].value),
@@ -201,6 +210,7 @@ class MotorSoundNode(Node):
         else:
             self._acceleration = 0.0
         self._commanded_speed = msg.linear.x
+        self._commanded_turn = msg.angular.z
         self._commanded_at = now
         self._update_drive()
 
@@ -210,6 +220,7 @@ class MotorSoundNode(Node):
             # Nothing is driving the base, and its own watchdog has zeroed the
             # motors by now -- the sound winds down with them.
             self._commanded_speed = 0.0
+            self._commanded_turn = 0.0
             self._acceleration = 0.0
         speed = abs(self._commanded_speed)
 
@@ -224,7 +235,7 @@ class MotorSoundNode(Node):
             throttle = max(throttle, IDLE_THROB)
         allowed = bool(self._enabled) and (self._mad_active or not self._only_in_mad_mode)
         self._synth.enabled = allowed and (self._idle_when_stopped or not parked)
-        self._synth.set_drive(speed, throttle)
+        self._synth.set_drive(speed, throttle, abs(self._commanded_turn))
 
     def _on_parameter_change(self, params):
         for param in params:
