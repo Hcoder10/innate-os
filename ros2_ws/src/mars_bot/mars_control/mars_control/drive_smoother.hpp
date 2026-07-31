@@ -32,8 +32,6 @@ constexpr double MAX_ANGULAR_ACCELERATION = 2.0;      // rad/s^2
 constexpr double MAX_ANGULAR_DECELERATION = 6.0;      // rad/s^2
 constexpr double MAX_JERK = 10.0;                     // m/s^3
 constexpr double MAX_ANGULAR_JERK = 100.0;            // rad/s^3
-// Keep time_constant >= max_deceleration / (2 * max_jerk) per axis, or the axis arrives at
-// rest still braking and that torque is cut in one tick — a kick after it has stopped.
 
 constexpr double INPUT_TIMEOUT = 0.4;      // s
 constexpr double MUX_TELEOP_WINDOW = 0.5;  // s, cmd_vel_mux's freshness window; INPUT_TIMEOUT's ceiling
@@ -93,6 +91,18 @@ void square_stick(double& x, double& y);
 
 /** Shortest signed rotation from `from` to `to`, wrapped to [-pi, pi]. */
 double angle_difference(double from, double to);
+
+/**
+ * Jerk limit raised until the axis is no longer braking when it arrives.
+ *
+ * Below `max_deceleration / (2 * time_constant)` the axis reaches rest with residual
+ * braking that step_axis then clears in a single tick — the kick after the robot has
+ * stopped that jerk limiting exists to prevent. Deriving the floor here rather than
+ * exposing the three knobs and asking the operator to keep them consistent: the
+ * relation is not something a settings page can express, and raising the limit is the
+ * safe direction (it only lets the acceleration change faster).
+ */
+double effective_jerk(double configured, double max_deceleration, double time_constant);
 
 /** Per-axis ramp limits for one tick. */
 struct AxisLimits {

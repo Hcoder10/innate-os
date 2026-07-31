@@ -53,6 +53,13 @@ double angle_difference(double from, double to) {
     return std::atan2(std::sin(to - from), std::cos(to - from));
 }
 
+double effective_jerk(double configured, double max_deceleration, double time_constant) {
+    if (!std::isfinite(max_deceleration) || !std::isfinite(time_constant) || time_constant <= 0.0) {
+        return configured;
+    }
+    return std::max(configured, max_deceleration / (2.0 * time_constant));
+}
+
 double step_axis(double current, double target, double& applied_rate, const AxisLimits& limits, double dt) {
     const bool decelerating = std::abs(target) < std::abs(current) || current * target < 0.0;
     const double limit = decelerating ? limits.max_deceleration : limits.max_acceleration;

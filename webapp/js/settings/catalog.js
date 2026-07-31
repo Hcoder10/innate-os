@@ -78,7 +78,7 @@ export const CATALOG = [
   },
   {
     section: "Drive feel (app / webapp joystick)",
-    note: "How quickly the robot approaches the caps above. App teleop only — the USB gamepad has its own smoother. All apply immediately except the tick rate.",
+    note: "How quickly the robot approaches the caps above. App teleop only — the USB gamepad has its own smoother. All apply immediately except the tick rate. The jerk limits are derived from these, so there is nothing to keep consistent by hand.",
     knobs: [
       { path: ["mars_app", P, "motion_control", "max_acceleration"], label: "Linear acceleration", default: 0.2, type: "float", unit: "m/s²", doc: "How hard it speeds up", min: 0.05, max: 5.0, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "max_deceleration"], label: "Linear deceleration", default: 1.2, type: "float", unit: "m/s²", doc: "How hard it slows down; keep above acceleration so stopping stays responsive", min: 0.05, max: 10.0, live: "/mars_app" },
@@ -86,8 +86,6 @@ export const CATALOG = [
       { path: ["mars_app", P, "motion_control", "max_angular_acceleration"], label: "Angular acceleration", default: 2.0, type: "float", unit: "rad/s²", doc: "How hard it starts turning", min: 0.05, max: 20.0, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "max_angular_deceleration"], label: "Angular deceleration", default: 6.0, type: "float", unit: "rad/s²", doc: "How hard it stops turning. A slow yaw ramp keeps turning after you stop asking", min: 0.05, max: 30.0, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "angular_speed_time_constant"], label: "Angular smoothing lag", default: 0.10, type: "float", unit: "s", doc: "First-order lag on yaw, separate so turning can be tightened without changing straight-line feel", min: 0.02, max: 2.0, live: "/mars_app" },
-      { path: ["mars_app", P, "motion_control", "max_jerk"], label: "Linear jerk limit", default: 10.0, type: "float", unit: "m/s³", doc: "How fast the acceleration limits may themselves change. Keep smoothing lag >= deceleration / (2 x jerk), or the robot kicks after it stops", min: 0.1, max: 200.0, live: "/mars_app" },
-      { path: ["mars_app", P, "motion_control", "max_angular_jerk"], label: "Angular jerk limit", default: 100.0, type: "float", unit: "rad/s³", doc: "Same for the angular pair", min: 0.1, max: 1000.0, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "settle_epsilon"], label: "Stop threshold", default: 0.01, type: "float", unit: "m/s", doc: "Snap straight to zero below this instead of easing down. A hardware floor: the motors are commanded in whole units of 0.01, so anything finer is motion they cannot express, and lingering there makes their speed loop hunt", min: 0.01, max: 0.5, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "input_timeout"], label: "Input timeout", default: 0.4, type: "float", unit: "s", doc: "Silence from the controller before ramping to a stop. Capped at the cmd_vel mux's 0.5 s teleop window — beyond that a dropped link keeps the robot moving on the last command", min: 0.05, max: 0.5, slider: true, step: 0.05, live: "/mars_app" },
       { path: ["mars_app", P, "motion_control", "dt"], label: "Smoother tick", default: 0.02, type: "float", unit: "s", doc: "Control period (0.02 = 50 Hz). Fixes the timer, so this one needs a restart" },

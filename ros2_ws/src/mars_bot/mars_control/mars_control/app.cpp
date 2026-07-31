@@ -952,16 +952,23 @@ class AppControl : public rclcpp::Node {
 
         // Mad states its accelerations outright; every other mode scales them.
         const bool mad = drive::is_mad_scale(scale);
+        const double linear_decel = smoothing_param("motion_control.max_deceleration", drive::MAX_DECELERATION) * scale;
+        const double angular_decel =
+            smoothing_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION) * scale;
         const drive::AxisLimits linear_limits{
             mad ? smoothing_param("mad.max_acceleration", drive::MAD_MAX_ACCELERATION)
                 : smoothing_param("motion_control.max_acceleration", drive::MAX_ACCELERATION) * scale,
-            smoothing_param("motion_control.max_deceleration", drive::MAX_DECELERATION) * scale,
-            smoothing_param("motion_control.max_jerk", drive::MAX_JERK) * scale, speed_tc, settle};
+            linear_decel,
+            drive::effective_jerk(smoothing_param("motion_control.max_jerk", drive::MAX_JERK) * scale, linear_decel,
+                                  speed_tc),
+            speed_tc, settle};
         const drive::AxisLimits angular_limits{
             mad ? smoothing_param("mad.max_angular_acceleration", drive::MAD_MAX_ANGULAR_ACCELERATION)
                 : smoothing_param("motion_control.max_angular_acceleration", drive::MAX_ANGULAR_ACCELERATION) * scale,
-            smoothing_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION) * scale,
-            smoothing_param("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK) * scale, angular_tc, settle};
+            angular_decel,
+            drive::effective_jerk(smoothing_param("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK) * scale,
+                                  angular_decel, angular_tc),
+            angular_tc, settle};
 
         smoother_.step(target_linear, target_angular, linear_limits, angular_limits, dt);
 

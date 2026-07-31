@@ -60,8 +60,11 @@
 #
 # The caps are the ceiling, these are the rate of approach to it.
 #
-# Keep speed_time_constant >= max_deceleration / (2 * max_jerk), and the angular triple
-# likewise, or the robot arrives at rest still braking and kicks after it has stopped.
+# The jerk limits are a floor, not a target: each is raised to at least
+# max_deceleration / (2 * time_constant) for its axis, because below that the robot arrives
+# at rest still braking and kicks after it has stopped. Set them higher to allow a snappier
+# change of acceleration; setting them lower has no effect. Not offered in the Settings
+# page for that reason — the relation is not something three independent fields can hold.
 #
 # settle_epsilon is a hardware floor, not a numerical one: bringup sends int(v * 100), so
 # 0.01 is one wire count and anything finer is motion the motors cannot express. It is the
@@ -84,7 +87,7 @@
 #       max_angular_deceleration: 6.0       # rad/s^2, straightening out; runs harder than
 #                                   # the linear pair, a slow yaw ramp keeps turning after
 #                                   # the operator stopped asking
-#       max_jerk: 10.0              # m/s^3, how fast the accel limits may change
+#       max_jerk: 10.0              # m/s^3, floor on how fast the accel limits may change
 #       max_angular_jerk: 100.0     # rad/s^3, same for the angular pair
 #       settle_epsilon: 0.01        # m/s and rad/s, snap to target below this
 #       input_timeout: 0.4          # s without a joystick message before ramping to a stop
