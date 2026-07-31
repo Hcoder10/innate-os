@@ -128,6 +128,15 @@ def read_skill_id(skill_dir: str | Path) -> str | None:
     Automatically migrates from the legacy server-skill.json format first.
     """
     skill_dir = Path(skill_dir)
+    # A read must not create the file it is asking about. This runs in bulk
+    # scans over custom_skills/ (node._register_local_skill_dirs), where
+    # _locked_metadata's touch would stamp a 0-byte metadata.json into every
+    # subdirectory — which the 0.7 catalog and workspace import classify by:
+    # phantom "broken" physical skills, and code packages silently dropped
+    # from import. No metadata and no legacy file means there is nothing to
+    # lock, migrate, or read.
+    if not (skill_dir / METADATA_JSON).exists() and not (skill_dir / SKILL_JSON).is_file():
+        return None
     with _locked_metadata(skill_dir) as meta_path:
         _migrate_skill_id(skill_dir)
         data = _read_meta(meta_path)

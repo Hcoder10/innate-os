@@ -4471,6 +4471,40 @@ button {
   flex-direction: column;
 }
 
+/* Folder section header (SkillInfo.group): a full-width toggle row, visually
+   quieter than skill rows so sections read as structure, not entries. */
+.skills-pop-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.skills-pop-group:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.skills-pop-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .skills-pop-row.expanded {
   background: rgb(255 255 255 / 4%);
   border-radius: 10px;
@@ -4529,6 +4563,11 @@ button {
 
 .skills-pop-type-dot.digital {
   background: var(--type-digital);
+}
+
+/* A skill file that failed to load — row is disabled, error shown inline. */
+.skills-pop-type-dot.broken {
+  background: var(--danger);
 }
 
 .skills-pop-tail {

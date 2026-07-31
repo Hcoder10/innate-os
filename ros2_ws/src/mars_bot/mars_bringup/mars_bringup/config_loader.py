@@ -198,13 +198,11 @@ def _validate_settings_param_types(data: dict) -> None:
     )
 
 
-def _load_settings_yaml(validate: bool = True) -> dict:
+def _load_settings_yaml() -> dict:
     """Parse config/settings.yaml. Returns ``{}`` when missing, empty, or unreadable
     (unreadable is warned via :func:`_warn_settings_unreadable`, never silent).
-
-    With ``validate=True`` an int written for a double-typed key raises (see
-    :func:`_validate_settings_param_types`). Runtime callers that only read the non-ROS
-    ``script_paths`` block pass ``validate=False`` so the launch-time guard can't crash a reload."""
+    An int written for a double-typed key raises (see
+    :func:`_validate_settings_param_types`)."""
     path = _settings_yaml_path()
     if not path.exists():
         return {}
@@ -215,8 +213,7 @@ def _load_settings_yaml(validate: bool = True) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    if validate:
-        _validate_settings_param_types(data)
+    _validate_settings_param_types(data)
     return data
 
 
@@ -226,24 +223,6 @@ def settings_params() -> list:
     if not _load_settings_yaml():
         return []
     return [str(_settings_yaml_path())]
-
-
-def load_extra_script_dirs(key: str) -> list[str]:
-    """Extra agent/skill scan dirs from settings.yaml's ``script_paths`` block.
-
-    ``key`` is ``"extra_agent_dirs"`` or ``"extra_skill_dirs"``. Accepts a YAML list or an
-    ``os.pathsep``-joined string; returns entries verbatim (caller expands ``~`` / ``$VARS``),
-    or ``[]`` when unset.
-    """
-    # validate=False: runs in the hot-reload watcher, where the launch-time guard must not crash.
-    section = _load_settings_yaml(validate=False).get("script_paths", {})
-    params = section.get("ros__parameters", {}) if isinstance(section, dict) else {}
-    value = params.get(key) if isinstance(params, dict) else None
-    if isinstance(value, str):
-        return value.split(os.pathsep)
-    if isinstance(value, list):
-        return [str(part) for part in value]
-    return []
 
 
 def _settings_global_params() -> dict:

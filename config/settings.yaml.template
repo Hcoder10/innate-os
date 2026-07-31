@@ -167,12 +167,13 @@
 #     cmd_publish_hz: 50.0                  # cmd_vel republish rate during a move
 #     poll_period_sec: 0.02                 # action-loop poll interval
 
-# ── Extra agent / skill directories ───────────────────────────────────
-# Scan agents/skills from extra locations, on top of the built-in workspace/ dirs.
-# Absolute paths anywhere on the machine, scanned in place (never created); in a Docker/sim
-# setup, host paths must also be mounted into the container. (Read directly by the agent /
-# skill loaders — not a ROS node, so leave the section name as `script_paths`.)
-# script_paths:
-#   ros__parameters:
-#     extra_agent_dirs: ["/home/me/my-agents", "/opt/team/agents"]
-#     extra_skill_dirs: ["/home/me/my-skills"]
+# Extra agent/skill directories (script_paths.extra_agent_dirs / extra_skill_dirs)
+# were removed in 0.7: agents and skills load only from workspace/. To add a
+# skill pack, drop its directory into workspace/ — it is picked up (and
+# hot-reloaded) without a restart. A pack that must stay elsewhere on disk is
+# symlinked in instead, and behaves the same:
+#     ln -s /opt/team/skills ~/innate-os/workspace/team_skills
+# Dirs a 0.6.x settings.yaml configured are symlinked into workspace/
+# automatically on update (scripts/update/migrate_user_data.sh): skill dirs as
+# custom_skills/ subpackages (keeping their local/<name> skill ids), agent-dir
+# entries file-by-file into custom_agents/.
