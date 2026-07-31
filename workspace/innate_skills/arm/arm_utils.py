@@ -31,4 +31,7 @@ class ArmUtils(Skill):
             if not self.manipulation.reboot_servos():
                 self.fail("Failed to reboot arm servos")
             return "Arm servos rebooted and reinitialized; torque is disabled. Run torque_on before moving."
+        # Unreachable per the Literal type, but agents pass arbitrary strings at
+        # runtime and nothing upstream enforces the enum — without this an
+        # invalid command silently succeeds.
         self.fail(f"Invalid command '{command}'. Must be one of: {', '.join(VALID_COMMANDS)}.")

@@ -12,7 +12,7 @@ class ArmZeroPosition(Skill):
     joint_states: JointStates
 
     def execute(self, duration: int = 3, keep_gripper: bool = True) -> SkillReturn:
-        joints = list(self.manipulation.ZERO)
+        joints = list[float](self.manipulation.ZERO)
         if keep_gripper:
             # j6 zero is *less* closed than a gripping pose, so blindly
             # zeroing it drops whatever the claw holds.

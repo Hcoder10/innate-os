@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Generic, NoReturn, TypeVar, Union, get_ar
 
 from rclpy.node import Node
 from std_msgs.msg import String
+from typing_extensions import Self
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
 from brain_client.common.logging import UniversalLogger
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from brain_client.skills.invoker import SkillInvoker
 
 T = TypeVar("T")
+_T_resource = TypeVar("_T_resource")
 
 # What execute() may return: the result message (SkillOutput to attach a
 # structured payload for chaining callers), or None. Failure is self.fail();
@@ -392,25 +394,10 @@ class PhysicalSkill(_Injected):
         self.skill_id = skill_id
 
 
-class resource(Generic[T]):  # noqa: N801 — decorator, lowercase like property/cached_property
-    """An expensive object a skill owns, built on first access and cached for
-    the run. A generator factory tears down below its ``yield`` at run end:
+class _Resource(Generic[T]):
+    """Descriptor behind ``@resource`` — see that decorator for the contract."""
 
-        @resource
-        def controller(self) -> Iterator[Nav2Controller]:
-            c = Nav2Controller(self)
-            yield c
-            c.destroy()
-
-    A plain ``return`` declares no teardown. Returning or yielding None means
-    "unavailable": nothing is cached, and the next access retries.
-    """
-
-    @overload
-    def __init__(self, factory: Callable[[Any], Iterator[T]]) -> None: ...
-    @overload
-    def __init__(self, factory: Callable[[Any], T]) -> None: ...
-    def __init__(self, factory):
+    def __init__(self, factory: Callable[[Any], Iterator[T] | T]):
         self._factory = factory
         self._name = getattr(factory, "__name__", "resource")
         self.__doc__ = factory.__doc__
@@ -422,9 +409,13 @@ class resource(Generic[T]):  # noqa: N801 — decorator, lowercase like property
     def _gen_key(self) -> str:
         return f"_resource_gen_{self._name}"
 
-    def __get__(self, obj, objtype=None) -> T:
+    @overload
+    def __get__(self, obj: None, objtype: type | None = None) -> Self: ...
+    @overload
+    def __get__(self, obj: object, objtype: type | None = None) -> T: ...
+    def __get__(self, obj, objtype=None):
         if obj is None:
-            return self  # pyright: ignore[reportReturnType] — class access yields the descriptor
+            return self
         # non-data descriptor: after the first build the instance-dict entry
         # wins the lookup (cached_property's trick); release() pops to re-arm
         if self._name not in obj.__dict__:
@@ -463,6 +454,30 @@ class resource(Generic[T]):  # noqa: N801 — decorator, lowercase like property
             gen.close()
             if logger is not None:
                 logger.error(f"resource '{self._name}': factory yields more than once")
+
+
+@overload
+def resource(factory: Callable[[Any], Iterator[_T_resource]]) -> _Resource[_T_resource]: ...
+@overload
+def resource(factory: Callable[[Any], _T_resource]) -> _Resource[_T_resource]: ...
+def resource(factory: Callable[[Any], Any]) -> _Resource[Any]:
+    """An expensive object a skill owns, built on first access and cached for
+    the run. A generator factory tears down below its ``yield`` at run end:
+
+        @resource
+        def controller(self) -> Iterator[Nav2Controller]:
+            c = Nav2Controller(self)
+            yield c
+            c.destroy()
+
+    A plain ``return`` declares no teardown. Returning or yielding None means
+    "unavailable": nothing is cached, and the next access retries.
+
+    Implemented as a function (not a decorator class) so type checkers replace
+    the factory method's type with ``_Resource[T]`` / ``T`` on access — a class
+    decorator is easy to miss, leaving ``self.foo`` typed as MethodType.
+    """
+    return _Resource(factory)
 
 
 @dataclass(frozen=True)
@@ -942,7 +957,7 @@ class Skill(ABC):
         node is destroyed wholesale right after this returns (#497)."""
         for cls in type(self).__mro__:
             for attr in vars(cls).values():
-                if isinstance(attr, resource):
+                if isinstance(attr, _Resource):
                     attr.release(self, getattr(self, "logger", None))
         for child in self._wired_children():
             child.shutdown()
