@@ -36,6 +36,10 @@ CMD_TIMEOUT_S = 0.5
 so when the sound decides the robot has stopped, the motors agree."""
 STOPPED_SPEED = 0.02
 """Below this, in m/s, the robot counts as parked."""
+IDLE_THROB = 0.3
+"""Load a parked-but-idling motor carries, so the resting sound rumbles like
+a lopey idle instead of humming sterile. Only heard when idle_when_stopped
+keeps the synth running while parked."""
 
 
 def _clamp01(value: float) -> float:
@@ -88,15 +92,15 @@ class MotorSoundNode(Node):
             parameters=[
                 ("motor_sound.enabled", True),
                 ("motor_sound.volume", 0.5),
-                ("motor_sound.idle_when_stopped", False),
+                ("motor_sound.idle_when_stopped", True),
                 ("motor_sound.only_in_mad_mode", True),
                 ("motor_sound.max_speed", 0.4),
                 ("motor_sound.reference_acceleration", 0.6),
                 ("motor_sound.base_hz", 180.0),
                 ("motor_sound.top_hz", 950.0),
-                ("motor_sound.gear_tops", [0.35, 0.70, 1.0]),
+                ("motor_sound.gear_tops", [0.5, 1.0]),
                 ("motor_sound.shift_seconds", 0.12),
-                ("motor_sound.spring_hz", 2.2),
+                ("motor_sound.spring_hz", 1.2),
                 ("motor_sound.damping", 0.55),
                 ("motor_sound.wobble_hz", 5.5),
                 ("motor_sound.wobble_depth", 0.018),
@@ -216,6 +220,8 @@ class MotorSoundNode(Node):
         throttle = max(throttle, _clamp01(self._acceleration / self._reference_acceleration))
 
         parked = speed < STOPPED_SPEED
+        if parked:
+            throttle = max(throttle, IDLE_THROB)
         allowed = bool(self._enabled) and (self._mad_active or not self._only_in_mad_mode)
         self._synth.enabled = allowed and (self._idle_when_stopped or not parked)
         self._synth.set_drive(speed, throttle)

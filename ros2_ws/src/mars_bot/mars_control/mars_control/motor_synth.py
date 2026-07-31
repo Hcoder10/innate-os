@@ -81,14 +81,16 @@ class MotorConfig:
     """Road speed in m/s at the top of top gear. Matches
     ``motion_control.yaml``'s ``max_speed``."""
 
-    gear_tops: tuple[float, ...] = (0.35, 0.70, 1.0)
+    gear_tops: tuple[float, ...] = (0.5, 1.0)
     """Fraction of ``max_speed`` at which each gear tops out. Within a gear
     the whine sweeps base_hz to top_hz, then drops back at the shift."""
     shift_seconds: float = 0.12
     """Cut duration on a gear change. The gap is what reads as a shift."""
 
-    spring_hz: float = 2.2
-    """How eagerly the motor's speed chases the robot's."""
+    spring_hz: float = 1.2
+    """How eagerly the motor's speed chases the robot's. Kept low so the
+    heard acceleration is a slow spool-up that deliberately lags the real
+    speed rather than tracking it exactly."""
     damping: float = 0.55
     """Below 1 the response overshoots: the swoop on pulling away and the
     glide down when stopping. Around 0.5-0.7 reads as lively; at 1.0 the motor

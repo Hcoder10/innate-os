@@ -174,7 +174,9 @@ def test_brush_flutter_modulates_the_envelope():
     def envelope_ratio(depth):
         cfg = MotorConfig(brush_depth=depth, gear_tops=(1.0,))
         synth = MotorSynth(SAMPLE_RATE, cfg)
-        buffer = render(synth, cfg.max_speed * 0.5, 0.3, blocks=100)
+        # Discard the spool-up: the slow spring sweeps pitch for ~1 s and that
+        # sweep would drown the tremolo being measured.
+        buffer = render(synth, cfg.max_speed * 0.5, 0.3, blocks=200)[SAMPLE_RATE:]
         smooth = np.convolve(np.abs(buffer), np.ones(192) / 192, "same")[2000:-2000]
         return smooth.std() / smooth.mean()
 
@@ -203,15 +205,19 @@ def test_acceleration_growl_roughens_the_envelope():
     than coasting at the same speed, and turning the growl off must remove
     most of that difference."""
 
-    def roughness(load, depth=0.5):
-        cfg = MotorConfig(gear_tops=(1.0,), growl_depth=depth)
+    def roughness(load, depth=0.5, noise=0.20):
+        cfg = MotorConfig(gear_tops=(1.0,), growl_depth=depth, growl_noise_level=noise)
         synth = MotorSynth(SAMPLE_RATE, cfg)
-        buffer = render(synth, cfg.max_speed * 0.5, load, blocks=120)[SAMPLE_RATE // 2 :]
+        # Discard the full spool-up (the slow spring takes ~1 s to settle), so
+        # only the held-speed envelope is judged, not the pitch sweep.
+        buffer = render(synth, cfg.max_speed * 0.5, load, blocks=300)[SAMPLE_RATE + SAMPLE_RATE // 2 :]
         smooth = np.convolve(np.abs(buffer), np.ones(240) / 240, "same")[2000:-2000]
         return smooth.std() / smooth.mean()
 
     assert roughness(1.0) > roughness(0.0) * 1.5, "load should growl"
-    assert roughness(1.0) > roughness(1.0, depth=0.0) * 1.3, "and the growl knob should be doing it"
+    # Both halves of the feature off -- the throb AM and the strain noise --
+    # must remove the load roughness entirely, back down to the coast level.
+    assert roughness(1.0) > roughness(1.0, depth=0.0, noise=0.0) * 1.5, "and the growl knobs should be doing it"
 
 
 def test_mad_mode_detection_from_robot_info():

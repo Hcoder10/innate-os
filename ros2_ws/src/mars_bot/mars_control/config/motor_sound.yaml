@@ -3,7 +3,7 @@
     motor_sound:
       enabled: true
       volume: 0.50                # 0..1, before the ALSA softvol Master level
-      idle_when_stopped: false    # true = keep the motor humming while parked
+      idle_when_stopped: true     # keep the motor rumbling while parked (in Mad mode)
       # The engine only runs in Mad mode: the node watches /robot/info's
       # drive_speed_scale and plays its spin-up chirp on entry. Set false to
       # run it in every mode.
@@ -17,7 +17,7 @@
       # Gearbox: fraction of max_speed where each gear tops out. The whine
       # snaps back at each shift and sweeps again; the brief cut
       # (shift_seconds) is the strongest "it is accelerating" cue there is.
-      gear_tops: [0.35, 0.70, 1.00]
+      gear_tops: [0.50, 1.00]
       shift_seconds: 0.12
 
       # Drive model. Mad mode doubles the motion_control cap (0.4 * 2.0), so
@@ -26,10 +26,12 @@
       reference_acceleration: 0.60  # commanded m/s^2 that counts as full throttle
 
       # The motor's own speed chases the robot's through a damped spring, so
-      # pulling away swoops and stopping glides down. damping below 1 is what
-      # produces the overshoot (0.55 peaks at ~112% of target); at 1.0 it
-      # tracks speed exactly and sounds mechanical.
-      spring_hz: 2.2
+      # pulling away swoops and stopping glides down. spring_hz sets how
+      # eagerly it chases: 1.2 makes the heard acceleration deliberately lag
+      # the real one, a slow spool-up rather than exact tracking. damping
+      # below 1 is what produces the overshoot (0.55 peaks at ~112% of
+      # target); at 1.0 it tracks speed exactly and sounds mechanical.
+      spring_hz: 1.2
       damping: 0.55
 
       # Texture. wobble_* is vibrato (0.018 is about a third of a semitone);
