@@ -1295,7 +1295,9 @@ button {
 .sm-label {
   font-size: 9px;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
+  color: rgb(231 231 234 / 72%);
 }
 
 .sm-group {
@@ -1304,16 +1306,22 @@ button {
   overflow: hidden;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
+  /* The rail's own glass is translucent, so over a bright camera view the buttons
+     lose their ground. This keeps them legible whatever is behind. */
+  background: rgb(0 0 0 / 28%);
 }
 
 .sm-btn {
-  padding: 6px 9px;
+  padding: 5px 9px;
   border: 0;
   border-bottom: 1px solid var(--hairline-strong);
   background: transparent;
-  color: var(--muted);
+  /* Type matches .layer-chip, the equivalent segmented control on Locate. */
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(231 231 234 / 72%);
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
@@ -1324,6 +1332,11 @@ button {
 
 .sm-btn:hover {
   color: var(--text);
+}
+
+.sm-btn:focus-visible {
+  outline: 1px solid var(--accent-dim);
+  outline-offset: -1px;
 }
 
 .sm-btn.on {
@@ -1342,7 +1355,9 @@ button {
 
 .ht-label {
   font-size: 9px;
-  color: var(--muted);
+  /* Same rail as the speed picker, same problem: plain grey washes out over a
+     bright camera view. Kept in step so the rail reads as one control group. */
+  color: rgb(231 231 234 / 72%);
 }
 
 .ht-track {
