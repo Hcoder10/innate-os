@@ -33,9 +33,6 @@ The character on top of the bare stack:
   so pulling away overshoots and coming to rest glides down.
 * A spin-up chirp on startup -- the whine rising from below into idle, the
   way a machine sounds when it wakes.
-
-ROS-free on purpose, so it can be auditioned on a laptop:
-``python -m mars_control.motor_synth out.wav``.
 """
 
 from __future__ import annotations
@@ -392,49 +389,3 @@ class MotorSynth:
         self._noise_tail = padded[-(NOISE_TAPS - 1) :]
         band_limited = np.convolve(padded, self._noise_kernel, mode="valid")
         return band_limited * self.cfg.rolling_level * (0.25 + 0.75 * speed_frac)
-
-
-def _render_demo(path: str, sample_rate: int = 48000) -> None:
-    """Render a drive cycle to a WAV so the character can be judged offline."""
-    import wave
-
-    cfg = MotorConfig()
-    synth = MotorSynth(sample_rate, cfg)
-    synth.trigger_startup()
-    block = 512
-
-    # (duration, start speed, end speed, throttle) -- wake up, pull away
-    # through the gears, cruise, stop, a short dart, stopped.
-    drive_cycle = [
-        (1.4, 0.0, 0.0, 0.0),
-        (2.5, 0.0, cfg.max_speed, 1.0),
-        (2.0, cfg.max_speed, cfg.max_speed, 0.3),
-        (2.0, cfg.max_speed, 0.0, 0.0),
-        (1.0, 0.0, 0.0, 0.0),
-        (1.2, 0.0, cfg.max_speed * 0.6, 1.0),
-        (1.2, cfg.max_speed * 0.6, 0.0, 0.0),
-        (1.5, 0.0, 0.0, 0.0),
-    ]
-
-    chunks = []
-    for duration, speed_from, speed_to, throttle in drive_cycle:
-        blocks = max(1, int(duration * sample_rate / block))
-        for i in range(blocks):
-            speed = speed_from + (speed_to - speed_from) * (i / blocks)
-            synth.set_drive(speed, throttle)
-            chunks.append(synth.render(block))
-
-    audio = np.concatenate(chunks)
-    pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-    with wave.open(path, "wb") as out:
-        out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(sample_rate)
-        out.writeframes(pcm.tobytes())
-    print(f"wrote {path} ({len(audio) / sample_rate:.1f}s)")
-
-
-if __name__ == "__main__":
-    import sys
-
-    _render_demo(sys.argv[1] if len(sys.argv) > 1 else "motor_demo.wav")
