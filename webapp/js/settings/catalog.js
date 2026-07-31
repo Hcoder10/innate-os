@@ -104,11 +104,11 @@ export const CATALOG = [
     ],
   },
   {
-    section: "Mad mode",
-    note: "Mad is the one speed mode whose accelerations are stated outright rather than scaled from the values above — it wants more linear and less angular than a single multiplier can give.",
+    section: "Mad Mars mode",
+    note: "Mad Mars is the one speed mode whose accelerations are stated outright rather than scaled from the values above — it wants more linear and less angular than a single multiplier can give.",
     knobs: [
-      { path: ["mars_app", P, "mad", "max_acceleration"], label: "Linear acceleration", default: 2.0, type: "float", unit: "m/s²", doc: "Replaces the scaled acceleration while Mad is selected", live: "/mars_app" },
-      { path: ["mars_app", P, "mad", "max_angular_acceleration"], label: "Angular acceleration", default: 3.0, type: "float", unit: "rad/s²", doc: "Replaces the scaled turn-in rate while Mad is selected", live: "/mars_app" },
+      { path: ["mars_app", P, "mad", "max_acceleration"], label: "Linear acceleration", default: 2.0, type: "float", unit: "m/s²", doc: "Replaces the scaled acceleration while Mad Mars is selected", live: "/mars_app" },
+      { path: ["mars_app", P, "mad", "max_angular_acceleration"], label: "Angular acceleration", default: 3.0, type: "float", unit: "rad/s²", doc: "Replaces the scaled turn-in rate while Mad Mars is selected", live: "/mars_app" },
     ],
   },
   {
