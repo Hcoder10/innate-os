@@ -85,6 +85,14 @@ constexpr double SETTLE_EPSILON = 0.01;  // m/s and rad/s, == 1 wire count
 // another mode mid-map, yanking them back would be worse than not helping. On exit the
 // previous value is restored, but only if it is still the one we set: if the operator (or
 // another client -- speed_scale is global) changed it since, that choice is theirs to keep.
+// Mad is the one mode whose limits are absolute rather than scaled. Everything else is a
+// multiplier on the caps, which works while the modes differ only in how fast they go --
+// but Mad wants 2.0 m/s^2 where scaling gives 0.4, and 3.0 rad/s^2 where scaling gives 4.0.
+// One ratio cannot be both above and below, so these are stated outright.
+constexpr double MAD_MAX_ACCELERATION = 2.0;          // m/s^2
+constexpr double MAD_MAX_ANGULAR_ACCELERATION = 3.0;  // rad/s^2
+constexpr const char* MAD_MODE_ID = "mad";
+
 constexpr const char* MAPPING_MODE_SCALE_ID = "slow";
 constexpr const char* RECORDING_SCALE_ID = "medium";
 
@@ -517,6 +525,9 @@ class AppControl : public rclcpp::Node {
         this->declare_parameter("motion_control.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK);
         this->declare_parameter("motion_control.settle_epsilon", joy_tuning::SETTLE_EPSILON);
         this->declare_parameter("motion_control.input_timeout", joy_tuning::INPUT_TIMEOUT);
+        // Mad-mode absolutes, used in place of the scaled limits while that mode is selected.
+        this->declare_parameter("mad.max_acceleration", joy_tuning::MAD_MAX_ACCELERATION);
+        this->declare_parameter("mad.max_angular_acceleration", joy_tuning::MAD_MAX_ANGULAR_ACCELERATION);
         // Heading hold. Gain 0 disables it, which is why these are not read through
         // smoothing_param -- zero is a legitimate value here, not a broken one.
         this->declare_parameter("heading_hold.gain", joy_tuning::HEADING_GAIN);
@@ -896,6 +907,12 @@ class AppControl : public rclcpp::Node {
         return next;
     }
 
+    /** True when speed_scale sits on the Mad preset, whose limits are absolute not scaled. */
+    static bool mad_mode_active(double scale) {
+        const double mad = joy_tuning::scale_for_mode(joy_tuning::MAD_MODE_ID);
+        return mad > 0.0 && std::abs(scale - mad) < 1e-6;
+    }
+
     /** Preset the current robot activity wants, or 0 when nothing applies. */
     double policy_scale() const {
         if (nav_mode_ == "mapping") {
@@ -1136,14 +1153,22 @@ class AppControl : public rclcpp::Node {
         // regardless of speed mode.
         const double settle = smoothing_param("motion_control.settle_epsilon", joy_tuning::SETTLE_EPSILON);
 
+        // Mad states its accelerations outright; every other mode scales them.
+        const bool mad = mad_mode_active(scale);
+        const double linear_accel =
+            mad ? smoothing_param("mad.max_acceleration", joy_tuning::MAD_MAX_ACCELERATION)
+                : smoothing_param("motion_control.max_acceleration", joy_tuning::MAX_ACCELERATION) * scale;
+        const double angular_accel =
+            mad ? smoothing_param("mad.max_angular_acceleration", joy_tuning::MAD_MAX_ANGULAR_ACCELERATION)
+                : smoothing_param("motion_control.max_angular_acceleration", joy_tuning::MAX_ANGULAR_ACCELERATION) *
+                      scale;
+
         smoothed_linear_ =
-            step_axis(smoothed_linear_, target_linear, rate_linear_,
-                      smoothing_param("motion_control.max_acceleration", joy_tuning::MAX_ACCELERATION) * scale,
+            step_axis(smoothed_linear_, target_linear, rate_linear_, linear_accel,
                       smoothing_param("motion_control.max_deceleration", joy_tuning::MAX_DECELERATION) * scale,
                       smoothing_param("motion_control.max_jerk", joy_tuning::MAX_JERK) * scale, speed_tc, dt, settle);
         smoothed_angular_ = step_axis(
-            smoothed_angular_, target_angular, rate_angular_,
-            smoothing_param("motion_control.max_angular_acceleration", joy_tuning::MAX_ANGULAR_ACCELERATION) * scale,
+            smoothed_angular_, target_angular, rate_angular_, angular_accel,
             smoothing_param("motion_control.max_angular_deceleration", joy_tuning::MAX_ANGULAR_DECELERATION) * scale,
             smoothing_param("motion_control.max_angular_jerk", joy_tuning::MAX_ANGULAR_JERK) * scale, angular_tc, dt,
             settle);

@@ -104,6 +104,12 @@
 #                                   # so below this the loop would chatter on the wire
 #       slew: 2.0                   # rad/s^2 limit on the correction itself, so engaging
 #                                   # and dropping out are not steps
+#     # Mad mode states its accelerations outright instead of scaling them. Every other
+#     # mode is a multiplier on the caps, which works while modes differ only in how fast
+#     # they go — but Mad wants 2.0 where scaling gives 0.4, and 3.0 where it gives 4.0.
+#     mad:
+#       max_acceleration: 2.0       # m/s^2, replaces the scaled limit in Mad mode
+#       max_angular_acceleration: 3.0   # rad/s^2, likewise
 
 # ── Battery thresholds + safety speed clamp (bringup) ─────────────────
 # bringup owns the final /cmd_vel clamp before the motors — the hardware safety ceiling

@@ -168,6 +168,8 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "heading_hold.straight_yaw",
         "heading_hold.deadband",
         "heading_hold.slew",
+        "mad.max_acceleration",
+        "mad.max_angular_acceleration",
         # main_camera_driver
         "fps",
         "target_brightness",
