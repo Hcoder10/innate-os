@@ -16,6 +16,7 @@ from pathlib import Path
 from brain_client.agents.types import Agent
 from brain_client.common.dynamic_loader import DynamicLoader
 from brain_client.common.script_paths import classify_source
+from brain_client.skills.workspace_import import ensure_import_roots
 
 
 class AgentLoader(DynamicLoader):
@@ -25,6 +26,13 @@ class AgentLoader(DynamicLoader):
 
     base_class = Agent
     name_suffixes = ("Agent", "Directive")
+
+    def __init__(self, logger):
+        super().__init__(logger)
+        # Agent files may reference skill classes directly
+        # (`from innate_skills.navigate_to_position import NavigateToPosition`),
+        # so workspace packages must be importable in this process too.
+        ensure_import_roots()
 
     def _iter_candidate_files(self, directory: Path) -> list[Path]:
         # Look for Python files (excluding __init__.py, types.py, and _-prefixed)
@@ -110,7 +118,7 @@ class AgentLoader(DynamicLoader):
     def create_agent_instances(
         self,
         agent_classes: dict[str, tuple[type[Agent], Path]],
-        available_skills: dict[str, any] | None = None,
+        available_skills: dict[str, dict] | None = None,
     ) -> dict[str, Agent]:
         """
         Create instances of agent classes.
@@ -155,9 +163,6 @@ class AgentLoader(DynamicLoader):
             agent_instance: The agent instance
             agents_directory: Path to the agents directory
         """
-        # Initialize the attribute for storing base64 icon data
-        agent_instance.display_icon_data = None
-
         if not agent_instance.display_icon or not agents_directory:
             return
 
@@ -171,7 +176,7 @@ class AgentLoader(DynamicLoader):
             except Exception as e:
                 self.logger.warning(f"Failed to load icon for agent '{agent_instance.id}': {e}")
 
-    def _validate_agent_skills(self, agent_instance: Agent, available_skills: dict[str, any]) -> None:
+    def _validate_agent_skills(self, agent_instance: Agent, available_skills: dict[str, dict]) -> None:
         """
         Validates that all skills referenced by an agent have corresponding
         skill files available.
@@ -184,7 +189,7 @@ class AgentLoader(DynamicLoader):
             Warning if a skill is not found (logged, not raised)
         """
         try:
-            agent_skills = agent_instance.get_skills()
+            agent_skills = agent_instance.skill_ids()
             missing_skills = []
 
             for skill_name in agent_skills:

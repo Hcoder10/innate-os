@@ -20,21 +20,11 @@ from util import threaded
 # blob (the log viewer wants text, not gigabytes).
 MAX_LOG_BYTES = 8 * 1024 * 1024
 
-# Roots the /episode* routes may serve from: workspace/custom_skills plus the
-# legacy in-place locations the brain still scans ($INNATE_OS_ROOT/skills,
-# ~/skills; used through 0.5.x). Deduped after resolve so INNATE_OS_ROOT=~ (which
-# collapses two of them) doesn't double-check.
+# Roots the /episode* routes may serve from. Only workspace/custom_skills:
+# the pre-0.6 in-place locations ($INNATE_OS_ROOT/skills, ~/skills) are no
+# longer scanned by the brain, so serving from them was dead surface.
 _INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
-SKILLS_ROOTS = tuple(
-    dict.fromkeys(
-        p.resolve()
-        for p in (
-            Path(_INNATE_OS_ROOT) / "workspace" / "custom_skills",
-            Path(_INNATE_OS_ROOT) / "skills",
-            Path(os.path.expanduser("~")) / "skills",
-        )
-    )
-)
+SKILLS_ROOTS = ((Path(_INNATE_OS_ROOT) / "workspace" / "custom_skills").resolve(),)
 
 
 def _under_skills_root(p: Path) -> bool:

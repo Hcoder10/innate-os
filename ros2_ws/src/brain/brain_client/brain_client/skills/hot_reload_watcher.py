@@ -10,16 +10,31 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-try:
+# watchdog is optional: the robot falls back to the reload service when it is
+# absent. The fallbacks below rebind the names, which a type checker cannot
+# use as types — so under TYPE_CHECKING it reads the real ones (start()
+# refuses to run unless WATCHDOG_AVAILABLE, so they are always real at use).
+if TYPE_CHECKING:
     from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
 
+    # Observer itself is a per-platform alias (a variable, not a class), so
+    # annotations need the base class.
+    from watchdog.observers.api import BaseObserver
+
     WATCHDOG_AVAILABLE = True
-except ImportError:
-    WATCHDOG_AVAILABLE = False
-    Observer = None
-    FileSystemEventHandler = object
+else:
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+
+        WATCHDOG_AVAILABLE = True
+    except ImportError:
+        WATCHDOG_AVAILABLE = False
+        Observer = None
+        FileSystemEventHandler = object
 
 
 class HotReloadWatcher:
@@ -36,6 +51,7 @@ class HotReloadWatcher:
         on_reload: Callable[[list[str], list[str]], None],
         debounce_seconds: float = 1.0,
         recursive: bool = False,
+        workspace_roots: list[str] | None = None,
     ):
         """
         Initialize the hot reload watcher.
@@ -50,17 +66,25 @@ class HotReloadWatcher:
                 live in a per-skill subdirectory (``<root>/<skill>/metadata.json`` and
                 assets); a change to any file in there reloads that skill. Agents are
                 flat ``.py`` files, so they watch non-recursively.
+            workspace_roots: Roots holding skill packages (``workspace/``), watched
+                recursively. Any ``.py`` change under one reloads everything — a
+                package's modules import each other freely, so no single skill owns
+                an edit — and because it is one recursive watch on the root, a pack
+                dropped in after boot (``cp -r john_skills workspace/``) is picked up
+                without a restart.
         """
         self.logger = logger
         self.skills_directories = skills_directories
         self.agents_directories = agents_directories
+        self.workspace_roots = workspace_roots or []
         self.on_reload = on_reload
         self.debounce_seconds = debounce_seconds
         self.recursive = recursive
 
-        self._observer: Observer | None = None
+        self._observer: BaseObserver | None = None
         self._pending_skills: set[str] = set()
         self._pending_agents: set[str] = set()
+        self._pending_reload_all = False
         self._lock = threading.Lock()
         self._debounce_timer: threading.Timer | None = None
         self._running = False
@@ -78,7 +102,8 @@ class HotReloadWatcher:
             self.logger.warn("Hot reload watcher already running")
             return True
 
-        self._observer = Observer()
+        observer = Observer()
+        self._observer = observer
 
         # Create event handler
         handler = _InternalHandler(
@@ -87,13 +112,23 @@ class HotReloadWatcher:
         )
 
         # Skills honor self.recursive (physical skills live in subdirs); agents are flat.
+        # A directory already inside a workspace root is skipped: the recursive
+        # root watch delivers its events, and scheduling both would report every
+        # change twice. It still resolves through skills_directories, so a
+        # physical skill's non-.py files map to their skill (see _record_change).
         watched_count = 0
-        watch_specs = [(d, self.recursive) for d in self.skills_directories] + [
-            (d, False) for d in self.agents_directories
-        ]
+        watch_specs = (
+            [(d, self.recursive) for d in self.skills_directories if not self._inside_workspace_root(d)]
+            + [(d, False) for d in self.agents_directories if not self._inside_workspace_root(d)]
+            + [(d, True) for d in self.workspace_roots]
+        )
         for directory, recursive in watch_specs:
             if os.path.exists(directory):
-                self._observer.schedule(handler, directory, recursive=recursive)
+                # Watch the resolved path: inotify delivers zero events for a
+                # watch scheduled through a symlink (a symlinked-in pack), and
+                # _resolve/_is_workspace_change realpath both sides already, so
+                # the real-path events still map back to their skills.
+                observer.schedule(handler, os.path.realpath(directory), recursive=recursive)
                 self.logger.info(f"👁️ Watching for changes: {directory}")
                 watched_count += 1
 
@@ -101,7 +136,7 @@ class HotReloadWatcher:
             self.logger.warn("No valid directories to watch for hot reload")
             return False
 
-        self._observer.start()
+        observer.start()
         self._running = True
         self.logger.info(f"🔥 Hot reload watcher started ({watched_count} directories)")
         return True
@@ -121,24 +156,66 @@ class HotReloadWatcher:
         self.logger.info("Hot reload watcher stopped")
 
     def _on_path_changed(self, file_path: str):
-        """Called when any watched file changes; resolves it to the skill/agent it belongs to."""
+        """Called when any watched file changes; records what it reloads and arms the timer.
+
+        Runs on watchdog's dispatch thread, where an escaped exception kills the
+        observer — ending hot reload for the rest of the process with nothing but
+        a one-time traceback — so any failure is logged and the event dropped.
+        """
+        try:
+            with self._lock:
+                if not self._record_change(file_path):
+                    return
+
+                # Cancel existing timer and schedule new one
+                if self._debounce_timer is not None:
+                    self._debounce_timer.cancel()
+
+                self._debounce_timer = threading.Timer(self.debounce_seconds, self._execute_reload)
+                self._debounce_timer.start()
+        except Exception as e:  # noqa: BLE001 — see docstring: never raise into the observer
+            self.logger.error(f"Hot reload watcher failed to handle change to {file_path}: {e}")
+
+    def _record_change(self, file_path: str) -> bool:
+        """Note what a changed file reloads; False if it's noise. Caller holds the lock."""
+        if self._is_workspace_change(file_path):
+            # Workspace packages import each other freely, so no single skill
+            # owns an edit: empty lists mean "reload everything".
+            self._pending_reload_all = True
+            return True
         resolved = self._resolve(file_path)
         if resolved is None:
-            return
+            return False
         item_name, is_skill = resolved
+        target = self._pending_skills if is_skill else self._pending_agents
+        target.add(item_name)
+        return True
 
-        with self._lock:
-            if is_skill:
-                self._pending_skills.add(item_name)
-            else:
-                self._pending_agents.add(item_name)
+    def _inside_workspace_root(self, directory: str) -> bool:
+        """True when a recursive workspace-root watch already covers ``directory``."""
+        path = Path(os.path.realpath(directory))
+        for root in self.workspace_roots:
+            resolved = Path(os.path.realpath(root))
+            if path == resolved or resolved in path.parents:
+                return True
+        return False
 
-            # Cancel existing timer and schedule new one
-            if self._debounce_timer is not None:
-                self._debounce_timer.cancel()
+    def _is_workspace_change(self, file_path: str) -> bool:
+        """True for a ``.py`` change under a watched workspace root.
 
-            self._debounce_timer = threading.Timer(self.debounce_seconds, self._execute_reload)
-            self._debounce_timer.start()
+        Skipping ``__pycache__`` is what stops a reload loop: the reload this
+        triggers writes ``.pyc`` files back under the same root.
+        """
+        path = Path(os.path.realpath(file_path))
+        if path.suffix != ".py":
+            return False
+        for root in self.workspace_roots:
+            try:
+                rel = path.relative_to(Path(os.path.realpath(root)))
+            except ValueError:
+                continue
+            return not any(part == "__pycache__" or part.startswith(".") for part in rel.parts)
+        return False
 
     def _resolve(self, file_path: str) -> tuple[str, bool] | None:
         """Map a changed file to ``(item_name, is_skill)``, or ``None`` if it's noise.
@@ -164,17 +241,28 @@ class HotReloadWatcher:
     def _execute_reload(self):
         """Execute pending reloads."""
         with self._lock:
+            reload_all = self._pending_reload_all
             skills = list(self._pending_skills)
             agents = list(self._pending_agents)
+            self._pending_reload_all = False
             self._pending_skills.clear()
             self._pending_agents.clear()
 
-        if skills or agents:
+        if not reload_all and not skills and not agents:
+            return
+
+        if reload_all:
+            # Empty lists mean "reload everything", which also covers whatever
+            # individual skills changed inside the same debounce window.
+            skills, agents = [], []
+            self.logger.info("🔄 Hot reload triggered - shared helper changed, reloading all skills")
+        else:
             self.logger.info(f"🔄 Hot reload triggered - skills: {skills}, agents: {agents}")
-            try:
-                self.on_reload(skills, agents)
-            except Exception as e:
-                self.logger.error(f"Hot reload failed: {e}")
+
+        try:
+            self.on_reload(skills, agents)
+        except Exception as e:
+            self.logger.error(f"Hot reload failed: {e}")
 
 
 def _flat_py_name_for(root: Path, path: Path) -> str | None:
@@ -205,6 +293,8 @@ def _skill_name_for(root: Path, path: Path) -> str | None:
     except ValueError:
         return None
     parts = rel.parts
+    if not parts:
+        return None  # the event is on the root itself (e.g. the directory was removed)
     if len(parts) == 1:
         return _flat_py_name_for(root, path)  # top-level code skill
     if any(part.startswith(".") or part == "__pycache__" for part in parts):
@@ -233,19 +323,19 @@ class _InternalHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
         if not event.is_directory:
-            self.on_path_changed(event.src_path)
+            self.on_path_changed(os.fsdecode(event.src_path))
 
     def on_created(self, event):
         if not event.is_directory:
-            self.on_path_changed(event.src_path)
+            self.on_path_changed(os.fsdecode(event.src_path))
 
     def on_deleted(self, event):
         # Deleting a skill's .py or a physical skill's file should reload it so the
         # catalog drops the stale entry.
         if not event.is_directory:
-            self.on_path_changed(event.src_path)
+            self.on_path_changed(os.fsdecode(event.src_path))
 
     def on_moved(self, event):
         # Atomic saves arrive as a rename onto the target, not a modify.
         if not event.is_directory and event.dest_path:
-            self.on_path_changed(event.dest_path)
+            self.on_path_changed(os.fsdecode(event.dest_path))

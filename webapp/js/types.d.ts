@@ -84,6 +84,8 @@ interface Skill {
   id: string;
   name: string;
   type: "code" | "learned" | "replay" | "poses" | "eval";
+  /** Folder path inside the skill package ("" = root, e.g. "chess"). */
+  group?: string;
   episode_count: number;
   /** Dataset directory on the robot; absent for code-only skills. */
   directory?: string;

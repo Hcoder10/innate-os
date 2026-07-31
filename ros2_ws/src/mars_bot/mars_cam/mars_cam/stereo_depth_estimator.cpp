@@ -322,11 +322,13 @@ void StereoDepthEstimator::syncCallback(const sensor_msgs::msg::Image::ConstShar
     try {
         processFrame(left_frame, right_frame, rclcpp::Time(left_msg->header.stamp));
         frame_count_++;
-        if (frame_count_ % 100 == 0) {
+        // Throughput heartbeat — rare enough to stay readable in the live log (~2 min at 8 FPS).
+        constexpr int kStatsEveryNFrames = 1000;
+        if (frame_count_ % kStatsEveryNFrames == 0) {
             auto now = this->now();
             double elapsed = (now - last_stats_time_).seconds();
-            RCLCPP_INFO(this->get_logger(), "Depth estimation: %.1f FPS, %d frames processed", 100.0 / elapsed,
-                        frame_count_);
+            RCLCPP_INFO(this->get_logger(), "Depth estimation: %.1f FPS, %d frames processed",
+                        kStatsEveryNFrames / elapsed, frame_count_);
             last_stats_time_ = now;
         }
     } catch (const std::exception& e) {
@@ -469,26 +471,26 @@ void StereoDepthEstimator::processFrame(const cv::Mat& left_input, const cv::Mat
         return std::chrono::duration<double, std::milli>(d).count();
     };
 
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                         "Pipeline %.1fms | sub %.1f | scale %.1f | rectify %.1f | sgm_submit %.1f | "
-                         "color_remap %.1f | mono_pub %.1f | color_pub %.1f | footprint %.1f | sgm_sync %.1f | "
-                         "extract %.1f | unfilt %.1f | filter %.1f | depth %.1f | pc %.1f | "
-                         "subs[L:%d R:%d C:%d J:%d PC:%d PCC:%d D:%d Di:%d Du:%d FP:%d FM:%d FC:%d col:%d]",
-                         ms(t_end - t_start), ms(t_sub - t_start), ms(t_scale - t_sub), ms(t_rect - t_scale),
-                         ms(t_submit - t_rect), ms(t_color_remap - t_submit), ms(t_mono_pub - t_color_remap),
-                         ms(t_color_pub - t_mono_pub), ms(t_footprint - t_color_pub), ms(t_sgm - t_footprint),
-                         ms(t_extract - t_sgm), ms(t_unfilt - t_extract), ms(t_filter - t_unfilt),
-                         ms(t_depth - t_filter), ms(t_pc - t_depth), (int)pub_left_rect, (int)pub_right_rect,
-                         (int)pub_left_color, (int)pub_left_compressed, (int)pub_pointcloud, (int)pub_pointcloud_color,
-                         (int)pub_depth, (int)pub_disparity, (int)pub_unfiltered, (int)pub_footprint_overlay,
-                         (int)pub_footprint_mask, (int)pub_footprint_cutout, (int)has_color);
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                          "Pipeline %.1fms | sub %.1f | scale %.1f | rectify %.1f | sgm_submit %.1f | "
+                          "color_remap %.1f | mono_pub %.1f | color_pub %.1f | footprint %.1f | sgm_sync %.1f | "
+                          "extract %.1f | unfilt %.1f | filter %.1f | depth %.1f | pc %.1f | "
+                          "subs[L:%d R:%d C:%d J:%d PC:%d PCC:%d D:%d Di:%d Du:%d FP:%d FM:%d FC:%d col:%d]",
+                          ms(t_end - t_start), ms(t_sub - t_start), ms(t_scale - t_sub), ms(t_rect - t_scale),
+                          ms(t_submit - t_rect), ms(t_color_remap - t_submit), ms(t_mono_pub - t_color_remap),
+                          ms(t_color_pub - t_mono_pub), ms(t_footprint - t_color_pub), ms(t_sgm - t_footprint),
+                          ms(t_extract - t_sgm), ms(t_unfilt - t_extract), ms(t_filter - t_unfilt),
+                          ms(t_depth - t_filter), ms(t_pc - t_depth), (int)pub_left_rect, (int)pub_right_rect,
+                          (int)pub_left_color, (int)pub_left_compressed, (int)pub_pointcloud, (int)pub_pointcloud_color,
+                          (int)pub_depth, (int)pub_disparity, (int)pub_unfiltered, (int)pub_footprint_overlay,
+                          (int)pub_footprint_mask, (int)pub_footprint_cutout, (int)has_color);
 
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                         "Filter detail %.1fms | fp_mask %.1f | down %.1f | clamp %.1f | domain %.1f | speckle %.1f | "
-                         "edge %.1f | median %.1f | bilateral %.1f | hole %.1f | temporal %.1f | up %.1f",
-                         ms(t_filter - t_unfilt), ft.footprint_mask_ms, ft.downsample_ms, ft.depth_clamp_ms,
-                         ft.domain_transform_ms, ft.speckle_ms, ft.edge_inv_ms, ft.median_ms, ft.bilateral_ms,
-                         ft.hole_fill_ms, ft.temporal_ms, ft.upsample_ms);
+    RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                          "Filter detail %.1fms | fp_mask %.1f | down %.1f | clamp %.1f | domain %.1f | speckle %.1f | "
+                          "edge %.1f | median %.1f | bilateral %.1f | hole %.1f | temporal %.1f | up %.1f",
+                          ms(t_filter - t_unfilt), ft.footprint_mask_ms, ft.downsample_ms, ft.depth_clamp_ms,
+                          ft.domain_transform_ms, ft.speckle_ms, ft.edge_inv_ms, ft.median_ms, ft.bilateral_ms,
+                          ft.hole_fill_ms, ft.temporal_ms, ft.upsample_ms);
 }
 
 }  // namespace mars_cam

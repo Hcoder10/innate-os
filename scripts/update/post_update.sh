@@ -256,16 +256,22 @@ fi
 # Repair the mode outside the seeding branch above: a robot whose .env lost its key — the
 # very case this fallback exists for — or one flashed with a pre-seeded /etc/innate.env
 # never reaches that branch, so gating the repair on it leaves the file 0600 root:root,
-# unreadable by the non-root launch readers. Skipped when ACTUAL_USER resolves to root
-# (run from a root shell, no sudo): "root:root 640" would revoke the launch readers'
-# group access on a file that may currently be correct.
+# unreadable by the non-root launch readers (print_runtime_env.py then treats it as
+# absent and the service key silently drops out — proxy "not configured").
+# Idempotent; matches the seeded state above. Contents are never touched.
 if [ -f "$SYSTEM_ENV_FILE" ]; then
-    if [ "$ACTUAL_USER" != "root" ]; then
-        chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
-        chmod 640 "$SYSTEM_ENV_FILE"
-        log "Set $SYSTEM_ENV_FILE to 640 root:$ACTUAL_USER"
-    else
+    if [ "$ACTUAL_USER" = "root" ]; then
+        # Run from a root shell, no sudo: "root:root 640" would revoke the launch
+        # readers' group access on a file that may currently be correct.
         log "Skipping $SYSTEM_ENV_FILE permission repair (no non-root user; re-run via sudo)"
+    elif [ "$(stat -c '%U:%G %a' "$SYSTEM_ENV_FILE")" != "root:$ACTUAL_USER 640" ]; then
+        # Best-effort under set -e: a user without a same-named group would fail
+        # the chown, and that must not abort the rest of the update.
+        if chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE" && chmod 640 "$SYSTEM_ENV_FILE"; then
+            log "Set $SYSTEM_ENV_FILE to 640 root:$ACTUAL_USER so launch readers can read the service key"
+        else
+            log "WARNING: could not fix $SYSTEM_ENV_FILE ownership/mode (group '$ACTUAL_USER' missing?); continuing"
+        fi
     fi
 fi
 
@@ -276,12 +282,12 @@ fi
 # shipped files; this step preserves any user-created *untracked* content
 # (custom skills/agents/inputs, trained models, SLAM maps, last mode/map).
 # Idempotent, never overwrites, only rmdir's empty dirs.
-# Home-dir ~/agents and ~/skills are migrated separately at brain startup
-# (brain_client.script_paths.migrate_legacy_home_directories).
+# Home-dir ~/agents and ~/skills are migrated too: 0.7 loads only from
+# workspace/, so leaving them in place would silently stop loading them.
 # -----------------------------------------------------------------------------
 # shellcheck source=scripts/update/migrate_user_data.sh
 source "$SCRIPT_DIR/migrate_user_data.sh"
-MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
+MIGRATE_CHOWN_USER="$ACTUAL_USER" MIGRATE_HOME="$ACTUAL_HOME" run_user_data_migrations "$REPO_DIR"
 
 # -----------------------------------------------------------------------------
 # 0a2. Create config/settings.yaml from template if missing.

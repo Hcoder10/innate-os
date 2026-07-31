@@ -18,14 +18,11 @@ import subprocess
 import threading
 import time
 
-import sounddevice as sd
-
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.types import InputDevice
 
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
-DTYPE = "int16"
 CHUNK_DURATION_SEC = 0.02
 
 
@@ -495,44 +492,3 @@ class ArecordStreamer:
                     self._proc.kill()
         except Exception:
             pass
-
-
-class MicStreamer:
-    """Streams audio via sounddevice (PortAudio)."""
-
-    def __init__(self, logger):
-        self.queue: queue.Queue[bytes] = queue.Queue(maxsize=50)
-        self._stream: sd.RawInputStream | None = None
-        self.logger = logger
-        self.sample_rate = DEFAULT_SAMPLE_RATE
-        self.channels = DEFAULT_CHANNELS
-
-    def _callback(self, indata, frames, time_info, status):
-        if status:
-            self.logger.warn(f"[PortAudio] {status}")
-        try:
-            self.queue.put_nowait(bytes(indata))
-        except queue.Full:
-            pass
-
-    def start(
-        self, device: str | None = None, sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS
-    ):
-        self.sample_rate = int(sample_rate)
-        self.channels = int(channels)
-        frames_per_chunk = int(self.sample_rate * CHUNK_DURATION_SEC)
-        kwargs = dict(
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            dtype=DTYPE,
-            blocksize=frames_per_chunk,
-            callback=self._callback,
-        )
-        if device:
-            try:
-                kwargs["device"] = int(device) if isinstance(device, str) and device.isdigit() else device
-            except Exception:
-                kwargs["device"] = device
-
-        self._stream = sd.RawInputStream(**kwargs)
-        self._stream.start()

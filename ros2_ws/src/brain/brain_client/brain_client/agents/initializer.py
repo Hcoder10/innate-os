@@ -8,16 +8,17 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
-from typing import Any
-
 from brain_client.agents.loader import AgentLoader
+from brain_client.agents.types import Agent
 from brain_client.common.script_paths import (
     ensure_user_directories,
     get_agent_directories,
+    get_workspace_dir,
 )
+from brain_client.skills.physical_refs import render_refs, write_refs
 
 
-def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tuple[dict[str, Any], Any | None]:
+def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tuple[dict[str, Agent], Agent | None]:
     """
     Initialize all agents using dynamic loading.
 
@@ -35,6 +36,12 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
     # Ensure custom dirs exist. Agents are scanned from workspace/custom_agents
     # and, if present, ~/agents (in place — never moved).
     ensure_user_directories()
+
+    # Agent files may `from physical_skills import X`, so make sure the
+    # generated package exists before importing them (a fresh workspace where
+    # agents load before the skills server has written it). The skills server
+    # is the authoritative writer; this only fills the ordering gap.
+    _regenerate_physical_refs(logger, skills_dict)
 
     agents_directories = [str(p) for p in get_agent_directories()]
 
@@ -64,3 +71,22 @@ def initialize_agents(logger, skills_dict: dict[str, Any] | None = None) -> tupl
         logger.error("No agents loaded! This will cause issues.")
 
     return agents, default_agent
+
+
+def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> None:
+    """Write workspace/physical_skills/ from the roster metadata, only when
+    the generated package doesn't exist yet. Skipped when no roster is
+    available (nothing to generate from) or when the skills server has
+    already written the package: the server regenerates it on every load and
+    publish from its full pre-dedupe roster, while this roster has
+    display-name dedupe applied — rewriting here from the (possibly smaller)
+    deduped set would make the two processes overwrite each other's file
+    forever, each write triggering the watcher's full reload."""
+    if not skills_dict:
+        return
+    if (get_workspace_dir() / "physical_skills" / "__init__.py").exists():
+        return
+    # Everything on the roster that isn't a code skill is a physical skill
+    # (learned/replay/eval/poses/...; broken entries never reach the registry).
+    entries = [meta for meta in skills_dict.values() if meta.get("type") != "code"]
+    write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), logger)
