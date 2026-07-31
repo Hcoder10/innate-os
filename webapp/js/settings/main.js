@@ -39,6 +39,7 @@ let cleanups = [];
  * @property {*} [savedWasValue]
  * @property {() => void} render  Push value + overridden state into the DOM control.
  * @property {HTMLElement} row
+ * @property {HTMLElement} [errEl]  Out-of-range message; absent on non-numeric knobs.
  */
 /** @type {Entry[]} */
 const entries = [];
@@ -88,6 +89,11 @@ const STYLE = `
 .set-row:hover { background: rgba(255,255,255,.025); }
 .set-row.saved { border-color: rgba(224,145,58,.45); background: rgba(224,145,58,.07); }
 .set-row.dirty { border-color: rgba(117,105,253,.6); background: rgba(64,31,251,.10); }
+.set-row.invalid { border-color: rgba(233,86,86,.7); background: rgba(233,86,86,.10); }
+.set-row.invalid input.set-num { border-color: rgba(233,86,86,.8); }
+.set-err { font-size: 12px; color: #e95656; }
+.set-err:empty { display: none; }
+.set-dirty.set-bad { color: #e95656; }
 .set-info { flex: 1 1 240px; min-width: 0; }
 .set-label { font-size: 14px; font-weight: 600; }
 .set-doc { display: block; color: var(--muted, #8a90a0); font-size: 12px; margin-top: 2px; }
@@ -98,9 +104,9 @@ const STYLE = `
   border: 1px solid var(--hairline, #2a2f3a); background: var(--panel, #111114); color: inherit; font: inherit; }
 .set-ctl input[type=checkbox] { width: 18px; height: 18px; }
 .set-unit { color: var(--muted, #8a90a0); font-size: 12px; width: 34px; }
-.set-default { color: var(--muted, #8a90a0); font-size: 12px; width: 96px; text-align: right; }
+.set-default { color: var(--muted, #8a90a0); font-size: 12px; min-width: 96px; text-align: right; white-space: nowrap; }
 .set-reset { font-size: 12px; background: none; border: none; color: var(--primary, #7569FD); cursor: pointer; padding: 4px; visibility: hidden; }
-.set-row.saved .set-reset, .set-row.dirty .set-reset { visibility: visible; }
+.set-row.saved .set-reset, .set-row.dirty .set-reset, .set-row.invalid .set-reset { visibility: visible; }
 .set-bar { flex: none; display: flex; align-items: center; gap: 14px;
   padding: 12px 28px; background: var(--panel, #111114); border-top: 1px solid var(--hairline, #2a2f3a); }
 .set-save { padding: 9px 20px; border-radius: 9px; border: none; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
@@ -190,7 +196,11 @@ function defaultLabel(/** @type {import("./catalog.js").Knob} */ knob) {
     const opt = knob.options.find((o) => o.value === knob.default);
     if (opt) return "default " + opt.label;
   }
-  return "default " + String(knob.default);
+  const range =
+    knob.min !== undefined && knob.max !== undefined && !knob.slider
+      ? ` (${knob.min}–${knob.max})`
+      : "";
+  return "default " + String(knob.default) + range;
 }
 
 /**
@@ -204,6 +214,24 @@ function coerceLoaded(/** @type {import("./catalog.js").Knob} */ knob, /** @type
   return String(v);
 }
 
+/**
+ * Why this value can't be saved, or "" if it can.
+ *
+ * The robot rejects out-of-range drive knobs outright (mars_app's on_set_parameters), so
+ * without this the save would appear to succeed and the robot would keep the old value.
+ * Bounds are the absurd limits, not tuning advice — the point is to keep a typo like
+ * 0.000001 m/s² of deceleration, which takes days to stop, out of the file.
+ */
+function boundsError(/** @type {Entry} */ e) {
+  const knob = e.knob;
+  if (knob.type !== "int" && knob.type !== "float") return "";
+  const v = Number(e.value);
+  if (!Number.isFinite(v)) return "must be a number";
+  if (knob.min !== undefined && v < knob.min) return `must be at least ${knob.min}`;
+  if (knob.max !== undefined && v > knob.max) return `must be at most ${knob.max}`;
+  return "";
+}
+
 /** Has this entry changed since the last save? */
 function isDirty(/** @type {Entry} */ e) {
   if (e.overridden !== e.savedOverridden) return true;
@@ -213,15 +241,27 @@ function isDirty(/** @type {Entry} */ e) {
 /** Repaint every row + the section dots + the footer (dirty count, Save enabled). */
 function recompute() {
   let dirty = 0;
+  let bad = 0;
   for (const e of entries) {
     const d = isDirty(e);
     if (d) dirty++;
-    e.row.classList.toggle("dirty", d);
+    // Only flag a knob the operator has actually touched: a bound tightened after a value
+    // was already saved shouldn't light up rows nobody is editing.
+    const err = d ? boundsError(e) : "";
+    if (err) bad++;
+    e.row.classList.toggle("dirty", d && !err);
+    e.row.classList.toggle("invalid", Boolean(err));
     e.row.classList.toggle("saved", !d && e.overridden);
+    if (e.errEl) e.errEl.textContent = err;
   }
   for (const s of sections) s.dot.classList.toggle("show", s.entries.some(isDirty));
-  dirtyEl.textContent = dirty ? `${dirty} unsaved change${dirty === 1 ? "" : "s"}` : "";
-  saveBtn.disabled = dirty === 0;
+  dirtyEl.textContent = bad
+    ? `${bad} value${bad === 1 ? "" : "s"} out of range`
+    : dirty
+      ? `${dirty} unsaved change${dirty === 1 ? "" : "s"}`
+      : "";
+  dirtyEl.classList.toggle("set-bad", bad > 0);
+  saveBtn.disabled = dirty === 0 || bad > 0;
   resetAllBtn.disabled = !entries.some((e) => e.overridden);
 }
 
@@ -544,8 +584,8 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
 /** Checkbox / slider / text / number control (bool, bounded numeric, string, number). */
 function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */ entry) {
   const knob = entry.knob;
-  // A numeric knob with a known hard maximum renders as a slider so the ceiling is visible.
-  const isSlider = (knob.type === "int" || knob.type === "float") && knob.max !== undefined;
+  const isSlider =
+    (knob.type === "int" || knob.type === "float") && knob.slider === true && knob.max !== undefined;
 
   if (knob.type === "bool") {
     const input = document.createElement("input");
@@ -669,6 +709,13 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
       entry.overridden = true;
       recompute();
     });
+
+    if (knob.min !== undefined || knob.max !== undefined) {
+      const err = document.createElement("span");
+      err.className = "set-err";
+      entry.errEl = err;
+      ctl.appendChild(err);
+    }
   }
 
   const unit = document.createElement("span");
