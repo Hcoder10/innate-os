@@ -94,7 +94,6 @@ constexpr double MAD_MAX_ACCELERATION = 2.0;          // m/s^2
 constexpr double MAD_MAX_ANGULAR_ACCELERATION = 3.0;  // rad/s^2
 constexpr const char* MAD_MODE_ID = "mad";
 
-constexpr const char* MAPPING_MODE_SCALE_ID = "slow";
 constexpr const char* RECORDING_SCALE_ID = "medium";
 
 // Heading hold. Closes the yaw loop that nothing else closes: the drive wheels track their
@@ -553,14 +552,8 @@ class AppControl : public rclcpp::Node {
         joystick_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
             "/joystick", 10, std::bind(&AppControl::joystick_callback, this, std::placeholders::_1));
 
-        // Speed policy inputs. Both are robot state, so the policy lives here rather than in
-        // each client: it then holds for the webapp and the mobile app alike, and survives a
-        // client disconnecting part-way through a map.
-        nav_mode_sub_ = this->create_subscription<std_msgs::msg::String>(
-            "/nav/current_mode", rclcpp::QoS(10).transient_local(), [this](const std_msgs::msg::String::SharedPtr msg) {
-                nav_mode_ = msg->data;
-                apply_speed_policy();
-            });
+        // An episode starting is a real event on the wire, so this policy lives here rather
+        // than in each client and holds for the webapp and the mobile app alike.
         recorder_sub_ = this->create_subscription<brain_messages::msg::RecorderStatus>(
             "/brain/recorder/status", 10, [this](const brain_messages::msg::RecorderStatus::SharedPtr msg) {
                 // "active" alone only means the recorder node is up; an episode is in progress
@@ -919,11 +912,16 @@ class AppControl : public rclcpp::Node {
         return mad > 0.0 && std::abs(scale - mad) < 1e-6;
     }
 
-    /** Preset the current robot activity wants, or 0 when nothing applies. */
+    /**
+     * Preset the current robot activity wants, or 0 when nothing applies.
+     *
+     * Mapping is deliberately absent. mode_manager early-returns on a change_mode request
+     * for the mode it is already in, so starting a second map produces no transition to key
+     * on; the clients set Slow from the map-recording screen instead. A mapping branch here
+     * would also mask this one -- mapping mode persists until someone switches back to
+     * navigation, so a robot left in it could never let a recording reach Medium.
+     */
     double policy_scale() const {
-        if (nav_mode_ == "mapping") {
-            return joy_tuning::scale_for_mode(joy_tuning::MAPPING_MODE_SCALE_ID);
-        }
         if (recording_) {
             return joy_tuning::scale_for_mode(joy_tuning::RECORDING_SCALE_ID);
         }
@@ -967,8 +965,8 @@ class AppControl : public rclcpp::Node {
             return;
         }
         this->set_parameter(rclcpp::Parameter("motion_control.speed_scale", next));
-        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f",
-                    desired > 0.0 ? (nav_mode_ == "mapping" ? "mapping" : "recording") : "idle", next);
+        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f", desired > 0.0 ? "recording" : "idle",
+                    next);
     }
 
     /**
@@ -1642,7 +1640,6 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr joystick_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr nav_mode_sub_;
     rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
@@ -1678,7 +1675,6 @@ class AppControl : public rclcpp::Node {
     bool heading_latched_ = false;
     // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
     // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
-    std::string nav_mode_;
     bool recording_ = false;
     double policy_desired_ = 0.0;
     double policy_restore_scale_ = 1.0;
