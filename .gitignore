@@ -93,6 +93,8 @@ data/
 # Directories are recreated at runtime by ensure_user_directories().
 workspace/custom_agents/
 workspace/custom_skills/
+# Regenerated from the skills on this robot on every change; per-machine, not source.
+workspace/physical_skills/
 
 # Runtime start_training resume markers (innate_training_node).
 workspace/.training_pending/
