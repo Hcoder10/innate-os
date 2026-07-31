@@ -23,7 +23,7 @@
       # Drive model. Mad mode doubles the motion_control cap (0.4 * 2.0), so
       # top gear redlines at Mad's actual top speed, not the nominal cap.
       max_speed: 0.80
-      reference_acceleration: 0.60  # m/s^2 counted as full throttle when no /cmd_vel
+      reference_acceleration: 0.60  # commanded m/s^2 that counts as full throttle
 
       # The motor's own speed chases the robot's through a damped spring, so
       # pulling away swoops and stopping glides down. damping below 1 is what

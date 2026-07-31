@@ -7,10 +7,13 @@ The synthesis itself lives in ``motor_synth`` and knows nothing about ROS.
 This node's only jobs are to work out how hard the motor is working
 and to keep the audio device fed:
 
-* road speed comes from ``/odom``
-* throttle demand comes from the gap between ``/cmd_vel`` and actual speed,
-  which is what makes accelerating sound different from coasting at the same
-  speed. When nothing is commanding the base, measured acceleration stands in.
+* road speed and throttle both come from ``/cmd_vel``. Commanded speed *is*
+  road speed on this base -- the wheel controller tracks its setpoint, and
+  the command arrives already smoothed by the teleop shaper -- whereas
+  ``/odom`` here carries pose only, its twist never filled in, which made
+  the whine deaf to speed when it listened there.
+* throttle demand is the commanded acceleration, which is what makes
+  accelerating sound different from cruising at the same speed.
 
 Audio goes to the ALSA ``default`` device, which ``config/alsa/asound.conf``
 defines as dmix + softvol. dmix is what lets this run alongside TTS instead of
@@ -22,7 +25,6 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -30,7 +32,8 @@ from std_msgs.msg import String
 from mars_control.motor_synth import MotorConfig, MotorSynth, is_mad_scale
 
 CMD_TIMEOUT_S = 0.5
-"""How long a /cmd_vel stays fresh enough to be treated as throttle demand."""
+"""How long a /cmd_vel stays fresh. Matches the base's own command watchdog,
+so when the sound decides the robot has stopped, the motors agree."""
 STOPPED_SPEED = 0.02
 """Below this, in m/s, the robot counts as parked."""
 
@@ -59,13 +62,10 @@ class MotorSoundNode(Node):
         # are plain floats, so the GIL makes each access atomic and no lock
         # is needed -- which matters, because blocking the audio thread on a
         # lock would produce dropouts.
-        self._speed = 0.0
-        self._acceleration = 0.0
         self._commanded_speed = 0.0
+        self._acceleration = 0.0
         self._commanded_at = 0.0
-        self._odom_stamp = 0.0
 
-        self.create_subscription(Odometry, "/odom", self._on_odom, 10)
         self.create_subscription(Twist, "/cmd_vel", self._on_cmd_vel, 10)
         # Speed mode is robot state, republished by mars_app at 1 Hz. Gating on
         # it here (rather than having a client toggle a parameter) means every
@@ -73,6 +73,9 @@ class MotorSoundNode(Node):
         # the engine, and leaving it always silences.
         self.create_subscription(String, "/robot/info", self._on_robot_info, 10)
         self.add_on_set_parameters_callback(self._on_parameter_change)
+        # /cmd_vel falls silent once nothing drives the base, so a slow tick
+        # is what winds the sound down after the last command goes stale.
+        self.create_timer(0.1, self._update_drive)
 
         self._stream = self._open_stream(params)
         if self._stream is not None and not self._only_in_mad_mode:
@@ -171,21 +174,6 @@ class MotorSoundNode(Node):
         except Exception:
             outdata.fill(0.0)
 
-    def _on_odom(self, msg: Odometry):
-        speed = msg.twist.twist.linear.x
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-
-        elapsed = stamp - self._odom_stamp
-        if 0.0 < elapsed < 0.5:
-            measured = (abs(speed) - abs(self._speed)) / elapsed
-            # Odometry twist is noisy and this feeds a timbre change, so
-            # smooth it rather than letting the whine flutter.
-            self._acceleration += (measured - self._acceleration) * 0.3
-
-        self._speed = speed
-        self._odom_stamp = stamp
-        self._update_drive()
-
     def _on_robot_info(self, msg: String):
         try:
             mad = is_mad_scale(json.loads(msg.data))
@@ -199,30 +187,38 @@ class MotorSoundNode(Node):
         self._update_drive()
 
     def _on_cmd_vel(self, msg: Twist):
+        now = time.monotonic()
+        elapsed = now - self._commanded_at
+        if 0.0 < elapsed < CMD_TIMEOUT_S:
+            measured = (abs(msg.linear.x) - abs(self._commanded_speed)) / elapsed
+            # Keyboard teleop and the mux's stop are steps; smoothing turns
+            # them into a swell the growl can ride instead of a one-tick spike.
+            self._acceleration += (measured - self._acceleration) * 0.3
+        else:
+            self._acceleration = 0.0
         self._commanded_speed = msg.linear.x
-        self._commanded_at = time.monotonic()
+        self._commanded_at = now
         self._update_drive()
 
     def _update_drive(self):
-        """Translate the robot's motion into speed + throttle for the synth."""
-        speed = abs(self._speed)
-        commanded = abs(self._commanded_speed)
+        """Translate the commanded motion into speed + throttle for the synth."""
+        if time.monotonic() - self._commanded_at > CMD_TIMEOUT_S:
+            # Nothing is driving the base, and its own watchdog has zeroed the
+            # motors by now -- the sound winds down with them.
+            self._commanded_speed = 0.0
+            self._acceleration = 0.0
+        speed = abs(self._commanded_speed)
 
         # Holding a steady speed still takes some throttle, so the motor is
         # never completely off-load while moving.
         throttle = 0.35 * min(speed / self._max_speed, 1.0)
+        # Speeding up is "foot down"; slowing down is not (negatives clamp to 0).
+        throttle = max(throttle, _clamp01(self._acceleration / self._reference_acceleration))
 
-        if time.monotonic() - self._commanded_at < CMD_TIMEOUT_S:
-            # Asking for more speed than we have is exactly "foot down".
-            demand = (commanded - speed) / (0.25 * self._max_speed)
-            throttle = max(throttle, _clamp01(demand))
-        else:
-            throttle = max(throttle, _clamp01(self._acceleration / self._reference_acceleration))
-
-        parked = speed < STOPPED_SPEED and commanded < STOPPED_SPEED
+        parked = speed < STOPPED_SPEED
         allowed = bool(self._enabled) and (self._mad_active or not self._only_in_mad_mode)
         self._synth.enabled = allowed and (self._idle_when_stopped or not parked)
-        self._synth.set_drive(self._speed, throttle)
+        self._synth.set_drive(speed, throttle)
 
     def _on_parameter_change(self, params):
         for param in params:
