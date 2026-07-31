@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """
-HeadInterface - Provides head tilt control capabilities to skills.
+Head - Provides head tilt control capabilities to skills.
 
 This interface allows skills to:
 1. Set the head tilt position
@@ -15,10 +15,12 @@ from std_msgs.msg import Int32
 from brain_client.common.logging import UniversalLogger
 
 
-class HeadInterface:
+class Head:
     """High-level interface for head (tilt) control.
 
-    Skills should use this instead of directly publishing to head topics.
+    Injected as ``self.head`` when a skill declares ``head: Head``; the
+    framework constructs it. Skills should use this instead of directly
+    publishing to head topics.
     """
 
     def __init__(self, node: Node, logger, head_position_topic: str = "/mars/head/set_position"):
@@ -29,7 +31,7 @@ class HeadInterface:
         # Publisher for head position commands
         self._head_position_pub = self.node.create_publisher(Int32, self.head_position_topic, 10)
 
-        self.logger.info(f"HeadInterface initialized with position topic: {self.head_position_topic}")
+        self.logger.info(f"Head initialized with position topic: {self.head_position_topic}")
 
     def set_position(self, angle_degrees: int) -> None:
         """Set the head tilt position.
@@ -48,4 +50,4 @@ class HeadInterface:
 
         self._head_position_pub.publish(msg)
 
-        self.logger.debug(f"HeadInterface: set head position to {angle_degrees} degrees")
+        self.logger.debug(f"Head: set head position to {angle_degrees} degrees")
