@@ -6,6 +6,7 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -528,6 +529,11 @@ class AppControl : public rclcpp::Node {
         // Mad-mode absolutes, used in place of the scaled limits while that mode is selected.
         this->declare_parameter("mad.max_acceleration", joy_tuning::MAD_MAX_ACCELERATION);
         this->declare_parameter("mad.max_angular_acceleration", joy_tuning::MAD_MAX_ANGULAR_ACCELERATION);
+
+        // Registered after every declare_parameter: the callback fires on declaration too,
+        // and a compiled default that failed its own check would abort construction.
+        param_callback_handle_ = this->add_on_set_parameters_callback(
+            [this](const std::vector<rclcpp::Parameter>& params) { return validate_parameters(params); });
         // Heading hold. Gain 0 disables it, which is why these are not read through
         // smoothing_param -- zero is a legitimate value here, not a broken one.
         this->declare_parameter("heading_hold.gain", joy_tuning::HEADING_GAIN);
@@ -963,6 +969,61 @@ class AppControl : public rclcpp::Node {
         this->set_parameter(rclcpp::Parameter("motion_control.speed_scale", next));
         RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f",
                     desired > 0.0 ? (nav_mode_ == "mapping" ? "mapping" : "recording") : "idle", next);
+    }
+
+    /**
+     * Reject drive tunables that would misbehave, at the point they are set.
+     *
+     * Without this the node accepts anything: smoothing_param quietly substitutes the
+     * compiled default, so the caller sees success and a later `param get` reports a value
+     * that is not the one controlling the robot. The speed caps do not even have that
+     * fallback -- a negative max_speed inverts the joystick and a non-finite one reaches
+     * the published twist. Refusing the write keeps what the robot reports and what it does
+     * in agreement, which matters now the settings page can set these live.
+     */
+    rcl_interfaces::msg::SetParametersResult validate_parameters(const std::vector<rclcpp::Parameter>& params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto& param : params) {
+            const std::string& name = param.get_name();
+            if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
+                continue;
+            }
+            const double value = param.as_double();
+            const bool is_ramp = name.rfind("motion_control.", 0) == 0 || name.rfind("mad.", 0) == 0;
+            const bool is_hold = name.rfind("heading_hold.", 0) == 0;
+            if (!is_ramp && !is_hold) {
+                continue;
+            }
+
+            if (!std::isfinite(value)) {
+                result.successful = false;
+                result.reason = name + " must be finite";
+                return result;
+            }
+            // heading_hold's thresholds may legitimately be 0, meaning "always"; every ramp
+            // knob is divided by or clamped to, so 0 breaks it rather than removing a limit.
+            if (is_ramp && name != "motion_control.speed_scale" && value <= 0.0) {
+                result.successful = false;
+                result.reason = name + " must be greater than 0";
+                return result;
+            }
+            if (is_hold && value < 0.0) {
+                result.successful = false;
+                result.reason = name + " must not be negative";
+                return result;
+            }
+            // A long input_timeout is the dangerous direction: the smoother keeps treating
+            // the last target as fresh, so the robot carries on driving that much longer
+            // after the operator stops. Bound it well under the mux's own 0.5 s window.
+            if (name == "motion_control.input_timeout" && value > 2.0) {
+                result.successful = false;
+                result.reason = "motion_control.input_timeout must be <= 2.0 s";
+                return result;
+            }
+        }
+        return result;
     }
 
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -1583,6 +1644,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr nav_mode_sub_;
     rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
     // Publishers
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
