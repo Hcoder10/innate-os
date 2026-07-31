@@ -1,0 +1,56 @@
+/**:
+  ros__parameters:
+    motor_sound:
+      enabled: true
+      volume: 0.50                # 0..1, before the ALSA softvol Master level
+      idle_when_stopped: false    # true = keep the motor humming while parked
+      # The engine only runs in Mad mode: the node watches /robot/info's
+      # drive_speed_scale and plays its spin-up chirp on entry. Set false to
+      # run it in every mode.
+      only_in_mad_mode: true
+
+      # Pitch. Within each gear the whine sweeps base_hz to top_hz; the ratio
+      # between them is the size of the sweep per gear (5.3x, ~29 semitones).
+      base_hz: 180.0
+      top_hz: 950.0
+
+      # Gearbox: fraction of max_speed where each gear tops out. The whine
+      # snaps back at each shift and sweeps again; the brief cut
+      # (shift_seconds) is the strongest "it is accelerating" cue there is.
+      gear_tops: [0.35, 0.70, 1.00]
+      shift_seconds: 0.12
+
+      # Drive model. Mad mode doubles the motion_control cap (0.4 * 2.0), so
+      # top gear redlines at Mad's actual top speed, not the nominal cap.
+      max_speed: 0.80
+      reference_acceleration: 0.60  # m/s^2 counted as full throttle when no /cmd_vel
+
+      # The motor's own speed chases the robot's through a damped spring, so
+      # pulling away swoops and stopping glides down. damping below 1 is what
+      # produces the overshoot (0.55 peaks at ~112% of target); at 1.0 it
+      # tracks speed exactly and sounds mechanical.
+      spring_hz: 2.2
+      damping: 0.55
+
+      # Texture. wobble_* is vibrato (0.018 is about a third of a semitone);
+      # brush_depth is commutator-flutter tremolo -- 0 is a clean brushless
+      # hum, higher is brushier and tremblier.
+      wobble_hz: 5.5
+      wobble_depth: 0.018
+      brush_depth: 0.35
+
+      # Acceleration growl: a slow irregular throb plus low-mid strain noise,
+      # both scaled by load -- flooring it rumbles, cruising is smooth.
+      growl_hz: 26.0
+      growl_depth: 0.50
+      growl_noise_level: 0.20
+
+      rolling_level: 0.14         # bearing and wheel noise, scaled by speed
+
+      startup_seconds: 0.9        # spin-up chirp on entering Mad mode
+      idle_level: 0.12            # how loud it sits when stopped but enabled
+
+      # Audio device. 48 kHz and the default device match config/alsa/asound.conf.
+      sample_rate: 48000
+      blocksize: 512              # ~11 ms of latency
+      device: ""                  # empty = ALSA default (dmix, shared with TTS)
