@@ -1306,22 +1306,18 @@ button {
   overflow: hidden;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
-  /* The rail's own glass is translucent, so over a bright camera view the buttons
-     lose their ground. This keeps them legible whatever is behind. */
-  background: rgb(0 0 0 / 28%);
 }
 
 .sm-btn {
-  padding: 5px 9px;
+  padding: 6px 9px;
   border: 0;
   border-bottom: 1px solid var(--hairline-strong);
   background: transparent;
-  /* Type matches .layer-chip, the equivalent segmented control on Locate. */
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
   color: rgb(231 231 234 / 72%);
+  font: inherit;
+  font-size: 10px;
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
@@ -1332,11 +1328,6 @@ button {
 
 .sm-btn:hover {
   color: var(--text);
-}
-
-.sm-btn:focus-visible {
-  outline: 1px solid var(--accent-dim);
-  outline-offset: -1px;
 }
 
 .sm-btn.on {
