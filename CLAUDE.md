@@ -1,86 +1,35 @@
 # CLAUDE.md
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+Project instructions for Claude. See [AGENTS.md](AGENTS.md) for the system overview, the
+`innate` CLI, and the ROS package map.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+## Writing skills
 
-## 1. Think Before Coding
+### Never `time.sleep` — always `self.sleep`
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+**In skill code, use `self.sleep(seconds)`. Never `time.sleep(seconds)`.**
 
-Before implementing:
+`self.sleep` wakes and raises `SkillCancelled` the moment a Stop lands; `time.sleep` blocks
+to completion, so a skill that uses it keeps running (and keeps the robot moving) after the
+user pressed Stop. Sleeping is the only cancel point a loop needs — write the loop as if
+cancel didn't exist and let the framework halt the base and report `CANCELLED`.
 
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+```python
+while traveled < target:
+    self.mobility.send_cmd_vel(linear_x=velocity, duration=0.5)
+    self.sleep(0.1)          # ✅ cancellable
+    # time.sleep(0.1)        # ❌ Stop is ignored until the sleep finishes
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+`time` itself is fine for *measuring* — `time.time()` / `time.monotonic()` for deadlines and
+elapsed checks. The rule is only about blocking.
 
-## 5. Clean, Readable Code
+`self.wait_for(read, timeout)` and `self.check_cancelled()` are cancel-aware too; cleanup
+belongs in `try/finally`.
 
-**You are a senior engineer. Write clean, maintainable code.**
+**The one exception:** teardown and already-committed physical actions must *not* be
+cancellable, so they use `time.sleep` deliberately — e.g. once `pick_any_object` closes the
+gripper, a cancel must not unwind mid-grip and drop the object. If you write such a section,
+comment it, or the next reader will "fix" it back to `self.sleep` and reintroduce the bug.
 
-Clean code is understood without reading the comments:
-
-- Use clear, descriptive variable and function names that state intent.
-- Keep complexity low. Avoid deep, multiple-levels-of-nesting indentation.
-- Use early returns to flatten control flow instead of nesting.
-- Keep things simple, always.
-
-When handling errors, don't overdo it:
-
-- Avoid scattering multiple try/catch blocks where one is enough.
-- Catch errors at the level where you can actually do something about them.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+See [AGENTS.md](AGENTS.md#writing-skills) for the full cancellation contract.
