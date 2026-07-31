@@ -220,14 +220,14 @@ class SkillRepository:
 
     def in_training_reason(self, skill_id: str) -> str | None:
         """The in-training entry a bare or qualified id matches: on the
-        roster, but with no checkpoint to run yet. Resolves bare names like
-        the invoker (see :meth:`bare_id_candidates`). None if no candidate
-        is training."""
+        roster, but its runnable data (checkpoint or recorded trajectory)
+        isn't on disk yet. Resolves bare names like the invoker (see
+        :meth:`bare_id_candidates`). None if no candidate is training."""
         candidates = self.bare_id_candidates(skill_id)
         with self._skills_lock:
             for candidate in candidates:
                 if candidate in self._in_training_skills:
-                    return f"'{candidate}' is still training and has no checkpoint to run yet"
+                    return f"'{candidate}' has no runnable data yet (still training, or its recording is not on this robot)"
         return None
 
     def unavailable_reason(self, skill_id: str) -> str | None:

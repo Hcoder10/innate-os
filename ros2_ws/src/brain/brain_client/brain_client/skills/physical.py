@@ -47,7 +47,8 @@ def validate_physical_skill(skill_dir: str, metadata: dict, logger) -> tuple:
     Returns:
         tuple: (is_valid: bool, is_in_training: bool)
             - is_valid: True if the skill can be loaded (either ready or in training)
-            - is_in_training: True if the skill is a learned type missing its checkpoint
+            - is_in_training: True if the skill's runnable data isn't on disk yet (a
+              learned skill's checkpoint, or a replay skill's trajectory)
 
     Episode counts are deliberately NOT part of validation: episodes accumulate
     while a skill trains, so the roster re-reads them at publish time
@@ -68,7 +69,18 @@ def validate_physical_skill(skill_dir: str, metadata: dict, logger) -> tuple:
         # cleanly until the take is saved and the trajectory is written.
         if not execution.get("replay_file") and os.path.isdir(os.path.join(skill_dir, "data")):
             return (True, True)
-        # Replay skills are never "in training"
+        # A named replay_file that isn't on disk is the not-fetched-yet state, not
+        # damage: recording folders ship in git with metadata.json + the generated
+        # ref shim but without the trajectory (see metadata["downloads"]). Mirror
+        # the missing-checkpoint treatment learned skills get — roster it as
+        # in_training so the typed ref keeps existing (agents importing it stay
+        # loadable) and execution is refused with a reason, not "unknown skill".
+        replay_file = execution.get("replay_file")
+        if replay_file and not os.path.exists(os.path.join(skill_dir, replay_file)):
+            logger.info(
+                f"Replay trajectory not on disk yet: {os.path.join(skill_dir, replay_file)} - marked as in_training"
+            )
+            return (True, True)
         return (_validate_replay_skill(skill_dir, execution, logger), False)
     else:
         logger.warning(f"Unknown skill type '{skill_type}' in {skill_dir}")
