@@ -5473,6 +5473,15 @@ button {
   padding: 4px 2px;
 }
 
+/* Reading surfaces are copy-paste material — chat history (discussion,
+   thoughts, skill runs) and skill status/error text — so they override the
+   overlays' drag-friendly `user-select: none`. */
+.agent-stream,
+.skills-pop-status {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .agent-compose {
   display: flex;
   gap: 8px;
