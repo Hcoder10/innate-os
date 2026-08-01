@@ -35,9 +35,10 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
 
     ``classes`` is every live registered Agent class with its source file, in
     registration order (innate before custom, so a custom agent wins an id
-    conflict — same precedence the directory scan had). ``import_errors``
-    maps module name -> error text for modules that failed to import; the
-    caller rosters these as broken so the UI can show them.
+    conflict — same precedence the directory scan had), including abstract
+    ones, which surface as broken entries from ``build_agent_instances``.
+    ``import_errors`` maps module name -> error text for modules that failed
+    to import; the caller rosters these as broken so the UI can show them.
 
     The whole workspace subtree is evicted first — the same reload model as
     the skill catalog: agent modules import skill classes and the generated
@@ -68,12 +69,13 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
         if cls.__name__.startswith("_"):
             continue  # helper base by convention, deliberately not an agent
         if inspect.isabstract(cls):
+            # Not skipped: it falls through to build_agent_instances, where
+            # cls() raises and rosters it broken. Helper bases use `_` above.
             missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
             logger.warning(
-                f"Skipping abstract agent {cls.__name__} in {module_name} (unimplemented: {missing}); "
+                f"Agent {cls.__name__} in {module_name} is abstract (unimplemented: {missing}); "
                 "implement the missing members, or prefix the class with '_' if it is a helper base."
             )
-            continue
         source_file = getattr(module, "__file__", None)
         if source_file is None:
             continue
