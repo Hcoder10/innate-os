@@ -299,7 +299,8 @@ class SkillRepository:
         # Aggregate by skill id: same-name skills in different namespaces are
         # distinct entries — display-name collisions are resolved at publish
         # time by _dedupe_display_names, not by silently dropping one here.
-        id_keyed: dict[str, tuple[str, type, Path]] = dict(registered_workspace_skills(self._logger))
+        id_keyed, function_local_broken = registered_workspace_skills(self._logger)
+        broken.update(function_local_broken)
 
         # A failed import leaves no classes to key broken entries by, so a
         # multi-skill module would otherwise collapse to one module-derived

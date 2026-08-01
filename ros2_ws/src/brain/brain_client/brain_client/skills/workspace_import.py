@@ -162,7 +162,7 @@ def _live_class(module, qualname: str):
     return obj
 
 
-def live_registered_classes(registry: dict, kind: str, logger, *, include_abstract: bool = False) -> list:
+def live_registered_classes(registry: dict, kind: str, logger, *, include_abstract: bool = False) -> tuple[list, list]:
     """Live ``(cls, source_path)`` pairs from a ``__init_subclass__`` registry
     (``Skill._registry``, ``Agent._registry``), pruning stale entries as it
     goes: an entry whose module is no longer in ``sys.modules`` (evicted for
@@ -170,20 +170,27 @@ def live_registered_classes(registry: dict, kind: str, logger, *, include_abstra
     file edited to remove the class) is dead. ``_``-prefixed classes are
     helper bases. Abstract classes warn and are kept only with
     ``include_abstract`` (agents roster them broken; skills skip them).
+
+    Returns ``(classes, rejected)``: ``rejected`` is ``(cls, error)`` for
+    function-local classes in live modules — unreachable from their module by
+    design, so unloadable; callers roster them broken rather than let them
+    vanish with only a log line.
     """
     out: list[tuple[type, Path]] = []
+    rejected: list[tuple[type, str]] = []
     for (module_name, qualname), cls in list(registry.items()):
         module = sys.modules.get(module_name)
         bound = _live_class(module, qualname) if module is not None else None
         if bound is not cls:
             # A live module with a function-local class is an authoring
-            # mistake, not staleness — pruning it silently would be the exact
-            # vanishing this import model exists to eliminate.
+            # mistake, not staleness — it must surface, not silently vanish.
             if module is not None and "<locals>" in qualname:
-                logger.warning(
-                    f"{kind} {qualname} in {module_name} is defined inside a function and cannot be "
+                error = (
+                    f"{qualname} in {module_name} is defined inside a function and cannot be "
                     "loaded; define it at module level."
                 )
+                logger.warning(f"{kind} {error}")
+                rejected.append((cls, error))
             del registry[(module_name, qualname)]
             continue
         if module_name.startswith("workspace."):
@@ -207,13 +214,15 @@ def live_registered_classes(registry: dict, kind: str, logger, *, include_abstra
         if source_file is None:
             continue
         out.append((cls, Path(source_file)))
-    return out
+    return out, rejected
 
 
-def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Path]]:
-    """Live skills from the registry: ``{skill_id: (class_name, cls, source_path)}``."""
+def registered_workspace_skills(logger) -> tuple[dict[str, tuple[str, type[Skill], Path]], dict[str, str]]:
+    """Live skills from the registry, plus function-local rejects as broken:
+    ``({skill_id: (class_name, cls, source_path)}, {skill_id: error})``."""
+    classes, rejected = live_registered_classes(Skill._registry, "Skill", logger)
     skills: dict[str, tuple[str, type[Skill], Path]] = {}
-    for cls, source_file in live_registered_classes(Skill._registry, "Skill", logger):
+    for cls, source_file in classes:
         skill_id = skill_id_for_class(cls)
         if skill_id in skills:
             logger.warning(
@@ -221,4 +230,4 @@ def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Pat
                 f"{skills[skill_id][2]} and {source_file}. Using the latter."
             )
         skills[skill_id] = (cls.__name__, cls, source_file)
-    return skills
+    return skills, {skill_id_for_class(cls): error for cls, error in rejected}
