@@ -27,7 +27,7 @@ from brain_client.common.script_paths import (
     get_innate_agents_dir,
     get_workspace_dir,
 )
-from brain_client.skills.workspace_import import import_packages, live_class
+from brain_client.skills.workspace_import import format_load_error, import_packages, live_class
 
 
 def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict[str, str]]:
@@ -112,8 +112,8 @@ def build_agent_instances(
             name = class_name_to_snake_case(cls.__name__)
             if name in broken:  # same class name broken in two modules — keep both rows
                 name = f"{cls.__module__}.{name}"
-            broken[name] = f"{type(e).__name__}: {e}"
-            logger.error(f"Error loading agent {cls.__name__} from {source_file}: {e}")
+            broken[name] = format_load_error(e)
+            logger.error(f"Error loading agent {cls.__name__} from {source_file}: {broken[name]}")
             continue
         if available_skills is not None:
             missing_skills = [skill_id for skill_id in skill_ids if skill_id not in available_skills]

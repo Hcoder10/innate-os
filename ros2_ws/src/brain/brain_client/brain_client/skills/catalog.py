@@ -51,6 +51,7 @@ from brain_client.skills.physical_refs import (
 )
 from brain_client.skills.replay_conversion import recording_action_to_replay
 from brain_client.skills.workspace_import import (
+    format_load_error,
     import_workspace_packages,
     module_skill_id,
     registered_workspace_skills,
@@ -326,8 +327,8 @@ class SkillRepository:
             try:
                 code_skills[skill_id] = self._harvest_entry(skill_id, skill_class, src_path)
             except Exception as e:
-                self._logger.error(f"Error loading skill {skill_id}: {e}")
-                broken[skill_id] = f"{type(e).__name__}: {e}"
+                broken[skill_id] = format_load_error(e)
+                self._logger.error(f"Error loading skill {skill_id}: {broken[skill_id]}")
         return code_skills, broken
 
     def _harvest_entry(self, skill_id: str, skill_class: type, src_path) -> CodeSkillEntry:

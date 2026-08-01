@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import sys
+import traceback
 from pathlib import Path
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
@@ -88,6 +89,20 @@ def import_workspace_packages(logger) -> dict[str, str]:
     return import_packages([get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()], logger)
 
 
+def format_load_error(e: BaseException) -> str:
+    """``<file>:<line>: ExcType: msg``, pointing at the deepest workspace frame
+    so the roster error names the user's file, not just the exception.
+    Falls back to plain ``ExcType: msg`` when no workspace frame is involved
+    (e.g. instantiating an abstract class)."""
+    workspace = str(get_workspace_dir())
+    location = ""
+    for frame in traceback.extract_tb(e.__traceback__):
+        if frame.filename.startswith(workspace):
+            rel = Path(frame.filename).relative_to(workspace)
+            location = f"{rel}:{frame.lineno}: "
+    return f"{location}{type(e).__name__}: {e}"
+
+
 def import_packages(package_dirs: list[Path], logger) -> dict[str, str]:
     """Import every module in every given workspace package; the shared core
     of skill discovery, also used for agent packages (agents/loader.py).
@@ -103,8 +118,8 @@ def import_packages(package_dirs: list[Path], logger) -> dict[str, str]:
             try:
                 importlib.import_module(module_name)
             except Exception as e:  # noqa: BLE001 — a broken user module must not stop discovery
-                errors[module_name] = f"{type(e).__name__}: {e}"
-                logger.warning(f"Module {module_name} failed to import: {type(e).__name__}: {e}")
+                errors[module_name] = format_load_error(e)
+                logger.warning(f"Module {module_name} failed to import: {errors[module_name]}")
     return errors
 
 
