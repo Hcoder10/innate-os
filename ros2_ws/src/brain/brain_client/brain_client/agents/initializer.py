@@ -8,33 +8,31 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
-from brain_client.agents.loader import AgentLoader
+from brain_client.agents.loader import build_agent_instances, discover_agent_classes
 from brain_client.agents.types import Agent
-from brain_client.common.script_paths import (
-    ensure_user_directories,
-    get_agent_directories,
-    get_workspace_dir,
-)
+from brain_client.common.script_paths import ensure_user_directories, get_workspace_dir
 from brain_client.skills.physical_refs import render_refs, write_refs
 
 
-def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tuple[dict[str, Agent], Agent | None]:
+def initialize_agents(
+    logger, skills_dict: dict[str, dict] | None = None
+) -> tuple[dict[str, Agent], Agent | None, dict[str, str]]:
     """
-    Initialize all agents using dynamic loading.
+    Initialize all agents by importing the agent packages.
 
     Args:
         logger: ROS logger instance
         skills_dict: Optional dictionary of available skills for validation
 
     Returns:
-        Tuple of (agents_dict, default_agent) where:
-        - agents_dict: Dictionary mapping agent names to their instances
+        Tuple of (agents_dict, default_agent, broken) where:
+        - agents_dict: Dictionary mapping agent ids to their instances
         - default_agent: The default agent instance to use
+        - broken: name -> load-error text for agents that failed to load,
+          published on get_available_directives so they stay visible in the
+          UI with their error instead of silently vanishing
     """
-    agent_loader = AgentLoader(logger)
-
-    # Ensure custom dirs exist. Agents are scanned from workspace/custom_agents
-    # and, if present, ~/agents (in place — never moved).
+    # Ensure custom dirs exist before importing.
     ensure_user_directories()
 
     # Agent files may `from physical_skills import X`, so make sure the
@@ -43,19 +41,13 @@ def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tup
     # is the authoritative writer; this only fills the ordering gap.
     _regenerate_physical_refs(logger, skills_dict)
 
-    agents_directories = [str(p) for p in get_agent_directories()]
-
-    # Load all agents dynamically from all directories
-    discovered_agent_classes = agent_loader.load_from_directories(agents_directories)
-
-    # Create agent instances with skill validation and icon loading.
-    # The loader stamps `source` per instance based on origin file path.
-    agents = agent_loader.create_agent_instances(
-        discovered_agent_classes,
-        available_skills=skills_dict,
-    )
+    classes, import_errors = discover_agent_classes(logger)
+    agents, broken = build_agent_instances(classes, logger, available_skills=skills_dict)
+    broken = {**import_errors, **broken}
 
     logger.info(f"Successfully loaded {len(agents)} agents")
+    if broken:
+        logger.warning(f"{len(broken)} agents failed to load: {list(broken)}")
 
     # Set default agent (fallback to first available if empty_directive not found)
     # Note: This doesn't mean the agent runs - is_brain_active controls that
@@ -70,7 +62,7 @@ def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tup
     else:
         logger.error("No agents loaded! This will cause issues.")
 
-    return agents, default_agent
+    return agents, default_agent, broken
 
 
 def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> None:

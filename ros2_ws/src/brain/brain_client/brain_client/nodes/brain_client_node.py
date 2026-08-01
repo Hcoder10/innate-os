@@ -285,7 +285,7 @@ class BrainClientNode(Node):
 
         # None skips per-agent skill validation: against an empty registry every
         # agent would "fail" it.
-        self.state.directives, self.state.current_directive = initialize_agents(
+        self.state.directives, self.state.current_directive, self.state.broken_agents = initialize_agents(
             self.get_logger(), self.state.registry.primitives or None
         )
         self.state.active_skill_ids = (
@@ -508,6 +508,14 @@ class BrainClientNode(Node):
                     "skills": self.state.registry.metadata,
                     "active_skills": self.catalog.active_skill_ids_for_registration(),
                     "brain_active": self.state.is_brain_active,
+                    # Agents whose module failed to import or whose class failed
+                    # to build — not selectable, shown disabled with the error.
+                    # In the meta dict (not the agent list) so clients that
+                    # don't know the field never offer them for selection.
+                    "broken_agents": [
+                        {"id": name, "display_name": name, "load_error": error}
+                        for name, error in sorted(self.state.broken_agents.items())
+                    ],
                 }
             ),
         ]

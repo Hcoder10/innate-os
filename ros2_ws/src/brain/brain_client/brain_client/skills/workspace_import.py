@@ -79,15 +79,23 @@ def _iter_module_names(directory: Path, prefix: str):
 
 
 def import_workspace_packages(logger) -> dict[str, str]:
-    """Import every module in every workspace package.
+    """Import every module in every skill package.
 
     Returns ``{module_name: error}`` for modules that failed — the catalog
     rosters these as broken so nothing silently vanishes. Modules already in
     ``sys.modules`` are cheap no-ops; a reload evicts first.
     """
+    return import_packages([get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()], logger)
+
+
+def import_packages(package_dirs: list[Path], logger) -> dict[str, str]:
+    """Import every module in every given workspace package; the shared core
+    of skill discovery, also used for agent packages (agents/loader.py).
+
+    Returns ``{module_name: error}`` for modules that failed to import.
+    """
     ensure_import_roots()
     errors: dict[str, str] = {}
-    package_dirs = [get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()]
     for package_dir in package_dirs:
         if not package_dir.is_dir():
             continue
@@ -118,7 +126,7 @@ def module_skill_id(module_name: str) -> str:
     return f"{namespace}/{rest or top}"
 
 
-def _live_class(module, qualname: str):
+def live_class(module, qualname: str):
     """The object ``qualname`` currently denotes in ``module``, or None.
 
     Walks the full dotted path so a Skill nested in a class namespace resolves
@@ -147,7 +155,7 @@ def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Pat
     skills: dict[str, tuple[str, type[Skill], Path]] = {}
     for (module_name, qualname), cls in list(Skill._registry.items()):
         module = sys.modules.get(module_name)
-        bound = _live_class(module, qualname) if module is not None else None
+        bound = live_class(module, qualname) if module is not None else None
         if bound is not cls:
             # A live module with a function-local Skill is an authoring
             # mistake, not staleness — pruning it silently would be the exact

@@ -112,7 +112,7 @@ export function createAgentPanel(root, rosClient, agentState) {
   let applying = false;
 
   function renderRoster() {
-    const { agents, currentDirective, brainActive } = agentState.get();
+    const { agents, broken, currentDirective, brainActive } = agentState.get();
     if (currentDirective) lastDirective = currentDirective;
 
     directiveSelect.replaceChildren();
@@ -120,6 +120,14 @@ export function createAgentPanel(root, rosClient, agentState) {
       directiveSelect.appendChild(new Option("No agents available", ""));
     } else {
       for (const a of agents) directiveSelect.appendChild(new Option(a.name, a.id));
+    }
+    // Agents that failed to load stay visible — disabled, error as tooltip —
+    // instead of silently vanishing from the picker.
+    for (const b of broken ?? []) {
+      const opt = new Option(`⚠ ${b.name} — failed to load`, "");
+      opt.disabled = true;
+      opt.title = b.error;
+      directiveSelect.appendChild(opt);
     }
     // Show the running directive when active, else the armed/last one. With no
     // prior choice, default to "Demo Agent" if the roster has it.
@@ -133,7 +141,9 @@ export function createAgentPanel(root, rosClient, agentState) {
     toggleBtn.textContent = applying ? "…" : brainActive ? "Stop" : "Start";
     toggleBtn.classList.toggle("stop", brainActive);
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
-    directiveSelect.disabled = applying || agents.length === 0;
+    // Keep the picker openable when only broken agents exist, so their rows
+    // (and error tooltips) are reachable; the change handler ignores "".
+    directiveSelect.disabled = applying || (agents.length === 0 && (broken ?? []).length === 0);
     resetBtn.disabled = applying;
     input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
