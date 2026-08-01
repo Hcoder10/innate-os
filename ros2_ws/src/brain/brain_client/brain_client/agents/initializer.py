@@ -51,7 +51,12 @@ def initialize_agents(
     broken: dict[str, str] = {}
     for module_name, error in import_errors.items():
         name = module_name.partition(".")[2] or module_name
-        broken[name if name not in broken else module_name] = error
+        if name in broken:
+            name = module_name
+        key, n = name, 2
+        while key in broken:
+            key, n = f"{name}.{n}", n + 1
+        broken[key] = error
     for name, error in probe_errors.items():
         key, n = name, 2
         while key in broken:
