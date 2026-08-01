@@ -42,8 +42,18 @@ def initialize_agents(
     _regenerate_physical_refs(logger, skills_dict)
 
     classes, import_errors = discover_agent_classes(logger)
-    agents, broken = build_agent_instances(classes, logger, available_skills=skills_dict)
-    broken = {**import_errors, **broken}
+    agents, probe_errors = build_agent_instances(classes, logger, available_skills=skills_dict)
+    # Merge without letting a class-keyed entry shadow a module-keyed one:
+    # a broken class can snake-case to a failed module's exact name (class
+    # InnateAgents while the innate_agents package itself failed to import).
+    # Both must stay visible, so the class entry counts up on collision —
+    # same idiom as the loader's own key fallbacks.
+    broken = dict(import_errors)
+    for name, error in probe_errors.items():
+        key, n = name, 2
+        while key in broken:
+            key, n = f"{name}.{n}", n + 1
+        broken[key] = error
 
     logger.info(f"Successfully loaded {len(agents)} agents")
     if broken:
