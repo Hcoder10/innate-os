@@ -94,12 +94,14 @@ def format_load_error(e: BaseException) -> str:
     so the roster error names the user's file, not just the exception.
     Falls back to plain ``ExcType: msg`` when no workspace frame is involved
     (e.g. instantiating an abstract class)."""
-    workspace = str(get_workspace_dir())
+    workspace = get_workspace_dir()
     location = ""
     for frame in traceback.extract_tb(e.__traceback__):
-        if frame.filename.startswith(workspace):
+        try:
             rel = Path(frame.filename).relative_to(workspace)
-            location = f"{rel}:{frame.lineno}: "
+        except ValueError:
+            continue  # not under workspace/ (a prefix sibling like workspace_old/ must not match)
+        location = f"{rel}:{frame.lineno}: "
     return f"{location}{type(e).__name__}: {e}"
 
 

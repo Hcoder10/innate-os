@@ -33,10 +33,14 @@ from brain_client.skills.workspace_import import format_load_error, import_packa
 def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict[str, str]]:
     """Re-import the agent packages; returns ``(classes, import_errors)``.
 
-    ``classes`` is every live registered Agent class with its source file, in
-    registration order (innate before custom, so a custom agent wins an id
-    conflict — same precedence the directory scan had), including abstract
-    ones, which surface as broken entries from ``build_agent_instances``.
+    ``classes`` is every live registered Agent class with its source file,
+    ordered innate before custom so a custom agent wins an id conflict (same
+    precedence the directory scan had) — sorted explicitly, because registry
+    order is dict insertion order, and a dict re-insert keeps a key's original
+    slot while a genuinely new key (an innate module that first imports after
+    boot, or a renamed class) appends at the end, after the custom entries.
+    Includes abstract classes, which surface as broken entries from
+    ``build_agent_instances``.
     ``import_errors`` maps module name -> error text for modules that failed
     to import; the caller rosters these as broken so the UI can show them.
 
@@ -80,6 +84,8 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
         if source_file is None:
             continue
         classes.append((cls, Path(source_file)))
+    # Stable: innate first, custom last, registration order within each.
+    classes.sort(key=lambda entry: entry[0].__module__.partition(".")[0] != "innate_agents")
     return classes, errors
 
 
