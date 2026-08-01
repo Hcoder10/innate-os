@@ -47,7 +47,8 @@ _SHIM_MARKER = "# AUTO-GENERATED physical-skill ref"
 # Dir shims land in workspace/ and get committed, so they have to survive
 # `ruff format` untouched: hence "{name}" and not {name!r}, whose single
 # quotes ruff rewrites and CI then fails on. Safe because class_name_for()
-# only ever returns a valid identifier.
+# only ever returns a valid identifier. {imported} is just "{name}", or
+# "{qualified} as {name}" when another skill took the plain name.
 
 _DIR_SHIM = (
     _SHIM_MARKER
@@ -56,10 +57,10 @@ _DIR_SHIM = (
 
 Same class either way:
 
-    from physical_skills import {name}
+    from physical_skills import {imported}
 """
 
-from physical_skills import {name}
+from physical_skills import {imported}
 
 __all__ = ["{name}"]
 '''
@@ -88,17 +89,34 @@ def _docstring(entry: dict) -> str:
     return textwrap.indent(f'"""{guidelines}\n\n{summary}\n"""', "    ")
 
 
-def _claimed(entries: list[dict]) -> dict[str, dict]:
-    """``{class_name: winning entry}`` in deterministic claim order.
+def _claim_order(entry: dict) -> tuple[bool, str]:
+    """local/ first, then by id — the catalog's plain-display-name precedence."""
+    return (not entry["id"].startswith("local/"), entry["id"])
 
-    local/ first: on a class-name collision the user's skill claims the
-    name, mirroring the catalog's plain-display-name precedence. Shared by
-    render_refs and render_dir_shims so the two can't disagree on winners."""
+
+def _claimed(entries: list[dict]) -> dict[str, dict]:
+    """``{class_name: entry}`` in deterministic claim order.
+
+    local/ first: on a collision the user's skill claims the plain name and
+    the loser is re-claimed qualified (``Wave`` taken -> ``WaveInnateOs``),
+    mirroring the catalog publishing its display name as 'wave (innate-os)' —
+    a live skill must not lose its ref to a flat-namespace clash. Plain names
+    are all claimed before any fallback, so a fallback can't displace one.
+    Shared by render_refs and render_dir_shims so they can't disagree."""
     claims: dict[str, dict] = {}
-    for entry in sorted(entries, key=lambda e: (not e["id"].startswith("local/"), e["id"])):
+    losers: list[tuple[str, dict]] = []
+    for entry in sorted(entries, key=_claim_order):
         name = class_name_for(entry["id"])
-        if name and name not in claims:
+        if not name:
+            continue
+        if name in claims:
+            losers.append((name, entry))
+        else:
             claims[name] = entry
+    for name, entry in losers:
+        suffix = class_name_for(entry["id"].rpartition("/")[0])
+        if suffix and name + suffix not in claims:
+            claims[name + suffix] = entry
     return claims
 
 
@@ -107,19 +125,17 @@ def render_refs(entries: list[dict]) -> dict[str, str]:
     least ``id``; optional guidelines/type/episode_count/in_training), as
     ``{filename: source}`` — write_refs prunes anything else, so a file
     dropped from this mapping is deleted on the next publish. Sorted for
-    deterministic output; collisions and non-identifier names are skipped
-    with a visible comment."""
+    deterministic output. A name collision qualifies the loser rather than
+    dropping it (see _claimed); only entries left with no usable name at
+    all are skipped, with a visible comment."""
     lines = [_HEADER]
-    claims = _claimed(entries)
+    names_by_id = {entry["id"]: name for name, entry in _claimed(entries).items()}
     by_name: dict[str, str] = {}
-    for entry in sorted(entries, key=lambda e: (not e["id"].startswith("local/"), e["id"])):
+    for entry in sorted(entries, key=_claim_order):
         skill_id = entry["id"]
-        name = class_name_for(skill_id)
+        name = names_by_id.get(skill_id)
         if not name:
-            lines.append(f"# skipped {skill_id}: cannot derive a Python class name\n")
-            continue
-        if claims[name] is not entry:
-            lines.append(f"# skipped {skill_id}: class name {name} already taken by {claims[name]['id']}\n")
+            lines.append(f"# skipped {skill_id}: no usable Python class name\n")
             continue
         by_name[name] = skill_id
         lines.append(f"\nclass {name}(TrainedSkill):\n{_docstring(entry)}\n\n    skill_id = {skill_id!r}\n")
@@ -174,16 +190,22 @@ def render_dir_shims(entries: list[dict]) -> dict[str, str | None]:
 
     The shim makes the recording folder an importable package, so the
     pack-local spelling (``from innate_skills.wave import Wave``) resolves to
-    the class defined in ``physical_skills``. ``None`` marks a shim to
-    *remove*: the entry exists but lost its class name (collision loser or
-    no derivable identifier), so a previously written shim must not linger
-    and re-export a name that now belongs to another skill."""
+    the class defined in ``physical_skills`` — under an alias when that class
+    is qualified, so a collision rewrites a committed shim instead of
+    deleting it (and reverts it verbatim once the collision goes). ``None``
+    marks a shim to *remove*: the entry got no class name at all, so a
+    previously written shim must not linger and re-export a name that now
+    belongs to another skill."""
     claims = _claimed(entries)
     shims: dict[str, str | None] = {}
-    for name, entry in claims.items():
+    for claimed_name, entry in claims.items():
         if entry.get("dir"):
+            # the folder keeps exporting its plain name — only the import
+            # line changes when this skill lost the plain name to another
+            name = class_name_for(entry["id"])
+            imported = name if claimed_name == name else f"{claimed_name} as {name}"
             path = os.path.join(entry["dir"], "__init__.py")
-            shims[path] = _DIR_SHIM.format(skill_id=entry["id"], name=name)
+            shims[path] = _DIR_SHIM.format(skill_id=entry["id"], name=name, imported=imported)
     winner_ids = {entry["id"] for entry in claims.values()}
     for entry in entries:
         if entry.get("dir") and entry["id"] not in winner_ids:
