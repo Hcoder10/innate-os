@@ -44,10 +44,10 @@ from innate import TrainedSkill
 # removes files that start with it, so a hand-written __init__.py is safe.
 _SHIM_MARKER = "# AUTO-GENERATED physical-skill ref"
 
-# Dir shims land in workspace/ and get committed, so they have to survive
-# `ruff format` untouched: hence "{name}" and not {name!r}, whose single
-# quotes ruff rewrites and CI then fails on. Safe because class_name_for()
-# only ever returns a valid identifier. {imported} is just "{name}", or
+# Dir shims are runtime-owned and gitignored (workspace/innate_skills/
+# .gitignore): committing one gives the path two writers, and a robot whose
+# running code is ahead of its checkout then aborts `git pull`/`innate update`
+# on the untracked collision. {imported} is just "{name}", or
 # "{qualified} as {name}" when another skill took the plain name.
 
 _DIR_SHIM = (
@@ -110,7 +110,7 @@ def _claimed(entries: list[dict]) -> dict[str, dict]:
     identifier ends up claimed; nothing is dropped for a name clash. Numbered
     names are the pathological tail, and unlike the plain and qualified names
     they depend on the rest of the roster: adding a skill can renumber one,
-    rewriting its committed shim. Shared by render_refs and render_dir_shims
+    rewriting its shim. Shared by render_refs and render_dir_shims
     so they can't disagree."""
     claims: dict[str, dict] = {}
     losers: list[tuple[str, dict]] = []
@@ -204,7 +204,7 @@ def render_dir_shims(entries: list[dict]) -> dict[str, str | None]:
     The shim makes the recording folder an importable package, so the
     pack-local spelling (``from innate_skills.wave import Wave``) resolves to
     the class defined in ``physical_skills`` — under an alias when that class
-    is qualified, so a collision rewrites a committed shim instead of
+    is qualified, so a collision rewrites the shim in place instead of
     deleting it (and reverts it verbatim once the collision goes). ``None``
     marks a shim to *remove*: the entry got no class name at all, so a
     previously written shim must not linger and re-export a name that now
@@ -266,9 +266,9 @@ def prune_dir_shims(package_dirs: list[str], live_shims: dict[str, str | None], 
     ``__init__.py`` stayed) — render_dir_shims can't list those, since it
     only sees rostered entries. A folder that still holds real metadata
     keeps its shim even when its skill is off the roster this publish
-    (corrupt trajectory, unreadable metadata): shims are committed alongside
-    metadata, so deleting one over a transient/fixable fault would dirty git
-    and break ``from innate_skills.<x> import <X>`` everywhere. Scans one
+    (corrupt trajectory, unreadable metadata): deleting one over a
+    transient/fixable fault would break
+    ``from innate_skills.<x> import <X>`` everywhere. Scans one
     level under each skill package root, the only place recording folders
     live; only marker-bearing files are ever deleted, so hand-written
     subpackage ``__init__.py`` files are untouched. Failure is logged, never
