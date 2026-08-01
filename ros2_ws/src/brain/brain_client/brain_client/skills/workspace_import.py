@@ -96,7 +96,8 @@ def format_load_error(e: BaseException) -> str:
     (e.g. instantiating an abstract class)."""
     workspace = get_workspace_dir()
     location = ""
-    for frame in traceback.extract_tb(e.__traceback__):
+    # lookup_lines=False: only filename/lineno are used, don't read sources.
+    for frame in traceback.StackSummary.extract(traceback.walk_tb(e.__traceback__), lookup_lines=False):
         try:
             rel = Path(frame.filename).relative_to(workspace)
         except ValueError:
@@ -143,7 +144,7 @@ def module_skill_id(module_name: str) -> str:
     return f"{namespace}/{rest or top}"
 
 
-def live_class(module, qualname: str):
+def _live_class(module, qualname: str):
     """The object ``qualname`` currently denotes in ``module``, or None.
 
     Walks the full dotted path so a Skill nested in a class namespace resolves
@@ -161,55 +162,63 @@ def live_class(module, qualname: str):
     return obj
 
 
-def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Path]]:
-    """Live skills from the registry: ``{skill_id: (class_name, cls, source_path)}``.
-
-    Prunes stale registrations as it goes: an entry whose module is no longer
-    in ``sys.modules`` (evicted for reload) or no longer binds this exact
-    class object (module re-imported, file edited to remove the class) is
-    dead. Abstract and ``_``-prefixed classes are helper bases, never skills.
+def live_registered_classes(registry: dict, kind: str, logger, *, include_abstract: bool = False) -> list:
+    """Live ``(cls, source_path)`` pairs from a ``__init_subclass__`` registry
+    (``Skill._registry``, ``Agent._registry``), pruning stale entries as it
+    goes: an entry whose module is no longer in ``sys.modules`` (evicted for
+    reload) or no longer binds this exact class object (module re-imported,
+    file edited to remove the class) is dead. ``_``-prefixed classes are
+    helper bases. Abstract classes warn and are kept only with
+    ``include_abstract`` (agents roster them broken; skills skip them).
     """
-    skills: dict[str, tuple[str, type[Skill], Path]] = {}
-    for (module_name, qualname), cls in list(Skill._registry.items()):
+    out: list[tuple[type, Path]] = []
+    for (module_name, qualname), cls in list(registry.items()):
         module = sys.modules.get(module_name)
-        bound = live_class(module, qualname) if module is not None else None
+        bound = _live_class(module, qualname) if module is not None else None
         if bound is not cls:
-            # A live module with a function-local Skill is an authoring
+            # A live module with a function-local class is an authoring
             # mistake, not staleness — pruning it silently would be the exact
             # vanishing this import model exists to eliminate.
             if module is not None and "<locals>" in qualname:
                 logger.warning(
-                    f"Skill {qualname} in {module_name} is defined inside a function and cannot be "
+                    f"{kind} {qualname} in {module_name} is defined inside a function and cannot be "
                     "loaded; define it at module level."
                 )
-            del Skill._registry[(module_name, qualname)]
-            continue
-        if cls.__name__.startswith("_"):
-            continue  # helper base by convention, deliberately not a skill
-        if inspect.isabstract(cls):
-            # Usually an unimplemented abstract method (e.g. a misspelled
-            # execute()) — the class silently vanishing from the roster was
-            # undiagnosable for the author (same warning the old file-exec
-            # loader carried; it must not regress here).
-            missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
-            logger.warning(
-                f"Skipping abstract class {cls.__name__} in {module_name} (unimplemented: {missing}); "
-                "implement the missing methods, or prefix the class with '_' if it is a helper base."
-            )
+            del registry[(module_name, qualname)]
             continue
         if module_name.startswith("workspace."):
             # The same file imported via the compat `workspace.<pkg>` path is a
-            # *second* module object; the bare-name import above already owns
-            # the registration, so skip the double to avoid duplicate ids.
+            # *second* module object; the bare-name import already owns the
+            # registration, so skip the double to avoid duplicate ids.
             continue
+        if cls.__name__.startswith("_"):
+            continue  # helper base by convention
+        if inspect.isabstract(cls):
+            # Usually a misspelled abstract method — silently vanishing from
+            # the roster was undiagnosable for the author.
+            missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
+            logger.warning(
+                f"{kind} {cls.__name__} in {module_name} is abstract (unimplemented: {missing}); "
+                "implement the missing members, or prefix the class with '_' if it is a helper base."
+            )
+            if not include_abstract:
+                continue
         source_file = getattr(module, "__file__", None)
         if source_file is None:
             continue
+        out.append((cls, Path(source_file)))
+    return out
+
+
+def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Path]]:
+    """Live skills from the registry: ``{skill_id: (class_name, cls, source_path)}``."""
+    skills: dict[str, tuple[str, type[Skill], Path]] = {}
+    for cls, source_file in live_registered_classes(Skill._registry, "Skill", logger):
         skill_id = skill_id_for_class(cls)
         if skill_id in skills:
             logger.warning(
                 f"Skill id conflict: '{skill_id}' defined by both "
                 f"{skills[skill_id][2]} and {source_file}. Using the latter."
             )
-        skills[skill_id] = (cls.__name__, cls, Path(source_file))
+        skills[skill_id] = (cls.__name__, cls, source_file)
     return skills

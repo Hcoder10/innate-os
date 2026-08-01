@@ -122,9 +122,11 @@ class ReloadCoordinator:
                     reloaded_skills = list(result.reloaded_skills)
 
             if agent_names:
+                # Always re-register after an agent swap: an empty roster (every
+                # agent now broken) still replaced the previous one.
                 reloaded_agents = self._reload_agents()
 
-            if reloaded_skills or reloaded_agents:
+            if reloaded_skills or agent_names:
                 self._catalog.register()
 
             self._logger.info(
@@ -234,7 +236,13 @@ class ReloadCoordinator:
             replacement = agents.get(current_id)
             if replacement is not None:
                 self._state.current_directive = replacement
-                previous_skill_ids = set(self._state.active_skill_ids or replacement.skill_ids())
+                # None means "never narrowed"; [] is a deliberate everything-off
+                # choice and must not re-widen.
+                previous_skill_ids = (
+                    set(self._state.active_skill_ids)
+                    if self._state.active_skill_ids is not None
+                    else set(replacement.skill_ids())
+                )
                 self._state.active_skill_ids = [
                     skill_id for skill_id in replacement.skill_ids() if skill_id in previous_skill_ids
                 ]

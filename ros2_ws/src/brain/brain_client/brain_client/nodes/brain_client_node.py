@@ -491,16 +491,19 @@ class BrainClientNode(Node):
     def _svc_get_directives(self, request, response):
         details = []
         for directive in self.state.directives.values():
-            details.append(
-                {
-                    "id": directive.id,
-                    "display_name": directive.display_name,
-                    "display_icon": directive.display_icon_data,
-                    "prompt": directive.get_prompt(),
-                    "skills": directive.skill_ids(),
-                    "source": getattr(directive, "source", "user"),
-                }
-            )
+            try:
+                details.append(
+                    {
+                        "id": directive.id,
+                        "display_name": directive.display_name,
+                        "display_icon": directive.display_icon_data,
+                        "prompt": directive.get_prompt(),
+                        "skills": directive.skill_ids(),
+                        "source": getattr(directive, "source", "user"),
+                    }
+                )
+            except Exception as e:  # noqa: BLE001 — one bad agent must not take the roster down
+                self.get_logger().error(f"Error reading directive {type(directive).__name__}: {e}")
         response.directives = [
             json.dumps(details),
             json.dumps(

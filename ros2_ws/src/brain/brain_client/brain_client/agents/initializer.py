@@ -43,12 +43,15 @@ def initialize_agents(
 
     classes, import_errors = discover_agent_classes(logger)
     agents, probe_errors = build_agent_instances(classes, logger, available_skills=skills_dict)
-    # Merge without letting a class-keyed entry shadow a module-keyed one:
-    # a broken class can snake-case to a failed module's exact name (class
-    # InnateAgents while the innate_agents package itself failed to import).
-    # Both must stay visible, so the class entry counts up on collision —
-    # same idiom as the loader's own key fallbacks.
-    broken = dict(import_errors)
+    # Module rows keyed like class rows (innate_agents.foo -> foo) so a broken
+    # entry keeps its name when a syntax error becomes a class-level failure;
+    # full module name if that key is taken. Class rows must never shadow a
+    # module row (class InnateAgents vs the innate_agents package), so they
+    # count up on collision — same idiom as the loader's own key fallbacks.
+    broken: dict[str, str] = {}
+    for module_name, error in import_errors.items():
+        name = module_name.partition(".")[2] or module_name
+        broken[name if name not in broken else module_name] = error
     for name, error in probe_errors.items():
         key, n = name, 2
         while key in broken:

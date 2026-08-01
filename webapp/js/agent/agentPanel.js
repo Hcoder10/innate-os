@@ -111,8 +111,11 @@ export function createAgentPanel(root, rosClient, agentState) {
   // Stop -> Start resumes the same one even though the brain reports "" when idle.
   let lastDirective = "";
   let applying = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let flashTimer = null;
 
   function renderRoster() {
+    if (flashTimer) return; // keep the copy-feedback row until it expires
     const { agents, broken, currentDirective, brainActive } = agentState.get();
     if (currentDirective) lastDirective = currentDirective;
 
@@ -166,12 +169,21 @@ export function createAgentPanel(root, rosClient, agentState) {
   directiveSelect.addEventListener("change", () => {
     const id = directiveSelect.value;
     if (id.startsWith("__broken__:")) {
-      // Copy the full load error, flash feedback in the closed box, then
+      // Copy the full load error, flash the result in the closed box, then
       // re-render (which re-arms the previous choice).
       const opt = directiveSelect.selectedOptions[0];
-      void copyText(opt?.dataset.error ?? "").catch(() => {});
-      if (opt) opt.text = "✓ load error copied";
-      setTimeout(renderRoster, 1200);
+      void copyText(opt?.dataset.error ?? "").then(
+        () => {
+          if (opt) opt.text = "✓ load error copied";
+        },
+        () => {
+          if (opt) opt.text = "✗ copy failed — see tooltip";
+        },
+      );
+      flashTimer = setTimeout(() => {
+        flashTimer = null;
+        renderRoster();
+      }, 1200);
       return;
     }
     if (!id) return;
@@ -519,6 +531,7 @@ export function createAgentPanel(root, rosClient, agentState) {
 
   return {
     destroy() {
+      if (flashTimer) clearTimeout(flashTimer);
       unsubAgents();
       unsubConn();
       unsubIn();
