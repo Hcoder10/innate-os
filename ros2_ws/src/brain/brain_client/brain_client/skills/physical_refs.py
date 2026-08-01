@@ -102,7 +102,16 @@ def _claimed(entries: list[dict]) -> dict[str, dict]:
     mirroring the catalog publishing its display name as 'wave (innate-os)' —
     a live skill must not lose its ref to a flat-namespace clash. Plain names
     are all claimed before any fallback, so a fallback can't displace one.
-    Shared by render_refs and render_dir_shims so they can't disagree."""
+
+    The qualified name can collide in turn — a leaf that spells out another
+    skill's leaf+pack (``local/wave-innate-os`` vs ``innate-os/wave``), or two
+    packs normalizing alike (``innate-os`` / ``innate_os``) — so it counts up
+    (``WaveInnateOs2``) until something is free. Every entry with a derivable
+    identifier ends up claimed; nothing is dropped for a name clash. Numbered
+    names are the pathological tail, and unlike the plain and qualified names
+    they depend on the rest of the roster: adding a skill can renumber one,
+    rewriting its committed shim. Shared by render_refs and render_dir_shims
+    so they can't disagree."""
     claims: dict[str, dict] = {}
     losers: list[tuple[str, dict]] = []
     for entry in sorted(entries, key=_claim_order):
@@ -114,9 +123,13 @@ def _claimed(entries: list[dict]) -> dict[str, dict]:
         else:
             claims[name] = entry
     for name, entry in losers:
-        suffix = class_name_for(entry["id"].rpartition("/")[0])
-        if suffix and name + suffix not in claims:
-            claims[name + suffix] = entry
+        # no suffix (an id with no pack prefix) leaves base == the taken plain
+        # name, so the counter alone separates it
+        base = name + class_name_for(entry["id"].rpartition("/")[0])
+        candidate, n = base, 2
+        while candidate in claims:
+            candidate, n = f"{base}{n}", n + 1
+        claims[candidate] = entry
     return claims
 
 
