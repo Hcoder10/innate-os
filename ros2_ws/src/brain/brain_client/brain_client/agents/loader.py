@@ -116,8 +116,11 @@ def build_agent_instances(
             skill_ids = agent.skill_ids()
         except Exception as e:  # noqa: BLE001 — one bad agent must not stop the roster
             name = class_name_to_snake_case(cls.__name__)
-            if name in broken:  # same class name broken in two modules — keep both rows
-                name = f"{cls.__module__}.{name}"
+            if name in broken:  # same class name broken more than once — keep every row
+                base = f"{cls.__module__}.{name}"
+                name, n = base, 2
+                while name in broken:  # same name twice in one module (nested classes)
+                    name, n = f"{base}.{n}", n + 1
             broken[name] = format_load_error(e)
             logger.error(f"Error loading agent {cls.__name__} from {source_file}: {broken[name]}")
             continue
