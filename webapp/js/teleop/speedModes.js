@@ -117,7 +117,7 @@ export function createSpeedModes(parent, rosClient) {
       if (
         mode.scale > 1.0 &&
         !window.confirm(
-          `Engage ${mode.label} mode? Beyond full speed, the arm loses every argument it starts with furniture — one high-speed collision can break it. Go mad, but drive like you want to keep the arm.`,
+          `Engage ${mode.label} mode? Beyond full speed, one high-speed collision can break the arm of the robot. Go mad, but with great power comes great responsibility.`,
         )
       ) {
         return;
