@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 // Promise-based confirm dialog on the app's .modal design (the same classes
-// collect/training hand-roll), replacing window.confirm for the Nav page's
-// destructive actions. Escape, backdrop, and ✕ all cancel; for dangerous
-// actions the cancel button takes initial focus so a stray Enter can't
-// delete anything.
+// collect/training hand-roll), replacing window.confirm for destructive
+// actions (Nav page, teleop speed picker). Escape, backdrop, and ✕ all
+// cancel; for dangerous actions the cancel button takes initial focus so a
+// stray Enter can't delete anything.
 
 /** Open dialogs' settle functions, so page teardown can sweep strays. */
 /** @type {Set<(result: boolean) => void>} */
@@ -21,7 +21,7 @@ export function dismissAllConfirms() {
 }
 
 /**
- * @param {{ title: string, body: string, confirmLabel: string, danger?: boolean }} opts
+ * @param {{ title: string, body: string, confirmLabel: string, cancelLabel?: string, danger?: boolean }} opts
  * @returns {Promise<boolean>}
  */
 export function confirmDialog(opts) {
@@ -53,7 +53,7 @@ export function confirmDialog(opts) {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "confirm-btn";
-    cancel.textContent = "Cancel";
+    cancel.textContent = opts.cancelLabel ?? "Cancel";
     const ok = document.createElement("button");
     ok.type = "button";
     ok.className = `confirm-btn confirm-primary${opts.danger ? " danger" : ""}`;
