@@ -110,6 +110,18 @@ export function createSpeedModes(parent, rosClient) {
     button.setAttribute("aria-checked", "false");
     button.addEventListener("click", () => {
       if (mode.id === selectedId) return;
+      // Above 1.0 the mode exceeds the robot's configured caps (that's what "Mad"
+      // is) — at those speeds a collision can break the arm, so the operator has
+      // to say they mean it. Gate on scale, not id, so any future above-cap mode
+      // the robot publishes gets the same warning.
+      if (
+        mode.scale > 1.0 &&
+        !window.confirm(
+          `Engage ${mode.label} mode? Beyond full speed, the arm loses every argument it starts with furniture — one high-speed collision can break it. Go mad, but drive like you want to keep the arm.`,
+        )
+      ) {
+        return;
+      }
       const previousId = selectedId;
       paint(mode.id);
       optimisticUntil = performance.now() + OPTIMISTIC_HOLD_MS;
