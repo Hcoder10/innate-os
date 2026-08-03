@@ -5,16 +5,21 @@ side (core.py / world_server.py). Kept MuJoCo-free on purpose: the adapter
 runs in the OS container, which does not ship MuJoCo -- the world itself
 always runs on the host (see world_server.py)."""
 
+import math
+
 CAMERA_WIDTH, CAMERA_HEIGHT = 640, 480
-# Vertical FOV matching the REAL head camera's focal length, best-estimated
-# at fx ~= 355 @640x480 (back-solved from pick_any_object's hardware tuning
-# note "0.37 grasps at ~0.32"; consistent with stereo_depth_estimator.yaml's
-# blind-range comment). The previous 80 degrees was the viewer's display
+# The REAL head camera's focal length, best-estimated at fx ~= 355 @640x480
+# (back-solved from pick_any_object's hardware tuning note "0.37 grasps at
+# ~0.32"; consistent with stereo_depth_estimator.yaml's blind-range comment).
+# Replace with camera_info's K[0] when read off a calibrated robot.
+HEAD_CAMERA_FX = 355.0
+# Vertical FOV derived from that focal length (~68.12 degrees), so the fx the
+# camera renders with, the fx node.py publishes in camera_info, and this
+# comment can never disagree. The previous 80 degrees was the viewer's display
 # FOV, not the camera -- through it the skill's range model over-read 1.6x
-# instead of the 1.3x its tuning cancels. Replace with camera_info's K[4]
-# when read off a calibrated robot; sim/viewer's ROBOT_CAMERA_VFOV tracks
-# this.
-CAMERA_FOVY = 68.5  # 2*atan(240/355), in degrees
+# instead of the 1.3x its tuning cancels. sim/viewer's robot-camera VFOV
+# tracks this.
+CAMERA_FOVY = math.degrees(2 * math.atan(CAMERA_HEIGHT / 2 / HEAD_CAMERA_FX))
 
 # The wrist camera is a different, uncalibrated lens; the skill's wrist-servo
 # constants are tuned on it and converge in sim at 80, so it keeps 80 until

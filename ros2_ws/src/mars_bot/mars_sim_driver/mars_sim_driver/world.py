@@ -76,9 +76,11 @@ FINGER_ARMATURE = 1e-4
 # Structural sag past the encoders (gear play, link flex): the link settles
 # gravity_torque/STRUCT_STIFFNESS + ARM_BACKLASH_RAD below the servo angle.
 # /joint_states reports ENCODER-side angles (core.encoder_positions), so the
-# sag is invisible to FK, like on the machine. Estimates (~19mm at the pick
-# pose) until measured on a real arm.
-STRUCT_STIFFNESS = 25.0  # N*m/rad, per arm joint
+# sag is invisible to FK, like on the machine. Applied to every driven joint
+# including joint_head (the neck arch flexes like the links; ~0.5deg of head
+# droop at level). Estimates (~19mm at the pick pose) until measured on a
+# real arm.
+STRUCT_STIFFNESS = 25.0  # N*m/rad, per driven joint
 # Geartrain free play, tanh-smoothed so unloaded joints get none.
 ARM_BACKLASH_RAD = 0.055
 BACKLASH_TANH_NM = 0.05  # torque scale over which the play takes up
@@ -100,7 +102,8 @@ GRASP_OBJECTS = (
         "forward": 0.227,
         "lateral": 0.116,
         "z": 0.02,  # resting height of the body origin = half the footprint
-        "geom": 'type="box" size="0.02 0.02 0.02"',
+        "type": "box",
+        "size": (0.02, 0.02, 0.02),
         "density": 700,
         "condim": 4,
         "rgba": "0.85 0.28 0.24 1",
@@ -113,7 +116,8 @@ GRASP_OBJECTS = (
         # tall: taller fills pick_any_object's optical-flow window with
         # featureless colour and positioning livelocks.
         "z": 0.03,
-        "geom": 'type="cylinder" size="0.020 0.03"',
+        "type": "cylinder",
+        "size": (0.020, 0.03),
         "density": 1050,
         "roll": 0.005,  # rolling resistance on the floor
         "condim": 4,
@@ -135,7 +139,8 @@ GRASP_OBJECTS = (
         # 60mm tall (the skill's closing band lands on its upper third);
         # 40x40 so the worst-case diagonal clears the 81mm jaw at any yaw.
         # Grey, not white: white on pale parquet starves the flow tracker.
-        "geom": 'type="box" size="0.020 0.020 0.030"',
+        "type": "box",
+        "size": (0.020, 0.020, 0.030),
         "density": 450,
         "condim": 6,
         "rgba": "0.45 0.46 0.50 1",
@@ -145,7 +150,8 @@ GRASP_OBJECTS = (
         "forward": 0.296,
         "lateral": -0.117,
         "z": 0.015,
-        "geom": 'type="box" size="0.015 0.05 0.015"',
+        "type": "box",
+        "size": (0.015, 0.05, 0.015),
         "density": 700,
         "condim": 4,
         # Deep orange: yellow on pale parquet starves the flow tracker.
@@ -166,7 +172,8 @@ GRASP_OBJECTS = (
         "forward": 0.227,
         "lateral": -0.221,
         "z": 0.0225,
-        "geom": 'type="sphere" size="0.0225"',
+        "type": "sphere",
+        "size": (0.0225,),
         "density": 1000,
         "condim": 6,
         # Foam stress ball: a hard sphere is unpickable (the contact rolls
@@ -315,13 +322,30 @@ def grasp_object_bodies() -> str:
             extra += f' priority="{obj["priority"]}"'
         if "solimp" in obj:
             extra += f' solimp="{obj["solimp"]}"'
+        size = " ".join(str(s) for s in obj["size"])
         bodies.append(f"""
     <body name="{obj["name"]}" pos="{park_x + i * GRASP_PARK_PITCH:.4f} {park_y:.4f} {obj["z"]}">
       <freejoint name="{obj["name"]}_free"/>
-      <geom name="{obj["name"]}_geom" {obj["geom"]} density="{obj["density"]}" condim="{obj["condim"]}"
+      <geom name="{obj["name"]}_geom" type="{obj["type"]}" size="{size}" density="{obj["density"]}" condim="{obj["condim"]}"
             friction="{friction}" solref="{solref}"{extra} rgba="{obj["rgba"]}" group="{VISUAL_GROUP}"/>
     </body>""")
     return "".join(bodies)
+
+
+def grasp_object_specs() -> dict[str, dict]:
+    """Drawable description of each prop -- {name: {type, size, rgba}} with
+    MuJoCo semantics (half-extents for boxes, [radius, half-height] for
+    cylinders, metres). world_server sends this once per observer connection,
+    so the browser viewer builds its prop meshes from the same definition the
+    physics runs -- there is no second copy of the roster to keep in step."""
+    return {
+        obj["name"]: {
+            "type": obj["type"],
+            "size": list(obj["size"]),
+            "rgba": [float(c) for c in obj["rgba"].split()],
+        }
+        for obj in GRASP_OBJECTS
+    }
 
 
 def build_world_xml(

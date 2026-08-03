@@ -5,9 +5,10 @@ sim/README.md "world_server.py"):
   Framing: 4-byte big-endian length | JSON; responses are one JSON frame,
   then one binary frame iff the JSON says "blob": <nbytes>.
 - observer state stream (--state-port): a WebSocket broadcasting ground
-  truth ({t, wall, pose, joints, objects}) after every physics slice, and
-  accepting stage commands ({"op": "drop_objects"}) back. Ground truth and
-  scenery only -- robot software must never consume or drive it.
+  truth ({t, wall, pose, joints, objects}) after every physics slice --
+  opening with a one-time {object_specs} frame naming the drawable props --
+  and accepting stage commands ({"op": "drop_objects"}) back. Ground truth
+  and scenery only -- robot software must never consume or drive it.
 
 Always runs on the host (the launcher starts it via uv): in-container
 software GL was slow enough to starve the whole ROS stack. No ROS; beyond
@@ -34,6 +35,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
+from . import world
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
@@ -146,20 +148,29 @@ class WorldServer:
         so an operator can practise grabbing without a full reset."""
         try:
             for raw in ws:
-                op = json.loads(raw).get("op")
-                if op in ("drop_objects", "remove_objects"):  # allowlist: it names the method
-                    with self.lock:
-                        getattr(self.sim, op)()
-        except Exception:  # noqa: BLE001,S110 -- client gone, or junk on the wire
+                # Per message, not around the loop: one junk frame (or an op
+                # that raises) must not silently end the command channel for
+                # the connection's whole lifetime.
+                try:
+                    op = json.loads(raw).get("op")
+                    if op in ("drop_objects", "remove_objects"):  # allowlist: it names the method
+                        with self.lock:
+                            getattr(self.sim, op)()
+                except Exception as exc:  # noqa: BLE001 -- junk on the wire
+                    print(f"[world-server] stage command dropped: {exc!r}", flush=True)
+        except Exception:  # noqa: BLE001,S110 -- client gone; the reader just ends
             pass
 
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
         client skips states instead of queueing lag), and accept the stage
-        commands above on the way back."""
+        commands above on the way back. Opens with a one-time object_specs
+        frame -- the drawable prop roster (world.grasp_object_specs), so
+        viewers build their meshes from the same definition the physics runs."""
         threading.Thread(target=self._serve_scenario_commands, args=(ws,), daemon=True).start()
         last_seq = -1
         try:
+            ws.send(json.dumps({"object_specs": world.grasp_object_specs()}))
             while True:
                 with self.state_cond:
                     self.state_cond.wait_for(lambda seen=last_seq: self.state_seq != seen)

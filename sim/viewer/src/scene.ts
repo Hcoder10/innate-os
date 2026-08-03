@@ -9,25 +9,32 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
 
+import type { ObjectSpec } from "./physics/worldStateController";
+
 const APARTMENT_URL = "/models/appartement.glb";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
 
-// The manipulation props (world.py GRASP_OBJECTS). They are MuJoCo primitives,
-// so the browser rebuilds them here rather than loading a mesh -- keep the
-// dimensions and colours in step with world.py. THREE's cylinder is Y-up while
-// MuJoCo's is Z-up, hence the rotated geometry.
-const GRASP_OBJECT_SHAPES: Record<string, { geometry: () => THREE.BufferGeometry; color: number }> = {
-  cube: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.04), color: 0xd94739 },
-  sock: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.06), color: 0x73757f },
-  can: {
-    geometry: () => new THREE.CylinderGeometry(0.02, 0.02, 0.06, 40).rotateX(Math.PI / 2),
-    color: 0x408cd9,
-  },
-  bar: { geometry: () => new THREE.BoxGeometry(0.03, 0.1, 0.03), color: 0xcc541a },
-  // Finely tessellated: a coarse sphere casts a visibly polygonal shadow right
-  // where it meets the floor, which is the one place the eye checks for contact.
-  ball: { geometry: () => new THREE.SphereGeometry(0.0225, 32, 24), color: 0x66cc73 },
-};
+// The manipulation props (world.py GRASP_OBJECTS) are MuJoCo primitives, so
+// the browser rebuilds them from the object_specs frame the world server
+// opens each observer connection with -- the physics' own roster, never a
+// second copy to keep in step. MuJoCo semantics: half-extents for boxes,
+// [radius, half-height] for cylinders; THREE's cylinder is Y-up while
+// MuJoCo's is Z-up, hence the rotated geometry. Spheres are finely
+// tessellated: a coarse one casts a visibly polygonal shadow right where it
+// meets the floor, which is the one place the eye checks for contact.
+function propGeometry(spec: ObjectSpec): THREE.BufferGeometry | null {
+  const s = spec.size;
+  switch (spec.type) {
+    case "box":
+      return new THREE.BoxGeometry(2 * s[0], 2 * s[1], 2 * s[2]);
+    case "cylinder":
+      return new THREE.CylinderGeometry(s[0], s[0], 2 * s[1], 40).rotateX(Math.PI / 2);
+    case "sphere":
+      return new THREE.SphereGeometry(s[0], 32, 24);
+    default:
+      return null;
+  }
+}
 
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
@@ -62,22 +69,35 @@ const CHASE_DISTANCE = 1.8; // meters behind the robot
 const CHASE_HEIGHT = 1.1; // meters above the ground
 
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
-// match the driver's cameras (mars_sim_driver.core's CAMERAS).
+// match the driver's cameras (mars_sim_driver.core's CAMERAS) -- per mount,
+// since the head and wrist are different physical lenses (constants.py):
+// main tracks CAMERA_FOVY (2*atan(240/355), the real head camera's focal
+// length), arm tracks WRIST_CAMERA_FOVY.
 export type CameraView = "orbit" | "main" | "arm";
-// Tracks mars_sim_driver/constants.py CAMERA_FOVY: the real head camera's
-// focal length (fx ~= 355 @640x480), not a display preference.
-const ROBOT_CAMERA_VFOV = 68.5;
 // Don't shrink to fix the near-clipped gripper: the origin sits inside the
 // wrist housing, so a smaller near renders the housing interior instead.
 const ROBOT_CAMERA_NEAR = 0.03;
 const ROBOT_CAMERA_MOUNTS: Array<{
   view: Exclude<CameraView, "orbit">;
   frame: string;
+  vfov: number;
   forward: THREE.Vector3;
   up: THREE.Vector3;
 }> = [
-  { view: "main", frame: "camera_optical_frame", forward: new THREE.Vector3(0, 0, 1), up: new THREE.Vector3(0, -1, 0) },
-  { view: "arm", frame: "arm_camera_link", forward: new THREE.Vector3(1, 0, 0), up: new THREE.Vector3(0, 0, 1) },
+  {
+    view: "main",
+    frame: "camera_optical_frame",
+    vfov: 68.12,
+    forward: new THREE.Vector3(0, 0, 1),
+    up: new THREE.Vector3(0, -1, 0),
+  },
+  {
+    view: "arm",
+    frame: "arm_camera_link",
+    vfov: 80,
+    forward: new THREE.Vector3(1, 0, 0),
+    up: new THREE.Vector3(0, 0, 1),
+  },
 ];
 
 export class SimScene {
@@ -110,8 +130,15 @@ export class SimScene {
   // the robot's own graph, so they follow the joints for free.
   private robotColliders: THREE.Object3D[] = [];
   private hullMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
-  // One mesh per manipulation prop, built on the first state that names it.
+  // One mesh per manipulation prop, built on the first state that names it
+  // from the server's object_specs roster (setObjectSpecs).
   private objectMeshes = new Map<string, THREE.Mesh>();
+  private objectSpecs: Record<string, ObjectSpec> = {};
+  private warnedUnknownProps = new Set<string>();
+  // Shadow box refit is deferred to the next render: setPose and
+  // setObjectPoses both move it, and running the fit in each would redo the
+  // work twice per frame (the first pass against stale prop positions).
+  private shadowDirty = true;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -409,7 +436,7 @@ export class SimScene {
         continue;
       }
       const cam = new THREE.PerspectiveCamera(
-        ROBOT_CAMERA_VFOV,
+        mount.vfov,
         this.viewSize().width / this.viewSize().height,
         ROBOT_CAMERA_NEAR,
         100,
@@ -501,9 +528,25 @@ export class SimScene {
     this.robot?.setJointValues(joints);
   }
 
+  /** Install the drawable prop roster (world_server's object_specs frame).
+   * On change -- a reconnect to a world server with edited props -- existing
+   * meshes are torn down so the next pose frame rebuilds them to the new
+   * definition. */
+  setObjectSpecs(specs: Record<string, ObjectSpec>): void {
+    if (JSON.stringify(specs) === JSON.stringify(this.objectSpecs)) return;
+    for (const mesh of this.objectMeshes.values()) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.objectMeshes.clear();
+    this.warnedUnknownProps.clear();
+    this.objectSpecs = specs;
+  }
+
   /** Mirror the manipulation props from ground truth, keyed by name
    * ({name: [x, y, z, qw, qx, qy, qz]} -- world_server's "objects" block).
-   * Each mesh is built on first sight from GRASP_OBJECT_SHAPES; a prop the
+   * Each mesh is built on first sight from the objectSpecs roster; a prop the
    * block stops naming has left the world (parked, or never dropped) and is
    * hidden rather than left behind at its last pose. */
   setObjectPoses(poses: Record<string, number[]>): void {
@@ -513,9 +556,19 @@ export class SimScene {
     for (const [name, pose] of Object.entries(poses)) {
       let mesh = this.objectMeshes.get(name);
       if (!mesh) {
-        const shape = GRASP_OBJECT_SHAPES[name];
-        if (!shape) continue; // a prop this build doesn't know how to draw
-        mesh = new THREE.Mesh(shape.geometry(), new THREE.MeshStandardMaterial({ color: shape.color, roughness: 0.7 }));
+        const spec = this.objectSpecs[name];
+        const geometry = spec && propGeometry(spec);
+        if (!geometry) {
+          // Not silent: a prop that streams poses but can't be drawn is a
+          // roster/protocol gap someone should hear about (once).
+          if (!this.warnedUnknownProps.has(name)) {
+            this.warnedUnknownProps.add(name);
+            console.warn(`[scene] no drawable spec for prop "${name}" -- not rendering it`);
+          }
+          continue;
+        }
+        const color = new THREE.Color(spec.rgba[0], spec.rgba[1], spec.rgba[2]);
+        mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 0.7 }));
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         this.objectMeshes.set(name, mesh);
@@ -528,7 +581,7 @@ export class SimScene {
       mesh.position.set(pose[0], pose[1], pose[2]);
       mesh.quaternion.set(pose[4], pose[5], pose[6], pose[3]);
     }
-    this.updateShadowVolume(); // the props moved; the box may need to grow or shrink
+    this.shadowDirty = true; // the props moved; the box may need to grow or shrink
   }
 
   // Orange accent for the arm links (see ORANGE_LINKS). Cached so every mesh
@@ -594,7 +647,7 @@ export class SimScene {
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
     this.robotXY = [x, y];
-    this.updateShadowVolume();
+    this.shadowDirty = true;
 
     if (this.followCamera) {
       const [prevX, prevY] = this.followPrevXY;
@@ -608,7 +661,15 @@ export class SimScene {
     }
   }
 
+  // Deferred shadow-box refit (see shadowDirty); runs at most once per frame.
+  private flushShadowVolume(): void {
+    if (!this.shadowDirty) return;
+    this.shadowDirty = false;
+    this.updateShadowVolume();
+  }
+
   render(): void {
+    this.flushShadowVolume();
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
     if (!robotCam) this.controls.update();
     this.renderer.render(this.scene, robotCam ?? this.camera);
@@ -644,6 +705,7 @@ export class SimScene {
    * origin bottom-left) -- used for PiP thumbnails. Restores full-canvas
    * viewport afterwards. */
   renderRegion(x: number, y: number, width: number, height: number): void {
+    this.flushShadowVolume(); // PiP tiles render before the main view each frame
     const cam = (this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined) ?? this.camera;
     const prevAspect = cam.aspect;
     cam.aspect = width / height;

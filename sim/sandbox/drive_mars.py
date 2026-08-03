@@ -218,11 +218,14 @@ def main() -> None:
         d.xfrc_applied[base_id, 5] = torque_yaw
 
         for name, (qadr, dadr) in joint_dofs.items():
-            d.qfrc_applied[dadr] = KP_JOINT * (ARM_HOME[name] - d.qpos[qadr]) - KD_JOINT * d.qvel[dadr]
+            # Fingers get no explicit velocity term: tune_contacts re-scaled
+            # their joints to the finger servo's inertia, where an explicit
+            # -kd*qvel rings at this timestep -- world.FINGER_DAMPING damps
+            # them implicitly instead (same reasoning as core.KD_GRIPPER).
+            kd = 0.0 if name == mimic_source else KD_JOINT
+            d.qfrc_applied[dadr] = KP_JOINT * (ARM_HOME[name] - d.qpos[qadr]) - kd * d.qvel[dadr]
         mimic_target = mimic_mult * ARM_HOME[mimic_source]
-        d.qfrc_applied[mimic_dof_adr] = (
-            KP_JOINT * (mimic_target - d.qpos[mimic_qpos_adr]) - KD_JOINT * d.qvel[mimic_dof_adr]
-        )
+        d.qfrc_applied[mimic_dof_adr] = KP_JOINT * (mimic_target - d.qpos[mimic_qpos_adr])
 
     mujoco.set_mjcb_control(control_callback)
 

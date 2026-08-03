@@ -20,7 +20,7 @@ import mujoco
 import numpy as np
 from PIL import Image
 
-from . import world
+from . import constants, world
 from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, WRIST_CAMERA_FOVY
 from .world import ARM_HOME, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG
 
@@ -55,10 +55,11 @@ KD_GRIPPER = 0.0
 # across the robot's front arc, joint2 may not stay folded up (negative =
 # arm up) -- the arm must duck under the head instead of sweeping through
 # it. Ramps back to the full range at the arc's edges. The real floor is
-# -0.5, but the simplified collision boxes (chassis + shoulder link are
-# both bounding boxes) overlap by up to 19mm at -0.5 where the real parts
-# clear, so the sim ducks to -0.25, the shallowest pose that clears.
-JOINT2_GUARD_MIN = -0.25
+# -0.5, but the collision boxes (chassis + shoulder link) still overlap by
+# up to ~8mm at -0.5 where the real parts clear, so the sim ducks to -0.35,
+# the shallowest 0.05-step pose that clears everywhere in the arc (measured
+# contact onset: joint2 = -0.36 at joint1 = +-0.5).
+JOINT2_GUARD_MIN = -0.35
 
 
 def joint2_min_target(joint1_target: float, full_min: float) -> float:
@@ -202,10 +203,15 @@ class VirtualMars:
         urdf_path = world.default_urdf_path()
         asset_files = [
             urdf_path,
-            # The robot half of the model (planar base, contact tuning) is
-            # built from world.py after the cache lookup, so its source has to
-            # key the cache too or an edit loads a stale .mjb.
+            # Everything compiled INTO the model after the cache lookup has to
+            # key the cache too, or an edit loads a stale .mjb: world.py (the
+            # planar base, contact tuning), constants.py (the camera FOVs) and
+            # this module (CAMERAS mounts/orientations). The launcher's
+            # world-server restart check hashes the same three files
+            # (runtime._world_model_sources_digest) -- keep them in step.
             Path(world.__file__),
+            Path(constants.__file__),
+            Path(__file__),
             *(f for pieces in rooms.values() for f in pieces),
             *(p for obj in visual_rooms.values() for p in (obj, obj.with_suffix(".png"))),
             *(f for f in urdf_path.parent.rglob("*") if f.suffix in (".stl", ".dae", ".obj", ".png", ".urdf")),
@@ -708,7 +714,12 @@ class VirtualMars:
         return math.degrees(float(self.data.qpos[qadr]))
 
     def joint_positions(self) -> dict[str, float]:
-        return {name: float(self.data.qpos[qadr]) for name, (qadr, _d, _t) in self._joints.items()}
+        out = {name: float(self.data.qpos[qadr]) for name, (qadr, _d, _t) in self._joints.items()}
+        # The mirrored finger's ACTUAL angle, not -joint6: each finger is
+        # independently torque-clamped against its own contacts, so the jaws
+        # can differ under load and the observer stream should show it.
+        out[world.MIMIC_JOINT[0]] = float(self.data.qpos[self._mimic[0]])
+        return out
 
     def encoder_positions(self) -> dict[str, float]:
         """What the real servo encoders would read: link angle plus the

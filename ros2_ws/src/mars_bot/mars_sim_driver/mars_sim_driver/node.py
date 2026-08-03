@@ -345,7 +345,10 @@ class VirtualMarsNode(Node):
     # Settle: a goto completes when the arm ARRIVES (tol), like real servos,
     # not when its time runs out. The cap bounds a blocked joint AND honours
     # the service contract: manipulation_server waits only `time + 0.2s` wall
-    # for goto_js, so the settle must fit inside that budget.
+    # for goto_js, so the settle must fit inside that budget -- which is why
+    # the deadline is anchored at the trajectory's NOMINAL end below, not at
+    # the tick that noticed it (each 20ms tick of detection slop would
+    # otherwise come out of the caller's 50ms of remaining headroom).
     SETTLE_TOL_RAD = 0.015
     SETTLE_CAP_S = 0.15
 
@@ -355,8 +358,14 @@ class VirtualMarsNode(Node):
         a 50Hz stream would play back at a fraction of its speed."""
         if not self._segments:
             if self._traj_req is not None and self._settle_target is not None:
-                positions = self.sim.joint_positions()
-                err = max(abs(positions[j] - t) for j, t in self._settle_target.items() if j in positions)
+                try:
+                    positions = self.sim.joint_positions()
+                    err = max(abs(positions[j] - t) for j, t in self._settle_target.items() if j in positions)
+                except (OSError, RuntimeError):
+                    # World server briefly away: the targets were already
+                    # delivered and the motion is done -- the deadline below
+                    # still resolves the goto, it must not turn into failure.
+                    err = math.inf
                 if err <= self.SETTLE_TOL_RAD or self._sim_now() >= self._settle_until:
                     self._settle_target = None
                     self._traj_req.ok = True
@@ -371,12 +380,14 @@ class VirtualMarsNode(Node):
             self._segment_started += duration
             if not self._segments:
                 self.sim.set_joint_targets(dict(end))  # land exactly on the final pose
-                self._segment_started = None
                 if self._traj_req is not None:
                     # Don't report done on the clock: the sim's PD arm still
-                    # trails its setpoint by 5-15mm of ee here. Settle first.
-                    self._settle_until = self._sim_now() + self.SETTLE_CAP_S
+                    # trails its setpoint by 5-15mm of ee here. Settle first,
+                    # capped from the segment's nominal end (_segment_started
+                    # has just rolled up to it -- see the class comment).
+                    self._settle_until = self._segment_started + self.SETTLE_CAP_S
                     self._settle_target = dict(end)
+                self._segment_started = None
                 return
         start, end, duration = self._segments[0]
         alpha = min(1.0, max(0.0, (now - self._segment_started) / duration))

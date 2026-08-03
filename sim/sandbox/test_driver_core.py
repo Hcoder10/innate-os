@@ -51,8 +51,8 @@ def main() -> None:
     # the head. Ramp math first, then the symptom that matters: a teleop-like
     # streamed joint1 sweep from home across the front must not jam.
     assert joint2_min_target(-1.4, -1.57) == -1.57  # outside the arc: full range
-    assert joint2_min_target(0.0, -1.57) == -0.25  # front arc: duck
-    assert abs(joint2_min_target(1.125, -1.57) - (-0.91)) < 1e-9  # mid-ramp
+    assert joint2_min_target(0.0, -1.57) == -0.35  # front arc: duck (JOINT2_GUARD_MIN)
+    assert abs(joint2_min_target(1.125, -1.57) - (-0.96)) < 1e-9  # mid-ramp
     assert joint2_min_target(1.25, -1.57) == -1.57
     home_j1 = world.ARM_HOME["joint1"]
     for leg_target in (-1.4, home_j1):  # across the front and back

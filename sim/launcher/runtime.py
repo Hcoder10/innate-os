@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import filecmp
 import hashlib
 import json
 import os
@@ -1359,7 +1360,7 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
 
 
 def sync_robot_description(config: dict[str, object]) -> None:
-    """Refresh the viewer's /robot/ tree from the tracked mars_sim package.
+    """Mirror the viewer's /robot/ tree from the tracked mars_sim package.
 
     The 3D view has to draw the same robot the driver simulates -- same links,
     and since the "collisions" overlay renders the URDF's own <collision>
@@ -1367,10 +1368,12 @@ def sync_robot_description(config: dict[str, object]) -> None:
     of the checkout on every run rather than shipped frozen inside the asset
     bundle, where a mars.urdf edit would never reach the browser at all.
 
-    Copies only what changed. The URDF is small and is the file that
-    actually changes, so it is compared by content; the ~7MB meshes use the
-    size+mtime shortcut (copy2 preserves both, so an exact match is a
-    previous copy of that very file).
+    A true mirror: files are compared by content (filecmp reads in chunks and
+    bails on the first difference, so unchanged runs cost one read of ~7MB --
+    sizes/mtimes alone are not trusted, exact mtime equality breaks across
+    filesystems with different timestamp resolution), and served files the
+    package no longer has are removed, since viewer/public is gitignored and
+    nothing else would ever clean a renamed mesh's orphan.
     """
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
@@ -1380,16 +1383,17 @@ def sync_robot_description(config: dict[str, object]) -> None:
 
     served = sim_repo / "viewer" / "public" / "robot"
     sources = [(package / "urdf" / "mars.urdf", served / "mars.urdf")]
-    sources += [(mesh, served / "meshes" / mesh.name) for mesh in sorted(package.glob("meshes/*"))]
+    sources += [(mesh, served / "meshes" / mesh.name) for mesh in sorted(package.glob("meshes/*")) if mesh.is_file()]
     for src, dst in sources:
-        if dst.exists():
-            if src.suffix == ".urdf":
-                if dst.read_bytes() == src.read_bytes():
-                    continue
-            elif dst.stat().st_size == src.stat().st_size and dst.stat().st_mtime == src.stat().st_mtime:
-                continue
+        if dst.exists() and filecmp.cmp(src, dst, shallow=False):
+            continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+    expected = {dst for _src, dst in sources}
+    if served.is_dir():
+        for stale in served.rglob("*"):
+            if stale.is_file() and stale not in expected:
+                stale.unlink()
 
 
 def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:

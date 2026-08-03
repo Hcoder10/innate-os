@@ -7,6 +7,7 @@
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
+import type { ObjectSpec } from "./physics/worldStateController";
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
 export const THUMB_W = 240;
@@ -93,6 +94,11 @@ export class SimSession {
   #hullsOn = false;
   #overlaysDirty = false;
 
+  // Drawable prop roster from the server's connection-opening object_specs
+  // frame; handed to the scene in tick() like the overlays above.
+  #objectSpecs: Record<string, ObjectSpec> | null = null;
+  #objectSpecsDirty = false;
+
   #stateUrls: string[];
   #rosUrl: string;
 
@@ -149,6 +155,10 @@ export class SimSession {
   #connectState(i: number): void {
     const url = this.#stateUrls[i];
     this.#controller = new WorldStateController(url);
+    this.#controller.onObjectSpecs = (specs) => {
+      this.#objectSpecs = specs;
+      this.#objectSpecsDirty = true;
+    };
     this.#controller.onState = (s) => {
       const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
@@ -325,6 +335,10 @@ export class SimSession {
     // one sample ahead: ~13ms at 75Hz, which at a 1.2m/s wrist is over 15mm of
     // mismatch, and it shows as the gripper passing through whatever it is
     // carrying -- only ever while moving, which is exactly when you look.
+    if (this.#objectSpecsDirty && this.#objectSpecs) {
+      this.#objectSpecsDirty = false;
+      scene.setObjectSpecs(this.#objectSpecs);
+    }
     const objects: Record<string, number[]> = {};
     for (const [name, pb] of Object.entries(b.objects)) {
       const pa = a.objects[name] ?? pb;
