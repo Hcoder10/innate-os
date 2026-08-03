@@ -117,7 +117,7 @@ export function createSpeedModes(parent, rosClient) {
       // the robot publishes gets the same warning.
       if (mode.scale > 1.0) {
         const ok = await confirmDialog({
-          title: `Engage ${mode.label} mode?`,
+          title: `Engage ${mode.label} MARS mode?`,
           body: "Beyond full speed, one high-speed collision can break the arm of the robot. Go mad, but with great power comes great responsibility.",
           confirmLabel: "Yes I am ready to handle the heat.",
           cancelLabel: "No I wanna go back to my safe space.",
