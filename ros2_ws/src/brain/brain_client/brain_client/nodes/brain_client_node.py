@@ -37,6 +37,7 @@ from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.lifecycle import primitive_lifecycle_message
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
+from brain_client.skills.workspace_import import format_load_error, unique_key
 from brain_client.transport.chat import ChatManager
 from brain_client.transport.messages import MessageIn, MessageInType, MessageOutType
 from brain_client.transport.tts import TTSHandler
@@ -490,7 +491,11 @@ class BrainClientNode(Node):
 
     def _svc_get_directives(self, request, response):
         details = []
-        for directive in self.state.directives.values():
+        # Load-time broken agents, plus any that pass loading but fail while
+        # this response is built — those roster broken too instead of silently
+        # dropping out of the picker (the vanishing this field exists to end).
+        broken = dict(self.state.broken_agents)
+        for agent_id, directive in self.state.directives.items():
             try:
                 details.append(
                     {
@@ -503,7 +508,9 @@ class BrainClientNode(Node):
                     }
                 )
             except Exception as e:  # noqa: BLE001 — one bad agent must not take the roster down
-                self.get_logger().error(f"Error reading directive {type(directive).__name__}: {e}")
+                error = format_load_error(e)
+                broken[unique_key(broken, agent_id)] = error
+                self.get_logger().error(f"Error reading directive '{agent_id}': {error}")
         response.directives = [
             json.dumps(details),
             json.dumps(
@@ -517,7 +524,7 @@ class BrainClientNode(Node):
                     # don't know the field never offer them for selection.
                     "broken_agents": [
                         {"id": name, "display_name": name, "load_error": error}
-                        for name, error in sorted(self.state.broken_agents.items())
+                        for name, error in sorted(broken.items())
                     ],
                 }
             ),

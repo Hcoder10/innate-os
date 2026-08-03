@@ -89,6 +89,19 @@ def import_workspace_packages(logger) -> dict[str, str]:
     return import_packages([get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()], logger)
 
 
+def unique_key(taken: dict, base: str) -> str:
+    """``base``, or ``base.2``, ``base.3``… — the first key not in ``taken``.
+
+    Every broken-roster merge goes through this so no entry can silently
+    shadow another (class over module, module over module, probe over import);
+    a collision costs a numbered suffix, never a vanished error.
+    """
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}.{n}", n + 1
+    return key
+
+
 def format_load_error(e: BaseException) -> str:
     """``<file>:<line>: ExcType: msg``, pointing at the deepest workspace frame
     so the roster error names the user's file, not just the exception.

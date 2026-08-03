@@ -25,7 +25,12 @@ from brain_client.common.script_paths import (
     get_innate_agents_dir,
     get_workspace_dir,
 )
-from brain_client.skills.workspace_import import format_load_error, import_packages, live_registered_classes
+from brain_client.skills.workspace_import import (
+    format_load_error,
+    import_packages,
+    live_registered_classes,
+    unique_key,
+)
 
 
 def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict[str, str]]:
@@ -50,14 +55,10 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
     errors = import_packages([get_innate_agents_dir(), get_custom_agents_dir()], logger)
     classes, rejected = live_registered_classes(Agent._registry, "Agent", logger, include_abstract=True)
     # Function-local agents can't load; roster them broken like import errors.
-    # Count up on collision so they never shadow a module's import error (or
-    # each other) — same idiom as every other broken-key merge.
+    # unique_key so they never shadow a module's import error (or each other).
     for cls, error in rejected:
         base = f"{cls.__module__}.{class_name_to_snake_case(cls.__name__)}"
-        key, n = base, 2
-        while key in errors:
-            key, n = f"{base}.{n}", n + 1
-        errors[key] = error
+        errors[unique_key(errors, base)] = error
     # Stable: innate first, custom last, registration order within each.
     classes.sort(key=lambda entry: entry[0].__module__.partition(".")[0] != "innate_agents")
     return classes, errors
@@ -92,10 +93,7 @@ def build_agent_instances(
         except Exception as e:  # noqa: BLE001 — one bad agent must not stop the roster
             name = class_name_to_snake_case(cls.__name__)
             if name in broken:  # same class name broken more than once — keep every row
-                base = f"{cls.__module__}.{name}"
-                name, n = base, 2
-                while name in broken:  # same name twice in one module (nested classes)
-                    name, n = f"{base}.{n}", n + 1
+                name = unique_key(broken, f"{cls.__module__}.{name}")
             broken[name] = format_load_error(e)
             logger.error(f"Error loading agent {cls.__name__} from {source_file}: {broken[name]}")
             continue

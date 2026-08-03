@@ -166,8 +166,10 @@ class ReloadCoordinator:
             else:
                 self._state.registry = registry
 
+            # `or None` skips per-agent skill validation against an empty
+            # registry (every agent would "fail" it) — same as _startup.
             self._state.directives, self._state.current_directive, self._state.broken_agents = initialize_agents(
-                self._logger, self._state.registry.primitives
+                self._logger, self._state.registry.primitives or None
             )
             self._state.active_skill_ids = (
                 list(self._state.current_directive.skill_ids()) if self._state.current_directive else []

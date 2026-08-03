@@ -12,6 +12,14 @@ from brain_client.agents.loader import build_agent_instances, discover_agent_cla
 from brain_client.agents.types import Agent
 from brain_client.common.script_paths import ensure_user_directories, get_workspace_dir
 from brain_client.skills.physical_refs import render_dir_shims, render_refs, write_dir_shims, write_refs
+from brain_client.skills.workspace_import import unique_key
+
+# module name -> agent ids it registered on its last clean import, carried
+# across reloads: a module that later fails to import rosters every agent it
+# used to define as broken, not one module-derived row that would collapse a
+# multi-agent file to a single entry (same contract as the skill catalog's
+# _skill_ids_by_module). Process-lifetime, like Agent._registry.
+_agent_ids_by_module: dict[str, list[str]] = {}
 
 
 def initialize_agents(
@@ -45,23 +53,32 @@ def initialize_agents(
     agents, probe_errors = build_agent_instances(classes, logger, available_skills=skills_dict)
     # Module rows keyed like class rows (innate_agents.foo -> foo) so a broken
     # entry keeps its name when a syntax error becomes a class-level failure;
-    # full module name if that key is taken. Class rows must never shadow a
-    # module row (class InnateAgents vs the innate_agents package), so they
-    # count up on collision — same idiom as the loader's own key fallbacks.
+    # full module name if that key is taken. All merges go through unique_key
+    # so no row (class over module, probe over import) can shadow another.
+    ids_by_module: dict[str, list[str]] = {}
+    for agent_id, agent in agents.items():
+        ids_by_module.setdefault(type(agent).__module__, []).append(agent_id)
     broken: dict[str, str] = {}
     for module_name, error in import_errors.items():
+        known_ids = _agent_ids_by_module.get(module_name)
+        if known_ids:
+            # The module imported cleanly earlier in this process, so we know
+            # which agents live in it: roster each one broken rather than one
+            # module row — a multi-agent file must not collapse to a single
+            # entry, vanishing every agent but one. The module-derived row is
+            # only for modules that never imported cleanly in this process.
+            ids_by_module[module_name] = known_ids  # carry through the breakage
+            for agent_id in known_ids:
+                broken[unique_key(broken, agent_id)] = error
+            continue
         name = module_name.partition(".")[2] or module_name
         if name in broken:
             name = module_name
-        key, n = name, 2
-        while key in broken:
-            key, n = f"{name}.{n}", n + 1
-        broken[key] = error
+        broken[unique_key(broken, name)] = error
+    _agent_ids_by_module.clear()
+    _agent_ids_by_module.update(ids_by_module)
     for name, error in probe_errors.items():
-        key, n = name, 2
-        while key in broken:
-            key, n = f"{name}.{n}", n + 1
-        broken[key] = error
+        broken[unique_key(broken, name)] = error
 
     logger.info(f"Successfully loaded {len(agents)} agents")
     if broken:

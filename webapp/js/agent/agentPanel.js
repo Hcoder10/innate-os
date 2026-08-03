@@ -156,6 +156,12 @@ export function createAgentPanel(root, rosClient, agentState) {
 
   /** @param {() => Promise<any>} fn */
   async function withApplying(fn) {
+    // A real action supersedes the copy-feedback flash: without this, the
+    // flash guard in renderRoster would hide the applying state for up to 1.2s.
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
     applying = true;
     renderRoster();
     try {
