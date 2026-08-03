@@ -10,8 +10,10 @@ Bundle layout (extracted by the launcher's ensure_sim_assets):
 
 The viewer's apartment_collisions_v2 (flat hulls + manifest.json) and
 apartment_sdf are REBUILT here from the work/ store, so the two consumers can
-never drift apart. models/robot/apartment_obj are carried over from the
-checkout (static exports, they change ~never).
+never drift apart. models/apartment_obj are carried over from the checkout
+(static exports, they change ~never). The robot description is deliberately
+NOT bundled -- it is tracked source, and the launcher refreshes the viewer's
+copy from the checkout on every run (runtime.sync_robot_description).
 
 The tarball is deterministic (sorted entries, zeroed metadata), so identical
 content always yields the identical tag: sim-assets-<sha256[:12]>.
@@ -47,7 +49,7 @@ ATTRIBUTION = (
     "# Attribution\n\n"
     + 'The apartment environment is derived from ["Appartement"](https://sketchfab.com/3d-models/appartement-6a7a5fe208344b2e8123a88923dbd5b3) by [SrMonteiro](https://sketchfab.com/crispimrafael), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: split per room, convex-decomposed for collision, re-exported for rendering (GLB/MuJoCo meshes), and rasterized into a navigation map.'
 )
-VIEWER_CARRYOVER = ["public/models", "public/robot", "assets/apartment_obj"]
+VIEWER_CARRYOVER = ["public/models", "assets/apartment_obj"]
 
 
 def stage(root: Path) -> None:
