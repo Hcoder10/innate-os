@@ -6,8 +6,8 @@ run unchanged -- see README "Virtual MARS driver".
   pub /odom                                       nav_msgs/Odometry @30Hz (pose only, like bringup.py)
   pub TF odom->base_link                          @30Hz
   pub /scan                                       sensor_msgs/LaserScan @6Hz, frame base_laser
-  pub /mars/main_camera/left/image_raw/compressed sensor_msgs/CompressedImage @7.5Hz (lazy)
-  pub /mars/arm/image_raw/compressed              sensor_msgs/CompressedImage @5Hz (lazy)
+  pub /mars/main_camera/left/image_raw/compressed sensor_msgs/CompressedImage @10Hz (lazy)
+  pub /mars/arm/image_raw/compressed              sensor_msgs/CompressedImage @6Hz (lazy)
   pub /mars/main_camera/depth/image_rect_raw      sensor_msgs/Image 16UC1 mm @8Hz (lazy)
   pub /mars/main_camera/points                    sensor_msgs/PointCloud2 xyz @8Hz (lazy)
   pub /mars/main_camera/left/camera_info          sensor_msgs/CameraInfo @8Hz
@@ -62,8 +62,10 @@ try:
 except ImportError:  # ros2_ws not sourced/built -- topic interface still works
     GotoJS = GotoJSTrajectory = None
 
-MAIN_CAMERA_FPS = 7.5  # main_camera_driver: 15fps capture, JPEG every 2nd frame
-WRIST_CAMERA_FPS = 5.0  # arm_camera_driver: 30fps capture, JPEG every 6th frame
+# The real drivers' rates (30fps capture, JPEG every Nth frame). Keep exact:
+# skills that servo off frames pace their cmd_vel by the frame rate.
+MAIN_CAMERA_FPS = 10.0  # main_camera_driver: compressed_frame_interval=3
+WRIST_CAMERA_FPS = 6.0  # arm_camera_driver: compressed_frame_interval=5
 DEPTH_FPS = 8.0  # stereo_depth_estimator max_fps
 ODOM_HZ = 30.0  # bringup.py odom_frequency
 SCAN_HZ = 6.0  # lidar.launch.py throttle
@@ -114,6 +116,8 @@ class VirtualMarsNode(Node):
         self._segments: list[tuple[dict, dict, float]] = []
         self._segment_started: float | None = None
         self._traj_req: SimpleNamespace | None = None
+        self._settle_target: dict | None = None  # final pose being settled onto
+        self._settle_until = 0.0
         self._last_stream_at = 0.0  # /mars/arm/commands ramp pacing
         self._stream_interval = 0.1  # EMA of the stream's cadence (see _on_arm_commands)
 
@@ -213,6 +217,7 @@ class VirtualMarsNode(Node):
             self._traj_req.ok = False
             self._traj_req.done.set()
             self._traj_req = None
+        self._settle_target = None
         self._segments.clear()
         self._segment_started = None
 
@@ -337,11 +342,26 @@ class VirtualMarsNode(Node):
         # time IS the sim clock -- no RPC and no 15ms cache quantization.
         return time.monotonic()
 
+    # Settle: a goto completes when the arm ARRIVES (tol), like real servos,
+    # not when its time runs out. The cap bounds a blocked joint AND honours
+    # the service contract: manipulation_server waits only `time + 0.2s` wall
+    # for goto_js, so the settle must fit inside that budget.
+    SETTLE_TOL_RAD = 0.015
+    SETTLE_CAP_S = 0.15
+
     def _advance_trajectory(self) -> None:
         """Linear joint-space interpolation of the queued segments (lock
         held). Completed segments roll the clock forward within one tick, or
         a 50Hz stream would play back at a fraction of its speed."""
         if not self._segments:
+            if self._traj_req is not None and self._settle_target is not None:
+                positions = self.sim.joint_positions()
+                err = max(abs(positions[j] - t) for j, t in self._settle_target.items() if j in positions)
+                if err <= self.SETTLE_TOL_RAD or self._sim_now() >= self._settle_until:
+                    self._settle_target = None
+                    self._traj_req.ok = True
+                    self._traj_req.done.set()
+                    self._traj_req = None
             return
         now = self._sim_now()
         if self._segment_started is None:
@@ -353,9 +373,10 @@ class VirtualMarsNode(Node):
                 self.sim.set_joint_targets(dict(end))  # land exactly on the final pose
                 self._segment_started = None
                 if self._traj_req is not None:
-                    self._traj_req.ok = True
-                    self._traj_req.done.set()
-                    self._traj_req = None
+                    # Don't report done on the clock: the sim's PD arm still
+                    # trails its setpoint by 5-15mm of ee here. Settle first.
+                    self._settle_until = self._sim_now() + self.SETTLE_CAP_S
+                    self._settle_target = dict(end)
                 return
         start, end, duration = self._segments[0]
         alpha = min(1.0, max(0.0, (now - self._segment_started) / duration))
