@@ -286,9 +286,12 @@ robot adapter; humans and tools see it only through the observer stream):
   and rate-limited like real hardware. Renders are demand-paced: a camera
   or depth product renders once per client pull (~8Hz), never free-running.
 - **observer stream** (WebSocket, port 8800; the webapp proxies it at
-  `/worldstate`) — ground truth `{t, wall, pose, joints}` pushed after
-  every physics slice (~75Hz), latest-wins per client. The 3D view consumes
-  this; future challenge UIs/graders are just more clients.
+  `/worldstate`) — ground truth `{t, wall, pose, joints, objects}` pushed after
+  every physics slice (~75Hz), latest-wins per client, and stage commands
+  (`{"op": "drop_objects"}` / `{"op": "remove_objects"}`, the viewer's
+  drop/remove button -- the manipulation props are parked off-map until asked
+  for) accepted back on the same socket. Scenery, never robot control. The 3D view consumes this;
+  future challenge UIs/graders are just more clients.
 
 Physics steps against the wall clock in <=25ms slices (a stall replays as
 several smooth slices, never one teleport), with all GL work on the main
