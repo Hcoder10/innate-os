@@ -46,7 +46,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
 
-from brain_client.state.arm import Arm, quat_to_rpy
+from brain_client.common.geometry import quat_to_rpy
+from brain_client.state.arm import Arm
 
 
 class ArmUnhealthy(RuntimeError):
