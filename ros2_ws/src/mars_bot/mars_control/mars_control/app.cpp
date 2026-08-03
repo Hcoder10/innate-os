@@ -822,9 +822,12 @@ class AppControl : public rclcpp::Node {
      * that engages the mode never blocks on the 2 s motion.
      */
     void fold_arm_for_mad_mode() {
-        // j6 = 2048 (0 rad): claw closed, so nothing snags and a held object
-        // keeps a light grip rather than being released at speed.
-        static constexpr std::array<int, 6> POSE_TICKS{3051, 1779, 3021, 871, 2006, 2048};
+        // FOLLOWER encoder ticks, mirrored on j2/j3/j4/j6 from what the webapp's
+        // copy button reports (that is the leader's unflipped frame). j2 sits at
+        // its configured limit — the captured pose was ~12 deg past it. j6 = 2048
+        // (0 rad): claw closed, so nothing snags and a held object keeps a light
+        // grip rather than being released at speed.
+        static constexpr std::array<int, 6> POSE_TICKS{3044, 2843, 1092, 1721, 1813, 2048};
         static constexpr std::array<double, 6> FLIP{1.0, -1.0, -1.0, -1.0, 1.0, -1.0};
         if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
             RCLCPP_WARN(this->get_logger(), "Mad mode: arm goto service not ready; skipping the safe fold");
