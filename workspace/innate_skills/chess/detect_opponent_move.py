@@ -9,7 +9,18 @@ import chess
 from google import genai
 from google.genai import types
 
-from innate import Head, Image, MainImage, Manipulation, Skill, SkillReturn, WristImage, resource
+from innate import (
+    ArmFailed,
+    ArmUnhealthy,
+    Head,
+    Image,
+    MainImage,
+    Manipulation,
+    Skill,
+    SkillReturn,
+    WristImage,
+    resource,
+)
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
@@ -116,37 +127,49 @@ class DetectOpponentMove(Skill):
         if self.obs_x is None or self.obs_y is None:
             self.logger.error("[DetectOpponentMove] No board calibration — cannot position arm")
             return False
-        self.manipulation.open_gripper(100)
-        self.sleep(0.5)
+        try:
+            # An unopened claw only spoils the wrist view — not worth aborting.
+            self.manipulation.gripper_open()
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.logger.warning(f"[DetectOpponentMove] Gripper open failed: {e}")
         if self.head:
             self.head.set_position(self.HEAD_TILT_DOWN)
             self.sleep(0.5)
         self.feedback("Moving arm to observation pose...")
-        success = self.manipulation.move_to_cartesian_pose(
-            x=self.obs_x,
-            y=self.obs_y,
-            z=self.OBS_Z,
-            roll=self.FIXED_ROLL,
-            pitch=self.OBS_PITCH,
-            yaw=self.OBS_YAW,
-            duration=2.0,
-            blocking=True,
-        )
-        if success:
-            self.sleep(0.5)  # let camera auto-exposure settle
-        return success
+        try:
+            self.manipulation.move_to(
+                self.obs_x,
+                self.obs_y,
+                self.OBS_Z,
+                roll=self.FIXED_ROLL,
+                pitch=self.OBS_PITCH,
+                yaw=self.OBS_YAW,
+                duration=2.0,
+                tol_xy=None,
+                tol_z=None,
+            )
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.logger.error(f"[DetectOpponentMove] Failed to reach observation pose: {e}")
+            return False
+        self.sleep(0.5)  # let camera auto-exposure settle
+        return True
 
     def _go_to_safe_pose(self):
-        self.manipulation.move_to_cartesian_pose(
-            x=0.15,
-            y=0.1,
-            z=0.1,
-            roll=self.FIXED_ROLL,
-            pitch=self.OBS_PITCH,
-            yaw=self.OBS_YAW,
-            duration=2.0,
-            blocking=True,
-        )
+        try:
+            # Best-effort teardown: the run's result stands either way.
+            self.manipulation.move_to(
+                0.15,
+                0.1,
+                0.1,
+                roll=self.FIXED_ROLL,
+                pitch=self.OBS_PITCH,
+                yaw=self.OBS_YAW,
+                duration=2.0,
+                tol_xy=None,
+                tol_z=None,
+            )
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.logger.warning(f"[DetectOpponentMove] Safe pose failed: {e}")
         if self.head:
             self.head.set_position(self.HEAD_TILT_NEUTRAL)
 
