@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 from . import world
-from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH
+from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, WRIST_CAMERA_FOVY
 from .world import ARM_HOME, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG
 
 # Stop the base if the last Twist is stale, like a real base watchdog.
@@ -43,6 +43,13 @@ TONEMAP_EXPOSURE = 2.5
 KP_JOINT = 50.0
 KD_JOINT = 1.0
 EFFORT_LIMIT = 50.0  # N*m
+# The gripper runs on mars.urdf's real joint6 rating instead. 50 N*m on a
+# 45mm finger is 1.1kN of pinch: it ejects whatever it grabs and shakes the
+# contact solver, where 2 N*m is the ~44N the actual servo delivers. Its
+# velocity term is zero because the finger's 2e-5 inertia makes an explicit
+# -kd*qvel unstable at this timestep; world.FINGER_DAMPING damps it instead.
+GRIPPER_EFFORT_LIMIT = 2.0  # N*m
+KD_GRIPPER = 0.0
 
 # arm_control.cpp's "intelligent joint limits": when joint1 swings the arm
 # across the robot's front arc, joint2 may not stay folded up (negative =
@@ -195,6 +202,10 @@ class VirtualMars:
         urdf_path = world.default_urdf_path()
         asset_files = [
             urdf_path,
+            # The robot half of the model (planar base, contact tuning) is
+            # built from world.py after the cache lookup, so its source has to
+            # key the cache too or an edit loads a stale .mjb.
+            Path(world.__file__),
             *(f for pieces in rooms.values() for f in pieces),
             *(p for obj in visual_rooms.values() for p in (obj, obj.with_suffix(".png"))),
             *(f for f in urdf_path.parent.rglob("*") if f.suffix in (".stl", ".dae", ".obj", ".png", ".urdf")),
@@ -208,12 +219,15 @@ class VirtualMars:
             world_spec = mujoco.MjSpec.from_string(xml)
             robot_spec = world.load_robot_spec(urdf_path)
             world.add_planar_base(robot_spec)
+            world.tune_contacts(robot_spec)
             world_spec.attach(robot_spec, frame=world_spec.worldbody.add_frame(), prefix="robot_")
 
             for cam_name, (body_name, forward, up) in CAMERAS.items():
                 cam = world_spec.body(body_name).add_camera()
                 cam.name = cam_name
-                cam.fovy = CAMERA_FOVY
+                # Per-camera FOV: the head and wrist cameras are different
+                # physical lenses (see constants.py).
+                cam.fovy = WRIST_CAMERA_FOVY if cam_name == "wrist" else CAMERA_FOVY
                 cam.quat = _camera_quat(forward, up)
 
             self.model = world_spec.compile()
@@ -253,12 +267,33 @@ class VirtualMars:
         mimic_name, mimic_source, mimic_mult = world.MIMIC_JOINT
         jid = self.model.joint(f"robot_{mimic_name}").id
         self._mimic = (self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid], mimic_source, mimic_mult)
+        # Servo (kd, torque ceiling) per dof: the two gripper fingers run on the
+        # real servo's rating, everything else on the generic arm clamp.
+        self._servo = {dadr: (KD_JOINT, EFFORT_LIMIT) for _q, dadr, _home in self._joints.values()}
+        for dadr in (self._joints[mimic_source][1], self._mimic[1]):
+            self._servo[dadr] = (KD_GRIPPER, GRIPPER_EFFORT_LIMIT)
+
+        # Manipulation props: parked off-map in the model, so they exist only
+        # once drop_objects places them (and only then does anything report
+        # them). mj_resetData restores the parked pose, so reset() just has to
+        # forget which ones were out.
+        self._dropped: set[str] = set()
+        self._objects = {}  # name -> (body id, freejoint qpos_adr, dof_adr)
+        for obj in world.GRASP_OBJECTS:
+            jid = self.model.joint(f"{obj['name']}_free").id
+            self._objects[obj["name"]] = (
+                self.model.body(obj["name"]).id,
+                self.model.jnt_qposadr[jid],
+                self.model.jnt_dofadr[jid],
+            )
 
         self._renderer: mujoco.Renderer | None = None
         self._depth_renderer: mujoco.Renderer | None = None
         self._cmd_vx = 0.0
         self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
+        self._hold = None  # (x, y, yaw) the stopped base is keeping, or None
+        self._still_since = None  # sim time the base went quiet, or None
         self.reset()
         release_freed_heap()
 
@@ -271,8 +306,11 @@ class VirtualMars:
             self.data.qpos[qadr] = home
         mq, _md, source, mult = self._mimic
         self.data.qpos[mq] = mult * ARM_HOME[source]
+        self._dropped.clear()  # mj_resetData already re-parked every prop
         self._cmd_vx = self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
+        self._hold = None
+        self._still_since = None
         mujoco.mj_forward(self.model, self.data)
 
     def set_cmd_vel(self, vx: float, wz: float) -> None:
@@ -321,9 +359,10 @@ class VirtualMars:
         force_forward = world.KP_FORWARD * (vx - v_forward)
         force_lateral = -world.KP_LATERAL * v_lateral
         torque_yaw = world.KP_YAW * (wz - d.qvel[dof_yaw])
-        d.xfrc_applied[self._base_id, 0] = force_forward * cos - force_lateral * sin
-        d.xfrc_applied[self._base_id, 1] = force_forward * sin + force_lateral * cos
-        d.xfrc_applied[self._base_id, 5] = torque_yaw
+        hold_x, hold_y, hold_yaw = self._station_keeping(vx, wz)
+        d.xfrc_applied[self._base_id, 0] = force_forward * cos - force_lateral * sin + hold_x
+        d.xfrc_applied[self._base_id, 1] = force_forward * sin + force_lateral * cos + hold_y
+        d.xfrc_applied[self._base_id, 5] = torque_yaw + hold_yaw
 
         # Re-clamp joint2 every step from the current joint1 target, like the
         # real node re-clamps every control cycle from the latest command.
@@ -331,12 +370,47 @@ class VirtualMars:
         for name, (qadr, dadr, target) in self._joints.items():
             if name == "joint2":
                 target = max(target, j2_min)
-            torque = KP_JOINT * (target - d.qpos[qadr]) - KD_JOINT * d.qvel[dadr]
-            d.qfrc_applied[dadr] = max(-EFFORT_LIMIT, min(EFFORT_LIMIT, torque))
+            # Structural sag (world.STRUCT_STIFFNESS / ARM_BACKLASH_RAD):
+            # the LINK settles below the encoder target under gravity load
+            # (qfrc_bias ~= gravity torque at the near-static poses where
+            # sag matters).
+            bias = d.qfrc_bias[dadr]
+            target -= bias / world.STRUCT_STIFFNESS + world.ARM_BACKLASH_RAD * math.tanh(bias / world.BACKLASH_TANH_NM)
+            kd, limit = self._servo[dadr]
+            torque = KP_JOINT * (target - d.qpos[qadr]) - kd * d.qvel[dadr]
+            d.qfrc_applied[dadr] = max(-limit, min(limit, torque))
         mq, md, source, mult = self._mimic
+        kd, limit = self._servo[md]
         target = mult * self._joints[source][2]
-        torque = KP_JOINT * (target - d.qpos[mq]) - KD_JOINT * d.qvel[md]
-        d.qfrc_applied[md] = max(-EFFORT_LIMIT, min(EFFORT_LIMIT, torque))
+        torque = KP_JOINT * (target - d.qpos[mq]) - kd * d.qvel[md]
+        d.qfrc_applied[md] = max(-limit, min(limit, torque))
+
+    def _station_keeping(self, vx: float, wz: float) -> tuple[float, float, float]:
+        """World-frame (fx, fy, torque_z) holding the stopped base where it
+        stopped; zero while driving. The drive above is velocity-only, so
+        with a zero command nothing else pulls the base back and the arm's
+        reaction torque walks the robot -- real wheels and gearing don't
+        give that ground away. The pose latches only after HOLD_SETTLE_S of
+        quiet, so a skill's per-camera-frame cmd_vel gaps never anchor a
+        base that is still meant to be driving."""
+        d = self.data
+        if vx or wz:
+            self._hold = self._still_since = None
+            return 0.0, 0.0, 0.0
+        qx, qy, qyaw = (self._base[k][0] for k in ("x", "y", "yaw"))
+        if self._still_since is None:
+            self._still_since = d.time
+        if d.time - self._still_since < world.HOLD_SETTLE_S:
+            return 0.0, 0.0, 0.0
+        if self._hold is None:
+            self._hold = (float(d.qpos[qx]), float(d.qpos[qy]), float(d.qpos[qyaw]))
+        hx, hy, hyaw = self._hold
+        yaw_err = math.atan2(math.sin(hyaw - d.qpos[qyaw]), math.cos(hyaw - d.qpos[qyaw]))
+        return (
+            world.KP_HOLD_LINEAR * (hx - d.qpos[qx]),
+            world.KP_HOLD_LINEAR * (hy - d.qpos[qy]),
+            world.KP_HOLD_YAW * yaw_err,
+        )
 
     def update_camera(self, camera: str) -> None:
         """Snapshot sim state into the renderer's scene (fast; call under the
@@ -635,3 +709,58 @@ class VirtualMars:
 
     def joint_positions(self) -> dict[str, float]:
         return {name: float(self.data.qpos[qadr]) for name, (qadr, _d, _t) in self._joints.items()}
+
+    def encoder_positions(self) -> dict[str, float]:
+        """What the real servo encoders would read: link angle plus the
+        structural deflection. The driver publishes THIS on /joint_states --
+        real sag happens past the encoders, invisible to FK. The observer
+        truth stream keeps joint_positions(), so viewers draw the sag."""
+        out = {}
+        for name, (qadr, dadr, _t) in self._joints.items():
+            bias = self.data.qfrc_bias[dadr]
+            sag = bias / world.STRUCT_STIFFNESS + world.ARM_BACKLASH_RAD * math.tanh(bias / world.BACKLASH_TANH_NM)
+            out[name] = float(self.data.qpos[qadr] + sag)
+        return out
+
+    def object_poses(self) -> dict[str, list[float]]:
+        """Ground-truth [x, y, z, qw, qx, qy, qz] per manipulation prop that is
+        actually in the world -- what the viewer draws them from. Empty until
+        drop_objects; props still parked off-map are omitted, not reported at
+        their parking spot, so a viewer never draws one."""
+        return {
+            name: [*map(float, self.data.xpos[bid]), *map(float, self.data.xquat[bid])]
+            for name, (bid, _q, _d) in self._objects.items()
+            if name in self._dropped
+        }
+
+    def _place_object(self, obj: dict, x: float, y: float) -> None:
+        """Teleport one prop upright and at rest to (x, y), resting height."""
+        _bid, qadr, dadr = self._objects[obj["name"]]
+        self.data.qpos[qadr : qadr + 7] = [x, y, obj["z"], 1.0, 0.0, 0.0, 0.0]
+        self.data.qvel[dadr : dadr + 6] = 0.0
+
+    def drop_objects(self) -> None:
+        """Bring the manipulation props into the world, on the floor in front
+        of the robot WHERE IT IS NOW and at rest (world.GRASP_OBJECTS' robot-
+        frame offsets). They are parked off-map until this is called, so this
+        is the only way they ever appear; calling it again re-lays them.
+        Drive somewhere, drop a fresh set, practise grabbing -- without
+        resetting the robot's own pose the way reset() does."""
+        x, y, yaw = self.pose()
+        cos, sin = math.cos(yaw), math.sin(yaw)
+        for obj in world.GRASP_OBJECTS:
+            forward, lateral = obj["forward"], obj["lateral"]
+            self._place_object(obj, x + cos * forward - sin * lateral, y + sin * forward + cos * lateral)
+        self._dropped.update(obj["name"] for obj in world.GRASP_OBJECTS)
+        mujoco.mj_forward(self.model, self.data)
+
+    def remove_objects(self) -> None:
+        """Send the props back off-map to GRASP_PARK_XY -- the state the world
+        starts in, and what reset() leaves behind. The counterpart of
+        drop_objects, so an operator can clear the floor without resetting the
+        robot's own pose."""
+        park_x, park_y = world.GRASP_PARK_XY
+        for i, obj in enumerate(world.GRASP_OBJECTS):
+            self._place_object(obj, park_x + i * world.GRASP_PARK_PITCH, park_y)
+        self._dropped.clear()
+        mujoco.mj_forward(self.model, self.data)
