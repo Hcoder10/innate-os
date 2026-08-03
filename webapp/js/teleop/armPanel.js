@@ -13,6 +13,7 @@
 // or serial failure.
 
 import { DynamixelLeader } from "../dynamixel.js";
+import { copyToButton, ICON_COPY } from "../clipboard.js";
 import {
   LEADER_POSITIONS_TOPIC,
   ARM_REBOOT_SERVICE,
@@ -140,10 +141,24 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   engageBtn.className = "arm-button arm-engage";
   engageBtn.type = "button";
 
+  // Copy the live joint ticks — handy for pasting a pose into a skill.
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "arm-button arm-copy";
+  copyBtn.type = "button";
+  copyBtn.title = "Copy joint positions";
+  copyBtn.setAttribute("aria-label", "Copy joint positions");
+  copyBtn.innerHTML = ICON_COPY;
+
+  // Engage + copy share a row; the row (not the button) is what hides when
+  // there's nothing to read.
+  const engageRow = document.createElement("div");
+  engageRow.className = "arm-engage-row";
+  engageRow.append(engageBtn, copyBtn);
+
   const note = document.createElement("p");
   note.className = "arm-note microlabel";
 
-  wrap.append(status, joints, connectBtn, engageBtn, note, ...(armSvc ? [divider(), armSvc.el] : []));
+  wrap.append(status, joints, connectBtn, engageRow, note, ...(armSvc ? [divider(), armSvc.el] : []));
 
   // ---- state ------------------------------------------------------------
 
@@ -197,7 +212,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     connectBtn.disabled = false;
     connectBtn.textContent = state.error ? "Reconnect arm" : "Connect arm";
 
-    engageBtn.hidden = !reading;
+    engageRow.hidden = !reading;
     engageBtn.textContent = engaged ? "Live — click to stop" : "Engage follow";
     engageBtn.classList.toggle("active", engaged);
 
@@ -238,6 +253,12 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   });
 
   engageBtn.addEventListener("click", () => setEngaged(!engaged));
+
+  copyBtn.addEventListener("click", () => {
+    const positions = leader.state.positions;
+    if (!positions) return; // row is hidden without a read, but be safe
+    void copyToButton(`[${positions.join(", ")}]`, copyBtn, "copied");
+  });
 
   const unsubLeader = leader.onChange((state) => {
     if (destroyed) return;
