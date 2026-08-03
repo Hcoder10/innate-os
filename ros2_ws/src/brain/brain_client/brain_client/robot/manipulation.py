@@ -74,9 +74,10 @@ class Waypoint:
     duration: float = 1.0
 
 
-# Legacy-shim deprecation warnings stay dark until the in-repo fleet is
-# migrated (rollout step 4), so shipped skills are warning-clean on day one.
-_LEGACY_WARNINGS_ENABLED = False
+# All shipped skills use the new API; only field-authored skills still hit
+# the shims, and each warns once per process so authors see the migration
+# path without log spam.
+_LEGACY_WARNINGS_ENABLED = True
 _legacy_warned: set[str] = set()
 
 

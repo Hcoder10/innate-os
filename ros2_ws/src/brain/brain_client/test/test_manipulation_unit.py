@@ -17,6 +17,7 @@ test_manipulation_surface.py, which stubs nothing.
 
 import math
 import threading
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -26,8 +27,16 @@ ros_stubs.install()
 
 import rclpy.executors  # noqa: E402  (real or stubbed, both fine)
 
+from brain_client.robot import manipulation as manipulation_mod  # noqa: E402
 from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation, Waypoint  # noqa: E402
 from brain_client.state.arm import Arm  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def reset_legacy_warned():
+    manipulation_mod._legacy_warned.clear()
+    yield
+    manipulation_mod._legacy_warned.clear()
 
 
 class FakeFuture:
@@ -245,6 +254,44 @@ def test_legacy_open_gripper_blocking_passes_when_open():
     m._command_gripper = lambda j6, duration, blocking: True
     m.recover = lambda *a, **k: pytest.fail("recover must not run when the claw opened")
     assert m.open_gripper(100.0, blocking=True) is True
+
+
+# --- legacy shims: deprecation warnings ---------------------------------------
+
+
+def test_legacy_methods_warn_once_per_process():
+    m = bare_manipulation(_grip_target=0.3)
+    capture_gotos(m)
+    with pytest.warns(FutureWarning, match="move_to_joint_positions.*move_joints"):
+        m.move_to_joint_positions([0, 0, 0, 0, 0, 0])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        m.move_to_joint_positions([0, 0, 0, 0, 0, 0])
+    assert caught == []  # warned once per process per method
+    # ... and the on-robot log line fired exactly once too.
+    log_lines = [msg for level, msg in m.logger.messages if "deprecated" in msg]
+    assert len(log_lines) == 1
+
+
+def test_each_legacy_method_warns_under_its_own_name():
+    m = bare_manipulation()
+    m._command_gripper = lambda j6, duration, blocking: True
+    with pytest.warns(FutureWarning, match="close_gripper.*gripper_close"):
+        m.close_gripper()
+    with pytest.warns(FutureWarning, match="open_gripper.*gripper_open"):
+        m.open_gripper(0.0)
+
+
+def test_new_api_never_warns():
+    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.8]))
+    capture_gotos(m)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        m.move_joints([0, 0, 0, 0, 0, 0])
+        m.gripper_close(0.2)
+        m.gripper_open(100.0)
+        m.halt()
+    assert [w for w in caught if issubclass(w.category, FutureWarning)] == []
 
 
 # --- reach clamp ---------------------------------------------------------------
