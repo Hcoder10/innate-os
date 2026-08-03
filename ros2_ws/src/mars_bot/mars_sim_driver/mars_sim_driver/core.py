@@ -21,18 +21,20 @@ import numpy as np
 from PIL import Image
 
 from . import world
-from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, WRIST_CAMERA_FOVY
+from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, NAV_CAMERA_FOVY, WRIST_CAMERA_FOVY
 from .props import PropRegistry
 from .world import ARM_HOME, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG
 
 # Stop the base if the last Twist is stale, like a real base watchdog.
 CMD_VEL_TIMEOUT_S = 0.5
 
-# name -> (body carrying the camera, URDF-frame forward/up of the lens).
+# name -> (body carrying the camera, URDF-frame forward/up of the lens, vertical fov).
 # MuJoCo cameras look down their local -Z with +Y up; _camera_quat converts.
 CAMERAS = {
-    "main": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0)),
-    "wrist": ("robot_arm_camera_link", (1, 0, 0), (0, 0, 1)),
+    "main": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0), CAMERA_FOVY),
+    "wrist": ("robot_arm_camera_link", (1, 0, 0), (0, 0, 1), WRIST_CAMERA_FOVY),
+    # Identical mount and orientation to main -- fov is the only difference.
+    "nav": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0), NAV_CAMERA_FOVY),
 }
 JPEG_QUALITY = 80  # matches main_camera_driver.cpp
 # Post-render ACES tone map approximating sim/viewer's Three.js output
@@ -140,6 +142,10 @@ def _model_cache_path(xml: str, asset_files: list[Path]) -> Path:
     digest = hashlib.sha256()
     digest.update(mujoco.__version__.encode())
     digest.update(xml.encode())
+    # Cameras are added to the spec after the XML is built, so they are not in
+    # `xml` -- without this a cache written before a camera was added or its fov
+    # changed loads happily and silently lacks it.
+    digest.update(repr(sorted(CAMERAS.items())).encode())
     for path in sorted(set(asset_files)):
         try:
             st = path.stat()
@@ -232,12 +238,10 @@ class VirtualMars:
             world.tune_contacts(robot_spec)
             world_spec.attach(robot_spec, frame=world_spec.worldbody.add_frame(), prefix="robot_")
 
-            for cam_name, (body_name, forward, up) in CAMERAS.items():
+            for cam_name, (body_name, forward, up, fovy) in CAMERAS.items():
                 cam = world_spec.body(body_name).add_camera()
                 cam.name = cam_name
-                # Per-camera FOV: the head and wrist cameras are different
-                # physical lenses (see constants.py).
-                cam.fovy = WRIST_CAMERA_FOVY if cam_name == "wrist" else CAMERA_FOVY
+                cam.fovy = fovy
                 cam.quat = _camera_quat(forward, up)
 
             self.model = world_spec.compile()
