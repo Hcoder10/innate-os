@@ -87,6 +87,7 @@ class _LegacyManipulationMixin:
     Same signatures, same bool/None/dict returns, same non-blocking defaults,
     same gripper re-seed-from-measured behavior. Each method delegates to the
     shared plumbing and (once enabled) warns once per process.
+    These will be removed in the 0.8.0 release.
     """
 
     def _warn_legacy(self, method: str, replacement: str) -> None:
