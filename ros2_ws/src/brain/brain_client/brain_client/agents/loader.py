@@ -50,8 +50,14 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
     errors = import_packages([get_innate_agents_dir(), get_custom_agents_dir()], logger)
     classes, rejected = live_registered_classes(Agent._registry, "Agent", logger, include_abstract=True)
     # Function-local agents can't load; roster them broken like import errors.
+    # Count up on collision so they never shadow a module's import error (or
+    # each other) — same idiom as every other broken-key merge.
     for cls, error in rejected:
-        errors[f"{cls.__module__}.{class_name_to_snake_case(cls.__name__)}"] = error
+        base = f"{cls.__module__}.{class_name_to_snake_case(cls.__name__)}"
+        key, n = base, 2
+        while key in errors:
+            key, n = f"{base}.{n}", n + 1
+        errors[key] = error
     # Stable: innate first, custom last, registration order within each.
     classes.sort(key=lambda entry: entry[0].__module__.partition(".")[0] != "innate_agents")
     return classes, errors
