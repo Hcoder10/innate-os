@@ -81,6 +81,16 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       onToggle(on);
     };
   };
+  // Momentary sibling of addChip: fires on click instead of latching on/off.
+  const addButton = (label: string, onPress: () => void) => {
+    const b = newChip(label);
+    b.onclick = () => {
+      onPress();
+      // Flash on: a momentary press must still read as having done something.
+      setChipOn(b, true);
+      setTimeout(() => setChipOn(b, false), 220);
+    };
+  };
   // Props, in two rows: the objects themselves, and under them the controls
   // that say what a click on one does. One chip per prop the world server
   // offers (props.py sidecars, relayed by session.onProps), so adding a prop
@@ -153,7 +163,9 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
   propControls.appendChild(divider);
   addChip("lidar", (on) => session.setLidarVisible(on));
+  addChip("waypoints", (on) => session.setNavPathVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
+  addButton("reset position", () => session.resetRobot());
   debugStack.appendChild(propControls);
 
   // Rebuilt whenever the roster arrives (once per observer connection).
