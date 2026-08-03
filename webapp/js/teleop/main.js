@@ -27,6 +27,7 @@ import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
+import { dismissAllConfirms } from "../nav/confirm.js";
 
 // Runtime feature flags (config.json, served static). Sim-only debug controls are
 // off unless a deployment opts in. Fetched once when this module first loads (the
@@ -102,6 +103,9 @@ function buildCockpit(root) {
   return {
     destroy() {
       drive.haltAll();
+      // Confirm dialogs (speed picker) live on document.body — sweep them so
+      // navigating away doesn't leave one floating over the next page.
+      dismissAllConfirms();
       for (const part of parts) part.destroy();
       session.destroy();
       root.innerHTML = "";
