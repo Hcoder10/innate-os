@@ -814,29 +814,20 @@ class AppControl : public rclcpp::Node {
      * Fold the arm into its Mad-mode bracing pose.
      *
      * At Mad's speeds a collision can break an extended arm, so entering the mode
-     * first tucks it against the body. The pose was captured on hardware as raw
-     * servo ticks and is converted with the driver's encoder convention
-     * (arm_control.cpp: rad = (tick - 2048) * 2pi / 4096, sign-flipped on joints
-     * 2, 3, 4, 6). Sent through goto_js_v2 (scheduled gains) so the pose is held
-     * stiff while the base accelerates; fire-and-forget so the parameter write
-     * that engages the mode never blocks on the 2 s motion.
+     * first tucks it against the body. Sent through goto_js_v2 (scheduled gains)
+     * so the pose is held stiff while the base accelerates; fire-and-forget so
+     * the parameter write that engages the mode never blocks on the 2 s motion.
      */
     void fold_arm_for_mad_mode() {
-        // FOLLOWER encoder ticks, mirrored on j2/j3/j4/j6 from what the webapp's
-        // copy button reports (that is the leader's unflipped frame). j2 sits at
-        // its configured limit — the captured pose was ~12 deg past it. j6 = 2048
-        // (0 rad): claw closed, so nothing snags and a held object keeps a light
-        // grip rather than being released at speed.
-        static constexpr std::array<int, 6> POSE_TICKS{3044, 2843, 1092, 1721, 1813, 2048};
-        static constexpr std::array<double, 6> FLIP{1.0, -1.0, -1.0, -1.0, 1.0, -1.0};
+        // Hardware-verified command radians (j2 at its configured limit, j6 = 0:
+        // claw closed so a held object keeps a light grip instead of releasing).
+        static constexpr std::array<double, 6> POSE_RAD{1.5278, -1.2195, 1.4665, -0.5016, -0.3605, 0.0};
         if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
             RCLCPP_WARN(this->get_logger(), "Mad mode: arm goto service not ready; skipping the safe fold");
             return;
         }
         auto request = std::make_shared<mars_msgs::srv::GotoJS::Request>();
-        for (size_t i = 0; i < POSE_TICKS.size(); ++i) {
-            request->data.data.push_back(FLIP[i] * (POSE_TICKS[i] - 2048) * 2.0 * M_PI / 4096.0);
-        }
+        request->data.data.assign(POSE_RAD.begin(), POSE_RAD.end());
         request->time = 2.0;
         RCLCPP_INFO(this->get_logger(), "Mad mode: folding the arm to its bracing pose");
         arm_goto_client_->async_send_request(
