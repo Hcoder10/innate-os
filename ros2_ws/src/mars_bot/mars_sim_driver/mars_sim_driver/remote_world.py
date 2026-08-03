@@ -167,6 +167,10 @@ class RemoteWorld:
         with self._state_lock:
             self._state_at = 0.0
 
+    def perturb_camera(self, camera: str, dpos, drot_deg) -> None:
+        """Offset a camera mount in the world (fault injection; see faults.py)."""
+        self._state_ch.call({"op": "perturb_camera", "camera": camera, "dpos": list(dpos), "drot_deg": list(drot_deg)})
+
     # --- sensors ---
 
     def lidar_scan(self, n_rays: int, max_range: float) -> np.ndarray:

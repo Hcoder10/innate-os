@@ -248,6 +248,10 @@ class WorldServer:
             with self.lock:
                 self.sim.reset()
             return {"ok": True}, None
+        if op == "perturb_camera":
+            with self.lock:
+                self.sim.perturb_camera(str(req["camera"]), req.get("dpos") or (0, 0, 0), req.get("drot_deg") or (0, 0, 0))
+            return {"ok": True}, None
         if op == "lidar":
             with self.lock:
                 ranges = self.sim.lidar_scan(int(req["n_rays"]), float(req["max_range"]))

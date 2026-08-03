@@ -28,6 +28,10 @@ alongside this node with the same mars.urdf. AMCL owns map->odom.
 The world itself runs in the world server (world_server.py); this node is a
 thin RPC client. VIRTUAL_MARS_REMOTE picks the endpoint (default
 127.0.0.1:8799, started by sim_driver.launch.py).
+
+VIRTUAL_MARS_FAULTS (JSON) injects calibration/sensing errors -- bad head
+encoder readings, camera mount offsets, stereo depth artifacts,
+miscalibrated intrinsics -- see faults.py for the keys.
 """
 
 import contextlib
@@ -55,6 +59,7 @@ from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
 from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH
+from .faults import FaultInjector
 from .remote_world import RemoteWorld
 
 try:
@@ -107,6 +112,11 @@ class VirtualMarsNode(Node):
         self.get_logger().info(f"waiting for the world server at {endpoint}...")
         self.sim.wait_ready(timeout=180.0)
         self.get_logger().info(f"world server connected at {endpoint}")
+        self._faults = FaultInjector(FOCAL, CX, CY)
+        for line in self._faults.describe():
+            self.get_logger().warning(f"fault injection: {line}")
+        if self._faults.wants_camera_perturb:
+            self.sim.perturb_camera("main", self._faults.cam_dpos, self._faults.cam_drot_deg)
         self._lock = threading.Lock()
         # Queued (from, to, duration) segments consumed by the trajectory
         # loop; _traj_req is the waiting goto_js* call's per-request
@@ -513,6 +523,7 @@ class VirtualMarsNode(Node):
         want_depth = self._depth_pub.get_subscription_count() > 0
         want_points = self._points_pub.get_subscription_count() > 0
         stamp = self._stamp()
+        depth = self._faults.corrupt_depth(depth)
         invalid = (depth < DEPTH_MIN_M) | (depth > DEPTH_MAX_M)
         img_scale = CAMERA_HEIGHT // depth.shape[0]
 
@@ -536,7 +547,9 @@ class VirtualMarsNode(Node):
         if want_points:
             step = max(1, POINTS_SUBSAMPLE // img_scale)
             vs, us = _points_grid(depth.shape[0], depth.shape[1], step)
-            f, cx, cy = FOCAL / img_scale, CX / img_scale, CY / img_scale
+            # Back-project with the (possibly miscalibrated) published
+            # intrinsics, like the real pipeline trusting its calibration.
+            f, cx, cy = self._faults.focal / img_scale, self._faults.cx / img_scale, self._faults.cy / img_scale
             z = np.where(invalid, np.nan, depth)[::step, ::step].astype(np.float32)
             x = (us - cx) / f * z
             y = (vs - cy) / f * z
@@ -563,9 +576,10 @@ class VirtualMarsNode(Node):
         msg.width, msg.height = CAMERA_WIDTH, CAMERA_HEIGHT
         msg.distortion_model = "plumb_bob"
         msg.d = [0.0] * 5
-        msg.k = [FOCAL, 0.0, CX, 0.0, FOCAL, CY, 0.0, 0.0, 1.0]
+        f, cx, cy = self._faults.focal, self._faults.cx, self._faults.cy
+        msg.k = [f, 0.0, cx, 0.0, f, cy, 0.0, 0.0, 1.0]
         msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-        msg.p = [FOCAL, 0.0, CX, 0.0, 0.0, FOCAL, CY, 0.0, 0.0, 0.0, 1.0, 0.0]
+        msg.p = [f, 0.0, cx, 0.0, 0.0, f, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         self._caminfo_pub.publish(msg)
 
     def _publish_joint_states(self) -> None:
@@ -577,6 +591,7 @@ class VirtualMarsNode(Node):
         msg = JointState()
         msg.header.stamp = self._stamp()
         msg.name = [*ARM_JOINTS, "joint_head"]  # same 7 as the real arm node
+        positions["joint_head"] = self._faults.head_reading(positions["joint_head"])
         msg.position = [positions[n] for n in msg.name]
         self._joint_states_pub.publish(msg)
 
@@ -603,6 +618,7 @@ class VirtualMarsNode(Node):
                 pitch = self.sim.head_pitch_deg()
         except (OSError, RuntimeError):
             return
+        pitch = math.degrees(self._faults.head_reading(math.radians(pitch)))
         msg = String()
         msg.data = json.dumps(
             {

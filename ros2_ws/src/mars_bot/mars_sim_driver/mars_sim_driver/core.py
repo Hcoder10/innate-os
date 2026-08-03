@@ -361,17 +361,11 @@ class VirtualMars:
         return encode_jpeg(self.render_rgb(camera))
 
     def update_depth(self, camera: str) -> None:
-        """Depth counterpart of update_camera. The robot's own geoms (group 0)
-        are excluded: the real stereo pipeline can't resolve the arm/head that
-        close to the lens (max_disparity limit + edge/speckle filters), so the
-        robot never appears in its own depth -- without this, STVL marks the
-        arm as an obstacle at the footprint and Nav2 can't plan."""
+        """Depth counterpart of update_camera."""
         if self._depth_renderer is None:
             self._depth_renderer = mujoco.Renderer(self.model, height=self._depth_h, width=self._depth_w)
             self._depth_renderer.enable_depth_rendering()
-            self._depth_scene_option = mujoco.MjvOption()
-            self._depth_scene_option.geomgroup[0] = 0
-        self._depth_renderer.update_scene(self.data, camera=camera, scene_option=self._depth_scene_option)
+        self._depth_renderer.update_scene(self.data, camera=camera)
 
     def read_depth(self) -> np.ndarray:
         return self._depth_renderer.render()
@@ -380,6 +374,21 @@ class VirtualMars:
         """Depth image in meters (float32, render height x width)."""
         self.update_depth(camera)
         return self.read_depth()
+
+    def perturb_camera(self, camera: str, dpos, drot_deg) -> None:
+        """Miscalibrate a camera mount (fault injection, see faults.py):
+        offset its pose relative to the parent body -- dpos in the body frame
+        (meters), drot_deg camera-local XYZ euler. Model-level, so it
+        survives reset()."""
+        cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        if cam_id < 0:
+            raise ValueError(f"unknown camera {camera!r}")
+        self.model.cam_pos[cam_id] += np.asarray(dpos, dtype=float)
+        err = np.zeros(4)
+        mujoco.mju_euler2Quat(err, np.radians(np.asarray(drot_deg, dtype=float)), "xyz")
+        composed = np.zeros(4)
+        mujoco.mju_mulQuat(composed, self.model.cam_quat[cam_id].copy(), err)
+        self.model.cam_quat[cam_id] = composed
 
     def lidar_scan(self, n_rays: int, max_range: float) -> np.ndarray:
         """360-degree planar scan from the base_laser mount, CCW from the

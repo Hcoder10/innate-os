@@ -48,6 +48,11 @@ services:
       # rendering outside Docker, see mars_sim_driver/world_server.py);
       # required -- the sim world always runs outside the container.
       - VIRTUAL_MARS_REMOTE=${VIRTUAL_MARS_REMOTE:-}
+      # Optional fault injection for the sim driver (bad head encoder,
+      # camera mount offsets, stereo depth artifacts, miscalibration) --
+      # JSON, see mars_sim_driver/faults.py. Export it before
+      # `./innate-sim up`; empty means no faults.
+      - VIRTUAL_MARS_FAULTS=${VIRTUAL_MARS_FAULTS:-}
       # The Foxglove bridge's published host port, so in-container tooling
       # (innate foxglove status) can print the address that actually works
       # from the host. Must match the ports entry below.
