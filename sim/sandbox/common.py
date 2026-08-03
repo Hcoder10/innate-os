@@ -37,19 +37,16 @@ TOUR = [
 
 def set_spawn(model: mujoco.MjModel, data: mujoco.MjData, x: float, y: float, yaw_deg: float) -> None:
     """Places the robot_base free joint at (x, y, drop-height, yaw):
-    qpos[0:3] = xyz, qpos[3:7] = wxyz quat, dropped from height rather than
-    spawned flush with the floor."""
+    qpos[q:q+3] = xyz, qpos[q+3:q+7] = wxyz quat, dropped from height rather
+    than spawned flush with the floor. Addressed by joint name, not qpos[0]:
+    the world carries other free bodies (world.GRASP_OBJECTS)."""
     import numpy as np
 
+    joint = model.joint("base_free")
+    q, v = model.jnt_qposadr[joint.id], model.jnt_dofadr[joint.id]
     half = np.radians(yaw_deg) / 2
-    data.qpos[0] = x
-    data.qpos[1] = y
-    data.qpos[2] = SPAWN_DROP_HEIGHT
-    data.qpos[3] = np.cos(half)
-    data.qpos[4] = 0.0
-    data.qpos[5] = 0.0
-    data.qpos[6] = np.sin(half)
-    data.qvel[:6] = 0.0
+    data.qpos[q : q + 7] = [x, y, SPAWN_DROP_HEIGHT, np.cos(half), 0.0, 0.0, np.sin(half)]
+    data.qvel[v : v + 6] = 0.0
 
 
 def apply_drive_force(model: mujoco.MjModel, data: mujoco.MjData, target_vx: float, target_wz: float) -> None:
@@ -59,14 +56,16 @@ def apply_drive_force(model: mujoco.MjModel, data: mujoco.MjData, target_vx: flo
     import numpy as np
 
     base_id = model.body("robot_base").id
-    qw, qz = data.qpos[3], data.qpos[6]
+    joint = model.joint("base_free")
+    q, v = model.jnt_qposadr[joint.id], model.jnt_dofadr[joint.id]
+    qw, qz = data.qpos[q + 3], data.qpos[q + 6]
     yaw = 2 * np.arctan2(qz, qw)
     cos, sin = np.cos(yaw), np.sin(yaw)
 
-    vx_world, vy_world = data.qvel[0], data.qvel[1]
+    vx_world, vy_world = data.qvel[v], data.qvel[v + 1]
     v_forward = vx_world * cos + vy_world * sin
     v_lateral = -vx_world * sin + vy_world * cos
-    wz_actual = data.qvel[5]
+    wz_actual = data.qvel[v + 5]
 
     force_forward = KP_FORWARD * (target_vx - v_forward)
     force_lateral = -KP_LATERAL * v_lateral
