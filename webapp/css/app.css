@@ -1609,6 +1609,29 @@ button {
   color: var(--accent);
 }
 
+/* Engage sits next to a small icon button that copies the joint ticks. */
+.arm-engage-row {
+  display: flex;
+  gap: 8px;
+}
+
+.arm-engage-row .arm-engage {
+  flex: 1;
+}
+
+.arm-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  color: var(--muted);
+}
+
+.arm-copy.copied {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
 .arm-note {
   font-size: 9px;
 }
