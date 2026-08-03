@@ -819,9 +819,10 @@ class AppControl : public rclcpp::Node {
      * the parameter write that engages the mode never blocks on the 2 s motion.
      */
     void fold_arm_for_mad_mode() {
-        // Hardware-verified command radians (j2 at its configured limit, j6 = 0:
-        // claw closed so a held object keeps a light grip instead of releasing).
-        static constexpr std::array<double, 6> POSE_RAD{1.5278, -1.2195, 1.4665, -0.5016, -0.3605, 0.0};
+        // Hardware-verified command radians (j1 at its configured limit — the
+        // demonstrated pose sat ~12 deg past it; j6 = 0: claw closed so a held
+        // object keeps a light grip instead of releasing).
+        static constexpr std::array<double, 6> POSE_RAD{1.5708, -0.3912, 1.4511, -1.6276, -0.0890, 0.0};
         if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
             RCLCPP_WARN(this->get_logger(), "Mad mode: arm goto service not ready; skipping the safe fold");
             return;
