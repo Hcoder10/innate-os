@@ -15,12 +15,11 @@ Below is an overview of each major component, the communication protocols, and r
 - [Components](#components)
   - [Mars Robot / Simulation](#mars-robot--simulation)
   - [ROS 2 Nodes & Packages](#ros-2-nodes--packages)
-  - [Cloud Agent](#cloud-agent)
+  - [Agent Loop](#agent-loop)
   - [Zenoh Discovery & Networking](#zenoh-networking)
   - [rosbridge](#rosbridge)
 - [Protocols and Message Types](#protocols-and-message-types)
   - [ROS 2 Topics & Services](#ros-2-topics--services)
-  - [Custom WebSocket Protocol](#custom-websocket-protocol)
   - [Zenoh Protocol](#zenoh-protocol)
 - [System Diagrams](#system-diagrams)
   - [Simulation Diagram](#simulation-diagram)
@@ -38,7 +37,7 @@ Below is an overview of each major component, the communication protocols, and r
 - In **simulation mode**, a simulator node (or an external sim bridging over rosbridge) publishes mock data (e.g. images, LiDAR) to ROS.  
 - In **real-world mode**, the hardware drivers (or a `UartManager`, `TcpManager`, etc.) publish **actual** sensor data.  
 
-A **cloud agent** connects via WebSockets to our `brain_client_node` (or similar). The agent can request images, command velocities, etc. Meanwhile, we also have a `rosbridge_server` that can allow external simulator connections.
+The **agent loop** runs on the robot inside `brain_client_node`: it snapshots the camera and pose, calls a hosted vision-language model, and acts on the reply by speaking or running a skill. Meanwhile, we also have a `rosbridge_server` that can allow external simulator connections.
 
 ---
 
@@ -56,15 +55,17 @@ Below is a brief description of each major piece. In the repository, these are l
 1. **`mars_msgs`**: Custom message/service definitions (e.g. `LightCommand.srv`).
 2. **`mars_bringup`**: Launch files and nodes for the real robot (UART drivers, battery manager).
 3. **`mars_sim_bringup`**: Launch files and nodes for simulation (TCP manager or direct rosbridge).
-4. **`brain_client`**: A node that connects to the cloud agent via WebSocket. This sends images, receives commands, etc.
+4. **`brain_client`**: The on-robot agent loop plus the skills server. Snapshots sensors, calls the model, and runs skills.
 5. **`config/dds/`** scripts: Facilitates DDS discovery server usage (setup scripts, XML templates).
 
-### Cloud Agent
+### Agent Loop
 
-A remote server or application that:
-- Connects via WebSockets to `brain_client_node`.
-- Requests images (`ready_for_image`) and receives them as base64-encoded JPEG.
-- Issues commands (`action_to_do`) that become `/cmd_vel` in ROS 2.
+Runs on the robot, inside `brain_client_node`. Each turn it:
+- Snapshots the latest camera frame, pose, and any queued events (user speech, skill results).
+- Calls a hosted vision-language model, reaching it through the Innate proxy (which holds the upstream key).
+- Acts on the reply: speaks it, or starts/stops a skill via the `execute_skill` action.
+
+See `ros2_ws/src/brain/brain_client/brain_client/README.md` for the package layout.
 
 ### Zenoh Networking
 
@@ -94,14 +95,6 @@ Below is a summary of the main ROS 2 topics and services used. They are standard
 | `/battery_state`         | `sensor_msgs/msg/BatteryState`    | Battery information                                                    |
 | `/light_command`         | `mars_msgs/srv/LightCommand`   | Custom service for controlling robot lights                            |
 | …                        | …                                  | (Add more as needed)                                                   |
-
-### Custom WebSocket Protocol
-
-**Between** `brain_client_node` and the external cloud agent. Example messages:
-- **`{ "type": "ready_for_image" }`**: means the cloud agent wants the latest camera frame.  
-- **`{ "type": "image", "image_b64": "..." }`**: base64-encoded JPEG frame.  
-- **`{ "type": "action_to_do", "cmd": "set_velocity", "values": [0.5, 0.0] }`**: instruct robot to move.  
-- etc.
 
 ### DDS Discovery Protocol
 
@@ -135,19 +128,19 @@ flowchart LR
         B["mars_sim_bringup
         (Launch + Nodes)"]
         C["brain_client_node
-        (WebSocket Bridge)"]
+        (Agent Loop)"]
         B -->|subscribe| A
         B -->|/cmd_vel| A
         C -->|/cmd_vel| B
     end
     
-    subgraph "Cloud Agent"
-        D["Vision Agent
-        (WebSocket API)"]
+    subgraph "Hosted Model"
+        D["Vision-Language Model
+        (via Innate proxy)"]
     end
 
-    C -->|"images (base64)"| D
-    D -->|"commands (velocity)"| C
+    C -->|"frame + events"| D
+    D -->|"speech + tool calls"| C
 ```
 
 </details>
@@ -163,7 +156,7 @@ flowchart LR
         A["mars_bringup
         (UART Manager)"]
         B["brain_client_node
-        (WebSocket Bridge)"]
+        (Agent Loop)"]
         C["ROS Topics
         (/cmd_vel, /odom)"]
         
@@ -172,13 +165,13 @@ flowchart LR
         B -->|publish| C
     end
 
-    subgraph "Cloud Agent"
-        D["Vision Agent
-        (WebSocket API)"]
+    subgraph "Hosted Model"
+        D["Vision-Language Model
+        (via Innate proxy)"]
     end
     
-    B -->|"images (base64)"| D
-    D -->|"commands (velocity)"| B
+    B -->|"frame + events"| D
+    D -->|"speech + tool calls"| B
 ```
 
 </details>

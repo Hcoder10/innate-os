@@ -5,7 +5,7 @@
 Innate OS is a lightweight, agentic operating system for the **MARS** — a small mobile robot with an arm.
 It runs on an **NVIDIA Jetson Orin Nano 8GB** (resource-constrained by design) and boots the full stack in under a minute.
 
-The OS is built on **ROS 2 (Humble)** with **Zenoh** as the DDS transport, and natively supports agentic workflows, vision-language navigation (VLN), and vision-language-action (VLA) models via a cloud brain.
+The OS is built on **ROS 2 (Humble)** with **Zenoh** as the DDS transport, and natively supports agentic workflows, vision-language navigation (VLN), and vision-language-action (VLA) models via an on-robot agent loop that calls a hosted vision-language model.
 
 For full documentation and hardware details, see [innate.bot](https://www.innate.bot/) and [docs.innate.bot](https://docs.innate.bot).
 

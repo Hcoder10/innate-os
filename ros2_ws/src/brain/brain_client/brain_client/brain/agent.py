@@ -99,7 +99,8 @@ class BrainAgent:
         scan_health=None,
         trace=None,
     ):
-        self._node = node
+        # The node is only a logger source now: the loop owns its own asyncio
+        # loop, so there are no ROS timers or guard conditions to create.
         self._logger = node.get_logger()
         self._state = state
         self._config = config
