@@ -18,9 +18,11 @@ bounded content history (old camera frames are pruned so requests stay small),
 and distilling a response into a plain :class:`Decision` the agent loop acts on.
 
 Threading contract: :meth:`GeminiSession.generate` is the only blocking network
-call and only *reads* the history, so the agent runs it on a worker thread.
-All history mutation (:meth:`absorb`, :meth:`add_tool_outcomes`, :meth:`clear`)
-happens on the ROS executor thread.
+call and only *reads* the history, so the agent awaits it on a worker thread
+(``asyncio.to_thread``). All history mutation (:meth:`absorb`,
+:meth:`add_tool_outcomes`) happens in the agent's coroutine, strictly between
+generate calls, and :meth:`clear` only runs while the loop task is stopped —
+there is no concurrent access to a session by construction, not by lock.
 """
 
 from __future__ import annotations
@@ -216,22 +218,9 @@ class GeminiSession:
         self._max_history = max_history
         self._max_image_turns = max_image_turns
         self._history: list[dict] = []
-        # Bumped by clear() and invalidate(); the agent discards turns started
-        # under an older generation.
-        self.generation = 0
 
     def clear(self) -> None:
         self._history = []
-        self.generation += 1
-
-    def invalidate(self) -> None:
-        """Orphan any in-flight turn without touching the history.
-
-        Used on brain deactivation: the conversation survives a stop/start
-        cycle, but a turn that was thinking when the brain stopped must not
-        be absorbed if it lands after a quick reactivation.
-        """
-        self.generation += 1
 
     @property
     def history_len(self) -> int:

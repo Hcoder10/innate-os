@@ -124,9 +124,16 @@ class PrimitiveRunner:
         running = self._state.primitive_running
         if running and running.get("manual"):
             return
-        if running and self._goal_handle:
-            self._goal_handle.cancel_goal_async()  # fire-and-forget
-            self._goal_handle = None
+        if running:
+            if self._goal_handle:
+                self._goal_handle.cancel_goal_async()  # fire-and-forget
+                self._goal_handle = None
+            else:
+                # The goal was sent but its handle hasn't resolved yet (the
+                # agent loop started it just as deactivation landed): the
+                # skills server's owner-agnostic cancel is the only reachable
+                # handle. Best effort — the terminal event cleans up as usual.
+                self.cancel_external()
         self._state.primitive_running = None
 
     # --- action plumbing ---

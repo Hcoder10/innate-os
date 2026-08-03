@@ -467,7 +467,7 @@ class BrainClientNode(Node):
     # ================= teardown =================
     def destroy_node(self):
         self.exit_event.set()
-        self.brain.stop()
+        self.brain.shutdown()
         if self._agent_status_heartbeat is not None and not self._agent_status_heartbeat.is_canceled():
             self._agent_status_heartbeat.cancel()
         self.reload.stop_watcher()

@@ -12,10 +12,10 @@ from brain_client.core.state import BrainState
 from brain_client.skills.runner import PrimitiveRunner
 
 
-def make_runner(running: dict | None, goal_handle=None):
+def make_runner(running: dict | None, goal_handle=None, cancel_external=lambda: True):
     state = BrainState()
     state.primitive_running = running
-    return SimpleNamespace(_state=state, _goal_handle=goal_handle), state
+    return SimpleNamespace(_state=state, _goal_handle=goal_handle, cancel_external=cancel_external), state
 
 
 def test_deactivation_preserves_manual_running_state():
@@ -37,6 +37,21 @@ def test_deactivation_cancels_and_clears_brain_owned_run():
     PrimitiveRunner.interrupt_for_deactivation(runner)
     assert cancelled == [True]
     assert runner._goal_handle is None
+    assert state.primitive_running is None
+
+
+def test_deactivation_of_a_just_sent_goal_falls_back_to_server_cancel():
+    # The agent loop sent the goal moments before deactivation: the goal
+    # response (and so the handle) hasn't resolved yet, but the run is real.
+    # The skills server's owner-agnostic cancel is the only reachable handle.
+    calls = []
+    runner, state = make_runner(
+        {"primitive_name": "wave", "skill_id": "local/wave"},
+        goal_handle=None,
+        cancel_external=lambda: calls.append(True) or True,
+    )
+    PrimitiveRunner.interrupt_for_deactivation(runner)
+    assert calls == [True]
     assert state.primitive_running is None
 
 

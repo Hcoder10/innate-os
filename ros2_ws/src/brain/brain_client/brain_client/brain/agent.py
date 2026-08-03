@@ -5,8 +5,25 @@
 This replaces the cloud brain and its WebSocket protocol. Each turn:
 
     look   — snapshot the camera, pose, running skill, and queued events
-    think  — one Gemini call (on a worker thread, the executor never blocks)
+    think  — one Gemini call (awaited on a worker thread, nothing else blocks)
     act    — speak the reply, start a skill, or stop the running one
+
+The whole agent is one sequential coroutine (:meth:`BrainAgent._turns`) on a
+dedicated asyncio loop thread, which buys two structural guarantees:
+
+* **Cancellation is the only stop mechanism.** Deactivation and reset cancel
+  the task; a turn still thinking unwinds at its await and can never absorb
+  its response — there is no stale-turn bookkeeping because a cancelled await
+  does not return.
+* **Turns are transactional.** Queued events are only consumed when a turn
+  commits its exchange into history. A failed or cancelled turn leaves them
+  queued, so the retry (or the next activation) re-sends them.
+
+Threading contract: ROS callbacks (executor thread) only queue events and wake
+the loop; observing, history, and acting on decisions all happen in the
+coroutine. Publishing and sending action goals are thread-safe in rclpy;
+creating/destroying ROS entities is not, and stays on the executor (the
+lifecycle starts/stops the camera and pose subscriptions).
 
 Turns run back-to-back when something happened (user spoke, a skill finished)
 and on a slow heartbeat otherwise, so the robot keeps watching the scene.
@@ -14,11 +31,12 @@ and on a slow heartbeat otherwise, so the robot keeps watching the scene.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import json
 import math
 import os
-import queue
 import re
 import threading
 import time
@@ -108,10 +126,9 @@ class BrainAgent:
             else None
         )
 
-        self._events: list[dict] = []  # pending {"text", "image"} for the next turn
-        self._events_in_turn: list[dict] = []  # drained into the in-flight turn; re-queued if it fails
-        self._turn_in_flight = False
-        self._next_turn_due = 0.0  # monotonic; 0 = turn wanted now
+        # Pending {"text", "image", "kind"} stimuli. The executor appends to the
+        # tail; the coroutine pops from the head — and only when a turn commits.
+        self._events: list[dict] = []
         self._pose_at_capture = None
         self._frame_at_capture: bytes | None = None
         self._pitch_at_capture = 0.0
@@ -119,13 +136,20 @@ class BrainAgent:
         self._error_streak = 0
         self._lidar_error_reported = False
         self._activated_at = 0.0
-        self._timer = None
         self._turn_count = 0
         self._turn_started_at = 0.0
-        self._last_snapshot_at = 0.0
+        self._turn_in_flight = False
+        self._pause_until = 0.0  # monotonic deadline of the current between-turns pause
 
-        self._results: queue.SimpleQueue = queue.SimpleQueue()
-        self._result_guard = node.create_guard_condition(self._finish_turn)
+        # The agent's own asyncio loop on a dedicated thread. ROS callbacks wake
+        # it via call_soon_threadsafe; start()/stop() spawn and cancel the task.
+        self._loop = asyncio.new_event_loop()
+        self._wake = asyncio.Event()  # loop-thread only; set via call_soon_threadsafe
+        self._task = None  # concurrent.futures.Future for the running root task
+        self._done = threading.Event()  # set when the root task has fully unwound
+        self._done.set()
+        self._thread = threading.Thread(target=self._loop.run_forever, name="brain-agent", daemon=True)
+        self._thread.start()
 
     @staticmethod
     def _pick_transport(proxy):
@@ -144,47 +168,65 @@ class BrainAgent:
                 "⚠️ The brain has no way to reach Gemini — configure the Innate proxy "
                 "(INNATE_SERVICE_KEY) or set GEMINI_API_KEY in innate-os/.env and restart."
             )
+        if self._task is not None:
+            return
         self._activated_at = time.monotonic()
-        self._next_turn_due = 0.0
         self._error_streak = 0
-        if self._timer is None:
-            self._timer = self._node.create_timer(0.2, self._tick)
+        self._spawn()
 
     def stop(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-            self._node.destroy_timer(self._timer)
-            self._timer = None
+        """Cancel the loop task and wait for it to unwind.
+
+        Synchronous by design: when this returns, no turn is thinking and no
+        decision will be acted on, so deactivation can safely interrupt the
+        running skill and reset can safely clear the history.
+        """
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            if not self._done.wait(timeout=5.0):
+                self._logger.error("[Brain] Agent loop did not unwind within 5s")
         self._events.clear()
-        if self._session is not None:
-            # A turn still thinking belongs to this activation: invalidate it
-            # so _finish_turn drops it even if the brain is reactivated before
-            # the response lands.
-            self._session.invalidate()
 
     def reset(self) -> None:
-        """Forget the conversation (directive switch / brain reset)."""
+        """Forget the conversation (directive switch / brain reset).
+
+        Restarts the loop task: a turn thinking under the old directive is
+        cancelled with it, so nothing from the old conversation can reach the
+        fresh history.
+        """
+        was_running = self._task is not None
+        self.stop()
         if self._session is not None:
             self._session.clear()
-        self._events.clear()
+        if was_running and self._state.is_brain_active:
+            self._spawn()
+
+    def shutdown(self) -> None:
+        """Stop the loop thread for good (node teardown)."""
+        self.stop()
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=2.0)
+        if not self._thread.is_alive():
+            self._loop.close()
+
+    def _spawn(self) -> None:
+        self._done = threading.Event()
+        self._task = asyncio.run_coroutine_threadsafe(self._run(self._done), self._loop)
 
     # ================= trace (the monitor's window into the loop) =================
     def _trace(self, event: str, **fields) -> None:
-        """Publish one JSON telemetry event on /brain/trace (no-op when unwired).
-
-        Everything here runs on the executor thread; the worker thread never
-        traces directly — its results are traced when they land in
-        :meth:`_finish_turn`.
-        """
+        """Publish one JSON telemetry event on /brain/trace (no-op when unwired)."""
         if self._trace_sink is None:
             return
         self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
 
     # ================= events (executor thread) =================
     def add_event(self, text: str, image: bytes | None = None, kind: str = "info") -> None:
-        """Queue something that happened; the next turn starts as soon as possible."""
+        """Queue something that happened; the loop wakes for an immediate turn."""
         self._events.append({"text": text, "image": image, "kind": kind})
-        self._next_turn_due = 0.0
+        if not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._wake.set)
         self._trace("event", kind=kind, text=text, image=image is not None)
 
     def on_user_message(self, text: str) -> None:
@@ -203,22 +245,37 @@ class BrainAgent:
     def on_skill_feedback(self, skill_name: str, feedback: str, image: bytes | None = None) -> None:
         self.add_event(f"Update from running skill {skill_name}: {feedback}", image=image)
 
-    # ================= the loop =================
-    def _tick(self) -> None:
-        self._check_lidar_health()
-        self._snapshot()
-        if not self._state.is_brain_active or not self.available or self._turn_in_flight:
-            return
-        # The due time is authoritative: new events reset it to 0 (add_event),
-        # while events re-queued after an inference failure keep the backoff.
-        if time.monotonic() < self._next_turn_due:
-            return
-        if self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
-            return
-        self._start_turn()
+    # ================= the loop (coroutine, loop thread) =================
+    async def _run(self, done: threading.Event) -> None:
+        """Root task: the turn loop plus the 1 Hz telemetry heartbeat."""
+        children = [asyncio.ensure_future(self._telemetry())]
+        if self.available:
+            children.append(asyncio.ensure_future(self._turns()))
+        try:
+            await asyncio.gather(*children)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # A bug, not a transport failure (those are handled per turn).
+            self._logger.error(f"[Brain] Agent loop crashed: {error!r}")
+            self._chat.emit_system(f"⚠️ Brain loop crashed: {error!r} — stop and start the brain to recover.")
+        finally:
+            for child in children:
+                child.cancel()
+            done.set()
 
-    def _start_turn(self) -> None:
-        text, images = self._observe()
+    async def _turns(self) -> None:
+        """look → think → act, forever. Every await is a cancel point."""
+        while True:
+            while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
+                await asyncio.sleep(0.2)  # the feed is down; don't think blind
+            await self._turn()
+            if not self._events:
+                await self._pause(self._interval())
+
+    async def _turn(self) -> None:
+        events = list(self._events)  # peek — consumed only if the turn commits
+        text, images = self._observe(events)
         user_message = GeminiSession.user_message(text, images)
         tools = self._build_tools()
         system = build_system_prompt(self._directive_prompt())
@@ -240,15 +297,78 @@ class BrainAgent:
         )
 
         self._turn_in_flight = True
-        threading.Thread(
-            target=self._think, args=(self._session.generation, user_message, tools, system), daemon=True
-        ).start()
+        try:
+            # The only blocking call, on a worker thread; generate() only reads
+            # the history, so it never races the mutation below. Cancellation
+            # unwinds HERE — the orphaned HTTP call finishes on its worker
+            # thread and its result is dropped by asyncio.
+            response = await asyncio.to_thread(self._session.generate, user_message, tools, system)
+        except asyncio.CancelledError:
+            self._turn_in_flight = False
+            self._trace(
+                "turn_dropped", turn=self._turn_count, latency=round(time.monotonic() - self._turn_started_at, 2)
+            )
+            raise
+        except Exception as error:
+            self._turn_in_flight = False
+            self._error_streak += 1
+            self._logger.error(f"[Brain] Gemini call failed ({self._error_streak}x): {error}")
+            if self._error_streak == 1:
+                self._chat.emit_system(f"⚠️ Brain inference failed: {error} — retrying.")
+            backoff = min(5.0 * self._error_streak, 30.0)
+            self._trace(
+                "turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff
+            )
+            # Nothing was consumed, so the retry re-sends the same events; an
+            # event arriving on top of them cuts the backoff short.
+            await self._pause(backoff, seen=len(events))
+            return
+        self._turn_in_flight = False
 
-    def _observe(self) -> tuple[str, list[bytes]]:
-        """Drain pending events and snapshot the world into one turn input."""
-        events, self._events = self._events, []
-        self._events_in_turn = events  # held so a failed turn can give them back
+        latency = time.monotonic() - self._turn_started_at
+        if self._error_streak > 0:
+            self._error_streak = 0
+            self._chat.emit_system("✅ Brain inference recovered.")
+        if not self._state.is_brain_active:
+            # Deactivation raced this turn's response (the flag flips just
+            # before stop() cancels us): drop the whole exchange.
+            self._trace("turn_dropped", turn=self._turn_count, latency=round(latency, 2))
+            return
+        decision = self._session.absorb(user_message, response)
+        del self._events[: len(events)]  # commit: consume exactly what this turn saw
+        outcomes = self._apply(decision)
+        self._trace(
+            "turn_end",
+            turn=self._turn_count,
+            latency=round(latency, 2),
+            thoughts=decision.thoughts,
+            speech=decision.speech,
+            calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
+            history=self._session.history_len,
+            next_in=round(self._interval(), 1),
+        )
 
+    def _interval(self) -> float:
+        return (
+            self._config.supervision_turn_interval
+            if self._state.primitive_running
+            else self._config.idle_turn_interval
+        )
+
+    async def _pause(self, seconds: float, *, seen: int = 0) -> None:
+        """Sleep up to ``seconds``; the queue growing past ``seen`` events ends it early."""
+        self._wake.clear()
+        if len(self._events) > seen:
+            return  # queued while we weren't looking — don't wait at all
+        self._pause_until = time.monotonic() + seconds
+        try:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), seconds)
+        finally:
+            self._pause_until = 0.0
+
+    def _observe(self, events: list[dict]) -> tuple[str, list[bytes]]:
+        """Snapshot the world + the given (peeked) events into one turn input."""
         status = f"[t+{int(time.monotonic() - self._activated_at)}s]"
         pose = self._pose.current_pose_xyt()
         if pose is not None:
@@ -276,76 +396,17 @@ class BrainAgent:
         images += [event["image"] for event in events if event["image"]]
         return "\n".join(lines), images
 
-    def _think(self, generation, user_message, tools, system) -> None:
-        """Worker thread: just the network call; the result hops back to the executor."""
-        try:
-            response = self._session.generate(user_message, tools, system)
-            self._results.put((generation, user_message, response, None))
-        except Exception as error:  # network/API failure -> paced retry on the executor
-            self._results.put((generation, user_message, None, error))
-        self._result_guard.trigger()
-
-    def _finish_turn(self) -> None:
-        """Guard-condition callback (executor thread): absorb and act on the response."""
+    async def _telemetry(self) -> None:
+        """1 Hz: lidar health surfacing + the monitor's snapshot heartbeat."""
         while True:
-            try:
-                generation, user_message, response, error = self._results.get_nowait()
-            except queue.Empty:
-                return
-            self._turn_in_flight = False
-            latency = time.monotonic() - self._turn_started_at
-            if self._session is None or generation != self._session.generation or not self._state.is_brain_active:
-                # Directive switched, brain reset, or deactivated while this
-                # turn was thinking: drop the whole exchange so the history
-                # carries nothing from a moment that no longer exists.
-                self._events_in_turn = []
-                self._trace("turn_dropped", turn=self._turn_count, latency=round(latency, 2))
-                continue
-            if error is not None:
-                self._handle_error(error)
-                continue
-            self._events_in_turn = []
-            if self._error_streak > 0:
-                self._error_streak = 0
-                self._chat.emit_system("✅ Brain inference recovered.")
-            decision = self._session.absorb(user_message, response)
-            outcomes = self._apply(decision)
-            interval = (
-                self._config.supervision_turn_interval
-                if self._state.primitive_running
-                else self._config.idle_turn_interval
-            )
-            self._next_turn_due = time.monotonic() + interval
-            self._trace(
-                "turn_end",
-                turn=self._turn_count,
-                latency=round(latency, 2),
-                thoughts=decision.thoughts,
-                speech=decision.speech,
-                calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
-                history=self._session.history_len,
-                next_in=round(interval, 1),
-            )
-
-    def _handle_error(self, error: Exception) -> None:
-        self._error_streak += 1
-        self._logger.error(f"[Brain] Gemini call failed ({self._error_streak}x): {error}")
-        if self._error_streak == 1:
-            self._chat.emit_system(f"⚠️ Brain inference failed: {error} — retrying.")
-        # Give the failed turn's events back to the queue so the retry re-sends
-        # them — a fresh heartbeat observation alone would silently drop the
-        # user's command or a skill result.
-        self._events = self._events_in_turn + self._events
-        self._events_in_turn = []
-        backoff = min(5.0 * self._error_streak, 30.0)
-        self._next_turn_due = time.monotonic() + backoff
-        self._trace("turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff)
+            self._check_lidar_health()
+            self._snapshot()
+            await asyncio.sleep(1.0)
 
     def _snapshot(self) -> None:
-        """Trace the loop's live state once a second (the monitor's heartbeat)."""
-        if self._trace_sink is None or time.monotonic() - self._last_snapshot_at < 1.0:
+        """Trace the loop's live state (the monitor's heartbeat)."""
+        if self._trace_sink is None:
             return
-        self._last_snapshot_at = time.monotonic()
         running = self._state.primitive_running
         self._trace(
             "snapshot",
@@ -355,8 +416,8 @@ class BrainAgent:
             turn=self._turn_count,
             in_flight=self._turn_in_flight,
             thinking_for=round(time.monotonic() - self._turn_started_at, 1) if self._turn_in_flight else 0,
-            queued=[{"kind": e["kind"], "text": e["text"][:200]} for e in self._events],
-            next_in=max(0.0, round(self._next_turn_due - time.monotonic(), 1)),
+            queued=[{"kind": e["kind"], "text": e["text"][:200]} for e in list(self._events)],
+            next_in=max(0.0, round(self._pause_until - time.monotonic(), 1)) if self._pause_until else 0.0,
             streak=self._error_streak,
             running=running["primitive_name"] if running else None,
             history=self._session.history_len if self._session else 0,

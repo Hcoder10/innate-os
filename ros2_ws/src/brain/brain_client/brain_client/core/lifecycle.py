@@ -77,9 +77,13 @@ class BrainLifecycle:
     # --- reset ---
     def perform_brain_reset(self, memory_state: str) -> None:
         self._logger.info(f"[BrainClient] Resetting brain (memory_state={memory_state})")
+        # Reset first: it joins any in-flight turn, so a decision from the old
+        # conversation can't start a skill under abort_running's feet. (The
+        # restarted loop's first turn may still glimpse the aborting skill for
+        # one observation — harmless, its tools collapse to stop/wait once.)
+        self._brain.reset()
         self._runner.abort_running()
         self._chat.clear()
-        self._brain.reset()
         self._chat.emit_system("Brain has been reset.")
 
     # --- directive switching ---

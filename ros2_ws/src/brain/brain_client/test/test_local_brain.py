@@ -197,12 +197,10 @@ def test_absorb_drops_thought_parts_from_stored_history():
     assert [p.get("text") for p in model_turn["parts"]] == ["Hello!"]
 
 
-def test_clear_bumps_generation_for_stale_turn_detection():
+def test_clear_empties_history():
     session = make_session()
-    generation = session.generation
     session.absorb(user_turn("hi", False), model_response({"text": "hello"}))
     session.clear()
-    assert session.generation == generation + 1
     assert session._history == []
 
 
@@ -308,6 +306,8 @@ def test_approach_goal_stops_short_and_faces_the_point():
 
 # ---------- agent loop (fake node, no network) ----------
 
+import asyncio  # noqa: E402
+import threading  # noqa: E402
 import time  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
@@ -315,114 +315,175 @@ from brain_client.brain.agent import BrainAgent  # noqa: E402
 from brain_client.core.state import BrainState  # noqa: E402
 
 
-def make_agent(monkeypatch, trace=None) -> tuple[BrainAgent, BrainState]:
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a (never-called) transport
-    logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
-    node = SimpleNamespace(
-        get_logger=lambda: logger,
-        create_guard_condition=lambda cb: SimpleNamespace(trigger=lambda: None),
-        create_timer=lambda period, cb: SimpleNamespace(cancel=lambda: None),
-        destroy_timer=lambda timer: None,
-    )
-    config = SimpleNamespace(
-        gemini_model="m",
-        gemini_thinking_level="",
-        history_max_entries=60,
-        history_max_image_turns=2,
-        idle_turn_interval=3.0,
-        supervision_turn_interval=5.0,
-    )
-    state = BrainState()
-    state.is_brain_active = True
-    camera = SimpleNamespace(
-        fresh_image_jpeg=lambda max_age: JPEG, fresh_arm_jpeg=lambda max_age: None, current_head_pitch=-10.0
-    )
-    pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
-    chat = SimpleNamespace(emit_system=lambda *a, **k: None, emit=lambda *a, **k: None, speak=lambda *a, **k: None)
-    agent = BrainAgent(
-        node,
-        state,
-        config,
-        camera=camera,
-        pose_tracker=pose,
-        runner=SimpleNamespace(),
-        roster=SimpleNamespace(active_skill_ids=lambda: []),
-        chat=chat,
-        gaze=SimpleNamespace(pause=lambda: None),
-        trace=trace,
-    )
-    return agent, state
+@pytest.fixture
+def agent_factory(monkeypatch):
+    """Build agents against stub collaborators; shut their loop threads down after."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a swappable transport
+    created = []
+
+    def make(trace=None) -> tuple[BrainAgent, BrainState]:
+        logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
+        node = SimpleNamespace(get_logger=lambda: logger)
+        config = SimpleNamespace(
+            gemini_model="m",
+            gemini_thinking_level="",
+            history_max_entries=60,
+            history_max_image_turns=2,
+            idle_turn_interval=3.0,
+            supervision_turn_interval=5.0,
+        )
+        state = BrainState()
+        state.is_brain_active = True
+        camera = SimpleNamespace(
+            fresh_image_jpeg=lambda max_age: JPEG, fresh_arm_jpeg=lambda max_age: None, current_head_pitch=-10.0
+        )
+        pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
+        chat = SimpleNamespace(emit_system=lambda *a, **k: None, emit=lambda *a, **k: None, speak=lambda *a, **k: None)
+        agent = BrainAgent(
+            node,
+            state,
+            config,
+            camera=camera,
+            pose_tracker=pose,
+            runner=SimpleNamespace(),
+            roster=SimpleNamespace(active_skill_ids=lambda: []),
+            chat=chat,
+            gaze=SimpleNamespace(pause=lambda: None),
+            trace=trace,
+        )
+        created.append(agent)
+        return agent, state
+
+    yield make
+    for agent in created:
+        agent.shutdown()
 
 
-def observed_user_message(agent: BrainAgent) -> dict:
-    text, images = agent._observe()
-    return GeminiSession.user_message(text, images)
+def run_turn(agent: BrainAgent) -> None:
+    """Run one turn to completion on the agent's own loop thread."""
+    asyncio.run_coroutine_threadsafe(agent._turn(), agent._loop).result(timeout=5)
 
 
-def test_failed_turn_requeues_its_events_for_the_retry(monkeypatch):
-    agent, state = make_agent(monkeypatch)
+def no_pause(agent: BrainAgent, monkeypatch) -> None:
+    """Skip the between-turns / backoff pauses so tests don't sleep."""
+
+    async def skip(seconds, *, seen=0):
+        pass
+
+    monkeypatch.setattr(agent, "_pause", skip)
+
+
+def test_failed_turn_leaves_events_queued_for_the_retry(agent_factory, monkeypatch):
+    agent, state = agent_factory()
+
+    def transport(model, body):
+        raise RuntimeError("boom")
+
+    agent._session._transport = transport
+    no_pause(agent, monkeypatch)
     agent.on_user_message("bring me a snack")
-    user_message = observed_user_message(agent)
-    assert agent._events == []  # drained into the in-flight turn
+    run_turn(agent)
 
-    agent._results.put((agent._session.generation, user_message, None, RuntimeError("boom")))
-    agent._finish_turn()
-
+    # Nothing was consumed (turns are transactional): the retry re-sends them.
     assert [e["text"] for e in agent._events] == ['The user says: "bring me a snack"']
-    assert agent._events_in_turn == []
-    assert agent._next_turn_due > time.monotonic()  # backoff still paces the retry
     assert agent._session._history == []  # the failed exchange never entered history
+    assert agent._error_streak == 1
 
 
-def test_turn_finishing_after_deactivation_is_dropped_entirely(monkeypatch):
-    agent, state = make_agent(monkeypatch)
-    user_message = observed_user_message(agent)
-    state.is_brain_active = False
+def test_committed_turn_consumes_exactly_the_events_it_saw(agent_factory):
+    agent, state = agent_factory()
+    agent._session._transport = lambda model, body: model_response(call_part("wait", {}))
+    agent.on_user_message("hello")
+    run_turn(agent)
 
-    agent._results.put((agent._session.generation, user_message, model_response({"text": "stale"}), None))
-    agent._finish_turn()
+    assert agent._events == []
+    # History: the user turn, the model turn, and the wait call's functionResponse.
+    assert agent._session.history_len == 3
+
+
+def test_turn_finishing_after_deactivation_is_dropped_entirely(agent_factory):
+    agent, state = agent_factory()
+
+    def transport(model, body):  # deactivation lands while the turn is thinking
+        state.is_brain_active = False
+        return model_response({"text": "stale"})
+
+    agent._session._transport = transport
+    run_turn(agent)
 
     assert agent._session._history == []  # no stale observation survives into the next activation
     assert agent._turn_in_flight is False
 
 
-def test_stop_invalidates_in_flight_turn_across_quick_reactivation(monkeypatch):
-    agent, state = make_agent(monkeypatch)
-    user_message = observed_user_message(agent)
-    generation = agent._session.generation
+def test_stop_cancels_a_turn_mid_think_and_absorbs_nothing(agent_factory):
+    agent, state = agent_factory()
+    thinking, release = threading.Event(), threading.Event()
 
-    agent.stop()  # deactivated while the turn was thinking...
-    agent.start()  # ...and reactivated before the response landed
+    def transport(model, body):
+        thinking.set()
+        release.wait(timeout=5)
+        return model_response({"text": "stale"})
 
-    agent._results.put((generation, user_message, model_response({"text": "stale"}), None))
-    agent._finish_turn()
+    agent._session._transport = transport
+    agent.on_user_message("hi")
+    agent.start()
+    assert thinking.wait(timeout=5)
 
-    assert agent._session._history == []  # the previous activation's turn is never absorbed
-    assert agent._turn_in_flight is False
+    agent.stop()  # synchronous: the turn has unwound at its await when this returns
+    release.set()  # the orphaned HTTP call finishes on its worker thread...
+    time.sleep(0.2)
+    assert agent._session._history == []  # ...and its response is dropped
+    assert agent._task is None
 
 
-def test_trace_reports_the_turn_lifecycle(monkeypatch):
+def test_reset_mid_turn_restarts_the_loop_with_empty_history(agent_factory):
+    agent, state = agent_factory()
+    thinking, release = threading.Event(), threading.Event()
+
+    def transport(model, body):
+        thinking.set()
+        release.wait(timeout=5)
+        return model_response({"text": "stale"})
+
+    agent._session._transport = transport
+    agent.start()
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+
+    agent.reset()  # cancels the old turn, clears history, respawns the loop
+    assert agent._task is not None
+    assert agent._session._history == []
+    assert thinking.wait(timeout=5)  # the restarted loop is already thinking again
+    agent.stop()
+    release.set()
+
+
+def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
     traces = []
-    agent, state = make_agent(monkeypatch, trace=lambda payload: traces.append(json.loads(payload)))
+    agent, state = agent_factory(trace=lambda payload: traces.append(json.loads(payload)))
+    no_pause(agent, monkeypatch)
 
+    outcomes = iter([RuntimeError("boom"), model_response(call_part("wait", {}))])
+
+    def transport(model, body):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    agent._session._transport = transport
     agent.on_user_message("hello")
-    user_message = observed_user_message(agent)
-    agent._results.put((agent._session.generation, user_message, None, RuntimeError("boom")))
-    agent._finish_turn()
-
-    user_message = observed_user_message(agent)
-    agent._results.put((agent._session.generation, user_message, model_response(call_part("wait", {})), None))
-    agent._finish_turn()
-
+    run_turn(agent)  # fails...
+    run_turn(agent)  # ...retries the same still-queued event and commits
     state.is_brain_active = False
-    agent._tick()  # inactive: no turn starts, but the snapshot heartbeat still fires
+    agent._snapshot()  # the telemetry heartbeat reports even while inactive
 
     events = [t["ev"] for t in traces]
-    assert events == ["event", "turn_error", "turn_end", "snapshot"]
+    assert events == ["event", "turn_start", "turn_error", "turn_start", "turn_end", "snapshot"]
     assert traces[0]["kind"] == "user"
-    assert traces[1]["streak"] == 1 and traces[1]["backoff"] == 5.0
-    assert traces[2]["calls"] == [{"name": "wait", "args": {}, "outcome": "ok"}]
-    snapshot = traces[3]
+    assert traces[2]["streak"] == 1 and traces[2]["backoff"] == 5.0
+    assert traces[4]["calls"] == [{"name": "wait", "args": {}, "outcome": "ok"}]
+    snapshot = traces[5]
     # History: the user turn, the model turn, and the wait call's functionResponse.
     assert snapshot["active"] is False and snapshot["backend"] == "gemini-direct" and snapshot["history"] == 3
 
