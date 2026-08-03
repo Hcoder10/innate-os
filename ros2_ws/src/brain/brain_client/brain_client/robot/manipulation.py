@@ -25,6 +25,9 @@ The methods under ``_LegacyManipulationMixin`` are the released (0.6.0)
 surface, kept as deprecated delegating shims for field-authored skills.
 """
 
+# Legacy mixin borrows Manipulation's attrs; drop with it in 0.8.0.
+# pyright: reportAttributeAccessIssue=false
+
 import math
 import threading
 import time
@@ -74,9 +77,7 @@ class Waypoint:
     duration: float = 1.0
 
 
-# All shipped skills use the new API; only field-authored skills still hit
-# the shims, and each warns once per process so authors see the migration
-# path without log spam.
+# One warning per shim per process: migration path without log spam.
 _LEGACY_WARNINGS_ENABLED = True
 _legacy_warned: set[str] = set()
 
@@ -95,8 +96,8 @@ class _LegacyManipulationMixin:
             return
         _legacy_warned.add(method)
         msg = f"Manipulation.{method}() is deprecated; use {replacement}"
-        self.logger.warning(msg)  # visible on-robot
-        warnings.warn(msg, FutureWarning, stacklevel=3)  # visible in pytest/dev
+        self.logger.warning(msg)  # on-robot
+        warnings.warn(msg, FutureWarning, stacklevel=3)  # pytest/dev
 
     def solve_ik(
         self,
@@ -142,8 +143,7 @@ class _LegacyManipulationMixin:
             self.logger.error("Failed to solve IK for target pose")
             return False
         if len(joint_positions) == 5:
-            # 0.6.0 default: re-seed j6 from the measured position (this is
-            # the drop-the-object footgun move_to() fixes; preserved here).
+            # 0.6.0 footgun, preserved: re-seeding j6 from measured drops a held object.
             if gripper_position is not None:
                 joint_positions.append(gripper_position)
             else:
@@ -203,8 +203,7 @@ class _LegacyManipulationMixin:
         for attempt in (1, 2):
             if not self._command_gripper(target, duration, blocking):
                 return False
-            # Can only verify a blocking move, and only when the target itself
-            # clears the shut threshold.
+            # Only a blocking move above the shut threshold is verifiable.
             if not blocking or target < self._GRIPPER_SHUT_J6:
                 return True
             self._spin_briefly(count=5, timeout_sec=0.01)
@@ -266,17 +265,15 @@ class Manipulation(_LegacyManipulationMixin):
     # Gripper joint j6, radians: 0 = closed, 0.85 = fully open.
     GRIPPER_CLOSED = 0.0
     GRIPPER_OPEN = 0.85
-    # Squeezing past the closed stop by more than this overcurrent-trips the
-    # servo on a real object (0.7 and 0.8 both tripped on hardware; recovery
-    # needs a reboot).
+    # More preload than this overcurrent-trips the servo on a real object
+    # (0.7 and 0.8 both tripped; recovery needs a reboot).
     GRIPPER_MAX_STRENGTH = 0.6
     # Below this j6 the claw is still (tripped) shut after an open command.
     _GRIPPER_SHUT_J6 = 0.10
 
-    # joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
-    # Folded rest with j4 lifted so the gripper clears the floor (verified live:
-    # ee_link z ~0.042 m). j1/j2 clamp to their limits, so this is what the arm
-    # actually reaches and holds.
+    # j1-j6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
+    # Folded, j4 lifted to clear the floor (ee_link z ~0.042 m); j1/j2 sit at
+    # their limits, so this is what the arm actually holds.
     REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
     ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
@@ -295,17 +292,14 @@ class Manipulation(_LegacyManipulationMixin):
         """
         self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
-        # The private executor spins only while a skill is active
-        # (start()..stop()). While parked, messages arriving on the
-        # always-alive subscriptions just rotate in the bounded rmw queues at
-        # no Python cost — dispatching them through an executor costs ~half a
-        # Jetson core at the ~600 msgs/s these feeds add up to.
+        # Spins only while a skill is active (start()..stop()). Parked, the
+        # ~600 msgs/s just rotate in the rmw queues; dispatching them would
+        # cost ~half a Jetson core.
         self._executor: rclpy.executors.SingleThreadedExecutor | None = None
         self._executor_thread: threading.Thread | None = None
         self._lifecycle_lock = threading.Lock()
         self._ik_lock = threading.Lock()
 
-        # Publishers
         self._ik_target_pub = self.node.create_publisher(Twist, "/ik_delta", 10)
 
         # Cached state
@@ -313,24 +307,20 @@ class Manipulation(_LegacyManipulationMixin):
         self._ik_solution_fk: PoseStamped | None = None
         self._fk_pose: PoseStamped | None = None
         self._arm_state: JointState | None = None
-        # Torque state from two sources: local service results and the
-        # driver's /mars/arm/status heartbeat (0.2 Hz, catches out-of-band
-        # toggles from the webapp). torque_enabled returns the newer.
+        # Two sources: local service results and the 0.2 Hz /mars/arm/status
+        # heartbeat (catches webapp toggles). torque_enabled returns the newer.
         self._torque_enabled: bool | None = None
         self._torque_stamp = 0.0
         self._status_torque: bool | None = None
         self._status_stamp = 0.0
-        # The standing grip target: the last COMMANDED j6. Under current-based
-        # position control the standing position error is the grip force, so
-        # motion defaults carry this value instead of re-reading the measured
-        # (stalled) position, which would release a held object.
+        # Standing grip target: the last COMMANDED j6. The standing position
+        # error IS the grip force, so motions carry this rather than the
+        # measured (stalled) position, which would release a held object.
         self._grip_target: float | None = None
 
-        # Subscription handles (created once in start(); kept for the node's
-        # lifetime — destroying one while the private executor thread spins
-        # races _take_subscription and crashes the process with InvalidHandle).
-        # stop() instead gates the callbacks via _active and parks the
-        # executor.
+        # Created once in start() and kept for the node's lifetime: destroying
+        # one while the executor spins races _take_subscription (InvalidHandle
+        # crash). stop() gates the callbacks via _active instead.
         self._active = False
         self._ik_solution_sub: Subscription | None = None
         self._ik_solution_fk_sub: Subscription | None = None
@@ -341,13 +331,10 @@ class Manipulation(_LegacyManipulationMixin):
         if not lazy:
             self.start()
 
-        # Service client for joint space control. We create the client once
-        # here, but deliberately avoid any blocking wait_for_service calls
-        # to keep the executor responsive.
+        # No blocking wait_for_service anywhere: keeps the executor responsive.
         self._goto_js_client = self.node.create_client(GotoJS, "/mars/arm/goto_js_v2")
         self._goto_js_traj_client = self.node.create_client(GotoJSTrajectory, "/mars/arm/goto_js_trajectory")
 
-        # Service clients for torque control
         self._torque_on_client = self.node.create_client(Trigger, "/mars/arm/torque_on")
         self._torque_off_client = self.node.create_client(Trigger, "/mars/arm/torque_off")
         self._reboot_servos_client = self.node.create_client(Trigger, "/mars/arm/reboot")
@@ -409,8 +396,7 @@ class Manipulation(_LegacyManipulationMixin):
         self._ik_solution_fk = None
         self._fk_pose = None
         self._arm_state = None
-        # _grip_target survives on purpose: a skill can end while the claw
-        # still holds an object, and the next run must not release it.
+        # _grip_target survives: a skill can end while still holding an object.
 
     def shutdown(self):
         """Stop the manipulation helper node and its private executor."""
@@ -476,7 +462,7 @@ class Manipulation(_LegacyManipulationMixin):
         if msg is None:
             deadline = time.monotonic() + 1.0
             while msg is None and time.monotonic() < deadline:
-                time.sleep(0.02)  # committed section: a bounded read, teardown-safe by design
+                time.sleep(0.02)  # committed: bounded read, teardown-safe
                 msg = self._fk_pose
             if msg is None:
                 raise ArmFailed("no end-effector pose on /fk_pose — is the IK node running?")
@@ -597,9 +583,8 @@ class Manipulation(_LegacyManipulationMixin):
             waypoint_joints.append(joints + [j6])
 
         if len(waypoint_joints) == 1:
-            # Single target: the quintic single-move service honors duration
-            # and decelerates smoothly (the trajectory service would pace the
-            # approach with a fixed 0.5 s default instead).
+            # The single-move service honors duration; the trajectory service
+            # would pace the approach at a fixed 0.5 s instead.
             if not self._goto(waypoint_joints[0], wps[0].duration, wait=True):
                 raise ArmFailed("arm move rejected or did not complete")
         else:
@@ -636,7 +621,7 @@ class Manipulation(_LegacyManipulationMixin):
         target[5] = self._grip_or(None)
         if not self._goto(target, duration, wait=True):
             raise ArmFailed("rest move rejected or did not complete")
-        time.sleep(0.3)  # committed section: teardown-safe by design, see class docstring
+        time.sleep(0.3)  # committed: teardown-safe by design
         if not self._goto(target, 1.0, wait=True):
             raise ArmFailed("rest settle move rejected or did not complete")
 
@@ -655,8 +640,7 @@ class Manipulation(_LegacyManipulationMixin):
         for attempt in (1, 2):
             if not self._command_gripper(target, duration, True):
                 raise ArmFailed("gripper command rejected or did not complete")
-            # Verification is only meaningful when the target itself clears
-            # the tripped-shut threshold.
+            # Only targets above the shut threshold are verifiable.
             if target < self._GRIPPER_SHUT_J6:
                 return
             self._spin_briefly(count=5, timeout_sec=0.01)
@@ -721,9 +705,9 @@ class Manipulation(_LegacyManipulationMixin):
         grip = self._grip_target
         self.logger.warning("[arm] recovering (reboot + torque on)")
         self.reboot_servos()
-        time.sleep(2.0)  # committed section: teardown-safe by design, see class docstring
+        time.sleep(2.0)  # committed: teardown-safe by design
         self.torque_on()
-        time.sleep(0.5)  # committed section: servo re-init settle
+        time.sleep(0.5)  # committed: servo re-init settle
         self._grip_target = grip
 
     # --- internals ---
@@ -856,7 +840,7 @@ class Manipulation(_LegacyManipulationMixin):
         request.num_joints = num_joints
         request.segment_durations = seg_durations
 
-        # + the driver's prepended approach segment (first duration, or 0.5 s)
+        # + the driver's prepended approach segment
         total_time = sum(seg_durations) + (seg_durations[0] if seg_durations else 0.5)
         try:
             future = self._goto_js_traj_client.call_async(request)
