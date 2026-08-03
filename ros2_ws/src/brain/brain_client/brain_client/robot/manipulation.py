@@ -533,14 +533,25 @@ class Manipulation(_LegacyManipulationMixin):
 
         ``grip``: j6 to hold through the move; default carries the standing
         grip target, so a held object stays held.
+
+        With BOTH tolerances None the move is unverified: the service result
+        is trusted, failure raises ArmFailed, and no recovery runs — for
+        callers whose targets legitimately settle off-pose (joint limits).
         """
         joints = self._solve_ik(x, y, z, roll, pitch, yaw)
         if joints is None:
             raise ArmFailed(f"IK found no solution for ({x:.2f}, {y:.2f}, {z:.2f})")
         target = joints + [self._grip_or(grip)]
-        for attempt in (1, 2):
+        verified = tol_xy is not None or tol_z is not None
+        for attempt in (1, 2) if verified else (1,):
             ok = self._goto(target, duration, wait=True)
             settled = self._read_pose_after_motion()
+            if not verified:
+                if not ok:
+                    raise ArmFailed(f"arm move to ({x:.2f}, {y:.2f}, {z:.2f}) rejected or did not complete")
+                if settled is None:
+                    raise ArmFailed("no end-effector pose after move — is the IK node running?")
+                return settled
             err_xy = math.hypot(settled.x - x, settled.y - y) if settled is not None else None
             err_z = abs(settled.z - z) if settled is not None else None
             if (

@@ -324,6 +324,17 @@ def test_move_to_tolerance_none_skips_that_axis():
     assert settled.z == 0.19
 
 
+def test_move_to_unverified_raises_without_recovery():
+    # Both tolerances None = caller opted out of health checking: a rejected
+    # command is ArmFailed, never a reboot cycle.
+    m = bare_manipulation(_fk_pose=fk_pose(0.1, 0.1, 0.3))
+    m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
+    capture_gotos(m, ok=False)
+    m.recover = lambda: pytest.fail("unverified move must not recover")
+    with pytest.raises(ArmFailed):
+        m.move_to(0.3, 0.0, 0.1, tol_xy=None, tol_z=None)
+
+
 def test_move_joints_five_values_keeps_standing_grip():
     m = bare_manipulation(_grip_target=0.6)
     calls = capture_gotos(m)

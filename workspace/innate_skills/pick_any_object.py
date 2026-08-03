@@ -11,8 +11,9 @@ import math
 import re
 import time
 
-from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy
 from innate import (
+    ArmFailed,
+    ArmUnhealthy,
     Head,
     JointStates,
     MainImage,
@@ -22,6 +23,7 @@ from innate import (
     Skill,
     SkillFailed,
     SkillReturn,
+    Waypoint,
     WristImage,
     resource,
     vision,
@@ -247,7 +249,11 @@ class PickAnyObject(Skill):
         floor, and the zero posture would sweep the gripper through it."""
         joints = CARRY_ARM + [-self._p["close_strength"]] if keep_grip else list(self.manipulation.REST)
         try:
-            self.manipulation.go(joints, duration=3.0, times=2)
+            self.manipulation.move_joints(joints, duration=3.0)
+            # Committed teardown (runs after cancel): time.sleep on purpose,
+            # then re-command so the servos settle under the shifted load.
+            time.sleep(0.3)
+            self.manipulation.move_joints(joints, duration=3.0)
         except Exception as e:  # noqa: BLE001 — teardown must not mask the run result
             self.logger.warning(f"[PickAnyObject] rest-arm failed: {e}")
 
@@ -461,7 +467,10 @@ class PickAnyObject(Skill):
         during the descent and optical flow slides off.
         Returns (x,y,z); falls back to (tx,ty) if never seen."""
         p = self._p
-        ee = self.manipulation.ee_xyz()
+        try:
+            ee = self.manipulation.pose.position
+        except ArmFailed:
+            ee = None
         z = ee[2] if ee else p["hover_z"]
         looks = int(p["wrist_steps"]) - 1
 
@@ -546,9 +555,7 @@ class PickAnyObject(Skill):
                 stalled = 0
                 x, y = nx, ny
                 tracker.guess = (p["wrist_box_u"], p["wrist_box_v"])
-            self.manipulation.move_checked(
-                x, y, z, pitch=p["wrist_pitch"], duration=p["wrist_move_s"], logger=self.logger
-            )
+            self.manipulation.move_to(x, y, z, pitch=p["wrist_pitch"], duration=p["wrist_move_s"])
             if stepped_down:
                 # A pure z-hop barely shifts the view: one fresh confirming
                 # frame is enough, so hops chain instead of re-earning 2+2.
@@ -567,14 +574,8 @@ class PickAnyObject(Skill):
         stale, and re-commanding it would close the just-opened gripper."""
         a = WRIST_SEARCH_ARM
         pose = [bearing, a[1], a[2], self._p["wrist_pitch"] - a[1] - a[2], a[4], self.manipulation.GRIPPER_OPEN]
-        self.manipulation.go(pose, duration=self._p["hover_s"], logger=self.logger)
+        self.manipulation.move_joints(pose, duration=self._p["hover_s"])
         self.sleep(0.3)
-
-    def _open_gripper_checked(self):
-        """Open gripper (the interface reboots + retries a tripped servo).
-        False if still shut."""
-        self.manipulation.torque_on()
-        return self.manipulation.open_gripper(duration=1.0, blocking=True)
 
     def _push_to_floor(self, x, y, z_from):
         """Blind descent to floor as ONE multi-waypoint trajectory — the
@@ -584,36 +585,25 @@ class PickAnyObject(Skill):
         self.check_cancelled()
         rungs = [z for z in (p["descend_z1"], p["descend_z2"], p["descend_z3"], p["floor_z"]) if z < z_from - 1e-6]
         if rungs:
-            if len(rungs) >= 2:  # the trajectory service needs >= 2 waypoints
-                poses = [{"x": x, "y": y, "z": z, "roll": 0.0, "pitch": p["arm_pitch"], "yaw": 0.0} for z in rungs]
-                ok = self.manipulation.move_cartesian_trajectory(
-                    poses,
-                    segment_duration=p["descend_s"],
-                    gripper_position=self.manipulation.GRIPPER_OPEN,
-                )
-            else:
-                # gripper_position pinned like the trajectory branch: without
-                # it j6 is re-seeded from the measured arm state, and a claw
-                # that drifted shut during the wrist descent stays shut.
-                ok = self.manipulation.move_to_cartesian_pose(
-                    x=x,
-                    y=y,
-                    z=rungs[0],
-                    roll=0.0,
-                    pitch=p["arm_pitch"],
-                    yaw=0.0,
-                    duration=p["descend_s"],
-                    blocking=True,
-                    gripper_position=self.manipulation.GRIPPER_OPEN,
-                )
-            if not ok:
-                self.manipulation.recover(self.logger)
+            # grip=GRIPPER_OPEN re-asserts an open claw even if it drifted
+            # shut during the wrist descent (never re-seed from measured).
+            waypoints = [Waypoint(x, y, z, pitch=p["arm_pitch"], duration=p["descend_s"]) for z in rungs]
+            try:
+                self.manipulation.follow(waypoints, grip=self.manipulation.GRIPPER_OPEN)
+            except ArmFailed as e:
+                # Contact-stall or transient rejection is expected down here —
+                # recover and let the height check below decide.
+                self.logger.warning(f"[PickAnyObject] descent failed ({e}); recovering")
+                self.manipulation.recover()
         # Covers the blind path only: after a wrist align the EE already
         # starts below the abort height — a limp arm there is caught by
         # _grasp_verified instead.
-        ee = self.manipulation.ee_xyz()
-        if ee is not None and ee[2] > p["descend_abort_z"]:
-            self.manipulation.recover(self.logger)
+        try:
+            ee_z = self.manipulation.pose.z
+        except ArmFailed:
+            ee_z = None
+        if ee_z is not None and ee_z > p["descend_abort_z"]:
+            self.manipulation.recover()
             raise ArmUnhealthy("arm would not descend")
 
     def _arm_joints(self):
@@ -632,20 +622,17 @@ class PickAnyObject(Skill):
         check catches."""
         p = self._p
         if p["close_lift_m"] > 0:
-            ee = self.manipulation.ee_xyz()
-            if ee is not None:
-                self.manipulation.move_to_cartesian_pose(
-                    x=x,
-                    y=y,
-                    z=ee[2] + p["close_lift_m"],
-                    roll=0.0,
-                    pitch=p["arm_pitch"],
-                    yaw=0.0,
-                    duration=0.5,
-                    blocking=True,
+            try:
+                ee_z = self.manipulation.pose.z
+                self.manipulation.move_to(
+                    x, y, ee_z + p["close_lift_m"], pitch=p["arm_pitch"], duration=0.5, tol_xy=None, tol_z=None
                 )
-        if not self.manipulation.close_gripper(strength=p["close_strength"], duration=p["close_s"], blocking=True):
-            raise ArmUnhealthy("gripper would not close")
+            except ArmFailed:
+                pass  # best-effort pre-close lift; the grasp decides below
+        try:
+            self.manipulation.gripper_close(p["close_strength"], duration=p["close_s"])
+        except ArmFailed as e:
+            raise ArmUnhealthy(f"gripper would not close: {e}") from e
         # Fingers have committed: from here teardown must fold with the grip
         # kept, not open over the floor mid-carry — only a verified miss
         # clears the flag. Set here, not after _grasp_at returns: an exception
@@ -664,41 +651,44 @@ class PickAnyObject(Skill):
                 j = self._arm_joints()
                 j[4] = max(-1.4, min(1.4, j[4] + p["twist_rad"]))
                 j[5] = grip
-                self.manipulation.move_to_joint_positions(joint_positions=j, duration=1.0, blocking=True)
+                self.manipulation.move_joints(j, duration=1.0)
                 time.sleep(0.3)
             j = self._arm_joints()
             j[1] = max(-1.4, j[1] - p["lift_rad"])
             j[5] = grip
-            # move_to_joint_positions reports failure by returning False, not
-            # raising — a silently skipped lift would leave the EE at floor_z
-            # for _grasp_verified's 0.15 m backup drive.
-            lifted = self.manipulation.move_to_joint_positions(joint_positions=j, duration=2.0, blocking=True)
+            self.manipulation.move_joints(j, duration=2.0)
+            lifted = True
             time.sleep(0.3)
         except LookupError:
             pass
+        except ArmFailed as e:
+            # A skipped lift would leave the EE at floor_z for
+            # _grasp_verified's 0.15 m backup drive — fall through to the
+            # FK-verified cartesian lift below.
+            self.logger.warning(f"[PickAnyObject] joint lift failed ({e}); trying cartesian lift")
         if not lifted:
-            # gripper=grip, never the default: the default re-seeds j6 from the
-            # measured (stalled) position, zeroing the grip preload — the
-            # object would drop out mid-lift. move_checked verifies by FK and
+            # The standing grip target (set by gripper_close above) rides
+            # along — never the measured j6, which is stalled on the object
+            # and would zero the grip preload. move_to verifies by FK and
             # recover-retries, so the arm is confirmed off the floor (or the
             # run fails cleanly and teardown carries with the grip kept).
-            self.manipulation.move_checked(
-                x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10, gripper=grip, logger=self.logger
-            )
+            self.manipulation.move_to(x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10)
 
     def _grasp_at(self, prompt, xy):
         """Full grasp at floor xy (base_link)."""
         p = self._p
         x, y = self.manipulation.clamp_reach(xy[0] - p["grasp_x_off"], xy[1])
 
-        if not self._open_gripper_checked():
-            raise ArmUnhealthy("gripper would not open")
+        self.manipulation.torque_on()
+        # gripper_open reboots + retries a tripped servo, raising ArmUnhealthy
+        # if the claw stays shut.
+        self.manipulation.gripper_open(duration=1.0)
         if p["wrist_steps"] >= 1:
             self._goto_search_pose(math.atan2(y, x))
             x, y, z = self._wrist_descend(prompt, x, y)
         else:
             z = p["hover_z"]
-            self.manipulation.move_checked(x, y, z, pitch=p["arm_pitch"], duration=p["hover_s"], logger=self.logger)
+            self.manipulation.move_to(x, y, z, pitch=p["arm_pitch"], duration=p["hover_s"])
 
         self._push_to_floor(x, y, z)
         self.check_cancelled()  # last exit before the fingers commit
@@ -710,7 +700,8 @@ class PickAnyObject(Skill):
         object isn't mistaken for a dropped one."""
         self._drive(-VERIFY_BACKUP_M)
         self.sleep(self._p["settle_s"])
-        j6 = self.manipulation.gripper_j6(self.joint_states)
+        js = self.joint_states
+        j6 = js.position[5] if js is not None and len(js.position) > 5 else None
         main_img, wrist_img = self.main_image, self.wrist_image
         images = [img for img in (main_img, wrist_img) if img]
         labels = []
@@ -771,8 +762,9 @@ class PickAnyObject(Skill):
         self._holding = False
         try:
             self.head.set_position(int(round(self._p["tilt_deg"])))
-            # Fold to rest so the arm doesn't occlude the head camera.
-            self.manipulation.go(self.manipulation.rest_joints(self.joint_states), duration=3.0, logger=self.logger)
+            # Fold to rest so the arm doesn't occlude the head camera
+            # (5-joint move: the claw keeps whatever it currently holds).
+            self.manipulation.move_joints(self.manipulation.REST[:5], duration=3.0)
 
             self.say(f"Looking for {prompt}.")
             xy = self._search(prompt)
