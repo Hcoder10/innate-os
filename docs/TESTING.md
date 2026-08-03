@@ -14,6 +14,8 @@ Build is the broad safety net for refactors (all 19 packages). Tests are the beh
 
 **Unit (fast, pure Python, no ROS)** — `pytest`:
 - `brain_client/test/test_fake_cloud_selftest.py` — the FakeCloud test double speaks the cloud protocol correctly.
+- `brain_client/test/test_manipulation_surface.py` — the arm interface's released (0.6.0) API surface is intact.
+- `brain_client/test/test_manipulation_unit.py` — arm interface behaviors (IK gripper padding, gripper math, lifecycle invariants).
 - `manipulation/test/test_config_validation.py` — manipulation config validation.
 
 **Integration (real ROS nodes)** — `colcon test`:
@@ -37,12 +39,14 @@ INNATE_TEST_IMAGE=innate-os-test:latest \
 Just the fast unit tests, no Docker:
 ```bash
 pytest ros2_ws/src/brain/brain_client/test/test_fake_cloud_selftest.py \
+       ros2_ws/src/brain/brain_client/test/test_manipulation_surface.py \
+       ros2_ws/src/brain/brain_client/test/test_manipulation_unit.py \
        ros2_ws/src/brain/manipulation/test/test_config_validation.py
 ```
 
 ## Adding a test
 
-- **Pure-Python (no ROS):** drop a `test_*.py` next to the code, then add its path to the `pytest` line in `ci/docker-compose.test.yml`.
+- **Pure-Python (no ROS):** drop a `test_*.py` next to the code, then add its path to the `pytest` line in `ci/run_integration_tests.sh` (the "unit tests (fast, no ROS)" block).
 - **Needs real ROS nodes:** write a `*.launch.py` `launch_testing` test (copy `test_fake_cloud_loop.launch.py`), register it with `add_ros_isolated_launch_test(...)` in the package `CMakeLists.txt`, and add its name to the `-R` regex in `ci/docker-compose.test.yml`.
 
 ## Known gaps (not yet wired — honest list, not coverage)
