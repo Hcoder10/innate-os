@@ -6,11 +6,40 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
+import { LoadQueue, queuedGLB } from "./loadQueue";
 
 const APARTMENT_URL = "/models/appartement.glb";
+const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
+
+/** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
+ * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
+interface ApartmentManifest {
+  rooms: ManifestRoom[];
+  total: number;
+}
+interface ManifestRoom {
+  file: string;
+  name: string;
+  bytes: number;
+  bbox: { min: number[]; max: number[] };
+}
+
+/** The apartment's wireframe skeleton: parent group (already in the scene,
+ * carrying the Y-up -> Z-up rotation) plus one placeholder box per room, drawn
+ * from the manifest alone. streamApartment() then swaps boxes for real glbs. */
+export interface ApartmentLayout {
+  group: THREE.Group;
+  rooms: { room: ManifestRoom; box: LineSegments2 }[];
+  /** No manifest: streamApartment falls back to the monolith glb. */
+  monolith: boolean;
+}
 
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
@@ -21,6 +50,18 @@ const HIDDEN_FRAME_LINKS: string[] = ["ee_link", "head_camera_left", "head_camer
 // Arm links painted orange. Every URDF link actually shares the matt_black
 // material, so we override by link name rather than by material.
 const ORANGE_LINKS = new Set(["link1", "link3", "link5"]);
+
+// Room streaming order: the spaces the operator looks at first load first.
+// Matched as substrings of the room name (from the source glb, Portuguese:
+// "Sala" = living room, "Corredor" = hallway); anything unmatched keeps
+// manifest order behind them. The queue is FIFO (loadQueue.ts), so enqueue
+// order is load order.
+const ROOM_PRIORITY = ["sala", "corredor"];
+function roomPriority(name: string): number {
+  const lower = name.toLowerCase();
+  const i = ROOM_PRIORITY.findIndex((keyword) => lower.includes(keyword));
+  return i === -1 ? ROOM_PRIORITY.length : i;
+}
 
 // Chase-cam framing used when a pose is snapped in (see spawnAt below).
 const CHASE_DISTANCE = 1.8; // meters behind the robot
@@ -65,6 +106,15 @@ export class SimScene {
   private hullsGroup?: THREE.Group;
   private hullsPromise?: Promise<void>;
   private hullsVisible = false;
+  // Shared fat-line material for placeholder boxes (LineBasicMaterial's
+  // linewidth is ignored by WebGL). resolution is refreshed each render().
+  private placeholderMat?: LineMaterial;
+  private tmpSize = new THREE.Vector2();
+  // Robot-shaped placeholder box, shown at the spawn pose until the STLs load.
+  private robotBox?: LineSegments2;
+  // Set by the first spawnAt: after that the camera belongs to the robot, and
+  // the layout overview framing must not yank it away.
+  private spawned = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -99,6 +149,11 @@ export class SimScene {
 
     this.addLights();
     this.addGround();
+    // Robot-sized placeholder box inside robotRoot: hidden with it until the
+    // first pose (spawnAt), then it marks the real spawn spot while the STLs
+    // stream; loadRobot removes it once the meshes are in.
+    this.robotBox = this.boxOutline(new THREE.Box3(new THREE.Vector3(-0.22, -0.22, 0), new THREE.Vector3(0.22, 0.22, 0.75)));
+    this.robotRoot.add(this.robotBox);
     this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
@@ -214,17 +269,130 @@ export class SimScene {
     this.scene.add(group);
   }
 
-  async loadApartment(): Promise<void> {
+  /**
+   * Phase one of the apartment load: fetch the manifest (a few KB) and draw
+   * every room's placeholder box. Called before any mesh download starts, so
+   * the first frame shows the apartment's wireframe layout instead of an empty
+   * void, and the camera has something real to frame (see frameLayout).
+   */
+  async loadApartmentLayout(): Promise<ApartmentLayout> {
+    // One parent group holds every room and carries the Y-up -> Z-up rotation,
+    // so it's applied once; placeholder boxes and rooms attach underneath.
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI / 2;
+    this.scene.add(group);
+
+    let manifest: ApartmentManifest | null = null;
+    try {
+      const res = await fetch(APARTMENT_MANIFEST_URL);
+      if (res.ok) manifest = (await res.json()) as ApartmentManifest;
+    } catch {
+      /* no manifest -- fall through to the monolith */
+    }
+    if (!manifest || !Array.isArray(manifest.rooms)) return { group, rooms: [], monolith: true };
+
+    // Skip a malformed room rather than throwing -- a bad bbox would build a
+    // Box3 from Vector3(undefined) and error the whole (visual-only) session.
+    const rooms = manifest.rooms
+      .filter((room) => {
+        if (isValidRoom(room)) return true;
+        console.warn("[sim-viewer] skipping malformed manifest room:", room);
+        return false;
+      })
+      .map((room) => {
+        const b = room.bbox;
+        const box = this.boxOutline(
+          new THREE.Box3(
+            new THREE.Vector3(b.min[0], b.min[1], b.min[2]),
+            new THREE.Vector3(b.max[0], b.max[1], b.max[2]),
+          ),
+        );
+        group.add(box);
+        return { room, box };
+      });
+    return { group, rooms, monolith: false };
+  }
+
+  /**
+   * Phase two: stream each room's glb through the queue and swap its
+   * placeholder box out on arrival. A room that fails is non-fatal (visual
+   * only): log it, drop its box, and let the rest of the apartment and the
+   * session carry on.
+   */
+  async streamApartment(queue: LoadQueue, layout: ApartmentLayout): Promise<void> {
     const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(APARTMENT_URL);
-    const root = gltf.scene;
-    root.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
+    const { group } = layout;
+
+    if (layout.monolith) {
+      // Dev-only fallback: a checkout that never ran the split. The published
+      // bundle always ships the manifest and never the monolith, so in prod
+      // this path only runs if the manifest fetch itself failed -- non-fatal,
+      // the sim just runs without the visual environment (robot still works).
+      try {
+        const root = await queuedGLB(queue, loader, APARTMENT_URL);
+        this.dressRoom(root);
+        group.add(root);
+      } catch (err) {
+        console.error("[sim-viewer] apartment unavailable (no manifest, no monolith):", err);
+      }
+      return;
+    }
+
+    const loadRoom = ({ room, box }: ApartmentLayout["rooms"][number]) =>
+      queuedGLB(queue, loader, `/models/apartment/${room.file}`)
+        .then((root) => {
+          this.dressRoom(root);
+          group.add(root);
+        })
+        .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
+        .finally(() => {
+          group.remove(box);
+          box.geometry.dispose(); // material is shared -- disposed in dispose()
+        });
+
+    // Priority rooms (living room, then hallway) load one at a time so they
+    // appear in that order -- with the shared queue running 2 downloads at
+    // once they'd otherwise race, and the living room is the biggest file, so
+    // the smaller hallway would pop in first. The remaining rooms then stream
+    // together behind them.
+    const ordered = [...layout.rooms].sort((a, b) => roomPriority(a.room.name) - roomPriority(b.room.name));
+    const priority = ordered.filter(({ room }) => roomPriority(room.name) < ROOM_PRIORITY.length);
+    const rest = ordered.slice(priority.length);
+    for (const room of priority) await loadRoom(room);
+    await Promise.all(rest.map(loadRoom));
+  }
+
+  /**
+   * Frame the orbit camera on the placeholder layout so the wireframe reads as
+   * an apartment from the first frame. No-op once a real pose has arrived --
+   * spawnAt's chase framing wins; this is only for the pre-pose gap.
+   */
+  frameLayout(layout: ApartmentLayout): void {
+    if (this.spawned || layout.rooms.length === 0) return;
+    const bounds = new THREE.Box3().setFromObject(layout.group);
+    if (bounds.isEmpty()) return;
+
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    // Pull back far enough that the widest horizontal extent fits the vertical
+    // FOV (the horizontal one is wider on any landscape stage), with margin.
+    const fov = (this.camera.fov * Math.PI) / 180;
+    const fit = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * 1.25;
+    // OrbitControls clamps the distance on update(); pick one it will honor.
+    const distance = Math.min(fit, this.controls.maxDistance);
+    const dir = new THREE.Vector3(-1, -1, 0.85).normalize();
+    this.camera.position.copy(center).addScaledVector(dir, distance);
+    this.controls.target.copy(center);
+    this.controls.update();
+  }
+
+  /** Ready a loaded apartment room for the scene: receive shadows and force
+   * FrontSide (the glb ships doubleSided) so walls draw only from inside the
+   * room, giving overview cameras the dollhouse-cutaway look. */
+  private dressRoom(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.receiveShadow = true;
-        // Force FrontSide (the glb ships doubleSided): walls draw only from
-        // inside the room, so overview cameras get the dollhouse-cutaway
-        // look. If winding issues hide geometry, flip to BackSide.
         const setFrontSide = (mat: THREE.Material) => {
           mat.side = THREE.FrontSide;
         };
@@ -232,21 +400,77 @@ export class SimScene {
         else setFrontSide(obj.material);
       }
     });
-    this.scene.add(root);
   }
 
-  async loadRobot(): Promise<URDFRobot> {
-    // loadAsync resolves at URDF parse, but the STL meshes attach later via
-    // this LoadingManager -- wait for onLoad or the restyle below misses them.
-    const manager = new THREE.LoadingManager();
-    const allMeshesLoaded = new Promise<void>((resolve) => {
-      manager.onLoad = () => resolve();
-    });
+  /** A thick wireframe outline of a box, used as a loading placeholder (room or
+   * robot). Fat lines (LineSegments2) since WebGL ignores LineBasicMaterial width. */
+  private boxOutline(box: THREE.Box3): LineSegments2 {
+    if (!this.placeholderMat) {
+      this.placeholderMat = new LineMaterial({ color: 0x3a6b5a, linewidth: 3, transparent: true, opacity: 0.6 });
+      this.placeholderMat.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
+    }
+    const size = box.getSize(new THREE.Vector3());
+    const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
+    const edges = new THREE.EdgesGeometry(boxGeo);
+    const geometry = new LineSegmentsGeometry().fromEdgesGeometry(edges);
+    boxGeo.dispose();
+    edges.dispose();
+    const seg = new LineSegments2(geometry, this.placeholderMat);
+    seg.position.copy(box.getCenter(new THREE.Vector3()));
+    return seg;
+  }
 
-    const loader = new URDFLoader(manager);
+  /**
+   * Two-phase load. The returned promise resolves as soon as the URDF is parsed
+   * and every STL job is in the queue -- so a caller can `await loadRobot(...)`
+   * and then enqueue lower-priority work (apartment rooms) knowing it lands
+   * behind the robot. Await the returned `done` for the fully-loaded robot.
+   */
+  async loadRobot(queue: LoadQueue): Promise<{ done: Promise<URDFRobot> }> {
+    const loader = new URDFLoader();
     loader.packages = { mars_sim: "/robot" };
-    const robot = await loader.loadAsync(ROBOT_URDF_URL);
-    await allMeshesLoaded;
+
+    // Route each STL through the shared queue (bounded concurrency + byte
+    // progress) instead of URDFLoader's default all-at-once loading.
+    const meshLoads: Promise<void>[] = [];
+    const loadMesh = (
+      path: string,
+      manager: THREE.LoadingManager,
+      material: THREE.Material,
+      done: (obj: THREE.Object3D | null, err?: unknown) => void,
+    ): void => {
+      meshLoads.push(
+        queue.add((report) => {
+          return new Promise<void>((resolve) => {
+            const finish = (obj: THREE.Object3D | null, err?: unknown) => {
+              done(obj, err);
+              resolve();
+            };
+            if (!/\.stl$/i.test(path)) {
+              console.warn(`[scene] unsupported robot mesh (expected STL): ${path}`);
+              finish(null);
+              return;
+            }
+            new STLLoader(manager).load(
+              path,
+              (geom) => finish(new THREE.Mesh(geom, material ?? new THREE.MeshPhongMaterial())),
+              (ev) => report(ev.loaded, ev.total),
+              (err) => finish(null, err),
+            );
+          });
+        }),
+      );
+    };
+    // The shipped .d.ts omits the `material` arg the runtime actually passes.
+    loader.loadMeshCb = loadMesh as unknown as typeof loader.loadMeshCb;
+
+    const robot = await loader.loadAsync(ROBOT_URDF_URL); // loadMeshCb enqueued every STL during parse
+    return { done: this.finishRobot(robot, meshLoads) };
+  }
+
+  /** Attach + restyle the robot once its queued STL meshes have all loaded. */
+  private async finishRobot(robot: URDFRobot, meshLoads: Promise<void>[]): Promise<URDFRobot> {
+    await Promise.all(meshLoads);
 
     for (const name of HIDDEN_FRAME_LINKS) {
       const link = robot.links[name];
@@ -269,6 +493,11 @@ export class SimScene {
     });
     this.robotRoot.add(robot);
     this.robot = robot;
+    if (this.robotBox) {
+      this.robotRoot.remove(this.robotBox);
+      this.robotBox.geometry.dispose(); // material is shared -- disposed in dispose()
+      this.robotBox = undefined;
+    }
 
     for (const mount of ROBOT_CAMERA_MOUNTS) {
       const frame = robot.frames[mount.frame];
@@ -355,6 +584,7 @@ export class SimScene {
    * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
+    this.spawned = true;
     this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
@@ -388,6 +618,8 @@ export class SimScene {
   render(): void {
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
     if (!robotCam) this.controls.update();
+    // Fat lines need the current drawing-buffer size to size their width in px.
+    this.placeholderMat?.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     this.renderer.render(this.scene, robotCam ?? this.camera);
   }
 
@@ -395,6 +627,7 @@ export class SimScene {
    * stage per visit, and undisposed contexts pile up until the browser kills
    * the oldest (~16), breaking the live view. */
   dispose(): void {
+    this.placeholderMat?.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -451,6 +684,16 @@ export class SimScene {
       cam.updateProjectionMatrix();
     }
   }
+}
+
+/** Runtime guard against a malformed manifest (untrusted JSON): file is a
+ * string and bbox is two arrays of >=3 finite numbers -- else we'd build a Box3
+ * from Vector3(undefined) and get NaN geometry. */
+function isValidRoom(room: unknown): boolean {
+  const r = room as { file?: unknown; bbox?: { min?: unknown; max?: unknown } } | null;
+  const finite3 = (a: unknown): boolean =>
+    Array.isArray(a) && a.length >= 3 && a.slice(0, 3).every((n) => typeof n === "number" && Number.isFinite(n));
+  return typeof r?.file === "string" && finite3(r?.bbox?.min) && finite3(r?.bbox?.max);
 }
 
 /** Walk up the parent chain to the URDFLink a mesh belongs to, returning its name. */
