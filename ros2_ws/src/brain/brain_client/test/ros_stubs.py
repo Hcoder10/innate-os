@@ -3,17 +3,24 @@
 """Import shims so the no-ROS unit tests run on a bare Python (e.g. macOS dev
 machines) as well as inside the CI image.
 
-``install()`` is a no-op when the real ROS packages import cleanly; otherwise
-it registers minimal stand-ins for the modules ``brain_client.robot.
-manipulation`` (and the ``innate`` namespace) import at module scope. The
-stubs are structural only — enough for classes to be defined, messages to be
-instantiated, and signatures to be inspected. Tests never spin ROS: instances
-are built with ``Manipulation.__new__`` and hand-set attributes.
+``install()`` registers minimal stand-ins for the modules ``brain_client.robot.
+manipulation`` (and the ``innate`` namespace) import at module scope, skipping
+each one the environment already provides. The stubs are structural only —
+enough for classes to be defined, messages to be instantiated, and signatures
+to be inspected. Tests never spin ROS: instances are built with
+``Manipulation.__new__`` and hand-set attributes.
+
+Each module is probed on its own rather than treating ``import rclpy`` as
+proof of a whole ROS stack. A sourced ``/opt/ros`` with an unbuilt colcon
+workspace has rclpy and the standard messages but no ``mars_msgs`` — which is
+exactly what running these tests straight from a dev checkout looks like
+(see docs/TESTING.md), and a partial stub is what makes that work.
 
 Also prepends the package source root to ``sys.path`` so ``brain_client`` and
 ``innate`` resolve from the working tree without a colcon install.
 """
 
+import importlib
 import sys
 import types
 import typing
@@ -24,11 +31,34 @@ _PKG_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _module(name: str, **attrs) -> types.ModuleType:
+    """Register a stand-in module, creating any missing parent packages.
+
+    ``from mars_msgs.msg import X`` resolves through both ``sys.modules`` and
+    the parent's attribute, so a stubbed leaf has to be reachable by each.
+    """
     mod = types.ModuleType(name)
     for key, value in attrs.items():
         setattr(mod, key, value)
     sys.modules[name] = mod
+    parent_name, _, leaf = name.rpartition(".")
+    if parent_name:
+        parent = sys.modules.get(parent_name) or _module(parent_name)
+        setattr(parent, leaf, mod)
     return mod
+
+
+def _stub(name: str, **attrs) -> types.ModuleType | None:
+    """Register ``name``'s stand-in unless this environment already has it.
+
+    Returns the stub, or None when the real module was used.
+    """
+    if name in sys.modules:  # real, or stubbed by an earlier install()
+        return None
+    try:
+        importlib.import_module(name)
+    except ImportError:
+        return _module(name, **attrs)
+    return None
 
 
 class _Vector3:
@@ -131,51 +161,36 @@ def _no_node(*_args, **_kwargs):
 
 
 def install() -> None:
-    """Register stub modules unless the real ROS stack is importable."""
+    """Stub whichever of the ROS modules these tests import are missing here."""
     if str(_PKG_ROOT) not in sys.path:
         sys.path.insert(0, str(_PKG_ROOT))
 
-    try:
-        import rclpy  # noqa: F401  (real environment — nothing to stub)
+    _stub("rclpy", create_node=_no_node)
+    _stub("rclpy.executors", SingleThreadedExecutor=_FakeExecutor)
+    _stub("rclpy.node", Node=type("Node", (), {}))
+    _stub("rclpy.subscription", Subscription=type("Subscription", (), {}))
+    _stub("rclpy.timer", Timer=type("Timer", (), {}))
 
-        return
-    except ImportError:
-        pass
-
-    if "rclpy" in sys.modules:  # already stubbed by an earlier install()
-        return
-
-    rclpy = _module("rclpy", create_node=_no_node)
-    rclpy.executors = _module("rclpy.executors", SingleThreadedExecutor=_FakeExecutor)
-    rclpy.node = _module("rclpy.node", Node=type("Node", (), {}))
-    rclpy.subscription = _module("rclpy.subscription", Subscription=type("Subscription", (), {}))
-    rclpy.timer = _module("rclpy.timer", Timer=type("Timer", (), {}))
-
-    geometry = _module("geometry_msgs")
-    geometry.msg = _module("geometry_msgs.msg", PoseStamped=PoseStamped, Twist=Twist)
-    sensor = _module("sensor_msgs")
-    sensor.msg = _module("sensor_msgs.msg", JointState=JointState)
-    std_msgs = _module("std_msgs")
-    std_msgs.msg = _module("std_msgs.msg", Float64MultiArray=Float64MultiArray, Int32=Int32, String=String)
-    std_srvs = _module("std_srvs")
-    std_srvs.srv = _module(
+    _stub("geometry_msgs.msg", PoseStamped=PoseStamped, Twist=Twist)
+    _stub("sensor_msgs.msg", JointState=JointState)
+    _stub("std_msgs.msg", Float64MultiArray=Float64MultiArray, Int32=Int32, String=String)
+    _stub(
         "std_srvs.srv",
         Trigger=_service({}, {"success": False, "message": ""}),
         SetBool=_service({"data": False}, {"success": False, "message": ""}),
     )
-    mars_msgs = _module("mars_msgs")
-    mars_msgs.srv = _module(
+    # The workspace's own messages: present only once colcon has built them,
+    # so this is the stub a bare `pytest ros2_ws/...` actually leans on.
+    _stub(
         "mars_msgs.srv",
         GotoJS=_service({"data": None, "time": 0.0}, {"success": False}),
         GotoJSTrajectory=_service({"waypoints": None, "num_joints": 0, "segment_durations": list}, {"success": False}),
     )
-    mars_msgs.msg = _module(
+    _stub(
         "mars_msgs.msg",
         ArmStatus=type("ArmStatus", (), {"is_ok": True, "error": "", "is_torque_enabled": False}),
     )
 
-    try:
-        import typing_extensions  # noqa: F401
-    except ImportError:
-        te = _module("typing_extensions")
+    te = _stub("typing_extensions")
+    if te is not None:
         te.__getattr__ = lambda name: getattr(typing, name)
