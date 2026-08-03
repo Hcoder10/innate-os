@@ -73,6 +73,8 @@ from brain_client.state.pose import Pose
 
 __all__ = [
     "Arm",
+    "ArmFailed",
+    "ArmUnhealthy",
     "PhysicalSkill",
     "Battery",
     "DepthMap",
@@ -94,6 +96,7 @@ __all__ = [
     "SkillResult",
     "SkillReturn",
     "TrainedSkill",
+    "Waypoint",
     "WristImage",
     "resource",
 ]
@@ -103,13 +106,18 @@ __all__ = [
 # Type checkers can't follow __getattr__, so they read the imports below.
 if TYPE_CHECKING:
     from brain_client.robot.head import Head
-    from brain_client.robot.manipulation import Manipulation
+    from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation, Waypoint
     from brain_client.robot.mobility import Mobility
 
 _LAZY_INTERFACES = {
     "Mobility": ("brain_client.robot.mobility", "Mobility"),
     "Manipulation": ("brain_client.robot.manipulation", "Manipulation"),
     "Head": ("brain_client.robot.head", "Head"),
+    # Manipulation's command vocabulary: the trajectory waypoint and the
+    # exceptions its motion methods raise.
+    "Waypoint": ("brain_client.robot.manipulation", "Waypoint"),
+    "ArmFailed": ("brain_client.robot.manipulation", "ArmFailed"),
+    "ArmUnhealthy": ("brain_client.robot.manipulation", "ArmUnhealthy"),
 }
 
 
