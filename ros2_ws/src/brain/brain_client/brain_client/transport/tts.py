@@ -7,6 +7,8 @@ Generates speech audio and plays it through the robot's audio system.
 """
 
 import base64
+import fcntl
+import json
 import queue
 import struct
 import subprocess
@@ -37,6 +39,7 @@ class TTSHandler:
         proxy: ProxyClient,
         tts_status_pub=None,
         tts_audio_pub=None,
+        tts_ref_pub=None,
         simulator_mode: bool = False,
     ):
         """
@@ -49,6 +52,9 @@ class TTSHandler:
             tts_audio_pub: Optional ROS publisher for /tts/audio (base64 WAV).
                 Used in simulator mode where there is no audio device — the
                 webapp plays the clip instead of the speaker.
+            tts_ref_pub: Optional ROS publisher for /tts/ref_audio — the exact
+                PCM being piped to the speaker, published as it is written so
+                barge-in detection has an echo reference. Hardware path only.
             simulator_mode: When True, synthesized speech is published on
                 ``tts_audio_pub`` rather than played locally via aplay.
         """
@@ -61,7 +67,11 @@ class TTSHandler:
         self.play_lock = threading.Lock()
         self.tts_status_pub = tts_status_pub
         self.tts_audio_pub = tts_audio_pub
+        self.tts_ref_pub = tts_ref_pub
         self._simulator_mode = simulator_mode
+        self._abort = threading.Event()
+        self._player: subprocess.Popen | None = None
+        self._utt_seq = 0
 
         # Initialize Cartesia client
         self._init_client()
@@ -137,6 +147,8 @@ class TTSHandler:
                 self.logger.debug("🔊 Audio already playing, skipping new speech request")
                 return False
             self.is_playing = True
+            self._abort.clear()
+            self._utt_seq += 1
 
         # Notify that TTS is starting
         self._publish_tts_status("true")
@@ -181,6 +193,7 @@ class TTSHandler:
     def _synthesize_to_aplay(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
         """Stream speech straight into aplay (real robot's speaker)."""
         text_len = len(text)
+        seq = self._utt_seq
         # Volume is managed system-wide by app.cpp via
         # amixer sset Master, so aplay just uses the default.
         player = subprocess.Popen(
@@ -189,6 +202,18 @@ class TTSHandler:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        with self.play_lock:
+            self._player = player
+        # Shrink the stdin pipe so the barge-in reference tee (published as the
+        # writer hands bytes to aplay) leads the speaker by a bounded ~200ms
+        # instead of the default 64KB (~750ms of audio).
+        try:
+            fcntl.fcntl(player.stdin.fileno(), 1031, 16384)  # F_SETPIPE_SZ
+        except OSError:
+            pass
+
+        self._publish_ref({"e": "start", "seq": seq, "rate": 44100})
+        stripper = _WavHeaderStripper()
 
         # Queue + writer thread decouples the network download from
         # blocking pipe writes, exactly like the demo.
@@ -202,8 +227,13 @@ class TTSHandler:
                     break
                 try:
                     player.stdin.write(chunk)
-                except BrokenPipeError:
+                except (BrokenPipeError, ValueError, OSError):
                     break
+                # Tee the PCM as the echo reference only once the pipe has
+                # accepted it, so the published stream tracks playback pace.
+                pcm = stripper.feed(chunk)
+                if pcm:
+                    self._publish_ref({"e": "pcm", "seq": seq, "pcm": base64.b64encode(pcm).decode("ascii")})
             try:
                 player.stdin.close()
             except Exception:
@@ -219,6 +249,8 @@ class TTSHandler:
 
             t_api = time.perf_counter()
             for chunk in self._stream_tts_bytes(text, voice):
+                if self._abort.is_set():
+                    break
                 if not chunk:
                     continue
                 chunk_count += 1
@@ -242,6 +274,9 @@ class TTSHandler:
             player.wait()
             t_play_done = time.perf_counter()
 
+            if self._abort.is_set():
+                self.logger.info(f"✋ TTS aborted mid-utterance ({text_len} chars)")
+                return True  # handled: no retry for an intentional stop
             if player.returncode == 0:
                 ttfb_ms = (t_first_chunk - t_api) * 1000 if t_first_chunk else 0
                 self.logger.info(
@@ -264,6 +299,48 @@ class TTSHandler:
             except Exception:
                 pass
             return False
+        finally:
+            with self.play_lock:
+                self._player = None
+            self._publish_ref({"e": "end", "seq": seq})
+
+    def _publish_ref(self, event: dict[str, Any]) -> None:
+        """Publish a barge-in reference event on /tts/ref_audio."""
+        if self.tts_ref_pub is None:
+            return
+        try:
+            from std_msgs.msg import String
+
+            self.tts_ref_pub.publish(String(data=json.dumps(event)))
+        except Exception as e:
+            self.logger.debug(f"Failed to publish TTS ref: {e}")
+
+    def stop_current(self, reason: str = "") -> bool:
+        """Stop the utterance playing right now and drop any queued ones.
+
+        Returns True if something was actually stopped. Safe from any thread;
+        used by barge-in (the human is talking — shut up immediately).
+        """
+        dropped = 0
+        try:
+            while True:
+                self._speech_queue.get_nowait()
+                dropped += 1
+        except queue.Empty:
+            pass
+        with self.play_lock:
+            playing = self.is_playing
+            player = self._player
+        if not playing:
+            return False
+        self._abort.set()
+        if player is not None and player.poll() is None:
+            try:
+                player.kill()  # kill, not terminate: silence NOW, don't drain
+            except Exception:
+                pass
+        self.logger.info(f"✋ TTS stopped ({reason or 'requested'}); dropped {dropped} queued utterance(s)")
+        return True
 
     def _synthesize_to_topic(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
         """Synthesize the full clip and publish it (base64 WAV) on /tts/audio.
@@ -348,6 +425,24 @@ class TTSHandler:
             self.logger.info("🔇 TTS handler closed")
             # Cartesia client doesn't need explicit cleanup in sync mode
             self._cartesia_client = None
+
+
+class _WavHeaderStripper:
+    """Drops the RIFF/fmt header from a streamed WAV, yielding raw PCM."""
+
+    def __init__(self):
+        self._buf = b""
+        self._pcm_started = False
+
+    def feed(self, chunk: bytes) -> bytes:
+        if self._pcm_started:
+            return chunk
+        self._buf += chunk
+        idx = self._buf.find(b"data")
+        if idx == -1 or len(self._buf) < idx + 8:
+            return b""
+        self._pcm_started = True
+        return self._buf[idx + 8 :]
 
 
 def _finalize_wav(data: bytes) -> bytes:

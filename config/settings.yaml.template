@@ -151,6 +151,10 @@
 #   ros__parameters:
 #     openai_realtime_model: "gpt-4o-realtime-preview"
 #     openai_transcribe_model: "gpt-4o-mini-transcribe"
+#     barge_in_enabled: true        # stop TTS when a human talks over the robot
+#     barge_in_threshold_db: 6.0    # residual-over-echo excess to count a frame as speech
+#     barge_in_min_ms: 250          # sustained speech required before triggering
+#     barge_in_flush_tail: false    # replay post-trigger mic audio to STT after TTS stops
 
 # ── Vision-language navigation (UniNavid) ─────────────────────────────
 # (The cloud endpoint URL is connectivity and lives in .env as UNINAVID_WS_URL.)

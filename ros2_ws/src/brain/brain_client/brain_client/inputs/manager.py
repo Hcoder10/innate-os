@@ -11,6 +11,7 @@ pubs/subs/service and delegates here.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from typing import Any
@@ -26,11 +27,12 @@ MIC_DEVICE_NAME = "micro"
 
 
 class InputDeviceManager:
-    def __init__(self, node, proxy, *, chat_in_pub, custom_pub):
+    def __init__(self, node, proxy, *, chat_in_pub, custom_pub, barge_in_pub=None):
         self._node = node
         self._logger = UniversalLogger(enabled=True, wrapped_logger=node.get_logger())
         self._chat_in_pub = chat_in_pub
         self._custom_pub = custom_pub
+        self._barge_in_pub = barge_in_pub
         self.input_devices: dict[str, InputDevice] = {}
         self._mic_enabled = True
         self._requested_inputs: set[str] = set()
@@ -83,6 +85,10 @@ class InputDeviceManager:
             elif data_type == "custom":
                 self._custom_pub.publish(msg)
                 self._logger.debug(f"📤 Published custom data from '{device_name}'")
+            elif data_type == "barge_in":
+                if self._barge_in_pub is not None:
+                    self._barge_in_pub.publish(msg)
+                    self._logger.info(f"🙋 Published barge-in from '{device_name}': {msg.data[:100]}")
             else:
                 self._logger.warning(
                     f"Unknown data type '{data_type}' from device '{device_name}'. Use 'chat_in' or 'custom'."
@@ -161,6 +167,18 @@ class InputDeviceManager:
                     device.set_tts_playing(is_playing)
         except Exception as e:
             self._logger.error(f"Error handling TTS status: {e}")
+
+    def handle_tts_ref(self, raw: str) -> None:
+        """Route a /tts/ref_audio event (JSON, pcm base64) to interested devices."""
+        try:
+            event = json.loads(raw)
+            if "pcm" in event:
+                event["pcm"] = base64.b64decode(event["pcm"])
+            for device in self.input_devices.values():
+                if hasattr(device, "feed_tts_ref"):
+                    device.feed_tts_ref(event)
+        except Exception as e:
+            self._logger.error(f"Error handling TTS ref audio: {e}")
 
     def shutdown(self) -> None:
         """Close active devices and shut them all down."""
