@@ -179,11 +179,27 @@ class Mobility:
         return math.copysign(v_min, v) if abs(v) < v_min else v
 
     def rotate_by(
-        self, get_xyt, angle, *, kp=1.2, wz_max=0.5, wz_min=0.15, tol=math.radians(2.5), timeout=12.0, logger=None
+        self, get_xyt, angle, *, kp=1.2, wz_max=0.5, wz_min=0.15, tolerance=math.radians(2.5), timeout=12.0, logger=None
     ):
         """Rotate in place by `angle` rad, closed on odometry yaw (open-loop
         if get_xyt yields None). Returns True when the target (or open-loop
-        best effort) was reached, False on timeout or odometry loss."""
+        best effort) was reached, False on timeout or odometry loss.
+
+        Args:
+            get_xyt: Callable returning the current (x, y, theta), or None when
+                odometry is unavailable.
+            angle: Angle to rotate in radians (positive = counter-clockwise).
+            kp: Proportional gain on the yaw error, rad/s per rad.
+            wz_max: Angular speed ceiling in rad/s.
+            wz_min: Angular speed floor in rad/s, so the base doesn't stall
+                near the target.
+            tolerance: Yaw error in radians at or under which the target counts
+                as reached — the loop returns True and stops commanding.
+            timeout: Seconds to keep correcting before giving up and returning
+                False.
+            logger: Logger for the open-loop/timeout warnings; defaults to the
+                Mobility logger.
+        """
         logger = logger or self.logger
         try:
             xyt = get_xyt()
@@ -202,7 +218,7 @@ class Mobility:
                     logger.warning("[mobility] odom lost mid-rotate — stopping short")
                     return False
                 err = math.atan2(math.sin(target - xyt[2]), math.cos(target - xyt[2]))
-                if abs(err) < tol:
+                if abs(err) < tolerance:
                     return True
                 wz = max(-wz_max, min(wz_max, kp * err))
                 if abs(wz) < wz_min:
@@ -217,12 +233,29 @@ class Mobility:
         finally:
             self.stop()
 
-    def drive(self, get_xyt, dist, *, kp=0.3, v_max=0.10, v_min=0.04, tol=0.015, timeout=15.0, logger=None):
+    def drive(self, get_xyt, dist, *, kp=0.3, v_max=0.10, v_min=0.04, tolerance=0.015, timeout=15.0, logger=None):
         """Drive straight by `dist` m, closed on odometry position (open-loop
         if get_xyt yields None). Returns True when the distance (or open-loop
-        best effort) was covered, False on timeout or odometry loss."""
+        best effort) was covered, False on timeout or odometry loss.
+
+        Args:
+            get_xyt: Callable returning the current (x, y, theta), or None when
+                odometry is unavailable.
+            dist: Distance to cover in metres (negative = backwards).
+            kp: Proportional gain on the remaining distance, m/s per m.
+            v_max: Linear speed ceiling in m/s.
+            v_min: Linear speed floor in m/s, so the base doesn't stall near
+                the target.
+            tolerance: Remaining distance in metres at or under which the
+                target counts as reached — the loop returns True and stops
+                commanding. A `dist` smaller than this is a no-op.
+            timeout: Seconds to keep correcting before giving up and returning
+                False.
+            logger: Logger for the open-loop/timeout warnings; defaults to the
+                Mobility logger.
+        """
         logger = logger or self.logger
-        if abs(dist) < tol:
+        if abs(dist) < tolerance:
             return True
         try:
             xyt = get_xyt()
@@ -241,7 +274,7 @@ class Mobility:
                     logger.warning("[mobility] odom lost mid-drive — stopping short")
                     return False
                 err = abs(dist) - math.hypot(xyt[0] - x0, xyt[1] - y0)
-                if err < tol:
+                if err < tolerance:
                     return True
                 v = math.copysign(max(v_min, min(v_max, kp * err)), dist)
                 self.send_cmd_vel(v, 0.0, 0.15)

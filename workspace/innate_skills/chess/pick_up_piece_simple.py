@@ -119,7 +119,15 @@ class PickUpPieceSimple(Skill):
         """One unverified cartesian move (chess poses near joint limits may
         legitimately settle off-pose, so FK verification stays off)."""
         self.manipulation.move_to(
-            x, y, z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), tol_xy=None, tol_z=None
+            x,
+            y,
+            z,
+            roll=self.FIXED_ROLL,
+            pitch=pitch,
+            yaw=yaw,
+            duration=self._d(duration),
+            tolerance_xy=None,
+            tolerance_z=None,
         )
 
     def _vertical_move(self, x, y, from_z, to_z, pitch, yaw, caution=1.0):

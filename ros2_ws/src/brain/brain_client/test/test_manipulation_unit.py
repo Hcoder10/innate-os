@@ -362,12 +362,12 @@ def test_move_to_recovers_once_then_raises_unhealthy():
 
 
 def test_move_to_tolerance_none_skips_that_axis():
-    # z stopped short (fingers met the floor) — tol_z=None accepts it.
+    # z stopped short (fingers met the floor) — tolerance_z=None accepts it.
     m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.19))
     m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
     capture_gotos(m)
     m.recover = lambda: pytest.fail("within-tolerance move must not recover")
-    settled = m.move_to(0.30, 0.00, 0.10, tol_z=None)
+    settled = m.move_to(0.30, 0.00, 0.10, tolerance_z=None)
     assert settled.z == 0.19
 
 
@@ -379,7 +379,7 @@ def test_move_to_unverified_raises_without_recovery():
     capture_gotos(m, ok=False)
     m.recover = lambda: pytest.fail("unverified move must not recover")
     with pytest.raises(ArmFailed):
-        m.move_to(0.3, 0.0, 0.1, tol_xy=None, tol_z=None)
+        m.move_to(0.3, 0.0, 0.1, tolerance_xy=None, tolerance_z=None)
 
 
 def test_move_joints_five_values_keeps_standing_grip():

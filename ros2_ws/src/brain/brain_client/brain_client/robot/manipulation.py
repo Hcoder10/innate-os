@@ -506,8 +506,8 @@ class Manipulation(_LegacyManipulationMixin):
         yaw: float = 0.0,
         duration: float = 1.5,
         grip: float | None = None,
-        tol_xy: float | None = 0.05,
-        tol_z: float | None = 0.10,
+        tolerance_xy: float | None = 0.05,
+        tolerance_z: float | None = 0.10,
     ) -> Arm:
         """Move the end-effector to a cartesian pose; return the settled pose.
 
@@ -515,23 +515,43 @@ class Manipulation(_LegacyManipulationMixin):
         the tolerances, recovers (reboot + torque on) and retries once, then
         raises ArmUnhealthy. Raises ArmFailed when the pose is unreachable.
 
-        tol_z is looser than tol_xy on purpose: a z shortfall usually means
-        the fingers met the object/floor early (expected while descending),
-        while xy error means the move is off target. Pass ``tol_xy=None`` /
-        ``tol_z=None`` to skip that axis check (expected-contact descents).
-
-        ``grip``: j6 to hold through the move; default carries the standing
-        grip target, so a held object stays held.
-
         With BOTH tolerances None the move is unverified: the service result
         is trusted, failure raises ArmFailed, and no recovery runs — for
         callers whose targets legitimately settle off-pose (joint limits).
+
+        Args:
+            x: Target end-effector x in metres, ``base_link`` frame.
+            y: Target end-effector y in metres, ``base_link`` frame.
+            z: Target end-effector z in metres, ``base_link`` frame.
+            roll: Target end-effector roll in radians.
+            pitch: Target end-effector pitch in radians.
+            yaw: Target end-effector yaw in radians.
+            duration: Seconds the arm is given to reach the pose. Advisory —
+                the hardware jerk limiter may extend it.
+            grip: j6 to hold through the move. The default carries the standing
+                grip target, so a held object stays held.
+            tolerance_xy: Horizontal FK error in metres at or under which the
+                pose counts as reached, or None to skip the check on x and y.
+            tolerance_z: Vertical FK error in metres at or under which the pose
+                counts as reached, or None to skip the check on z (expected-
+                contact descents). Deliberately looser than `tolerance_xy`: a z
+                shortfall usually means the fingers met the object or floor
+                early, which is expected while descending, whereas xy error
+                means the move is off target.
+
+        Returns:
+            The settled end-effector pose.
+
+        Raises:
+            ArmFailed: Pose unreachable, command rejected, or the move did not
+                complete.
+            ArmUnhealthy: Still outside tolerance after one recover-and-retry.
         """
         joints = self._solve_ik(x, y, z, roll, pitch, yaw)
         if joints is None:
             raise ArmFailed(f"IK found no solution for ({x:.2f}, {y:.2f}, {z:.2f})")
         target = joints + [self._grip_or(grip)]
-        verified = tol_xy is not None or tol_z is not None
+        verified = tolerance_xy is not None or tolerance_z is not None
         for attempt in (1, 2) if verified else (1,):
             ok = self._goto(target, duration, wait=True)
             settled = self._read_pose_after_motion()
@@ -546,8 +566,8 @@ class Manipulation(_LegacyManipulationMixin):
             if (
                 ok
                 and settled is not None
-                and (tol_xy is None or (err_xy is not None and err_xy <= tol_xy))
-                and (tol_z is None or (err_z is not None and err_z <= tol_z))
+                and (tolerance_xy is None or (err_xy is not None and err_xy <= tolerance_xy))
+                and (tolerance_z is None or (err_z is not None and err_z <= tolerance_z))
             ):
                 return settled
             self.logger.warning(
