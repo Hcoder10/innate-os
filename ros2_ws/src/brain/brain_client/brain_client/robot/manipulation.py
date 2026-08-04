@@ -12,8 +12,9 @@ the ambient ``arm:`` feed).
 Arm motion is a short atomic commitment: no method here is interrupted by a
 skill cancel — cancellation lands between calls — so every method is safe in
 ``finally``-block teardown. ``duration`` is advisory: the hardware jerk
-limiter may extend it, and the joint-2 self-collision clamp can silently
-alter targets near the body.
+limiter may extend it, the joint-2 self-collision clamp can silently alter
+targets near the body, and ``safety.max_ee_speed`` (when set) stretches
+durations so cartesian moves respect the cap.
 
 The gripper (j6) runs current-based position control: the standing position
 error IS the grip force, so re-commanding j6 from its *measured* position
@@ -76,6 +77,44 @@ class Waypoint:
     pitch: float = 0.0
     yaw: float = 0.0
     duration: float = 1.0
+
+
+class Safety:
+    """Skill-tunable caps, set via ``self.manipulation.safety``.
+
+    ``max_ee_speed`` (m/s; None = uncapped) stretches any cartesian move's
+    duration to keep the straight-line EE speed under the cap. A tuning aid on
+    the driver's jerk limiter, not a certified limit: joint-space moves and
+    the 0.6.0 shims are not covered, and ``stop()`` resets it.
+    """
+
+    def __init__(self, logger):
+        self.logger = logger
+        self._max_ee_speed: float | None = None
+
+    @property
+    def max_ee_speed(self) -> float | None:
+        """End-effector straight-line speed cap in m/s; None = uncapped."""
+        return self._max_ee_speed
+
+    @max_ee_speed.setter
+    def max_ee_speed(self, value: float | None) -> None:
+        if value is not None and not value > 0.0:
+            raise ValueError(f"max_ee_speed must be > 0 m/s or None, got {value!r}")
+        self._max_ee_speed = None if value is None else float(value)
+
+    def reset(self) -> None:
+        """Back to uncapped."""
+        self._max_ee_speed = None
+
+    def capped_duration(self, distance: float, duration: float) -> float:
+        """``duration``, stretched so ``distance`` over it respects the cap."""
+        cap = self._max_ee_speed
+        if cap is None or distance <= cap * duration:
+            return duration
+        stretched = distance / cap
+        self.logger.debug(f"[arm] speed cap {cap:.2f} m/s stretches {duration:.2f}s to {stretched:.2f}s")
+        return stretched
 
 
 # One warning per shim per process: migration path without log spam.
@@ -272,7 +311,9 @@ class Manipulation(_LegacyManipulationMixin):
     # Below this j6 the claw is still (tripped) shut after an open command.
     _GRIPPER_SHUT_J6 = 0.10
 
-    # j1-j6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
+    # /mars/arm/state order: base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper claw.
+    JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+
     # Folded, j4 lifted to clear the floor (ee_link z ~0.042 m); j1/j2 sit at
     # their limits, so this is what the arm actually holds.
     REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
@@ -293,6 +334,7 @@ class Manipulation(_LegacyManipulationMixin):
         """
         self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
+        self.safety = Safety(logger)
         # Spins only while a skill is active (start()..stop()). Parked, the
         # ~600 msgs/s just rotate in the rmw queues; dispatching them would
         # cost ~half a Jetson core.
@@ -398,6 +440,7 @@ class Manipulation(_LegacyManipulationMixin):
         self._fk_pose = None
         self._arm_state = None
         # _grip_target survives: a skill can end while still holding an object.
+        self.safety.reset()  # per-run knob: a forgotten cap must not slow later skills
 
     def shutdown(self):
         """Stop the manipulation helper node and its private executor."""
@@ -481,6 +524,11 @@ class Manipulation(_LegacyManipulationMixin):
         )
 
     @property
+    def joint_names(self) -> tuple[str, ...]:
+        """The arm's joint names in command order (j6 is the gripper claw)."""
+        return self.JOINT_NAMES
+
+    @property
     def torque_enabled(self) -> bool | None:
         """Freshest known torque state (local commands vs /mars/arm/status);
         None while neither source has reported."""
@@ -550,6 +598,8 @@ class Manipulation(_LegacyManipulationMixin):
         joints = self._solve_ik(x, y, z, roll, pitch, yaw)
         if joints is None:
             raise ArmFailed(f"IK found no solution for ({x:.2f}, {y:.2f}, {z:.2f})")
+        if self.safety.max_ee_speed is not None:
+            duration = self.safety.capped_duration(math.dist(self.pose.position, (x, y, z)), duration)
         target = joints + [self._grip_or(grip)]
         verified = tolerance_xy is not None or tolerance_z is not None
         for attempt in (1, 2) if verified else (1,):
@@ -578,6 +628,43 @@ class Manipulation(_LegacyManipulationMixin):
                 self.recover()
         raise ArmUnhealthy(f"arm failed to reach ({x:.2f}, {y:.2f}, {z:.2f})")
 
+    def move_by(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        *,
+        droll: float = 0.0,
+        dpitch: float = 0.0,
+        dyaw: float = 0.0,
+        duration: float = 0.5,
+        grip: float | None = None,
+        tolerance_xy: float | None = 0.05,
+        tolerance_z: float | None = 0.10,
+    ) -> Arm:
+        """Nudge the end-effector by offsets from its measured pose.
+
+        Adds the deltas to the live FK pose and delegates to :meth:`move_to`
+        (same verify/recover/grip contract, same speed cap). Measured, not
+        last-commanded, so a servoing loop corrects from where the arm
+        actually is. RPY deltas add per axis — fine for nudges, wrong for
+        large rotations.
+        """
+        cur = self.pose
+        roll, pitch, yaw = cur.rpy
+        return self.move_to(
+            cur.x + dx,
+            cur.y + dy,
+            cur.z + dz,
+            roll=roll + droll,
+            pitch=pitch + dpitch,
+            yaw=yaw + dyaw,
+            duration=duration,
+            grip=grip,
+            tolerance_xy=tolerance_xy,
+            tolerance_z=tolerance_z,
+        )
+
     def follow(self, waypoints: Sequence[Waypoint], *, grip: float | None = None) -> Arm:
         """Sweep through cartesian waypoints as one smooth trajectory.
 
@@ -604,12 +691,25 @@ class Manipulation(_LegacyManipulationMixin):
             waypoint_joints.append(joints + [j6])
 
         if len(waypoint_joints) == 1:
+            duration = wps[0].duration
+            if self.safety.max_ee_speed is not None:
+                duration = self.safety.capped_duration(
+                    math.dist(self.pose.position, (wps[0].x, wps[0].y, wps[0].z)), duration
+                )
             # The single-move service honors duration; the trajectory service
             # would pace the approach at a fixed 0.5 s instead.
-            if not self._goto(waypoint_joints[0], wps[0].duration, wait=True):
+            if not self._goto(waypoint_joints[0], duration, wait=True):
                 raise ArmFailed("arm move rejected or did not complete")
         else:
             seg_durations = [wp.duration for wp in wps[1:]]
+            if self.safety.max_ee_speed is not None:
+                pts = [self.pose.position] + [(wp.x, wp.y, wp.z) for wp in wps]
+                seg_durations = [
+                    self.safety.capped_duration(math.dist(pts[k + 1], pts[k + 2]), d)
+                    for k, d in enumerate(seg_durations)
+                ]
+                # a copy of seg_durations[0] also paces the driver's prepended approach
+                seg_durations[0] = self.safety.capped_duration(math.dist(pts[0], pts[1]), seg_durations[0])
             if not self._send_trajectory(waypoint_joints, seg_durations):
                 raise ArmFailed("trajectory rejected, failed, or preempted")
         settled = self._read_pose_after_motion()

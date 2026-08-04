@@ -28,7 +28,7 @@ ros_stubs.install()
 import rclpy.executors  # noqa: E402  (real or stubbed, both fine)
 
 from brain_client.robot import manipulation as manipulation_mod  # noqa: E402
-from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation, Waypoint  # noqa: E402
+from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation, Safety, Waypoint  # noqa: E402
 from brain_client.state.arm import Arm  # noqa: E402
 
 
@@ -86,6 +86,7 @@ def bare_manipulation(**overrides):
     """A Manipulation with no ROS entities: only the attributes under test."""
     m = Manipulation.__new__(Manipulation)
     m.logger = FakeLogger()
+    m.safety = Safety(m.logger)
     m._ik_lock = threading.Lock()
     m._lifecycle_lock = threading.Lock()
     m._active = True
@@ -454,6 +455,121 @@ def test_follow_raises_on_ik_failure_with_waypoint_index():
 def test_follow_empty_raises():
     with pytest.raises(ArmFailed):
         bare_manipulation().follow([])
+
+
+# --- new API: move_by ------------------------------------------------------------
+
+
+def test_move_by_targets_measured_pose_plus_deltas():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.20))
+    seen = {}
+
+    def fake_move_to(x, y, z, **kwargs):
+        seen.update(x=x, y=y, z=z, **kwargs)
+        return "settled"
+
+    m.move_to = fake_move_to
+    assert m.move_by(dx=0.01, dz=-0.05, duration=0.3, tolerance_z=None) == "settled"
+    assert (seen["x"], seen["y"], seen["z"]) == (pytest.approx(0.31), pytest.approx(0.0), pytest.approx(0.15))
+    assert seen["duration"] == 0.3 and seen["tolerance_z"] is None
+
+
+def test_move_by_composes_rpy_from_measured_orientation():
+    # measured at 90° yaw; dyaw adds on top
+    m = bare_manipulation(_fk_pose=fk_pose(0.3, 0.0, 0.2, qz=math.sin(math.pi / 4), qw=math.cos(math.pi / 4)))
+    seen = {}
+    m.move_to = lambda x, y, z, **kwargs: seen.update(kwargs)
+    m.move_by(dyaw=0.1)
+    assert seen["yaw"] == pytest.approx(math.pi / 2 + 0.1)
+    assert seen["roll"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_move_by_raises_when_feed_dead(monkeypatch):
+    monkeypatch.setattr("brain_client.robot.manipulation.time.sleep", lambda s: None)
+    monkeypatch.setattr("brain_client.robot.manipulation.time.monotonic", iter([0.0, 0.5, 2.0]).__next__)
+    with pytest.raises(ArmFailed):
+        bare_manipulation().move_by(dz=-0.05)
+
+
+# --- new API: safety speed cap ---------------------------------------------------
+
+
+def test_speed_cap_stretches_only_over_cap_durations():
+    s = Safety(FakeLogger())
+    assert s.capped_duration(0.2, 1.0) == 1.0
+    s.max_ee_speed = 0.1
+    assert s.capped_duration(0.05, 1.0) == 1.0
+    assert s.capped_duration(0.2, 1.0) == pytest.approx(2.0)
+    s.max_ee_speed = None
+    assert s.capped_duration(0.2, 1.0) == 1.0
+
+
+def test_speed_cap_rejects_nonpositive():
+    s = Safety(FakeLogger())
+    for bad in (0.0, -0.5):
+        with pytest.raises(ValueError):
+            s.max_ee_speed = bad
+
+
+def test_move_to_stretches_duration_to_speed_cap():
+    # 0.2 m at ≤ 0.1 m/s: 1 s becomes 2 s
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10))
+    m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
+    calls = capture_gotos(m)
+    m.safety.max_ee_speed = 0.1
+    m.move_to(0.30, 0.00, 0.30, duration=1.0, tolerance_xy=None, tolerance_z=None)
+    assert calls[0][1] == pytest.approx(2.0)
+
+
+def test_follow_single_waypoint_caps_approach():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.50))
+    m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
+    calls = capture_gotos(m)
+    m.safety.max_ee_speed = 0.1
+    m.follow([Waypoint(0.30, 0.00, 0.20, duration=1.0)])
+    assert calls[0][1] == pytest.approx(3.0)
+
+
+def test_follow_caps_approach_and_each_segment():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.50), _grip_target=0.3)
+    m._solve_ik = lambda x, y, z, *a, **k: [x, y, z, 0.0, 0.0]
+    sent = []
+    m._send_trajectory = lambda wps, durs: (sent.append(durs), True)[1]
+    m.safety.max_ee_speed = 0.1
+    m.follow(
+        [
+            Waypoint(0.30, 0.0, 0.20),
+            Waypoint(0.30, 0.0, 0.15, duration=1.0),
+            Waypoint(0.30, 0.0, 0.05, duration=0.5),
+        ]
+    )
+    durations = sent[0]
+    # seg 1 fits, but its copy paces the 0.3 m approach → 3.0 s; seg 2 (0.10 m / 0.5 s) → 1.0 s
+    assert durations == [pytest.approx(3.0), pytest.approx(1.0)]
+
+
+def test_stop_resets_speed_cap():
+    m = bare_manipulation()
+    m.safety.max_ee_speed = 0.1
+    m.stop()
+    assert m.safety.max_ee_speed is None
+
+
+# --- introspection ---------------------------------------------------------------
+
+
+def test_joint_names_match_the_driver():
+    assert Manipulation.JOINT_NAMES == ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+    assert bare_manipulation().joint_names == Manipulation.JOINT_NAMES
+
+
+def test_cameras_mapping_names_the_frame_types():
+    pytest.importorskip("numpy")  # innate namespace pulls state/image.py
+    import innate
+
+    assert set(innate.CAMERAS) == {"main", "wrist"}
+    assert innate.CAMERAS["main"] is innate.MainImage
+    assert innate.CAMERAS["wrist"] is innate.WristImage
 
 
 # --- new API: gripper + grip target ---------------------------------------------
