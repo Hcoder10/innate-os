@@ -145,8 +145,8 @@ class DetectOpponentMove(Skill):
                 pitch=self.OBS_PITCH,
                 yaw=self.OBS_YAW,
                 duration=2.0,
-                tol_xy=None,
-                tol_z=None,
+                tolerance_xy=None,
+                tolerance_z=None,
             )
         except (ArmFailed, ArmUnhealthy) as e:
             self.logger.error(f"[DetectOpponentMove] Failed to reach observation pose: {e}")
@@ -165,8 +165,8 @@ class DetectOpponentMove(Skill):
                 pitch=self.OBS_PITCH,
                 yaw=self.OBS_YAW,
                 duration=2.0,
-                tol_xy=None,
-                tol_z=None,
+                tolerance_xy=None,
+                tolerance_z=None,
             )
         except (ArmFailed, ArmUnhealthy) as e:
             self.logger.warning(f"[DetectOpponentMove] Safe pose failed: {e}")

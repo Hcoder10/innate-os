@@ -228,7 +228,7 @@ class PickAnyObject(Skill):
             kp=self._p["rot_kp"],
             wz_max=self._p["rot_wz_max"],
             wz_min=self._p["rot_wz_min"],
-            tol=math.radians(self._p["rot_tol_deg"]),
+            tolerance=math.radians(self._p["rot_tol_deg"]),
             logger=self.logger,
         )
 
@@ -239,7 +239,7 @@ class PickAnyObject(Skill):
             kp=self._p["drive_kp"],
             v_max=self._p["drive_v_max"],
             v_min=self._p["drive_v_min"],
-            tol=self._p["drive_tol_m"],
+            tolerance=self._p["drive_tol_m"],
             logger=self.logger,
         )
 
@@ -625,7 +625,13 @@ class PickAnyObject(Skill):
             try:
                 ee_z = self.manipulation.pose.z
                 self.manipulation.move_to(
-                    x, y, ee_z + p["close_lift_m"], pitch=p["arm_pitch"], duration=0.5, tol_xy=None, tol_z=None
+                    x,
+                    y,
+                    ee_z + p["close_lift_m"],
+                    pitch=p["arm_pitch"],
+                    duration=0.5,
+                    tolerance_xy=None,
+                    tolerance_z=None,
                 )
             except ArmFailed:
                 pass  # best-effort pre-close lift; the grasp decides below
@@ -672,7 +678,7 @@ class PickAnyObject(Skill):
             # and would zero the grip preload. move_to verifies by FK and
             # recover-retries, so the arm is confirmed off the floor (or the
             # run fails cleanly and teardown carries with the grip kept).
-            self.manipulation.move_to(x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tol_xy=0.10)
+            self.manipulation.move_to(x, y, 0.22, pitch=p["arm_pitch"], duration=2.0, tolerance_xy=0.10)
 
     def _grasp_at(self, prompt, xy):
         """Full grasp at floor xy (base_link)."""

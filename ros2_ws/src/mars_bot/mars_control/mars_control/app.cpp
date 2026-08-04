@@ -475,6 +475,11 @@ class AppControl : public rclcpp::Node {
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
             std::bind(&AppControl::drive_smoother_callback, this));
 
+        // Seed the edge detector from the value that was actually declared: booting into
+        // Mad is a starting state, not a transition, and the arm services are not up yet.
+        mad_engaged_ = drive::is_mad_scale(drive_speed_scale());
+        mad_mode_timer_ = this->create_wall_timer(100ms, std::bind(&AppControl::watch_mad_mode, this));
+
         // Timer for publishing robot info
         robot_info_timer_ = this->create_wall_timer(1000ms, std::bind(&AppControl::publish_robot_info_callback, this));
 
@@ -811,14 +816,36 @@ class AppControl : public rclcpp::Node {
     }
 
     /**
-     * Fold the arm into its Mad-mode bracing pose — at Mad's speeds a collision
-     * can break an extended arm. Fire-and-forget goto_js_v2 so the parameter
-     * write that engages the mode never blocks on the motion.
+     * Fold the arm on the rising edge of the APPLIED speed mode.
+     *
+     * Polled rather than driven from the parameter callback: Humble's rclcpp has no
+     * post-set hook, and the pre-set one it does have only validates — a batch that
+     * sets speed_scale alongside a parameter that fails validation is rejected whole,
+     * so folding there would brace the arm for a mode the robot never enters. Reading
+     * the parameter back keeps "engaged" and "braced" describing the same fact,
+     * whatever wrote it (webapp, speed policy, ros2 param set).
+     */
+    void watch_mad_mode() {
+        const bool mad = drive::is_mad_scale(drive_speed_scale());
+        if (mad && !mad_engaged_) {
+            fold_arm_for_mad_mode();
+        }
+        mad_engaged_ = mad;
+    }
+
+    /**
+     * Fold the arm into its Mad-mode bracing pose.
+     *
+     * At Mad's speeds a collision can break an extended arm, so entering the mode
+     * first tucks it against the body. Sent through goto_js_v2 (scheduled gains)
+     * so the pose is held stiff while the base accelerates; fire-and-forget so
+     * the parameter write that engages the mode never blocks on the 2 s motion.
      */
     void fold_arm_for_mad_mode() {
-        // Command-frame radians, hardware-verified. Leader-panel capture with j4
-        // negated (the leader's j4 reads inverted); j2 at its limit; j6 closed.
-        static constexpr std::array<double, 6> POSE_RAD{1.5278, -1.2195, 1.4665, -0.5016, -0.3605, 0.0};
+        // Hardware-verified command radians (j1 at its configured limit — the
+        // demonstrated pose sat ~12 deg past it; j6 = 0: claw closed so a held
+        // object keeps a light grip instead of releasing).
+        static constexpr std::array<double, 6> POSE_RAD{1.5708, -0.3912, 1.4511, -1.6276, -0.0890, 0.0};
         if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
             RCLCPP_WARN(this->get_logger(), "Mad mode: arm goto service not ready; skipping the safe fold");
             return;
@@ -876,18 +903,9 @@ class AppControl : public rclcpp::Node {
                     result.reason = "motion_control.speed_scale must be within the published preset range";
                     return result;
                 }
-                // Entering Mad folds the arm into its bracing pose. Rising-edge only, so
-                // re-asserting the mad scale mid-drive does not re-run the fold.
-                bool was_mad = false;
-                try {
-                    was_mad = drive::is_mad_scale(this->get_parameter("motion_control.speed_scale").as_double());
-                } catch (const std::exception&) {
-                    // This parameter's own declaration: nothing readable yet, and the
-                    // compiled default is not mad.
-                }
-                if (drive::is_mad_scale(value) && !was_mad) {
-                    fold_arm_for_mad_mode();
-                }
+                // Entering Mad folds the arm into its bracing pose, but not from here:
+                // this callback only validates, and a later parameter in the same batch
+                // can still reject the set. watch_mad_mode() reacts to the APPLIED value.
                 continue;
             }
             if (name == "motion_control.dt" && std::abs(value - smoothing_dt_) > 1e-9) {
@@ -1477,6 +1495,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
     rclcpp::TimerBase::SharedPtr hostname_sync_timer_;
     rclcpp::TimerBase::SharedPtr drive_smoother_timer_;
+    rclcpp::TimerBase::SharedPtr mad_mode_timer_;
 
     // Drive smoother state. Only touched from joystick_callback and drive_smoother_callback,
     // which the single-threaded executor serialises, so no locking is needed.
@@ -1493,6 +1512,8 @@ class AppControl : public rclcpp::Node {
     bool policy_owns_scale_ = false;
     // Integration step, fixed to the period the smoother timer was created with.
     double smoothing_dt_ = drive::CONTROL_DT;
+    // Last speed mode watch_mad_mode() observed, so the arm folds on entry only.
+    bool mad_engaged_ = false;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

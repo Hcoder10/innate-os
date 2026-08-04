@@ -117,9 +117,25 @@ class PickUpPieceSimple(Skill):
 
     def _move_arm(self, x, y, z, pitch, yaw, duration):
         """One unverified cartesian move (chess poses near joint limits may
-        legitimately settle off-pose, so FK verification stays off)."""
+        legitimately settle off-pose, so FK verification stays off).
+
+        TODO: unverified means a pose that settled somewhere else still reads
+        as success, so the clearance lift and the moves above the source and
+        destination squares can all "succeed" with the arm off target — the
+        next lateral move or descent then hits pieces. Wants per-call
+        tolerances loose enough for the near-limit poses rather than off
+        entirely, which needs measuring the real settle error per square.
+        """
         self.manipulation.move_to(
-            x, y, z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), tol_xy=None, tol_z=None
+            x,
+            y,
+            z,
+            roll=self.FIXED_ROLL,
+            pitch=pitch,
+            yaw=yaw,
+            duration=self._d(duration),
+            tolerance_xy=None,
+            tolerance_z=None,
         )
 
     def _vertical_move(self, x, y, from_z, to_z, pitch, yaw, caution=1.0):
@@ -268,10 +284,13 @@ class PickUpPieceSimple(Skill):
         speed: float = 1.0,
     ) -> SkillReturn:
         self._speed = max(0.1, min(speed, 3.0))
+        # Not caught: every later move assumes the arm starts folded and clear
+        # of the board. Continuing from an unknown position means the first
+        # lateral move at HEIGHT_SAFE sweeps through the pieces.
         try:
             self._go_to_safe_pose()
         except (ArmFailed, ArmUnhealthy) as e:
-            self.logger.warning(f"[PickUpPieceSimple] Initial safe pose failed, continuing: {e}")
+            self.fail(f"Failed to reach safe pose before moving — arm position unknown: {e}")
 
         calibration = self._load_calibration()
         if calibration is None:

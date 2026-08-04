@@ -23,10 +23,10 @@ class ArmMoveToXYZ(Skill):
     ) -> SkillReturn:
         self.logger.info(f"Moving arm to XYZ ({x}, {y}, {z}) with RPY ({roll}, {pitch}, {yaw}) over {duration}s")
         try:
-            # Unverified move (tol=None): arbitrary agent-chosen targets may
+            # Unverified move (both tolerances None): arbitrary agent-chosen targets may
             # legitimately settle off-pose near joint limits.
             self.manipulation.move_to(
-                x, y, z, roll=roll, pitch=pitch, yaw=yaw, duration=duration, tol_xy=None, tol_z=None
+                x, y, z, roll=roll, pitch=pitch, yaw=yaw, duration=duration, tolerance_xy=None, tolerance_z=None
             )
         except (ArmFailed, ArmUnhealthy) as e:
             self.fail(f"Failed to move arm: {e}")
