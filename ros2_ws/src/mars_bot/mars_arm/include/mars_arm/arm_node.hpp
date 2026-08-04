@@ -148,6 +148,11 @@ class MarsArmNode : public rclcpp::Node {
     // Auto-recovery reboot timestamps per servo id (1-7); only touched from
     // the health timer's callback group, so no lock of its own.
     std::array<std::deque<std::chrono::steady_clock::time_point>, 8> auto_recovery_history_;
+    // Servos an auto-recovery rebooted but did not finish reconfiguring. The
+    // reboot clears the latched error bit, so nothing else would flag them —
+    // the health check retries the configuration and holds the arm unhealthy
+    // until it sticks. Same callback group as auto_recovery_history_.
+    std::array<bool, 8> auto_recovery_incomplete_{};
     std::atomic<bool> arm_torque_enabled_{true};
 
     // Control timer

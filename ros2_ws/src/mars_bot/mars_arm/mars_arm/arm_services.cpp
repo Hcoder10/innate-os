@@ -206,6 +206,26 @@ void MarsArmNode::healthMonitorCallback() {
         for (const auto& config : joint_configs_) {
             const int servo_id = config.servo_id;
 
+            // A previous auto-recovery rebooted this servo but threw before
+            // reconfiguring it. The reboot cleared the error bit, so the check
+            // below sees a nominal servo the control loop is driving with an
+            // unknown configuration. Retry here; a manual /mars/arm/reboot
+            // reconfigures it too, and this retry then succeeds and clears it.
+            if (auto_recovery_incomplete_[servo_id]) {
+                try {
+                    configureServoByIdLocked(servo_id, servo_id == 7 || arm_torque_enabled_.load());
+                    auto_recovery_incomplete_[servo_id] = false;
+                    RCLCPP_WARN(this->get_logger(), "Servo %d reconfigured after an incomplete auto-recovery",
+                                servo_id);
+                } catch (const std::exception& e) {
+                    status_msg.is_ok = false;
+                    status_msg.error = "Servo " + std::to_string(servo_id) +
+                                       " was rebooted but could not be reconfigured (" + e.what() +
+                                       ") — use 'Reboot arm' (/mars/arm/reboot) or power-cycle the arm";
+                    break;
+                }
+            }
+
             uint8_t hw_status = dynamixel_->readHardwareErrorStatus(servo_id);
             if (hw_status != 0) {
                 status_msg.is_ok = false;
@@ -276,6 +296,11 @@ bool MarsArmNode::autoRecoverServoLocked(int servo_id) {
     }
     history.push_back(now);
 
+    // Set before the reboot and cleared only once everything below succeeded:
+    // a throw partway leaves the servo rebooted (latch gone) but not fully
+    // configured, and the attempt is already spent. The health check retries
+    // the configuration and keeps the arm unhealthy until it lands.
+    auto_recovery_incomplete_[servo_id] = true;
     try {
         RCLCPP_WARN(this->get_logger(), "Auto-recovering servo %d: rebooting to clear the latched overload", servo_id);
         dynamixel_->reboot(servo_id);
@@ -295,11 +320,15 @@ bool MarsArmNode::autoRecoverServoLocked(int servo_id) {
             std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
             latest_target_[idx] = rad;
         }
+        auto_recovery_incomplete_[servo_id] = false;
         RCLCPP_WARN(this->get_logger(), "Auto-recovered servo %d (rebooted, reconfigured, torque %s)", servo_id,
                     enable_torque ? "on" : "off");
         return true;
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Auto-recovery of servo %d failed: %s", servo_id, e.what());
+        RCLCPP_ERROR(this->get_logger(),
+                     "Auto-recovery of servo %d failed: %s — it may be rebooted but not fully configured; "
+                     "the health check will retry and report the arm unhealthy until it is",
+                     servo_id, e.what());
         return false;
     }
 }
