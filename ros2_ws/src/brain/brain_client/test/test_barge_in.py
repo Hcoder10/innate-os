@@ -156,6 +156,19 @@ def test_resample_path():
     assert h.triggers == []
 
 
+def test_odd_byte_ref_chunks():
+    # network chunks split mid-sample; feed_ref must re-align, not drop them
+    det = BargeInDetector()
+    det.on_ref_start(1)
+    pcm = (RNG.standard_normal(44100) * 8000).astype(np.int16).tobytes()
+    for i in range(0, len(pcm), 999):  # odd chunk size
+        det.feed_ref(pcm[i : i + 999], 44100)
+    det.feed_mic(np.zeros(CHUNK, dtype=np.int16).tobytes())
+    # all samples (minus <1 chunk of resampler latency) must have arrived
+    got = det._ref.n_frames
+    assert got >= (44100 // 44100 * 24000 - 2048) // 240 - 3
+
+
 def test_no_ref_no_activity():
     # mic audio with no utterance active must be ignored entirely
     det = BargeInDetector(on_trigger=lambda i: pytest.fail("must not trigger"))

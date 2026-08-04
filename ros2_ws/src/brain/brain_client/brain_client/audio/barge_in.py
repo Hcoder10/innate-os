@@ -162,6 +162,7 @@ class BargeInDetector:
         with self._ref_lock:
             self._ref_pending.clear()
         self._ratecv_state = None
+        self._ref_byte_tail = b""
         self._processed = 0  # mic frames already scored
         self._lag: int | None = None  # ref frame r echoes at mic frame r + lag
         self._lag_confident = False
@@ -237,6 +238,14 @@ class BargeInDetector:
     def feed_ref(self, pcm: bytes, rate: int):
         """Reference TTS PCM (s16le mono). Called from the ROS executor thread."""
         if not self._active:
+            return
+        # network chunk boundaries are not sample-aligned; carry odd bytes over
+        pcm = self._ref_byte_tail + pcm
+        if len(pcm) % 2:
+            pcm, self._ref_byte_tail = pcm[:-1], pcm[-1:]
+        else:
+            self._ref_byte_tail = b""
+        if not pcm:
             return
         if rate != MIC_RATE:
             pcm, self._ratecv_state = audioop.ratecv(pcm, 2, 1, rate, MIC_RATE, self._ratecv_state)
