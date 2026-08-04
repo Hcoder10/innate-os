@@ -288,19 +288,16 @@ class MicroInput(InputDevice):
                     break  # Stop event was set
 
                 try:
-                    # Stop old client if exists
+                    # Stop old client if exists. The audio thread is left
+                    # running: it feeds barge-in detection during TTS and must
+                    # not share fate with the WebSocket (it skips OpenAI sends
+                    # while disconnected).
                     if self.client:
                         try:
                             self.client.stop()
                         except:  # noqa: E722
                             pass
                         self.client = None
-
-                    # Stop old audio thread
-                    self._stop_evt.set()
-                    if self._audio_thread and self._audio_thread.is_alive():
-                        self._audio_thread.join(timeout=1.0)
-                    self._stop_evt.clear()
 
                     # Reconnect
                     self._connect_via_proxy()
@@ -318,13 +315,15 @@ class MicroInput(InputDevice):
         self._reconnect_thread.start()
 
     def _start_audio_thread(self):
-        """Start the audio streaming thread."""
+        """Start the audio consumer thread (one per device open, survives reconnects)."""
+        if self._audio_thread and self._audio_thread.is_alive():
+            return
         self._stop_evt.clear()
 
         def audio_loop():
-            if not self.client.wait_until_connected(timeout=10):
-                self.logger.error("WebSocket didn't connect in time")
-                return
+            client = self.client
+            if client is not None and not client.wait_until_connected(timeout=10):
+                self.logger.error("WebSocket didn't connect in time (audio loop continues for barge-in)")
 
             self.logger.info("🎧 Audio streaming thread started")
 
