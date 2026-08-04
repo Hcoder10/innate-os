@@ -458,6 +458,38 @@ def test_reset_mid_turn_restarts_the_loop_with_empty_history(agent_factory):
     release.set()
 
 
+def test_running_skill_guidance_reads_registry_metadata(agent_factory):
+    # Regression: registry.primitives holds plain metadata dicts (not stub
+    # objects) since the SkillRegistry slimming — the supervision turn must
+    # read guidance with dict access, not a method call.
+    from brain_client.skills.registry import SkillRegistry
+
+    agent, state = agent_factory()
+    state.registry = SkillRegistry.from_metadata(
+        [{**WAVE_SKILL, "type": "code", "guidelines_when_running": "  do not block the arm  "}]
+    )
+    state.primitive_running = {"primitive_name": "wave", "primitive_id": "p1", "skill_id": "local/wave"}
+    text, images = agent._observe([])
+    assert "(guidance while this skill runs: do not block the arm)" in text
+
+
+def test_a_turn_bug_backs_off_instead_of_killing_the_loop(agent_factory, monkeypatch):
+    # Regression: an unexpected exception anywhere in the turn (not just the
+    # network call) must take the backoff path, not unwind the whole loop —
+    # a crashed brain stays dead until a human stops and starts it.
+    agent, state = agent_factory()
+    agent._session._transport = lambda model, body: model_response({"text": "hi"})
+    no_pause(agent, monkeypatch)
+
+    def broken_tools():
+        raise AttributeError("'dict' object has no attribute 'guidelines_when_running'")
+
+    monkeypatch.setattr(agent, "_build_tools", broken_tools)
+    run_turn(agent)  # raises nothing: the failure is absorbed
+    assert agent._error_streak == 1
+    assert agent._session._history == []
+
+
 def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
     traces = []
     agent, state = agent_factory(trace=lambda payload: traces.append(json.loads(payload)))

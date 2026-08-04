@@ -276,46 +276,73 @@ class BrainAgent:
 
     async def _turn(self) -> None:
         events = list(self._events)  # peek — consumed only if the turn commits
-        text, images = self._observe(events)
-        user_message = GeminiSession.user_message(text, images)
-        tools = self._build_tools()
-        system = build_system_prompt(self._directive_prompt())
-        self._pose_at_capture = self._pose.current_pose_xyt()
-
-        if self._state.log_everything:
-            self._logger.info(f"[Brain] Turn input:\n{text}")
-
         self._turn_count += 1
         self._turn_started_at = time.monotonic()
-        self._trace(
-            "turn_start",
-            turn=self._turn_count,
-            input=text,
-            images=len(images),
-            tools=[d["name"] for d in tools[0]["functionDeclarations"]],
-            history=self._session.history_len,
-            frame=base64.b64encode(self._frame_at_capture).decode(),
-        )
-
-        self._turn_in_flight = True
         try:
-            # The only blocking call, on a worker thread; generate() only reads
-            # the history, so it never races the mutation below. Cancellation
-            # unwinds HERE — the orphaned HTTP call finishes on its worker
-            # thread and its result is dropped by asyncio.
-            response = await asyncio.to_thread(self._session.generate, user_message, tools, system)
+            text, images = self._observe(events)
+            user_message = GeminiSession.user_message(text, images)
+            tools = self._build_tools()
+            system = build_system_prompt(self._directive_prompt())
+            self._pose_at_capture = self._pose.current_pose_xyt()
+
+            if self._state.log_everything:
+                self._logger.info(f"[Brain] Turn input:\n{text}")
+
+            self._trace(
+                "turn_start",
+                turn=self._turn_count,
+                input=text,
+                images=len(images),
+                tools=[d["name"] for d in tools[0]["functionDeclarations"]],
+                history=self._session.history_len,
+                frame=base64.b64encode(self._frame_at_capture).decode(),
+            )
+
+            self._turn_in_flight = True
+            try:
+                # The only blocking call, on a worker thread; generate() only
+                # reads the history, so it never races the mutation below.
+                # Cancellation unwinds HERE — the orphaned HTTP call finishes
+                # on its worker thread and its result is dropped by asyncio.
+                response = await asyncio.to_thread(self._session.generate, user_message, tools, system)
+            finally:
+                self._turn_in_flight = False
+
+            latency = time.monotonic() - self._turn_started_at
+            if self._error_streak > 0:
+                self._error_streak = 0
+                self._chat.emit_system("✅ Brain recovered.")
+            if not self._state.is_brain_active:
+                # Deactivation raced this turn's response (the flag flips just
+                # before stop() cancels us): drop the whole exchange.
+                self._trace("turn_dropped", turn=self._turn_count, latency=round(latency, 2))
+                return
+            decision = self._session.absorb(user_message, response)
+            del self._events[: len(events)]  # commit: consume exactly what this turn saw
+            outcomes = self._apply(decision)
+            self._trace(
+                "turn_end",
+                turn=self._turn_count,
+                latency=round(latency, 2),
+                thoughts=decision.thoughts,
+                speech=decision.speech,
+                calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
+                history=self._session.history_len,
+                next_in=round(self._interval(), 1),
+            )
         except asyncio.CancelledError:
-            self._turn_in_flight = False
             self._trace(
                 "turn_dropped", turn=self._turn_count, latency=round(time.monotonic() - self._turn_started_at, 2)
             )
             raise
         except Exception as error:
-            self._turn_in_flight = False
+            # Inference failures and turn-level bugs alike: a robot brain must
+            # stay operational, so back off and retry rather than die. The
+            # error is surfaced once in chat and on every /brain/trace event.
             self._error_streak += 1
-            self._logger.error(f"[Brain] Gemini call failed ({self._error_streak}x): {error}")
+            self._logger.error(f"[Brain] Turn failed ({self._error_streak}x): {error!r}")
             if self._error_streak == 1:
-                self._chat.emit_system(f"⚠️ Brain inference failed: {error} — retrying.")
+                self._chat.emit_system(f"⚠️ Brain turn failed: {error} — retrying.")
             backoff = min(5.0 * self._error_streak, 30.0)
             self._trace(
                 "turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff
@@ -323,31 +350,6 @@ class BrainAgent:
             # Nothing was consumed, so the retry re-sends the same events; an
             # event arriving on top of them cuts the backoff short.
             await self._pause(backoff, seen=len(events))
-            return
-        self._turn_in_flight = False
-
-        latency = time.monotonic() - self._turn_started_at
-        if self._error_streak > 0:
-            self._error_streak = 0
-            self._chat.emit_system("✅ Brain inference recovered.")
-        if not self._state.is_brain_active:
-            # Deactivation raced this turn's response (the flag flips just
-            # before stop() cancels us): drop the whole exchange.
-            self._trace("turn_dropped", turn=self._turn_count, latency=round(latency, 2))
-            return
-        decision = self._session.absorb(user_message, response)
-        del self._events[: len(events)]  # commit: consume exactly what this turn saw
-        outcomes = self._apply(decision)
-        self._trace(
-            "turn_end",
-            turn=self._turn_count,
-            latency=round(latency, 2),
-            thoughts=decision.thoughts,
-            speech=decision.speech,
-            calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
-            history=self._session.history_len,
-            next_in=round(self._interval(), 1),
-        )
 
     def _interval(self) -> float:
         return (
@@ -546,8 +548,8 @@ class BrainAgent:
         return directive.get_prompt() if directive is not None else None
 
     def _running_skill_guidance(self, skill_id: str | None) -> str:
-        stub = self._state.registry.primitives.get(skill_id) if skill_id else None
-        return stub.guidelines_when_running().strip() if stub else ""
+        meta = self._state.registry.primitives.get(skill_id) if skill_id else None
+        return (meta.get("guidelines_when_running") or "").strip() if meta else ""
 
     def _check_lidar_health(self) -> None:
         """Surface a clear chat error when the lidar stops publishing (INN-474)."""
