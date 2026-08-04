@@ -170,12 +170,15 @@ class BargeInDetector:
         self._onset_run = 0
         self._ref_onset: int | None = None
         self._ref_scan = 0
+        self._suppress_until = 0
         # A human talking over the robot is only audible in the echo's
-        # syllable dips, so evidence arrives in bursts: require min_ms worth
-        # of hot frames within a 3x window rather than consecutively.
-        win = max(30, 3 * (self.min_ms // 10))
-        self._hot = deque(maxlen=win)
-        self._clip_win = deque(maxlen=win)
+        # syllable dips and gaps, and the mic clips through much of the
+        # overlap, so evidence is sparse: require `need` hot frames within a
+        # 15x window (measured live: interrupters give 9-16 hot frames/1.5s,
+        # echo-only gives 0-1). Clipped frames don't consume window slots.
+        self._need_hot = max(6, self.min_ms // 25)
+        self._hot = deque(maxlen=15 * self._need_hot)
+        self._clip_win = deque(maxlen=15 * self._need_hot)
         self._gain_init_frames = 0
         self._reverb_env = np.zeros(N_MELS, dtype=np.float32)
         self._triggered = False
@@ -337,6 +340,10 @@ class BargeInDetector:
         if best_lag is None:
             return
         if best_corr >= ALIGN_MIN_CORR:
+            # A lag jump means playback stalled or the estimate was off; the
+            # frames scored around it are unreliable, so hold triggering briefly.
+            if self._lag_confident and self._lag is not None and abs(best_lag - self._lag) > 2:
+                self._suppress_until = m + 30
             self._lag = best_lag
             self._lag_confident = True
         elif self._lag_confident:
@@ -366,7 +373,6 @@ class BargeInDetector:
         self._clip_win.append(1 if clipped else 0)
         if clipped:
             self._clipped_frames += 1
-            self._hot.append(0)
             if self.debug_dump_dir:
                 self._trace.append((m, -99.0, sum(self._hot), 1.0, self._lag or -1))
             return
@@ -394,7 +400,7 @@ class BargeInDetector:
         score = float(np.mean(np.sort(sb)[len(sb) // 3 :]))  # trimmed: top 2/3 bands
         self._max_score = max(self._max_score, score)
 
-        hot = score > self.threshold_db
+        hot = score > self.threshold_db and m >= self._suppress_until
         self._hot.append(1 if hot else 0)
         self._max_hot = max(self._max_hot, sum(self._hot))
 
@@ -426,10 +432,9 @@ class BargeInDetector:
         elapsed_ms = (m - (self._mic_onset or 0)) * 10
         if elapsed_ms < self.warmup_ms:
             return
-        need = self.min_ms // 10
-        if len(self._hot) < need or sum(self._hot) < need:
+        if sum(self._hot) < self._need_hot:
             return
-        if sum(self._clip_win) > 0.4 * len(self._clip_win):
+        if sum(self._clip_win) > 0.6 * len(self._clip_win):
             return  # too much saturation in the window to judge
         self._triggered = True
         info = {

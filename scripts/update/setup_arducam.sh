@@ -84,6 +84,13 @@ done
 amixer -c "$ARDUCAM_CARD" sset Capture 100% cap unmute 2>/dev/null && \
     echo "  ✓ Set Capture to 100% and enabled" || true
 
+# The camera mic clips hard at 100% while the robot speaks (speaker-to-mic
+# coupling puts TTS peaks past full scale), which blinds barge-in detection
+# and distorts STT audio during any loud moment. 50% is the highest setting
+# with zero clipping (measured on MARS: peak 12.5% FS vs saturated at 70%+).
+amixer -c "$ARDUCAM_CARD" sset Mic 50% 2>/dev/null && \
+    echo "  ✓ Set Mic capture to 50% (anti-clipping headroom)" || true
+
 # -----------------------------------------------------------------------------
 # Step 3: Save ALSA settings
 # -----------------------------------------------------------------------------

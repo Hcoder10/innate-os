@@ -153,7 +153,7 @@
 #     openai_transcribe_model: "gpt-4o-mini-transcribe"
 #     barge_in_enabled: true        # stop TTS when a human talks over the robot
 #     barge_in_threshold_db: 6.0    # residual-over-echo excess to count a frame as speech
-#     barge_in_min_ms: 250          # sustained speech required before triggering
+#     barge_in_min_ms: 250          # cumulative overlap-speech evidence before triggering
 #     barge_in_flush_tail: false    # replay post-trigger mic audio to STT after TTS stops
 
 # ── Vision-language navigation (UniNavid) ─────────────────────────────
