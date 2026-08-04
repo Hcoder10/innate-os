@@ -28,7 +28,7 @@ export function startDemo(h) {
   const D = { turn: 0, history: 6, queued: [], running: null, streak: 0, inFlight: false, nextIn: 3, uptime: 47 };
   const snap = () =>
     h.onTrace({
-      ev: "snapshot", active: true, backend: "innate-proxy", model: "gemini-3-flash-preview",
+      ev: "snapshot", active: true, backend: "innate-proxy", model: "gemini-3.6-flash",
       turn: D.turn, in_flight: D.inFlight, queued: D.queued, next_in: D.nextIn,
       streak: D.streak, running: D.running, history: D.history, uptime: D.uptime++,
     });

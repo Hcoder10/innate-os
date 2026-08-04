@@ -64,7 +64,7 @@ class BrainConfig:
             "odom_topic": "/odom",
             "current_nav_mode_topic": "/nav/current_mode",
             "scan_topic": "/scan",
-            "gemini_model": "gemini-3-flash-preview",
+            "gemini_model": "gemini-3.6-flash",
             # "" lets the model think at its default level. "low" is faster but
             # measurably hurts instruction-following (skill re-runs, chatter).
             "gemini_thinking_level": "",

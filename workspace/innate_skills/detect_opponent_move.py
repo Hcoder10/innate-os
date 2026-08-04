@@ -365,7 +365,7 @@ class DetectOpponentMove(Skill):
 
         try:
             response = self.gemini_client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-3.6-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
