@@ -22,7 +22,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
 
-from brain_client.perception.camera import _DEPTH_DTYPES
+# Depth decoding lives here now: the brain's CameraCapture is JPEG-only.
+_DEPTH_DTYPES = {"16UC1": np.uint16, "mono16": np.uint16, "32FC1": np.float32, "mono32": np.float32}
 
 
 class CameraProvider(Node):
