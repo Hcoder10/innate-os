@@ -117,7 +117,15 @@ class PickUpPieceSimple(Skill):
 
     def _move_arm(self, x, y, z, pitch, yaw, duration):
         """One unverified cartesian move (chess poses near joint limits may
-        legitimately settle off-pose, so FK verification stays off)."""
+        legitimately settle off-pose, so FK verification stays off).
+
+        TODO: unverified means a pose that settled somewhere else still reads
+        as success, so the clearance lift and the moves above the source and
+        destination squares can all "succeed" with the arm off target — the
+        next lateral move or descent then hits pieces. Wants per-call
+        tolerances loose enough for the near-limit poses rather than off
+        entirely, which needs measuring the real settle error per square.
+        """
         self.manipulation.move_to(
             x,
             y,
