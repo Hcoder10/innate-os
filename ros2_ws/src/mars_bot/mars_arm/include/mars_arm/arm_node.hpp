@@ -69,6 +69,7 @@ class MarsArmNode : public rclcpp::Node {
                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void healthMonitorCallback();
     std::string describeHardwareError(uint8_t status, int servo_id) const;
+    bool autoRecoverServoLocked(int servo_id);
 
     // Head control
     int logicalAngleToEncoder(double logical_angle_deg);
@@ -144,6 +145,9 @@ class MarsArmNode : public rclcpp::Node {
     rclcpp::Publisher<mars_msgs::msg::ArmStatus>::SharedPtr arm_status_pub_;
     rclcpp::TimerBase::SharedPtr health_timer_;
     mars_msgs::msg::ArmStatus last_arm_status_;
+    // Auto-recovery reboot timestamps per servo id (1-7); only touched from
+    // the health timer's callback group, so no lock of its own.
+    std::array<std::deque<std::chrono::steady_clock::time_point>, 8> auto_recovery_history_;
     std::atomic<bool> arm_torque_enabled_{true};
 
     // Control timer
