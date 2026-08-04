@@ -212,7 +212,7 @@ class BrainClientNode(Node):
             self.get_logger(), self.state.registry.primitives or None
         )
         self.state.active_skill_ids = (
-            list(self.state.current_directive.get_skills()) if self.state.current_directive else []
+            list(self.state.current_directive.skill_ids()) if self.state.current_directive else []
         )
         self.gaze.update()
         self.reload.start_watcher()
@@ -447,7 +447,7 @@ class BrainClientNode(Node):
                     "display_name": directive.display_name,
                     "display_icon": directive.display_icon_data,
                     "prompt": directive.get_prompt(),
-                    "skills": directive.get_skills(),
+                    "skills": directive.skill_ids(),
                     "source": getattr(directive, "source", "user"),
                 }
             )

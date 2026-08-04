@@ -33,11 +33,19 @@
  * @property {string} doc
  * @property {string} [docHref]      Optional URL rendered as a link after the doc text.
  * @property {string} [docLinkText]  Label for the docHref link (defaults to "Learn more").
- * @property {number} [min]  Lower bound for numeric knobs (defaults to 0 on sliders).
- * @property {number} [max]  Known hard maximum. When set on a numeric knob the UI renders a slider.
+ * @property {number} [min]  Lowest accepted value. Rejected on save, not silently clamped.
+ * @property {number} [max]  Highest accepted value. Likewise.
+ * @property {boolean} [slider]  Render as a slider rather than a number field. Needs min+max.
+ *   Left off where an exact value matters more than seeing the ceiling — the drive-feel
+ *   knobs are tuned to figures like 0.35 that a stepped slider cannot hit.
  * @property {number} [step] Slider step (defaults to 1).
  * @property {{value: string, label: string}[]} [options]  For a string knob: render a
  *   <select> of these choices instead of a free-text field.
+ * @property {string} [live]  Node to push this knob to with set_parameters after saving,
+ *   so it applies without a restart. Set ONLY where the running node re-reads the
+ *   parameter (mars_app reads its drive knobs every tick). Nodes that copy a parameter
+ *   into a field at construction — bringup's safety clamp, the camera driver, nav2's
+ *   launch-time remap — must be left off, or the UI would claim an effect it did not have.
  */
 
 /** @typedef {{ section: string, note?: string, knobs: Knob[] }} Group */
@@ -62,25 +70,61 @@ export const CATALOG = [
     section: "Driving speed",
     note: "Manual (teleop) and autonomous (nav) are capped independently. Neither is the hard ceiling — the safety clamp below is.",
     knobs: [
-      { path: ["/**", P, "motion_control", "max_speed"], label: "Manual max speed", default: 0.4, type: "float", unit: "m/s", doc: "Top translational speed for teleop / manual driving" },
-      { path: ["/**", P, "motion_control", "max_angular_speed"], label: "Manual max turn", default: 1.0, type: "float", unit: "rad/s", doc: "Top rotational speed for teleop / manual driving" },
-      { path: ["/**", P, "nav", "max_speed"], label: "Autonomous max speed", default: 0.45, type: "float", unit: "m/s", doc: "Top translational speed for autonomous nav2" },
-      { path: ["/**", P, "nav", "max_angular_speed"], label: "Autonomous max turn", default: 0.6, type: "float", unit: "rad/s", doc: "Top rotational speed for autonomous nav2" },
+      { path: ["/**", P, "motion_control", "max_speed"], label: "Manual max speed", default: 0.4, type: "float", unit: "m/s", doc: "Top translational speed for teleop / manual driving", min: 0.05, max: 2.0, live: "/mars_app" },
+      { path: ["/**", P, "motion_control", "max_angular_speed"], label: "Manual max turn", default: 1.0, type: "float", unit: "rad/s", doc: "Top rotational speed for teleop / manual driving", min: 0.05, max: 5.0, live: "/mars_app" },
+      { path: ["/**", P, "nav", "max_speed"], label: "Autonomous max speed", default: 0.45, type: "float", unit: "m/s", doc: "Top translational speed for autonomous nav2", min: 0.05, max: 2.0 },
+      { path: ["/**", P, "nav", "max_angular_speed"], label: "Autonomous max turn", default: 0.6, type: "float", unit: "rad/s", doc: "Top rotational speed for autonomous nav2", min: 0.05, max: 5.0 },
+    ],
+  },
+  {
+    section: "Drive feel (app / webapp joystick)",
+    note: "How quickly the robot approaches the caps above. App teleop only — the USB gamepad has its own smoother. All apply immediately except the tick rate. The jerk limits are derived from these, so there is nothing to keep consistent by hand.",
+    knobs: [
+      { path: ["mars_app", P, "motion_control", "max_acceleration"], label: "Linear acceleration", default: 0.2, type: "float", unit: "m/s²", doc: "How hard it speeds up", min: 0.05, max: 5.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_deceleration"], label: "Linear deceleration", default: 1.2, type: "float", unit: "m/s²", doc: "How hard it slows down; keep above acceleration so stopping stays responsive", min: 0.05, max: 10.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "speed_time_constant"], label: "Linear smoothing lag", default: 0.40, type: "float", unit: "s", doc: "First-order lag on speed; higher is softer with a longer tail", min: 0.02, max: 2.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_angular_acceleration"], label: "Angular acceleration", default: 2.0, type: "float", unit: "rad/s²", doc: "How hard it starts turning", min: 0.05, max: 20.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "max_angular_deceleration"], label: "Angular deceleration", default: 6.0, type: "float", unit: "rad/s²", doc: "How hard it stops turning. A slow yaw ramp keeps turning after you stop asking", min: 0.05, max: 30.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "angular_speed_time_constant"], label: "Angular smoothing lag", default: 0.10, type: "float", unit: "s", doc: "First-order lag on yaw, separate so turning can be tightened without changing straight-line feel", min: 0.02, max: 2.0, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "settle_epsilon"], label: "Stop threshold", default: 0.01, type: "float", unit: "m/s", doc: "Snap straight to zero below this instead of easing down. A hardware floor: the motors are commanded in whole units of 0.01, so anything finer is motion they cannot express, and lingering there makes their speed loop hunt", min: 0.01, max: 0.5, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "input_timeout"], label: "Input timeout", default: 0.4, type: "float", unit: "s", doc: "Silence from the controller before ramping to a stop. Capped at the cmd_vel mux's 0.5 s teleop window — beyond that a dropped link keeps the robot moving on the last command", min: 0.05, max: 0.5, slider: true, step: 0.05, live: "/mars_app" },
+      { path: ["mars_app", P, "motion_control", "dt"], label: "Smoother tick", default: 0.02, type: "float", unit: "s", doc: "Control period (0.02 = 50 Hz). Fixes the timer, so this one needs a restart" },
+    ],
+  },
+  {
+    section: "Heading hold",
+    note: "Resists being turned off-course while driving straight. Does not restore heading lost earlier — you correct your own overshoot.",
+    knobs: [
+      { path: ["mars_app", P, "heading_hold", "gain"], label: "Gain", default: 5.0, type: "float", doc: "Correction per unit of heading error. 0 disables the loop", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "leak"], label: "Memory", default: 0.2, type: "float", unit: "s", doc: "How long it remembers a heading. Longer rejects drift better but takes longer to forget; 0 makes it an absolute heading lock", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "max_correction"], label: "Correction ceiling", default: 1.0, type: "float", unit: "rad/s", doc: "Most it may steer on its own", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "min_speed"], label: "Engage above", default: 0.01, type: "float", unit: "m/s", doc: "Stays off below this speed — heading means little while creeping. A gentle acceleration limit means you cross it later, leaving longer uncorrected at the start of a move", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "straight_yaw"], label: "Straight threshold", default: 0.05, type: "float", unit: "rad/s", doc: "Requested turn rate below which you count as driving straight; above it the hold releases immediately", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "deadband"], label: "Error deadband", default: 0.01, type: "float", unit: "rad", doc: "Heading error to ignore. One unit of the robot's heading resolution, so below this the loop would chatter", live: "/mars_app" },
+      { path: ["mars_app", P, "heading_hold", "slew"], label: "Engage rate", default: 2.0, type: "float", unit: "rad/s²", doc: "How fast the correction itself may change, so engaging and dropping out are not steps", live: "/mars_app" },
+    ],
+  },
+  {
+    section: "Mad Mars mode",
+    note: "Mad Mars is the one speed mode whose accelerations are stated outright rather than scaled from the values above — it wants more linear and less angular than a single multiplier can give.",
+    knobs: [
+      { path: ["mars_app", P, "mad", "max_acceleration"], label: "Linear acceleration", default: 2.0, type: "float", unit: "m/s²", doc: "Replaces the scaled acceleration while Mad Mars is selected", min: 0.05, max: 5.0, live: "/mars_app" },
+      { path: ["mars_app", P, "mad", "max_angular_acceleration"], label: "Angular acceleration", default: 3.0, type: "float", unit: "rad/s²", doc: "Replaces the scaled turn-in rate while Mad Mars is selected", min: 0.05, max: 20.0, live: "/mars_app" },
     ],
   },
   {
     section: "Safety clamp (at the motors)",
     note: "The hardware ceiling every velocity source passes through. Keep these ≥ the driving caps above.",
     knobs: [
-      { path: ["bringup", P, "safety", "max_speed"], label: "Hard max speed", default: 0.4, type: "float", unit: "m/s", doc: "Hard /cmd_vel linear ceiling at the motors" },
+      { path: ["bringup", P, "safety", "max_speed"], label: "Hard max speed", default: 0.8, type: "float", unit: "m/s", doc: "Hard /cmd_vel linear ceiling at the motors" },
       { path: ["bringup", P, "safety", "max_angular_speed"], label: "Hard max turn", default: 2.5, type: "float", unit: "rad/s", doc: "Hard /cmd_vel angular ceiling at the motors" },
     ],
   },
   {
     section: "Battery",
     knobs: [
-      { path: ["bringup", P, "battery", "warning_percentage"], label: "Low-battery warning", default: 20, type: "int", unit: "%", doc: "Low-battery warning level", min: 0, max: 100 },
-      { path: ["bringup", P, "battery", "critical_percentage"], label: "Critical battery", default: 10, type: "int", unit: "%", doc: "Critical-battery level", min: 0, max: 100 },
+      { path: ["bringup", P, "battery", "warning_percentage"], label: "Low-battery warning", default: 20, type: "int", unit: "%", doc: "Low-battery warning level", min: 0, max: 100, slider: true },
+      { path: ["bringup", P, "battery", "critical_percentage"], label: "Critical battery", default: 10, type: "int", unit: "%", doc: "Critical-battery level", min: 0, max: 100, slider: true },
     ],
   },
   {
@@ -93,7 +137,6 @@ export const CATALOG = [
     section: "Arm",
     knobs: [
       { path: ["mars_arm", P, "max_jerk"], label: "Max jerk", default: 150.0, type: "float", unit: "rad/s³", doc: "Trajectory jerk limit (0 disables)" },
-      { path: ["mars_arm", P, "stress_enabled"], label: "Motor stress protection", default: false, type: "bool", doc: "Motor-protection cooldown" },
     ],
   },
   {
@@ -103,12 +146,12 @@ export const CATALOG = [
       { path: ["main_camera_driver", P, "publish_left_width"], label: "Image width", default: 640, type: "int", unit: "px", doc: "Streamed main-camera image width" },
       { path: ["main_camera_driver", P, "publish_left_height"], label: "Image height", default: 480, type: "int", unit: "px", doc: "Streamed main-camera image height" },
       { path: ["main_camera_driver", P, "fps"], label: "Frame rate", default: 30.0, type: "float", unit: "fps", doc: "Camera frame rate" },
-      { path: ["main_camera_driver", P, "jpeg_quality"], label: "JPEG quality", default: 80, type: "int", doc: "JPEG compression quality (1–100)", min: 1, max: 100 },
+      { path: ["main_camera_driver", P, "jpeg_quality"], label: "JPEG quality", default: 80, type: "int", doc: "JPEG compression quality (1–100)", min: 1, max: 100, slider: true },
       { path: ["main_camera_driver", P, "auto_exposure_mode"], label: "Auto-exposure mode", default: 0, type: "int", doc: "0 = hardware AE, 1 = custom PID, 2 = manual" },
       { path: ["main_camera_driver", P, "exposure"], label: "Manual exposure", default: -1, type: "int", doc: "Manual exposure time (-1 = keep current; 1–10000)" },
       { path: ["main_camera_driver", P, "gain"], label: "Manual gain", default: -1, type: "int", doc: "Manual gain (-1 = keep current; 0–255)" },
-      { path: ["main_camera_driver", P, "default_gain"], label: "Auto-exposure gain", default: 110, type: "int", doc: "Gain used in auto-exposure mode (0–255)", min: 0, max: 255 },
-      { path: ["main_camera_driver", P, "target_brightness"], label: "Target brightness", default: 128.0, type: "float", doc: "Auto-exposure target brightness (0–255)", min: 0, max: 255, step: 1 },
+      { path: ["main_camera_driver", P, "default_gain"], label: "Auto-exposure gain", default: 110, type: "int", doc: "Gain used in auto-exposure mode (0–255)", min: 0, max: 255, slider: true },
+      { path: ["main_camera_driver", P, "target_brightness"], label: "Target brightness", default: 128.0, type: "float", doc: "Auto-exposure target brightness (0–255)", min: 0, max: 255, slider: true, step: 1 },
       { path: ["main_camera_driver", P, "ae_kp"], label: "Auto-exposure Kp", default: 0.8, type: "float", doc: "Auto-exposure proportional gain" },
     ],
   },
@@ -167,14 +210,6 @@ export const CATALOG = [
       { path: ["uninavid_node", P, "consecutive_stops_to_complete"], label: "Stops to complete", default: 30, type: "int", doc: "Stop predictions in a row before \"reached\"" },
       { path: ["uninavid_node", P, "cmd_publish_hz"], label: "Command publish rate", default: 50.0, type: "float", unit: "Hz", doc: "cmd_vel republish rate during a move" },
       { path: ["uninavid_node", P, "poll_period_sec"], label: "Poll period", default: 0.02, type: "float", unit: "s", doc: "Action-loop poll interval" },
-    ],
-  },
-  {
-    section: "Extra agent / skill directories",
-    note: "Scan agents/skills from extra absolute paths, on top of the built-in workspace dirs. Paths are scanned in place (never created); in a Docker/sim setup they must also be mounted into the container.",
-    knobs: [
-      { path: ["script_paths", P, "extra_agent_dirs"], label: "Extra agent dirs", default: [], type: "list", doc: "Absolute paths scanned for agents" },
-      { path: ["script_paths", P, "extra_skill_dirs"], label: "Extra skill dirs", default: [], type: "list", doc: "Absolute paths scanned for skills" },
     ],
   },
 ];

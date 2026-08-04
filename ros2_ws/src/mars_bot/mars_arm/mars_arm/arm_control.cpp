@@ -30,12 +30,6 @@ void MarsArmNode::controlTimerCallback() {
         }
         ts[3] = std::chrono::steady_clock::now();
 
-        // ========== MOTOR STRESS PROTECTION ==========
-        double dt = 1.0 / control_frequency_;
-        if (stress_enabled_) {
-            updateMotorStress(dt, loads);
-        }
-
         // ========== PUBLISH ARM STATE ==========
         std::vector<double> positions_rad;
         for (int pos : positions) {
@@ -114,6 +108,36 @@ void MarsArmNode::controlTimerCallback() {
         // SCHEDULED mode: interpolate near/far by arm extension (gravity compensation)
         if (++gs_cycle_counter_ >= kGainScheduleInterval) {
             gs_cycle_counter_ = 0;
+
+            // Decay the post-trajectory stiff hold once the arm has been quiet
+            // (see last_trajectory_end_): holding scheduled gains indefinitely
+            // ran joint 2 up to 70 C. Never while a trajectory is executing —
+            // its end stamp is stale mid-flight, and decaying then flipped a
+            // carry move onto soft gains 3 ms in and shook the object loose.
+            // And only while the shoulder/elbow bear ~no load: soft gains under
+            // real load sag the arm, and that jolt at the end of a pick shook
+            // the carried object out of the gripper. A loaded pose (carrying)
+            // stays stiff instead; the temperature warning covers the rare
+            // carry-for-hours case.
+            const auto trajectory_end = last_trajectory_end_.load();
+            if (gain_mode_ == GainMode::SCHEDULED && !trajectory_executing_ &&
+                trajectory_end.time_since_epoch().count() != 0) {
+                double idle_s =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - trajectory_end).count();
+                bool unloaded =
+                    loads.size() > 2 && std::abs(loads[1]) < kDecayMaxLoad && std::abs(loads[2]) < kDecayMaxLoad;
+                if (idle_s > kScheduledHoldTimeoutS && unloaded) {
+                    gain_mode_ = GainMode::TELEOP;
+                    RCLCPP_INFO(this->get_logger(), "Gain mode -> TELEOP (idle %.1fs, arm unloaded)", idle_s);
+                } else if (idle_s > kScheduledHoldTimeoutS && loads.size() <= 2) {
+                    // A short state read leaves the load unknown; staying stiff is
+                    // the safe call, but say so — silently holding scheduled gains
+                    // is exactly what ran joint 2 up to 70 C.
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 30000,
+                                         "Idle gain decay blocked: no shoulder/elbow load reading — holding "
+                                         "scheduled (stiff) gains");
+                }
+            }
 
             bool gs_changed = false;
             std::vector<std::tuple<int, int, int, int, int, int>> gs_pid_data;
@@ -386,68 +410,6 @@ std::vector<int> MarsArmNode::applyLimitsAndConvertToEncoder(std::vector<double>
         command_encoder.push_back(static_cast<int>((pos / (2 * M_PI)) * 4096 + 2048));
     }
     return command_encoder;
-}
-
-void MarsArmNode::updateMotorStress(double dt, const std::vector<int>& loads) {
-    auto now = std::chrono::steady_clock::now();
-
-    // Only track arm joints (0-5), not head (6)
-    for (size_t j = 0; j < 6 && j < loads.size(); ++j) {
-        auto& tracker = stress_trackers_[j];
-
-        // If in cooldown, check if it's time to re-enable
-        if (tracker.in_cooldown) {
-            if (now >= tracker.cooldown_until) {
-                tracker.in_cooldown = false;
-                tracker.score = 0.0;
-
-                // Re-enable torque on this servo
-                int servo_id = joint_configs_[j].servo_id;
-                RCLCPP_WARN(this->get_logger(), "Stress cooldown ended for joint %zu (servo %d) — re-enabling torque",
-                            j + 1, servo_id);
-                try {
-                    dynamixel_->enableTorque(servo_id);
-                } catch (const std::exception& e) {
-                    RCLCPP_ERROR(this->get_logger(), "Failed to re-enable torque on servo %d after cooldown: %s",
-                                 servo_id, e.what());
-                }
-            }
-            continue;  // skip scoring while in cooldown
-        }
-
-        // Leaky integrator: score += (A * |load| - C) * dt, clamped >= 0
-        // loads[j]: mA for x330, 0.1% for x430
-        double load_abs = std::abs(static_cast<double>(loads[j]));
-        double stress_delta = (stress_multiplier_ * load_abs - stress_leak_) * dt;
-        tracker.score = std::max(0.0, tracker.score + stress_delta);
-
-        // Check threshold
-        if (tracker.score >= stress_threshold_) {
-            int servo_id = joint_configs_[j].servo_id;
-            RCLCPP_WARN(
-                this->get_logger(),
-                "Stress threshold exceeded for joint %zu (servo %d): score=%.1f >= %.1f — disabling torque for %.1fs",
-                j + 1, servo_id, tracker.score, stress_threshold_, stress_cooldown_sec_);
-
-            tracker.in_cooldown = true;
-            tracker.cooldown_until = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                               std::chrono::duration<double>(stress_cooldown_sec_));
-
-            try {
-                dynamixel_->disableTorque(servo_id);
-            } catch (const std::exception& e) {
-                RCLCPP_ERROR(this->get_logger(), "Failed to disable torque on servo %d for stress cooldown: %s",
-                             servo_id, e.what());
-            }
-        }
-    }
-
-    // Periodic log of stress scores
-    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                         "StressScores: J1=%.1f J2=%.1f J3=%.1f J4=%.1f J5=%.1f J6=%.1f (threshold=%.1f)",
-                         stress_trackers_[0].score, stress_trackers_[1].score, stress_trackers_[2].score,
-                         stress_trackers_[3].score, stress_trackers_[4].score, stress_trackers_[5].score,
-                         stress_threshold_);
 }
 
 }  // namespace mars_arm

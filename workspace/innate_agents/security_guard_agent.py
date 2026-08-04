@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agents.types import Agent
+from innate_skills.email.send_email import SendEmail
+from innate_skills.navigate_to_position import NavigateToPosition
+from inputs.micro_input import MicroInput
+
+from brain_client.agents.types import Agent, InputRef, SkillRef
 
 
 class SecurityGuardAgent(Agent):
@@ -21,16 +25,13 @@ class SecurityGuardAgent(Agent):
     def display_icon(self) -> str:
         return "assets/security_guard.png"
 
-    def get_skills(self) -> list[str]:
-        """Return the list of skill IDs this directive can use"""
-        return [
-            "innate-os/navigate_to_position",
-            "innate-os/send_email",
-        ]
+    def get_skills(self) -> list[SkillRef]:
+        """Return the skills this directive can use"""
+        return [NavigateToPosition, SendEmail]
 
-    def get_inputs(self) -> list[str]:
+    def get_inputs(self) -> list[InputRef]:
         """Enable microphone input to hear user"""
-        return ["micro"]
+        return [MicroInput]
 
     def get_prompt(self) -> str:
         return """You are a security guard robot tasked with patrolling the house to detect potential intruders. You have a vigilant and professional personality.

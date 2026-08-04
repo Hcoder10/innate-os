@@ -32,6 +32,52 @@ Run `innate` with no arguments to print the current system status (version, mode
 | `innate volume` | Get or set speaker volume |
 | `innate --help` | Show all commands |
 
+## Writing Skills
+
+Skills live in `workspace/` (see [workspace/README.md](workspace/README.md)). A skill is a
+`Skill` subclass; everything it consumes is declared with a type annotation.
+
+### Never `time.sleep` — always `self.sleep`
+
+**In skill code, use `self.sleep(seconds)`. Never `time.sleep(seconds)`.**
+
+`self.sleep` wakes and raises `SkillCancelled` the moment a Stop lands; `time.sleep` blocks
+to completion, so a skill that uses it keeps running (and keeps the robot moving) after the
+user pressed Stop. Sleeping is the only cancel point a loop needs — write the loop as if
+cancel didn't exist and let the framework halt the base and report `CANCELLED`.
+
+```python
+while traveled < target:
+    self.mobility.send_cmd_vel(linear_x=velocity, duration=0.5)
+    self.sleep(0.1)          # ✅ cancellable
+    # time.sleep(0.1)        # ❌ Stop is ignored until the sleep finishes
+```
+
+`time` itself is fine for *measuring* — `time.time()` / `time.monotonic()` for deadlines and
+elapsed checks. The rule is only about blocking.
+
+Related cancel-aware helpers, all of which raise `SkillCancelled` too:
+
+| Call | Use for |
+|---|---|
+| `self.sleep(seconds)` | Any pause in skill code |
+| `self.wait_for(read, timeout)` | Block until a reader returns non-`None` |
+| `self.check_cancelled()` | A checkpoint with no sleep (e.g. before an irreversible commit) |
+| `self.cancelled` | Read the latch without raising |
+
+Cleanup belongs in `try/finally` inside `execute()`. `self.on_cancel(hook)` is only for
+forwarding a cancel to an external action goal — braking the base is automatic.
+
+### The one exception: committed, non-cancellable sections
+
+Teardown and already-committed physical actions must **not** be cancellable, so they use
+`time.sleep` on purpose. Once `pick_any_object` closes the gripper, a cancel must not unwind
+mid-grip and drop the object over the floor, so `_close_twist_lift` sleeps with `time.sleep`
+and the run finishes carrying the object home.
+
+If you write such a section, say so in a comment — otherwise the next reader "fixes" it back
+to `self.sleep` and reintroduces the bug. Everywhere else, `self.sleep`.
+
 ## Key ROS Packages
 
 | Package | Role |

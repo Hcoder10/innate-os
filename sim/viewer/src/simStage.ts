@@ -5,6 +5,7 @@
 // context and blitted out.
 
 import { SimScene, type CameraView } from "./scene";
+import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
 // One PiP tile refresh per N rendered frames, round-robin: ~30fps per tile
@@ -61,26 +62,41 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(chips);
 
-  // Loading overlay: spinner + staged label instead of a black canvas until
-  // assets and the first world state arrive.
+  // Loading indicator: a compact pill holding a progress bar, centered just
+  // below the camera thumbnail strip (webapp's .cam-strip pins tiles at the top
+  // edge, ~14px + 120px tall) so the two don't overlap. The canvas shows
+  // immediately underneath (robot first, then rooms stream in), not a full
+  // black block. Fades out when the download finishes. pointer-events:none so
+  // it never shields the stage; the bar re-enables them for its hover.
   const loading = document.createElement("div");
   loading.style.cssText =
-    "position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;" +
-    "justify-content:center;gap:14px;background:#0b0e11;transition:opacity .45s ease;";
-  const spinner = document.createElement("div");
-  spinner.style.cssText =
-    "width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.14);" +
-    "border-top-color:#7dffc4;animation:sim-stage-spin .9s linear infinite;";
-  const spinStyle = document.createElement("style");
-  spinStyle.textContent = "@keyframes sim-stage-spin{to{transform:rotate(1turn)}}";
+    "position:absolute;top:150px;left:50%;transform:translateX(-50%);z-index:6;pointer-events:none;" +
+    "display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;" +
+    "background:rgba(0,0,0,.42);transition:opacity .5s ease;";
+  const bar = document.createElement("div");
+  bar.style.cssText =
+    "width:min(280px,60%);height:6px;border-radius:999px;background:rgba(255,255,255,.12);" +
+    "overflow:hidden;transition:background .2s;pointer-events:auto;";
+  const barFill = document.createElement("div");
+  barFill.style.cssText = "height:100%;width:0%;background:#7dffc4;border-radius:999px;transition:width .3s ease;";
+  bar.appendChild(barFill);
+  bar.onmouseenter = () => (bar.style.background = "rgba(255,255,255,.22)");
+  bar.onmouseleave = () => (bar.style.background = "rgba(255,255,255,.12)");
   const loadingLabel = document.createElement("div");
   loadingLabel.style.cssText = "color:rgba(255,255,255,.6);font:500 13px system-ui;";
-  loading.append(spinStyle, spinner, loadingLabel);
+  const readout = document.createElement("div");
+  readout.style.cssText = "color:rgba(255,255,255,.35);font:500 11px ui-monospace,monospace;";
+  loading.append(bar, loadingLabel, readout);
   wrap.appendChild(loading);
 
   const setLoading = (text: string) => (loadingLabel.textContent = text);
+  const mb = (bytes: number) => (bytes / 1e6).toFixed(1);
+  const setProgress = (loaded: number, total: number) => {
+    barFill.style.width = `${total > 0 ? Math.min(100, (loaded / total) * 100) : 0}%`;
+    readout.textContent = `${mb(loaded)} / ${mb(total)} MB`;
+  };
   const failLoading = (text: string) => {
-    spinner.style.display = "none";
+    barFill.style.background = "#ff9f9f";
     loadingLabel.style.color = "#ff9f9f";
     loadingLabel.textContent = text;
   };
@@ -93,12 +109,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     // this fallback the invisible overlay stayed and ate every click.
     setTimeout(() => loading.remove(), 700);
   };
-  // Hide only when the session reports frames actually flowing.
+  // The scrim fades when the download finishes (see the load sequence below);
+  // here we only surface load failures.
   const unsubscribe = session.onChange((s) => {
-    if (s.status === "streaming") {
-      hideLoading();
-      unsubscribe();
-    } else if (s.status === "error") {
+    if (s.status === "error") {
       failLoading("simulation view failed to load — see the browser console");
       unsubscribe();
     }
@@ -189,17 +203,41 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     }
   };
 
+  // One shared bounded queue drives real byte progress for the whole load;
+  // seed an estimate so the bar has a width before Content-Lengths arrive
+  // (apartment ~35 MB + robot ~7 MB), refined as real sizes land.
+  const queue = new LoadQueue(2, ({ loaded, total }) => setProgress(loaded, total));
+  queue.setEstimatedTotal(42e6);
   (async () => {
     try {
-      setLoading("loading apartment…");
-      await scene.loadApartment();
-      setLoading("loading robot…");
-      await scene.loadRobot();
-      setLoading("connecting to the world…");
+      // Start rendering + accept poses right away: the worldstate socket is
+      // already connecting (session.start), so the robot's placeholder box
+      // snaps to its real spawn pose while the STLs stream, then the mesh
+      // replaces it. Bail at each await if the stage was destroyed mid-load
+      // (SPA remount) -- else we'd mutate a disposed scene.
       session.stageReady();
-      if (!disposed) raf = requestAnimationFrame(loop);
+      raf = requestAnimationFrame(loop);
+      // The apartment manifest first (a few KB, unqueued): it draws every
+      // room's placeholder box and frames the camera on them, so the first
+      // frames show the apartment's wireframe layout rather than an empty
+      // void while the meshes are still being fetched.
+      setLoading("loading layout...");
+      const layout = await scene.loadApartmentLayout();
+      if (disposed) return;
+      scene.frameLayout(layout);
+      setLoading("loading robot and apartment...");
+      // Await once: the robot's STLs are now in the shared queue. Enqueue the
+      // apartment rooms after, so they land behind the robot (deterministic
+      // robot-first, no timing guess).
+      const { done: robotDone } = await scene.loadRobot(queue);
+      if (disposed) return;
+      const apartment = scene.streamApartment(queue, layout);
+      // Await twice: the rest of both loads.
+      await Promise.all([robotDone, apartment]);
+      if (disposed) return;
+      hideLoading();
     } catch (err) {
-      session.stageError(err);
+      if (!disposed) session.stageError(err);
     }
   })();
 
@@ -207,6 +245,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     audioEl: null, // sim has no robot mic; the pages skip the mic toggle in sim mode
     destroy() {
       disposed = true;
+      queue.cancel(); // stop pulling new downloads for a stage that's gone
       unsubscribe();
       cancelAnimationFrame(raf);
       observer.disconnect();

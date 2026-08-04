@@ -1328,6 +1328,17 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
                 if not (member.isfile() or member.isdir()):
                     raise StackError(f"unsupported member type in asset bundle: {member.name}")
             tar.extractall(staging)
+        # The published tarball normalises every member to mtime 0 so its content
+        # hash -- and thus the asset tag -- is reproducible (tools/publish_assets.py),
+        # leaving ~all 1300+ files at mtime 0 on disk, which collapses the webapp's
+        # mtime+size ETag to size-only. Stamp one install time so the next bundle
+        # (extracted the same way) flips 0 -> non-zero and the ETag busts.
+        installed_at = time.time()
+        try:
+            for extracted in staging.rglob("*"):
+                os.utime(extracted, (installed_at, installed_at))
+        except OSError as exc:
+            raise StackError(f"Failed to stamp sim asset mtimes under {staging}: {exc}") from exc
         for unit in SIM_ASSET_UNITS:
             src = staging / unit
             if not src.is_dir():
@@ -1381,20 +1392,15 @@ def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False
 
 
 def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: bool) -> None:
-    """INNATE_SIM_VIEWER_DEV=1: rebuild dist-lib when viewer sources are
-    newer than it (the edit-run loop for sim/viewer developers)."""
+    """INNATE_SIM_VIEWER_DEV=1: rebuild dist-lib when viewer sources are newer
+    than it, and (re)generate the per-room apartment split -- the edit-run loop
+    for sim/viewer developers."""
     npm = shutil.which("npm")
     if npm is None:
         raise StackError(
             "INNATE_SIM_VIEWER_DEV=1 needs npm on PATH (install Node.js), "
             "or unset it to use the prebuilt viewer bundle."
         )
-    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
-    sources += sorted((viewer / "src").rglob("*.ts"))
-    if bundle.exists():
-        newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
-        if bundle.stat().st_mtime >= newest_src:
-            return
     if not (viewer / "node_modules").is_dir():
         if offline:
             warn("Offline and sim/viewer/node_modules is missing -- skipping the viewer bundle build.")
@@ -1406,14 +1412,43 @@ def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: boo
             log_path=VIEWER_BUILD_LOG_PATH,
             failure_message="npm ci failed for sim/viewer.",
         )
-    log("Building the sim viewer bundle (dist-lib)...")
-    run_logged_with_heartbeat(
-        [npm, "run", "build:lib"],
-        cwd=viewer,
-        log_path=VIEWER_BUILD_LOG_PATH,
-        failure_message="Sim viewer bundle build failed (npm run build:lib).",
-        progress_message="Still building the sim viewer bundle.",
-    )
+    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
+    sources += sorted((viewer / "src").rglob("*.ts"))
+    newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
+    if not bundle.exists() or bundle.stat().st_mtime < newest_src:
+        log("Building the sim viewer bundle (dist-lib)...")
+        run_logged_with_heartbeat(
+            [npm, "run", "build:lib"],
+            cwd=viewer,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message="Sim viewer bundle build failed (npm run build:lib).",
+            progress_message="Still building the sim viewer bundle.",
+        )
+    _ensure_apartment_split(viewer, npm)
+
+
+def _ensure_apartment_split(viewer: Path, npm: str) -> None:
+    """Generate the per-room apartment split + manifest the webapp streams
+    (scene.ts loadApartmentLayout). `up` re-extracts public/models from the asset
+    bundle, wiping the split, so regenerate whenever the manifest is missing or
+    older than the glb. Non-fatal: without it the 3D view just falls back to the
+    single-file apartment."""
+    glb = viewer / "public" / "models" / "appartement.glb"
+    manifest = viewer / "public" / "models" / "apartment" / "manifest.json"
+    if not glb.is_file():
+        return
+    if manifest.is_file() and manifest.stat().st_mtime >= glb.stat().st_mtime:
+        return
+    log("Splitting the apartment into per-room assets...")
+    try:
+        run_logged(
+            [npm, "run", "split:apartment"],
+            cwd=viewer,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message="apartment split failed.",
+        )
+    except StackError:
+        warn("Apartment split failed -- the 3D view uses the single-file apartment. See the viewer build log.")
 
 
 def _recv_exact(conn: socket.socket, n: int) -> bytes | None:

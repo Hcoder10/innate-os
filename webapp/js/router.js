@@ -17,6 +17,7 @@
 
 import { ros } from "./rosClient.js";
 import { initShell } from "./shell.js";
+import { getConfig } from "./config.js";
 
 /**
  * @typedef {{ destroy: () => void }} PageView
@@ -68,9 +69,7 @@ const shell = initShell(navigate);
 // a page whose services have no sim backing.
 const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "brain", "nav", "logging", "settings"]);
 /** @type {Promise<{simControls?: boolean}>} */
-const configPromise = fetch("/config.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : {}))
-  .catch(() => ({}));
+const configPromise = getConfig();
 
 /**
  * Tear down the current page and mount `route`. Pages read their own query
@@ -101,7 +100,23 @@ async function render(route) {
     }
   } catch (err) {
     console.error(`[router] failed to load ${route.path}:`, err);
+  } finally {
+    // The first page has now built its DOM (a sim stage brings up its own
+    // loading scrim here), so hand off from the boot splash. In `finally` so a
+    // failed first mount still clears it rather than stranding the splash.
+    dismissBootSplash();
   }
+}
+
+// Boot splash lives in index.html so it paints before this module's graph
+// loads; drop it once the first page mounts. Fade then remove; a fallback
+// timer covers a missed transitionend (reduced-motion, pre-paint start).
+function dismissBootSplash() {
+  const splash = document.getElementById("boot-splash");
+  if (!splash) return;
+  splash.classList.add("is-leaving");
+  splash.addEventListener("transitionend", () => splash.remove(), { once: true });
+  setTimeout(() => splash.remove(), 600);
 }
 
 /**

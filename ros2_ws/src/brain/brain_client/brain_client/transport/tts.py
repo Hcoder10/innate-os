@@ -14,10 +14,9 @@ import threading
 import time
 from typing import Any
 
+from brain_client.common.logging import UniversalLogger
 from innate_proxy import ProxyClient
 from innate_proxy.adapters.cartesia import ProxyCartesiaClient
-
-from brain_client.common.logging import UniversalLogger
 
 
 class TTSHandler:

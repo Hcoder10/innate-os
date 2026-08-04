@@ -6,6 +6,7 @@
 
 import { ros } from "./rosClient.js";
 import { initTtsAudio } from "./ttsAudio.js";
+import { getConfig } from "./config.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
 import { maybeShowAppPromo } from "./appPromo.js";
@@ -213,11 +214,7 @@ export function initShell(navigate) {
 async function applySimSectionFilter(nav) {
   /** @type {any} */
   let config;
-  try {
-    config = await fetch("/config.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : {}));
-  } catch {
-    return; // no config → assume real robot, keep every section
-  }
+  config = await getConfig(); // {} on any failure → assume real robot, keep every section
   if (!config?.simControls) return;
   for (const link of nav.querySelectorAll(".rail-link")) {
     const key = /** @type {HTMLElement} */ (link).dataset.section ?? "";

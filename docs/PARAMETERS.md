@@ -46,7 +46,7 @@ To tune something, **uncomment a whole stanza** (the `node:`, `ros__parameters:`
 | `joystick_controller` `joystick` | `slow_mode_factor` | `0.25` |
 | `bringup` `battery` | `warning_percentage` / `critical_percentage` | `20` / `10` |
 | `bringup` `safety` (hard `/cmd_vel` clamp) | `max_speed` / `max_angular_speed` | `0.4` / `2.5` |
-| `mars_arm` | `max_jerk` / `stress_enabled` | `150.0` / `false` |
+| `mars_arm` | `max_jerk` | `150.0` |
 | `main_camera_driver` (hardware) | `width/height` (capture), `publish_stereo_width/height`, `publish_left_width/height` (published size; downstream follows it automatically), `fps`, `jpeg_quality`, `auto_exposure_mode`, `exposure`, `gain`, `default_gain`, `target_brightness`, `ae_kp` | see template |
 | `arm_camera_driver` (hardware) | `width/height` (capture), `fps` | see template |
 | `webrtc_streamer` (teleop stream) | `main_width/main_height`, `arm_width/arm_height` (encode size per camera) | see template |
@@ -54,7 +54,6 @@ To tune something, **uncomment a whole stanza** (the `node:`, `ros__parameters:`
 | `navigation_grid_localizer` | `max_score_threshold`, `max_range`, `auto_localize_timeout` | `0.3`, `12.0`, `30.0` |
 | `brain_client_node` | `cartesia_voice_id` (TTS voice), `vertical_fov`, `pose_image_interval`, `scan_stale_after_sec`, `send_depth`, `send_arm_camera_image`, `log_everything`, STT/transcribe models | see template |
 | `uninavid_node` (VLN) | `forward_speed`, `turn_speed`, `cmd_duration_sec`, `image_send_hz`, `consecutive_stops_to_complete`, `cmd_publish_hz`, `poll_period_sec` | `0.3` / `0.8`, rest see template |
-| `script_paths` | `extra_agent_dirs`, `extra_skill_dirs` (extra dirs scanned on top of `workspace/`) | `[]` |
 
 > **Driving caps vs the safety clamp.** `motion_control` is the *driving feel* cap: the
 > joystick, keyboard, and app drive joystick all ship the same `0.4` m/s / `1.0` rad/s

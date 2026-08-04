@@ -1445,6 +1445,8 @@ def _cached_skill_contracts():
 
 
 def _skill_status(skill_info):
+    if getattr(skill_info, "type", "") == "broken":
+        return "error"
     return "training" if getattr(skill_info, "in_training", False) else "ready"
 
 

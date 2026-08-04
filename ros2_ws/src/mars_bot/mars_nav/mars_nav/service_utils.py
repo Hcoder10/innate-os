@@ -101,6 +101,14 @@ def transition_node(service_clients: dict, logger, node_name: str, target_state:
             logger.warning(f"Failed to get state for {node_name}")
             return False
 
+        # A node mid-transition (CONFIGURING/ACTIVATING/...) can't accept a
+        # new change_state request, and its transient-state id would compare
+        # above every primary state and silently fall through as success.
+        # Report failure so the caller retries once the node has settled.
+        if current_state >= State.TRANSITION_STATE_CONFIGURING:
+            logger.warning(f"{node_name} is mid-transition (state {current_state}); cannot transition it now")
+            return False
+
         # Already at target state
         if current_state == target_state:
             logger.debug(f"{node_name} already at target state {target_state}")

@@ -26,12 +26,17 @@ AVAILABLE_SKILLS_QOS = QoSProfile(
 
 
 def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
-    """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message."""
+    """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message.
+
+    Skills that failed to load are on the roster for the UI only — they are
+    left out of the registry so the brain never declares one as a tool.
+    """
     metadata = [
         {
             "id": s.id,
             "name": s.name,
             "type": s.type,
+            "group": s.group,
             "guidelines": s.guidelines,
             "guidelines_when_running": s.guidelines_when_running,
             "inputs": json.loads(s.inputs_json) if s.inputs_json else {},
@@ -41,6 +46,7 @@ def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRe
             "wheeled": s.wheeled,
         }
         for s in msg.skills
+        if not s.load_error
     ]
     return SkillRegistry.from_metadata(metadata, on_duplicate=on_duplicate)
 
@@ -64,6 +70,7 @@ class SkillRoster:
                 s.id,
                 s.name,
                 s.type,
+                s.group,
                 s.guidelines,
                 s.guidelines_when_running,
                 s.inputs_json,
@@ -71,6 +78,7 @@ class SkillRoster:
                 s.episode_count,
                 s.directory,
                 s.wheeled,
+                s.load_error,
             )
             for s in msg.skills
         )
@@ -99,7 +107,7 @@ class SkillRoster:
         current_skill_ids = (
             self._state.active_skill_ids
             if self._state.active_skill_ids is not None
-            else list(self._state.current_directive.get_skills())
+            else list(self._state.current_directive.skill_ids())
         )
         current_skill_set = set(current_skill_ids)
         return [skill_id for skill_id in self.available_skill_ids() if skill_id in current_skill_set]

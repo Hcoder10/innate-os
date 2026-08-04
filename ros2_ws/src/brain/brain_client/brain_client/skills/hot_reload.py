@@ -156,7 +156,7 @@ class ReloadCoordinator:
                 self._logger, self._state.registry.primitives
             )
             self._state.active_skill_ids = (
-                list(self._state.current_directive.get_skills()) if self._state.current_directive else []
+                list(self._state.current_directive.skill_ids()) if self._state.current_directive else []
             )
             self._logger.info(
                 f"[BrainClient] Reloaded {len(self._state.registry.primitives)} primitives, "
@@ -180,10 +180,14 @@ class ReloadCoordinator:
         waiter = rclpy.create_node("brain_client_reload_skills_waiter")
         executor = SingleThreadedExecutor()
         try:
+
+            def on_skills(msg: AvailableSkills) -> None:
+                received.setdefault("registry", registry_from_skills_msg(msg))
+
             waiter.create_subscription(
                 AvailableSkills,
                 "/brain/available_skills",
-                lambda msg: received.setdefault("registry", registry_from_skills_msg(msg)),
+                on_skills,
                 AVAILABLE_SKILLS_QOS,
             )
             executor.add_node(waiter)
@@ -218,9 +222,9 @@ class ReloadCoordinator:
                 reloaded.append(agent_name)
                 if self._state.current_directive and self._state.current_directive.id == agent_name:
                     self._state.current_directive = agent_instance
-                    previous_skill_ids = set(self._state.active_skill_ids or agent_instance.get_skills())
+                    previous_skill_ids = set(self._state.active_skill_ids or agent_instance.skill_ids())
                     self._state.active_skill_ids = [
-                        skill_id for skill_id in agent_instance.get_skills() if skill_id in previous_skill_ids
+                        skill_id for skill_id in agent_instance.skill_ids() if skill_id in previous_skill_ids
                     ]
                     self._logger.info(f"Updated current directive: {agent_name}")
                 self._logger.info(f"Reloaded agent: {agent_name} [source={agent_instance.source}]")

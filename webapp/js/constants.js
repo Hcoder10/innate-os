@@ -6,9 +6,29 @@
 
 export const ROSBRIDGE_PORT = 9090;
 
-// Drive: {x, y} in [-1, 1], y > 0 = forward. The robot's mars_app node maps
-// every /joystick message straight to one /cmd_vel publish.
+// Drive: {x, y} in [-1, 1], y > 0 = forward. The robot's mars_app node shapes
+// each message into a velocity *target*; a 50 Hz smoother there ramps
+// /cmd_vel_teleop toward it under acceleration limits, so what we publish is a
+// request, not the twist the motors see.
 export const JOYSTICK_TOPIC = "/joystick";
+
+// ---- Manual-drive speed mode ----------------------------------------------
+// A multiplier on the robot's configured motion_control speed caps, held as a
+// live ROS parameter on mars_app (rcl_interfaces/srv/SetParameters, PARAMETER_DOUBLE).
+// It scales the caps rather than replacing them, so a client can only ever slow
+// the robot down, never drive it past what settings.yaml allows.
+export const APP_CONTROL_NODE = "/mars_app";
+export const SET_PARAMETERS_SERVICE = `${APP_CONTROL_NODE}/set_parameters`;
+export const SPEED_SCALE_PARAM = "motion_control.speed_scale";
+export const PARAMETER_DOUBLE = 3;
+// The picker's presets. `scale` must match the mobile app's table so the two
+// clients label the same robot state identically — the value is global, and
+// whichever client changed it last wins.
+export const SPEED_MODES = [
+  { id: "slow", label: "Slow", scale: 0.35 },
+  { id: "medium", label: "Med", scale: 0.65 },
+  { id: "fast", label: "Fast", scale: 1.0 },
+];
 
 // Head tilt: std_msgs/Int32 degrees in [HEAD_MIN_DEG, HEAD_MAX_DEG].
 export const HEAD_SET_POSITION_TOPIC = "/mars/head/set_position";
@@ -263,10 +283,13 @@ export const GET_RUN_LOGS_SERVICE = "/innate_training/get_run_logs";
 export const BRAIN_RELOAD_SERVICE = "/brain/reload";
 
 // Friendly subpane names per tmux window — index = pane (0 = left, 1 = right).
-// Mirrors innate-os/scripts/launch_ros_in_tmux.sh ROS_COMMAND_GROUPS; keep the
-// two in sync. Labels the Logging page's subpane picker by launch file.
+// Robot windows mirror innate-os/scripts/launch_ros_in_tmux.sh ROS_COMMAND_GROUPS;
+// sim windows mirror innate-os/scripts/launch_sim_in_tmux.zsh. Keep both in sync
+// so the Logging page labels each subpane by launch file (in the sim and on the
+// robot alike) instead of falling back to the raw "window.pane" id.
 /** @type {Record<string, string[]>} */
 export const PANE_LAUNCH_LABELS = {
+  // Robot (launch_ros_in_tmux.sh)
   "app-bringup": ["app.launch.py", "mars_bringup.launch.py"],
   "arm-recorder": ["arm.launch.py", "recorder.launch.py"],
   "brain-nav": ["brain_client.launch.py", "mode_manager.launch.py"],
@@ -275,6 +298,16 @@ export const PANE_LAUNCH_LABELS = {
   "ik-logger": ["ik.launch.py", "logger.launch.py"],
   "training-uninavid": ["training_node", "uninavid.launch.py"],
   "console": ["console.launch.py", "dataset_encoder.launch.py"],
+  // Sim (launch_sim_in_tmux.zsh) — different window split, .sim launch variants
+  "zenoh": ["rmw_zenohd"],
+  "rosbridge-app": ["sim_rosbridge.launch.py", "app.sim.launch.py"],
+  "sim-driver": ["sim_driver.launch.py"],
+  "nav-brain": ["mode_manager.launch.py", "brain_client.sim.launch.py"],
+  "behavior": ["behavior.launch.py"],
+  "arm-ik": ["ik.py"],
+  "vision-nav": ["uninavid.launch.py"],
+  "console-webapp": ["console.launch.py", "https_server.py"],
+  "foxglove": ["foxglove_bridge_launch.xml"],
 };
 
 // ---- Camera Calibration page ----------------------------------------------

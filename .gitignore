@@ -93,12 +93,17 @@ data/
 # Directories are recreated at runtime by ensure_user_directories().
 workspace/custom_agents/
 workspace/custom_skills/
+# Regenerated from the skills on this robot on every change; per-machine, not source.
+workspace/physical_skills/
 
 # Runtime start_training resume markers (innate_training_node).
 workspace/.training_pending/
 
 # Per-skill persistent key-value stores (Skill.storage, skills/types.py).
 workspace/skill_storage/
+
+# Generated on-robot by the skill catalog (typed physical-skill refs).
+workspace/physical_skills/
 
 # recordings folder
 recordings/
@@ -116,7 +121,6 @@ data/.last_mode
 arm_wave/
 
 .vscode
-ros2_ws/src/brain/brain_client/innate/skills.pyi
 workspace/innate_skills/**/*.engine
 
 node_modules/

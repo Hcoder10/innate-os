@@ -568,7 +568,6 @@ class ModeManager(Node):
 
             node_names = nodes
 
-            failures = []
             for node_name in all_nodes_except_target:
                 # Check if this node should skip cleanup (only deactivate to INACTIVE)
                 if node_name in skip_cleanup_nodes:
@@ -587,50 +586,31 @@ class ModeManager(Node):
                 if not success:
                     self.get_logger().warning(f"Failed to shutdown non-target node {node_name} (continuing)")
 
-            # Phase 1: Configure all nodes in forward order
-            self.get_logger().info(f"Configuring {len(node_names)} nodes for {mode.value} mode")
-            for node_name in node_names:
-                success = transition_node(
-                    self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_INACTIVE, only_up=True
-                )
-                if not success:
-                    failures.append(node_name)
-                    self.get_logger().warning(f"Failed to configure {node_name}, continuing...")
-                    break
-            self.get_logger().info("Configured nodes")
-
-            # Phase 2: Activate nodes in forward order
-            map_load_success = False
-
             # Get nodes that should only be configured (not activated) for this mode
             configure_only = configure_only_nodes.get(mode.value, set())
 
-            self.get_logger().info(f"Activating {len(node_names)} nodes for {mode.value} mode")
-            for node_name in node_names:
-                if node_name in failures:
-                    self.get_logger().warning(f"{node_name} failed configuration. Not proceeding further.")
-                    break  # don't process the rest of the nodes
-
-                # Skip activation for configure-only nodes
-                if node_name in configure_only:
-                    self.get_logger().info(f"Skipping activation for {node_name} (configure-only)")
-                    continue
-
-                success = transition_node(
-                    self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_ACTIVE
+            # Startup runs in up to two passes. A node can miss the first pass
+            # transiently — most commonly it is stuck in a lifecycle transition
+            # waiting on a peer this very pass brings up (e.g. a costmap's
+            # on_activate blocked on a map publisher), which also makes its
+            # lifecycle services unresponsive. The second pass re-runs the
+            # sweep once the failed nodes have settled back into a primary
+            # state (bounded poll) and picks up whatever recovered.
+            # (Previously the first failure left the mode down and a manual
+            # retry of change_mode succeeded.)
+            # Exception: a map-load failure alone is not retried — the load
+            # already retries internally, so a second sweep can't fix it and
+            # would only double the time spent holding the mode lock.
+            failures, map_load_success = self._startup_pass(mode, node_names, configure_only)
+            failed_nodes = [f for f in failures if not f.endswith("_map_load")]
+            if failed_nodes:
+                self.get_logger().warning(
+                    f"{mode.value} startup pass 1 failed on {failures}; retrying once after settle"
                 )
-                if not success:
-                    failures.append(node_name)
-                    self.get_logger().warning(f"Failed to activate {node_name}. Not proceeding further.")
-                    break
-
-                # Load map immediately after map server is activated (navigation mode only)
-                if mode == NavigationMode.NAV and "map_server" in node_name and success:
-                    map_load_success = self._load_map_on_server(node_name)
-                    if not map_load_success:
-                        failures.append(f"{node_name}_map_load")
-
-            self.get_logger().info("Activated nodes")
+                self._wait_for_nodes_to_settle(failed_nodes)
+                failures, map_load_success = self._startup_pass(
+                    mode, node_names, configure_only, map_already_loaded=map_load_success
+                )
 
             if failures:
                 message = f"{mode.value} mode started with {len(failures)} activation failures: {failures}"
@@ -647,6 +627,103 @@ class ModeManager(Node):
             error_msg = f"Error requesting {mode.value} startup: {str(e)}"
             self.get_logger().error(error_msg)
             return False, error_msg
+
+    def _startup_pass(
+        self, mode: NavigationMode, node_names: list, configure_only: set, map_already_loaded: bool = False
+    ) -> tuple[list, bool]:
+        """One configure+activate sweep over the mode's nodes.
+
+        Safe to run repeatedly, with two caveats the code below handles:
+        transitions are idempotent (nodes already at/above the target are
+        left alone) EXCEPT configure-only nodes, which are deliberately
+        pulled back down to INACTIVE; and the navigation map load is not a
+        lifecycle transition — pass map_already_loaded=True on a retry pass
+        to skip reloading a map a previous pass already loaded (only_up
+        transitions never take the map server back down, so it persists).
+        Returns the nodes that failed plus whether the map load succeeded
+        (navigation mode only).
+        """
+        failures = []
+        map_load_success = False
+
+        # Phase 1: Configure all nodes in forward order
+        self.get_logger().info(f"Configuring {len(node_names)} nodes for {mode.value} mode")
+        for node_name in node_names:
+            # Configure-only nodes must land exactly at INACTIVE: a leftover
+            # ACTIVE one (e.g. recovered from a wedged activation) would keep
+            # its costmap running against this mode's stand-in map, spamming
+            # warnings and wasting CPU — so no only_up for them.
+            success = transition_node(
+                self._service_clients,
+                self.get_logger(),
+                node_name,
+                State.PRIMARY_STATE_INACTIVE,
+                only_up=node_name not in configure_only,
+            )
+            if not success:
+                # Keep configuring the rest: a later peer coming up is exactly
+                # what un-wedges a node stuck mid-transition (see two-pass
+                # comment in request_mode_startup), so recovery must not
+                # depend on the wedged node's position in the list.
+                failures.append(node_name)
+                self.get_logger().warning(f"Failed to configure {node_name}, continuing...")
+        self.get_logger().info("Configured nodes")
+
+        # Phase 2: Activate nodes in forward order
+        self.get_logger().info(f"Activating {len(node_names)} nodes for {mode.value} mode")
+        for node_name in node_names:
+            if node_name in failures:
+                self.get_logger().warning(f"{node_name} failed configuration. Not proceeding further.")
+                break  # don't process the rest of the nodes
+
+            # Skip activation for configure-only nodes
+            if node_name in configure_only:
+                self.get_logger().info(f"Skipping activation for {node_name} (configure-only)")
+                continue
+
+            success = transition_node(self._service_clients, self.get_logger(), node_name, State.PRIMARY_STATE_ACTIVE)
+            if not success:
+                failures.append(node_name)
+                self.get_logger().warning(f"Failed to activate {node_name}. Not proceeding further.")
+                break
+
+            # Load map immediately after map server is activated (navigation mode only)
+            if mode == NavigationMode.NAV and "map_server" in node_name and success:
+                if map_already_loaded:
+                    self.get_logger().info(f"Map already loaded on {node_name} in a previous pass; skipping reload")
+                    map_load_success = True
+                else:
+                    map_load_success = self._load_map_on_server(node_name)
+                    if not map_load_success:
+                        failures.append(f"{node_name}_map_load")
+
+        self.get_logger().info("Activated nodes")
+        return failures, map_load_success
+
+    def _wait_for_nodes_to_settle(self, node_names: list, timeout_sec: float = 10.0, poll_sec: float = 0.5) -> None:
+        """Wait for the given nodes to settle into a primary lifecycle state.
+
+        A pass-1 failure usually means the node is wedged mid-transition
+        (e.g. ACTIVATING until a peer's map arrives), with its lifecycle
+        services unresponsive. Rather than guessing a fixed delay, poll
+        get_state until every node answers with a primary state, so the
+        retry pass runs exactly when it can succeed. Bounded by timeout_sec
+        so a permanently dead node can't hold the mode lock long; the retry
+        pass still runs and reports whatever remains broken.
+        """
+
+        def is_settled(node_name: str) -> bool:
+            state = get_node_state(self._service_clients, self.get_logger(), node_name, timeout_sec=2.0)
+            return state is not None and state < State.TRANSITION_STATE_CONFIGURING
+
+        deadline = time.monotonic() + timeout_sec
+        pending = list(node_names)
+        while pending and time.monotonic() < deadline:
+            pending = [n for n in pending if not is_settled(n)]
+            if pending:
+                time.sleep(poll_sec)
+        if pending:
+            self.get_logger().warning(f"Nodes still unsettled after {timeout_sec:.0f}s: {pending}; retrying anyway")
 
     def _lifecycle_watchdog(self):
         """Restore nodes that crashed and respawned mid-session.

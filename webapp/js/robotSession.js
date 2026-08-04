@@ -13,6 +13,7 @@
 
 import { WebRtcSession } from "./webrtcSession.js";
 import { ros } from "./rosClient.js";
+import { getConfig } from "./config.js";
 
 /**
  * @returns {Promise<{ createSession: () => WebRtcSession, createStage: ((root: HTMLElement, session: WebRtcSession) => { audioEl: HTMLAudioElement | null, destroy: () => void }) | null }>}
@@ -21,9 +22,7 @@ import { ros } from "./rosClient.js";
  */
 export async function robotSessionFactory() {
   /** @type {any} */
-  const config = await fetch("/config.json", { cache: "no-store" })
-    .then((r) => (r.ok ? r.json() : {}))
-    .catch(() => ({}));
+  const config = await getConfig();
   if (config.simControls) {
     try {
       // Served by proxy/https_server.py from sim/viewer's build -- a runtime

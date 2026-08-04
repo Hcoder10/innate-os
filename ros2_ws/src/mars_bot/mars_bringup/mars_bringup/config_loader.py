@@ -137,6 +137,7 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         # /**
         "motion_control.max_speed",
         "motion_control.max_angular_speed",
+        "motion_control.speed_scale",
         "nav.max_speed",
         "nav.max_angular_speed",
         "inflation_layer.inflation_radius",
@@ -148,6 +149,27 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "max_jerk",
         # joystick_controller
         "joystick.slow_mode_factor",
+        # mars_app (teleop drive smoothing)
+        "motion_control.dt",
+        "motion_control.speed_time_constant",
+        "motion_control.angular_speed_time_constant",
+        "motion_control.max_acceleration",
+        "motion_control.max_deceleration",
+        "motion_control.max_angular_acceleration",
+        "motion_control.max_angular_deceleration",
+        "motion_control.max_jerk",
+        "motion_control.max_angular_jerk",
+        "motion_control.settle_epsilon",
+        "motion_control.input_timeout",
+        "heading_hold.gain",
+        "heading_hold.leak",
+        "heading_hold.max_correction",
+        "heading_hold.min_speed",
+        "heading_hold.straight_yaw",
+        "heading_hold.deadband",
+        "heading_hold.slew",
+        "mad.max_acceleration",
+        "mad.max_angular_acceleration",
         # main_camera_driver
         "fps",
         "target_brightness",
@@ -198,13 +220,11 @@ def _validate_settings_param_types(data: dict) -> None:
     )
 
 
-def _load_settings_yaml(validate: bool = True) -> dict:
+def _load_settings_yaml() -> dict:
     """Parse config/settings.yaml. Returns ``{}`` when missing, empty, or unreadable
     (unreadable is warned via :func:`_warn_settings_unreadable`, never silent).
-
-    With ``validate=True`` an int written for a double-typed key raises (see
-    :func:`_validate_settings_param_types`). Runtime callers that only read the non-ROS
-    ``script_paths`` block pass ``validate=False`` so the launch-time guard can't crash a reload."""
+    An int written for a double-typed key raises (see
+    :func:`_validate_settings_param_types`)."""
     path = _settings_yaml_path()
     if not path.exists():
         return {}
@@ -215,8 +235,7 @@ def _load_settings_yaml(validate: bool = True) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    if validate:
-        _validate_settings_param_types(data)
+    _validate_settings_param_types(data)
     return data
 
 
@@ -226,24 +245,6 @@ def settings_params() -> list:
     if not _load_settings_yaml():
         return []
     return [str(_settings_yaml_path())]
-
-
-def load_extra_script_dirs(key: str) -> list[str]:
-    """Extra agent/skill scan dirs from settings.yaml's ``script_paths`` block.
-
-    ``key`` is ``"extra_agent_dirs"`` or ``"extra_skill_dirs"``. Accepts a YAML list or an
-    ``os.pathsep``-joined string; returns entries verbatim (caller expands ``~`` / ``$VARS``),
-    or ``[]`` when unset.
-    """
-    # validate=False: runs in the hot-reload watcher, where the launch-time guard must not crash.
-    section = _load_settings_yaml(validate=False).get("script_paths", {})
-    params = section.get("ros__parameters", {}) if isinstance(section, dict) else {}
-    value = params.get(key) if isinstance(params, dict) else None
-    if isinstance(value, str):
-        return value.split(os.pathsep)
-    if isinstance(value, list):
-        return [str(part) for part in value]
-    return []
 
 
 def _settings_global_params() -> dict:

@@ -1,66 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Skill registry — pure name<->id bookkeeping, no ROS.
-
-The cloud agent and the LLM refer to skills sometimes by deterministic *id*
-(e.g. ``innate-os/navigate_to_position``) and sometimes by human *name*
-(``navigate_to_position``). This module is the single source of truth for that
-mapping, replacing three inconsistent inline translations in the old node.
-
-The ROS layer converts an ``AvailableSkills`` message into a list of plain metadata
-dicts and calls :meth:`SkillRegistry.from_metadata`; nothing here imports rclpy.
-"""
+"""Skill registry — pure name<->id bookkeeping, no ROS. The single source of
+truth for resolving cloud/LLM skill references (ids or display names)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 
-class PrimitiveStub:
-    """Lightweight stand-in holding a skill's metadata (no executable body).
-
-    Exposes the ``guidelines`` accessors the registration payload reads.
-    """
-
-    def __init__(self, metadata: dict):
-        self.metadata = metadata
-
-    def guidelines(self) -> str:
-        return self.metadata.get("guidelines", "")
-
-    def guidelines_when_running(self) -> str:
-        return self.metadata.get("guidelines_when_running", "")
-
-
 @dataclass
 class SkillRegistry:
     """Immutable-ish view of the currently available skills.
 
-    ``primitives`` is keyed by skill id; ``metadata`` is the ordered list used for
-    registration.
+    ``primitives`` maps skill id to its metadata dict; ``metadata`` is the
+    ordered list used for registration.
     """
 
-    primitives: dict[str, PrimitiveStub] = field(default_factory=dict)
+    primitives: dict[str, dict] = field(default_factory=dict)
     metadata: list[dict] = field(default_factory=list)
     name_to_id: dict[str, str] = field(default_factory=dict)
     id_to_name: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_metadata(cls, metadata_list: list[dict], on_duplicate=None) -> SkillRegistry:
-        """Build a registry from a list of skill metadata dicts.
-
-        Each dict must contain at least ``id`` and ``name``. ``on_duplicate`` is an
-        optional callback ``(name, existing_id, new_id)`` invoked when two skills
-        share a name (the later one wins, matching prior behaviour).
-        """
-        primitives: dict[str, PrimitiveStub] = {}
+        """Build from metadata dicts (each with at least id + name);
+        ``on_duplicate(name, existing_id, new_id)`` fires on name clashes
+        (later wins)."""
+        primitives: dict[str, dict] = {}
         name_to_id: dict[str, str] = {}
         id_to_name: dict[str, str] = {}
 
         for meta in metadata_list:
             skill_id = meta["id"]
             name = meta["name"]
-            primitives[skill_id] = PrimitiveStub(meta)
+            primitives[skill_id] = meta
             if name in name_to_id and on_duplicate is not None:
                 on_duplicate(name, name_to_id[name], skill_id)
             name_to_id[name] = skill_id

@@ -70,11 +70,63 @@ def _prompt_yes_no(question: str, *, default: bool = False) -> bool:
 
 
 def _prompt_secret(question: str) -> str:
+    prompt = f"{YELLOW}{question}: {NC}"
     try:
-        return getpass.getpass(f"{YELLOW}{question}: {NC}", stream=sys.stdout).strip()
+        masked = _read_masked_secret(prompt)
+        # None: no interactive TTY (or raw mode unavailable) -- fall back to
+        # fully hidden input rather than echoing to a non-terminal.
+        if masked is None:
+            return getpass.getpass(prompt, stream=sys.stdout).strip()
+        return masked
     except (KeyboardInterrupt, EOFError):
         print()
         raise SystemExit(1)  # noqa: B904
+
+
+def _read_masked_secret(prompt: str) -> str | None:
+    """Read a line echoing '*' per character so a paste is visibly registered,
+    with a live length count so a double-paste is obvious (Ctrl-U clears).
+    Returns None when stdin/stdout isn't an interactive TTY or raw mode is
+    unavailable, letting the caller fall back to hidden input."""
+    try:
+        import termios
+        import tty
+    except ImportError:
+        return None
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    chars: list[str] = []
+
+    def redraw() -> None:
+        count = f" ({len(chars)})" if chars else ""
+        sys.stdout.write("\r\x1b[K" + prompt + "*" * len(chars) + count)
+        sys.stdout.flush()
+
+    try:
+        # Raw so Ctrl-C/Ctrl-U/backspace arrive as bytes we handle here.
+        tty.setraw(fd)
+        redraw()
+        while (ch := sys.stdin.read(1)) not in ("\r", "\n"):
+            if ch == "":  # stdin closed
+                raise EOFError
+            if ch == "\x03":  # Ctrl-C (raw mode swallows the signal)
+                raise KeyboardInterrupt
+            if ch == "\x15":  # Ctrl-U: clear a botched/double paste and retry
+                chars.clear()
+            elif ch in ("\x7f", "\b"):  # backspace
+                if chars:
+                    chars.pop()
+            elif ch > " ":  # printable non-space (keys never contain spaces)
+                chars.append(ch)
+            redraw()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    return "".join(chars).strip()
 
 
 def _quote_env_value(value: str) -> str:
@@ -216,23 +268,23 @@ def _save_gemini_key(config: dict[str, object], gemini_key: str) -> None:
 def _configure_gemini_key(config: dict[str, object]) -> None:
     user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
     if is_configured_secret_value(GEMINI_API_KEY, user_env.get(GEMINI_API_KEY)):
-        success(f"{GEMINI_API_KEY} already configured.")
-        return
+        if not _prompt_yes_no(f"{GEMINI_API_KEY} is already set. Replace it?", default=False):
+            return
+    else:
+        restored = uncomment_env_key(ENV_PATH, GEMINI_API_KEY)
+        if restored is not None:
+            raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
+            raw_env[GEMINI_API_KEY] = restored
+            user_env[GEMINI_API_KEY] = restored
+            success(f"Re-enabled {GEMINI_API_KEY} in {ENV_PATH.name}.")
+            return
 
-    restored = uncomment_env_key(ENV_PATH, GEMINI_API_KEY)
-    if restored is not None:
-        raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-        raw_env[GEMINI_API_KEY] = restored
-        user_env[GEMINI_API_KEY] = restored
-        success(f"Re-enabled {GEMINI_API_KEY} in {ENV_PATH.name}.")
-        return
-
-    shell_value = os.environ.get(GEMINI_API_KEY, "").strip()
-    if is_configured_secret_value(GEMINI_API_KEY, shell_value) and _prompt_yes_no(
-        f"Found {GEMINI_API_KEY} in your shell. Save it to {ENV_PATH.name}?", default=True
-    ):
-        _save_gemini_key(config, shell_value)
-        return
+        shell_value = os.environ.get(GEMINI_API_KEY, "").strip()
+        if is_configured_secret_value(GEMINI_API_KEY, shell_value) and _prompt_yes_no(
+            f"Found {GEMINI_API_KEY} in your shell. Save it to {ENV_PATH.name}?", default=True
+        ):
+            _save_gemini_key(config, shell_value)
+            return
 
     while True:
         gemini_key = _prompt_secret(f"Paste {GEMINI_API_KEY}")
@@ -245,21 +297,21 @@ def _configure_gemini_key(config: dict[str, object]) -> None:
 def _configure_service_key(config: dict[str, object]) -> None:
     user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
     if is_configured_secret(user_env.get(INNATE_SERVICE_KEY)):
-        success(f"{INNATE_SERVICE_KEY} already configured.")
-        return
+        if not _prompt_yes_no(f"{INNATE_SERVICE_KEY} is already set. Replace it?", default=False):
+            return
+    else:
+        restored = uncomment_env_key(ENV_PATH, INNATE_SERVICE_KEY)
+        if restored is not None:
+            _use_service_key_for_run(config, restored)
+            success(f"Re-enabled {INNATE_SERVICE_KEY} in {ENV_PATH.name}.")
+            return
 
-    restored = uncomment_env_key(ENV_PATH, INNATE_SERVICE_KEY)
-    if restored is not None:
-        _use_service_key_for_run(config, restored)
-        success(f"Re-enabled {INNATE_SERVICE_KEY} in {ENV_PATH.name}.")
-        return
-
-    shell_value = os.environ.get(INNATE_SERVICE_KEY, "").strip()
-    if is_configured_secret(shell_value) and _prompt_yes_no(
-        f"Found {INNATE_SERVICE_KEY} in your shell. Save it to {ENV_PATH.name}?", default=True
-    ):
-        _save_service_key(config, shell_value)
-        return
+        shell_value = os.environ.get(INNATE_SERVICE_KEY, "").strip()
+        if is_configured_secret(shell_value) and _prompt_yes_no(
+            f"Found {INNATE_SERVICE_KEY} in your shell. Save it to {ENV_PATH.name}?", default=True
+        ):
+            _save_service_key(config, shell_value)
+            return
 
     while True:
         service_key = _prompt_secret(f"Paste {INNATE_SERVICE_KEY}")
@@ -408,18 +460,23 @@ def configure_brain_backend(config: dict[str, object]) -> None:
         return
 
     print()
-    print(f"{CYAN}{BOLD}Brain Backend{NC}")
+    print(f"{CYAN}{BOLD}Cloud LLM Access{NC}")
     print(
-        f"{DIM}The brain is the robot's agent. Run it locally with a Gemini key, "
-        f"use Innate's hosted brain with a service key, or run the sim with no agent.{NC}"
+        f"{DIM}The robot's agent uses a cloud LLM to think. Choose how to reach it:\n"
+        f"  - Your own Gemini key: clones the open-source agent\n"
+        f"    (https://github.com/innate-inc/innate-cloud-agent) and runs it on this\n"
+        f"    machine. Everything works except voice.\n"
+        f"  - Innate service key (ships with a MARS robot): the same agent, run by\n"
+        f"    Innate. Full experience, including the robot's voice.\n"
+        f"  - None: drive, navigate, and trigger skills manually, with no agent.{NC}"
     )
     print()
-    default_choice = "1" if has_gemini else ("2" if has_service_key else "3")
+    default_choice = "1" if has_gemini else ("2" if has_service_key else "1")
     choice = _prompt_choice(
-        "Which brain backend?",
+        "How would you like to access the cloud LLM?",
         {
-            "1": "Local cloud-agent (Gemini key: get from https://aistudio.google.com/api-keys)",
-            "2": "Hosted Innate brain (service key)",
+            "1": "Your own Gemini key (get one at https://aistudio.google.com/api-keys)",
+            "2": "Innate service key (from your robot)",
             "3": "None (run the sim without an agent)",
         },
         default=default_choice,

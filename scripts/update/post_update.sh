@@ -104,6 +104,29 @@ ensure_log_ownership() {
     fi
 }
 
+# DPkg::Lock::Timeout only covers the dpkg lock, not the lists lock that
+# `apt-get update` takes, so apt fails instantly if e.g. the apt-daily timer
+# is running. Retry until the lock frees up.
+apt_update() {
+    local attempt output
+    for attempt in $(seq 1 60); do
+        # Capture apt's output (appended to the log) for the lock check — only
+        # lock contention is worth retrying. Echoed to stderr via fd 2 rather
+        # than tee'd to /dev/stderr: under systemd fd 2 is a journald socket,
+        # which tee cannot re-open (ENXIO), failing the pipeline even when apt
+        # succeeded.
+        if output=$(set -o pipefail; apt-get update 2>&1 | tee -a "$LOG_FILE"); then
+            printf '%s\n' "$output" >&2
+            return 0
+        fi
+        printf '%s\n' "$output" >&2
+        grep -q "Could not get lock" <<<"$output" || return 1
+        log "  apt lists lock busy (attempt $attempt/60), retrying in 5s..."
+        sleep 5
+    done
+    return 1
+}
+
 log "========================================"
 log "Starting post-update script"
 log "Repository: $REPO_DIR"
@@ -227,10 +250,28 @@ if [ -f "$ENV_FILE" ]; then
             (umask 077; printf '%s\n' "$SERVICE_KEY_LINE" > "$SYSTEM_ENV_FILE")
             log "Copied INNATE_SERVICE_KEY from .env to $SYSTEM_ENV_FILE"
         fi
-        # Unconditional: older updaters left this 0600 root:root, unreadable by
-        # the non-root launch readers.
-        chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE"
-        chmod 640 "$SYSTEM_ENV_FILE"
+    fi
+fi
+
+# Repair the mode outside the seeding branch above: a robot whose .env lost its key — the
+# very case this fallback exists for — or one flashed with a pre-seeded /etc/innate.env
+# never reaches that branch, so gating the repair on it leaves the file 0600 root:root,
+# unreadable by the non-root launch readers (print_runtime_env.py then treats it as
+# absent and the service key silently drops out — proxy "not configured").
+# Idempotent; matches the seeded state above. Contents are never touched.
+if [ -f "$SYSTEM_ENV_FILE" ]; then
+    if [ "$ACTUAL_USER" = "root" ]; then
+        # Run from a root shell, no sudo: "root:root 640" would revoke the launch
+        # readers' group access on a file that may currently be correct.
+        log "Skipping $SYSTEM_ENV_FILE permission repair (no non-root user; re-run via sudo)"
+    elif [ "$(stat -c '%U:%G %a' "$SYSTEM_ENV_FILE")" != "root:$ACTUAL_USER 640" ]; then
+        # Best-effort under set -e: a user without a same-named group would fail
+        # the chown, and that must not abort the rest of the update.
+        if chown "root:$ACTUAL_USER" "$SYSTEM_ENV_FILE" && chmod 640 "$SYSTEM_ENV_FILE"; then
+            log "Set $SYSTEM_ENV_FILE to 640 root:$ACTUAL_USER so launch readers can read the service key"
+        else
+            log "WARNING: could not fix $SYSTEM_ENV_FILE ownership/mode (group '$ACTUAL_USER' missing?); continuing"
+        fi
     fi
 fi
 
@@ -241,12 +282,12 @@ fi
 # shipped files; this step preserves any user-created *untracked* content
 # (custom skills/agents/inputs, trained models, SLAM maps, last mode/map).
 # Idempotent, never overwrites, only rmdir's empty dirs.
-# Home-dir ~/agents and ~/skills are migrated separately at brain startup
-# (brain_client.script_paths.migrate_legacy_home_directories).
+# Home-dir ~/agents and ~/skills are migrated too: 0.7 loads only from
+# workspace/, so leaving them in place would silently stop loading them.
 # -----------------------------------------------------------------------------
 # shellcheck source=scripts/update/migrate_user_data.sh
 source "$SCRIPT_DIR/migrate_user_data.sh"
-MIGRATE_CHOWN_USER="$ACTUAL_USER" run_user_data_migrations "$REPO_DIR"
+MIGRATE_CHOWN_USER="$ACTUAL_USER" MIGRATE_HOME="$ACTUAL_HOME" run_user_data_migrations "$REPO_DIR"
 
 # -----------------------------------------------------------------------------
 # 0a2. Create config/settings.yaml from template if missing.
@@ -344,40 +385,38 @@ fi
 # -----------------------------------------------------------------------------
 # 0d. Disable desktop/update daemons with no robot function.
 # These ship with the desktop image and only cost RAM + periodic CPU wakeups on
-# a headless robot. Each is disabled only if present (non-fatal); snapd only
-# when no snaps are installed. Reversible via `systemctl enable --now <unit>`.
+# a headless robot. Absent units are ignored (non-fatal); snapd only when no
+# snaps are installed. Reversible via `systemctl enable --now <unit>`.
 # -----------------------------------------------------------------------------
 disable_unit() {
-    local unit="$1"
-    # Skip units not present on this image.
-    [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ] || return 0
-    if systemctl disable --now "$unit" >/dev/null 2>&1; then
-        log "  Disabled $unit"
-    else
-        log "  Could not disable $unit (continuing)"
-    fi
+    # Units absent on this image error individually; the rest are still
+    # disabled and stopped. Non-fatal — errors surface as warnings.
+    systemctl disable --now "$@" 2>&1 >/dev/null | while IFS= read -r line; do
+        log "  WARNING: $line"
+    done
 }
 
 # fwupd is intentionally left enabled — it's the channel for LVFS firmware
 # updates, the one disabled daemon that removes a real capability.
 log "Disabling desktop/update daemons with no robot function..."
-for unit in \
+disable_unit \
     packagekit.service \
     ModemManager.service \
     cups.service cups.socket cups-browsed.service lpd.service \
     colord.service \
     switcheroo-control.service \
     kerneloops.service \
-    ubuntu-advantage.service; do
-    disable_unit "$unit"
-done
+    ubuntu-advantage.service \
+    apt-daily.timer apt-daily-upgrade.timer \
+    unattended-upgrades.service
 
 # snapd: only disable when nothing is installed as a snap (else we'd break it).
-if command -v snap >/dev/null 2>&1 && [ -n "$(snap list 2>/dev/null | tail -n +2)" ]; then
+# Installed snaps are checked on the filesystem, not via `snap list` — the snap
+# CLI socket-activates snapd and waits for it to load state, hanging 30s+.
+if command -v snap >/dev/null 2>&1 && ls /var/lib/snapd/snaps/*.snap >/dev/null 2>&1; then
     log "  Keeping snapd (installed snaps present)"
 else
-    disable_unit snapd.service
-    disable_unit snapd.socket
+    disable_unit snapd.service snapd.socket
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
@@ -612,7 +651,7 @@ fi
         
         # Install ROS2 base
         log "    Updating package lists..."
-        apt-get update || {
+        apt_update || {
             log "    ERROR: Failed to update package lists"
             exit 1
         }
@@ -637,10 +676,13 @@ fi
     # Add git-core PPA for latest git version (if not already added)
     if ! grep -q "git-core/ppa" /etc/apt/sources.list.d/*.list 2>/dev/null; then
         log "  Adding git-core PPA..."
-        add-apt-repository -y ppa:git-core/ppa
+        add-apt-repository -y --no-update ppa:git-core/ppa
     fi
 
-    apt-get update
+    apt_update || {
+        log "  ERROR: Failed to update package lists"
+        exit 1
+    }
 
     # Install all apt dependencies (common + hardware-specific) in one go
     if [ -f "$APT_DEPS_COMMON" ] && [ -f "$APT_DEPS_HARDWARE" ]; then
@@ -660,8 +702,8 @@ fi
     # Remove PulseAudio (conflicts with ALSA-only audio setup)
     if dpkg -l | grep -q "^ii.*pulseaudio "; then
         log "Removing PulseAudio..."
-        apt-get purge -y pulseaudio pulseaudio-utils 2>/dev/null || true
-        apt-get autoremove -y 2>/dev/null || true
+        apt-get -o DPkg::Lock::Timeout=45 purge -y pulseaudio pulseaudio-utils 2>/dev/null || true
+        apt-get -o DPkg::Lock::Timeout=45 autoremove -y 2>/dev/null || true
         log "  PulseAudio removed"
     else
         log "  PulseAudio not installed, skipping removal"
@@ -684,9 +726,20 @@ fi
         # Install Jetson-optimized PyTorch separately with ONLY the Jetson index
         # pip prefers manylinux wheels over platform-specific wheels, so we CANNOT
         # have PyPI as a fallback when installing torch or it will grab the CPU wheel
-        JETSON_INDEX="https://pypi.jetson-ai-lab.io/jp6/cu126"
+        #
+        # The URL MUST end in /+simple/ -- that is the PEP 503 index devpi serves.
+        # Without it pip hits the browsable web UI, which serves no wheel links
+        # (torch included) and 404s outright for anything the index doesn't host
+        # itself (sympy, networkx, jinja2, pillow...), so the install dies. On
+        # /+simple/ devpi proxies PyPI for those while still shadowing torch,
+        # torchvision and torchaudio with the Jetson aarch64 wheels.
+        JETSON_INDEX="https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/"
         TORCH_VERSION="2.8.0"
         TORCHVISION_VERSION="0.23.0"
+        # Pin torchaudio too: the index also carries 2.9.x/2.10.x builds whose
+        # metadata only requires "torch" (no version bound), so an unpinned
+        # torchaudio would pair 2.10 with torch 2.8 and fail at import time.
+        TORCHAUDIO_VERSION="2.8.0"
         
         CUDA_AVAILABLE=$(sudo -u "$ACTUAL_USER" python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
         if [[ "$CUDA_AVAILABLE" != "True" ]]; then
@@ -695,7 +748,7 @@ fi
             sudo -u "$ACTUAL_USER" pip3 install --no-cache-dir \
                 "torch==$TORCH_VERSION" \
                 "torchvision==$TORCHVISION_VERSION" \
-                torchaudio \
+                "torchaudio==$TORCHAUDIO_VERSION" \
                 --index-url "$JETSON_INDEX"
             log "  PyTorch installed from Jetson AI Lab"
         fi

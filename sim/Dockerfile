@@ -53,6 +53,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install --system \
         websockets \
+        aiohttp \
         pydantic \
         click \
         'packaging>=24' \
