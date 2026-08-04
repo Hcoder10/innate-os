@@ -159,7 +159,13 @@ class MicroInput(InputDevice):
                 on_trigger=self._on_barge_in_trigger,
                 threshold_db=float(cfg.get("barge_in_threshold_db", 6.0)),
                 min_ms=int(cfg.get("barge_in_min_ms", 250)),
+                debug_dump_dir=str(cfg.get("barge_in_debug_dir", "")),
             )
+            from brain_client.audio.echo_model import load_predictor
+
+            predictor = load_predictor(str(cfg.get("barge_in_model_path", "")), self.logger)
+            if predictor is not None:
+                self._barge_in.set_echo_predictor(predictor)
             self.logger.info("🙋 Barge-in detection enabled")
         except Exception as e:
             self.logger.error(f"❌ Barge-in detector init failed (continuing without): {e}")

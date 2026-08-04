@@ -122,12 +122,14 @@ class BargeInDetector:
         threshold_db: float = 6.0,
         min_ms: int = 250,
         warmup_ms: int = 400,
+        debug_dump_dir: str = "",
     ):
         self.logger = logger if logger is not None else _SilentLogger()
         self.on_trigger = on_trigger
         self.threshold_db = float(threshold_db)
         self.min_ms = int(min_ms)
         self.warmup_ms = int(warmup_ms)
+        self.debug_dump_dir = debug_dump_dir
 
         self._fb = _mel_filterbank(FRAME, MIC_RATE, N_MELS, FMIN, FMAX)
         freqs = np.fft.rfftfreq(FRAME, 1.0 / MIC_RATE)
@@ -180,6 +182,8 @@ class BargeInDetector:
         self._clipped_frames = 0
         self._max_score = -99.0
         self._tail: deque[bytes] = deque(maxlen=100)  # ~2 s of post-trigger mic
+        self._max_hot = 0
+        self._trace: list[tuple] = []  # (frame, score, hot_sum, clipped, lag) when dumping
 
     def on_ref_start(self, seq: int):
         with self._state_lock:
@@ -196,9 +200,32 @@ class BargeInDetector:
         self.logger.info(
             f"🛑 barge-in utterance {self._seq} done: mic_frames={self._mic.n_frames} "
             f"ref_frames={self._ref.n_frames} lag={lag_ms}ms confident={self._lag_confident} "
-            f"max_score={self._max_score:.1f}dB clipped={self._clipped_frames} "
-            f"triggered={self._triggered}"
+            f"max_score={self._max_score:.1f}dB max_hot={self._max_hot}/{self._hot.maxlen} "
+            f"clipped={self._clipped_frames} triggered={self._triggered}"
         )
+        self._dump_debug()
+
+    def _dump_debug(self):
+        if not self.debug_dump_dir or not self._trace:
+            return
+        try:
+            import os
+            import time
+
+            os.makedirs(self.debug_dump_dir, exist_ok=True)
+            path = os.path.join(self.debug_dump_dir, f"barge_{int(time.time())}_{self._seq}.npz")
+            np.savez_compressed(
+                path,
+                trace=np.array(self._trace, dtype=np.float32),
+                mic_bands=np.asarray(self._mic.band_power),
+                ref_bands=np.asarray(self._ref.band_power),
+                mic_peak=np.asarray(self._mic.peak),
+                gains=self._gains,
+                ambient=self._ambient,
+            )
+            self.logger.info(f"🧪 barge-in debug dump: {path}")
+        except Exception as e:
+            self.logger.error(f"barge-in debug dump failed: {e}")
 
     # ------------------------------------------------------------------ #
     # data feeds
@@ -340,6 +367,8 @@ class BargeInDetector:
         if clipped:
             self._clipped_frames += 1
             self._hot.append(0)
+            if self.debug_dump_dir:
+                self._trace.append((m, -99.0, sum(self._hot), 1.0, self._lag or -1))
             return
 
         ref_p = self._ref.band_power[r]
@@ -367,14 +396,20 @@ class BargeInDetector:
 
         hot = score > self.threshold_db
         self._hot.append(1 if hot else 0)
+        self._max_hot = max(self._max_hot, sum(self._hot))
 
-        if not hot:
+        # Adapt slowly (the coupling only changes on arm/volume moves) and only
+        # while nothing suspicious is present — a fast EMA would absorb a
+        # sustained interrupter and self-normalize it away.
+        if score < self.threshold_db * 0.5:
             adapt = ref_active & (excess_db < 3.0)
             with np.errstate(divide="ignore", invalid="ignore"):
                 ratio = np.where(adapt, mic_p / np.maximum(ref_p, 1e-6), self._gains)
-            ratio = np.clip(ratio, self._gains * 0.25, self._gains * 4.0 + 1e-9)
-            self._gains = (0.92 * self._gains + 0.08 * ratio).astype(np.float32)
+            ratio = np.clip(ratio, self._gains * 0.5, self._gains * 2.0 + 1e-9)
+            self._gains = (0.98 * self._gains + 0.02 * ratio).astype(np.float32)
 
+        if self.debug_dump_dir:
+            self._trace.append((m, score, sum(self._hot), 0.0, self._lag or -1))
         self._maybe_trigger(m, score)
 
     def _predict_echo(self, r: int, ref_p: np.ndarray) -> np.ndarray:
