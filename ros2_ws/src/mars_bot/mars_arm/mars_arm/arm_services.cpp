@@ -271,8 +271,7 @@ bool MarsArmNode::autoRecoverServoLocked(int servo_id) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 60000,
                              "Servo %d hit the auto-recovery limit (%d in %ld min) — something keeps overloading it; "
                              "leaving it for manual recovery",
-                             servo_id, kAutoRecoverMaxAttempts,
-                             static_cast<long>(kAutoRecoverWindow.count()));
+                             servo_id, kAutoRecoverMaxAttempts, static_cast<long>(kAutoRecoverWindow.count()));
         return false;
     }
     history.push_back(now);
