@@ -103,9 +103,10 @@ const CHASE_HEIGHT = 1.1; // meters above the ground
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
 export type CameraView = "orbit" | "main" | "arm";
-// Tracks mars_sim_driver/constants.py CAMERA_FOVY: the real head camera's
-// focal length (fx ~= 355 @640x480), not a display preference.
-const ROBOT_CAMERA_VFOV = 68.5;
+// Track mars_sim_driver/constants.py: per-camera FOVs matching what the
+// driver renders (the head and wrist are different physical lenses), so the
+// operator's preview frames exactly what the robot consumes.
+const ROBOT_CAMERA_VFOV: Record<"main" | "arm", number> = { main: 68.5, arm: 80 };
 // Don't shrink to fix the near-clipped gripper: the origin sits inside the
 // wrist housing, so a smaller near renders the housing interior instead.
 const ROBOT_CAMERA_NEAR = 0.03;
@@ -636,7 +637,7 @@ export class SimScene {
         continue;
       }
       const cam = new THREE.PerspectiveCamera(
-        ROBOT_CAMERA_VFOV,
+        ROBOT_CAMERA_VFOV[mount.view],
         this.viewSize().width / this.viewSize().height,
         ROBOT_CAMERA_NEAR,
         100,
