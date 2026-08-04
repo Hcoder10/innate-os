@@ -276,10 +276,13 @@ class PickUpPieceSimple(Skill):
         speed: float = 1.0,
     ) -> SkillReturn:
         self._speed = max(0.1, min(speed, 3.0))
+        # Not caught: every later move assumes the arm starts folded and clear
+        # of the board. Continuing from an unknown position means the first
+        # lateral move at HEIGHT_SAFE sweeps through the pieces.
         try:
             self._go_to_safe_pose()
         except (ArmFailed, ArmUnhealthy) as e:
-            self.logger.warning(f"[PickUpPieceSimple] Initial safe pose failed, continuing: {e}")
+            self.fail(f"Failed to reach safe pose before moving — arm position unknown: {e}")
 
         calibration = self._load_calibration()
         if calibration is None:
