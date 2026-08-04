@@ -151,7 +151,11 @@ export class SimScene {
     this.renderer.setPixelRatio(this.fixedSize ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, !this.fixedSize);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCF, not PCFSoftShadowMap: three deprecated the latter (r185 warns and
+    // falls back to exactly this), so asking for it bought nothing but two
+    // console warnings per load. Softness comes from the key light's
+    // shadow.radius instead -- see addLights.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.5;
@@ -186,16 +190,22 @@ export class SimScene {
     // "glossy" on the robot parts.
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
-    // The shadow map follows the robot (see setPose) over a 5m box rather than
-    // trying to cover the whole flat. That is 2.4mm per texel, fine enough for
-    // the arm's ~2cm detail and the manipulation props to cast real contact
-    // shadows -- without one under the gripper there is no depth cue to judge
-    // a grasp by. It also lets normalBias stay at 12mm; the 50mm it needed
-    // over a 16m box erased the shadow of anything smaller than 50mm, i.e.
-    // every part that matters here.
+    // The shadow map follows the robot (see setPose/updateShadowVolume) over a
+    // box that starts at 2 * SHADOW_BOX_MIN_M and grows only to cover dropped
+    // props, rather than trying to cover the whole flat. At the 1.4m floor
+    // that is 0.68mm per texel, fine enough for the arm's ~2cm detail and the
+    // props to cast real contact shadows -- without one under the gripper
+    // there is no depth cue to judge a grasp by. It also lets normalBias stay
+    // sub-millimetre; the 50mm it needed over a 16m box erased the shadow of
+    // anything smaller than 50mm, i.e. every part that matters here.
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.castShadow = true;
     key.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
+    // Soft edges the supported way (the renderer runs plain PCF -- see the
+    // constructor). Cheap here because the box is tight: at sub-mm texels a
+    // 2-texel blur is a ~1.5mm penumbra, enough to kill the staircase on a
+    // sphere's contact shadow without smearing the gripper's.
+    key.shadow.radius = 2;
     key.shadow.camera.near = 0.1;
     key.shadow.camera.far = 12;
     key.shadow.camera.left = -SHADOW_BOX_MIN_M;

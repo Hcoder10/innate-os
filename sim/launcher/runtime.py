@@ -1567,20 +1567,22 @@ def _world_server_bind_addresses() -> str:
     return ""
 
 
-def _world_model_sources_digest(config: dict[str, object]) -> str:
-    """Content digest of the sources compiled into the world server's MuJoCo
-    model: the robot description, the driver's model-building modules, and
-    the installed apartment bundle (its .assets-tag marker is derived from
-    the bundle tarball's sha256, so the tag names the content). A running
-    server that compiled different content is serving stale physics -- by
-    CONTENT, not mtime, so no copy, checkout or asset refresh can fool it."""
+def _world_server_sources_digest(config: dict[str, object]) -> str:
+    """Content digest of everything the running world server embodies: the
+    robot description, the driver modules compiled into its MuJoCo model
+    (world/core/constants -- keep in step with core._model_cache_path), the
+    server process's own module (its wire protocol outlives an edit too), and
+    the installed apartment bundle (its .assets-tag marker is derived from the
+    bundle tarball's sha256, so the tag names the content). A running server
+    built from different content is stale -- compared by CONTENT, not mtime,
+    so no copy, checkout or asset refresh can fool it."""
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
     mars_bot = os_repo / "ros2_ws" / "src" / "mars_bot"
     driver = mars_bot / "mars_sim_driver" / "mars_sim_driver"
     candidates = sorted((mars_bot / "mars_sim" / "urdf").glob("*"))
     candidates += sorted((mars_bot / "mars_sim" / "meshes").glob("*"))
-    candidates += [driver / name for name in ("world.py", "core.py", "constants.py")]
+    candidates += [driver / name for name in ("world.py", "core.py", "constants.py", "world_server.py")]
     candidates += [sim_repo / "assets" / ".assets-tag"]
     digest = hashlib.sha256()
     for f in candidates:
@@ -1629,7 +1631,7 @@ def ensure_world_server(config: dict[str, object]) -> str:
             running_digest = ""
             with contextlib.suppress(OSError):
                 running_digest = WORLD_SERVER_MODEL_DIGEST_PATH.read_text(encoding="utf-8").strip()
-            if _world_model_sources_digest(config) == running_digest:
+            if _world_server_sources_digest(config) == running_digest:
                 log("Host world server already running.")
                 return endpoint
             log("Host world server compiled different robot/world sources -- restarting it...")
@@ -1664,7 +1666,7 @@ def ensure_world_server(config: dict[str, object]) -> str:
         log_offset = WORLD_SERVER_LOG_PATH.stat().st_size if WORLD_SERVER_LOG_PATH.exists() else 0
         if _start_world_server(uv, sim_repo, bind=bind, mujoco_gl=backend):
             # Record what this server compiled, for the reuse check above.
-            WORLD_SERVER_MODEL_DIGEST_PATH.write_text(_world_model_sources_digest(config) + "\n", encoding="utf-8")
+            WORLD_SERVER_MODEL_DIGEST_PATH.write_text(_world_server_sources_digest(config) + "\n", encoding="utf-8")
             log("Host world server ready.")
             return endpoint
         attempt_log = ""

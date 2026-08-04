@@ -40,8 +40,8 @@ OS_BUILD_LOG_PATH = LOG_DIR / "os-build.log"
 VIEWER_BUILD_LOG_PATH = LOG_DIR / "viewer-build.log"
 WORLD_SERVER_LOG_PATH = LOG_DIR / "world-server.log"
 WORLD_SERVER_PID_PATH = STATE_DIR / "world-server.pid"
-# Content digest of the model sources the running world server compiled
-# (see runtime._world_model_sources_digest); written next to the pid.
+# Content digest of the sources the running world server was built from
+# (see runtime._world_server_sources_digest); written next to the pid.
 WORLD_SERVER_MODEL_DIGEST_PATH = STATE_DIR / "world-server.model-digest"
 WORLD_SERVER_PORT = 8799
 OS_SESSION_LOG_PATH = LOG_DIR / "os-session.log"

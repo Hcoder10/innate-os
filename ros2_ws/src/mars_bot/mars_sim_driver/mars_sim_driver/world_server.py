@@ -5,10 +5,10 @@ sim/README.md "world_server.py"):
   Framing: 4-byte big-endian length | JSON; responses are one JSON frame,
   then one binary frame iff the JSON says "blob": <nbytes>.
 - observer state stream (--state-port): a WebSocket broadcasting ground
-  truth ({t, wall, pose, joints, objects}) after every physics slice --
-  opening with a one-time {object_specs} frame naming the drawable props --
-  and accepting stage commands ({"op": "drop_objects"}) back. Ground truth
-  and scenery only -- robot software must never consume or drive it.
+  truth ({t, wall, pose, joints, objects}) after every physics slice -- the
+  connection's first frame also carrying {object_specs}, the drawable prop
+  roster -- and accepting stage commands ({"op": "drop_objects"}) back.
+  Ground truth and scenery only -- robot software must never consume it.
 
 Always runs on the host (the launcher starts it via uv): in-container
 software GL was slow enough to starve the whole ROS stack. No ROS; beyond
@@ -164,17 +164,24 @@ class WorldServer:
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
         client skips states instead of queueing lag), and accept the stage
-        commands above on the way back. Opens with a one-time object_specs
-        frame -- the drawable prop roster (world.grasp_object_specs), so
-        viewers build their meshes from the same definition the physics runs."""
+        commands above on the way back.
+
+        The connection's FIRST state frame also carries "object_specs", the
+        drawable prop roster (world.grasp_object_specs), so viewers build
+        their meshes from the same definition the physics runs. It rides an
+        ordinary state frame rather than a frame of its own: a viewer that
+        predates the roster just ignores an unknown key, where a
+        differently-shaped frame would walk into its state parser."""
         threading.Thread(target=self._serve_scenario_commands, args=(ws,), daemon=True).start()
         last_seq = -1
+        specs = f',"object_specs":{json.dumps(world.grasp_object_specs())}}}'
         try:
-            ws.send(json.dumps({"object_specs": world.grasp_object_specs()}))
             while True:
                 with self.state_cond:
                     self.state_cond.wait_for(lambda seen=last_seq: self.state_seq != seen)
                     payload, last_seq = self.state_payload, self.state_seq
+                if specs:  # splice into the first frame only; payload ends in '}'
+                    payload, specs = payload[:-1] + specs, ""
                 ws.send(payload)
         except Exception:  # noqa: BLE001,S110 -- client gone; the stream just ends
             pass

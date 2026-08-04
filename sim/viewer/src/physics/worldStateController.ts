@@ -28,7 +28,7 @@ export interface ObjectSpec {
 
 export class WorldStateController {
   onState?: (state: WorldState) => void;
-  /** One-time prop roster the server opens each connection with; absent on
+  /** Prop roster, carried on the connection's first state frame; absent on
    * servers that predate the manipulation props. */
   onObjectSpecs?: (specs: Record<string, ObjectSpec>) => void;
 
@@ -97,11 +97,9 @@ export class WorldStateController {
       objects?: Record<string, number[]> | null;
       object_specs?: Record<string, ObjectSpec>;
     };
-    if (msg.object_specs) {
-      // The connection-opening roster frame; carries no state.
-      this.onObjectSpecs?.(msg.object_specs);
-      return;
-    }
+    // The roster rides the connection's first state frame (see
+    // world_server.serve_state), so it is an extra key, never its own frame.
+    if (msg.object_specs) this.onObjectSpecs?.(msg.object_specs);
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
     // Only a fallback for servers that don't stream it: under contact load
