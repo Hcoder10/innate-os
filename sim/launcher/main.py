@@ -64,6 +64,7 @@ from runtime import (
     tail_file,
     wait_for_os_runtime_ready,
     wait_for_virtual_mars,
+    world_server_running,
 )
 from setup_wizard import (
     _prompt_yes_no,
@@ -397,9 +398,14 @@ def main() -> int:
             cmd_down(config)
         elif args.sim_command == "assets":
             # Pure download+extract: VirtualMars (scripts/notebooks, no ROS,
-            # no Docker) needs sim/assets without bringing the stack up.
+            # no Docker) needs sim/assets without bringing the stack up. If a
+            # world server IS running, reconcile it like `up` would -- its
+            # MuJoCo model was compiled from the previous bundle, and leaving
+            # it serving stale collision physics is worse than a restart.
             ensure_sim_assets(config)
             sync_robot_description(config)
+            if world_server_running():
+                ensure_world_server(config)
             success("Sim assets are in place (sim/assets + sim/viewer).")
         elif args.sim_command == "clean":
             ensure_docker_available(command_hint=f"{CLI_SIM} clean")

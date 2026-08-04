@@ -1587,6 +1587,11 @@ def _world_server_bind_addresses() -> str:
     return ""
 
 
+def world_server_running() -> bool:
+    """Whether a host world server answers on the driver port."""
+    return _world_server_ping_reply(WORLD_SERVER_PORT) is not None
+
+
 def _world_model_sources_digest(config: dict[str, object]) -> str:
     """Content digest of the sources compiled into the world server's MuJoCo
     model: the robot description, the driver's model-building modules, and
