@@ -49,18 +49,10 @@ class BrainConfig:
 
     # --- Proxy service config (credentials come from env, not params) ---
     cartesia_voice_id: str
-    openai_realtime_model: str
-    openai_realtime_url: str
-    openai_transcribe_model: str
 
     @property
     def proxy_config(self) -> dict:
-        return {
-            "cartesia_voice_id": self.cartesia_voice_id,
-            "openai_realtime_model": self.openai_realtime_model,
-            "openai_realtime_url": self.openai_realtime_url,
-            "openai_transcribe_model": self.openai_transcribe_model,
-        }
+        return {"cartesia_voice_id": self.cartesia_voice_id}
 
     @classmethod
     def load(cls, node) -> BrainConfig:
@@ -77,9 +69,6 @@ class BrainConfig:
             # measurably hurts instruction-following (skill re-runs, chatter).
             "gemini_thinking_level": "",
             "cartesia_voice_id": "9fdaae0b-f885-4813-b589-3c07cf9d5fea",
-            "openai_realtime_model": "gpt-4o-realtime-preview",
-            "openai_realtime_url": "wss://api.openai.com/v1/realtime",
-            "openai_transcribe_model": "gpt-4o-mini-transcribe",
         }
         bool_params = {
             "send_arm_camera_image": True,
@@ -135,7 +124,4 @@ class BrainConfig:
             history_max_image_turns=i("history_max_image_turns"),
             scan_stale_after_sec=d("scan_stale_after_sec"),
             cartesia_voice_id=s("cartesia_voice_id"),
-            openai_realtime_model=s("openai_realtime_model"),
-            openai_realtime_url=s("openai_realtime_url"),
-            openai_transcribe_model=s("openai_transcribe_model"),
         )

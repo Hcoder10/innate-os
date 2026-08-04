@@ -68,22 +68,6 @@ def generate_launch_description():
         default_value=get_env("CARTESIA_VOICE_ID", "9fdaae0b-f885-4813-b589-3c07cf9d5fea"),
         description="Cartesia Alfred voice id",
     )
-    openai_realtime_model_arg = DeclareLaunchArgument(
-        "openai_realtime_model",
-        default_value="gpt-4o-realtime-preview",
-        description="OpenAI Realtime model for STT",
-    )
-    openai_realtime_url_arg = DeclareLaunchArgument(
-        "openai_realtime_url",
-        default_value="wss://api.openai.com/v1/realtime",
-        description="OpenAI Realtime WebSocket URL",
-    )
-    openai_transcribe_model_arg = DeclareLaunchArgument(
-        "openai_transcribe_model",
-        default_value="gpt-4o-mini-transcribe",
-        description="OpenAI transcription model",
-    )
-
     brain_client_node = Node(
         package="brain_client",
         executable="brain_client_node.py",
@@ -100,9 +84,6 @@ def generate_launch_description():
                 "gemini_model": LaunchConfiguration("gemini_model"),
                 # Proxy service config
                 "cartesia_voice_id": LaunchConfiguration("cartesia_voice_id"),
-                "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
-                "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
-                "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
             },
             *settings_params(),
         ],
@@ -126,9 +107,6 @@ def generate_launch_description():
             gemini_model_arg,
             # Proxy service config args
             cartesia_voice_id_arg,
-            openai_realtime_model_arg,
-            openai_realtime_url_arg,
-            openai_transcribe_model_arg,
             brain_client_node,
             Node(
                 package="brain_client",
