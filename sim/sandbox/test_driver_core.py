@@ -8,6 +8,7 @@ Usage: uv run sandbox/test_driver_core.py
 
 import math
 import threading
+import time
 
 import _driver_pkg  # noqa: F401
 from mars_sim_driver import world
@@ -80,6 +81,7 @@ def main() -> None:
     print(f"lidar: {hits}/360 rays hit, nearest {scan.min():.2f}m, farthest hit {scan[scan < 12].max():.2f}m")
 
     check_challenges(sim)  # last: it moves the sim clock and leaves a prop out
+    check_concurrent_start(sim)
     print("PASS")
 
 
@@ -144,6 +146,69 @@ def check_challenges(sim: VirtualMars) -> None:
         both.update(WorldState(t=t, robot=(0.0, 0.0, 0.0), centers=here), [])
     assert dwell.update(WorldState(t=6.0, robot=(0.0, 0.0, 0.0), centers=here), []), "Hold behind AllOf lost its dwell"
     print("challenge predicates: Hold keeps its dwell behind a decided sibling")
+
+    engine.abort()
+    sim.remove_all_props()
+    sim.reset()
+
+
+def check_concurrent_start(sim: VirtualMars) -> None:
+    """Two observer connections starting a challenge at the same time.
+
+    start() is three critical sections (deactivate, build the scene, publish)
+    and each observer connection commands on its own thread, so without one
+    lock across all three the second starter tears the first down mid-build
+    and the published run is judged against the other's world."""
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=OUT_DIR / "challenges_concurrent.json")
+    for cid, prop in (("a", "cube"), ("b", "can")):
+        engine.challenges[cid] = Challenge(
+            id=cid,
+            title=cid,
+            brief="",
+            setup=[Drop(prop, world.SPAWN_X, world.SPAWN_Y)],
+            goals=[Goal("never", Near("robot", "nothing_here", 1.0))],  # never passes: the run stays open
+        )
+
+    # Engine teardowns, counted: the tell is whether the second start reaches
+    # _deactivate() while the first is still inside its scene build.
+    deactivations = []
+    real_deactivate = engine._deactivate
+
+    def counting_deactivate():
+        deactivations.append(1)
+        real_deactivate()
+
+    engine._deactivate = counting_deactivate
+    b_running, b_done = threading.Event(), threading.Event()
+
+    def start_b():
+        b_running.set()
+        engine.start("b")
+        b_done.set()
+
+    real_drop = sim.drop_prop_at
+    raced = []
+
+    def drop_and_race(*args, **kwargs):
+        ok = real_drop(*args, **kwargs)
+        if not raced:  # once, from inside challenge a's scene build
+            raced.append(1)
+            threading.Thread(target=start_b, daemon=True).start()
+            b_running.wait(5.0)  # b's thread is alive and about to call start()
+            time.sleep(0.3)  # ample for an unserialized start to get in
+            assert len(deactivations) == 1, "a second start tore down the run being built"
+            assert not b_done.is_set(), "a second start published while the first was mid-build"
+        return ok
+
+    sim.drop_prop_at = drop_and_race
+    engine.start("a")
+    sim.drop_prop_at = real_drop
+
+    assert b_done.wait(5.0), "the queued start never ran"
+    assert engine.active is not None and engine.active.id == "b", "the later start did not win"
+    out = set(sim.props.out)
+    assert out == {"can"}, f"world does not match the active run (expected just b's can, got {sorted(out)})"
+    print("challenge start: concurrent starts serialize, and the world matches the run that won")
 
     engine.abort()
     sim.remove_all_props()

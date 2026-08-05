@@ -271,11 +271,14 @@ class ChallengeEngine:
     """Judges one active challenge at a time against the observer state feed.
 
     Thread model mirrors the world server: start()/abort() run on observer
-    connection threads and take the sim lock for setup; tick() runs wherever
-    publish_state() does -- the physics thread every slice, and the observer
-    thread that just ran a command -- always after state gathering, with no
-    sim access of its own (pure evaluation under _mutex); post_event() may be
-    called from any thread.
+    connection threads, one at a time under _run_lock, and take the sim lock
+    for setup; tick() runs wherever publish_state() does -- the physics thread
+    every slice, and the observer thread that just ran a command -- always
+    after state gathering, with no sim access of its own (pure evaluation
+    under _mutex); post_event() may be called from any thread.
+
+    Lock order is _run_lock -> sim_lock -> _mutex, and no two are ever held
+    together; anything that changes here has to keep that true.
     """
 
     def __init__(
@@ -291,6 +294,12 @@ class ChallengeEngine:
         self.progress_path = progress_path or world.repo_root() / "workspace" / "challenges.json"
         self.progress = self._load_progress()
         self._mutex = threading.Lock()  # engine state (active challenge, events)
+        # Serializes whole start/abort transitions. start() is three critical
+        # sections (deactivate, build the scene, publish the run) and holds
+        # nothing across them, so without this two observer connections can
+        # interleave and publish one challenge over the other's world. Always
+        # taken OUTERMOST -- never while holding _mutex or the sim lock.
+        self._run_lock = threading.Lock()
         self._events: list[dict] = []
         self.active: Challenge | None = None
         self.state = "running"  # of the active challenge: running | passed | failed
@@ -346,33 +355,46 @@ class ChallengeEngine:
         # against a stale started_t instantly "times out" a fresh run) or judge
         # goal 0 against the world the last run left behind. So: deactivate,
         # build the scene, then publish the whole run in one atomic step.
-        self._deactivate()
-        with self.sim_lock:
-            if challenge.reset_world:
-                self.sim.reset()  # also re-parks every prop (props.py)
-            for drop in challenge.setup:
-                if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg)):
-                    print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
-            started_t = float(self.sim.data.time)
-        with self._mutex:
-            for goal in challenge.goals:
-                try:
-                    goal.predicate.reset()
-                except Exception:  # noqa: BLE001,S110 -- challenge bug; judged as-is
-                    pass
-            self.state = "running"
-            self.reason = ""
-            self.goal_done = [False] * len(challenge.goals)
-            self.started_t = started_t
-            self.elapsed_s = 0.0
-            self._events.clear()  # anything that happened during setup is not this run's
-            entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
-            entry["attempts"] += 1
-            self.active = challenge  # last: judging starts here
+        #
+        # _run_lock holds those three steps together against a SECOND starter.
+        # Each observer connection commands on its own thread, so two tabs
+        # starting different challenges could otherwise interleave -- A drops
+        # its props, B's reset re-parks them and drops its own, and whichever
+        # publishes last is judged against the other's world, with goals that
+        # can never fire. Serialized, the later start simply wins: it aborts
+        # the earlier run and builds its scene on top.
+        with self._run_lock:
+            self._deactivate()
+            with self.sim_lock:
+                if challenge.reset_world:
+                    self.sim.reset()  # also re-parks every prop (props.py)
+                for drop in challenge.setup:
+                    if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg)):
+                        print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
+                started_t = float(self.sim.data.time)
+            with self._mutex:
+                for goal in challenge.goals:
+                    try:
+                        goal.predicate.reset()
+                    except Exception:  # noqa: BLE001,S110 -- challenge bug; judged as-is
+                        pass
+                self.state = "running"
+                self.reason = ""
+                self.goal_done = [False] * len(challenge.goals)
+                self.started_t = started_t
+                self.elapsed_s = 0.0
+                self._events.clear()  # anything that happened during setup is not this run's
+                entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
+                entry["attempts"] += 1
+                self.active = challenge  # last: judging starts here
         return True
 
     def abort(self) -> None:
-        self._deactivate()
+        # Same lock as start(): aborting mid-build would otherwise clear an
+        # `active` the starting thread is about to overwrite anyway, leaving
+        # its scene on the floor with nothing judging it.
+        with self._run_lock:
+            self._deactivate()
 
     def _deactivate(self) -> None:
         """Stop judging. A run still in progress is recorded as aborted --
