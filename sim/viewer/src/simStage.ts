@@ -79,9 +79,9 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   //     top-down, so this is the one that matters for practising grabs.
   //   place    -- click the floor to mark the spot, drag to point the yaw,
   //     release; physics settles it onto whatever is under it.
-  const propRow = document.createElement("div");
-  propRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
-  debugStack.appendChild(propRow);
+  const propRows = document.createElement("div");
+  propRows.style.cssText = "display:flex;flex-direction:column;gap:6px;align-items:flex-start;";
+  debugStack.appendChild(propRows);
   const propControls = document.createElement("div");
   propControls.style.cssText = "display:flex;gap:6px;align-items:center;";
   debugStack.appendChild(propControls);
@@ -136,48 +136,57 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   propControls.appendChild(clearChip);
 
   // Rebuilt whenever the roster arrives (once per observer connection).
+  //
+  // One row per group, headed by that group's set chip, then a loose row for
+  // the props that belong to no set. A set chip floating in a row of everything
+  // says nothing about WHICH props it lays out; heading its own row, it does.
   const propChips = new Map<string, HTMLButtonElement>();
-  const groupChips: HTMLButtonElement[] = [];
   const unsubscribeProps = session.onProps((props: PropInfo[]) => {
-    for (const chip of propChips.values()) chip.remove();
-    for (const chip of groupChips) chip.remove();
+    propRows.replaceChildren();
     propChips.clear();
-    groupChips.length = 0;
-    // A set chip ahead of the props it contains: putting a whole set down at
-    // once is the workflow the arm's props exist for, and clicking five chips
-    // is not it. Only props that name a group get one, so scenery -- which is
-    // placed deliberately, one piece at a time -- has none.
-    for (const group of [...new Set(props.map((p) => p.group).filter(Boolean))]) {
-      const members = props.filter((p) => p.group === group);
-      if (members.length < 2) continue; // a set of one is just the prop's own chip
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.textContent = `+${group}`;
-      chip.title = `Set down all ${members.length} ${group} props in front of the robot`;
-      chip.style.cssText =
-        `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-        "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
-      chip.onclick = () => {
-        armDrop(null);
-        session.dropPropGroup(group as string);
-      };
-      groupChips.push(chip);
-      propRow.appendChild(chip);
-    }
+
+    const buckets = new Map<string | null, PropInfo[]>();
     for (const prop of props) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.textContent = prop.label;
-      chip.title = prop.title;
-      chip.style.cssText =
-        `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-        "color:rgba(255,255,255,.75);font:500 13px system-ui;cursor:pointer;line-height:1;";
-      chip.onclick = () => {
-        if (placeMode) armDrop(armedProp === prop.name ? null : prop.name);
-        else session.dropPropAtRobot(prop.name);
-      };
-      propChips.set(prop.name, chip);
-      propRow.appendChild(chip);
+      const key = prop.group || null;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(prop);
+      else buckets.set(key, [prop]);
+    }
+
+    for (const [group, members] of buckets) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
+      // A set of one is just the prop's own chip, so it gets no set chip.
+      if (group && members.length > 1) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.textContent = `+${group}`;
+        chip.title = `Set down all ${members.length} ${group} props in front of the robot`;
+        chip.style.cssText =
+          `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+          "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+        chip.onclick = () => {
+          armDrop(null);
+          session.dropPropGroup(group);
+        };
+        row.appendChild(chip);
+      }
+      for (const prop of members) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.textContent = prop.label;
+        chip.title = prop.title;
+        chip.style.cssText =
+          `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+          "color:rgba(255,255,255,.75);font:500 13px system-ui;cursor:pointer;line-height:1;";
+        chip.onclick = () => {
+          if (placeMode) armDrop(armedProp === prop.name ? null : prop.name);
+          else session.dropPropAtRobot(prop.name);
+        };
+        propChips.set(prop.name, chip);
+        row.appendChild(chip);
+      }
+      propRows.appendChild(row);
     }
   });
 
