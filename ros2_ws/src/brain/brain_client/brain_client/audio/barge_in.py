@@ -156,6 +156,7 @@ class BargeInDetector:
         self._gains = np.full(N_MELS, np.nan, dtype=np.float32)
         self._ambient = np.full(N_MELS, 10 ** (-55 / 10) * 32768.0**2, dtype=np.float32)
         self._model: Callable[[np.ndarray], np.ndarray] | None = None
+        self._model_ctx = 21
         self._model_scale = 1.0
         self._last_model_p: np.ndarray | None = None
         # External noise gate (wall clock): the host sets this while its own
@@ -201,6 +202,9 @@ class BargeInDetector:
         self._max_score = -99.0
         self._tail: deque[bytes] = deque(maxlen=100)  # ~2 s of post-trigger mic
         self._max_hot = 0
+        self._t_proc = 0.0
+        self._n_scored_calls = 0
+        self._n_model_calls = 0
         self._trace: list[tuple] = []  # (frame, score, hot_sum, clipped, lag) when dumping
 
     def on_ref_start(self, seq: int):
@@ -219,7 +223,11 @@ class BargeInDetector:
             f"🛑 barge-in utterance {self._seq} done: mic_frames={self._mic.n_frames} "
             f"ref_frames={self._ref.n_frames} lag={lag_ms}ms confident={self._lag_confident} "
             f"max_score={self._max_score:.1f}dB max_hot={self._max_hot}/{self._hot.maxlen} "
-            f"clipped={self._clipped_frames} triggered={self._triggered}"
+            f"clipped={self._clipped_frames} triggered={self._triggered} "
+            f"| cpu={self._t_proc * 1000:.0f}ms over {self._n_scored_calls} frames "
+            f"({self._t_proc / max(self._n_scored_calls, 1) * 1000:.2f}ms/frame, "
+            f"{self._n_model_calls} model calls, "
+            f"{self._t_proc / max(self._mic.n_frames / 100.0, 1e-6) * 100:.1f}% realtime)"
         )
         self._dump_debug()
 
@@ -291,6 +299,8 @@ class BargeInDetector:
     # ------------------------------------------------------------------ #
 
     def _process_new_frames(self):
+        t0 = time.perf_counter()
+        self._n_scored_calls += self._mic.n_frames - self._processed
         while self._processed < self._mic.n_frames:
             m = self._processed
             self._processed += 1
@@ -299,6 +309,7 @@ class BargeInDetector:
                 self._last_align_at = m
                 self._update_alignment(m)
             self._score_frame(m)
+        self._t_proc += time.perf_counter() - t0
 
     def _track_onsets(self, m: int):
         if self._mic_onset is None:
@@ -464,7 +475,8 @@ class BargeInDetector:
         # live: 27 dB under-prediction bursts -> false triggers). An online
         # scalar tracks that common-mode drift, and the adaptive-gain estimate
         # floors the result so neither predictor can under-predict alone.
-        r0 = max(0, r - 70)  # enough for a reverb-spanning model context
+        r0 = max(0, r - (self._model_ctx - 1))
+        self._n_model_calls += 1
         self._last_model_p = self._model(np.asarray(self._ref.band_power[r0 : r + 1]))
         return np.maximum(predicted, self._model_scale * self._last_model_p)
 
@@ -517,4 +529,5 @@ class BargeInDetector:
         Combined with (never replacing) the adaptive gains — see _predict_echo.
         """
         self._model = predictor
+        self._model_ctx = int(getattr(predictor, "context_frames", 21))
         self._model_scale = 1.0

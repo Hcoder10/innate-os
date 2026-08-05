@@ -49,14 +49,18 @@ def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray]
         conv1 = _make_conv1d_same(weights["w1"], weights["b1"])
         conv2 = _make_conv1d_same(weights["w2"], weights["b2"])
         wh, bh = weights["wh"].astype(np.float32), weights["bh"].astype(np.float32)
-        n_ctx = int(weights["ctx"]) if "ctx" in weights else DEFAULT_CONTEXT_FRAMES
+        # Only the last output frame is used, and with two 'same'-padded convs
+        # it depends on just (k1//2 + k2//2 + 1) input frames — feeding the
+        # full trained window computes ~60 discarded positions per call. The
+        # trimmed result is bit-identical (verified against the full context).
+        n_ctx = weights["w1"].shape[2] // 2 + weights["w2"].shape[2] // 2 + 1
     except Exception as e:
         if logger:
             logger.error(f"failed to load barge-in echo model {path}: {e}")
         return None
 
     def predict(ref_ctx: np.ndarray) -> np.ndarray:
-        # pad/trim the context to the trained window, log-compress like training
+        # pad/trim to the receptive field, log-compress like training
         ctx = ref_ctx[-n_ctx:]
         if len(ctx) < n_ctx:
             ctx = np.concatenate([np.tile(ctx[:1], (n_ctx - len(ctx), 1)), ctx])
@@ -66,6 +70,7 @@ def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray]
         y = wh @ h[:, -1] + bh
         return np.maximum(10.0**y - 1.0, 0.0)
 
+    predict.context_frames = n_ctx  # frames the caller needs to supply
     if logger:
-        logger.info(f"🧠 barge-in learned echo model loaded: {path}")
+        logger.info(f"🧠 barge-in learned echo model loaded: {path} (receptive field {n_ctx} frames)")
     return predict

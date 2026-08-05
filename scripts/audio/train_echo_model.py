@@ -31,10 +31,12 @@ FRAME = 512
 HOP = 240
 N_MELS = 24
 FMIN, FMAX = 100.0, 8000.0
-# Context must span the room's reverb tail (~600ms measured), or the model
-# cannot predict the ring-out after loud syllables. Stored in the npz so the
-# robot-side loader follows automatically.
-CONTEXT = 63
+# Frames of reference context per training example. NOTE: with two 'same'-padded
+# conv layers the predicted (last) frame only ever sees the last 5 input frames
+# — widening CONTEXT alone does NOT let the model span the reverb tail (63 was
+# tried and scored slightly worse than 21 while costing 3x the compute). To
+# actually use longer context the architecture needs dilation or more layers.
+CONTEXT = 21
 
 
 def mel_filterbank():
