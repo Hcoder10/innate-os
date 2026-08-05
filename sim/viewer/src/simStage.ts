@@ -39,8 +39,11 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   debugStack.style.cssText =
     "position:absolute;left:14px;bottom:132px;display:flex;flex-direction:column;gap:8px;z-index:5;";
   wrap.appendChild(debugStack);
-  const chips = document.createElement("div");
-  chips.style.cssText = "display:flex;gap:6px;";
+  // One controls row, built here because newChip fills it but appended after
+  // the prop rows so it sits beneath them: what a prop click does, then the
+  // view overlays. Four stacked rows crowded the WASD overlay underneath.
+  const propControls = document.createElement("div");
+  propControls.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
   const newChip = (label: string) => {
@@ -51,7 +54,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       // No backdrop-filter: re-blurring over an animated canvas costs fps.
       `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
       "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
-    chips.appendChild(b);
+    propControls.appendChild(b);
     return b;
   };
   const addChip = (label: string, onToggle: (on: boolean) => void) => {
@@ -64,10 +67,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       onToggle(on);
     };
   };
-  addChip("lidar", (on) => session.setLidarVisible(on));
-  addChip("collisions", (on) => session.setCollisionHullsVisible(on));
-  debugStack.appendChild(chips);
-
   // Props, in two rows: the objects themselves, and under them the controls
   // that say what a click on one does. One chip per prop the world server
   // offers (props.py sidecars, relayed by session.onProps), so adding a prop
@@ -82,9 +81,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const propRows = document.createElement("div");
   propRows.style.cssText = "display:flex;flex-direction:column;gap:6px;align-items:flex-start;";
   debugStack.appendChild(propRows);
-  const propControls = document.createElement("div");
-  propControls.style.cssText = "display:flex;gap:6px;align-items:center;";
-  debugStack.appendChild(propControls);
 
   // Slide switch: place | at robot. Defaults to "at robot" -- that is the
   // one-click layout the props have always had, and the destructive-feeling
@@ -134,6 +130,15 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     session.removeObjects();
   };
   propControls.appendChild(clearChip);
+
+  // Hairline between what places props and what draws overlays -- same row,
+  // different jobs.
+  const divider = document.createElement("span");
+  divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
+  propControls.appendChild(divider);
+  addChip("lidar", (on) => session.setLidarVisible(on));
+  addChip("collisions", (on) => session.setCollisionHullsVisible(on));
+  debugStack.appendChild(propControls);
 
   // Rebuilt whenever the roster arrives (once per observer connection).
   //
