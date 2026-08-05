@@ -3,31 +3,20 @@
 # Copyright (c) 2026 Innate Inc
 """Manipulation — the arm + gripper command interface for skills.
 
-Injected as ``self.manipulation`` when a skill declares
-``manipulation: Manipulation``. By default every command blocks until the
-motion settles and raises :class:`ArmFailed` / :class:`ArmUnhealthy` on
-failure; reads return the ROS-free :class:`~brain_client.state.arm.Arm`
-dataclass (the same type as the ambient ``arm:`` feed).
+Injected as ``self.manipulation``. Motions block until the arm settles and
+raise :class:`ArmFailed` / :class:`ArmUnhealthy` on failure; pass
+``block=False`` to return once the command is accepted and join later with
+:meth:`Manipulation.wait`. Reads return the ROS-free
+:class:`~brain_client.state.arm.Arm` dataclass.
 
-Every motion method also takes ``block=False`` to return as soon as the
-command is accepted — the skill keeps running (drive the base, watch a
-camera) while the arm travels. A non-blocking motion is unverified until
-joined: ``wait()`` blocks until it completes and returns the settled pose
-(raising on failure), ``moving`` reports whether one is still in flight, and
-issuing any new motion supersedes it.
-
-A blocking motion is a short atomic commitment: it is not interrupted by a
-skill cancel — cancellation lands between calls — so every method is safe in
-``finally``-block teardown. ``duration`` is advisory: the hardware jerk
-limiter may extend it, the joint-2 self-collision clamp can silently alter
-targets near the body, and ``safety.max_ee_speed`` (when set) stretches
-durations so cartesian moves respect the cap.
+Motions are not interrupted by a skill cancel — cancellation lands between
+calls — so every method is safe in ``finally`` teardown. ``duration`` is
+advisory: the hardware jerk limiter may extend it.
 
 The gripper (j6) runs current-based position control: the standing position
-error IS the grip force, so re-commanding j6 from its *measured* position
-drops a held object. The interface therefore tracks the last *commanded* j6
-(the standing grip target) and every motion default carries it — grip an
-object once, then move freely.
+error IS the grip force, so re-commanding j6 from its measured position
+drops a held object. Motions therefore carry the last *commanded* j6 (the
+standing grip target) by default — grip once, then move freely.
 """
 
 import math
@@ -63,11 +52,9 @@ class ArmFailed(RuntimeError):
 class Waypoint:
     """One stop on a cartesian path for :meth:`Manipulation.follow`.
 
-    Positions are meters in ``base_link``; angles are radians. ``duration``
-    is the seconds to travel to this waypoint from the previous one. The
-    driver also spends the first segment's duration approaching waypoint 0
-    from wherever the arm is, so uniform-duration paths behave exactly as
-    written; a single-waypoint path is paced by its own ``duration``.
+    Metres in ``base_link``, radians; ``duration`` is the travel time from
+    the previous waypoint. The driver also spends the first segment's
+    duration approaching waypoint 0 from wherever the arm is.
     """
 
     x: float
@@ -82,10 +69,10 @@ class Waypoint:
 class Safety:
     """Skill-tunable caps, set via ``self.manipulation.safety``.
 
-    ``max_ee_speed`` (m/s; None = uncapped) stretches any cartesian move's
-    duration to keep the straight-line EE speed under the cap. A tuning aid on
-    the driver's jerk limiter, not a certified limit: joint-space moves are
-    not covered, and ``stop()`` resets it.
+    ``max_ee_speed`` (m/s, None = uncapped) stretches cartesian move
+    durations to cap straight-line end-effector speed. A tuning aid, not a
+    certified limit: joint-space moves are not covered, and ``stop()``
+    resets it.
     """
 
     def __init__(self, logger):
@@ -94,7 +81,6 @@ class Safety:
 
     @property
     def max_ee_speed(self) -> float | None:
-        """End-effector straight-line speed cap in m/s; None = uncapped."""
         return self._max_ee_speed
 
     @max_ee_speed.setter
@@ -104,7 +90,6 @@ class Safety:
         self._max_ee_speed = None if value is None else float(value)
 
     def reset(self) -> None:
-        """Back to uncapped."""
         self._max_ee_speed = None
 
     def capped_duration(self, distance: float, duration: float) -> float:
@@ -119,54 +104,43 @@ class Safety:
 
 @dataclass
 class _PendingMotion:
-    """A non-blocking motion in flight: the service future and its patience."""
+    """A non-blocking motion in flight."""
 
     future: Any  # rclpy.task.Future (untyped upstream)
     name: str
-    deadline: float  # monotonic; command duration + result margin
+    deadline: float
 
 
 class Manipulation:
     """Arm + gripper command interface. See the module docstring for the
     contract: blocking, raising, grip-preserving, teardown-safe."""
 
-    # --- hardware truths (public constants) ---
-    # Gripper joint j6, radians: 0 = closed, 0.85 = fully open.
+    # Gripper j6 radians: 0 = closed, 0.85 = fully open. Preload beyond
+    # GRIPPER_MAX_STRENGTH overcurrent-trips the servo on a real object;
+    # below _GRIPPER_SHUT_J6 the claw is still (tripped) shut after an open.
     GRIPPER_CLOSED = 0.0
     GRIPPER_OPEN = 0.85
-    # More preload than this overcurrent-trips the servo on a real object
-    # (0.7 and 0.8 both tripped; recovery needs a reboot).
     GRIPPER_MAX_STRENGTH = 0.6
-    # Below this j6 the claw is still (tripped) shut after an open command.
     _GRIPPER_SHUT_J6 = 0.10
 
-    # /mars/arm/state order: base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper claw.
+    # /mars/arm/state order: base yaw, shoulder, elbow, wrist pitch, wrist roll, claw.
     JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 
-    # Folded, j4 lifted to clear the floor (ee_link z ~0.042 m); j1/j2 sit at
-    # their limits, so this is what the arm actually holds.
+    # Folded with j4 lifted to clear the floor; j1/j2 sit at their limits.
     REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
     ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    # Grasp reach box (base_link m).
+    # Grasp reach box (base_link metres).
     REACH_X = (0.22, 0.40)
     REACH_Y = (-0.10, 0.10)
 
     def __init__(self, node: Node, logger, lazy: bool = False):
-        """
-        Initialize the manipulation interface.
-
-        Args:
-            node: ROS2 node for creating publishers/subscribers/clients
-            logger: Logger for status messages
-            lazy: If True, defer subscription creation until start() is called
-        """
+        """``lazy`` defers the state feeds until :meth:`start`."""
         self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
         self.logger = logger
         self.safety = Safety(logger)
-        # Spins only while a skill is active (start()..stop()). Parked, the
-        # ~600 msgs/s just rotate in the rmw queues; dispatching them would
-        # cost ~half a Jetson core.
+        # Spins only while a skill is active; parked between skills to keep
+        # ~600 msg/s of callback dispatch off the CPU.
         self._executor: rclpy.executors.SingleThreadedExecutor | None = None
         self._executor_thread: threading.Thread | None = None
         self._lifecycle_lock = threading.Lock()
@@ -174,25 +148,19 @@ class Manipulation:
 
         self._ik_target_pub = self.node.create_publisher(Twist, "/ik_delta", 10)
 
-        # Cached state
         self._ik_solution: JointState | None = None
         self._fk_pose: PoseStamped | None = None
         self._arm_state: JointState | None = None
-        # Two sources: local service results and the 0.2 Hz /mars/arm/status
-        # heartbeat (catches webapp toggles). torque_enabled returns the newer.
         self._torque_enabled: bool | None = None
         self._torque_stamp = 0.0
         self._status_torque: bool | None = None
         self._status_stamp = 0.0
-        # Standing grip target: the last COMMANDED j6. The standing position
-        # error IS the grip force, so motions carry this rather than the
-        # measured (stalled) position, which would release a held object.
+        # Standing grip target: the last COMMANDED j6 (see module docstring).
         self._grip_target: float | None = None
-        # The one non-blocking motion in flight (any new command supersedes it).
         self._pending: _PendingMotion | None = None
 
-        # Created once in start() and kept for the node's lifetime: destroying
-        # one while the executor spins races _take_subscription (InvalidHandle
+        # Subscriptions are created once and never destroyed: destroying one
+        # while the executor spins races _take_subscription (InvalidHandle
         # crash). stop() gates the callbacks via _active instead.
         self._active = False
         self._ik_solution_sub: Subscription | None = None
@@ -222,8 +190,7 @@ class Manipulation:
             self.logger.error(f"[Manipulation] Executor stopped unexpectedly: {e}")
 
     def start(self):
-        """Enable arm-state feeds: spin up the private executor and create the
-        subscriptions once. Safe to call multiple times."""
+        """Enable the arm-state feeds; idempotent."""
         with self._lifecycle_lock:
             self._active = True
             if self._executor is None:
@@ -247,12 +214,8 @@ class Manipulation:
             )
 
     def stop(self):
-        """Deactivate arm-state feeds, park the private executor and clear cached state.
-
-        Subscriptions are deliberately kept alive (see __init__); the callbacks
-        early-return while inactive, and with the executor parked they are not
-        invoked at all between skills.
-        """
+        """Park the executor and clear cached state; the subscriptions stay
+        alive (see __init__)."""
         with self._lifecycle_lock:
             self._active = False
             if self._executor is not None:
@@ -264,46 +227,38 @@ class Manipulation:
         self._ik_solution = None
         self._fk_pose = None
         self._arm_state = None
-        self._pending = None  # an unjoined motion doesn't outlive the run
+        self._pending = None
         # _grip_target survives: a skill can end while still holding an object.
-        self.safety.reset()  # per-run knob: a forgotten cap must not slow later skills
+        self.safety.reset()
 
     def shutdown(self):
-        """Stop the manipulation helper node and its private executor."""
         self.stop()
         self.node.destroy_node()
 
     def halt(self) -> None:
-        """Framework brake hook (Skill._halt_interfaces on cancel/run end).
+        """Framework brake hook (Skill._halt_interfaces); deliberately a no-op.
 
-        Deliberately a no-op: the goto services cannot preempt an in-flight
-        motion (blocking or not), arm moves are short atomic commitments, and
-        teardown legitimately moves the arm after halt fires. It must NOT
-        freeze at the measured joints (that would re-seed j6 and drop a held
-        object) and must NOT torque off (the arm would fall).
+        The goto services cannot preempt an in-flight motion, and halting must
+        not freeze at measured joints (the j6 re-seed would drop a held
+        object) nor torque off (the arm would fall).
         """
         self.logger.debug("[Manipulation] halt(): arm motions are committed; nothing to brake")
 
     # --- callbacks (private executor thread) ---
 
     def _ik_solution_callback(self, msg: JointState):
-        """Store the latest IK solution."""
         if self._active:
-            self.logger.debug(f"IK solution received: {msg}")
             self._ik_solution = msg
 
     def _fk_pose_callback(self, msg: PoseStamped):
-        """Store the latest FK pose."""
         if self._active:
             self._fk_pose = msg
 
     def _arm_state_callback(self, msg: JointState):
-        """Store the latest arm state (includes effort/load)."""
         if self._active:
             self._arm_state = msg
 
     def _arm_status_callback(self, msg):
-        """Track the driver's torque flag (catches out-of-band toggles)."""
         if self._active:
             self._status_torque = bool(msg.is_torque_enabled)
             self._status_stamp = time.monotonic()
@@ -312,17 +267,13 @@ class Manipulation:
 
     @property
     def last_fk_pose(self) -> PoseStamped | None:
-        """The latest cached /fk_pose message, or None. No spin, no warning —
-        for high-rate ambient reads (RobotStateProvider.current_arm)."""
+        """Latest cached /fk_pose message, no wait — for 50 Hz ambient reads."""
         return self._fk_pose
 
     @property
     def pose(self) -> Arm:
-        """Live end-effector pose (same Arm type as the ambient ``arm:`` feed).
-
-        Waits up to 1 s for the first FK fix after start(); raises ArmFailed
-        if none arrives (IK node down or feeds not started).
-        """
+        """Live end-effector pose. Waits up to 1 s for the first FK fix;
+        raises ArmFailed if none arrives."""
         msg = self._fk_pose
         if msg is None:
             deadline = time.monotonic() + 1.0
@@ -335,13 +286,13 @@ class Manipulation:
 
     @property
     def joint_names(self) -> tuple[str, ...]:
-        """The arm's joint names in command order (j6 is the gripper claw)."""
+        """Joint names in command order (j6 is the gripper claw)."""
         return self.JOINT_NAMES
 
     @property
     def torque_enabled(self) -> bool | None:
-        """Freshest known torque state (local commands vs /mars/arm/status);
-        None while neither source has reported."""
+        """Freshest known torque state (local commands vs the /mars/arm/status
+        heartbeat, which catches webapp toggles); None until either reports."""
         if self._status_stamp > self._torque_stamp:
             return self._status_torque
         return self._torque_enabled
@@ -368,50 +319,19 @@ class Manipulation:
         tolerance_z: float | None = 0.10,
         block: bool = True,
     ) -> Arm | None:
-        """Move the end-effector to a cartesian pose; return the settled pose.
+        """Move the end-effector to a cartesian pose (``base_link`` metres,
+        radians) and return the settled pose.
 
-        IK + execute + FK verify. If the arm doesn't track the target within
-        the tolerances, recovers (reboot + torque on) and retries once, then
-        raises ArmUnhealthy. Raises ArmFailed when the pose is unreachable.
-
-        With BOTH tolerances None the move is unverified: the service result
-        is trusted, failure raises ArmFailed, and no recovery runs — for
-        callers whose targets legitimately settle off-pose (joint limits).
-
-        With ``block=False`` the call returns None as soon as the command is
-        accepted (IK still runs inline; rejection still raises ArmFailed).
-        The move is unverified — tolerances don't apply — until joined with
-        :meth:`wait`.
-
-        Args:
-            x: Target end-effector x in metres, ``base_link`` frame.
-            y: Target end-effector y in metres, ``base_link`` frame.
-            z: Target end-effector z in metres, ``base_link`` frame.
-            roll: Target end-effector roll in radians.
-            pitch: Target end-effector pitch in radians.
-            yaw: Target end-effector yaw in radians.
-            duration: Seconds the arm is given to reach the pose. Advisory —
-                the hardware jerk limiter may extend it.
-            grip: j6 to hold through the move. The default carries the standing
-                grip target, so a held object stays held.
-            tolerance_xy: Horizontal FK error in metres at or under which the
-                pose counts as reached, or None to skip the check on x and y.
-            tolerance_z: Vertical FK error in metres at or under which the pose
-                counts as reached, or None to skip the check on z (expected-
-                contact descents). Deliberately looser than `tolerance_xy`: a z
-                shortfall usually means the fingers met the object or floor
-                early, which is expected while descending, whereas xy error
-                means the move is off target.
-            block: When False, return None once the command is accepted
-                instead of waiting for the arm to settle.
-
-        Returns:
-            The settled end-effector pose, or None when ``block=False``.
-
-        Raises:
-            ArmFailed: Pose unreachable, command rejected, or the move did not
-                complete.
-            ArmUnhealthy: Still outside tolerance after one recover-and-retry.
+        FK-verified: if the settled pose is off by more than ``tolerance_xy``
+        / ``tolerance_z``, recover (reboot + torque on) and retry once, then
+        raise ArmUnhealthy. ``tolerance_z`` is looser because descents
+        legitimately stop early on contact; either tolerance may be None to
+        skip that axis, and with both None the move is unverified — the
+        service result is trusted, failure raises ArmFailed, no recovery.
+        Raises ArmFailed when the pose is unreachable. ``grip`` defaults to
+        the standing grip target so a held object stays held. ``block=False``
+        returns None once the command is accepted (IK still runs inline);
+        join with :meth:`wait`.
         """
         joints = self._solve_ik(x, y, z, roll, pitch, yaw)
         if joints is None:
@@ -421,8 +341,6 @@ class Manipulation:
         target = joints + [self._grip_or(grip)]
         where = f"({x:.2f}, {y:.2f}, {z:.2f})"
 
-        # Unverified: trust the service result, never recover. Covers both
-        # block=False and callers who opted out of both tolerances.
         if not block or (tolerance_xy is None and tolerance_z is None):
             if not self._goto(target, duration, wait=block):
                 raise ArmFailed(f"arm move to {where} rejected or did not complete")
@@ -459,12 +377,9 @@ class Manipulation:
         tolerance_z: float | None = 0.10,
         block: bool = True,
     ) -> Arm | None:
-        """Nudge the end-effector by offsets from its measured pose.
-
-        Adds the deltas to the live FK pose and delegates to :meth:`move_to`
-        (same verify/recover/grip/block contract, same speed cap). Measured,
-        not last-commanded, so a servoing loop corrects from where the arm
-        actually is. RPY deltas add per axis — fine for nudges, wrong for
+        """Nudge the end-effector by offsets from its *measured* pose (so a
+        servoing loop corrects from where the arm actually is); delegates to
+        :meth:`move_to`. RPY deltas add per axis — fine for nudges, wrong for
         large rotations.
         """
         cur = self.pose
@@ -484,18 +399,13 @@ class Manipulation:
         )
 
     def follow(self, waypoints: Sequence[Waypoint], *, grip: float | None = None, block: bool = True) -> Arm | None:
-        """Sweep through cartesian waypoints as one smooth trajectory.
+        """Sweep through waypoints as one smooth trajectory, starting from
+        wherever the arm is (the driver prepends the current pose).
 
-        The arm interpolates linearly between waypoints with no deceleration
-        at intermediate points, starting from wherever it is (the driver
-        prepends the current pose). A single waypoint is a plain smooth move
-        paced by its ``duration``. Returns the pose where the arm settled
-        (unverified — contact along the path is legitimate); raises ArmFailed
-        if IK fails for any waypoint or the trajectory is rejected/preempted.
-
-        ``grip``: j6 to hold along the path; default carries the standing
-        grip target. ``block=False`` returns None once the trajectory is
-        accepted; join it with :meth:`wait`.
+        Returns the settled pose, unverified — contact along the path is
+        legitimate. Raises ArmFailed on IK failure or rejection. ``grip``
+        defaults to the standing grip target; ``block=False`` returns None
+        once accepted (join with :meth:`wait`).
         """
         wps = list(waypoints)
         if not wps:
@@ -534,13 +444,8 @@ class Manipulation:
         return self._settled_pose("trajectory") if block else None
 
     def move_joints(self, joints: Sequence[float], *, duration: float = 3.0, block: bool = True) -> None:
-        """Move to joint positions (radians), blocking by default.
-
-        5 values command j1-j5 and keep the standing grip; 6 values command
-        j6 too (and become the new standing grip target). Raises ArmFailed
-        if the command is rejected or does not complete. ``block=False``
-        returns once the command is accepted; join it with :meth:`wait`.
-        """
+        """Move to joint positions (radians): 5 values keep the standing grip,
+        6 values set it. Raises ArmFailed on rejection or non-completion."""
         target = [float(j) for j in joints]
         if len(target) == 5:
             target.append(self._grip_or(None))
@@ -550,11 +455,8 @@ class Manipulation:
             raise ArmFailed("arm move rejected or did not complete")
 
     def rest(self, *, duration: float = 3.0) -> None:
-        """Fold the arm to the rest pose, keeping the grip.
-
-        Re-commands the pose once after a short pause so the servos settle
-        under load (folding while carrying shifts the load mid-move).
-        """
+        """Fold to the rest pose, keeping the grip; re-commands once after a
+        pause so the servos settle under a load shifted by the fold."""
         target = list(self.REST)
         target[5] = self._grip_or(None)
         if not self._goto(target, duration, wait=True):
@@ -567,25 +469,15 @@ class Manipulation:
 
     @property
     def moving(self) -> bool:
-        """True while a non-blocking motion is still in flight.
-
-        Blocking motions never show here — they've settled by the time the
-        call returns.
-        """
+        """True while a non-blocking motion is still in flight."""
         pending = self._pending
         return pending is not None and not pending.future.done()
 
     def wait(self, timeout: float | None = None) -> Arm:
-        """Join the in-flight non-blocking motion; return the settled pose.
-
-        Blocks until the motion completes (or, with nothing in flight, just
-        reads the pose). ``timeout`` overrides the default patience of the
-        motion's own duration plus a margin. Committed like every other
-        motion call: a skill cancel lands after it returns.
-
-        Raises:
-            ArmFailed: The motion failed, timed out, or no end-effector pose
-                is available.
+        """Join the in-flight non-blocking motion and return the settled pose
+        (with nothing in flight, just read the pose). Raises ArmFailed on
+        failure or timeout; ``timeout`` overrides the default patience of the
+        motion's duration plus a margin.
         """
         pending = self._pending
         self._pending = None
@@ -598,14 +490,12 @@ class Manipulation:
     # --- gripper ---
 
     def gripper_open(self, percent: float = 100.0, *, duration: float = 0.5, block: bool = True) -> None:
-        """Open the claw to ``percent`` (100 = fully open), blocking by default.
+        """Open the claw to ``percent`` (100 = fully open).
 
-        Verifies the claw physically opened — the servo can overcurrent-trip
-        and stay shut — and reboots + retries once if not; raises ArmUnhealthy
-        when it stays shut, ArmFailed when the command itself is rejected.
-        The reached opening becomes the standing grip target (nothing held).
-        ``block=False`` returns once the command is accepted, unverified;
-        join it with :meth:`wait`.
+        The servo can overcurrent-trip and stay shut, so a blocking open
+        verifies the claw moved, rebooting and retrying once before raising
+        ArmUnhealthy. Raises ArmFailed on rejection. ``block=False`` skips
+        verification; join with :meth:`wait`.
         """
         percent = max(0.0, min(100.0, percent))
         target = self.GRIPPER_CLOSED + (self.GRIPPER_OPEN - self.GRIPPER_CLOSED) * (percent / 100.0)
@@ -629,14 +519,9 @@ class Manipulation:
         raise ArmUnhealthy("gripper did not open (servo tripped shut)")
 
     def gripper_close(self, strength: float = 0.0, *, duration: float = 0.5, block: bool = True) -> None:
-        """Close the claw, blocking by default; raises ArmFailed on rejection.
-
-        ``strength`` is radians past the closed stop — the grip preload on an
-        object, clamped to GRIPPER_MAX_STRENGTH (beyond trips the servo). It
-        becomes the standing grip target, carried by every following move.
-        ``block=False`` returns once the command is accepted; join it with
-        :meth:`wait`.
-        """
+        """Close the claw. ``strength`` is radians of grip preload past the
+        closed stop, clamped to GRIPPER_MAX_STRENGTH; it becomes the standing
+        grip target. Raises ArmFailed on rejection."""
         strength = min(abs(strength), self.GRIPPER_MAX_STRENGTH)
         if not self._command_gripper(self.GRIPPER_CLOSED - strength, duration, block):
             raise ArmFailed("gripper command rejected or did not complete")
@@ -644,7 +529,6 @@ class Manipulation:
     # --- servo power / recovery ---
 
     def torque_on(self) -> bool:
-        """Enable torque on all arm motors. Returns True if successful."""
         success = self._call_trigger(self._torque_on_client, "Torque on", "Torque enabled on arm")
         if success:
             self._torque_enabled = True
@@ -652,7 +536,6 @@ class Manipulation:
         return success
 
     def torque_off(self) -> bool:
-        """Disable torque on all arm motors (arm will be limp). Returns True if successful."""
         success = self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
         if success:
             self._torque_enabled = False
@@ -661,7 +544,7 @@ class Manipulation:
         return success
 
     def reboot_servos(self) -> bool:
-        """Reboot all arm Dynamixel servos, clearing hardware errors. Returns True if successful."""
+        """Reboot the arm servos, clearing hardware errors; leaves torque off."""
         success = self._call_trigger(
             self._reboot_servos_client,
             "Reboot servos",
@@ -675,11 +558,8 @@ class Manipulation:
         return success
 
     def recover(self) -> None:
-        """Full recovery: reboot servos, re-enable torque, settle (~2.5 s).
-
-        Preserves the standing grip target across the reboot so a mid-pick
-        retry re-asserts the grip preload instead of releasing the object.
-        """
+        """Reboot servos, re-enable torque, settle (~2.5 s); preserves the
+        standing grip target so a mid-pick retry keeps the grip preload."""
         grip = self._grip_target
         self.logger.warning("[arm] recovering (reboot + torque on)")
         self.reboot_servos()
@@ -695,7 +575,6 @@ class Manipulation:
         time.sleep(seconds)
 
     def _measured_gripper(self) -> float | None:
-        """Measured j6, or None while arm state is missing/short."""
         state = self._arm_state
         try:
             return state.position[5] if state is not None else None
@@ -703,8 +582,7 @@ class Manipulation:
             return None
 
     def _grip_or(self, explicit: float | None) -> float:
-        """The j6 a motion should carry: explicit > standing target > measured
-        (start of a run, nothing held yet) > 0.0."""
+        """The j6 a motion should carry: explicit > standing target > measured > 0."""
         if explicit is not None:
             return float(explicit)
         if self._grip_target is not None:
@@ -724,9 +602,9 @@ class Manipulation:
     ) -> list[float] | None:
         """IK for a cartesian pose: the 5 arm joints, or None on failure.
 
-        The IK node's request/response runs over topics (/ik_delta in,
-        /ik_solution out) with no correlation id, so requests serialize on
-        _ik_lock and failure surfaces as a timeout.
+        The IK node speaks topics (/ik_delta in, /ik_solution out) with no
+        correlation id, so requests serialize on _ik_lock and failure
+        surfaces as a timeout.
         """
         with self._ik_lock:
             self._ik_solution = None
@@ -754,11 +632,8 @@ class Manipulation:
         return None
 
     def _goto(self, joint_positions: list[float], duration: float, wait: bool) -> bool:
-        """Send a 6-joint GotoJS command; when ``wait``, block to completion,
-        otherwise leave the in-flight motion joinable via ``_pending``.
-
-        The commanded j6 becomes the standing grip target on success.
-        """
+        """Send a 6-joint GotoJS command; the commanded j6 becomes the
+        standing grip target on success."""
         if len(joint_positions) != 6:
             self.logger.error(f"Expected 6 joint positions, got {len(joint_positions)}")
             return False
@@ -792,13 +667,9 @@ class Manipulation:
     def _send_trajectory(
         self, waypoint_joints: list[list[float]], seg_durations: list[float], wait: bool = True
     ) -> bool:
-        """Send a multi-waypoint GotoJSTrajectory; when ``wait``, block to
-        completion, otherwise leave the motion joinable via ``_pending``.
-
-        The driver prepends the current measured pose as waypoint 0 (gripper
-        seeded from the last commanded goal, preserving grip preload) and
-        paces that approach with a copy of the first segment duration.
-        """
+        """Send a multi-waypoint GotoJSTrajectory. The driver prepends the
+        current pose as waypoint 0, paced by a copy of the first segment
+        duration."""
         if self._goto_js_traj_client is None or not self._goto_js_traj_client.service_is_ready():
             self.logger.error("[Manipulation] GotoJSTrajectory service not ready")
             return False
@@ -847,7 +718,6 @@ class Manipulation:
         return self._goto(positions, duration, wait=blocking)
 
     def _arm_from_fk(self, msg: PoseStamped) -> Arm:
-        """The typed Arm for an /fk_pose message, gripper from measured j6."""
         p = msg.pose
         return Arm(
             x=p.position.x,
@@ -862,24 +732,19 @@ class Manipulation:
         )
 
     def _read_pose_after_motion(self) -> Arm | None:
-        """Fresh-ish FK after a blocking move (10 Hz feed), or None."""
         self._settle()
         msg = self._fk_pose
         return None if msg is None else self._arm_from_fk(msg)
 
     def _settled_pose(self, what: str) -> Arm:
-        """Where the arm ended up after ``what``; raises if FK is silent."""
         settled = self._read_pose_after_motion()
         if settled is None:
             raise ArmFailed(f"no end-effector pose after {what} — is the IK node running?")
         return settled
 
     def _await_result(self, future, name: str, timeout_sec: float):
-        """Block on a service future; its result, or None on timeout.
-
-        Waits without spinning or re-adding this node — the private executor
-        thread is already delivering.
-        """
+        """Block on a service future; its result, or None on timeout. Waits on
+        an Event, never spins — the private executor thread delivers."""
         if not future.done():
             done = threading.Event()
             future.add_done_callback(lambda _future: done.set())
@@ -892,7 +757,6 @@ class Manipulation:
         return result
 
     def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
-        """Block on a motion-service future; True iff it completed successfully."""
         result = self._await_result(future, name, timeout_sec)
         if result is None:
             return False
@@ -902,7 +766,6 @@ class Manipulation:
         return True
 
     def _call_trigger(self, client, action_name: str, success_msg: str, timeout_sec: float = 2.0) -> bool:
-        """Call a std_srvs/Trigger service, log the outcome, and return whether it succeeded."""
         if not client.service_is_ready():
             self.logger.error(f"[Manipulation] {action_name} service not ready")
             return False

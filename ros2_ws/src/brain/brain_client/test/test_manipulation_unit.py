@@ -2,16 +2,9 @@
 # Copyright (c) 2026 Innate Inc
 """No-ROS behavioral tests for the arm interface.
 
-Pins the behaviors field skills depend on — gripper percent/strength math,
-the reach clamp, the open-verify self-heal, the standing grip target,
-non-blocking motions (``block=False`` + ``wait()``/``moving``), and the
-start()/stop() lifecycle invariants (subscriptions are created once and never
-destroyed; destroying one under the spinning private executor crashes the
-process with InvalidHandle → rmw_zenoh SIGABRT).
-
 Instances are built with ``Manipulation.__new__`` + hand-set attributes; no
 node, no executor, no rclpy.init. These tests stub internal seams and may be
-updated alongside internal refactors — the strict compat tripwire is
+updated alongside internal refactors — the API tripwire is
 test_manipulation_surface.py, which stubs nothing.
 """
 
@@ -166,7 +159,7 @@ def test_move_to_returns_settled_pose():
     settled = m.move_to(0.30, 0.00, 0.10)
     assert isinstance(settled, Arm)
     assert settled.position == (0.30, 0.00, 0.10)
-    assert calls[0][2] is True  # always blocking
+    assert calls[0][2] is True
     assert calls[0][0][5] == 0.5  # carried the measured grip (nothing commanded yet)
 
 
@@ -179,7 +172,6 @@ def test_move_to_unreachable_raises_armfailed():
 
 
 def test_move_to_recovers_once_then_raises_unhealthy():
-    # FK stuck far from the target: recover + retry once, then ArmUnhealthy.
     m = bare_manipulation(_fk_pose=fk_pose(0.10, 0.10, 0.30))
     m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
     capture_gotos(m)
@@ -191,7 +183,7 @@ def test_move_to_recovers_once_then_raises_unhealthy():
 
 
 def test_move_to_tolerance_none_skips_that_axis():
-    # z stopped short (fingers met the floor) — tolerance_z=None accepts it.
+    # z stopped short, as when fingers meet the floor mid-descent
     m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.19))
     m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
     capture_gotos(m)
@@ -201,8 +193,6 @@ def test_move_to_tolerance_none_skips_that_axis():
 
 
 def test_move_to_unverified_raises_without_recovery():
-    # Both tolerances None = caller opted out of health checking: a rejected
-    # command is ArmFailed, never a reboot cycle.
     m = bare_manipulation(_fk_pose=fk_pose(0.1, 0.1, 0.3))
     m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
     capture_gotos(m, ok=False)
@@ -303,7 +293,6 @@ def test_move_by_targets_measured_pose_plus_deltas():
 
 
 def test_move_by_composes_rpy_from_measured_orientation():
-    # measured at 90° yaw; dyaw adds on top
     m = bare_manipulation(_fk_pose=fk_pose(0.3, 0.0, 0.2, qz=math.sin(math.pi / 4), qw=math.cos(math.pi / 4)))
     seen = {}
     m.move_to = lambda x, y, z, **kwargs: seen.update(kwargs)

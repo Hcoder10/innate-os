@@ -1,14 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""API-surface snapshot for the arm SDK.
-
-Skills are written against the surface below and must keep working across
-refactors: same names, same parameter order, same defaults (a changed default
-like ``block=True`` is a silent field regression), same constants. This test
-is the tripwire — an intentional API change updates the table here in the
-same commit.
-
-Runs without ROS via ros_stubs (no-op inside the CI image).
+"""API-surface snapshot for the arm SDK: names, parameter order, defaults,
+constants. Field skills are written against this surface, so a changed
+default is a silent regression — an intentional API change updates the
+table here in the same commit. Runs without ROS via ros_stubs.
 """
 
 import inspect

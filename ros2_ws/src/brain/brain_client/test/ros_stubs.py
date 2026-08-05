@@ -1,23 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Import shims so the no-ROS unit tests run on a bare Python (e.g. macOS dev
-machines) as well as inside the CI image.
+"""Import shims so the no-ROS unit tests run on a bare Python (e.g. macOS
+dev machines) as well as inside the CI image.
 
-``install()`` registers minimal stand-ins for the modules ``brain_client.robot.
-manipulation`` (and the ``innate`` namespace) import at module scope, skipping
-each one the environment already provides. The stubs are structural only —
-enough for classes to be defined, messages to be instantiated, and signatures
-to be inspected. Tests never spin ROS: instances are built with
-``Manipulation.__new__`` and hand-set attributes.
-
-Each module is probed on its own rather than treating ``import rclpy`` as
-proof of a whole ROS stack. A sourced ``/opt/ros`` with an unbuilt colcon
-workspace has rclpy and the standard messages but no ``mars_msgs`` — which is
-exactly what running these tests straight from a dev checkout looks like
-(see docs/TESTING.md), and a partial stub is what makes that work.
-
-Also prepends the package source root to ``sys.path`` so ``brain_client`` and
-``innate`` resolve from the working tree without a colcon install.
+``install()`` registers structural stand-ins for the ROS modules the tests
+import, skipping each one the environment already provides. Modules are
+probed one by one, not via ``import rclpy`` as proof of a whole stack: a
+sourced ``/opt/ros`` with an unbuilt colcon workspace has rclpy but no
+``mars_msgs``, and the partial stub is what makes that work. Also prepends
+the package source root to ``sys.path``.
 """
 
 import importlib
