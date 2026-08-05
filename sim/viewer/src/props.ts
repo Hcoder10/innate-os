@@ -37,6 +37,8 @@ export interface PropInfo {
   name: string;
   label: string;
   title: string;
+  /** Props laid out together by one click (props.py `group`). */
+  group: string;
   collision: string;
   size: number[];
   rgba: number[];

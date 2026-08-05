@@ -7,6 +7,7 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="cube",
     label="🧊",
+    group="manipulation",
     title="Cube",
     collision="box",
     size=(0.02, 0.02, 0.02),

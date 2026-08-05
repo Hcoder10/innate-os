@@ -48,6 +48,12 @@ class Prop:
     name: str
     label: str = "?"  # one glyph, the viewer's chip for this prop
     title: str = ""  # human-readable name (defaults to name)
+    # Props that get laid out together by one click. The manipulation set is
+    # what the arm practises on, and putting the whole set down at once is the
+    # workflow that matters there: drive somewhere, lay out a fresh set, grab.
+    # Their reach offsets are chosen so a whole group lands side by side
+    # without overlapping.
+    group: str = "scenery"
 
     # -- geometry --
     # Mesh path relative to the sidecar. None (or a file that isn't installed)
@@ -224,6 +230,7 @@ class Prop:
             "name": self.name,
             "label": self.label,
             "title": self.title,
+            "group": self.group,
             "collision": self.collision,
             "size": list(self.size),
             "rgba": list(self.rgba),
@@ -338,6 +345,22 @@ class PropRegistry:
         y = ry + sin * forward + cos * lateral
         self._place(data, name, x, y, prop.rest_z, 0.0)
         return True
+
+    def groups(self) -> list[str]:
+        """Group names in sidecar order, each appearing once."""
+        return list(dict.fromkeys(prop.group for prop in self.props.values()))
+
+    def drop_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
+        """Set down every prop in one group at its own reach offset, and park
+        the rest -- so the set that lands is exactly the set asked for, the way
+        the stage's one-click layout always behaved. Returns how many landed."""
+        placed = 0
+        for name, prop in self.props.items():
+            if prop.group == group:
+                placed += bool(self.drop_at_robot(data, name, pose))
+            else:
+                self.park(data, name)
+        return placed
 
     def park(self, data, name: str) -> bool:
         """Send one prop back off-map."""

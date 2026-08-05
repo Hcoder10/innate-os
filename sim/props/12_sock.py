@@ -12,6 +12,7 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="sock",
     label="🧦",
+    group="manipulation",
     title="Sock",
     collision="box",
     # 60mm tall (the skill's closing band lands on its upper third);

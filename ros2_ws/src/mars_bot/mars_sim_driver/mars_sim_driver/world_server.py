@@ -174,6 +174,10 @@ class WorldServer:
             name = str(cmd["name"])
             with self.lock:
                 ok = self.sim.remove_prop(name)
+        elif op == "drop_group":  # a whole set at once, each at its own offset
+            with self.lock:
+                self.sim.drop_group(str(cmd.get("group", "manipulation")))
+            ok = True
         elif op in ("drop_objects", "remove_objects"):  # whole-set shortcuts
             with self.lock:
                 getattr(self.sim, op)()

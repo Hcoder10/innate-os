@@ -6,6 +6,7 @@
 
 import * as THREE from "three";
 import { SimScene, type CameraView } from "./scene";
+import type { PropInfo } from "./props";
 import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
@@ -104,9 +105,33 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   // Rebuilt whenever the roster arrives (once per observer connection).
   const propChips = new Map<string, HTMLButtonElement>();
-  const unsubscribeProps = session.onProps((props: { name: string; label: string; title: string }[]) => {
+  const groupChips: HTMLButtonElement[] = [];
+  const unsubscribeProps = session.onProps((props: PropInfo[]) => {
     for (const chip of propChips.values()) chip.remove();
+    for (const chip of groupChips) chip.remove();
     propChips.clear();
+    groupChips.length = 0;
+    // One chip per set, before the individual props: putting a whole set down
+    // at once is the workflow the arm's props exist for, and clicking five
+    // chips is not it. Sets come from the roster, so a new group in a sidecar
+    // gets its button for free.
+    for (const group of [...new Set(props.map((p) => p.group))]) {
+      const members = props.filter((p) => p.group === group);
+      if (members.length < 2) continue; // a set of one is just the prop's own chip
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = `+${group}`;
+      chip.title = `Set down all ${members.length} ${group} props in front of the robot`;
+      chip.style.cssText =
+        `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+        "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+      chip.onclick = () => {
+        armDrop(null);
+        session.dropPropGroup(group);
+      };
+      groupChips.push(chip);
+      propRow.appendChild(chip);
+    }
     for (const prop of props) {
       const chip = document.createElement("button");
       chip.type = "button";

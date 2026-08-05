@@ -5,6 +5,7 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="bar",
     label="🍫",
+    group="manipulation",
     title="Bar",
     collision="box",
     size=(0.015, 0.05, 0.015),

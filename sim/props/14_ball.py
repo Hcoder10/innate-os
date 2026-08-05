@@ -13,6 +13,7 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="ball",
     label="🟢",
+    group="manipulation",
     title="Stress ball",
     collision="sphere",
     size=(0.0225,),

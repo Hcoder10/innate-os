@@ -250,6 +250,12 @@ export class SimSession {
     this.#controller?.send({ op: "remove_objects" });
   }
 
+  /** Lay a whole set of props out in front of the robot at once, each at its
+   * own reach offset (props.py `group`), parking everything outside the set. */
+  dropPropGroup(group: string): void {
+    this.#controller?.send({ op: "drop_group", group });
+  }
+
   /** Put one prop down in front of the robot, at the prop's own reach offset
    * -- for the manipulation props that is an arc the arm can reach top-down,
    * so it is placed at rest rather than dropped. */

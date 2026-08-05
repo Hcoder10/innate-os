@@ -757,13 +757,21 @@ class VirtualMars:
         mujoco.mj_forward(self.model, self.data)
         return True
 
-    def drop_objects(self) -> None:
-        """Set down every prop that has a reachable offset, the way the stage's
-        one-click "drop objects" always did."""
-        pose = self.pose()
-        for name in self.props.props:
-            self.props.drop_at_robot(self.data, name, pose)
+    def drop_group(self, group: str = "manipulation") -> int:
+        """Lay out a whole set of props in front of the robot WHERE IT IS NOW,
+        each at its own reach offset, and park everything outside the set.
+
+        This is the workflow the arm's props exist for: drive somewhere, put a
+        fresh set down, practise grabbing -- without resetting the robot's own
+        pose the way reset() does. Returns how many landed."""
+        placed = self.props.drop_group(self.data, group, self.pose())
         mujoco.mj_forward(self.model, self.data)
+        return placed
+
+    def drop_objects(self) -> None:
+        """Back-compat alias for the stage's original one-click layout, which
+        has always meant the manipulation set specifically."""
+        self.drop_group("manipulation")
 
     def remove_objects(self) -> None:
         """Send every prop back off-map -- the state the world starts in, and

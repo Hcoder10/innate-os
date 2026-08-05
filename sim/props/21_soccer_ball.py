@@ -20,7 +20,7 @@ PROP = Prop(
     rgba=(0.9, 0.9, 0.9, 1.0),
     rest_z=0.11,
     drop_z=0.6,
-    reach=(1.0, 0.0),
+    reach=(1.2, -0.8),  # offset laterally so a whole-group drop lands them side by side
     viewer={
         "glb": "/models/soccer_ball.glb",
         "rotateToZUp": True,

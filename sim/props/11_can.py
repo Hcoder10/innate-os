@@ -5,6 +5,7 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="can",
     label="🥫",
+    group="manipulation",
     title="Can",
     collision="cylinder",
     # 40mm across: 50mm pinches at the fingertip and rolls out. 60mm
