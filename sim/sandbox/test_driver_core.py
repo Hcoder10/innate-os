@@ -146,7 +146,7 @@ def check_challenges(sim: VirtualMars) -> None:
     print("challenge predicates: Hold keeps its dwell behind a decided sibling")
 
     engine.abort()
-    sim.remove_objects()
+    sim.remove_all_props()
     sim.reset()
 
 
