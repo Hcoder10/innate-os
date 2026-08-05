@@ -39,6 +39,10 @@ class PrimitiveRunner:
         # execute_skill action only lets the goal's sender cancel.
         self._cancel_skill_client = node.create_client(Trigger, "/brain/cancel_skill")
         self._goal_handle = None
+        # Bumped whenever the brain disowns its goal (reset/deactivation). Late
+        # callbacks from a disowned goal compare against it and stand down, so
+        # they can never clear a newer run's state or feed a fresh session.
+        self._generation = 0
 
     # --- public API ---
     def start_task(self, skill_id: str, primitive_id: str | None, inputs: dict) -> None:
@@ -102,13 +106,10 @@ class PrimitiveRunner:
         return True
 
     def abort_running(self) -> None:
-        """Stop any running primitive without announcing an interruption (used on reset)."""
-        if self._state.primitive_running:
-            if self._goal_handle:
-                self._goal_handle.cancel_goal_async()  # fire-and-forget
-                self._goal_handle = None
-            self._state.primitive_running = None
+        """Stop the brain's primitive without announcing an interruption (used on reset)."""
+        if self._state.primitive_running and not self._state.primitive_running.get("manual"):
             self._stop_robot()
+        self.interrupt_for_deactivation()
 
     def interrupt_for_deactivation(self) -> None:
         """Cancel the running primitive on deactivate.
@@ -124,17 +125,20 @@ class PrimitiveRunner:
         running = self._state.primitive_running
         if running and running.get("manual"):
             return
-        if running:
-            if self._goal_handle:
-                self._goal_handle.cancel_goal_async()  # fire-and-forget
-                self._goal_handle = None
-            else:
-                # The goal was sent but its handle hasn't resolved yet (the
-                # agent loop started it just as deactivation landed): the
-                # skills server's owner-agnostic cancel is the only reachable
-                # handle. Best effort — the terminal event cleans up as usual.
-                self.cancel_external()
+        self._disown_goal()
         self._state.primitive_running = None
+
+    def _disown_goal(self) -> None:
+        """Cancel the current goal and stand down its late callbacks.
+
+        A goal whose handle hasn't resolved yet (sent moments before a reset or
+        deactivation) is cancelled when it does — _on_goal_response sees the
+        stale generation and cancels on arrival.
+        """
+        self._generation += 1
+        if self._goal_handle:
+            self._goal_handle.cancel_goal_async()  # fire-and-forget
+            self._goal_handle = None
 
     # --- action plumbing ---
     def _send_goal(self, task_type: str, inputs: dict) -> bool:
@@ -146,11 +150,16 @@ class PrimitiveRunner:
         if not self.action_client.wait_for_server(timeout_sec=1.0):
             self._logger.error("Primitive execution action server not available!")
             return False
-        future = self.action_client.send_goal_async(goal_msg, feedback_callback=self._on_feedback_msg)
-        future.add_done_callback(self._on_goal_response)
+        generation = self._generation
+        future = self.action_client.send_goal_async(
+            goal_msg, feedback_callback=lambda msg: self._on_feedback_msg(msg, generation)
+        )
+        future.add_done_callback(lambda f: self._on_goal_response(f, generation))
         return True
 
-    def _on_feedback_msg(self, feedback_wrapper) -> None:
+    def _on_feedback_msg(self, feedback_wrapper, generation: int) -> None:
+        if generation != self._generation:
+            return  # feedback from a disowned goal
         try:
             feedback_text = feedback_wrapper.feedback.feedback
             substep = decode_substep_feedback(feedback_text)
@@ -188,8 +197,14 @@ class PrimitiveRunner:
         if event == "completed" and output and output.strip():
             self._chat.emit("skill_output", output, speak=False)
 
-    def _on_goal_response(self, future) -> None:
+    def _on_goal_response(self, future, generation: int) -> None:
         goal_handle = future.result()
+        if generation != self._generation:
+            # The brain disowned this goal while its response was in flight:
+            # cancel it now that a handle finally exists, touch nothing else.
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            return
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
             if self._state.primitive_running:
@@ -208,7 +223,7 @@ class PrimitiveRunner:
             return
         self._goal_handle = goal_handle
         self._logger.info("Primitive execution goal accepted.")
-        goal_handle.get_result_async().add_done_callback(self._on_result)
+        goal_handle.get_result_async().add_done_callback(lambda f: self._on_result(f, generation))
 
     def _on_cancel_response(self, future) -> None:
         cancel_response = future.result()
@@ -218,12 +233,16 @@ class PrimitiveRunner:
         else:
             self._logger.error("Goal cancellation rejected.")
 
-    def _on_result(self, future) -> None:
+    def _on_result(self, future, generation: int) -> None:
         result = future.result().result
         status_color = "\033[92m" if result.success else "\033[91m"
         self._logger.info(
             f"{status_color}Primitive execution result: {result.success}, Type: {result.success_type}\033[0m"
         )
+        if generation != self._generation:
+            # A disowned goal ending: a newer run (or a fresh session) may own
+            # the state and the event queue now — this result concerns neither.
+            return
         self._goal_handle = None
         self._stop_robot()
 

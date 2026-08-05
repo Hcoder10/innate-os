@@ -439,6 +439,20 @@ def test_committed_turn_consumes_exactly_the_events_it_saw(agent_factory):
     assert agent._session.history_len == 3
 
 
+def test_tool_failure_becomes_an_outcome_instead_of_failing_the_committed_turn(agent_factory):
+    agent, state = agent_factory()
+    state.primitive_running = {"primitive_name": "wave", "skill_id": "local/wave"}
+    # The runner stub has no attributes, so stopping the skill raises.
+    agent._session._transport = lambda model, body: [model_response(call_part(STOP_SKILL, {}))]
+    agent.on_user_message("stop that")
+    run_turn(agent)
+
+    assert agent._events == []  # the turn committed; nothing is rerun
+    assert agent._error_streak == 0
+    outcome = agent._session._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
+    assert outcome.startswith("failed —")
+
+
 def test_turn_finishing_after_deactivation_is_dropped_entirely(agent_factory):
     agent, state = agent_factory()
 

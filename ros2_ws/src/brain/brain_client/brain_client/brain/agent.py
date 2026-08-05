@@ -351,8 +351,20 @@ class BrainAgent:
         return outcomes
 
     def _execute(self, call) -> str:
-        """Run one tool call; the returned string is the model-facing outcome."""
+        """Run one tool call; the returned string is the model-facing outcome.
+
+        Never raises: the turn has already committed, so an escaping error
+        would orphan the model's function calls in history and rerun the turn
+        without the events that triggered it.
+        """
         self._logger.info(f"[Brain] Tool call: {call.name}({call.args})")
+        try:
+            return self._dispatch(call)
+        except Exception as error:
+            self._logger.error(f"[Brain] Tool call {call.name} failed: {error!r}")
+            return f"failed — {error}"
+
+    def _dispatch(self, call) -> str:
         if call.name == WAIT:
             return "ok"
         if call.name == STOP_SKILL:
