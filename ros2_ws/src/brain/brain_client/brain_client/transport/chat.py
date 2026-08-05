@@ -113,6 +113,11 @@ class SpeechStreamer:
         self._say(self._buffer)
         self._buffer = ""
 
+    def mute(self) -> None:
+        """Drop everything not yet spoken — the reply went stale mid-stream."""
+        self._muted = True
+        self._buffer = ""
+
     def _say(self, sentence: str) -> None:
         sentence = sentence.strip()
         if sentence.startswith("Calling tool"):  # leaked tool narration, never speech

@@ -532,7 +532,7 @@ def test_user_speech_preempts_a_thinking_housekeeping_turn(agent_factory):
     assert any("hello" in p.get("text", "") for p in first_user_turn["parts"])
 
 
-def test_a_turn_begun_on_a_user_event_is_not_preempted(agent_factory):
+def test_a_second_message_reruns_an_unspoken_user_turn(agent_factory):
     agent, state = agent_factory()
     thinking, release = threading.Event(), threading.Event()
     turn_inputs = []
@@ -546,15 +546,89 @@ def test_a_turn_begun_on_a_user_event_is_not_preempted(agent_factory):
 
     agent._session._transport = transport
     agent.on_user_message("first request")
-    agent.start()  # this turn carries a user event: never discarded
+    agent.start()
     assert thinking.wait(timeout=5)
     thinking.clear()
 
-    agent.on_user_message("second thought")  # queues; must not abort the turn
+    agent.on_user_message("actually, cancel that")  # lands before any speech
+    assert thinking.wait(timeout=5)  # rerun starts without waiting for the first call
+    assert 'The user says: "first request"' in turn_inputs[1]
+    assert 'The user says: "actually, cancel that"' in turn_inputs[1]
     release.set()
-    assert thinking.wait(timeout=5)  # next turn only after the first commits
-    assert 'The user says: "first request"' in turn_inputs[0]
-    assert 'The user says: "second thought"' in turn_inputs[1]
+    agent.stop()
+
+
+def test_a_turn_that_started_speaking_finishes(agent_factory):
+    traces = []
+    agent, state = agent_factory(trace=lambda payload: traces.append(json.loads(payload)))
+    thinking, release = threading.Event(), threading.Event()
+    turn_inputs = []
+
+    def transport(model, body):
+        turn_inputs.append(body["contents"][-1]["parts"][0]["text"])
+        if len(turn_inputs) > 1:
+            return [model_response(call_part("wait", {}))]
+
+        def chunks():
+            yield model_response({"text": "One moment. "})  # spoken: the turn now holds the floor
+            thinking.set()
+            release.wait(timeout=5)
+            yield model_response({"text": "There."})
+
+        return chunks()
+
+    agent._session._transport = transport
+    agent.on_user_message("first")
+    agent.start()
+    assert thinking.wait(timeout=5)  # the first sentence has streamed
+
+    agent.on_user_message("second")
+    time.sleep(0.3)  # a wrong implementation would abandon in this window
+    assert not any(t["ev"] == "turn_preempted" for t in traces)
+    release.set()
+
+    deadline = time.time() + 5
+    while len(turn_inputs) < 2 and time.time() < deadline:
+        time.sleep(0.02)
+    assert 'The user says: "second"' in turn_inputs[1]
+    assert ("One moment.", True) in agent._chat.spoken
+    agent.stop()
+
+
+def test_nonstop_speech_cannot_starve_the_loop(agent_factory):
+    traces = []
+    agent, state = agent_factory(trace=lambda payload: traces.append(json.loads(payload)))
+    thinking, release = threading.Event(), threading.Event()
+    calls = []
+
+    def transport(model, body):
+        calls.append(body["contents"][-1]["parts"][0]["text"])
+        thinking.set()
+        release.wait(timeout=5)
+        return [model_response(call_part("wait", {}))]
+
+    agent._session._transport = transport
+    agent.on_user_message("one")
+    agent.start()
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+    agent.on_user_message("two")  # abandons run 1
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+    agent.on_user_message("three")  # abandons run 2
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+
+    agent.on_user_message("four")  # cap reached: run 3 completes regardless
+    time.sleep(0.3)
+    assert sum(t["ev"] == "turn_preempted" for t in traces) == 2
+    release.set()
+
+    deadline = time.time() + 5
+    while len(calls) < 4 and time.time() < deadline:
+        time.sleep(0.02)
+    assert all(f'"{word}"' in calls[2] for word in ("one", "two", "three"))  # the capped run carried it all
+    assert '"four"' in calls[3]
     agent.stop()
 
 
@@ -584,6 +658,17 @@ def test_speech_streamer_mutes_leaked_tool_narration_and_skips_noise():
     assert spoken == ["Done."] and silent.spoke is False
 
 
+def test_speech_streamer_mute_drops_everything_not_yet_spoken():
+    spoken = []
+    chat = SimpleNamespace(speak=lambda text, replace_pending=False: spoken.append(text))
+    streamer = SpeechStreamer(chat)
+    streamer.feed("First. Sec")
+    streamer.mute()
+    streamer.feed("ond. Third.")
+    streamer.flush()
+    assert spoken == ["First."]
+
+
 def test_user_turn_streams_sentences_to_tts_before_commit(agent_factory):
     agent, state = agent_factory()
     agent._session._transport = lambda model, body: iter(
@@ -594,13 +679,13 @@ def test_user_turn_streams_sentences_to_tts_before_commit(agent_factory):
     assert agent._chat.spoken == [("First sentence.", True), ("Second.", False)]
 
 
-def test_housekeeping_turn_speech_is_buffered_not_streamed(agent_factory):
+def test_housekeeping_turn_speech_streams_like_any_other(agent_factory):
     agent, state = agent_factory()
     agent._session._transport = lambda model, body: iter(
         [model_response({"text": "One. "}), model_response({"text": "Two."})]
     )
-    run_turn(agent)  # no user event: this turn could be abandoned, so it must not stream
-    assert agent._chat.spoken == [("One. Two.", True)]
+    run_turn(agent)  # the started-speaking guard protects it, so it may stream too
+    assert agent._chat.spoken == [("One.", True), ("Two.", False)]
 
 
 def test_running_skill_guidance_reads_registry_metadata(agent_factory):

@@ -10,8 +10,9 @@ The whole agent is one sequential coroutine on a dedicated loop thread
   its response.
 * **Turns are transactional.** Events are consumed only when a turn commits,
   so a failed or abandoned turn re-sends them. This is what makes abandoning
-  free: user speech aborts a housekeeping turn mid-think, and the rerun sees
-  everything it saw plus the new message.
+  free: user speech aborts any turn that has not yet begun to speak, and the
+  rerun sees everything it saw plus the new message — a correction prevents a
+  stale action instead of cancelling it after it started.
 
 Threading contract: ROS callbacks (executor thread) only queue events and wake
 the loop; observing, history, and acting all happen in the coroutine.
@@ -105,6 +106,7 @@ class BrainAgent:
         self._turn_count = 0
         self._turn_started_at = 0.0
         self._turn_in_flight = False
+        self._speaker = None  # the in-flight turn's SpeechStreamer (loop reads .spoke)
         self._pause_until = 0.0  # monotonic deadline of the current between-turns pause
 
         self._runtime = LoopThread("brain-agent")
@@ -154,27 +156,32 @@ class BrainAgent:
             return await self._heartbeat()
         heartbeat = asyncio.ensure_future(self._heartbeat())
         turn = spoke = None
+        reruns = 0
         try:
             while True:
                 while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
                     await asyncio.sleep(0.2)  # feed down: don't think blind
 
-                if any(event["kind"] == "user" for event in self._events):
-                    await self._turn()  # the user's own turn: always runs to completion
-                else:
-                    # A housekeeping turn races the user's voice. Abandoning is
-                    # free: nothing is consumed until a turn commits, so the
-                    # rerun sees everything this one saw plus their message.
-                    self._user_spoke.clear()
-                    turn = asyncio.ensure_future(self._turn())
-                    spoke = asyncio.ensure_future(self._user_spoke.wait())
-                    await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
-                    spoke.cancel()
-                    if not turn.done():  # the user spoke mid-think: answer them instead
-                        self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
-                        turn.cancel()
-                        await asyncio.wait({turn})  # fully unwound before the rerun looks
-
+                # Every turn races the user's voice. Abandoning is free —
+                # nothing is consumed until a turn commits, so the rerun sees
+                # everything this one saw plus the new message — with two
+                # bounds: a turn that began speaking finishes what it says,
+                # and the third rerun runs to completion, so nonstop speech
+                # cannot starve the loop.
+                self._user_spoke.clear()
+                turn = asyncio.ensure_future(self._turn())
+                spoke = asyncio.ensure_future(self._user_spoke.wait())
+                await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
+                spoke.cancel()
+                if not turn.done() and not self._speaker.spoke and reruns < 2:
+                    self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
+                    self._speaker.mute()  # the orphaned reply must not keep talking
+                    turn.cancel()
+                    await asyncio.wait({turn})  # fully unwound before the rerun looks
+                    reruns += 1
+                    continue
+                await turn  # committed (or holding the floor): run to completion
+                reruns = 0
                 if not self._events:
                     await self._pause(self._interval())
         except Exception as error:
@@ -182,6 +189,8 @@ class BrainAgent:
             self._chat.emit_system(f"⚠️ Brain loop crashed: {error!r} — stop and start the brain to recover.")
         finally:
             heartbeat.cancel()
+            if self._speaker is not None:
+                self._speaker.mute()
             for task in (turn, spoke):
                 if task is not None:
                     task.cancel()  # stop() can land mid-race; the turn dies with the loop
@@ -191,9 +200,9 @@ class BrainAgent:
         events = list(self._events)  # a peek — consumed only if the turn commits
         self._turn_count += 1
         self._turn_started_at = time.monotonic()
-        # Stream speech only on the user's own turns: a housekeeping turn can
-        # be abandoned mid-think, and an abandoned turn must never have spoken.
-        speaker = self._chat.stream_speech() if any(e["kind"] == "user" for e in events) else None
+        # Published before the first await, so the racing loop always reads
+        # the current turn's speaker: once it has spoken, no abandoning.
+        speaker = self._speaker = self._chat.stream_speech()
         try:
             text, images = self._look(events)
             message = GeminiSession.user_message(text, images)
@@ -323,26 +332,20 @@ class BrainAgent:
         return build_tools(skills, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
-    def _act(self, decision, speaker=None) -> list:
+    def _act(self, decision, speaker) -> list:
         if decision.thoughts:
             self._chat.emit_thoughts(decision.thoughts)
-        if speaker is not None:
-            speaker.flush()  # the reply's last sentence has no trailing boundary
         speech = decision.speech
-        if speaker is not None and speaker.spoke:
-            # Audio already streamed sentence-by-sentence; the panel still gets
-            # the full reply as one message.
-            if speech:
-                self._chat.emit("robot", speech, speak=False)
-            speech = None
-        if speech and any(event["kind"] == "user" for event in self._events):
-            # The user said something newer while this turn was thinking;
-            # voicing a reply to the previous moment talks over them.
+        if speech and not speaker.spoke and any(event["kind"] == "user" for event in self._events):
+            # Never started talking and the user has already said something
+            # newer — voicing this reply now would talk over the conversation.
             self._logger.info(f"[Brain] Speech suppressed (newer user message pending): {speech[:60]!r}")
-            speech = None
-        if speech:
+            speaker.mute()
+        speaker.flush()  # the reply's last sentence has no trailing boundary
+        if speaker.spoke and speech:
+            # Audio went out sentence-by-sentence; the panel still gets the
+            # full reply as one message.
             self._chat.emit("robot", speech, speak=False)
-            self._chat.speak(speech, replace_pending=True)
         outcomes = [(call, self._execute(call)) for call in decision.calls]
         self._session.add_tool_outcomes(outcomes)
         return outcomes
