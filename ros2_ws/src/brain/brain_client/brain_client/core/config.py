@@ -65,9 +65,14 @@ class BrainConfig:
             "current_nav_mode_topic": "/nav/current_mode",
             "scan_topic": "/scan",
             "gemini_model": "gemini-3.6-flash",
-            # "" lets the model think at its default level. "low" is faster but
-            # measurably hurts instruction-following (skill re-runs, chatter).
-            "gemini_thinking_level": "",
+            # "minimal" | "low" | "medium" | "high"; "" = model default.
+            # Measured on 3.6-flash (2026-08): minimal is ~3x faster than the
+            # default level (0.96s vs 3.08s median turn) and passed the same
+            # single-turn discipline probes (wait on idle, ignore STT noise,
+            # tool choice, go_to_point_in_view grounding). An earlier model's "low"
+            # measurably hurt multi-turn instruction-following (skill re-runs,
+            # chatter) — if that resurfaces, revert to "" here.
+            "gemini_thinking_level": "minimal",
             "cartesia_voice_id": "9fdaae0b-f885-4813-b589-3c07cf9d5fea",
         }
         bool_params = {
