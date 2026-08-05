@@ -59,6 +59,7 @@ class Orchestrator:
 
         # Set via set_lifecycle() after construction (mutual cycle with BrainLifecycle).
         self.lifecycle = None
+        self.vision_output = None
 
         self._active_inputs_pub = active_inputs_pub
         self._memory_positions_pub = memory_positions_pub
@@ -73,6 +74,12 @@ class Orchestrator:
     def set_lifecycle(self, lifecycle) -> None:
         """Inject BrainLifecycle, which can only be built after this object (mutual cycle)."""
         self.lifecycle = lifecycle
+
+    def set_vision_output(self, vision_output) -> None:
+        """Inject VisionOutputHandler, built after this object. Registration
+        completing is what releases a task it held (see its
+        _defer_until_registered)."""
+        self.vision_output = vision_output
 
     # ================= perception loop =================
     def check_lidar_health(self) -> None:
@@ -111,6 +118,8 @@ class Orchestrator:
             # at 10 Hz, so keep this at debug to avoid flooding the log. Matches
             # the "Brain not active" skip above.
             self._logger.debug("[BrainClient] Primitives not registered. Skipping agent_loop.")
+            if self.vision_output is not None:
+                self.vision_output.expire_deferred()
             return
         if not (self._state.ready_for_image and self._camera.has_image):
             return
@@ -283,6 +292,8 @@ class Orchestrator:
             self._logger.error("Failed to register primitives and/or directive with server")
             return
         self._state.primitives_registered = True
+        if self.vision_output is not None:
+            self.vision_output.replay_deferred()
         self._logger.info(
             f"Successfully registered {msg.payload.get('count', 0)} primitives and directive: "
             f"{msg.payload.get('directive_registered', False)}"

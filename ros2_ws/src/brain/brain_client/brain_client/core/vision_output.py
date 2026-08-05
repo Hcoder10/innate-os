@@ -11,12 +11,21 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+import time
 import traceback
 
 from brain_client.perception import pose as pose_math
 from brain_client.transport.messages import VisionAgentOutput
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
+
+# How long a task may wait for a registration round trip before the cloud is
+# told the robot dropped it. Registration is a single request/ack the robot
+# itself initiates, so this is generous; the cap exists only so a registration
+# that never completes cannot pin the agent on a tool call forever -- the exact
+# failure _bounce_dropped_task was written to prevent.
+DEFERRED_TASK_TIMEOUT_S = 20.0
 
 
 class VisionOutputHandler:
@@ -27,6 +36,11 @@ class VisionOutputHandler:
         self._chat = chat
         self._gaze = gaze
         self._pose = pose_tracker
+        # A task that arrived mid-registration, waiting for it to finish.
+        # (message, deadline); guarded because it is set on the websocket
+        # handler thread and read from the agent loop's timer thread.
+        self._deferred = None
+        self._deferred_lock = threading.Lock()
 
     def handle_message(self, msg) -> None:
         """ws handler entry point: validate, optionally log, then dispatch."""
@@ -37,8 +51,8 @@ class VisionOutputHandler:
                 self._bounce_dropped_task(msg.payload, "the brain is not active")
                 return
             if not self._state.primitives_registered:
-                self._logger.warn("[BrainClient] Primitives not registered. Skipping VisionAgentOutput.")
-                self._bounce_dropped_task(msg.payload, "skills were mid (re-)registration")
+                self._logger.warn("[BrainClient] Primitives not registered. Holding task until registration completes.")
+                self._defer_until_registered(msg)
                 return
 
             # HOTFIX: accept next_task with a "name" field by aliasing it to "type".
@@ -55,6 +69,48 @@ class VisionOutputHandler:
             self._handle_output(payload)
         except Exception as e:
             self._logger.error(f"Error processing vision output: {e}. Traceback: {traceback.format_exc()}")
+
+    def _defer_until_registered(self, msg) -> None:
+        """Hold a task that landed during a registration round trip.
+
+        A task arriving inside that window is not one the robot cannot run --
+        it is one the robot is not ready for YET, and registration is a round
+        trip the robot itself started. Bouncing it made the cloud record a
+        failure for a skill that would have succeeded moments later, which is
+        what test_dispatched_primitive_completes_rather_than_failing caught.
+
+        Latest wins: the cloud runs one task at a time, so a held task that a
+        newer one supersedes is already stale -- but it still gets an answer,
+        because the cloud marks a primitive running when it SENDS it and only a
+        terminal message clears that.
+        """
+        with self._deferred_lock:
+            previous = self._deferred[0] if self._deferred else None
+            self._deferred = (msg, time.monotonic() + DEFERRED_TASK_TIMEOUT_S)
+        if previous is not None:
+            self._bounce_dropped_task(previous.payload, "a newer task replaced it while skills were registering")
+
+    def replay_deferred(self) -> None:
+        """Run a task held through registration. Called once registration
+        completes (Orchestrator.handle_registered)."""
+        with self._deferred_lock:
+            held = self._deferred[0] if self._deferred else None
+            self._deferred = None
+        if held is not None:
+            self._logger.info("[BrainClient] Registration complete; running the task held during it.")
+            self.handle_message(held)
+
+    def expire_deferred(self) -> None:
+        """Answer a held task whose registration never completed. Polled from
+        the agent loop so a stuck registration still gets the cloud a terminal
+        message instead of silence."""
+        with self._deferred_lock:
+            if not self._deferred or time.monotonic() < self._deferred[1]:
+                return
+            held = self._deferred[0]
+            self._deferred = None
+        self._logger.warn("[BrainClient] Held task timed out waiting for registration; reporting it dropped.")
+        self._bounce_dropped_task(held.payload, "skills did not finish (re-)registering in time")
 
     def _bounce_dropped_task(self, raw_payload, why: str) -> None:
         """A dropped trigger must never be dropped SILENTLY: the cloud marks

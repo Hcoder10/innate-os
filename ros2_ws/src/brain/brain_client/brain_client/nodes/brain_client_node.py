@@ -236,6 +236,9 @@ class BrainClientNode(Node):
         self.vision_output = VisionOutputHandler(
             self, state, runner=self.runner, chat=self.chat, gaze=self.gaze, pose_tracker=self.pose_tracker
         )
+        # The other half of that cycle: registration completing is what lets a
+        # task held through it finally run.
+        self.orchestrator.set_vision_output(self.vision_output)
         self.reload = ReloadCoordinator(
             self,
             state,
