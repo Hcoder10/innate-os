@@ -5972,8 +5972,11 @@ button {
     display: none;
   }
 
-  /* The Robot/Link/Agent telemetry card costs too much of a small feed. */
-  .overlay-top-left {
+  /* The Robot/Link/Agent telemetry card costs too much of a small feed.
+     The agent page stacks that card (and, in sim, the challenge panel) in
+     .overlay-stack-top-left instead, so it needs hiding by its own name. */
+  .overlay-top-left,
+  .overlay-stack-top-left {
     display: none;
   }
 

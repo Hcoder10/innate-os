@@ -81,13 +81,6 @@ function buildAgentView(root) {
       root.innerHTML = "";
     },
   };
-
-  /** @param {string} className */
-  function overlay(className) {
-    const el = document.createElement("div");
-    el.className = `overlay ${className}`;
-    return el;
-  }
 }
 
 /**
