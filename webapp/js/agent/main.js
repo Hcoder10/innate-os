@@ -52,12 +52,18 @@ function buildAgentView(root) {
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
   root.append(cornerStack);
-  const telemetryOverlay = overlay("");
+  // Column order is DOM order: the challenge panel (sim only) first, then the
+  // telemetry card under it. The stack does the positioning, so the card
+  // carries no corner class of its own.
+  const challengePanel = typeof session.onChallenge === "function" ? createChallengePanel(cornerStack, session) : null;
+  const telemetryOverlay = document.createElement("div");
+  telemetryOverlay.className = "overlay";
+  cornerStack.append(telemetryOverlay);
   const agentState = createAgentState(ros);
 
   const parts = [
     videoStage,
-    ...(typeof session.onChallenge === "function" ? [createChallengePanel(cornerStack, session)] : []),
+    ...(challengePanel ? [challengePanel] : []),
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" }),
@@ -65,7 +71,6 @@ function buildAgentView(root) {
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },
   ];
-  cornerStack.append(telemetryOverlay);
 
   session.start();
 

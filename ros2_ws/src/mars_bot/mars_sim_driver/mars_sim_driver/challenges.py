@@ -172,12 +172,18 @@ class SkillDone(Predicate):
             self.guard.reset()
 
 
+# Every child is updated on every tick, never short-circuited: a stateful
+# predicate only advances when it is asked, so a Hold sitting behind a decided
+# sibling would silently restart its dwell each tick if all()/any() stopped
+# early. Judge first, combine second.
+
+
 @dataclass
 class AllOf(Predicate):
     preds: list[Predicate]
 
     def update(self, state: WorldState, events: list[dict]) -> bool:
-        return all(p.update(state, events) for p in list(self.preds))
+        return all([p.update(state, events) for p in self.preds])  # noqa: C419 -- see above
 
     def reset(self) -> None:
         for p in self.preds:
@@ -189,7 +195,7 @@ class AnyOf(Predicate):
     preds: list[Predicate]
 
     def update(self, state: WorldState, events: list[dict]) -> bool:
-        return any(p.update(state, events) for p in list(self.preds))
+        return any([p.update(state, events) for p in self.preds])  # noqa: C419 -- see above
 
     def reset(self) -> None:
         for p in self.preds:
@@ -255,9 +261,11 @@ class ChallengeEngine:
     """Judges one active challenge at a time against the observer state feed.
 
     Thread model mirrors the world server: start()/abort() run on observer
-    connection threads and take the sim lock for setup; tick() runs on the
-    physics thread after state is gathered (no sim access, pure evaluation);
-    post_event() may be called from any thread.
+    connection threads and take the sim lock for setup; tick() runs wherever
+    publish_state() does -- the physics thread every slice, and the observer
+    thread that just ran a command -- always after state gathering, with no
+    sim access of its own (pure evaluation under _mutex); post_event() may be
+    called from any thread.
     """
 
     def __init__(
@@ -313,20 +321,14 @@ class ChallengeEngine:
         if challenge is None:
             print(f"[challenges] start ignored: unknown id {challenge_id!r}", flush=True)
             return False
-        with self._mutex:
-            self.active = challenge
-            self.state = "running"
-            self.reason = ""
-            self.goal_done = [False] * len(challenge.goals)
-            self.elapsed_s = 0.0
-            self._events.clear()
-            for goal in challenge.goals:
-                try:
-                    goal.predicate.reset()
-                except Exception:  # noqa: BLE001,S110 -- challenge bug; judged as-is
-                    pass
-            entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
-            entry["attempts"] += 1
+        # Nothing is judged while the scene is being built. The world reset and
+        # the drops take the sim lock, which the physics thread keeps grabbing
+        # between ticks, so a tick lands in the middle of this -- and it must
+        # not see a challenge whose start time isn't known yet (elapsed_s
+        # against a stale started_t instantly "times out" a fresh run) or judge
+        # goal 0 against the world the last run left behind. So: deactivate,
+        # build the scene, then publish the whole run in one atomic step.
+        self._deactivate()
         with self.sim_lock:
             if challenge.reset_world:
                 self.sim.reset()  # also re-parks every prop (props.py)
@@ -335,10 +337,28 @@ class ChallengeEngine:
                     print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
             started_t = float(self.sim.data.time)
         with self._mutex:
+            for goal in challenge.goals:
+                try:
+                    goal.predicate.reset()
+                except Exception:  # noqa: BLE001,S110 -- challenge bug; judged as-is
+                    pass
+            self.state = "running"
+            self.reason = ""
+            self.goal_done = [False] * len(challenge.goals)
             self.started_t = started_t
+            self.elapsed_s = 0.0
+            self._events.clear()  # anything that happened during setup is not this run's
+            entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
+            entry["attempts"] += 1
+            self.active = challenge  # last: judging starts here
         return True
 
     def abort(self) -> None:
+        self._deactivate()
+
+    def _deactivate(self) -> None:
+        """Stop judging. A run still in progress is recorded as aborted --
+        whether the user pressed Abort or started something else over it."""
         with self._mutex:
             if self.active is not None and self.state == "running":
                 self._record(self.active.id, "aborted", None)
