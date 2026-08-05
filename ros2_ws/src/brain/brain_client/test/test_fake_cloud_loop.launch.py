@@ -76,6 +76,12 @@ SCRIPTED_INPUTS = {
 }
 TEST_DIRECTIVE = "security_guard_agent"
 
+# How many times test_loop_continues_after_completion replaces a primitive that
+# failed instead of completing. Bounded, not unlimited: the continuation path
+# is what it measures, so a run that only ever makes progress by redispatching
+# should still be reported as broken.
+MAX_REDISPATCHES = 3
+
 IMAGE_TOPIC = "/test/camera/compressed"
 
 # FakeCloud is started in generate_test_description (before the nodes connect) and
@@ -319,17 +325,75 @@ class TestFakeCloudLoop(unittest.TestCase):
             f"Expected primitive_completed, got {terminal[0].get('type')}: {terminal[0].get('payload')}",
         )
 
+    def test_dispatched_primitive_completes_rather_than_failing(self):
+        """A dispatched primitive reports completion, not failure.
+
+        Split out of test_loop_continues_after_completion, which used to carry
+        both this and the continuation path and so reported an intermittent
+        failure as "the loop stopped". They are separate claims: this one owns
+        the failure itself.
+
+        send_email needs no external creds and succeeds headlessly (see
+        test_scripted_primitive_runs_to_completion), so a failure here is a
+        real defect. Assert WITH the reason the skills server attached -- a
+        module load error, an in-training checkpoint, or the skill's own
+        message (skills_server._abort_result via catalog.unavailable_reason) --
+        because a list of message types cannot say why, and that "why" is the
+        whole diagnosis.
+        """
+        self._activate_test_directive()
+        before = len(FAKE.transcript)
+        FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
+        done = self._feed_until(
+            lambda: bool(self._since(before, "primitive_completed", "primitive_failed")),
+            timeout=45.0,
+        )
+        self.assertTrue(done, f"No terminal result for {SCRIPTED_SKILL}. Types: {FAKE.received_types()}")
+        terminal = self._since(before, "primitive_completed", "primitive_failed")[0]
+        payload = terminal.get("payload") or {}
+        self.assertEqual(
+            terminal.get("type"),
+            "primitive_completed",
+            f"{SCRIPTED_SKILL} failed instead of completing. reason={payload.get('reason')!r} payload={payload}",
+        )
+
     def test_loop_continues_after_completion(self):
         """After one primitive completes the brain requests and runs the next -
-        the post-completion continuation path. Scripts two of its own tasks."""
+        the post-completion continuation path. Scripts two of its own tasks.
+
+        Redispatches around an intermittent primitive failure, which is
+        test_dispatched_primitive_completes_rather_than_failing's subject, not
+        this one's. It has to: the fake cloud pops its queue on dispatch and
+        never requeues (fake_cloud._handle_perception), so one failure leaves
+        this test asking for two completions from a single remaining task --
+        unsatisfiable, and it burns the whole timeout streaming perception
+        rather than failing on the thing that actually went wrong.
+        """
         self._activate_test_directive()
         before = len(FAKE.transcript)
         FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
         FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)
-        done = self._feed_until(lambda: len(self._since(before, "primitive_completed")) >= 2, timeout=45.0)
-        self.assertTrue(
-            done,
-            f"Loop did not complete two primitives. Types: {FAKE.received_types()}",
+
+        completed = failures = 0
+        for _ in range(MAX_REDISPATCHES + 1):
+            seen_failures = failures
+            self._feed_until(
+                lambda seen=seen_failures: (
+                    len(self._since(before, "primitive_completed")) >= 2
+                    or len(self._since(before, "primitive_failed")) > seen
+                ),
+                timeout=45.0,
+            )
+            completed = len(self._since(before, "primitive_completed"))
+            failures = len(self._since(before, "primitive_failed"))
+            if completed >= 2:
+                return
+            if failures == seen_failures:
+                break  # neither completed nor failed: a genuine stall, not the flake
+            FAKE.script_task(SCRIPTED_SKILL, SCRIPTED_INPUTS)  # replace the consumed slot
+        self.fail(
+            f"Loop did not complete two primitives: {completed} completed, {failures} failed, "
+            f"after up to {MAX_REDISPATCHES} redispatches. Types: {FAKE.received_types()}"
         )
 
     def test_chat_in_is_forwarded_to_cloud(self):
