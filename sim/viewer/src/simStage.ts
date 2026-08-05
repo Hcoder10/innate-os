@@ -46,14 +46,29 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   propControls.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
-  const newChip = (label: string) => {
+  const ON_FG = "#7dffc4";
+  const OFF_FG = "rgba(255,255,255,.75)";
+  /** The one place a chip's lit/unlit look is decided. Every chip goes through
+   * it, so the toggles and an armed prop can never drift apart. */
+  const setChipOn = (el: HTMLElement, on: boolean) => {
+    el.style.background = on ? ON_BG : OFF_BG;
+    el.style.color = on ? ON_FG : OFF_FG;
+  };
+  // No backdrop-filter: re-blurring over an animated canvas costs fps.
+  const CHIP_CSS =
+    "padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);" +
+    "font:500 11px system-ui;cursor:pointer;line-height:1;";
+  const makeChip = (label: string, title?: string) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
-    b.style.cssText =
-      // No backdrop-filter: re-blurring over an animated canvas costs fps.
-      `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-      "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+    if (title) b.title = title;
+    b.style.cssText = CHIP_CSS;
+    setChipOn(b, false);
+    return b;
+  };
+  const newChip = (label: string) => {
+    const b = makeChip(label);
     propControls.appendChild(b);
     return b;
   };
@@ -62,8 +77,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     let on = false;
     b.onclick = () => {
       on = !on;
-      b.style.background = on ? ON_BG : OFF_BG;
-      b.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+      setChipOn(b, on);
       onToggle(on);
     };
   };
@@ -90,25 +104,30 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   modeSwitch.type = "button";
   modeSwitch.title = "How clicking a prop places it";
   modeSwitch.style.cssText =
-    "position:relative;display:inline-flex;padding:2px;border-radius:999px;" +
-    `border:1px solid rgba(255,255,255,.25);background:${OFF_BG};cursor:pointer;` +
-    "font:500 11px system-ui;line-height:1;";
+    // Equal grid columns, so the half-width knob lands exactly on a label
+    // whatever the two words measure.
+    "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;" +
+    "padding:2px;border-radius:999px;border:1px solid rgba(255,255,255,.28);" +
+    // Darker than a chip: the 3D scene behind this is often bright wall or
+    // floor, where 45% black leaves the inactive label unreadable.
+    "background:rgba(0,0,0,.62);cursor:pointer;font:500 11px system-ui;line-height:1;";
   const knob = document.createElement("span");
   knob.style.cssText =
-    `position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;background:${ON_BG};` +
-    "transition:transform .15s ease;pointer-events:none;";
+    "position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;" +
+    "background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
   const placeLabel = document.createElement("span");
   const robotLabel = document.createElement("span");
   placeLabel.textContent = "place";
   robotLabel.textContent = "at robot";
   for (const label of [placeLabel, robotLabel]) {
-    label.style.cssText = "position:relative;z-index:1;padding:4px 10px;transition:color .15s ease;";
+    label.style.cssText =
+      "position:relative;z-index:1;padding:4px 12px;text-align:center;white-space:nowrap;transition:color .15s ease;";
   }
   modeSwitch.append(knob, placeLabel, robotLabel);
   const refreshModeSwitch = () => {
     knob.style.transform = placeMode ? "translateX(0)" : "translateX(100%)";
-    placeLabel.style.color = placeMode ? "#7dffc4" : "rgba(255,255,255,.55)";
-    robotLabel.style.color = placeMode ? "rgba(255,255,255,.55)" : "#7dffc4";
+    placeLabel.style.color = placeMode ? ON_FG : OFF_FG;
+    robotLabel.style.color = placeMode ? OFF_FG : ON_FG;
   };
   modeSwitch.onclick = () => {
     placeMode = !placeMode;
@@ -118,13 +137,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   refreshModeSwitch();
   propControls.appendChild(modeSwitch);
 
-  const clearChip = document.createElement("button");
-  clearChip.type = "button";
-  clearChip.textContent = "clear";
-  clearChip.title = "Send every prop back off-map";
-  clearChip.style.cssText =
-    `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-    "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+  const clearChip = makeChip("clear", "Send every prop back off-map");
   clearChip.onclick = () => {
     armDrop(null);
     session.removeObjects();
@@ -163,13 +176,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
       // A set of one is just the prop's own chip, so it gets no set chip.
       if (group && members.length > 1) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.textContent = `+${group}`;
-        chip.title = `Set down all ${members.length} ${group} props in front of the robot`;
-        chip.style.cssText =
-          `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-          "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+        const chip = makeChip(`+${group}`, `Set down all ${members.length} ${group} props in front of the robot`);
         chip.onclick = () => {
           armDrop(null);
           session.dropPropGroup(group);
@@ -177,13 +184,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
         row.appendChild(chip);
       }
       for (const prop of members) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.textContent = prop.label;
-        chip.title = prop.title;
-        chip.style.cssText =
-          `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-          "color:rgba(255,255,255,.75);font:500 13px system-ui;cursor:pointer;line-height:1;";
+        const chip = makeChip(prop.label, prop.title);
+        chip.style.fontSize = "13px"; // emoji read small at the chip's 11px
+        // A roster can arrive mid-drag; keep whatever was armed looking armed.
+        setChipOn(chip, prop.name === armedProp);
         chip.onclick = () => {
           if (placeMode) armDrop(armedProp === prop.name ? null : prop.name);
           else session.dropPropAtRobot(prop.name);
@@ -297,8 +301,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     canvas.style.cursor = name !== null ? "crosshair" : "";
     for (const [propName, chip] of propChips) {
       const on = propName === name;
-      chip.style.background = on ? ON_BG : OFF_BG;
-      chip.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+      setChipOn(chip, on);
     }
     if (name === null) clearDropDrag();
   }

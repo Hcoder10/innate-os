@@ -12,7 +12,7 @@ from mars_sim_driver.props import Prop
 # bouncy-ball ~1100 lands at 37g, inside the skitter zone props.py warns about.
 PROP = Prop(
     name="ball",
-    label="🟢",
+    label="🎾",
     group="manipulation",
     title="Stress ball",
     collision="sphere",
