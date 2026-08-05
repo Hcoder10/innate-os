@@ -110,6 +110,14 @@ def test_build_tools_while_running_offers_only_stop_and_wait():
     assert "navigate_to_position" in declarations[0]["description"]
 
 
+def test_build_tools_while_running_with_user_speech_offers_stop_alone():
+    # Offered any no-op tool the model calls it and goes silent, so a turn
+    # carrying a user message gets stop alone — text becomes the reply channel.
+    declarations = build_tools([], "wave", user_spoke=True)[0]["functionDeclarations"]
+    assert [d["name"] for d in declarations] == [STOP_SKILL]
+    assert "NOT reasons to stop" in declarations[0]["description"]
+
+
 def test_build_tools_with_no_skills_still_offers_wait():
     declarations = build_tools([], None)[0]["functionDeclarations"]
     assert [d["name"] for d in declarations] == ["wait"]
@@ -222,7 +230,7 @@ def test_generate_builds_a_complete_native_request():
     def transport(model, body):
         captured["model"] = model
         captured.update(body)
-        return model_response({"text": "ok"})
+        return [model_response({"text": "ok"})]
 
     session = make_session(transport=transport)
     tools = build_tools([WAVE_SKILL], None)
@@ -239,11 +247,31 @@ def test_generate_sets_thinking_level_when_configured():
 
     def transport(model, body):
         captured.update(body)
-        return model_response({"text": "ok"})
+        return [model_response({"text": "ok"})]
 
     session = GeminiSession(transport, model="m", thinking_level="high", max_history=10, max_image_turns=2)
     session.generate(user_turn("hi", False), [], "S")
     assert captured["generationConfig"]["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "high"}
+
+
+def test_generate_streams_speech_deltas_and_assembles_the_response():
+    chunks = [
+        model_response({"text": "thinking...", "thought": True}),
+        model_response({"text": "One. "}),
+        model_response({"text": "Two"}),
+        model_response(call_part("wave", {}, "c9")),
+    ]
+    heard = []
+    session = make_session(transport=lambda model, body: iter(chunks))
+    response = session.generate(user_turn("hi", False), [], "S", on_speech=heard.append)
+
+    assert heard == ["One. ", "Two"]  # thoughts never reach the speech stream
+    parts = response["candidates"][0]["content"]["parts"]
+    assert parts[0] == {"text": "thinking...", "thought": True}  # kept verbatim
+    assert {"text": "One. Two"} in parts  # adjacent plain-text deltas merged
+    decision = _decision_from(response)
+    assert decision.speech == "One. Two"
+    assert [c.name for c in decision.calls] == ["wave"]
 
 
 # ---------- visual grounding (pixel -> floor target) ----------
@@ -313,6 +341,7 @@ from types import SimpleNamespace  # noqa: E402
 
 from brain_client.brain.agent import BrainAgent  # noqa: E402
 from brain_client.core.state import BrainState  # noqa: E402
+from brain_client.transport.chat import SpeechStreamer  # noqa: E402
 
 
 @pytest.fixture
@@ -331,6 +360,7 @@ def agent_factory(monkeypatch):
             history_max_image_turns=2,
             idle_turn_interval=3.0,
             supervision_turn_interval=5.0,
+            simulator_mode=False,
         )
         state = BrainState()
         state.is_brain_active = True
@@ -338,7 +368,15 @@ def agent_factory(monkeypatch):
             fresh_image_jpeg=lambda max_age: JPEG, fresh_arm_jpeg=lambda max_age: None, current_head_pitch=-10.0
         )
         pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
-        chat = SimpleNamespace(emit_system=lambda *a, **k: None, emit=lambda *a, **k: None, speak=lambda *a, **k: None)
+        spoken = []
+        chat = SimpleNamespace(
+            emit_system=lambda *a, **k: None,
+            emit=lambda *a, **k: None,
+            emit_thoughts=lambda *a, **k: None,
+            speak=lambda text, replace_pending=False: spoken.append((text, replace_pending)),
+            spoken=spoken,
+        )
+        chat.stream_speech = lambda: SpeechStreamer(chat)
         agent = BrainAgent(
             node,
             state,
@@ -361,7 +399,7 @@ def agent_factory(monkeypatch):
 
 def run_turn(agent: BrainAgent) -> None:
     """Run one turn to completion on the agent's own loop thread."""
-    asyncio.run_coroutine_threadsafe(agent._turn(), agent._loop).result(timeout=5)
+    asyncio.run_coroutine_threadsafe(agent._turn(), agent._runtime.loop).result(timeout=5)
 
 
 def no_pause(agent: BrainAgent, monkeypatch) -> None:
@@ -392,7 +430,7 @@ def test_failed_turn_leaves_events_queued_for_the_retry(agent_factory, monkeypat
 
 def test_committed_turn_consumes_exactly_the_events_it_saw(agent_factory):
     agent, state = agent_factory()
-    agent._session._transport = lambda model, body: model_response(call_part("wait", {}))
+    agent._session._transport = lambda model, body: [model_response(call_part("wait", {}))]
     agent.on_user_message("hello")
     run_turn(agent)
 
@@ -406,7 +444,7 @@ def test_turn_finishing_after_deactivation_is_dropped_entirely(agent_factory):
 
     def transport(model, body):  # deactivation lands while the turn is thinking
         state.is_brain_active = False
-        return model_response({"text": "stale"})
+        return [model_response({"text": "stale"})]
 
     agent._session._transport = transport
     run_turn(agent)
@@ -422,7 +460,7 @@ def test_stop_cancels_a_turn_mid_think_and_absorbs_nothing(agent_factory):
     def transport(model, body):
         thinking.set()
         release.wait(timeout=5)
-        return model_response({"text": "stale"})
+        return [model_response({"text": "stale"})]
 
     agent._session._transport = transport
     agent.on_user_message("hi")
@@ -433,7 +471,7 @@ def test_stop_cancels_a_turn_mid_think_and_absorbs_nothing(agent_factory):
     release.set()  # the orphaned HTTP call finishes on its worker thread...
     time.sleep(0.2)
     assert agent._session._history == []  # ...and its response is dropped
-    assert agent._task is None
+    assert not agent._runtime.running
 
 
 def test_reset_mid_turn_restarts_the_loop_with_empty_history(agent_factory):
@@ -443,7 +481,7 @@ def test_reset_mid_turn_restarts_the_loop_with_empty_history(agent_factory):
     def transport(model, body):
         thinking.set()
         release.wait(timeout=5)
-        return model_response({"text": "stale"})
+        return [model_response({"text": "stale"})]
 
     agent._session._transport = transport
     agent.start()
@@ -451,11 +489,118 @@ def test_reset_mid_turn_restarts_the_loop_with_empty_history(agent_factory):
     thinking.clear()
 
     agent.reset()  # cancels the old turn, clears history, respawns the loop
-    assert agent._task is not None
+    assert agent._runtime.running
     assert agent._session._history == []
     assert thinking.wait(timeout=5)  # the restarted loop is already thinking again
     agent.stop()
     release.set()
+
+
+def test_user_speech_preempts_a_thinking_housekeeping_turn(agent_factory):
+    traces = []
+    agent, state = agent_factory(trace=lambda payload: traces.append(json.loads(payload)))
+    thinking, release = threading.Event(), threading.Event()
+    turn_inputs = []
+
+    def transport(model, body):
+        turn_inputs.append(body["contents"][-1]["parts"][0]["text"])
+        thinking.set()
+        if len(turn_inputs) == 1:
+            release.wait(timeout=5)  # the heartbeat turn hangs mid-think
+        return [model_response(call_part("wait", {}))]
+
+    agent._session._transport = transport
+    agent.start()  # empty queue: the first turn is a preemptible heartbeat
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+
+    agent.on_user_message("hello")
+    # The rerun starts thinking without waiting for the hung heartbeat call.
+    assert thinking.wait(timeout=5)
+    assert 'The user says: "hello"' in turn_inputs[1]
+    assert "turn_preempted" in [t["ev"] for t in traces]
+
+    release.set()  # the orphaned heartbeat response unblocks and is dropped
+    deadline = time.time() + 5
+    while agent._events and time.time() < deadline:
+        time.sleep(0.02)
+    assert agent._events == []  # the rerun committed the user's event
+    agent.stop()
+    # The aborted heartbeat exchange never entered history: the first stored
+    # user turn is the rerun's, which carries the user's message.
+    first_user_turn = next(c for c in agent._session._history if c["role"] == "user")
+    assert any("hello" in p.get("text", "") for p in first_user_turn["parts"])
+
+
+def test_a_turn_begun_on_a_user_event_is_not_preempted(agent_factory):
+    agent, state = agent_factory()
+    thinking, release = threading.Event(), threading.Event()
+    turn_inputs = []
+
+    def transport(model, body):
+        turn_inputs.append(body["contents"][-1]["parts"][0]["text"])
+        thinking.set()
+        if len(turn_inputs) == 1:
+            release.wait(timeout=5)
+        return [model_response(call_part("wait", {}))]
+
+    agent._session._transport = transport
+    agent.on_user_message("first request")
+    agent.start()  # this turn carries a user event: never discarded
+    assert thinking.wait(timeout=5)
+    thinking.clear()
+
+    agent.on_user_message("second thought")  # queues; must not abort the turn
+    release.set()
+    assert thinking.wait(timeout=5)  # next turn only after the first commits
+    assert 'The user says: "first request"' in turn_inputs[0]
+    assert 'The user says: "second thought"' in turn_inputs[1]
+    agent.stop()
+
+
+def test_speech_streamer_speaks_sentence_by_sentence():
+    spoken = []
+    chat = SimpleNamespace(speak=lambda text, replace_pending=False: spoken.append((text, replace_pending)))
+    streamer = SpeechStreamer(chat)
+    streamer.feed("I see a ball. It is ")
+    streamer.feed("red! And")
+    streamer.feed(" close.")
+    streamer.flush()
+    # First sentence supersedes any stale queue; the rest append in order.
+    assert spoken == [("I see a ball.", True), ("It is red!", False), ("And close.", False)]
+
+
+def test_speech_streamer_mutes_leaked_tool_narration_and_skips_noise():
+    spoken = []
+    chat = SimpleNamespace(speak=lambda text, replace_pending=False: spoken.append(text))
+    streamer = SpeechStreamer(chat)
+    streamer.feed("Done. Calling tool default_api. This must not be spoken.")
+    streamer.flush()
+    assert spoken == ["Done."]
+
+    silent = SpeechStreamer(chat)
+    silent.feed("--- ")
+    silent.flush()
+    assert spoken == ["Done."] and silent.spoke is False
+
+
+def test_user_turn_streams_sentences_to_tts_before_commit(agent_factory):
+    agent, state = agent_factory()
+    agent._session._transport = lambda model, body: iter(
+        [model_response({"text": "First sentence. "}), model_response({"text": "Second."})]
+    )
+    agent.on_user_message("talk to me")
+    run_turn(agent)
+    assert agent._chat.spoken == [("First sentence.", True), ("Second.", False)]
+
+
+def test_housekeeping_turn_speech_is_buffered_not_streamed(agent_factory):
+    agent, state = agent_factory()
+    agent._session._transport = lambda model, body: iter(
+        [model_response({"text": "One. "}), model_response({"text": "Two."})]
+    )
+    run_turn(agent)  # no user event: this turn could be abandoned, so it must not stream
+    assert agent._chat.spoken == [("One. Two.", True)]
 
 
 def test_running_skill_guidance_reads_registry_metadata(agent_factory):
@@ -469,7 +614,7 @@ def test_running_skill_guidance_reads_registry_metadata(agent_factory):
         [{**WAVE_SKILL, "type": "code", "guidelines_when_running": "  do not block the arm  "}]
     )
     state.primitive_running = {"primitive_name": "wave", "primitive_id": "p1", "skill_id": "local/wave"}
-    text, images = agent._observe([])
+    text, images = agent._look([])
     assert "(guidance while this skill runs: do not block the arm)" in text
 
 
@@ -478,7 +623,7 @@ def test_a_turn_bug_backs_off_instead_of_killing_the_loop(agent_factory, monkeyp
     # network call) must take the backoff path, not unwind the whole loop —
     # a crashed brain stays dead until a human stops and starts it.
     agent, state = agent_factory()
-    agent._session._transport = lambda model, body: model_response({"text": "hi"})
+    agent._session._transport = lambda model, body: [model_response({"text": "hi"})]
     no_pause(agent, monkeypatch)
 
     def broken_tools():
@@ -501,7 +646,7 @@ def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
         outcome = next(outcomes)
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        return [outcome]
 
     agent._session._transport = transport
     agent.on_user_message("hello")

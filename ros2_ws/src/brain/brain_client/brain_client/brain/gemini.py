@@ -3,8 +3,8 @@
 """Gemini inference for the local brain, over the native Gemini REST API.
 
 The brain reaches Gemini through the Innate proxy (service ``gemini`` — the
-proxy holds the upstream key and passes native ``:generateContent`` calls
-through untouched; the robot authenticates with its service key) or directly
+proxy holds the upstream key and passes native ``:streamGenerateContent``
+calls through untouched; the robot authenticates with its service key) or directly
 against ``generativelanguage.googleapis.com`` when ``GEMINI_API_KEY`` is set.
 Both speak the same wire format: JSON contents/parts, inline JPEG images,
 function tools.
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -36,7 +37,7 @@ import httpx
 
 STOP_SKILL = "stop_current_skill"
 WAIT = "wait"
-GO_TO_POINT = "go_to_point"
+GO_TO_POINT_IN_VIEW = "go_to_point_in_view"
 
 # An explicit no-op keeps idle turns clean: without it, models tend to emit
 # placeholder text ("[]", "Empty response") rather than returning nothing.
@@ -48,8 +49,8 @@ _WAIT_DECLARATION = {
 # Visual navigation grounding: the model points at a floor pixel and the robot
 # projects it into a local navigation goal (brain/grounding.py). Declared only
 # when navigate_to_position is among the active skills — it is the actuator.
-_GO_TO_POINT_DECLARATION = {
-    "name": GO_TO_POINT,
+_GO_TO_POINT_IN_VIEW_DECLARATION = {
+    "name": GO_TO_POINT_IN_VIEW,
     "description": (
         "Drive toward a point you can see in the CURRENT camera frame. Give normalized image "
         "coordinates (0-1000) of a point ON THE FLOOR: y from the top, x from the left. For an "
@@ -69,7 +70,7 @@ _GO_TO_POINT_DECLARATION = {
 
 PROXY_SERVICE = "gemini"
 DIRECT_BASE_URL = "https://generativelanguage.googleapis.com"
-GENERATE_PATH = "/v1beta/models/{model}:generateContent"
+STREAM_PATH = "/v1beta/models/{model}:streamGenerateContent?alt=sse"
 
 _FRAME_REMOVED = {"text": "[older camera frame removed]"}
 
@@ -107,7 +108,7 @@ def assign_tool_names(skills: list[dict]) -> list[tuple[str, dict]]:
     shadow a built-in tool); colliding names get a numeric suffix so a call
     never silently dispatches to the wrong skill.
     """
-    taken = {STOP_SKILL, WAIT, GO_TO_POINT}
+    taken = {STOP_SKILL, WAIT, GO_TO_POINT_IN_VIEW}
     named = []
     for meta in skills:
         base = name = tool_name(meta["name"])
@@ -121,13 +122,33 @@ def assign_tool_names(skills: list[dict]) -> list[tuple[str, dict]]:
     return named
 
 
-def build_tools(skills: list[dict], running_skill_name: str | None, *, can_go_to_point: bool = False) -> list[dict]:
+def build_tools(
+    skills: list[dict],
+    running_skill_name: str | None,
+    *,
+    can_go_to_point_in_view: bool = False,
+    user_spoke: bool = False,
+) -> list[dict]:
     """One function declaration per available skill, in a native tools block.
 
     While a skill runs, the robot's only action is stopping it, so the
-    declarations collapse to stop_current_skill.
+    declarations collapse. The shape depends on whether the user just spoke:
+    offered any no-op tool, the model calls it and goes silent, so a turn
+    carrying a user message gets stop_current_skill ALONE — plain text becomes
+    the reply channel, and the description steers stop away from questions.
     """
     if running_skill_name is not None:
+        if user_spoke:
+            stop = {
+                "name": STOP_SKILL,
+                "description": (
+                    f"Abort the currently running skill ({running_skill_name}). Only when the user "
+                    "asks you to stop or switch task, or the skill is clearly failing. Questions "
+                    "and conversation are NOT reasons to stop — answer those in text and let the "
+                    "skill continue."
+                ),
+            }
+            return [{"functionDeclarations": [stop]}]
         stop = {
             "name": STOP_SKILL,
             "description": (
@@ -137,8 +158,8 @@ def build_tools(skills: list[dict], running_skill_name: str | None, *, can_go_to
         }
         return [{"functionDeclarations": [stop, _WAIT_DECLARATION]}]
     declarations = [_declaration(name, meta) for name, meta in assign_tool_names(skills)]
-    if can_go_to_point:
-        declarations.append(_GO_TO_POINT_DECLARATION)
+    if can_go_to_point_in_view:
+        declarations.append(_GO_TO_POINT_IN_VIEW_DECLARATION)
     declarations.append(_WAIT_DECLARATION)
     return [{"functionDeclarations": declarations}]
 
@@ -178,34 +199,50 @@ def _param_schema(spec: dict) -> dict:
     return schema
 
 
-# ---------- transports (callable: (model, body) -> response dict) ----------
+# ---------- transports (callable: (model, body) -> iterator of response chunks) ----------
 
 
 def proxy_transport(proxy):
     """Reach Gemini through the Innate proxy (the proxy holds the upstream key)."""
 
-    def send(model: str, body: dict) -> dict:
-        endpoint = GENERATE_PATH.format(model=model)
+    def stream(model: str, body: dict):
+        endpoint = STREAM_PATH.format(model=model)
         with proxy.request_stream(PROXY_SERVICE, endpoint, json=body) as resp:
-            payload = resp.read()
             if resp.status_code != 200:
-                raise RuntimeError(f"gemini via proxy: HTTP {resp.status_code}: {payload[:200]!r}")
-            return json.loads(payload)
+                raise RuntimeError(f"gemini via proxy: HTTP {resp.status_code}: {resp.read()[:200]!r}")
+            yield from _sse_chunks(resp.iter_lines())
 
-    return send
+    return stream
+
+
+def pick_transport(proxy):
+    """The way to reach Gemini: the Innate proxy (managed) or GEMINI_API_KEY (dev)."""
+    if proxy is not None and proxy.is_available():
+        return proxy_transport(proxy), "innate-proxy"
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key:
+        return direct_transport(api_key), "gemini-direct"
+    return None, "unconfigured"
 
 
 def direct_transport(api_key: str):
     """Reach Google's Gemini API directly with GEMINI_API_KEY."""
 
-    def send(model: str, body: dict) -> dict:
-        url = DIRECT_BASE_URL + GENERATE_PATH.format(model=model)
-        resp = httpx.post(url, headers={"x-goog-api-key": api_key}, json=body, timeout=90.0)
-        if resp.status_code != 200:
-            raise RuntimeError(f"gemini direct: HTTP {resp.status_code}: {resp.text[:200]}")
-        return resp.json()
+    def stream(model: str, body: dict):
+        url = DIRECT_BASE_URL + STREAM_PATH.format(model=model)
+        with httpx.stream("POST", url, headers={"x-goog-api-key": api_key}, json=body, timeout=90.0) as resp:
+            if resp.status_code != 200:
+                resp.read()
+                raise RuntimeError(f"gemini direct: HTTP {resp.status_code}: {resp.text[:200]}")
+            yield from _sse_chunks(resp.iter_lines())
 
-    return send
+    return stream
+
+
+def _sse_chunks(lines):
+    for line in lines:
+        if line.startswith("data: "):
+            yield json.loads(line[len("data: ") :])
 
 
 class GeminiSession:
@@ -233,8 +270,13 @@ class GeminiSession:
             parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg).decode()}})
         return {"role": "user", "parts": parts}
 
-    def generate(self, user_message: dict, tools: list[dict], system: str) -> dict:
-        """Blocking network call — safe on a worker thread (history is only read)."""
+    def generate(self, user_message: dict, tools: list[dict], system: str, on_speech=None) -> dict:
+        """Blocking network call — safe on a worker thread (history is only read).
+
+        The reply streams in; every plain-text delta is handed to ``on_speech``
+        as it arrives, which is what lets the robot start talking at the first
+        sentence boundary. Returns the fully assembled response.
+        """
         thinking = {"includeThoughts": True}
         if self._thinking_level:
             thinking["thinkingLevel"] = self._thinking_level
@@ -245,7 +287,14 @@ class GeminiSession:
         }
         if tools:
             body["tools"] = tools
-        return self._transport(self._model, body)
+        parts: list[dict] = []
+        for chunk in self._transport(self._model, body):
+            content = _model_content(chunk) or {}
+            for part in content.get("parts") or []:
+                parts.append(part)
+                if on_speech and part.get("text") and not part.get("thought"):
+                    on_speech(part["text"])
+        return {"candidates": [{"content": {"role": "model", "parts": _merged(parts)}}]}
 
     def absorb(self, user_message: dict, response: dict) -> Decision:
         """Commit the exchange to history and distill the model's Decision.
@@ -295,6 +344,19 @@ class GeminiSession:
             content["parts"] = [dict(_FRAME_REMOVED) if "inlineData" in p else p for p in content["parts"]]
 
 
+def _merged(parts: list[dict]) -> list[dict]:
+    """Collapse adjacent plain-text deltas; anything carrying more than text
+    (thoughts, signatures, calls) is kept verbatim for the stored history."""
+    merged: list[dict] = []
+    for part in parts:
+        previous = merged[-1] if merged else None
+        if previous is not None and set(previous) == {"text"} and set(part) == {"text"}:
+            previous["text"] += part["text"]
+        else:
+            merged.append(dict(part))
+    return merged
+
+
 def _model_content(response: dict) -> dict | None:
     candidates = response.get("candidates") or []
     return candidates[0].get("content") if candidates else None
@@ -317,4 +379,14 @@ def _decision_from(response: dict) -> Decision:
                 decision.thoughts = f"{decision.thoughts or ''}{part['text']}".strip()
             else:
                 decision.speech = f"{decision.speech or ''}{part['text']}".strip()
+    decision.speech = _clean_speech(decision.speech)
     return decision
+
+
+def _clean_speech(speech: str | None) -> str | None:
+    """Drop unspeakable output: placeholders and leaked tool-call narration."""
+    if not speech:
+        return None
+    # gemini-3 preview sometimes appends "Calling tool default_api:..." to its text.
+    speech = re.sub(r"Calling tool\b.*", "", speech, flags=re.DOTALL).strip()
+    return speech if re.search(r"[a-zA-Z0-9]", speech) else None

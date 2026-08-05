@@ -10,9 +10,10 @@ history list so no other component needs to.
 from __future__ import annotations
 
 import json
+import re
 import time
 
-from std_msgs.msg import String
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
 class ChatManager:
@@ -36,6 +37,8 @@ class ChatManager:
         chat_entry = self.entry(sender, text)
         self.history.append(chat_entry)
         self._logger.debug(f"chat_out: {chat_entry}")
+        from std_msgs.msg import String  # deferred: keeps the module importable without ROS
+
         self._chat_out_pub.publish(String(data=json.dumps(chat_entry)))
 
         if speak is None:
@@ -46,6 +49,12 @@ class ChatManager:
     def emit_system(self, text: str) -> None:
         """Publish a system message (never spoken)."""
         self.emit("system", text, speak=False)
+
+    def emit_thoughts(self, thoughts: str) -> None:
+        """Publish a thought summary, trimmed — the panel wants a glimpse, not a log."""
+        if len(thoughts) > 600:
+            thoughts = thoughts[:600].rsplit(" ", 1)[0] + " …"
+        self.emit("robot_thoughts", thoughts, speak=False)
 
     def publish_task_status(
         self,
@@ -66,6 +75,8 @@ class ChatManager:
         }
         if reason:
             payload["reason"] = reason
+        from std_msgs.msg import String  # deferred: keeps the module importable without ROS
+
         self._task_status_pub.publish(String(data=json.dumps(payload)))
 
     def history_json(self) -> str:
@@ -77,3 +88,38 @@ class ChatManager:
     def speak(self, text: str, replace_pending: bool = False) -> None:
         if self._tts_handler is not None:
             self._tts_handler.speak_text_async(text, replace_pending=replace_pending)
+
+    def stream_speech(self) -> SpeechStreamer:
+        return SpeechStreamer(self)
+
+
+class SpeechStreamer:
+    """Feeds a streaming reply to TTS one sentence at a time, so the robot
+    starts talking at the first sentence boundary instead of the last."""
+
+    def __init__(self, chat: ChatManager):
+        self._chat = chat
+        self._buffer = ""
+        self._muted = False
+        self.spoke = False
+
+    def feed(self, text: str) -> None:
+        self._buffer += text
+        *sentences, self._buffer = _SENTENCE_END.split(self._buffer)
+        for sentence in sentences:
+            self._say(sentence)
+
+    def flush(self) -> None:
+        self._say(self._buffer)
+        self._buffer = ""
+
+    def _say(self, sentence: str) -> None:
+        sentence = sentence.strip()
+        if sentence.startswith("Calling tool"):  # leaked tool narration, never speech
+            self._muted = True
+        if self._muted or not re.search(r"[a-zA-Z0-9]", sentence):
+            return
+        # The first sentence supersedes any stale queued utterances; the rest
+        # of the reply queues in order behind it.
+        self._chat.speak(sentence, replace_pending=not self.spoke)
+        self.spoke = True

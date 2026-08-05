@@ -6,7 +6,7 @@ code, start from what it *does*:
 | Folder | What lives here |
 |---|---|
 | `nodes/` | The runnable ROS entry points (the only files with `main()`). Thin composition roots — they build collaborators, wire them, and spin. No behaviour. |
-| `brain/` | The local agent loop: `agent` (look → think → act as one cancellable coroutine), `gemini` (native API, tools, bounded history), pure `grounding` (pointed pixel → floor target), and the system `prompt`. |
+| `brain/` | The local agent loop: `agent` (look → think → act as one cancellable coroutine), `loop` (the dedicated-thread asyncio runtime it runs on), `gemini` (native API, tools, bounded history), pure `grounding` (pointed pixel → floor target), and the system `prompt`. |
 | `core/` | The activate/deactivate/reset state machine and directive switching (`lifecycle`), typed `config`, and the shared `state`. |
 | `perception/` | Turning sensors into what the agent sees: `camera`, `pose`/`pose_tracking`, `scan_health`, `gaze`. |
 | `skills/` | The skill system: `registry`, `roster` (available + directive-active sets), `runner` (action lifecycle), `loader`, `hot_reload`, and the public `types` SDK base classes. |
