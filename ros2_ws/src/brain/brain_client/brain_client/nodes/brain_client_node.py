@@ -314,6 +314,10 @@ class BrainClientNode(Node):
 
     # ================= always-on subscription callbacks =================
     def _on_chat_in(self, msg: String) -> None:
+        # the user spoke: release a post-barge-in TTS hold so the reply to
+        # their words is voiced
+        if self._tts_handler is not None:
+            self._tts_handler.clear_hold()
         try:
             data = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError):

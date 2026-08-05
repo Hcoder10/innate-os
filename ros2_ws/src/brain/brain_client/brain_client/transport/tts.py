@@ -72,6 +72,7 @@ class TTSHandler:
         self._abort = threading.Event()
         self._player: subprocess.Popen | None = None
         self._utt_seq = 0
+        self._hold_until = 0.0
 
         # Initialize Cartesia client
         self._init_client()
@@ -140,6 +141,13 @@ class TTSHandler:
         if not text or not text.strip():
             self.logger.debug("🔇 Empty text provided, skipping speech")
             return False
+
+        # A barge-in means "shut up and listen": drop utterances (typically the
+        # tail of the interrupted reply) until the user's words arrive as a
+        # chat_in (clear_hold) or the hold times out. True = handled, no retry.
+        if time.monotonic() < self._hold_until:
+            self.logger.info(f"🤫 Holding after barge-in, dropped utterance: '{text[:50]}'")
+            return True
 
         # Check if we're already playing audio
         with self.play_lock:
@@ -316,12 +324,20 @@ class TTSHandler:
         except Exception as e:
             self.logger.debug(f"Failed to publish TTS ref: {e}")
 
-    def stop_current(self, reason: str = "") -> bool:
+    def clear_hold(self) -> None:
+        """The user's words reached the brain; its next reply may speak."""
+        if self._hold_until and time.monotonic() < self._hold_until:
+            self.logger.info("🎤 Barge-in hold released (user input arrived)")
+        self._hold_until = 0.0
+
+    def stop_current(self, reason: str = "", hold_s: float = 5.0) -> bool:
         """Stop the utterance playing right now and drop any queued ones.
 
         Returns True if something was actually stopped. Safe from any thread;
-        used by barge-in (the human is talking — shut up immediately).
+        used by barge-in (the human is talking — shut up immediately). New
+        utterances are held for ``hold_s`` or until clear_hold().
         """
+        self._hold_until = time.monotonic() + hold_s
         dropped = 0
         try:
             while True:
