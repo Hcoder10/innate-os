@@ -48,12 +48,12 @@ class Prop:
     name: str
     label: str = "?"  # one glyph, the viewer's chip for this prop
     title: str = ""  # human-readable name (defaults to name)
-    # Props that get laid out together by one click. The manipulation set is
-    # what the arm practises on, and putting the whole set down at once is the
-    # workflow that matters there: drive somewhere, lay out a fresh set, grab.
-    # Their reach offsets are chosen so a whole group lands side by side
-    # without overlapping.
-    group: str = "scenery"
+    # Props laid out together by one click, or None for a prop that is only
+    # ever placed deliberately. The manipulation set is what the arm practises
+    # on, and putting the whole set down at once is the workflow that matters
+    # there: drive somewhere, lay out a fresh set, grab. A group's reach
+    # offsets have to be chosen so the whole set lands side by side.
+    group: str | None = None
 
     # -- geometry --
     # Mesh path relative to the sidecar. None (or a file that isn't installed)
@@ -347,8 +347,9 @@ class PropRegistry:
         return True
 
     def groups(self) -> list[str]:
-        """Group names in sidecar order, each appearing once."""
-        return list(dict.fromkeys(prop.group for prop in self.props.values()))
+        """Named groups in sidecar order, each appearing once (ungrouped props
+        contribute nothing)."""
+        return list(dict.fromkeys(p.group for p in self.props.values() if p.group))
 
     def drop_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
         """Set down every prop in one group at its own reach offset, and park

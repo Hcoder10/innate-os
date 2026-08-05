@@ -21,7 +21,7 @@ PROP = Prop(
     rgba=(0.82, 0.68, 0.44, 1.0),
     rest_z=0.256,
     drop_z=1.0,
-    reach=(1.2, 0.8),  # offset laterally so a whole-group drop lands them side by side
+    reach=(1.2, 0.0),
     viewer={
         "glb": "/models/labrador.glb",
         "rotateToZUp": True,

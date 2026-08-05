@@ -68,10 +68,12 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(chips);
 
-  // Prop row: one chip per prop the world server offers (props.py sidecars,
-  // relayed by session.onProps), so adding a prop is a sidecar and nothing
-  // here. Two ways to put one down, chosen by the mode chip:
+  // Props, in two rows: the objects themselves, and under them the controls
+  // that say what a click on one does. One chip per prop the world server
+  // offers (props.py sidecars, relayed by session.onProps), so adding a prop
+  // is a sidecar and nothing here.
   //
+  // The switch picks between the two ways to put a prop down:
   //   at robot -- one click, using the prop's own reach offset. The
   //     manipulation props' offsets put them on an arc the arm can reach
   //     top-down, so this is the one that matters for practising grabs.
@@ -80,28 +82,58 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const propRow = document.createElement("div");
   propRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
   debugStack.appendChild(propRow);
+  const propControls = document.createElement("div");
+  propControls.style.cssText = "display:flex;gap:6px;align-items:center;";
+  debugStack.appendChild(propControls);
 
+  // Slide switch: place | at robot. Defaults to "at robot" -- that is the
+  // one-click layout the props have always had, and the destructive-feeling
+  // one (taking over the pointer) is the one you opt into.
   let placeMode = false;
-  const modeChip = document.createElement("button");
-  modeChip.type = "button";
-  modeChip.style.cssText =
+  const modeSwitch = document.createElement("button");
+  modeSwitch.type = "button";
+  modeSwitch.title = "How clicking a prop places it";
+  modeSwitch.style.cssText =
+    "position:relative;display:inline-flex;padding:2px;border-radius:999px;" +
+    `border:1px solid rgba(255,255,255,.25);background:${OFF_BG};cursor:pointer;` +
+    "font:500 11px system-ui;line-height:1;";
+  const knob = document.createElement("span");
+  knob.style.cssText =
+    `position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;background:${ON_BG};` +
+    "transition:transform .15s ease;pointer-events:none;";
+  const placeLabel = document.createElement("span");
+  const robotLabel = document.createElement("span");
+  placeLabel.textContent = "place";
+  robotLabel.textContent = "at robot";
+  for (const label of [placeLabel, robotLabel]) {
+    label.style.cssText = "position:relative;z-index:1;padding:4px 10px;transition:color .15s ease;";
+  }
+  modeSwitch.append(knob, placeLabel, robotLabel);
+  const refreshModeSwitch = () => {
+    knob.style.transform = placeMode ? "translateX(0)" : "translateX(100%)";
+    placeLabel.style.color = placeMode ? "#7dffc4" : "rgba(255,255,255,.55)";
+    robotLabel.style.color = placeMode ? "rgba(255,255,255,.55)" : "#7dffc4";
+  };
+  modeSwitch.onclick = () => {
+    placeMode = !placeMode;
+    if (!placeMode) armDrop(null); // leaving place mode disarms whatever was armed
+    refreshModeSwitch();
+  };
+  refreshModeSwitch();
+  propControls.appendChild(modeSwitch);
+
+  const clearChip = document.createElement("button");
+  clearChip.type = "button";
+  clearChip.textContent = "clear";
+  clearChip.title = "Send every prop back off-map";
+  clearChip.style.cssText =
     `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
     "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
-  const refreshModeChip = () => {
-    modeChip.textContent = placeMode ? "place" : "at robot";
-    modeChip.title = placeMode
-      ? "Click a prop, then click the floor and drag to aim it"
-      : "Click a prop to set it down in front of the robot, where the arm can reach it";
-    modeChip.style.background = placeMode ? ON_BG : OFF_BG;
-    modeChip.style.color = placeMode ? "#7dffc4" : "rgba(255,255,255,.75)";
+  clearChip.onclick = () => {
+    armDrop(null);
+    session.removeObjects();
   };
-  modeChip.onclick = () => {
-    placeMode = !placeMode;
-    if (!placeMode) armDrop(null);
-    refreshModeChip();
-  };
-  refreshModeChip();
-  propRow.appendChild(modeChip);
+  propControls.appendChild(clearChip);
 
   // Rebuilt whenever the roster arrives (once per observer connection).
   const propChips = new Map<string, HTMLButtonElement>();
@@ -111,11 +143,11 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     for (const chip of groupChips) chip.remove();
     propChips.clear();
     groupChips.length = 0;
-    // One chip per set, before the individual props: putting a whole set down
-    // at once is the workflow the arm's props exist for, and clicking five
-    // chips is not it. Sets come from the roster, so a new group in a sidecar
-    // gets its button for free.
-    for (const group of [...new Set(props.map((p) => p.group))]) {
+    // A set chip ahead of the props it contains: putting a whole set down at
+    // once is the workflow the arm's props exist for, and clicking five chips
+    // is not it. Only props that name a group get one, so scenery -- which is
+    // placed deliberately, one piece at a time -- has none.
+    for (const group of [...new Set(props.map((p) => p.group).filter(Boolean))]) {
       const members = props.filter((p) => p.group === group);
       if (members.length < 2) continue; // a set of one is just the prop's own chip
       const chip = document.createElement("button");
@@ -127,7 +159,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
         "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
       chip.onclick = () => {
         armDrop(null);
-        session.dropPropGroup(group);
+        session.dropPropGroup(group as string);
       };
       groupChips.push(chip);
       propRow.appendChild(chip);
@@ -148,19 +180,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       propRow.appendChild(chip);
     }
   });
-
-  const clearChip = document.createElement("button");
-  clearChip.type = "button";
-  clearChip.textContent = "clear";
-  clearChip.title = "Send every prop back off-map";
-  clearChip.style.cssText =
-    `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-    "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
-  clearChip.onclick = () => {
-    armDrop(null);
-    session.removeObjects();
-  };
-  propRow.appendChild(clearChip);
 
   // Loading indicator: a compact pill holding a progress bar, centered just
   // below the camera thumbnail strip (webapp's .cam-strip pins tiles at the top

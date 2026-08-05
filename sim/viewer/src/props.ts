@@ -37,8 +37,9 @@ export interface PropInfo {
   name: string;
   label: string;
   title: string;
-  /** Props laid out together by one click (props.py `group`). */
-  group: string;
+  /** Props laid out together by one click, or null for a prop that is only
+   * ever placed deliberately (props.py `group`). */
+  group: string | null;
   collision: string;
   size: number[];
   rgba: number[];
