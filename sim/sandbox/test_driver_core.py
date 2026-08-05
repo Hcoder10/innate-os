@@ -1,15 +1,17 @@
 """Headless check of mars_sim_driver.core (no ROS needed): settle, render
 both cameras, drive via cmd_vel, verify motion and the stale-command
-watchdog. Saves the rendered frames to sim/assets/virtual_mars_test/ for
-eyeballing.
+watchdog, then judge a challenge against the same world. Saves the rendered
+frames to sim/assets/virtual_mars_test/ for eyeballing.
 
 Usage: uv run sandbox/test_driver_core.py
 """
 
 import math
+import threading
 
 import _driver_pkg  # noqa: F401
 from mars_sim_driver import world
+from mars_sim_driver.challenges import AllOf, Challenge, ChallengeEngine, Drop, Goal, Hold, Near, WorldState
 from mars_sim_driver.core import VirtualMars, joint2_min_target
 
 OUT_DIR = world.default_assets_dir() / "virtual_mars_test"
@@ -76,7 +78,76 @@ def main() -> None:
     assert hits > 180, f"only {hits}/360 lidar rays hit indoors"
     assert scan.min() > 0.05, f"lidar sees something at {scan.min():.3f}m (inside the robot?)"
     print(f"lidar: {hits}/360 rays hit, nearest {scan.min():.2f}m, farthest hit {scan[scan < 12].max():.2f}m")
+
+    check_challenges(sim)  # last: it moves the sim clock and leaves a prop out
     print("PASS")
+
+
+def check_challenges(sim: VirtualMars) -> None:
+    """The two ways the challenge judge (challenges.py) has been wrong.
+
+    No GL and no rosbridge here -- predicates are pure functions of the world
+    state, and the engine is fed by hand rather than by the physics thread."""
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=OUT_DIR / "challenges.json")
+    engine.challenges["probe"] = Challenge(
+        id="probe",
+        title="Probe",
+        brief="",
+        # On the spawn point, where start()'s world reset puts the robot back:
+        # goal 0 is true from the first tick that is allowed to judge. Goal 1
+        # never is, so the run stays open for the assertions below.
+        setup=[Drop("human", world.SPAWN_X, world.SPAWN_Y)],
+        goals=[Goal("reach", Near("robot", "human", 1.5)), Goal("never", Near("robot", "nothing_here", 1.0))],
+        time_limit_s=60.0,
+    )
+
+    # A tick landing between the world reset and the run being published must
+    # not judge anything: it would measure the PREVIOUS run's world, and time
+    # the new run from a started_t that is still whatever it was. On a server
+    # up longer than the limit, that failed a run at birth. The physics thread
+    # produces this by taking the sim lock between slices; a tick from inside
+    # the drop is the same interleaving, deterministically.
+    sim.data.time = 900.0
+    mid_ticks = []
+    real_reset, real_drop = sim.reset, sim.drop_prop_at
+
+    def tick_now():
+        mid_ticks.append(engine.tick(float(sim.data.time), sim.pose(), sim.object_centers()))
+
+    def reset_and_tick():
+        tick_now()  # before the reset: the OLD world, on the OLD clock (900s)
+        real_reset()
+
+    def drop_and_tick(*args, **kwargs):
+        ok = real_drop(*args, **kwargs)
+        tick_now()  # after the reset: a scene that is still being built
+        return ok
+
+    sim.reset, sim.drop_prop_at = reset_and_tick, drop_and_tick
+    engine.start("probe")
+    sim.reset, sim.drop_prop_at = real_reset, real_drop
+    assert len(mid_ticks) >= 2, "the setup window was never ticked on both sides of the reset"
+    assert all(tick["active"] is None for tick in mid_ticks), "judged a run that had not started"
+
+    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers())["active"]
+    assert block["state"] == "running", f"fresh run born {block['state']} ({block['reason']})"
+    assert block["elapsed_s"] == 0.0, f"fresh run started at {block['elapsed_s']}s"
+    assert block["goals"][0]["done"], "judging never resumed after the setup window"
+    print(f"challenge start: clean through {len(mid_ticks)} ticks in the setup window (900s uptime, 60s limit)")
+
+    # AllOf must update every child, not stop at the first False: a Hold only
+    # advances when it is asked, so short-circuiting restarts its dwell.
+    dwell = Hold(Near("robot", "human", 1.5), seconds=5.0)
+    both = AllOf([Near("robot", "nothing_here", 1.0), dwell])  # first child never true
+    here = {"human": (0.0, 0.0)}
+    for t in (0.0, 2.0, 6.0):
+        both.update(WorldState(t=t, robot=(0.0, 0.0, 0.0), centers=here), [])
+    assert dwell.update(WorldState(t=6.0, robot=(0.0, 0.0, 0.0), centers=here), []), "Hold behind AllOf lost its dwell"
+    print("challenge predicates: Hold keeps its dwell behind a decided sibling")
+
+    engine.abort()
+    sim.remove_objects()
+    sim.reset()
 
 
 if __name__ == "__main__":
