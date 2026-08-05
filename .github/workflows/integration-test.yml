@@ -36,6 +36,10 @@ jobs:
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
+        with:
+          # `gcloud beta builds submit` (used below for log streaming) needs the
+          # beta component.
+          install_components: beta
 
       - name: Submit integration tests to Cloud Build
         run: |
@@ -54,7 +58,11 @@ jobs:
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             publish_base="true"
           fi
-          gcloud builds submit \
+          # `beta`: the build logs go only to Cloud Logging (see the cloudbuild
+          # config's `logging: CLOUD_LOGGING_ONLY`), and only the beta command
+          # can stream logs from Cloud Logging into this step's output — the GA
+          # command only streams from a GCS logs bucket, so it would sit silent.
+          gcloud beta builds submit \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${{ vars.GCP_REGION }}" \
             --gcs-source-staging-dir="${{ vars.GCP_CLOUD_BUILD_SOURCE_STAGING_DIR }}" \
