@@ -13,6 +13,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
 import { LoadQueue, queuedGLB } from "./loadQueue";
+import { PropLibrary, type PropInfo } from "./props";
 
 const APARTMENT_URL = "/models/appartement.glb";
 const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
@@ -40,23 +41,6 @@ export interface ApartmentLayout {
   /** No manifest: streamApartment falls back to the monolith glb. */
   monolith: boolean;
 }
-// The manipulation props (world.py GRASP_OBJECTS). They are MuJoCo primitives,
-// so the browser rebuilds them here rather than loading a mesh -- keep the
-// dimensions and colours in step with world.py. THREE's cylinder is Y-up while
-// MuJoCo's is Z-up, hence the rotated geometry.
-const GRASP_OBJECT_SHAPES: Record<string, { geometry: () => THREE.BufferGeometry; color: number }> = {
-  cube: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.04), color: 0xd94739 },
-  sock: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.06), color: 0x73757f },
-  can: {
-    geometry: () => new THREE.CylinderGeometry(0.02, 0.02, 0.06, 40).rotateX(Math.PI / 2),
-    color: 0x408cd9,
-  },
-  bar: { geometry: () => new THREE.BoxGeometry(0.03, 0.1, 0.03), color: 0xcc541a },
-  // Finely tessellated: a coarse sphere casts a visibly polygonal shadow right
-  // where it meets the floor, which is the one place the eye checks for contact.
-  ball: { geometry: () => new THREE.SphereGeometry(0.0225, 32, 24), color: 0x66cc73 },
-};
-
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
 // RViz). Hide them here rather than in the URDF itself, since that file is
@@ -159,8 +143,10 @@ export class SimScene {
   // the robot's own graph, so they follow the joints for free.
   private robotColliders: THREE.Object3D[] = [];
   private hullMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
-  // One mesh per manipulation prop, built on the first state that names it.
-  private objectMeshes = new Map<string, THREE.Mesh>();
+  // Every prop in the world, built from the server's roster (props.ts).
+  private props: PropLibrary;
+  // While true a placement drag owns the pointer and orbit stays off.
+  private placementMode = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -180,6 +166,10 @@ export class SimScene {
 
     this.scene.background = new THREE.Color(0x14161a);
     this.scene.fog = new THREE.FogExp2(0x14161a, 0.035);
+
+    // Props share the apartment's hull wireframe material, so one "collisions"
+    // toggle covers both. A prop entering the world refits the shadow box.
+    this.props = new PropLibrary(this.scene, this.hullMaterial, () => this.updateShadowVolume());
 
     this.camera = new THREE.PerspectiveCamera(55, w / h, 0.05, 200);
     this.camera.up.set(0, 0, 1);
@@ -336,6 +326,7 @@ export class SimScene {
    */
   setCollisionHullsVisible(visible: boolean): void {
     this.hullsVisible = visible;
+    this.props.setHullsVisible(visible);
     if (visible && !this.hullsPromise) {
       // ~1300 OBJ fetches; takes seconds on first show. A failure resets the
       // promise so toggling again retries instead of staying dead forever.
@@ -673,11 +664,10 @@ export class SimScene {
     // two would push the robot itself out of its own shadow box.
     const reach = SHADOW_BOX_MAX_M - SHADOW_MARGIN_M;
     const points: Array<[number, number]> = [this.robotXY];
-    for (const mesh of this.objectMeshes.values()) {
-      if (!mesh.visible) continue;
-      const dx = mesh.position.x - this.robotXY[0];
-      const dy = mesh.position.y - this.robotXY[1];
-      if (Math.hypot(dx, dy) <= reach) points.push([mesh.position.x, mesh.position.y]);
+    for (const root of this.props.visibleRoots) {
+      const dx = root.position.x - this.robotXY[0];
+      const dy = root.position.y - this.robotXY[1];
+      if (Math.hypot(dx, dy) <= reach) points.push([root.position.x, root.position.y]);
     }
     const xs = points.map((pt) => pt[0]);
     const ys = points.map((pt) => pt[1]);
@@ -721,7 +711,35 @@ export class SimScene {
    * Falls back to orbit if the requested view's frame wasn't in the URDF. */
   setView(view: CameraView): void {
     this.activeView = view === "orbit" || this.robotCameras.has(view) ? view : "orbit";
-    this.controls.enabled = this.activeView === "orbit";
+    this.applyControlsEnabled();
+  }
+
+  /** While a placement drag owns the pointer the orbit controls stay off,
+   * even in the orbit view -- otherwise aiming a prop also spins the camera.
+   * Applied immediately: a flag that is only consulted by setView() would not
+   * take effect until the user happened to switch views. */
+  setPlacementMode(on: boolean): void {
+    this.placementMode = on;
+    this.applyControlsEnabled();
+  }
+
+  private applyControlsEnabled(): void {
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
+  }
+
+  /** Intersect a canvas pointer position with the floor plane (z=0) through
+   * the active view's camera; null when it points above the horizon. */
+  screenToFloor(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const cam = (this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined) ?? this.camera;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, cam);
+    const hit = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
   }
 
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
@@ -729,33 +747,18 @@ export class SimScene {
     this.robot?.setJointValues(joints);
   }
 
-  /** Mirror the manipulation props from ground truth, keyed by name
+  /** Adopt the world server's prop roster (props.py sidecars): what exists,
+   * what to call it, and how to draw it. Sent once per observer connection. */
+  setPropManifest(props: PropInfo[]): void {
+    this.props.setManifest(props);
+  }
+
+  /** Mirror every prop in the world from ground truth, keyed by name
    * ({name: [x, y, z, qw, qx, qy, qz]} -- world_server's "objects" block).
-   * Each mesh is built on first sight from GRASP_OBJECT_SHAPES; a prop the
-   * block stops naming has left the world (parked, or never dropped) and is
-   * hidden rather than left behind at its last pose. */
+   * A prop the block stops naming has left the world and is hidden rather
+   * than left behind at its last pose. */
   setObjectPoses(poses: Record<string, number[]>): void {
-    for (const [name, mesh] of this.objectMeshes) {
-      if (!poses[name]) mesh.visible = false;
-    }
-    for (const [name, pose] of Object.entries(poses)) {
-      let mesh = this.objectMeshes.get(name);
-      if (!mesh) {
-        const shape = GRASP_OBJECT_SHAPES[name];
-        if (!shape) continue; // a prop this build doesn't know how to draw
-        mesh = new THREE.Mesh(shape.geometry(), new THREE.MeshStandardMaterial({ color: shape.color, roughness: 0.7 }));
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        this.objectMeshes.set(name, mesh);
-        this.scene.add(mesh);
-      }
-      // Explicitly, not just on creation: a prop that was removed and dropped
-      // again reuses its hidden mesh, and would otherwise stay invisible until
-      // a page reload rebuilt it.
-      mesh.visible = true;
-      mesh.position.set(pose[0], pose[1], pose[2]);
-      mesh.quaternion.set(pose[4], pose[5], pose[6], pose[3]);
-    }
+    this.props.setPoses(poses);
     this.updateShadowVolume(); // the props moved; the box may need to grow or shrink
   }
 

@@ -4,6 +4,7 @@
 // full-res every frame, PiP thumbnails scissor-rendered from the same GL
 // context and blitted out.
 
+import * as THREE from "three";
 import { SimScene, type CameraView } from "./scene";
 import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
@@ -64,24 +65,77 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   };
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
-  // Not a toggle with its own memory: the label follows the world, so a sim
-  // reset (which takes the props away) or another viewer's drop leaves this
-  // reading correctly. refreshObjectChip runs from the render loop.
-  const objectChip = newChip("drop objects");
-  let objectChipShowsRemove: boolean | null = null;
-  const refreshObjectChip = () => {
-    const present = session.objectsPresent;
-    if (present === objectChipShowsRemove) return;
-    objectChipShowsRemove = present;
-    objectChip.textContent = present ? "remove objects" : "drop objects";
-    objectChip.style.background = present ? ON_BG : OFF_BG;
-    objectChip.style.color = present ? "#7dffc4" : "rgba(255,255,255,.75)";
-  };
-  objectChip.onclick = () => {
-    if (session.objectsPresent) session.removeObjects();
-    else session.dropObjects();
-  };
   debugStack.appendChild(chips);
+
+  // Prop row: one chip per prop the world server offers (props.py sidecars,
+  // relayed by session.onProps), so adding a prop is a sidecar and nothing
+  // here. Two ways to put one down, chosen by the mode chip:
+  //
+  //   at robot -- one click, using the prop's own reach offset. The
+  //     manipulation props' offsets put them on an arc the arm can reach
+  //     top-down, so this is the one that matters for practising grabs.
+  //   place    -- click the floor to mark the spot, drag to point the yaw,
+  //     release; physics settles it onto whatever is under it.
+  const propRow = document.createElement("div");
+  propRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
+  debugStack.appendChild(propRow);
+
+  let placeMode = false;
+  const modeChip = document.createElement("button");
+  modeChip.type = "button";
+  modeChip.style.cssText =
+    `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+    "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+  const refreshModeChip = () => {
+    modeChip.textContent = placeMode ? "place" : "at robot";
+    modeChip.title = placeMode
+      ? "Click a prop, then click the floor and drag to aim it"
+      : "Click a prop to set it down in front of the robot, where the arm can reach it";
+    modeChip.style.background = placeMode ? ON_BG : OFF_BG;
+    modeChip.style.color = placeMode ? "#7dffc4" : "rgba(255,255,255,.75)";
+  };
+  modeChip.onclick = () => {
+    placeMode = !placeMode;
+    if (!placeMode) armDrop(null);
+    refreshModeChip();
+  };
+  refreshModeChip();
+  propRow.appendChild(modeChip);
+
+  // Rebuilt whenever the roster arrives (once per observer connection).
+  const propChips = new Map<string, HTMLButtonElement>();
+  const unsubscribeProps = session.onProps((props: { name: string; label: string; title: string }[]) => {
+    for (const chip of propChips.values()) chip.remove();
+    propChips.clear();
+    for (const prop of props) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = prop.label;
+      chip.title = prop.title;
+      chip.style.cssText =
+        `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+        "color:rgba(255,255,255,.75);font:500 13px system-ui;cursor:pointer;line-height:1;";
+      chip.onclick = () => {
+        if (placeMode) armDrop(armedProp === prop.name ? null : prop.name);
+        else session.dropPropAtRobot(prop.name);
+      };
+      propChips.set(prop.name, chip);
+      propRow.appendChild(chip);
+    }
+  });
+
+  const clearChip = document.createElement("button");
+  clearChip.type = "button";
+  clearChip.textContent = "clear";
+  clearChip.title = "Send every prop back off-map";
+  clearChip.style.cssText =
+    `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
+    "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+  clearChip.onclick = () => {
+    armDrop(null);
+    session.removeObjects();
+  };
+  propRow.appendChild(clearChip);
 
   // Loading indicator: a compact pill holding a progress bar, centered just
   // below the camera thumbnail strip (webapp's .cam-strip pins tiles at the top
@@ -165,6 +219,61 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
 
+  // Placement drag (mode "place"): while a prop is armed the orbit controls
+  // are off -- press marks the spot on the floor, drag points the yaw (arrow
+  // preview), release drops it there and physics settles it.
+  let armedProp: string | null = null;
+  let dropStart: THREE.Vector3 | null = null;
+  let dropArrow: THREE.ArrowHelper | null = null;
+  const clearDropDrag = () => {
+    dropStart = null;
+    if (dropArrow) {
+      scene.scene.remove(dropArrow);
+      dropArrow.dispose();
+      dropArrow = null;
+    }
+  };
+  function armDrop(name: string | null): void {
+    armedProp = name;
+    scene.setPlacementMode(name !== null);
+    canvas.style.cursor = name !== null ? "crosshair" : "";
+    for (const [propName, chip] of propChips) {
+      const on = propName === name;
+      chip.style.background = on ? ON_BG : OFF_BG;
+      chip.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+    }
+    if (name === null) clearDropDrag();
+  }
+  canvas.addEventListener("pointerdown", (e) => {
+    if (armedProp === null || e.button !== 0) return;
+    dropStart = scene.screenToFloor(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dropStart) return;
+    const cur = scene.screenToFloor(e.clientX, e.clientY);
+    if (!cur) return;
+    const drag = cur.sub(dropStart).setZ(0);
+    if (drag.length() < 0.05) return;
+    if (!dropArrow) {
+      dropArrow = new THREE.ArrowHelper(drag.clone().normalize(), dropStart.clone().setZ(0.05), 1, 0xff8800, 0.25, 0.15);
+      scene.scene.add(dropArrow);
+    }
+    dropArrow.setDirection(drag.clone().normalize());
+    dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
+  });
+  // On window, not canvas: releasing outside the canvas must still finish (or
+  // cancel) the drag rather than leaving the prop armed and the arrow behind.
+  window.addEventListener("pointerup", (e) => {
+    if (armedProp === null || !dropStart) return;
+    const end = scene.screenToFloor(e.clientX, e.clientY);
+    const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
+    // An identity drop faces +y (the human's head); the drag vector is that
+    // direction, so subtract the quarter turn between them.
+    const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
+    session.dropPropAt(armedProp, dropStart.x, dropStart.y, yaw);
+    armDrop(null);
+  });
+
   const resize = () => {
     const w = wrap.clientWidth;
     const h = wrap.clientHeight;
@@ -187,7 +296,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     session.tick(scene, dt);
-    refreshObjectChip();
 
     // Thumbnails first (scissor corner renders, blitted out), one tile per
     // slot -- see THUMB_FRAME_DIV.
@@ -269,6 +377,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       disposed = true;
       queue.cancel(); // stop pulling new downloads for a stage that's gone
       unsubscribe();
+      unsubscribeProps();
       cancelAnimationFrame(raf);
       observer.disconnect();
       longTaskObserver?.disconnect();

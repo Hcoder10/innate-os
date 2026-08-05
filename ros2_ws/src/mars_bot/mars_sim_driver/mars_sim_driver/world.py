@@ -10,6 +10,7 @@ from VIRTUAL_MARS_ASSETS (default: <repo>/sim/assets in a dev checkout).
 import math
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mujoco
 
@@ -83,103 +84,6 @@ STRUCT_STIFFNESS = 25.0  # N*m/rad, per arm joint
 ARM_BACKLASH_RAD = 0.055
 BACKLASH_TANH_NM = 0.05  # torque scale over which the play takes up
 
-# --- manipulation props --------------------------------------------------
-#
-# Graspable free bodies for core.drop_objects (the viewer's "drop objects"
-# button), parked off-map at GRASP_PARK_XY until dropped; a reset re-parks
-# them. forward/lateral are robot-frame metres from the robot at drop time,
-# on a 0.22m arc around the arm's shoulder so each is reachable top-down.
-# Densities are real materials'; do NOT lighten them -- at 20-40g a prop
-# skitters metres off the lightest graze.
-GRASP_PARK_XY = (15.0, 15.0)
-GRASP_PARK_PITCH = 0.5
-
-GRASP_OBJECTS = (
-    {
-        "name": "cube",
-        "forward": 0.227,
-        "lateral": 0.116,
-        "z": 0.02,  # resting height of the body origin = half the footprint
-        "geom": 'type="box" size="0.02 0.02 0.02"',
-        "density": 700,
-        "condim": 4,
-        "rgba": "0.85 0.28 0.24 1",
-    },
-    {
-        "name": "can",
-        "forward": 0.296,
-        "lateral": 0.011,
-        # 40mm across: 50mm pinches at the fingertip and rolls out. 60mm
-        # tall: taller fills pick_any_object's optical-flow window with
-        # featureless colour and positioning livelocks.
-        "z": 0.03,
-        "geom": 'type="cylinder" size="0.020 0.03"',
-        "density": 1050,
-        "roll": 0.005,  # rolling resistance on the floor
-        "condim": 4,
-        "rgba": "0.25 0.55 0.85 1",
-    },
-    {
-        # pick_any_object's design target: its default prompt is "the sock",
-        # and its grasp band sits HIGH -- the shipped constants close the jaws
-        # with the pad centre ~50mm off a hard floor (floor_z is an ee target,
-        # the pads ride ~10mm above it, close_lift adds 10mm more). A sock is
-        # a 60-80mm lump you pinch by the top; the 40mm cube is below that
-        # band and is the HARD case on real hardware too. This prop is what
-        # "the skill works" should be measured against: a rolled-sock-sized,
-        # sock-weight box (65g of fabric).
-        "name": "sock",
-        "forward": 0.161,
-        "lateral": 0.154,
-        "z": 0.03,
-        # 60mm tall (the skill's closing band lands on its upper third);
-        # 40x40 so the worst-case diagonal clears the 81mm jaw at any yaw.
-        # Grey, not white: white on pale parquet starves the flow tracker.
-        "geom": 'type="box" size="0.020 0.020 0.030"',
-        "density": 450,
-        "condim": 6,
-        "rgba": "0.45 0.46 0.50 1",
-    },
-    {
-        "name": "bar",
-        "forward": 0.296,
-        "lateral": -0.117,
-        "z": 0.015,
-        "geom": 'type="box" size="0.015 0.05 0.015"',
-        "density": 700,
-        "condim": 4,
-        # Deep orange: yellow on pale parquet starves the flow tracker.
-        "rgba": "0.80 0.33 0.10 1",
-    },
-    {
-        # 40mm, the same width as the cube and can: a 50mm sphere left only
-        # 15mm of jaw clearance per side, so the descending blade grazed its
-        # flank on ordinary aim error, stalled the descent high, and the jaws
-        # closed over the top cap without ever moving the ball (measured: pad
-        # centre 31mm above ball centre at the close, ball displaced 4mm total,
-        # 0/4). A sphere needs the pads at its equator -- it is the least
-        # forgiving shape in the roster, so it gets the friendliest width.
-        # Density is a dense rubber ball's: at the sphere's tiny volume the
-        # real bouncy-ball ~1100 lands at 37g, inside the skitter zone the
-        # header comment warns about.
-        "name": "ball",
-        "forward": 0.227,
-        "lateral": -0.221,
-        "z": 0.0225,
-        "geom": 'type="sphere" size="0.0225"',
-        "density": 1000,
-        "condim": 6,
-        # Foam stress ball: a hard sphere is unpickable (the contact rolls
-        # around the curve and the arm rides up over it). ~3mm of dent stops
-        # the roll; much softer slips. Priority beats the fingers' pad model.
-        "priority": 4,
-        "friction": "2.0 0.4 0.1",
-        "solref": "0.012 1",
-        "solimp": "0.9 0.97 0.003",
-        "rgba": "0.4 0.8 0.45 1",
-    },
-)
-
 # Matches the webapp's ARM_HOME_POSITIONS.
 ARM_HOME = {
     "joint1": 1.445009902188274,
@@ -208,6 +112,10 @@ _PALETTE = [
     "0.2 0.9 0.7 1",
     "0.6 0.6 0.9 1",
 ]
+
+
+if TYPE_CHECKING:
+    from .props import PropRegistry
 
 
 def repo_root() -> Path:
@@ -299,41 +207,19 @@ def capped_texture_path(png_path: Path, texture_max: int) -> Path:
     return cached
 
 
-def grasp_object_bodies() -> str:
-    """MJCF for the manipulation props (see GRASP_OBJECTS), each a free body
-    parked off-map. core.drop_objects brings them into the apartment; the
-    parked pose is also what mj_resetData restores them to."""
-    park_x, park_y = GRASP_PARK_XY
-    bodies = []
-    for i, obj in enumerate(GRASP_OBJECTS):
-        # Per-object contact overrides (the sock): friction/solref/solimp
-        # default to the rigid-prop values, priority is emitted only if set.
-        friction = obj.get("friction", f"1.0 0.02 {obj.get('roll', 0.001)}")
-        solref = obj.get("solref", "0.01 1")
-        extra = ""
-        if "priority" in obj:
-            extra += f' priority="{obj["priority"]}"'
-        if "solimp" in obj:
-            extra += f' solimp="{obj["solimp"]}"'
-        bodies.append(f"""
-    <body name="{obj["name"]}" pos="{park_x + i * GRASP_PARK_PITCH:.4f} {park_y:.4f} {obj["z"]}">
-      <freejoint name="{obj["name"]}_free"/>
-      <geom name="{obj["name"]}_geom" {obj["geom"]} density="{obj["density"]}" condim="{obj["condim"]}"
-            friction="{friction}" solref="{solref}"{extra} rgba="{obj["rgba"]}" group="{VISUAL_GROUP}"/>
-    </body>""")
-    return "".join(bodies)
-
-
 def build_world_xml(
     rooms: dict[str, list[Path]],
     include_placeholder_robot: bool = True,
     visual_rooms: dict[str, Path] | None = None,
     texture_max: int | None = None,
+    props: "PropRegistry | None" = None,
 ) -> str:
     """The apartment environment MJCF (floor plane + decomposed room hulls,
-    optionally the textured visual rooms in their own geom group, plus the
-    graspable props in front of the spawn).
+    optionally the textured visual rooms in their own geom group, plus every
+    droppable prop parked off-map -- see props.py).
     texture_max caps the visual textures' resolution (see capped_texture_path)."""
+    prop_assets = props.assets_xml(VISUAL_GROUP) if props else ""
+    prop_bodies = props.bodies_xml(VISUAL_GROUP, COLLISION_GROUP) if props else ""
     collision_group = COLLISION_GROUP if visual_rooms else 0
 
     mesh_lines = []
@@ -390,7 +276,7 @@ def build_world_xml(
   <statistic center="{lx} {ly} {lz}" extent="{extent}"/>
   <asset>
 {chr(10).join(mesh_lines)}
-{chr(10).join(visual_mesh_lines)}
+{chr(10).join(visual_mesh_lines)}{prop_assets}
   </asset>
   <worldbody>
     <light pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
@@ -400,7 +286,7 @@ def build_world_xml(
     <body name="apartment" quat="0.7071068 0.7071068 0 0">
 {chr(10).join(geom_lines)}
 {chr(10).join(visual_geom_lines)}
-    </body>{grasp_object_bodies()}{robot_body}
+    </body>{prop_bodies}{robot_body}
   </worldbody>
 </mujoco>
 """

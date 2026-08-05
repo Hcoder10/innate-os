@@ -7,6 +7,7 @@
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
+import type { PropInfo } from "./props";
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
 export const THUMB_W = 240;
@@ -93,6 +94,13 @@ export class SimSession {
   #hullsOn = false;
   #overlaysDirty = false;
 
+  // The prop roster, relayed from the world server once per connection
+  // (props.py sidecars). The stage builds its buttons from it and the scene
+  // builds its models; both key off this rather than a second local table.
+  #props: PropInfo[] = [];
+  #propListeners = new Set<(props: PropInfo[]) => void>();
+  #propsDirty = false;
+
   #stateUrls: string[];
   #rosUrl: string;
 
@@ -149,6 +157,11 @@ export class SimSession {
   #connectState(i: number): void {
     const url = this.#stateUrls[i];
     this.#controller = new WorldStateController(url);
+    this.#controller.onProps = (props) => {
+      this.#props = props;
+      this.#propsDirty = true; // handed to the scene on the next tick
+      for (const cb of this.#propListeners) cb(props);
+    };
     this.#controller.onState = (s) => {
       const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
@@ -232,9 +245,35 @@ export class SimSession {
     this.#controller?.send({ op: "drop_objects" });
   }
 
-  /** Send the props back off-map (stage "remove objects" button). */
+  /** Send every prop back off-map (stage "clear" button). */
   removeObjects(): void {
     this.#controller?.send({ op: "remove_objects" });
+  }
+
+  /** Put one prop down in front of the robot, at the prop's own reach offset
+   * -- for the manipulation props that is an arc the arm can reach top-down,
+   * so it is placed at rest rather than dropped. */
+  dropPropAtRobot(name: string): void {
+    this.#controller?.send({ op: "drop_prop_at_robot", name });
+  }
+
+  /** Release one prop above a spot the user picked, yawed about +z; the world
+   * server's physics settles it onto whatever is below. */
+  dropPropAt(name: string, x: number, y: number, yaw: number): void {
+    this.#controller?.send({ op: "drop_prop_at", name, x, y, yaw });
+  }
+
+  /** Send one prop back off-map. */
+  removeProp(name: string): void {
+    this.#controller?.send({ op: "remove_prop", name });
+  }
+
+  /** Subscribe to the prop roster (props.py sidecars); fires immediately if it
+   * has already arrived. The stage builds its buttons from this. */
+  onProps(cb: (props: PropInfo[]) => void): () => void {
+    this.#propListeners.add(cb);
+    if (this.#props.length) cb(this.#props);
+    return () => this.#propListeners.delete(cb);
   }
 
   /** Whether any manipulation prop is currently in the world. Read from
@@ -340,6 +379,10 @@ export class SimSession {
         pa[2] + (pb[2] - pa[2]) * u,
         ...q.map((v) => v / norm),
       ];
+    }
+    if (this.#propsDirty) {
+      this.#propsDirty = false;
+      scene.setPropManifest(this.#props);
     }
     scene.setObjectPoses(objects);
 
