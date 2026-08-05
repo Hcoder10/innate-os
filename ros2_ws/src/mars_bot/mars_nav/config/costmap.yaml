@@ -53,8 +53,11 @@ local_costmap:
       footprint: "[[0.25, 0.165], [0.25, -0.165], [-0.20, -0.165], [-0.20, 0.165]]"
       track_unknown_space: false        # unknown space is treated as FREE in the rolling local costmap
       unknown_cost_value: 255          # unused while track_unknown_space is false
+      # Depth obstacle layer (voxel_layer/STVL) intentionally NOT loaded: with a
+      # calibrated camera it marks phantom obstacles from floor leakage
+      # (measured 2x cross-track degradation + swerve spikes, R7-27 2026-07).
+      # Re-add "voxel_layer" here only after the depth pipeline passes QA.
       plugins: [
-        "voxel_layer",
         "obstacle_layer",
         "inflation_layer",
         ]
@@ -149,7 +152,6 @@ mapfree:
         height: 10
         plugins: [ 
           "obstacle_layer", 
-          "voxel_layer",
           "inflation_layer",
           ]
         obstacle_layer:

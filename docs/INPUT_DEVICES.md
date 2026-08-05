@@ -23,7 +23,7 @@ class HelloWorld(Directive):
 ```python
 # workspace/inputs/my_sensor_input.py
 
-from brain_client.input_types import InputDevice
+from brain_client.inputs.types import InputDevice
 import threading
 import time
 
@@ -215,9 +215,9 @@ innate-os/
 │       └── hello_world_directive.py  # Uses get_inputs()
 └── ros2_ws/src/brain/brain_client/
     └── brain_client/
-        ├── input_types.py            # Base class
-        ├── input_loader.py           # Auto-discovery
-        └── input_manager_node.py     # ROS bridge
+        ├── inputs/types.py           # Base class
+        ├── inputs/loader.py          # Auto-discovery
+        └── nodes/input_manager.py    # ROS bridge
 ```
 
 ## Summary

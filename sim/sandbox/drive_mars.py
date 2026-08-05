@@ -65,6 +65,7 @@ def build_model(rooms: dict[str, list[Path]], visual_rooms: dict[str, Path] | No
     world_spec = mujoco.MjSpec.from_string(world_xml)
     robot_spec = world.load_robot_spec(world.default_urdf_path())
     world.add_planar_base(robot_spec)
+    world.tune_contacts(robot_spec)  # same contact model the driver builds
 
     frame = world_spec.worldbody.add_frame()
     world_spec.attach(robot_spec, frame=frame, prefix="robot_")

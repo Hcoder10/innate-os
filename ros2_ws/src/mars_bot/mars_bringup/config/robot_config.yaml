@@ -11,7 +11,7 @@
     safety:
       # Hard /cmd_vel clamp at the motors — the overall ceiling every velocity source
       # passes through. A backstop, kept above the motion_control / nav driving caps.
-      max_speed: 0.4
+      max_speed: 0.8
       max_angular_speed: 2.5
     ros_topics:
       odom_frequency: 30.0

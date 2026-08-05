@@ -43,6 +43,7 @@ from config import (
     VIEWER_BUILD_LOG_PATH,
     WORKSPACE_ROOT,
     WORLD_SERVER_LOG_PATH,
+    WORLD_SERVER_MODEL_DIGEST_PATH,
     WORLD_SERVER_PID_PATH,
     WORLD_SERVER_PORT,
     DockerUnresponsiveError,
@@ -1266,7 +1267,8 @@ SIM_ASSET_UNITS = [
     # extracted; the hulls feed the webapp's "collisions" overlay.)
     "viewer/public/physics/apartment_collisions_v2",
     "viewer/public/models",
-    "viewer/public/robot",
+    # (viewer/public/robot is NOT a bundle unit: the robot description is
+    # tracked source, refreshed from the checkout by sync_robot_description.)
     "viewer/assets/apartment_obj",
     # Built SimSession bundle: ships prebuilt so `up` needs no Node.js
     # (absent from pre-dist-lib bundles; the extractor skips missing units).
@@ -1356,6 +1358,40 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def sync_robot_description(config: dict[str, object]) -> None:
+    """Refresh the viewer's /robot/ tree from the tracked mars_sim package.
+
+    The 3D view has to draw the same robot the driver simulates -- same links,
+    and since the "collisions" overlay renders the URDF's own <collision>
+    primitives, the same collision geometry. So the description is copied out
+    of the checkout on every run rather than shipped frozen inside the asset
+    bundle, where a mars.urdf edit would never reach the browser at all.
+
+    Copies only what changed. The URDF is small and is the file that
+    actually changes, so it is compared by content; the ~7MB meshes use the
+    size+mtime shortcut (copy2 preserves both, so an exact match is a
+    previous copy of that very file).
+    """
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    package = os_repo / "ros2_ws" / "src" / "mars_bot" / "mars_sim"
+    if not package.is_dir():
+        return  # image-mode checkout without the ROS sources; keep whatever is served
+
+    served = sim_repo / "viewer" / "public" / "robot"
+    sources = [(package / "urdf" / "mars.urdf", served / "mars.urdf")]
+    sources += [(mesh, served / "meshes" / mesh.name) for mesh in sorted(package.glob("meshes/*"))]
+    for src, dst in sources:
+        if dst.exists():
+            if src.suffix == ".urdf":
+                if dst.read_bytes() == src.read_bytes():
+                    continue
+            elif dst.stat().st_size == src.stat().st_size and dst.stat().st_mtime == src.stat().st_mtime:
+                continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
 def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:
     """Make sure the webapp's 3D-view bundle (viewer/dist-lib) is usable.
 
@@ -1392,20 +1428,15 @@ def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False
 
 
 def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: bool) -> None:
-    """INNATE_SIM_VIEWER_DEV=1: rebuild dist-lib when viewer sources are
-    newer than it (the edit-run loop for sim/viewer developers)."""
+    """INNATE_SIM_VIEWER_DEV=1: rebuild dist-lib when viewer sources are newer
+    than it, and (re)generate the per-room apartment split -- the edit-run loop
+    for sim/viewer developers."""
     npm = shutil.which("npm")
     if npm is None:
         raise StackError(
             "INNATE_SIM_VIEWER_DEV=1 needs npm on PATH (install Node.js), "
             "or unset it to use the prebuilt viewer bundle."
         )
-    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
-    sources += sorted((viewer / "src").rglob("*.ts"))
-    if bundle.exists():
-        newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
-        if bundle.stat().st_mtime >= newest_src:
-            return
     if not (viewer / "node_modules").is_dir():
         if offline:
             warn("Offline and sim/viewer/node_modules is missing -- skipping the viewer bundle build.")
@@ -1417,14 +1448,43 @@ def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: boo
             log_path=VIEWER_BUILD_LOG_PATH,
             failure_message="npm ci failed for sim/viewer.",
         )
-    log("Building the sim viewer bundle (dist-lib)...")
-    run_logged_with_heartbeat(
-        [npm, "run", "build:lib"],
-        cwd=viewer,
-        log_path=VIEWER_BUILD_LOG_PATH,
-        failure_message="Sim viewer bundle build failed (npm run build:lib).",
-        progress_message="Still building the sim viewer bundle.",
-    )
+    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
+    sources += sorted((viewer / "src").rglob("*.ts"))
+    newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
+    if not bundle.exists() or bundle.stat().st_mtime < newest_src:
+        log("Building the sim viewer bundle (dist-lib)...")
+        run_logged_with_heartbeat(
+            [npm, "run", "build:lib"],
+            cwd=viewer,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message="Sim viewer bundle build failed (npm run build:lib).",
+            progress_message="Still building the sim viewer bundle.",
+        )
+    _ensure_apartment_split(viewer, npm)
+
+
+def _ensure_apartment_split(viewer: Path, npm: str) -> None:
+    """Generate the per-room apartment split + manifest the webapp streams
+    (scene.ts loadApartmentLayout). `up` re-extracts public/models from the asset
+    bundle, wiping the split, so regenerate whenever the manifest is missing or
+    older than the glb. Non-fatal: without it the 3D view just falls back to the
+    single-file apartment."""
+    glb = viewer / "public" / "models" / "appartement.glb"
+    manifest = viewer / "public" / "models" / "apartment" / "manifest.json"
+    if not glb.is_file():
+        return
+    if manifest.is_file() and manifest.stat().st_mtime >= glb.stat().st_mtime:
+        return
+    log("Splitting the apartment into per-room assets...")
+    try:
+        run_logged(
+            [npm, "run", "split:apartment"],
+            cwd=viewer,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message="apartment split failed.",
+        )
+    except StackError:
+        warn("Apartment split failed -- the 3D view uses the single-file apartment. See the viewer build log.")
 
 
 def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
@@ -1527,6 +1587,34 @@ def _world_server_bind_addresses() -> str:
     return ""
 
 
+def world_server_running() -> bool:
+    """Whether a host world server answers on the driver port."""
+    return _world_server_ping_reply(WORLD_SERVER_PORT) is not None
+
+
+def _world_model_sources_digest(config: dict[str, object]) -> str:
+    """Content digest of the sources compiled into the world server's MuJoCo
+    model: the robot description, the driver's model-building modules, and
+    the installed apartment bundle (its .assets-tag marker is derived from
+    the bundle tarball's sha256, so the tag names the content). A running
+    server that compiled different content is serving stale physics -- by
+    CONTENT, not mtime, so no copy, checkout or asset refresh can fool it."""
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    mars_bot = os_repo / "ros2_ws" / "src" / "mars_bot"
+    driver = mars_bot / "mars_sim_driver" / "mars_sim_driver"
+    candidates = sorted((mars_bot / "mars_sim" / "urdf").glob("*"))
+    candidates += sorted((mars_bot / "mars_sim" / "meshes").glob("*"))
+    candidates += [driver / name for name in ("world.py", "core.py", "constants.py")]
+    candidates += [sim_repo / "assets" / ".assets-tag"]
+    digest = hashlib.sha256()
+    for f in candidates:
+        with contextlib.suppress(OSError):
+            digest.update(f.name.encode())
+            digest.update(f.read_bytes())
+    return digest.hexdigest()
+
+
 def ensure_world_server(config: dict[str, object]) -> str:
     """Start the host world server (physics + rendering, outside Docker --
     see mars_sim_driver/world_server.py) and return the endpoint the
@@ -1561,13 +1649,20 @@ def ensure_world_server(config: dict[str, object]) -> str:
         expected_binds = {b.strip() for b in bind.split(",") if b.strip()}
         actual_binds = reply.get("binds")
         if reply.get("state_port") and actual_binds is not None and set(actual_binds) == expected_binds:
-            log("Host world server already running.")
-            return endpoint
+            # The MuJoCo model is compiled at server start; a URDF or
+            # world-module edit since then is not in the running physics.
+            running_digest = ""
+            with contextlib.suppress(OSError):
+                running_digest = WORLD_SERVER_MODEL_DIGEST_PATH.read_text(encoding="utf-8").strip()
+            if _world_model_sources_digest(config) == running_digest:
+                log("Host world server already running.")
+                return endpoint
+            log("Host world server compiled different robot/world sources -- restarting it...")
         # Reusing a mismatched server would either starve the webapp's 3D
         # view (pre-stream builds) or keep listeners open that the current
         # bind policy would never create (e.g. a leftover
         # INNATE_SIM_WORLD_BIND=0.0.0.0 server) -- restart instead.
-        if not reply.get("state_port"):
+        elif not reply.get("state_port"):
             log("Host world server is outdated (no observer state stream) -- restarting it...")
         elif actual_binds is None:
             log("Host world server predates bind reporting -- restarting it...")
@@ -1593,6 +1688,8 @@ def ensure_world_server(config: dict[str, object]) -> str:
         log(f"Starting host world server ({label} rendering)...")
         log_offset = WORLD_SERVER_LOG_PATH.stat().st_size if WORLD_SERVER_LOG_PATH.exists() else 0
         if _start_world_server(uv, sim_repo, bind=bind, mujoco_gl=backend):
+            # Record what this server compiled, for the reuse check above.
+            WORLD_SERVER_MODEL_DIGEST_PATH.write_text(_world_model_sources_digest(config) + "\n", encoding="utf-8")
             log("Host world server ready.")
             return endpoint
         attempt_log = ""
@@ -1714,6 +1811,7 @@ def _start_world_server(uv: str, sim_repo: Path, *, bind: str, mujoco_gl: str | 
     with contextlib.suppress(ProcessLookupError, OSError):
         proc.kill()
     WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
+    WORLD_SERVER_MODEL_DIGEST_PATH.unlink(missing_ok=True)
     return False
 
 
@@ -1768,6 +1866,7 @@ def stop_world_server() -> None:
         pass
     with contextlib.suppress(OSError):  # read-only fs: the kill still counts
         WORLD_SERVER_PID_PATH.unlink(missing_ok=True)
+        WORLD_SERVER_MODEL_DIGEST_PATH.unlink(missing_ok=True)
 
 
 def ensure_skill_assets(config: dict[str, object]) -> None:

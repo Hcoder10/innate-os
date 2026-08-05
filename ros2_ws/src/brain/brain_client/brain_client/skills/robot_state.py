@@ -1,30 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Robot-state provision for skill execution.
-
-Owns the on-demand state subscriptions (odom / map / head) and the camera + robot
-interface references, and injects required interfaces and live robot state into the
-running skill — including the 50 Hz continuous-update thread. Pulled out of the
-skills action server so the node is left with just the action/execution flow.
-"""
+"""Robot-state provision for skill execution: the state subscriptions,
+interface injection, and the 50 Hz continuous-update thread. Ambient reads
+land on the current_* accessors, converting the newest cached message."""
 
 from __future__ import annotations
 
-import base64
 import json
-import math
 import threading
 import time
+from collections.abc import Callable
 
-import numpy as np
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Odometry as OdometryMsg
-from sensor_msgs.msg import BatteryState, JointState
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import BatteryState, JointState, LaserScan
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
-from brain_client.skills.odometry import Odometry
-from brain_client.skills.types import InterfaceType, RobotStateType
+from brain_client.skills.types import _DEFAULT_STATE_GRACE_S, InterfaceType, RobotStateType, _state_grace_s
+from brain_client.state.arm import Arm
+from brain_client.state.battery import Battery
+from brain_client.state.head import HeadState
+from brain_client.state.image import DepthMap, MainImage, WristImage
+from brain_client.state.joint_states import JointStates
+from brain_client.state.lidar import Lidar
+from brain_client.state.map import Map
+from brain_client.state.odometry import Odometry
+from brain_client.state.pose import Pose
 
 
 class RobotStateProvider:
@@ -42,26 +46,35 @@ class RobotStateProvider:
         self.last_head_position = None
         self.last_joint_states = None
         self.last_battery = None
+        self.last_amcl_pose = None
+        self.last_scan = None
+        self._lidar_cache = None  # (msg, Lidar) of the last converted scan
+        # (msg, Map) of the last converted map — a fresh Map per 50 Hz tick
+        # would discard Map.grid's cached_property and re-decode the whole
+        # grid on every skill read
+        self._map_cache = None
+        # (jpeg, Image) of the last converted frame per camera — the b64
+        # encode is far too expensive to redo at 50 Hz for a ~15 Hz camera
+        self._main_image_cache = None
+        self._wrist_image_cache = None
 
         self._odom_sub = None
         self._map_sub = None
         self._head_position_sub = None
         self._joint_states_sub = None
         self._battery_sub = None
-        # Feeds are gated by this flag instead of destroying the subscriptions:
-        # destroying a subscription an executor has already selected as
-        # "ready" races _take_subscription and crashes the process
-        # (InvalidHandle -> rmw_zenoh Rust panic -> SIGABRT), easiest to hit
-        # right after a skill cancellation. The subscriptions live on the
-        # manipulation interface's private node, whose executor is parked
-        # between skills — always-alive high-rate feeds (/joint_states + head
-        # position alone are ~400 msgs/s) would otherwise cost ~half a Jetson
-        # core in executor dispatch even while idle.
+        self._amcl_pose_sub = None
+        self._scan_sub = None
+        # Gate feeds with this flag, never by destroying subscriptions:
+        # destroying one the executor already selected as "ready" crashes the
+        # process (InvalidHandle -> rmw_zenoh SIGABRT), easiest to hit right
+        # after a cancel. The subs live on manipulation's private node, parked
+        # between skills — always-alive feeds (~400 msgs/s) would otherwise
+        # cost ~half a Jetson core while idle.
         self._active = False
-        # warn once per missing state, not at 50 Hz while a slow topic
-        # (battery publishes at 0.2 Hz) sends its first message
-        self._warned_missing = set()
+        self._warned_missing = set()  # warn once per missing state, not at 50 Hz
 
+        # (skill, injection pairs) holding the 50 Hz slot; None when idle
         self._current_skill = None
         self._current_skill_lock = threading.Lock()
         # parents suspended while a chained child holds the 50 Hz slot
@@ -69,10 +82,25 @@ class RobotStateProvider:
         self._state_update_thread = None
         self._state_update_stop_event = threading.Event()
 
+        # feed enum -> snapshot accessor; see _state_getters
+        self._state_getter_map = {
+            RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64: self.current_main_image,
+            RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64: self.current_wrist_image,
+            RobotStateType.LAST_DEPTH_IMAGE: self.current_depth,
+            RobotStateType.LAST_ODOM: self.current_odom,
+            RobotStateType.LAST_MAP: self.current_map,
+            RobotStateType.LAST_JOINT_STATES: self.current_joint_states,
+            RobotStateType.LAST_BATTERY: self.current_battery,
+            RobotStateType.LAST_HEAD_POSITION: self.current_head_position,
+            RobotStateType.LAST_POSE: self.current_pose,
+            RobotStateType.LAST_LIDAR: self.current_lidar,
+            RobotStateType.LAST_ARM: self.current_arm,
+        }
+
     # --- interface injection (at skill load + before execution) ---
     def inject_required_interfaces(self, skill) -> None:
         """Inject only the interfaces declared by the skill via Interface descriptors."""
-        for interface_type in skill.get_required_interfaces():
+        for interface_type in skill.declared_interface_types():
             if interface_type == InterfaceType.MANIPULATION:
                 skill.inject_interface(interface_type, self._manipulation)
             elif interface_type == InterfaceType.MOBILITY:
@@ -98,14 +126,16 @@ class RobotStateProvider:
         )
         self._joint_states_sub = feed_node.create_subscription(JointState, "/joint_states", self._on_joint_states, 10)
         self._battery_sub = feed_node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
+        self._amcl_pose_sub = feed_node.create_subscription(
+            PoseWithCovarianceStamped, "/amcl_pose", self._on_amcl_pose, 10
+        )
+        # the lidar driver publishes with sensor-data QoS (best effort); a
+        # reliable subscription would never match it
+        self._scan_sub = feed_node.create_subscription(LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
 
     def stop_subscriptions(self) -> None:
-        """Deactivate robot-state feeds when no skill is running.
-
-        The subscriptions are deliberately NOT destroyed (see __init__); the
-        callbacks early-return while inactive, and parking the private
-        executor (manipulation.stop()) stops them being invoked at all.
-        """
+        """Deactivate feeds — subscriptions are deliberately NOT destroyed
+        (see __init__); callbacks early-return and the private executor parks."""
         self._active = False
         self._manipulation.stop()
         self.last_odom = None
@@ -113,6 +143,12 @@ class RobotStateProvider:
         self.last_head_position = None
         self.last_joint_states = None
         self.last_battery = None
+        self.last_amcl_pose = None
+        self.last_scan = None
+        self._lidar_cache = None
+        self._map_cache = None
+        self._main_image_cache = None
+        self._wrist_image_cache = None
 
     def _on_odom(self, msg: OdometryMsg) -> None:
         if self._active:
@@ -130,6 +166,14 @@ class RobotStateProvider:
         if self._active:
             self.last_battery = msg
 
+    def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        if self._active:
+            self.last_amcl_pose = msg
+
+    def _on_scan(self, msg: LaserScan) -> None:
+        if self._active:
+            self.last_scan = msg
+
     def _on_head_position(self, msg: String) -> None:
         if not self._active:
             return
@@ -145,17 +189,19 @@ class RobotStateProvider:
 
     # --- continuous updates ---
     def begin_continuous_updates(self, skill) -> None:
-        """Start (or hand over) the 50 Hz state feed for ``skill``.
+        """Start (or hand over) the 50 Hz state feed. Nesting-safe: a parent
+        holding the slot is suspended and resumes when the child ends.
 
-        Nesting-safe: if a skill already holds the slot (a parent running a
-        chained child), it is suspended and resumes when the child ends.
-        """
+        The declared-feed set is fixed once the run is wired, so the
+        (state, getter) pairs are computed here, once — not by re-walking the
+        sub-skill tree on every 50 Hz tick."""
+        entry = (skill, self._injection_pairs(skill))
         with self._current_skill_lock:
             if self._current_skill is not None:
                 self._skill_stack.append(self._current_skill)
-                self._current_skill = skill
+                self._current_skill = entry
                 return  # update thread already running
-            self._current_skill = skill
+            self._current_skill = entry
         self._state_update_stop_event.clear()
         self._state_update_thread = threading.Thread(target=self._state_update_thread_func, daemon=True)
         self._state_update_thread.start()
@@ -177,145 +223,237 @@ class RobotStateProvider:
         while not self._state_update_stop_event.is_set():
             with self._current_skill_lock:
                 if self._current_skill is not None:
+                    skill, pairs = self._current_skill
                     try:
-                        self.update_skill_robot_state(self._current_skill)
+                        self._inject(skill, pairs)
                     except Exception as e:
                         self._logger.error(f"Error in continuous state update: {e}")
             self._state_update_stop_event.wait(0.02)
 
-    def wait_for_camera_states(self, skill, required_states, timeout_s: float = 3.0) -> None:
-        """Block briefly until required camera frames exist, then re-inject.
+    def _state_getters(self) -> dict:
+        # static per provider (also the test seam: tests stub this per instance)
+        return self._state_getter_map
 
-        The camera subscription is created at skill start, so the first frame
-        is always one publish period away (more in sim, where cameras render
-        on demand) -- without this, a skill reading its image in the first
-        lines of execute() fails cold and only succeeds on retry. Bounded:
-        on timeout the skill still sees the missing state and handles it."""
-        wanted = []
-        if RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states:
-            wanted.append(lambda: self._camera.last_main_camera_b64)
-        if RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states:
-            wanted.append(lambda: self._camera.last_wrist_camera_b64)
-        if not wanted:
-            return
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            if all(get() is not None for get in wanted):
-                break
-            time.sleep(0.05)
-        else:
-            self._logger.warn(f"Camera frames still missing after {timeout_s:.0f}s; the skill sees no image.")
+    def wait_for_required_states(self, skill) -> None:
+        """Block, bounded per feed, until every required state has a first
+        value, then re-inject.
+
+        Feeds start at run start, so the first message is at least one
+        publish period away — without this, a required read in execute()'s
+        opening lines would fail cold. Anything still missing afterwards
+        fails the run (Skill.missing_required_robot_states), never execute().
+
+        Optional declarations (``| None``, legacy descriptors) never block
+        the start — a dead feed would stall every run for nothing. They are
+        injected as messages land (the 50 Hz refresh); a skill wanting one
+        early waits itself: ``self.wait_for(lambda: self.image)``."""
+        getters = self._state_getters()
+        start = time.monotonic()
+        # per-feed grace bounds come from the spec table (types._feed_specs)
+        deadlines = {
+            state_type: start + _state_grace_s().get(state_type, _DEFAULT_STATE_GRACE_S)
+            for state_type in skill.required_robot_state_types()
+            if state_type in getters
+        }
+        pending = dict(deadlines)
+        while pending and not skill.cancelled:
+            now = time.monotonic()
+            pending = {t: deadline for t, deadline in pending.items() if getters[t]() is None and now < deadline}
+            if pending:
+                time.sleep(0.05)
+        timed_out = [t.name for t in deadlines if getters[t]() is None]
+        if timed_out:
+            self._logger.warn(f"Required state still missing after its grace period: {', '.join(timed_out)}")
         self.update_skill_robot_state(skill)
 
+    # --- snapshot accessors ---
+    # Ambient state reads (skill.battery, skill.odom, ...) land here: each
+    # call converts the newest cached message, so every read is as fresh as
+    # the topic.
+    def current_main_image(self) -> MainImage | None:
+        # memoized per frame, like lidar: re-encoding ~100 KB JPEGs to base64
+        # at 50 Hz is ~10 MB/s of allocations for frames that change at ~15 Hz
+        jpeg = self._camera.last_main_camera_jpeg
+        if jpeg is None:
+            return None
+        cached = self._main_image_cache
+        if cached is not None and cached[0] is jpeg:
+            return cached[1]
+        image = MainImage.from_jpeg(jpeg)
+        self._main_image_cache = (jpeg, image)
+        return image
+
+    def current_wrist_image(self) -> WristImage | None:
+        jpeg = self._camera.last_wrist_camera_jpeg
+        if jpeg is None:
+            return None
+        cached = self._wrist_image_cache
+        if cached is not None and cached[0] is jpeg:
+            return cached[1]
+        image = WristImage.from_jpeg(jpeg)
+        self._wrist_image_cache = (jpeg, image)
+        return image
+
+    def current_depth(self) -> DepthMap | None:
+        depth = self._camera.last_depth_image
+        # view-cast: same buffer, feed-identifying type
+        return None if depth is None else depth.view(DepthMap)
+
+    def current_odom(self) -> Odometry | None:
+        msg = self.last_odom
+        if msg is None:
+            return None
+        pos = msg.pose.pose.position
+        twist = msg.twist.twist
+        return Odometry(
+            x=pos.x,
+            y=pos.y,
+            theta=quaternion_to_yaw(msg.pose.pose.orientation),
+            linear_velocity=twist.linear.x,
+            angular_velocity=twist.angular.z,
+            stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            frame_id=msg.header.frame_id,
+            child_frame_id=msg.child_frame_id,
+            # .raw builds lazily from the message, so
+            # high-rate reads pay nothing for the full-fidelity dict
+            raw_source=msg,
+        )
+
+    def current_map(self) -> Map | None:
+        msg = self.last_map
+        if msg is None:
+            return None
+        # memoized per message, like lidar: a fresh Map every 50 Hz tick would
+        # throw away Map.grid's cached_property, making every skill read of
+        # .grid re-decode the whole grid
+        cached = self._map_cache
+        if cached is not None and cached[0] is msg:
+            return cached[1]
+        # cheap: the grid itself decodes lazily on Map.grid access
+        current = Map(
+            resolution=msg.info.resolution,
+            width=msg.info.width,
+            height=msg.info.height,
+            origin_x=msg.info.origin.position.x,
+            origin_y=msg.info.origin.position.y,
+            origin_theta=quaternion_to_yaw(msg.info.origin.orientation),
+            stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            frame_id=msg.header.frame_id,
+            raw_source=msg,
+        )
+        self._map_cache = (msg, current)
+        return current
+
+    def current_joint_states(self) -> JointStates | None:
+        msg = self.last_joint_states
+        if msg is None:
+            return None
+        return JointStates(
+            name=tuple(msg.name),
+            position=tuple(msg.position),
+            velocity=tuple(msg.velocity),
+            effort=tuple(msg.effort),
+        )
+
+    def current_battery(self) -> Battery | None:
+        msg = self.last_battery
+        if msg is None:
+            return None
+        return Battery(
+            percentage=msg.percentage,
+            voltage=msg.voltage,
+            current=msg.current,
+            charging=msg.power_supply_status == BatteryState.POWER_SUPPLY_STATUS_CHARGING,
+        )
+
+    def current_head_position(self) -> HeadState | None:
+        payload = self.last_head_position
+        if payload is None:
+            return None
+        pitch = payload.get("current_position")
+        if pitch is None:
+            return None
+        return HeadState(
+            pitch_degrees=pitch,
+            min_degrees=payload.get("min_angle"),
+            max_degrees=payload.get("max_angle"),
+            default_degrees=payload.get("default_angle"),
+            raw_source=payload,
+        )
+
+    def current_pose(self) -> Pose | None:
+        msg = self.last_amcl_pose
+        if msg is None:
+            return None
+        pose = msg.pose.pose
+        return Pose(
+            x=pose.position.x,
+            y=pose.position.y,
+            theta=quaternion_to_yaw(pose.orientation),
+            stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            frame_id=msg.header.frame_id,
+        )
+
+    def current_lidar(self) -> Lidar | None:
+        msg = self.last_scan
+        if msg is None:
+            return None
+        # memoized per message: tuple(msg.ranges) copies ~1100 floats at 50 Hz
+        # for a ~10 Hz scan
+        cached = self._lidar_cache
+        if cached is not None and cached[0] is msg:
+            return cached[1]
+        lidar = Lidar(
+            ranges=tuple(msg.ranges),
+            angle_min=msg.angle_min,
+            angle_increment=msg.angle_increment,
+            range_min=msg.range_min,
+            range_max=msg.range_max,
+            stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            frame_id=msg.header.frame_id,
+        )
+        self._lidar_cache = (msg, lidar)
+        return lidar
+
+    def current_arm(self) -> Arm | None:
+        # last_fk_pose, not get_current_end_effector_pose(): the dict getter
+        # spins the node and warn-logs on None — both wrong at 50 Hz
+        fk = self._manipulation.last_fk_pose
+        if fk is None:
+            return None
+        js = self.last_joint_states
+        gripper = js.position[5] if js is not None and len(js.position) > 5 else None
+        pose = fk.pose
+        return Arm(
+            x=pose.position.x,
+            y=pose.position.y,
+            z=pose.position.z,
+            qx=pose.orientation.x,
+            qy=pose.orientation.y,
+            qz=pose.orientation.z,
+            qw=pose.orientation.w,
+            gripper=gripper,
+            frame_id=fk.header.frame_id,
+        )
+
     # --- state injection ---
+    def _injection_pairs(self, skill) -> list[tuple[RobotStateType, Callable[[], object]]]:
+        """(state, getter) for every declared feed, sub-skills included."""
+        getters = self._state_getters()
+        return [(t, getters[t]) for t in skill.declared_robot_state_types() if t in getters]
+
     def update_skill_robot_state(self, skill) -> None:
-        """Update a skill's robot state from current sensor data."""
-        required_states = skill.get_required_robot_states()
-        if not required_states:
-            return
+        """Inject a current value for every state the skill declared (one-shot
+        path: the 50 Hz thread injects via precomputed pairs instead)."""
+        self._inject(skill, self._injection_pairs(skill))
 
-        robot_state_to_inject = {}
-
-        if RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64 in required_states:
-            b64 = self._camera.last_main_camera_b64
-            if b64 is not None:
-                robot_state_to_inject[RobotStateType.LAST_MAIN_CAMERA_IMAGE_B64.value] = b64
+    def _inject(self, skill, pairs) -> None:
+        to_inject = {}
+        for state_type, getter in pairs:
+            value = getter()
+            if value is not None:
+                to_inject[state_type.value] = value
             else:
-                self._warn_missing("LAST_MAIN_CAMERA_IMAGE_B64")
-
-        if RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64 in required_states:
-            b64 = self._camera.last_wrist_camera_b64
-            if b64 is not None:
-                robot_state_to_inject[RobotStateType.LAST_WRIST_CAMERA_IMAGE_B64.value] = b64
-            else:
-                self._warn_missing("LAST_WRIST_CAMERA_IMAGE_B64")
-
-        if RobotStateType.LAST_ODOM in required_states:
-            if self.last_odom is not None:
-                msg = self.last_odom
-                pos = msg.pose.pose.position
-                twist = msg.twist.twist
-                robot_state_to_inject[RobotStateType.LAST_ODOM.value] = Odometry(
-                    x=pos.x,
-                    y=pos.y,
-                    theta=quaternion_to_yaw(msg.pose.pose.orientation),
-                    linear_velocity=twist.linear.x,
-                    angular_velocity=twist.angular.z,
-                    stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
-                    frame_id=msg.header.frame_id,
-                    child_frame_id=msg.child_frame_id,
-                    # .raw is built lazily from the message on first access, so
-                    # this 50 Hz path pays nothing for the full-fidelity dict
-                    raw_source=msg,
-                )
-            else:
-                self._warn_missing("LAST_ODOM")
-
-        if RobotStateType.LAST_MAP in required_states:
-            if self.last_map is not None:
-                map_data_bytes = np.array(self.last_map.data, dtype=np.int8).tobytes()
-                ori_map = self.last_map.info.origin.orientation
-                yaw_map = quaternion_to_yaw(ori_map)
-                robot_state_to_inject[RobotStateType.LAST_MAP.value] = {
-                    "header": {
-                        "stamp": {
-                            "sec": self.last_map.header.stamp.sec,
-                            "nanosec": self.last_map.header.stamp.nanosec,
-                        },
-                        "frame_id": self.last_map.header.frame_id,
-                    },
-                    "info": {
-                        "map_load_time": {
-                            "sec": self.last_map.info.map_load_time.sec,
-                            "nanosec": self.last_map.info.map_load_time.nanosec,
-                        },
-                        "resolution": self.last_map.info.resolution,
-                        "width": self.last_map.info.width,
-                        "height": self.last_map.info.height,
-                        "origin": {
-                            "position": {
-                                "x": self.last_map.info.origin.position.x,
-                                "y": self.last_map.info.origin.position.y,
-                                "z": self.last_map.info.origin.position.z,
-                            },
-                            "orientation": {"x": ori_map.x, "y": ori_map.y, "z": ori_map.z, "w": ori_map.w},
-                            "yaw_degrees": math.degrees(yaw_map),
-                        },
-                    },
-                    "data_b64": base64.b64encode(map_data_bytes).decode("utf-8"),
-                }
-            else:
-                self._warn_missing("LAST_MAP")
-
-        if RobotStateType.LAST_JOINT_STATES in required_states:
-            if self.last_joint_states is not None:
-                js = self.last_joint_states
-                robot_state_to_inject[RobotStateType.LAST_JOINT_STATES.value] = {
-                    "name": list(js.name),
-                    "position": list(js.position),
-                    "velocity": list(js.velocity),
-                    "effort": list(js.effort),
-                }
-            else:
-                self._warn_missing("LAST_JOINT_STATES")
-
-        if RobotStateType.LAST_BATTERY in required_states:
-            if self.last_battery is not None:
-                b = self.last_battery
-                robot_state_to_inject[RobotStateType.LAST_BATTERY.value] = {
-                    "percentage": b.percentage,
-                    "voltage": b.voltage,
-                    "current": b.current,
-                    "charging": b.power_supply_status == BatteryState.POWER_SUPPLY_STATUS_CHARGING,
-                }
-            else:
-                self._warn_missing("LAST_BATTERY")
-
-        if RobotStateType.LAST_HEAD_POSITION in required_states:
-            if self.last_head_position is not None:
-                robot_state_to_inject[RobotStateType.LAST_HEAD_POSITION.value] = self.last_head_position
-            else:
-                self._warn_missing("LAST_HEAD_POSITION")
-
-        if robot_state_to_inject:
-            skill.update_robot_state(**robot_state_to_inject)
+                self._warn_missing(state_type.name)
+        if to_inject:
+            skill.update_robot_state(**to_inject)

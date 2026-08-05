@@ -1,7 +1,9 @@
 // Ground-truth state feed for the sim viewer: the world server broadcasts
-// {t, wall, pose, joints} per physics slice on its observer WebSocket
+// {t, wall, pose, joints, objects} per physics slice on its observer WebSocket
 // (proxied at /worldstate) -- the 3D view's only state source. See
 // world_server.py "two interfaces".
+
+import type { PropInfo } from "../props";
 
 export interface WorldState {
   /** Sim clock (s) -- the playback timeline. */
@@ -12,10 +14,15 @@ export interface WorldState {
   y: number;
   yaw: number;
   joints: Record<string, number>;
+  /** Ground truth of every manipulation prop (world.py GRASP_OBJECTS), keyed
+   * by name: [x, y, z, qw, qx, qy, qz]. Empty on servers that predate them. */
+  objects: Record<string, number[]>;
 }
 
 export class WorldStateController {
   onState?: (state: WorldState) => void;
+  /** The prop roster, sent once per connection (props.py sidecars). */
+  onProps?: (props: PropInfo[]) => void;
 
   #url: string;
   #ws!: WebSocket;
@@ -61,21 +68,44 @@ export class WorldStateController {
     await this.#open;
   }
 
+  /** Send a stage command (e.g. place_group) back up the observer socket.
+   * Dropped silently while the socket is (re)connecting -- it is a button
+   * press, not something worth queueing. */
+  send(cmd: object): void {
+    if (this.#ws.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(cmd));
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#ws.close();
   }
 
   #onMessage(raw: string): void {
-    const msg = JSON.parse(raw) as {
+    const parsed = JSON.parse(raw) as { props?: PropInfo[] };
+    if (parsed.props) {
+      // Roster frame, not a state frame: it has no clock and arrives once,
+      // ahead of the stream (see world_server.serve_state).
+      this.onProps?.(parsed.props);
+      return;
+    }
+    const msg = parsed as unknown as {
       t: number;
       wall: number;
       pose: [number, number, number];
       joints: Record<string, number>;
+      objects?: Record<string, number[]> | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
     joints["joint6M"] = -(joints["joint6"] ?? 0);
-    this.onState?.({ t: msg.t, wall: msg.wall, x: msg.pose[0], y: msg.pose[1], yaw: msg.pose[2], joints });
+    this.onState?.({
+      t: msg.t,
+      wall: msg.wall,
+      x: msg.pose[0],
+      y: msg.pose[1],
+      yaw: msg.pose[2],
+      joints,
+      objects: msg.objects ?? {},
+    });
   }
 }

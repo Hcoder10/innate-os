@@ -3,6 +3,10 @@
 # Copyright (c) 2026 Innate Inc
 
 
+import math
+import time
+from collections import deque
+
 import rclpy
 from geometry_msgs.msg import Twist
 from mars_msgs.srv import LightCommand
@@ -133,6 +137,9 @@ class Bringup(Node):
         odom_period = 1.0 / self.params["ros_topics"]["odom_frequency"]
         self.odom_timer = self.create_timer(odom_period, self._publish_odometry)
 
+        # Pose history for twist estimation: (monotonic time, x, y, yaw)
+        self._twist_history = deque()
+
         # Create battery state publisher
         self.battery_pub = self.create_publisher(
             BatteryState,
@@ -247,6 +254,23 @@ class Bringup(Node):
         odom.pose.pose.position.y = transform.transform.translation.y
         odom.pose.pose.position.z = transform.transform.translation.z
         odom.pose.pose.orientation = transform.transform.rotation
+
+        # Body-frame twist from pose differences over a 0.2s window: the MCU
+        # pose is quantized (1 cm / 0.01 rad), so per-sample diffs at 30 Hz
+        # would be dominated by quantization noise.
+        x = transform.transform.translation.x
+        y = transform.transform.translation.y
+        q = transform.transform.rotation
+        yaw = 2.0 * math.atan2(q.z, q.w)
+        now_s = time.monotonic()
+        self._twist_history.append((now_s, x, y, yaw))
+        while len(self._twist_history) > 1 and now_s - self._twist_history[0][0] > 0.2:
+            self._twist_history.popleft()
+        t0, x0, y0, yaw0 = self._twist_history[0]
+        dt = now_s - t0
+        if dt >= 0.1:
+            odom.twist.twist.linear.x = ((x - x0) * math.cos(yaw) + (y - y0) * math.sin(yaw)) / dt
+            odom.twist.twist.angular.z = math.atan2(math.sin(yaw - yaw0), math.cos(yaw - yaw0)) / dt
 
         # Publish the odometry message
         self.odom_pub.publish(odom)

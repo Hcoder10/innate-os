@@ -19,6 +19,7 @@ void MarsArmNode::loadJointConfigs(const std::vector<std::string>& joint_names) 
         this->declare_parameter(jn + ".control_mode", 3);
         this->declare_parameter(jn + ".motor_type", std::string(""));
         this->declare_parameter(jn + ".current_limit", 0);
+        this->declare_parameter(jn + ".goal_current", 0);
         this->declare_parameter(jn + ".homing_offset", 0);
         this->declare_parameter(jn + ".profile_velocity", 0);
         this->declare_parameter(jn + ".profile_acceleration", 0);
@@ -55,6 +56,25 @@ void MarsArmNode::loadJointConfigs(const std::vector<std::string>& joint_names) 
         } else if (cl > 0) {
             throw std::runtime_error(jn + " (" + config.motor_type +
                                      "): current_limit not supported — no current control hw");
+        }
+
+        // Goal current: the mode-5 torque cap. Must stay under current_limit,
+        // which doubles as the overload-detection threshold — a servo gripping
+        // AT its current_limit trips overload.
+        config.goal_current = static_cast<int>(this->get_parameter(jn + ".goal_current").as_int());
+        if (config.goal_current != 0) {
+            if (!isX330(config.motor_type)) {
+                throw std::runtime_error(jn + " (" + config.motor_type +
+                                         "): goal_current not supported — no current control hw");
+            }
+            if (config.goal_current < 0 || config.goal_current > config.current_limit) {
+                throw std::runtime_error(
+                    jn + ": goal_current out of range [0, current_limit=" + std::to_string(config.current_limit) + "]");
+            }
+        } else if (config.control_mode == 0 || config.control_mode == 5) {
+            throw std::runtime_error(jn + ": control_mode " + std::to_string(config.control_mode) +
+                                     " needs a non-zero goal_current — the servo default is near-zero "
+                                     "torque and the joint would stall under its own friction");
         }
 
         config.homing_offset = static_cast<int>(this->get_parameter(jn + ".homing_offset").as_int());

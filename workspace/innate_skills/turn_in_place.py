@@ -3,15 +3,14 @@
 import math
 import time
 
-from innate import Interface, InterfaceType, RobotState, RobotStateType, Skill, SkillResult
 from pydantic import BaseModel
+
+from innate import Mobility, Odometry, Skill, SkillOutput, SkillReturn
 
 # Allowed angular speeds (rad/s). Slow on purpose: no obstacle awareness here.
 MIN_SPEED = 0.2
 MAX_SPEED = 1.0
 DEFAULT_SPEED = 0.5
-# how long to wait for the first odom message after execute() starts
-ODOM_WAIT_SEC = 2.0
 
 
 class TurnResult(BaseModel):
@@ -21,98 +20,36 @@ class TurnResult(BaseModel):
 
 
 class TurnInPlace(Skill):
-    """Turn in place by an angle using raw cmd_vel closed on odometry yaw --
-    no Nav2, no map. Positive angle turns left (counter-clockwise, ROS
-    convention), negative turns right."""
+    """Turn the robot in place by angle_degrees: positive turns left
+    (counter-clockwise), negative turns right. Uses odometry only -- no map or
+    path planning. E.g. turn right 90 degrees -> angle_degrees=-90."""
 
-    mobility = Interface(InterfaceType.MOBILITY)
-    odom = RobotState(RobotStateType.LAST_ODOM)
+    mobility: Mobility
+    odom: Odometry
 
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-
-    @property
-    def name(self):
-        return "turn_in_place"
-
-    def guidelines(self):
-        return (
-            "Turn the robot in place by angle_degrees: positive turns left "
-            "(counter-clockwise), negative turns right. Uses odometry only -- no map or "
-            "path planning. E.g. turn right 90 degrees -> angle_degrees=-90."
-        )
-
-    def execute(self, angle_degrees: float, speed: float = DEFAULT_SPEED):
-        try:
-            return self._execute(angle_degrees, speed)
-        finally:
-            # reset on exit, not entry: an entry reset would erase a cancel
-            # delivered while the server was still setting up the goal
-            self._cancelled = False
-
-    def _execute(self, angle_degrees: float, speed: float):
-        if self.mobility is None:
-            return "Mobility interface not available", SkillResult.FAILURE
+    def execute(self, angle_degrees: float, speed: float = DEFAULT_SPEED) -> SkillReturn:
         if angle_degrees == 0.0:
-            return "Turned 0 degrees", SkillResult.SUCCESS, TurnResult(turned_degrees=0.0)
-        yaw = self._wait_for_yaw()
-        if self._cancelled:
-            return "Turn cancelled", SkillResult.CANCELLED
-        if yaw is None:
-            return "No odometry available", SkillResult.FAILURE
-
+            return SkillOutput("Turned 0 degrees", TurnResult(turned_degrees=0.0))
         target = abs(angle_degrees)
         sign = 1.0 if angle_degrees > 0 else -1.0
         velocity = math.copysign(min(max(abs(speed), MIN_SPEED), MAX_SPEED), angle_degrees)
         deadline = time.time() + math.radians(target) / abs(velocity) * 3.0 + 2.0
 
-        # accumulate wrapped yaw deltas so multi-turn and the ±180° seam work;
-        # signed so motion against the commanded direction subtracts
+        # accumulate wrapped yaw deltas so multi-turn and the ±180° seam work
         turned = 0.0
-        last_yaw = yaw
+        last_yaw = self.odom.theta_degrees
         while turned < target:
-            if self._cancelled:
-                self._stop()
-                return f"Turn cancelled after {turned:.0f} degrees", SkillResult.CANCELLED
             if time.time() > deadline:
-                self._stop()
-                return f"Stuck: turned only {turned:.0f} of {target:.0f} degrees", SkillResult.FAILURE
-            # duration acts as a deadman: if this loop dies, the base stops
+                self.fail(f"Stuck: turned only {turned:.0f} of {target:.0f} degrees")
             self.mobility.send_cmd_vel(angular_z=velocity, duration=0.5)
-            time.sleep(0.05)
-            yaw = self._yaw()
-            if yaw is not None:
-                delta = (yaw - last_yaw + 180.0) % 360.0 - 180.0
-                turned += delta * sign
-                last_yaw = yaw
+            self.sleep(0.05)
+            yaw = self.odom.theta_degrees
+            turned += ((yaw - last_yaw + 180.0) % 360.0 - 180.0) * sign
+            last_yaw = yaw
 
-        self._stop()
+        self.mobility.stop()
         direction = "left" if angle_degrees > 0 else "right"
-        return (
+        return SkillOutput(
             f"Turned {turned:.0f} degrees {direction}",
-            SkillResult.SUCCESS,
             TurnResult(turned_degrees=round(turned, 1)),
         )
-
-    def cancel(self):
-        self._cancelled = True
-        self._stop()
-        return "Turn cancelled"
-
-    def _yaw(self):
-        """Current heading in degrees from the odometry state, or None."""
-        return self.odom.theta_degrees if self.odom is not None else None
-
-    def _wait_for_yaw(self):
-        """Heading once odometry arrives, or None after ODOM_WAIT_SEC."""
-        deadline = time.time() + ODOM_WAIT_SEC
-        while True:
-            yaw = self._yaw()
-            if yaw is not None or self._cancelled or time.time() > deadline:
-                return yaw
-            time.sleep(0.02)
-
-    def _stop(self):
-        if self.mobility is not None:
-            self.mobility.send_cmd_vel(linear_x=0.0, angular_z=0.0)

@@ -6,12 +6,41 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import URDFLoader from "urdf-loader";
 import type { URDFRobot } from "urdf-loader";
+import { LoadQueue, queuedGLB } from "./loadQueue";
+import { PropLibrary, type PropInfo } from "./props";
 
 const APARTMENT_URL = "/models/appartement.glb";
+const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
 
+/** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
+ * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
+interface ApartmentManifest {
+  rooms: ManifestRoom[];
+  total: number;
+}
+interface ManifestRoom {
+  file: string;
+  name: string;
+  bytes: number;
+  bbox: { min: number[]; max: number[] };
+}
+
+/** The apartment's wireframe skeleton: parent group (already in the scene,
+ * carrying the Y-up -> Z-up rotation) plus one placeholder box per room, drawn
+ * from the manifest alone. streamApartment() then swaps boxes for real glbs. */
+export interface ApartmentLayout {
+  group: THREE.Group;
+  rooms: { room: ManifestRoom; box: LineSegments2 }[];
+  /** No manifest: streamApartment falls back to the monolith glb. */
+  monolith: boolean;
+}
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
 // RViz). Hide them here rather than in the URDF itself, since that file is
@@ -22,6 +51,35 @@ const HIDDEN_FRAME_LINKS: string[] = ["ee_link", "head_camera_left", "head_camer
 // material, so we override by link name rather than by material.
 const ORANGE_LINKS = new Set(["link1", "link3", "link5"]);
 
+// Room streaming order: the spaces the operator looks at first load first.
+// Matched as substrings of the room name (from the source glb, Portuguese:
+// "Sala" = living room, "Corredor" = hallway); anything unmatched keeps
+// manifest order behind them. The queue is FIFO (loadQueue.ts), so enqueue
+// order is load order.
+const ROOM_PRIORITY = ["sala", "corredor"];
+function roomPriority(name: string): number {
+  const lower = name.toLowerCase();
+  const i = ROOM_PRIORITY.findIndex((keyword) => lower.includes(keyword));
+  return i === -1 ? ROOM_PRIORITY.length : i;
+}
+// Key light offset from whatever it is lighting; setPose slides it along with
+// the robot so the tight shadow box stays centred on it. The direction is the
+// original key light's, so the robot shades the same as it always did.
+const KEY_LIGHT_OFFSET: [number, number, number] = [2.0, -1.5, 3.0];
+
+// The shadow box covers the robot AND every prop in the world, so nothing
+// loses its shadow by being left behind -- but it shrinks to the minimum that
+// does, because texel size is 2 * box / map and that is what decides whether
+// shadows look sharp or blocky. 0.7m is the floor (a robot 0.35m across with
+// a 0.36m reach, props dropped within 0.35m): 0.68mm per texel at 2048. Past
+// SHADOW_BOX_MAX_M it stops growing and distant props lose their shadow
+// rather than blurring the robot's, which is the part being looked at.
+const SHADOW_BOX_MIN_M = 0.7;
+const SHADOW_BOX_MAX_M = 3.0;
+const SHADOW_BOX_STEP_M = 0.25; // quantised, so the box does not resize every frame
+const SHADOW_MARGIN_M = 0.5; // the robot's own extent plus the throw of its shadow
+const SHADOW_MAP_PX = 2048;
+
 // Chase-cam framing used when a pose is snapped in (see spawnAt below).
 const CHASE_DISTANCE = 1.8; // meters behind the robot
 const CHASE_HEIGHT = 1.1; // meters above the ground
@@ -29,7 +87,10 @@ const CHASE_HEIGHT = 1.1; // meters above the ground
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
 export type CameraView = "orbit" | "main" | "arm";
-const ROBOT_CAMERA_VFOV = 80;
+// Track mars_sim_driver/constants.py: per-camera FOVs matching what the
+// driver renders (the head and wrist are different physical lenses), so the
+// operator's preview frames exactly what the robot consumes.
+const ROBOT_CAMERA_VFOV: Record<"main" | "arm", number> = { main: 68.5, arm: 80 };
 // Don't shrink to fix the near-clipped gripper: the origin sits inside the
 // wrist housing, so a smaller near renders the housing interior instead.
 const ROBOT_CAMERA_NEAR = 0.03;
@@ -62,9 +123,30 @@ export class SimScene {
   private robotCameras = new Map<CameraView, THREE.PerspectiveCamera>();
   private activeView: CameraView = "orbit";
   private lidarPoints?: THREE.Points;
+  private keyLight?: THREE.DirectionalLight;
+  private shadowCatcher?: THREE.Mesh;
+  private shadowBoxM = SHADOW_BOX_MIN_M;
+  private robotXY: [number, number] = [0, 0];
   private hullsGroup?: THREE.Group;
   private hullsPromise?: Promise<void>;
   private hullsVisible = false;
+  // Shared fat-line material for placeholder boxes (LineBasicMaterial's
+  // linewidth is ignored by WebGL). resolution is refreshed each render().
+  private placeholderMat?: LineMaterial;
+  private tmpSize = new THREE.Vector2();
+  // Robot-shaped placeholder box, shown at the spawn pose until the STLs load.
+  private robotBox?: LineSegments2;
+  // Set by the first spawnAt: after that the camera belongs to the robot, and
+  // the layout overview framing must not yank it away.
+  private spawned = false;
+  // The URDF's <collision> subtrees, one per link. They hang off the link in
+  // the robot's own graph, so they follow the joints for free.
+  private robotColliders: THREE.Object3D[] = [];
+  private hullMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+  // Every prop in the world, built from the server's roster (props.ts).
+  private props: PropLibrary;
+  // While true a placement drag owns the pointer and orbit stays off.
+  private placementMode = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -77,13 +159,17 @@ export class SimScene {
     this.renderer.setPixelRatio(this.fixedSize ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, !this.fixedSize);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.5;
 
     this.scene.background = new THREE.Color(0x14161a);
     this.scene.fog = new THREE.FogExp2(0x14161a, 0.035);
+
+    // Props share the apartment's hull wireframe material, so one "collisions"
+    // toggle covers both. A prop entering the world refits the shadow box.
+    this.props = new PropLibrary(this.scene, this.hullMaterial, () => this.updateShadowVolume());
 
     this.camera = new THREE.PerspectiveCamera(55, w / h, 0.05, 200);
     this.camera.up.set(0, 0, 1);
@@ -99,6 +185,12 @@ export class SimScene {
 
     this.addLights();
     this.addGround();
+    // Robot-sized placeholder box inside robotRoot: hidden with it until the
+    // first pose (spawnAt), then it marks the real spawn spot while the STLs
+    // stream; loadRobot removes it once the meshes are in.
+    this.robotBox = this.boxOutline(new THREE.Box3(new THREE.Vector3(-0.22, -0.22, 0), new THREE.Vector3(0.22, 0.22, 0.75)));
+    this.robotRoot.add(this.robotBox);
+    this.addShadowCatcher();
     this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
@@ -111,27 +203,89 @@ export class SimScene {
     // "glossy" on the robot parts.
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
+    // The shadow map follows the robot (see setPose) over a 5m box rather than
+    // trying to cover the whole flat. That is 2.4mm per texel, fine enough for
+    // the arm's ~2cm detail and the manipulation props to cast real contact
+    // shadows -- without one under the gripper there is no depth cue to judge
+    // a grasp by. It also lets normalBias stay at 12mm; the 50mm it needed
+    // over a 16m box erased the shadow of anything smaller than 50mm, i.e.
+    // every part that matters here.
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
-    key.position.set(4, -3, 6);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
     key.shadow.camera.near = 0.1;
-    key.shadow.camera.far = 30;
-    key.shadow.camera.left = -8;
-    key.shadow.camera.right = 8;
-    key.shadow.camera.top = 8;
-    key.shadow.camera.bottom = -8;
-    // normalBias clears the shadow-acne stripes a coarse 16m shadow map
-    // paints on the robot's ~2cm detail, without depth-bias peter-panning.
-    key.shadow.bias = -0.0004;
-    key.shadow.normalBias = 0.05;
+    key.shadow.camera.far = 12;
+    key.shadow.camera.left = -SHADOW_BOX_MIN_M;
+    key.shadow.camera.right = SHADOW_BOX_MIN_M;
+    key.shadow.camera.top = SHADOW_BOX_MIN_M;
+    key.shadow.camera.bottom = -SHADOW_BOX_MIN_M;
+    // Both biases stay near zero, and that is safe rather than sloppy.
+    // Shadow bias exists to stop a surface shadowing ITSELF, and three renders
+    // the flipped side into the shadow map (WebGLShadowMap's shadowSide: a
+    // FrontSide material casts from its back faces), so the depth stored is
+    // already the far side of every closed mesh. The shadow catcher casts
+    // nothing at all, so it cannot self-shadow under any circumstances -- for
+    // the floor shadow, every millimetre of bias is pure daylight between an
+    // object and its own shadow, worst under a sphere or a cube corner. The
+    // 0.5mm left is a margin for the robot's own meshes, which do receive.
+    key.shadow.bias = 0;
+    key.shadow.normalBias = 0.0005;
+    // REQUIRED. DirectionalLightShadow builds its camera as
+    // OrthographicCamera(-5, 5, 5, -5, 0.5, 500) and computes the projection
+    // in that constructor; LightShadow.updateMatrices never recomputes it. So
+    // every frustum value set above is ignored until this call, which is why
+    // nothing cast a shadow: the box stayed the default 10m centred on the
+    // world origin, while the robot spawns 4.3m away and drives off from
+    // there. Delete this line and the shadows go away again.
+    key.shadow.camera.updateProjectionMatrix();
+    key.position.set(...KEY_LIGHT_OFFSET);
     this.scene.add(key);
+    this.scene.add(key.target);
+    this.keyLight = key;
 
     const fill = new THREE.DirectionalLight(0xaaccff, 0.8);
     fill.position.set(-4, 3, 3);
     this.scene.add(fill);
 
     this.scene.add(new THREE.HemisphereLight(0xaabbcc, 0x445566, 1.2));
+  }
+
+  /** A transparent plane under the robot that shows nothing but the shadows
+   * falling on it.
+   *
+   * The apartment glb is baked: every one of its materials carries
+   * KHR_materials_unlit, so GLTFLoader gives them MeshBasicMaterial, which
+   * ignores lights entirely. The shading you see in the flat -- including the
+   * shadow under the sofa -- is painted into the texture, and receiveShadow on
+   * those meshes does nothing. Without this plane no shadow can ever land on
+   * the floor, however the light is set up.
+   *
+   * It rides with the robot (see setPose) because it only needs to cover the
+   * shadow box, and sits ON the physics floor at z=0 so shadows start where
+   * the object touches. Where the visual floor is raised (a rug), the rug
+   * draws over the shadow. */
+  private addShadowCatcher(): void {
+    const mesh = new THREE.Mesh(
+      // Big enough to cover the widest shadow box; it costs nothing where no
+      // shadow lands. PlaneGeometry is already XY / +Z normal, i.e. our floor.
+      new THREE.PlaneGeometry(2 * SHADOW_BOX_MAX_M + 2, 2 * SHADOW_BOX_MAX_M + 2),
+      // Coplanar with the floor at z=0 rather than lifted off it: a plane
+      // floated even 4mm up starts the shadow 4mm up the object's side, which
+      // at this light angle is a visible gap under everything. polygonOffset
+      // wins the z-fight in depth instead, without moving it in world space.
+      new THREE.ShadowMaterial({
+        opacity: 0.42,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+    );
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.renderOrder = 1;
+    this.shadowCatcher = mesh;
+    this.scene.add(mesh);
   }
 
   private addGround(): void {
@@ -163,13 +317,16 @@ export class SimScene {
   }
 
   /**
-   * Wireframe overlay of the driver's collision hulls -- the same
-   * apartment_collisions_v2 set mars_sim_driver collides against, lazily
-   * fetched on first show (manifest.json lists the OBJs since a browser
-   * can't list a directory), rotated Y-up -> Z-up like the apartment glb.
+   * Wireframe overlay of everything the driver collides with: the robot's own
+   * <collision> primitives from mars.urdf (already posed by the URDF graph,
+   * so they track the joints) plus the apartment_collisions_v2 hull set
+   * mars_sim_driver collides against. The hulls are lazily fetched on first
+   * show (manifest.json lists the OBJs since a browser can't list a
+   * directory) and rotated Y-up -> Z-up like the apartment glb.
    */
   setCollisionHullsVisible(visible: boolean): void {
     this.hullsVisible = visible;
+    this.props.setHullsVisible(visible);
     if (visible && !this.hullsPromise) {
       // ~1300 OBJ fetches; takes seconds on first show. A failure resets the
       // promise so toggling again retries instead of staying dead forever.
@@ -179,13 +336,14 @@ export class SimScene {
       });
     }
     if (this.hullsGroup) this.hullsGroup.visible = visible;
+    for (const collider of this.robotColliders) collider.visible = visible;
   }
 
   private async loadCollisionHulls(): Promise<void> {
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
     const baseUrl = "/physics/apartment_collisions_v2/";
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+    const material = this.hullMaterial;
 
     // Fast path: one binary triangle soup (float32 xyz), one fetch, no
     // parsing -- publish_assets writes it next to the per-hull OBJs.
@@ -214,17 +372,136 @@ export class SimScene {
     this.scene.add(group);
   }
 
-  async loadApartment(): Promise<void> {
+  /**
+   * Phase one of the apartment load: fetch the manifest (a few KB) and draw
+   * every room's placeholder box. Called before any mesh download starts, so
+   * the first frame shows the apartment's wireframe layout instead of an empty
+   * void, and the camera has something real to frame (see frameLayout).
+   */
+  async loadApartmentLayout(): Promise<ApartmentLayout> {
+    // One parent group holds every room and carries the Y-up -> Z-up rotation,
+    // so it's applied once; placeholder boxes and rooms attach underneath.
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI / 2;
+    this.scene.add(group);
+
+    let manifest: ApartmentManifest | null = null;
+    try {
+      const res = await fetch(APARTMENT_MANIFEST_URL);
+      if (res.ok) manifest = (await res.json()) as ApartmentManifest;
+    } catch {
+      /* no manifest -- fall through to the monolith */
+    }
+    if (!manifest || !Array.isArray(manifest.rooms)) return { group, rooms: [], monolith: true };
+
+    // Skip a malformed room rather than throwing -- a bad bbox would build a
+    // Box3 from Vector3(undefined) and error the whole (visual-only) session.
+    const rooms = manifest.rooms
+      .filter((room) => {
+        if (isValidRoom(room)) return true;
+        console.warn("[sim-viewer] skipping malformed manifest room:", room);
+        return false;
+      })
+      .map((room) => {
+        const b = room.bbox;
+        const box = this.boxOutline(
+          new THREE.Box3(
+            new THREE.Vector3(b.min[0], b.min[1], b.min[2]),
+            new THREE.Vector3(b.max[0], b.max[1], b.max[2]),
+          ),
+        );
+        group.add(box);
+        return { room, box };
+      });
+    return { group, rooms, monolith: false };
+  }
+
+  /**
+   * Phase two: stream each room's glb through the queue and swap its
+   * placeholder box out on arrival. A room that fails is non-fatal (visual
+   * only): log it, drop its box, and let the rest of the apartment and the
+   * session carry on.
+   */
+  async streamApartment(queue: LoadQueue, layout: ApartmentLayout): Promise<void> {
     const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(APARTMENT_URL);
-    const root = gltf.scene;
-    root.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
+    const { group } = layout;
+
+    if (layout.monolith) {
+      // Dev-only fallback: a checkout that never ran the split. The published
+      // bundle always ships the manifest and never the monolith, so in prod
+      // this path only runs if the manifest fetch itself failed -- non-fatal,
+      // the sim just runs without the visual environment (robot still works).
+      try {
+        const root = await queuedGLB(queue, loader, APARTMENT_URL);
+        this.dressRoom(root);
+        group.add(root);
+      } catch (err) {
+        console.error("[sim-viewer] apartment unavailable (no manifest, no monolith):", err);
+      }
+      return;
+    }
+
+    const loadRoom = ({ room, box }: ApartmentLayout["rooms"][number]) =>
+      queuedGLB(queue, loader, `/models/apartment/${room.file}`)
+        .then((root) => {
+          this.dressRoom(root);
+          group.add(root);
+        })
+        .catch((err) => console.error(`[sim-viewer] apartment room '${room.file}' failed to load:`, err))
+        .finally(() => {
+          group.remove(box);
+          box.geometry.dispose(); // material is shared -- disposed in dispose()
+        });
+
+    // Priority rooms (living room, then hallway) load one at a time so they
+    // appear in that order -- with the shared queue running 2 downloads at
+    // once they'd otherwise race, and the living room is the biggest file, so
+    // the smaller hallway would pop in first. The remaining rooms then stream
+    // together behind them.
+    const ordered = [...layout.rooms].sort((a, b) => roomPriority(a.room.name) - roomPriority(b.room.name));
+    const priority = ordered.filter(({ room }) => roomPriority(room.name) < ROOM_PRIORITY.length);
+    const rest = ordered.slice(priority.length);
+    for (const room of priority) await loadRoom(room);
+    await Promise.all(rest.map(loadRoom));
+  }
+
+  /**
+   * Frame the orbit camera on the placeholder layout so the wireframe reads as
+   * an apartment from the first frame. No-op once a real pose has arrived --
+   * spawnAt's chase framing wins; this is only for the pre-pose gap.
+   */
+  frameLayout(layout: ApartmentLayout): void {
+    if (this.spawned || layout.rooms.length === 0) return;
+    const bounds = new THREE.Box3().setFromObject(layout.group);
+    if (bounds.isEmpty()) return;
+
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    // Pull back far enough that the widest horizontal extent fits the vertical
+    // FOV (the horizontal one is wider on any landscape stage), with margin.
+    const fov = (this.camera.fov * Math.PI) / 180;
+    const fit = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * 1.25;
+    // OrbitControls clamps the distance on update(); pick one it will honor.
+    const distance = Math.min(fit, this.controls.maxDistance);
+    const dir = new THREE.Vector3(-1, -1, 0.85).normalize();
+    this.camera.position.copy(center).addScaledVector(dir, distance);
+    this.controls.target.copy(center);
+    this.controls.update();
+  }
+
+  /** Ready a loaded apartment room for the scene: receive shadows and force
+   * FrontSide (the glb ships doubleSided) so walls draw only from inside the
+   * room, giving overview cameras the dollhouse-cutaway look. */
+  private dressRoom(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
+        // Does nothing, kept only so this doesn't look like an oversight: the
+        // glb's materials are all KHR_materials_unlit, so GLTFLoader makes
+        // them MeshBasicMaterial and they cannot receive a shadow. Their
+        // shading is baked into the texture. addShadowCatcher is what puts
+        // the robot's own shadow on the floor. castShadow is deliberately
+        // left off -- the flat already shades itself.
         obj.receiveShadow = true;
-        // Force FrontSide (the glb ships doubleSided): walls draw only from
-        // inside the room, so overview cameras get the dollhouse-cutaway
-        // look. If winding issues hide geometry, flip to BackSide.
         const setFrontSide = (mat: THREE.Material) => {
           mat.side = THREE.FrontSide;
         };
@@ -232,28 +509,97 @@ export class SimScene {
         else setFrontSide(obj.material);
       }
     });
-    this.scene.add(root);
   }
 
-  async loadRobot(): Promise<URDFRobot> {
-    // loadAsync resolves at URDF parse, but the STL meshes attach later via
-    // this LoadingManager -- wait for onLoad or the restyle below misses them.
-    const manager = new THREE.LoadingManager();
-    const allMeshesLoaded = new Promise<void>((resolve) => {
-      manager.onLoad = () => resolve();
-    });
+  /** A thick wireframe outline of a box, used as a loading placeholder (room or
+   * robot). Fat lines (LineSegments2) since WebGL ignores LineBasicMaterial width. */
+  private boxOutline(box: THREE.Box3): LineSegments2 {
+    if (!this.placeholderMat) {
+      this.placeholderMat = new LineMaterial({ color: 0x3a6b5a, linewidth: 3, transparent: true, opacity: 0.6 });
+      this.placeholderMat.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
+    }
+    const size = box.getSize(new THREE.Vector3());
+    const boxGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
+    const edges = new THREE.EdgesGeometry(boxGeo);
+    const geometry = new LineSegmentsGeometry().fromEdgesGeometry(edges);
+    boxGeo.dispose();
+    edges.dispose();
+    const seg = new LineSegments2(geometry, this.placeholderMat);
+    seg.position.copy(box.getCenter(new THREE.Vector3()));
+    return seg;
+  }
 
-    const loader = new URDFLoader(manager);
+  /**
+   * Two-phase load. The returned promise resolves as soon as the URDF is parsed
+   * and every STL job is in the queue -- so a caller can `await loadRobot(...)`
+   * and then enqueue lower-priority work (apartment rooms) knowing it lands
+   * behind the robot. Await the returned `done` for the fully-loaded robot.
+   */
+  async loadRobot(queue: LoadQueue): Promise<{ done: Promise<URDFRobot> }> {
+    const loader = new URDFLoader();
     loader.packages = { mars_sim: "/robot" };
-    const robot = await loader.loadAsync(ROBOT_URDF_URL);
-    await allMeshesLoaded;
+
+    // Route each STL through the shared queue (bounded concurrency + byte
+    // progress) instead of URDFLoader's default all-at-once loading.
+    const meshLoads: Promise<void>[] = [];
+    const loadMesh = (
+      path: string,
+      manager: THREE.LoadingManager,
+      material: THREE.Material,
+      done: (obj: THREE.Object3D | null, err?: unknown) => void,
+    ): void => {
+      meshLoads.push(
+        queue.add((report) => {
+          return new Promise<void>((resolve) => {
+            const finish = (obj: THREE.Object3D | null, err?: unknown) => {
+              done(obj, err);
+              resolve();
+            };
+            if (!/\.stl$/i.test(path)) {
+              console.warn(`[scene] unsupported robot mesh (expected STL): ${path}`);
+              finish(null);
+              return;
+            }
+            new STLLoader(manager).load(
+              path,
+              (geom) => finish(new THREE.Mesh(geom, material ?? new THREE.MeshPhongMaterial())),
+              (ev) => report(ev.loaded, ev.total),
+              (err) => finish(null, err),
+            );
+          });
+        }),
+      );
+    };
+    // The shipped .d.ts omits the `material` arg the runtime actually passes.
+    loader.loadMeshCb = loadMesh as unknown as typeof loader.loadMeshCb;
+    loader.parseCollision = true; // the collisions overlay draws these
+
+    const robot = await loader.loadAsync(ROBOT_URDF_URL); // loadMeshCb enqueued every STL during parse
+    return { done: this.finishRobot(robot, meshLoads) };
+  }
+
+  /** Attach + restyle the robot once its queued STL meshes have all loaded. */
+  private async finishRobot(robot: URDFRobot, meshLoads: Promise<void>[]): Promise<URDFRobot> {
+    await Promise.all(meshLoads);
 
     for (const name of HIDDEN_FRAME_LINKS) {
       const link = robot.links[name];
       if (link) link.visible = false;
     }
 
+    // Collider subtrees first, so the visual restyle below can skip them.
     robot.traverse((obj) => {
+      if (!(obj as { isURDFCollider?: boolean }).isURDFCollider) return;
+      obj.visible = this.hullsVisible;
+      this.robotColliders.push(obj);
+      obj.traverse((child) => {
+        child.userData.collider = true;
+        if (child instanceof THREE.Mesh) child.material = this.hullMaterial;
+      });
+    });
+
+    robot.traverse((obj) => {
+      if (obj.userData.collider) return;
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
@@ -269,6 +615,11 @@ export class SimScene {
     });
     this.robotRoot.add(robot);
     this.robot = robot;
+    if (this.robotBox) {
+      this.robotRoot.remove(this.robotBox);
+      this.robotBox.geometry.dispose(); // material is shared -- disposed in dispose()
+      this.robotBox = undefined;
+    }
 
     for (const mount of ROBOT_CAMERA_MOUNTS) {
       const frame = robot.frames[mount.frame];
@@ -277,7 +628,7 @@ export class SimScene {
         continue;
       }
       const cam = new THREE.PerspectiveCamera(
-        ROBOT_CAMERA_VFOV,
+        ROBOT_CAMERA_VFOV[mount.view],
         this.viewSize().width / this.viewSize().height,
         ROBOT_CAMERA_NEAR,
         100,
@@ -293,6 +644,64 @@ export class SimScene {
     return robot;
   }
 
+  /** Fit the shadow box around the robot AND every prop in the world, then
+   * park the light and the catcher on it.
+   *
+   * Pinned to the robot, anything left behind stops having a shadow the moment
+   * it leaves the box, which just reads as a bug. Sized to the whole set
+   * always, one prop dropped across the room costs sharpness everywhere. So it
+   * tracks the actual spread, quantised so it is not resized every frame, and
+   * stops growing at SHADOW_BOX_MAX_M -- past that a distant prop loses its
+   * shadow rather than blurring the robot's, which is the part being looked
+   * at. normalBias follows the texel size, since its whole job is to clear
+   * about one texel. */
+  private updateShadowVolume(): void {
+    const key = this.keyLight;
+    if (!key) return;
+
+    // Props further than the box could ever reach are dropped rather than
+    // dragging the centre off the robot: at the cap, a midpoint between the
+    // two would push the robot itself out of its own shadow box.
+    const reach = SHADOW_BOX_MAX_M - SHADOW_MARGIN_M;
+    const points: Array<[number, number]> = [this.robotXY];
+    for (const root of this.props.visibleRoots) {
+      const dx = root.position.x - this.robotXY[0];
+      const dy = root.position.y - this.robotXY[1];
+      if (Math.hypot(dx, dy) <= reach) points.push([root.position.x, root.position.y]);
+    }
+    const xs = points.map((pt) => pt[0]);
+    const ys = points.map((pt) => pt[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    // Radius, not half-width: the box is axis-aligned in the LIGHT's frame,
+    // not the world's. SHADOW_MARGIN_M covers the robot's own extent and the
+    // throw of its shadow beyond whichever point is furthest out.
+    const needed = Math.max(...points.map((pt) => Math.hypot(pt[0] - cx, pt[1] - cy))) + SHADOW_MARGIN_M;
+    const box = Math.min(
+      SHADOW_BOX_MAX_M,
+      Math.max(SHADOW_BOX_MIN_M, Math.ceil(needed / SHADOW_BOX_STEP_M) * SHADOW_BOX_STEP_M),
+    );
+    if (box !== this.shadowBoxM) {
+      this.shadowBoxM = box;
+      key.shadow.camera.left = -box;
+      key.shadow.camera.right = box;
+      key.shadow.camera.top = box;
+      key.shadow.camera.bottom = -box;
+      key.shadow.camera.updateProjectionMatrix(); // never automatic; see addLights
+      key.shadow.normalBias = Math.max(0.0005, ((2 * box) / SHADOW_MAP_PX) * 0.8);
+    }
+
+    // Snap to whole texels: slid continuously the map re-samples every frame
+    // and the shadow edges crawl, which reads as cheap however sharp they are.
+    const texel = (2 * box) / SHADOW_MAP_PX;
+    const sx = Math.round(cx / texel) * texel;
+    const sy = Math.round(cy / texel) * texel;
+    key.position.set(sx + KEY_LIGHT_OFFSET[0], sy + KEY_LIGHT_OFFSET[1], KEY_LIGHT_OFFSET[2]);
+    key.target.position.set(sx, sy, 0);
+    key.target.updateMatrixWorld();
+    this.shadowCatcher?.position.set(sx, sy, 0);
+  }
+
   /** Views actually available (a frame can be missing from the URDF). */
   get availableViews(): CameraView[] {
     return ["orbit", ...this.robotCameras.keys()];
@@ -302,12 +711,55 @@ export class SimScene {
    * Falls back to orbit if the requested view's frame wasn't in the URDF. */
   setView(view: CameraView): void {
     this.activeView = view === "orbit" || this.robotCameras.has(view) ? view : "orbit";
-    this.controls.enabled = this.activeView === "orbit";
+    this.applyControlsEnabled();
+  }
+
+  /** While a placement drag owns the pointer the orbit controls stay off,
+   * even in the orbit view -- otherwise aiming a prop also spins the camera.
+   * Applied immediately: a flag that is only consulted by setView() would not
+   * take effect until the user happened to switch views. */
+  setPlacementMode(on: boolean): void {
+    this.placementMode = on;
+    this.applyControlsEnabled();
+  }
+
+  private applyControlsEnabled(): void {
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
+  }
+
+  /** Intersect a canvas pointer position with the floor plane (z=0) through
+   * the active view's camera; null when it points above the horizon. */
+  screenToFloor(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const cam = (this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined) ?? this.camera;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, cam);
+    const hit = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
   }
 
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
   setJointAngles(joints: Record<string, number>): void {
     this.robot?.setJointValues(joints);
+  }
+
+  /** Adopt the world server's prop roster (props.py sidecars): what exists,
+   * what to call it, and how to draw it. Sent once per observer connection. */
+  setPropManifest(props: PropInfo[]): void {
+    this.props.setManifest(props);
+  }
+
+  /** Mirror every prop in the world from ground truth, keyed by name
+   * ({name: [x, y, z, qw, qx, qy, qz]} -- world_server's "objects" block).
+   * A prop the block stops naming has left the world and is hidden rather
+   * than left behind at its last pose. */
+  setObjectPoses(poses: Record<string, number[]>): void {
+    this.props.setPoses(poses);
+    this.updateShadowVolume(); // the props moved; the box may need to grow or shrink
   }
 
   // Orange accent for the arm links (see ORANGE_LINKS). Cached so every mesh
@@ -355,6 +807,7 @@ export class SimScene {
    * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
+    this.spawned = true;
     this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
@@ -372,6 +825,8 @@ export class SimScene {
   setPose(x: number, y: number, yaw: number): void {
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
+    this.robotXY = [x, y];
+    this.updateShadowVolume();
 
     if (this.followCamera) {
       const [prevX, prevY] = this.followPrevXY;
@@ -388,6 +843,8 @@ export class SimScene {
   render(): void {
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
     if (!robotCam) this.controls.update();
+    // Fat lines need the current drawing-buffer size to size their width in px.
+    this.placeholderMat?.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     this.renderer.render(this.scene, robotCam ?? this.camera);
   }
 
@@ -395,6 +852,7 @@ export class SimScene {
    * stage per visit, and undisposed contexts pile up until the browser kills
    * the oldest (~16), breaking the live view. */
   dispose(): void {
+    this.placeholderMat?.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -451,6 +909,16 @@ export class SimScene {
       cam.updateProjectionMatrix();
     }
   }
+}
+
+/** Runtime guard against a malformed manifest (untrusted JSON): file is a
+ * string and bbox is two arrays of >=3 finite numbers -- else we'd build a Box3
+ * from Vector3(undefined) and get NaN geometry. */
+function isValidRoom(room: unknown): boolean {
+  const r = room as { file?: unknown; bbox?: { min?: unknown; max?: unknown } } | null;
+  const finite3 = (a: unknown): boolean =>
+    Array.isArray(a) && a.length >= 3 && a.slice(0, 3).every((n) => typeof n === "number" && Number.isFinite(n));
+  return typeof r?.file === "string" && finite3(r?.bbox?.min) && finite3(r?.bbox?.max);
 }
 
 /** Walk up the parent chain to the URDFLink a mesh belongs to, returning its name. */

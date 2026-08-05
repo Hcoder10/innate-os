@@ -11,7 +11,6 @@ device loading, data routing, and activation. No device logic lives here.
 from __future__ import annotations
 
 import rclpy
-from innate_proxy import ProxyClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
@@ -20,6 +19,7 @@ from std_srvs.srv import SetBool
 
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.manager import InputDeviceManager
+from innate_proxy import ProxyClient
 
 
 class InputManagerNode(Node):

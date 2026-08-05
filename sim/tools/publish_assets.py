@@ -10,8 +10,10 @@ Bundle layout (extracted by the launcher's ensure_sim_assets):
 
 The viewer's apartment_collisions_v2 (flat hulls + manifest.json) and
 apartment_sdf are REBUILT here from the work/ store, so the two consumers can
-never drift apart. models/robot/apartment_obj are carried over from the
-checkout (static exports, they change ~never).
+never drift apart. models/apartment_obj are carried over from the checkout
+(static exports, they change ~never). The robot description is deliberately
+NOT bundled -- it is tracked source, and the launcher refreshes the viewer's
+copy from the checkout on every run (runtime.sync_robot_description).
 
 The tarball is deterministic (sorted entries, zeroed metadata), so identical
 content always yields the identical tag: sim-assets-<sha256[:12]>.
@@ -47,7 +49,7 @@ ATTRIBUTION = (
     "# Attribution\n\n"
     + 'The apartment environment is derived from ["Appartement"](https://sketchfab.com/3d-models/appartement-6a7a5fe208344b2e8123a88923dbd5b3) by [SrMonteiro](https://sketchfab.com/crispimrafael), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: split per room, convex-decomposed for collision, re-exported for rendering (GLB/MuJoCo meshes), and rasterized into a navigation map.'
 )
-VIEWER_CARRYOVER = ["public/models", "public/robot", "assets/apartment_obj"]
+VIEWER_CARRYOVER = ["public/models", "assets/apartment_obj"]
 
 
 def stage(root: Path) -> None:
@@ -91,6 +93,19 @@ def stage(root: Path) -> None:
         subprocess.run(["npm", "ci"], cwd=VIEWER, check=True)
     subprocess.run(["npm", "run", "build:lib"], cwd=VIEWER, check=True)
     shutil.copytree(VIEWER / "dist-lib", root / "viewer" / "dist-lib")
+
+    # Progressive loading: split the apartment glb into per-room files + a
+    # manifest (tools/split-apartment.mjs, pure split -- no re-encode), then
+    # drop the monolith from the bundle. The webapp is its only runtime
+    # consumer, so shipping both would nearly double the apartment's ~31 MB; the
+    # source glb stays in the checkout for re-splitting + export_visual_rooms.py.
+    staged_models = root / "viewer" / "public" / "models"
+    subprocess.run(
+        ["node", "tools/split-apartment.mjs", str(staged_models / "appartement.glb"), str(staged_models / "apartment")],
+        cwd=VIEWER,
+        check=True,
+    )
+    (staged_models / "appartement.glb").unlink()
 
     # CC BY attribution must travel with the distributed material -- this
     # bundle is downloadable without ever seeing the innate-os repo.
@@ -185,8 +200,13 @@ def main() -> None:
 
         # Install the staged viewer/ dirs locally: work/ came from this disk,
         # but the viewer's hulls/manifest/sdf were rebuilt above and may be
-        # stale in the checkout. Only then is the marker's claim true.
-        for rel in ("public/physics/apartment_collisions_v2", "public/physics/apartment_sdf"):
+        # stale in the checkout, and the apartment split was just generated.
+        # Only then is the marker's claim true.
+        for rel in (
+            "public/physics/apartment_collisions_v2",
+            "public/physics/apartment_sdf",
+            "public/models/apartment",
+        ):
             dest = VIEWER / rel
             shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(root / "viewer" / rel, dest)

@@ -7,6 +7,7 @@
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
+import type { PropInfo } from "./props";
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
 export const THUMB_W = 240;
@@ -67,7 +68,14 @@ export class SimSession {
   #stageReady = false;
 
   // Ground-truth snapshots on the sim clock.
-  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  #samples: {
+    t: number;
+    x: number;
+    y: number;
+    yaw: number;
+    joints: Record<string, number>;
+    objects: Record<string, number[]>;
+  }[] = [];
   #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
   #lastArrival = 0;
   // Playback position on the sim clock (see tick).
@@ -85,6 +93,13 @@ export class SimSession {
   #lidarOn = false;
   #hullsOn = false;
   #overlaysDirty = false;
+
+  // The prop roster, relayed from the world server once per connection
+  // (props.py sidecars). The stage builds its buttons from it and the scene
+  // builds its models; both key off this rather than a second local table.
+  #props: PropInfo[] = [];
+  #propListeners = new Set<(props: PropInfo[]) => void>();
+  #propsDirty = false;
 
   #stateUrls: string[];
   #rosUrl: string;
@@ -142,6 +157,11 @@ export class SimSession {
   #connectState(i: number): void {
     const url = this.#stateUrls[i];
     this.#controller = new WorldStateController(url);
+    this.#controller.onProps = (props) => {
+      this.#props = props;
+      this.#propsDirty = true; // handed to the scene on the next tick
+      for (const cb of this.#propListeners) cb(props);
+    };
     this.#controller.onState = (s) => {
       const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
@@ -157,11 +177,11 @@ export class SimSession {
 
       const last = this.#samples[this.#samples.length - 1];
       if (last === undefined || s.t > last.t) {
-        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects });
         if (this.#samples.length > 60) this.#samples.shift();
       } else if (s.t < last.t - 0.5) {
         // Sim clock jumped backwards (world-server restart): restart playback.
-        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects }];
         this.#playT = null;
       }
       this.#live = true;
@@ -217,6 +237,52 @@ export class SimSession {
   setCollisionHullsVisible(on: boolean): void {
     this.#hullsOn = on;
     this.#overlaysDirty = true;
+  }
+
+  /** Send every prop back off-map (stage "clear" chip). */
+  removeAllProps(): void {
+    this.#controller?.send({ op: "remove_all_props" });
+  }
+
+  /** Set a whole set of props down in front of the robot at once, each at its
+   * own reach offset (props.py `group`), parking everything outside the set. */
+  placePropGroup(group: string): void {
+    this.#controller?.send({ op: "place_group", group });
+  }
+
+  /** Set one prop down in front of the robot at the prop's own reach offset --
+   * for the manipulation props that is an arc the arm can reach top-down, so
+   * it lands at rest rather than falling. */
+  placePropAtRobot(name: string): void {
+    this.#controller?.send({ op: "place_prop_at_robot", name });
+  }
+
+  /** Release one prop above a spot the user picked, yawed about +z; the world
+   * server's physics settles it onto whatever is below. */
+  dropPropAt(name: string, x: number, y: number, yaw: number): void {
+    this.#controller?.send({ op: "drop_prop_at", name, x, y, yaw });
+  }
+
+  /** Send one prop back off-map. */
+  removeProp(name: string): void {
+    this.#controller?.send({ op: "remove_prop", name });
+  }
+
+  /** Subscribe to the prop roster (props.py sidecars); fires immediately if it
+   * has already arrived. The stage builds its buttons from this. */
+  onProps(cb: (props: PropInfo[]) => void): () => void {
+    this.#propListeners.add(cb);
+    if (this.#props.length) cb(this.#props);
+    return () => this.#propListeners.delete(cb);
+  }
+
+  /** Whether any manipulation prop is currently in the world. Read from
+   * ground truth rather than from what this client last asked for, so the
+   * stage's button still reads right after a sim reset or another viewer's
+   * drop. False until the first state arrives. */
+  get objectsPresent(): boolean {
+    const last = this.#samples[this.#samples.length - 1];
+    return last !== undefined && Object.keys(last.objects).length > 0;
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.
@@ -293,6 +359,32 @@ export class SimSession {
       joints[name] = va + (vb - va) * u;
     }
     scene.setJointAngles(joints);
+    // Interpolate the props on the SAME timeline as the robot. Drawing them at
+    // sample b while the robot is drawn at u between a and b puts them up to
+    // one sample ahead: ~13ms at 75Hz, which at a 1.2m/s wrist is over 15mm of
+    // mismatch, and it shows as the gripper passing through whatever it is
+    // carrying -- only ever while moving, which is exactly when you look.
+    const objects: Record<string, number[]> = {};
+    for (const [name, pb] of Object.entries(b.objects)) {
+      const pa = a.objects[name] ?? pb;
+      // Shortest-arc quaternion blend; the props barely rotate, so a
+      // normalised lerp is indistinguishable from a slerp here.
+      const dot = pa[3] * pb[3] + pa[4] * pb[4] + pa[5] * pb[5] + pa[6] * pb[6];
+      const s = dot < 0 ? -1 : 1;
+      const q = [3, 4, 5, 6].map((i) => pa[i] + (s * pb[i] - pa[i]) * u);
+      const norm = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+      objects[name] = [
+        pa[0] + (pb[0] - pa[0]) * u,
+        pa[1] + (pb[1] - pa[1]) * u,
+        pa[2] + (pb[2] - pa[2]) * u,
+        ...q.map((v) => v / norm),
+      ];
+    }
+    if (this.#propsDirty) {
+      this.#propsDirty = false;
+      scene.setPropManifest(this.#props);
+    }
+    scene.setObjectPoses(objects);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;

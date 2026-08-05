@@ -77,11 +77,11 @@ ros-humble-tf-transformations
 
 # ROS2 Humble packages - Navigation (shared subset; robot-only metas live in
 # apt-dependencies.hardware.txt, sim-only nav pieces in apt-dependencies.sim.txt)
-ros-humble-nav2-simple-commander
-ros-humble-nav2-controller
-ros-humble-nav2-bt-navigator
-ros-humble-nav2-behaviors
-ros-humble-nav2-lifecycle-manager
+ros-humble-innate-nav2-simple-commander
+ros-humble-innate-nav2-controller
+ros-humble-innate-nav2-bt-navigator
+ros-humble-innate-nav2-behaviors
+ros-humble-innate-nav2-lifecycle-manager
 
 # ROS2 Humble packages - Vision/Perception
 ros-humble-cv-bridge

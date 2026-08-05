@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agent_types import Agent
+from brain_client.agents.types import Agent, SkillRef
 
 
 class EmptyDirective(Agent):
@@ -14,7 +14,7 @@ class EmptyDirective(Agent):
     def display_name(self) -> str:
         return "No Prompt"
 
-    def get_skills(self) -> list[str]:
+    def get_skills(self) -> list[SkillRef]:
         return []
 
     def get_prompt(self) -> str:

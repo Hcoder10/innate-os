@@ -264,8 +264,8 @@ class PrimitiveRunner:
         self._maybe_run_pending(result)
 
     def _is_code_skill(self, skill_id: str) -> bool:
-        stub = self._state.registry.primitives.get(skill_id)
-        return stub is not None and stub.metadata.get("type") == "code"
+        meta = self._state.registry.primitives.get(skill_id)
+        return meta is not None and meta.get("type") == "code"
 
     def _emit_skill_output(self, result, is_code: bool) -> None:
         """Surface a successful code skill's output in the chat (never spoken)."""

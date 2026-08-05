@@ -16,6 +16,7 @@
 #include "mars_msgs/srv/goto_js.hpp"
 #include "mars_msgs/srv/goto_js_trajectory.hpp"
 #include "mars_msgs/msg/arm_status.hpp"
+#include <atomic>
 #include <cmath>
 #include <chrono>
 #include <nlohmann/json.hpp>
@@ -45,6 +46,9 @@ class MarsArmNode : public rclcpp::Node {
     template <typename Func>
     void retryServoOp(int servo_id, const char* op_name, Func&& fn, int max_retries = 3);
     void configureServoByIdLocked(int servo_id, bool enable_torque = true);
+    // Re-write Goal Current after any torque enable (it is RAM and a
+    // torque-enable clears it). No-op for joints without a goal_current.
+    void reapplyGoalCurrentLocked(int servo_id);
     void configureServosLocked(bool enable_torque = true);
     void syncTargetToMotorPositions();
 
@@ -163,8 +167,26 @@ class MarsArmNode : public rclcpp::Node {
     std::array<GainProfile, 7> gs_teleop_;
     std::array<GainProfile, 7> gs_last_applied_;
     int gs_cycle_counter_ = 0;
-    GainMode gain_mode_{GainMode::TELEOP};
+    // Written by the trajectory and service threads, read (and decayed) by
+    // the control loop — atomic so those cross-thread accesses are defined.
+    // The decay's check-then-write can still interleave with a trajectory
+    // start; the waypoint loop re-asserts the mode each step to bound that.
+    std::atomic<GainMode> gain_mode_{GainMode::TELEOP};
     GainMode last_applied_gain_mode_{GainMode::TELEOP};
+    // When the last trajectory finished. Scheduled gains hold the arm firmly
+    // between the closely-spaced moves a skill sends (dropping to the soft
+    // teleop gains in the gaps made the arm sag and snap back), but holding
+    // them while idle cooks the shoulder — joint 2 reached 70 C. So the hold
+    // decays back to teleop gains after kScheduledHoldTimeout of quiet.
+    // Atomic for the same reason as gain_mode_: stamped by the trajectory
+    // threads (HoldGuard), read by the control loop.
+    std::atomic<std::chrono::steady_clock::time_point> last_trajectory_end_{std::chrono::steady_clock::time_point{}};
+    // True while a trajectory is streaming waypoints. The idle decay must
+    // never fire mid-trajectory: last_trajectory_end_ is stale during
+    // execution, and the decay once flipped a 3 s carry move onto soft
+    // teleop gains 3 ms after it started — the shaken grip dropped the
+    // object it was carrying.
+    std::atomic<bool> trajectory_executing_{false};
 
     // Control loop timing instrumentation
     std::array<TimingAccumulator, 10> timing_stats_{{TimingAccumulator{"total"}, TimingAccumulator{"lock_wait"},

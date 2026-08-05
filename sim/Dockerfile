@@ -113,6 +113,37 @@ RUN cat >> /root/.zshrc <<'EOF'
 export INNATE_OS_ROOT=/root/innate-os
 export CCACHE_DIR=/root/.cache/ccache
 export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on PATH
+
+# Tab completions for the `innate` CLI — the container's answer to what
+# scripts/update/post_update.sh does on a physical robot, but deliberately NOT
+# to the same path: post_update writes scripts/build/completions, and here
+# scripts/ is a bind mount carrying the host user's ownership, which compinit's
+# security audit rejects for an fpath entry root doesn't own (and generating
+# there would drop root-owned files into the developer's checkout). So the file
+# lives under /root instead. The bind mount also means scripts/innate does not
+# exist at image build time, so this runs on login, not in a RUN layer. It lands
+# after oh-my-zsh's compinit, hence the second compinit to pick up the new fpath.
+fpath=("/root/.zsh/completions" $fpath)
+# Generation costs ~60ms, so just regenerate every shell instead of tracking
+# whether scripts/innate has outrun the cached file. Written through a temp
+# file and renamed into place because the sim's tmux session opens nine windows
+# at once and every one of them sources this: a plain `>` would let them
+# truncate the file out from under each other's compinit. Capped at 3s (50x the
+# nominal cost) and stderr to a log -- this is in the login path of every shell
+# now, so a wedged generator must not be able to wedge the shell with it.
+if [ -f /root/innate-os/scripts/innate ]; then
+    mkdir -p /root/.zsh/completions
+    innate_comp_tmp=$(mktemp /root/.zsh/completions/innate-completions.XXXXXX)
+    if timeout 3 /root/innate-os/scripts/innate completions \
+           > "$innate_comp_tmp" 2>/root/.zsh/innate-completions.log \
+       && [ -s "$innate_comp_tmp" ]; then
+        mv "$innate_comp_tmp" /root/.zsh/completions/_innate
+    else
+        rm -f "$innate_comp_tmp"
+    fi
+    unset innate_comp_tmp
+fi
+autoload -Uz compinit && compinit
 EOF
 
 WORKDIR /root/innate-os

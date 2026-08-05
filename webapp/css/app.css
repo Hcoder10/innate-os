@@ -251,6 +251,87 @@ button {
   50% { opacity: 0.25; }
 }
 
+/* ---- boot splash -------------------------------------------------------- */
+
+/* Covers the stage area from first paint until router.js mounts the first page
+   (see index.html). Fixed, offset past the 64px rail column so the nav shows
+   through the moment initShell builds it (which happens well before the first
+   page mounts) — only the main stage waits behind the splash. */
+.boot-splash {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 64px; /* = body grid's rail column (grid-template-columns: 64px 1fr) */
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: var(--bg);
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+
+/* .is-leaving is set by router.js to fade out; then the element is removed. */
+.boot-splash.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-splash__mark {
+  font-size: 15px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Indeterminate bar: no byte progress yet at boot (the JS itself is still
+   downloading), so a looping sweep rather than a filled fraction. */
+.boot-splash__bar {
+  width: min(220px, 50vw);
+  height: 3px;
+  border-radius: 999px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.boot-splash__bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: boot-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes boot-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-splash__bar span {
+    animation: boot-pulse 1.4s ease-in-out infinite;
+    width: 100%;
+    transform: none;
+  }
+  @keyframes boot-pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 0.8;
+    }
+  }
+}
+
 /* ---- stage -------------------------------------------------------------- */
 
 .stage {
@@ -1283,6 +1364,58 @@ button {
   font-size: 9px;
 }
 
+/* ---- speed modes ----------------------------------------------------------- */
+
+.speed-modes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sm-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
+  color: rgb(231 231 234 / 72%);
+}
+
+.sm-group {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+}
+
+.sm-btn {
+  padding: 6px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-strong);
+  background: transparent;
+  /* Brighter than --muted: the rail floats over the live camera feed, where plain
+     grey washes out on light backgrounds. Matches .skills-menu-active. */
+  color: rgb(231 231 234 / 72%);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.sm-btn:last-child {
+  border-bottom: 0;
+}
+
+.sm-btn:hover {
+  color: var(--text);
+}
+
+.sm-btn.on {
+  background: var(--accent-faint);
+  color: var(--accent);
+}
+
 /* ---- head tilt ------------------------------------------------------------ */
 
 .head-tilt {
@@ -1294,7 +1427,9 @@ button {
 
 .ht-label {
   font-size: 9px;
-  color: var(--muted);
+  /* Same rail as the speed picker, same problem: plain grey washes out over a
+     bright camera view. Kept in step so the rail reads as one control group. */
+  color: rgb(231 231 234 / 72%);
 }
 
 .ht-track {
@@ -1553,6 +1688,29 @@ button {
   border-color: var(--accent-dim);
   background: var(--accent-faint);
   color: var(--accent);
+}
+
+/* Engage sits next to a small icon button that copies the joint ticks. */
+.arm-engage-row {
+  display: flex;
+  gap: 8px;
+}
+
+.arm-engage-row .arm-engage {
+  flex: 1;
+}
+
+.arm-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  color: var(--muted);
+}
+
+.arm-copy.copied {
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 .arm-note {
@@ -4471,6 +4629,40 @@ button {
   flex-direction: column;
 }
 
+/* Folder section header (SkillInfo.group): a full-width toggle row, visually
+   quieter than skill rows so sections read as structure, not entries. */
+.skills-pop-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.skills-pop-group:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.skills-pop-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .skills-pop-row.expanded {
   background: rgb(255 255 255 / 4%);
   border-radius: 10px;
@@ -4529,6 +4721,11 @@ button {
 
 .skills-pop-type-dot.digital {
   background: var(--type-digital);
+}
+
+/* A skill file that failed to load — row is disabled, error shown inline. */
+.skills-pop-type-dot.broken {
+  background: var(--danger);
 }
 
 .skills-pop-tail {

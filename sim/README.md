@@ -122,7 +122,7 @@ If something stops you anyway, we want to hear about it —
 
 ```bash
 ./innate-sim status      # startup checks + health snapshot
-./innate-sim logs        # startup logs; `logs os` / `logs agent` follow live
+./innate-sim logs startup   # startup logs; `logs brain` / `logs cloud-agent` for the running stack
 ./innate-sim sh          # shell into the container; `innate build` rebuilds ros2_ws
 ./innate-sim down        # stop the container + world server (keeps data)
 ./innate-sim clean       # remove containers/volumes (keeps .env + config)
@@ -144,13 +144,15 @@ real robot runs — develop here, deploy there. Start with the docs:
 | You edited | What to do |
 |---|---|
 | skills or agents in `workspace/` | **nothing** — they hot-reload on save (fallback: `ros2 service call /brain/reload std_srvs/srv/Trigger` in the container) |
-| ROS code in `ros2_ws/src/` | inside the container: `innate build` then `innate restart` |
+| parameters in `config/` | inside the container: `innate restart` |
+| ROS code in `ros2_ws/src/` | inside the container: `innate build` (it stops the nodes, builds, and restarts them) |
 | the simulated world (`mars_sim_driver/` world/server) | `./innate-sim down && ./innate-sim up` — this part runs on the host |
 | launcher / webapp files | just rerun `./innate-sim up` / reload the browser |
 
 The container's ROS session lives in tmux (`./innate-sim sh`, then
-`tmux attach -t innate`): one window per subsystem (zenoh, rosbridge,
-sim-driver, nav-brain, behavior, arm-ik, vision-nav, console-webapp).
+`tmux attach -t innate`): one window per subsystem (zenoh, rosbridge-app,
+sim-driver, nav-brain, behavior, arm-ik, vision-nav, console-webapp,
+foxglove).
 
 ---
 
@@ -226,6 +228,42 @@ robot on Wi-Fi**, where those topics are too large to stream smoothly; there you
 use the lighter `/mars/main_camera/remote/*` topics instead. See
 [Foxglove](../README.md#foxglove) in the main README for that case.
 
+### Working on the robot code
+
+`./innate-sim sh` drops you into the container, where the same `innate` CLI
+as on a real robot manages the ROS stack. Your checkout is bind-mounted into
+it (`ros2_ws/`, `workspace/`, `scripts/`, `config/`), so files you edit on
+the host are immediately visible inside — you only choose how to reload them:
+
+```bash
+innate                   # status: mode, node health, command hints
+innate view              # attach the tmux session running the stack (Ctrl-b d to detach)
+innate restart           # stop + relaunch all ROS nodes (no rebuild)
+innate build             # stop nodes, colcon-build ros2_ws, restart
+innate build <pkg…>      # same, but only the named packages (faster)
+innate build release     # optimized build (CMAKE_BUILD_TYPE=Release)
+innate skill list        # skills the brain currently offers
+innate skill run <id> @param=value   # trigger a skill from the shell
+```
+
+[When do changes take effect?](#when-do-changes-take-effect) above has the
+answer for each kind of edit. `ros2_ws/` is the one worth knowing by heart:
+`colcon` installs a *copy*, so editing a node and restarting is not enough —
+`innate build mars_nav` (naming the package keeps the cycle short) rebuilds
+and restarts in one step.
+
+The trap is the simulated world itself — `mars_sim_driver`'s `world.py`,
+`core.py` and `world_server.py`. That process runs on the **host**, outside
+the container, on every platform, importing straight from your checkout.
+`innate build` rebuilds the container's copy, but the world server never
+loads it. Restart that one from the host:
+`./innate-sim down && ./innate-sim up`.
+
+`innate view` is the fastest way to see why a node is unhappy: the tmux
+session has one window per subsystem (zenoh, rosbridge-app, sim-driver,
+nav-brain, behavior, arm-ik, vision-nav, console-webapp, foxglove), each
+showing that process's live output.
+
 Prefer your own ROS tooling? A rosbridge server is also available at
 `ws://localhost:9090`.
 
@@ -286,9 +324,15 @@ robot adapter; humans and tools see it only through the observer stream):
   and rate-limited like real hardware. Renders are demand-paced: a camera
   or depth product renders once per client pull (~8Hz), never free-running.
 - **observer stream** (WebSocket, port 8800; the webapp proxies it at
-  `/worldstate`) — ground truth `{t, wall, pose, joints}` pushed after
-  every physics slice (~75Hz), latest-wins per client. The 3D view consumes
-  this; future challenge UIs/graders are just more clients.
+  `/worldstate`) — ground truth `{t, wall, pose, joints, objects}` pushed after
+  every physics slice (~75Hz), latest-wins per client, and stage commands
+  (the viewer's prop chips: `drop_prop_at` releases a prop over a spot you
+  picked and lets physics settle it, `place_prop_at_robot` / `place_group` set
+  props down at rest at their own reach offsets, `remove_prop` /
+  `remove_all_props` send them back off-map, which is where every prop starts)
+  accepted back on the same socket.
+  Scenery, never robot control. The 3D view consumes this;
+  future challenge UIs/graders are just more clients.
 
 Physics steps against the wall clock in <=25ms slices (a stall replays as
 several smooth slices, never one teleport), with all GL work on the main

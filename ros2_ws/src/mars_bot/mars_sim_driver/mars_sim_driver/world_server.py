@@ -5,8 +5,9 @@ sim/README.md "world_server.py"):
   Framing: 4-byte big-endian length | JSON; responses are one JSON frame,
   then one binary frame iff the JSON says "blob": <nbytes>.
 - observer state stream (--state-port): a WebSocket broadcasting ground
-  truth ({t, wall, pose, joints}) after every physics slice. View-only;
-  robot software must never consume it.
+  truth ({t, wall, pose, joints, objects}) after every physics slice, and
+  accepting stage commands ({"op": "drop_prop_at", ...}) back. Ground truth and
+  scenery only -- robot software must never consume or drive it.
 
 Always runs on the host (the launcher starts it via uv): in-container
 software GL was slow enough to starve the whole ROS stack. No ROS; beyond
@@ -17,6 +18,7 @@ reads take the physics lock directly.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import socket
@@ -127,17 +129,69 @@ class WorldServer:
         with self.lock:
             x, y, yaw = self.sim.pose()
             joints = self.sim.joint_positions()
+            objects = self.sim.object_poses()
             sim_time = float(self.sim.data.time)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
-        payload = json.dumps({"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints})
+        payload = json.dumps(
+            {"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints, "objects": objects}
+        )
         with self.state_cond:
             self.state_payload = payload
             self.state_seq += 1
             self.state_cond.notify_all()
 
+    def _serve_scenario_commands(self, ws) -> None:
+        """Read the observer socket for stage commands. This is the sim's own
+        scenery, not robot control: the ops place props (see props.py) and take
+        them away again, without a full reset."""
+        try:
+            for raw in ws:
+                try:
+                    self._run_scenario_command(json.loads(raw))
+                except Exception as exc:  # noqa: BLE001 -- one bad command must not drop the connection
+                    print(f"[world-server] ignoring stage command: {exc!r}", flush=True)
+        except Exception:  # noqa: BLE001,S110 -- client gone, or junk on the wire
+            pass
+
+    def _run_scenario_command(self, cmd: dict) -> None:
+        op = cmd.get("op")
+        if op == "drop_prop_at":  # user picked the spot: release + settle
+            name, x, y = str(cmd["name"]), float(cmd["x"]), float(cmd["y"])
+            yaw = float(cmd.get("yaw", 0.0))
+            with self.lock:
+                ok = self.sim.drop_prop_at(name, x, y, yaw)
+        elif op == "place_prop_at_robot":  # at rest, at the prop's own reach offset
+            name = str(cmd["name"])
+            with self.lock:
+                ok = self.sim.place_prop_at_robot(name)
+        elif op == "remove_prop":
+            name = str(cmd["name"])
+            with self.lock:
+                ok = self.sim.remove_prop(name)
+        elif op == "place_group":  # a whole set at once, each at its own offset
+            with self.lock:
+                self.sim.place_group(str(cmd.get("group", "manipulation")))
+            ok = True
+        elif op == "remove_all_props":  # the stage's "clear" chip
+            with self.lock:
+                self.sim.remove_all_props()
+            ok = True
+        else:
+            return
+        if not ok:
+            print(f"[world-server] {op} ignored: no prop {cmd.get('name')!r} in this world", flush=True)
+        self.publish_state()
+
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
-        client skips states instead of queueing lag)."""
+        client skips states instead of queueing lag), and accept the stage
+        commands above on the way back."""
+        threading.Thread(target=self._serve_scenario_commands, args=(ws,), daemon=True).start()
+        # The prop roster (props.py sidecars) never changes while the server
+        # runs, so it goes out once per connection instead of riding every
+        # state broadcast. The viewer builds its models and buttons from it.
+        with contextlib.suppress(Exception):  # noqa: BLE001 -- client gone before the first frame
+            ws.send(json.dumps({"props": self.sim.prop_manifest()}))
         last_seq = -1
         try:
             while True:
@@ -224,7 +278,11 @@ class WorldServer:
             with self.lock:
                 x, y, yaw = self.sim.pose()
                 vx, vy, wz = self.sim.velocity()
-                joints = self.sim.joint_positions()
+                # Encoder-side, not link-side: this is what the DRIVER
+                # publishes on /joint_states, and real encoders sit before the
+                # structural sag (see core.encoder_positions). The observer
+                # stream below keeps ground truth for viewers.
+                joints = self.sim.encoder_positions()
                 targets = self.sim.joint_targets()
                 sim_time = float(self.sim.data.time)
             return {
