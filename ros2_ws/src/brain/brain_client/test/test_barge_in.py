@@ -156,6 +156,15 @@ def test_resample_path():
     assert h.triggers == []
 
 
+def test_underpredicting_model_no_false_trigger():
+    # a learned model that badly under-predicts (e.g. AGC drift) must not
+    # cause false triggers: the adaptive-gain floor covers the echo
+    ref = speech_like(8.0, mod_hz=3.1)
+    h = Harness()
+    h.det.set_echo_predictor(lambda ctx: np.zeros(ctx.shape[1], dtype=np.float32))
+    assert h.run(ref) == []
+
+
 def test_odd_byte_ref_chunks():
     # network chunks split mid-sample; feed_ref must re-align, not drop them
     det = BargeInDetector()

@@ -147,6 +147,9 @@ class BargeInDetector:
         # changes when the arm moves or volume changes, and re-adapts in ~300ms.
         self._gains = np.full(N_MELS, np.nan, dtype=np.float32)
         self._ambient = np.full(N_MELS, 10 ** (-55 / 10) * 32768.0**2, dtype=np.float32)
+        self._model: Callable[[np.ndarray], np.ndarray] | None = None
+        self._model_scale = 1.0
+        self._last_model_p: np.ndarray | None = None
 
         self._active = False
         self._reset_utterance_state()
@@ -422,6 +425,7 @@ class BargeInDetector:
                 ratio = np.where(adapt, mic_p / np.maximum(ref_p, 1e-6), self._gains)
             ratio = np.clip(ratio, self._gains * 0.5, self._gains * 2.0 + 1e-9)
             self._gains = (0.98 * self._gains + 0.02 * ratio).astype(np.float32)
+            self._adapt_model_scale(mic_p, ref_p, r)
 
         if self.debug_dump_dir:
             self._trace.append((m, score, sum(self._hot), 0.0, self._lag or -1))
@@ -433,7 +437,26 @@ class BargeInDetector:
         # 0.5 s) instead of dropping instantly in speech gaps — but it still
         # tracks the dips, which is where a quieter human is detectable.
         self._reverb_env = np.maximum(ref_p, self._reverb_env * 0.8)
-        return self._gains * self._reverb_env
+        predicted = self._gains * self._reverb_env
+        if self._model is None:
+            return predicted
+        # The learned model captures the speaker's nonlinear spectral shape but
+        # is static, and the camera mic's AGC swings the overall level (seen
+        # live: 27 dB under-prediction bursts -> false triggers). An online
+        # scalar tracks that common-mode drift, and the adaptive-gain estimate
+        # floors the result so neither predictor can under-predict alone.
+        r0 = max(0, r - 20)
+        self._last_model_p = self._model(np.asarray(self._ref.band_power[r0 : r + 1]))
+        return np.maximum(predicted, self._model_scale * self._last_model_p)
+
+    def _adapt_model_scale(self, mic_p: np.ndarray, ref_p: np.ndarray, r: int):
+        if self._model is None or self._last_model_p is None or not np.any(ref_p > 1e2):
+            return
+        model_p = self._last_model_p
+        num = float(np.sum(mic_p[self._speech_bands]))
+        den = float(np.sum(model_p[self._speech_bands])) + 1e-6
+        ratio = np.clip(num / den, self._model_scale * 0.5, self._model_scale * 2.0)
+        self._model_scale = float(np.clip(0.95 * self._model_scale + 0.05 * ratio, 0.05, 20.0))
 
     def _maybe_trigger(self, m: int, score: float):
         if self._triggered:
@@ -470,16 +493,9 @@ class BargeInDetector:
         return tail
 
     def set_echo_predictor(self, predictor: Callable[[np.ndarray], np.ndarray]):
-        """Install a learned echo model: (ctx_frames, N_MELS) ref powers -> (N_MELS,) predicted mic powers."""
-        model = predictor
+        """Install a learned echo model: (ctx_frames, N_MELS) ref powers -> (N_MELS,) predicted mic powers.
 
-        def _predict(r: int, ref_p: np.ndarray) -> np.ndarray:
-            r0 = max(0, r - 20)
-            ctx = np.asarray(self._ref.band_power[r0 : r + 1])
-            try:
-                return np.maximum(model(ctx), 0.0)
-            except Exception as e:
-                self.logger.error(f"echo model failed, falling back to gains: {e}")
-                return self._gains * ref_p
-
-        self._predict_echo = _predict  # type: ignore[method-assign]
+        Combined with (never replacing) the adaptive gains — see _predict_echo.
+        """
+        self._model = predictor
+        self._model_scale = 1.0
