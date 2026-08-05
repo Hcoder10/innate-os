@@ -53,19 +53,21 @@ class PrimitiveRunner:
         the "running" entry in the chat.
         """
         skill_name = self._state.registry.name_for(skill_id)
+        # Marked running before the goal is sent: the response and result
+        # callbacks fire on the ROS thread and must find the state they clear.
+        self._state.primitive_running = {
+            "primitive_name": skill_name,
+            "primitive_id": primitive_id,
+            "skill_id": skill_id,
+        }
         if not self._send_goal(skill_id, inputs):
+            self._state.primitive_running = None
             self.report_start_failure(
                 primitive_name=skill_name,
                 primitive_id=primitive_id,
                 skill_id=skill_id,
                 reason="Skill execution server unavailable — the skill never started.",
             )
-            return
-        self._state.primitive_running = {
-            "primitive_name": skill_name,
-            "primitive_id": primitive_id,
-            "skill_id": skill_id,
-        }
 
     def report_start_failure(self, *, primitive_name, primitive_id, reason, skill_id=None) -> None:
         """Tell the brain and the app that a task never started (no goal exists)."""

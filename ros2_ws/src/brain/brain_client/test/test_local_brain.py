@@ -439,6 +439,43 @@ def test_committed_turn_consumes_exactly_the_events_it_saw(agent_factory):
     assert agent._session.history_len == 3
 
 
+def test_a_call_outside_the_active_skill_set_is_rejected(agent_factory):
+    # The registry knows every installed skill, but only names declared this
+    # turn may dispatch — a hallucinated call must not bypass the directive's
+    # active-skill allowlist.
+    from brain_client.skills.registry import SkillRegistry
+
+    agent, state = agent_factory()
+    state.registry = SkillRegistry.from_metadata([WAVE_SKILL, {**WAVE_SKILL, "id": "local/pick", "name": "pick"}])
+    started = []
+    agent._runner.start_task = lambda *a, **k: started.append(a)
+    agent._roster.active_skill_ids = lambda: ["local/wave"]
+    agent._session._transport = lambda model, body: [model_response(call_part("pick", {}))]
+    run_turn(agent)
+
+    assert started == []
+    outcome = agent._session._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
+    assert outcome == "unknown skill 'pick'"
+
+
+def test_chat_failure_after_commit_still_answers_the_models_calls(agent_factory, monkeypatch):
+    # emit_thoughts raising after absorb() must not leave the functionCall
+    # unanswered in history — that would poison every later request.
+    agent, state = agent_factory()
+    no_pause(agent, monkeypatch)
+
+    def explode(*a, **k):
+        raise RuntimeError("publisher torn down")
+
+    agent._chat.emit_thoughts = explode
+    agent._session._transport = lambda model, body: [
+        model_response({"text": "hmm", "thought": True}, call_part(WAIT, {}))
+    ]
+    run_turn(agent)
+
+    assert agent._session._history[-1]["parts"][0]["functionResponse"]["name"] == WAIT
+
+
 def test_tool_failure_becomes_an_outcome_instead_of_failing_the_committed_turn(agent_factory):
     agent, state = agent_factory()
     state.primitive_running = {"primitive_name": "wave", "skill_id": "local/wave"}

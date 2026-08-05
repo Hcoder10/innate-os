@@ -48,6 +48,9 @@ _NAV_TO_POSITION = "innate-os/navigate_to_position"
 # A camera frame older than this means the feed is broken; don't think blind.
 _FRESH_FRAME_SEC = 3.0
 
+# While the loop can't turn (feed down), only this many queued events are kept.
+_MAX_EVENTS_WHILE_BLIND = 30
+
 
 class BrainAgent:
     def __init__(
@@ -126,16 +129,22 @@ class BrainAgent:
         self._error_streak = 0
         self._runtime.spawn(self._loop())
 
-    def stop(self) -> None:
-        """Synchronous: when this returns, no turn is thinking and none will act."""
-        if not self._runtime.cancel():
+    def stop(self) -> bool:
+        """Synchronous: when this returns True, no turn is thinking and none will act."""
+        unwound = self._runtime.cancel()
+        if not unwound:
             self._logger.error("[Brain] Agent loop did not unwind within 5s")
         self._events.clear()
+        return unwound
 
     def reset(self) -> None:
         """Forget the conversation; a turn thinking under the old one dies with it."""
         was_running = self._runtime.running
-        self.stop()
+        if not self.stop():
+            # The old loop is stuck mid-unwind: spawning a second one over it
+            # would interleave two conversations. Stay down instead.
+            self._chat.emit_system("⚠️ Brain loop is stuck — stop and start the brain to recover.")
+            return
         if self._session is not None:
             self._session.clear()
         if was_running and self._state.is_brain_active:
@@ -159,8 +168,7 @@ class BrainAgent:
         reruns = 0
         try:
             while True:
-                while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
-                    await asyncio.sleep(0.2)  # feed down: don't think blind
+                await self._await_camera()
 
                 # Every turn races the user's voice. Abandoning is free —
                 # nothing is consumed until a turn commits, so the rerun sees
@@ -205,6 +213,8 @@ class BrainAgent:
         speaker = self._speaker = self._chat.stream_speech()
         try:
             text, images = self._look(events)
+            if self._frame_at_capture is None:
+                return  # the feed died between the loop's freshness check and the look
             message = GeminiSession.user_message(text, images)
             tools = self._build_tools(events)
             directive = self._state.current_directive
@@ -267,6 +277,19 @@ class BrainAgent:
                 "turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff
             )
             await self._pause(backoff, seen=len(events))  # events stay queued; a new one ends this early
+
+    async def _await_camera(self) -> None:
+        """Hold turns while the camera feed is down; tell the user if it stays down."""
+        for _ in range(25):  # brief grace: the feed may just be starting up
+            if self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is not None:
+                return
+            await asyncio.sleep(0.2)
+        self._logger.error("[Brain] Camera feed is down; holding turns until it returns")
+        self._chat.emit_system("⚠️ No camera frames — the brain is waiting for the feed to return.")
+        while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
+            del self._events[:-_MAX_EVENTS_WHILE_BLIND]  # don't hoard stimuli while blind
+            await asyncio.sleep(0.2)
+        self._chat.emit_system("✅ Camera feed is back.")
 
     async def _pause(self, seconds: float, *, seen: int = 0) -> None:
         """Sleep up to ``seconds``; the queue growing past ``seen`` events ends it early."""
@@ -333,6 +356,10 @@ class BrainAgent:
 
     # ================= act =================
     def _act(self, decision, speaker) -> list:
+        # Execute and answer the calls before any chat I/O: a functionCall
+        # left unanswered in history poisons every later request.
+        outcomes = [(call, self._execute(call)) for call in decision.calls]
+        self._session.add_tool_outcomes(outcomes)
         if decision.thoughts:
             self._chat.emit_thoughts(decision.thoughts)
         speech = decision.speech
@@ -346,8 +373,6 @@ class BrainAgent:
             # Audio went out sentence-by-sentence; the panel still gets the
             # full reply as one message.
             self._chat.emit("robot", speech, speak=False)
-        outcomes = [(call, self._execute(call)) for call in decision.calls]
-        self._session.add_tool_outcomes(outcomes)
         return outcomes
 
     def _execute(self, call) -> str:
@@ -374,7 +399,10 @@ class BrainAgent:
         if call.name == GO_TO_POINT_IN_VIEW:
             return self._go_to_point_in_view(call.args)
 
-        skill_id = self._tool_map.get(call.name) or self._state.registry.resolve_skill_id(call.name)
+        # Only names declared this turn resolve: falling back to the full
+        # registry would let a hallucinated call bypass the directive's
+        # active-skill allowlist.
+        skill_id = self._tool_map.get(call.name)
         if skill_id is None:
             return f"unknown skill '{call.name}'"
         self._start_skill(skill_id, self._adjust_nav_goal(skill_id, dict(call.args)))
@@ -455,6 +483,8 @@ class BrainAgent:
     # ================= events (executor thread) =================
     def add_event(self, text: str, image: bytes | None = None, kind: str = "info") -> None:
         """Queue something that happened; the loop wakes for an immediate turn."""
+        if not self.available:
+            return  # no transport, no loop: these would accumulate forever
         self._events.append({"text": text, "image": image, "kind": kind})
         self._runtime.post(self._wake, kind)
         self._trace("event", kind=kind, text=text, image=image is not None)
