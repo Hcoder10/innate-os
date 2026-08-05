@@ -82,10 +82,14 @@ class MotorSoundNode(Node):
         # is what winds the sound down after the last command goes stale.
         self.create_timer(0.1, self._update_drive)
 
+        # Gate the synth before the audio thread exists: _open_stream starts
+        # PortAudio rendering immediately and a fresh MotorSynth is enabled, so
+        # deciding afterwards leaks an idle engine until this call lands — a
+        # click normally, a fifth of a second when a build is eating the CPU.
+        self._update_drive()
         self._stream = self._open_stream(params)
         if self._stream is not None and not self._only_in_mad_mode:
             self._synth.trigger_startup()
-        self._update_drive()
 
     def _declare_parameters(self):
         self.declare_parameters(

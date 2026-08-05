@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import JointStates, Manipulation, Skill, SkillReturn
+from innate import Manipulation, Skill, SkillReturn
 
 
 class ArmZeroPosition(Skill):
@@ -9,13 +9,12 @@ class ArmZeroPosition(Skill):
     closure unless keep_gripper=False."""
 
     manipulation: Manipulation
-    joint_states: JointStates
 
     def execute(self, duration: int = 3, keep_gripper: bool = True) -> SkillReturn:
-        joints = list[float](self.manipulation.ZERO)
         if keep_gripper:
-            # j6 zero is *less* closed than a gripping pose, so blindly
-            # zeroing it drops whatever the claw holds.
-            joints = self.manipulation.with_gripper(joints, self.manipulation.gripper_j6(self.joint_states))
-        self.manipulation.go(joints, duration=duration, logger=self.logger)
+            # 5-joint move: j6 zero is *less* closed than a gripping pose, so
+            # blindly zeroing it would drop whatever the claw holds.
+            self.manipulation.move_joints(self.manipulation.ZERO[:5], duration=duration)
+        else:
+            self.manipulation.move_joints(self.manipulation.ZERO, duration=duration)
         return "Arm moved to zero position"

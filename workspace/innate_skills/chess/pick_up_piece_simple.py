@@ -14,9 +14,9 @@ move across the rank 6/7 boundary relays through rank 5.
 
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
-from innate import Manipulation, Skill, SkillReturn
+from innate import ArmFailed, ArmUnhealthy, Manipulation, Skill, SkillReturn, Waypoint
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 PieceType = Literal["king", "queen", "rook", "bishop", "knight", "pawn"]
@@ -115,71 +115,79 @@ class PickUpPieceSimple(Skill):
     def _gripper_wait(self, seconds: float):
         self.sleep(max(seconds / self._speed, self.GRIPPER_MIN_WAIT))
 
-    def _move_arm(self, x, y, z, pitch, yaw, duration, gripper_position=None) -> bool:
-        kwargs: dict[str, Any] = dict(
-            x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=self._d(duration), blocking=True
-        )
-        if gripper_position is not None:
-            kwargs["gripper_position"] = gripper_position
-        return self.manipulation.move_to_cartesian_pose(**kwargs)
+    def _move_arm(self, x, y, z, pitch, yaw, duration):
+        """One unverified cartesian move (chess poses near joint limits may
+        legitimately settle off-pose, so FK verification stays off).
 
-    def _vertical_move(self, x, y, from_z, to_z, pitch, yaw, gripper_position=None, caution=1.0):
+        TODO: unverified means a pose that settled somewhere else still reads
+        as success, so the clearance lift and the moves above the source and
+        destination squares can all "succeed" with the arm off target — the
+        next lateral move or descent then hits pieces. Wants per-call
+        tolerances loose enough for the near-limit poses rather than off
+        entirely, which needs measuring the real settle error per square.
+        """
+        self.manipulation.move_to(
+            x,
+            y,
+            z,
+            roll=self.FIXED_ROLL,
+            pitch=pitch,
+            yaw=yaw,
+            duration=self._d(duration),
+            tolerance_xy=None,
+            tolerance_z=None,
+        )
+
+    def _vertical_move(self, x, y, from_z, to_z, pitch, yaw, caution=1.0):
         """Move vertically in VERTICAL_STEPS increments with fixed X, Y.
         Descent is fast at the top and slow near the board; lift is uniformly
-        fast. Tries the smooth trajectory service, falls back to step moves."""
+        fast. Tries the smooth trajectory service, falls back to step moves.
+        The gripper rides along on the standing grip target."""
         descending = to_z < from_z
         direction = "descending" if descending else "lifting"
         n = self.VERTICAL_STEPS
 
-        seg_durs = []
-        for i in range(n):
+        waypoints = []
+        for i in range(1, n + 1):
             if descending:
-                frac = (i + 0.5) / n
+                frac = (i - 0.5) / n
                 phase = self.PHASE_DESCENT_FAR + (self.PHASE_DESCENT_NEAR - self.PHASE_DESCENT_FAR) * frac
             else:
                 phase = self.PHASE_LIFT
-            seg_durs.append(1.0 / (self._speed * phase * caution))
-
-        poses = [
-            dict(x=x, y=y, z=from_z + (to_z - from_z) * i / n, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw)
-            for i in range(n + 1)
-        ]
-        try:
-            if self.manipulation.move_cartesian_trajectory(
-                poses, segment_durations=seg_durs, gripper_position=gripper_position
-            ):
-                return
-            self.logger.warning("[PickUpPieceSimple] Trajectory service failed, falling back to step-by-step")
-        except Exception as e:
-            self.logger.warning(f"[PickUpPieceSimple] Trajectory not available ({e}), falling back")
-
-        for i in range(1, n + 1):
-            z = from_z + (to_z - from_z) * i / n
-            kwargs: dict[str, Any] = dict(
-                x=x, y=y, z=z, roll=self.FIXED_ROLL, pitch=pitch, yaw=yaw, duration=seg_durs[i - 1]
+            waypoints.append(
+                Waypoint(
+                    x,
+                    y,
+                    from_z + (to_z - from_z) * i / n,
+                    roll=self.FIXED_ROLL,
+                    pitch=pitch,
+                    yaw=yaw,
+                    duration=1.0 / (self._speed * phase * caution),
+                )
             )
-            if gripper_position is not None:
-                kwargs["gripper_position"] = gripper_position
-            if not self.manipulation.move_to_cartesian_pose(**kwargs):
-                self.fail(f"Failed at {direction} step {i}/{n} z={z:.3f}m")
-            self.sleep(seg_durs[i - 1])
+        try:
+            self.manipulation.follow(waypoints)
+            return
+        except ArmFailed as e:
+            self.logger.warning(f"[PickUpPieceSimple] Trajectory failed ({e}), falling back to step-by-step")
+
+        for i, wp in enumerate(waypoints, start=1):
+            try:
+                self._move_arm(wp.x, wp.y, wp.z, wp.pitch, wp.yaw, wp.duration * self._speed)
+            except (ArmFailed, ArmUnhealthy) as e:
+                self.fail(f"Failed at {direction} step {i}/{n} z={wp.z:.3f}m: {e}")
 
     def _go_to_safe_pose(self):
         """Lift straight up first (no lateral move over the board), then fold
-        to the resting safe pose."""
-        ee = self.manipulation.get_current_end_effector_pose()
-        if ee is not None and ee["position"]["z"] < self.HEIGHT_SAFE_CLEARANCE:
-            rpy = self.manipulation.get_current_orientation_rpy()
-            self._move_arm(
-                ee["position"]["x"],
-                ee["position"]["y"],
-                self.HEIGHT_SAFE_CLEARANCE,
-                rpy["pitch"] if rpy else 0.0,
-                rpy["yaw"] if rpy else 0.0,
-                2.0,
-            )
+        to the resting safe pose. Raises on arm failure."""
+        try:
+            pose = self.manipulation.pose
+        except ArmFailed:
+            pose = None
+        if pose is not None and pose.z < self.HEIGHT_SAFE_CLEARANCE:
+            self._move_arm(pose.x, pose.y, self.HEIGHT_SAFE_CLEARANCE, pose.pitch, pose.yaw, 2.0)
         self._move_arm(0.05, 0.08, 0.3, 0.0, 1.57, 2.0)
-        return self._move_arm(0.05, 0.08, 0.11, 0.0, 1.57, 1.0)
+        self._move_arm(0.05, 0.08, 0.11, 0.0, 1.57, 1.0)
 
     def _needs_relay(self, src_square, dst_square):
         src_rank, dst_rank = int(src_square[1]), int(dst_square[1])
@@ -225,47 +233,47 @@ class PickUpPieceSimple(Skill):
         caution=1.0,
     ):
         """One pick-and-place cycle: pick from src, place at dst. Raises
-        SkillFailed on any arm failure. Every trajectory command carries an
-        explicit gripper target to avoid stale _arm_state reads."""
+        SkillFailed on any arm failure. The standing grip target carries the
+        commanded gripper closure through every move — no per-call threading."""
         if safe_height is None:
             safe_height = self.HEIGHT_SAFE
-        open_grip = self.manipulation.GRIPPER_CLOSED + (
-            self.manipulation.GRIPPER_OPEN - self.manipulation.GRIPPER_CLOSED
-        ) * (self.GRIPPER_OPEN_PERCENT / 100.0)
-        closed_grip = self.manipulation.GRIPPER_CLOSED - self.GRIPPER_CLOSE_STRENGTH
         air_dur = 2.0 / (self.PHASE_AIR * caution)
 
         self.feedback(f"Moving above {src_label}...")
-        if not self._move_arm(src_x, src_y, safe_height, src_pitch, src_yaw, air_dur):
-            self.fail(f"Failed to move above {src_label}")
+        try:
+            self._move_arm(src_x, src_y, safe_height, src_pitch, src_yaw, air_dur)
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.fail(f"Failed to move above {src_label}: {e}")
 
         self.feedback("Opening gripper...")
-        self.manipulation.open_gripper(self.GRIPPER_OPEN_PERCENT)
+        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT)
         self._gripper_wait(1.5)
 
         self.feedback(f"Descending to pick from {src_label}...")
-        self._vertical_move(src_x, src_y, safe_height, pick_height, src_pitch, src_yaw, open_grip, caution)
+        self._vertical_move(src_x, src_y, safe_height, pick_height, src_pitch, src_yaw, caution)
 
         self.feedback("Grabbing piece...")
-        self.manipulation.close_gripper(strength=self.GRIPPER_CLOSE_STRENGTH, blocking=True)
+        self.manipulation.gripper_close(self.GRIPPER_CLOSE_STRENGTH)
         self._gripper_wait(2.0)
 
         self.feedback("Lifting piece...")
-        self._vertical_move(src_x, src_y, pick_height, safe_height, src_pitch, src_yaw, closed_grip, caution)
+        self._vertical_move(src_x, src_y, pick_height, safe_height, src_pitch, src_yaw, caution)
 
         self.feedback(f"Moving above {dst_label}...")
-        if not self._move_arm(dst_x, dst_y, safe_height, dst_pitch, dst_yaw, air_dur, gripper_position=closed_grip):
-            self.fail(f"Failed to move above {dst_label}")
+        try:
+            self._move_arm(dst_x, dst_y, safe_height, dst_pitch, dst_yaw, air_dur)
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.fail(f"Failed to move above {dst_label}: {e}")
 
         self.feedback(f"Descending to place on {dst_label}...")
-        self._vertical_move(dst_x, dst_y, safe_height, pick_height, dst_pitch, dst_yaw, closed_grip, caution)
+        self._vertical_move(dst_x, dst_y, safe_height, pick_height, dst_pitch, dst_yaw, caution)
 
         self.feedback("Releasing piece...")
-        self.manipulation.open_gripper(self.GRIPPER_OPEN_PERCENT)
+        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT)
         self._gripper_wait(1.5)
 
         self.feedback("Lifting after place...")
-        self._vertical_move(dst_x, dst_y, pick_height, safe_height, dst_pitch, dst_yaw, open_grip, caution)
+        self._vertical_move(dst_x, dst_y, pick_height, safe_height, dst_pitch, dst_yaw, caution)
 
     def execute(
         self,
@@ -276,7 +284,13 @@ class PickUpPieceSimple(Skill):
         speed: float = 1.0,
     ) -> SkillReturn:
         self._speed = max(0.1, min(speed, 3.0))
-        self._go_to_safe_pose()
+        # Not caught: every later move assumes the arm starts folded and clear
+        # of the board. Continuing from an unknown position means the first
+        # lateral move at HEIGHT_SAFE sweeps through the pieces.
+        try:
+            self._go_to_safe_pose()
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.fail(f"Failed to reach safe pose before moving — arm position unknown: {e}")
 
         calibration = self._load_calibration()
         if calibration is None:
@@ -292,8 +306,10 @@ class PickUpPieceSimple(Skill):
             self._move_piece(square, place_square, piece, is_capture, calibration, src_pos, dst_pos)
         finally:
             self.feedback("Returning to safe pose...")
-            if not self._go_to_safe_pose():
-                self.logger.warning("[PickUpPieceSimple] Failed to reach safe pose after move")
+            try:
+                self._go_to_safe_pose()
+            except (ArmFailed, ArmUnhealthy) as e:
+                self.logger.warning(f"[PickUpPieceSimple] Failed to reach safe pose after move: {e}")
 
         msg = f"Moved piece from {square} to {place_square}"
         self.feedback(msg)

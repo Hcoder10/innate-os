@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from innate import Manipulation, Skill, SkillReturn, WristImage
+from innate import ArmFailed, Manipulation, Skill, SkillReturn, WristImage
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CORNER_CAPTURES_DIR = Path("/home/jetson1/innate-os/captures/corners")
@@ -26,10 +26,11 @@ class RecordPosition(Skill):
         if corner not in VALID_CORNERS:
             self.fail(f"Invalid corner '{corner}'. Must be one of: {VALID_CORNERS}")
 
-        fk_pose = self.manipulation.get_current_end_effector_pose()
-        if not fk_pose:
+        try:
+            pose = self.manipulation.pose
+        except ArmFailed:
             self.fail("Could not get current position")
-        pos = fk_pose["position"]
+        pos = {"x": pose.x, "y": pose.y, "z": pose.z}
 
         calibration = {}
         if CALIBRATION_FILE.exists():

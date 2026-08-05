@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import Manipulation, Skill, SkillReturn
+from innate import ArmFailed, ArmUnhealthy, Manipulation, Skill, SkillReturn
 
 
 class ArmMoveToXYZ(Skill):
@@ -22,8 +22,12 @@ class ArmMoveToXYZ(Skill):
         duration: int = 3,
     ) -> SkillReturn:
         self.logger.info(f"Moving arm to XYZ ({x}, {y}, {z}) with RPY ({roll}, {pitch}, {yaw}) over {duration}s")
-        if not self.manipulation.move_to_cartesian_pose(
-            x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, duration=duration, blocking=True
-        ):
-            self.fail("Failed to solve IK or send arm command")
+        try:
+            # Unverified move (both tolerances None): arbitrary agent-chosen targets may
+            # legitimately settle off-pose near joint limits.
+            self.manipulation.move_to(
+                x, y, z, roll=roll, pitch=pitch, yaw=yaw, duration=duration, tolerance_xy=None, tolerance_z=None
+            )
+        except (ArmFailed, ArmUnhealthy) as e:
+            self.fail(f"Failed to move arm: {e}")
         return f"Arm moved to ({x}, {y}, {z})"

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import JointStates, Manipulation, Skill, SkillReturn
+from innate import Manipulation, Skill, SkillReturn
 
 
 class ArmRestPosition(Skill):
@@ -9,12 +9,10 @@ class ArmRestPosition(Skill):
     its current closure unless keep_gripper=False."""
 
     manipulation: Manipulation
-    joint_states: JointStates
 
     def execute(self, duration: int = 3, keep_gripper: bool = True) -> SkillReturn:
-        self.manipulation.go(
-            self.manipulation.rest_joints(self.joint_states, keep_gripper),
-            duration=duration,
-            logger=self.logger,
-        )
+        if keep_gripper:
+            self.manipulation.rest(duration=duration)
+        else:
+            self.manipulation.move_joints(self.manipulation.REST, duration=duration)
         return "Arm moved to rest position"

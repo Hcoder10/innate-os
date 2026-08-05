@@ -3,6 +3,9 @@
 """Skill-facing arm state. ROS-free on purpose."""
 
 from dataclasses import dataclass
+from functools import cached_property
+
+from brain_client.common.geometry import quat_to_rpy
 
 
 @dataclass(frozen=True)
@@ -38,3 +41,23 @@ class Arm:
     def orientation(self) -> tuple[float, float, float, float]:
         """(qx, qy, qz, qw)."""
         return (self.qx, self.qy, self.qz, self.qw)
+
+    @cached_property
+    def rpy(self) -> tuple[float, float, float]:
+        """(roll, pitch, yaw) in radians, derived from the quaternion."""
+        return quat_to_rpy(self.qx, self.qy, self.qz, self.qw)
+
+    @property
+    def roll(self) -> float:
+        """Roll in radians."""
+        return self.rpy[0]
+
+    @property
+    def pitch(self) -> float:
+        """Pitch in radians."""
+        return self.rpy[1]
+
+    @property
+    def yaw(self) -> float:
+        """Yaw in radians."""
+        return self.rpy[2]
