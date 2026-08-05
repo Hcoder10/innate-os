@@ -153,11 +153,28 @@ class BrainAgent:
         if not self.available:
             return await self._heartbeat()
         heartbeat = asyncio.ensure_future(self._heartbeat())
+        turn = spoke = None
         try:
             while True:
                 while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
                     await asyncio.sleep(0.2)  # feed down: don't think blind
-                await self._take_turn()
+
+                if any(event["kind"] == "user" for event in self._events):
+                    await self._turn()  # the user's own turn: always runs to completion
+                else:
+                    # A housekeeping turn races the user's voice. Abandoning is
+                    # free: nothing is consumed until a turn commits, so the
+                    # rerun sees everything this one saw plus their message.
+                    self._user_spoke.clear()
+                    turn = asyncio.ensure_future(self._turn())
+                    spoke = asyncio.ensure_future(self._user_spoke.wait())
+                    await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
+                    spoke.cancel()
+                    if not turn.done():  # the user spoke mid-think: answer them instead
+                        self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
+                        turn.cancel()
+                        await asyncio.wait({turn})  # fully unwound before the rerun looks
+
                 if not self._events:
                     await self._pause(self._interval())
         except Exception as error:
@@ -165,28 +182,9 @@ class BrainAgent:
             self._chat.emit_system(f"⚠️ Brain loop crashed: {error!r} — stop and start the brain to recover.")
         finally:
             heartbeat.cancel()
-
-    async def _take_turn(self) -> None:
-        """Take one turn. A turn carrying a user message always completes; a
-        housekeeping turn is abandoned the moment the user speaks, and the
-        rerun sees everything it saw plus the new message."""
-        if any(event["kind"] == "user" for event in self._events):
-            return await self._turn()
-        self._user_spoke.clear()
-        turn = asyncio.ensure_future(self._turn())
-        spoke = asyncio.ensure_future(self._user_spoke.wait())
-        try:
-            await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            spoke.cancel()
-            if not turn.done():  # abandoned: drain it before anything else runs
-                if self._user_spoke.is_set():
-                    self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
-                turn.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await turn
-                if self._runtime.draining:
-                    raise asyncio.CancelledError  # stop() landed mid-drain; keep unwinding
+            for task in (turn, spoke):
+                if task is not None:
+                    task.cancel()  # stop() can land mid-race; the turn dies with the loop
 
     async def _turn(self) -> None:
         """One turn: look at the world, think with Gemini, commit, act."""

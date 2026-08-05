@@ -12,14 +12,11 @@ class LoopThread:
     """The agent's runtime: spawn a root coroutine, cancel it synchronously.
 
     ``cancel()`` blocks until the task has fully unwound, so the caller can
-    safely mutate state the task was using. ``draining`` is readable from the
-    loop thread while a cancel is in flight — a coroutine that swallows a
-    ``CancelledError`` of its own making checks it to keep unwinding.
+    safely mutate state the task was using.
     """
 
     def __init__(self, name: str):
         self.loop = asyncio.new_event_loop()
-        self.draining = False
         self._task = None
         self._done = threading.Event()
         self._thread = threading.Thread(target=self.loop.run_forever, name=name, daemon=True)
@@ -46,11 +43,8 @@ class LoopThread:
         task, self._task = self._task, None
         if task is None:
             return True
-        self.draining = True
         task.cancel()
-        unwound = self._done.wait(timeout)
-        self.draining = False
-        return unwound
+        return self._done.wait(timeout)
 
     def post(self, fn, *args) -> None:
         """Run ``fn`` on the loop thread (thread-safe, no-op after shutdown)."""
