@@ -13,13 +13,23 @@ The standalone browser sim (MuJoCo WASM physics, no ROS) lives in the
 separate `innate-sim-demo` repo -- it was extracted from this source tree
 and keeps its own copy.
 
-The stage has two sim-only debug chips: **lidar** (live `/scan` hit points)
-and **collisions** (wireframe of the exact hull set the driver collides
-against, for physics-vs-visual alignment checks).
+The stage has sim-only chips: **lidar** (live `/scan` hit points),
+**collisions** (wireframe of everything the driver collides against, for
+physics-vs-visual alignment checks: the apartment hull set plus the robot's
+own `<collision>` primitives, which urdf-loader parses out of mars.urdf and
+hangs off each link so they track the joints), and **drop objects** / **remove objects**. The
+apartment has no props in it by default; the button lays a set out on the floor
+in front of the robot wherever it currently is, so you can drive somewhere,
+drop them, and practise grabbing -- then flips to "remove objects" to clear
+them away. It reads the world rather than remembering its own presses, so a sim
+reset (which also clears them) leaves it labelled correctly.
 
-The render assets (`public/models` glb, `public/robot` URDF+STLs,
-`public/physics` hulls for the overlay) are not in git: `./innate-sim up`
-extracts them from the published bundle (see `sim/sim-assets.lock`).
+The render assets (`public/models` glb, `public/physics` hulls) are not in
+git: `./innate-sim up` extracts them from the published bundle (see
+`sim/sim-assets.lock`). `public/robot` is different -- the URDF and STLs are
+tracked source, and `up` refreshes the served copy from
+`ros2_ws/src/mars_bot/mars_sim` so the browser can never draw a different
+robot from the one the driver simulates.
 
 ## Build
 

@@ -1,5 +1,5 @@
 // Ground-truth state feed for the sim viewer: the world server broadcasts
-// {t, wall, pose, joints} per physics slice on its observer WebSocket
+// {t, wall, pose, joints, objects} per physics slice on its observer WebSocket
 // (proxied at /worldstate) -- the 3D view's only state source. See
 // world_server.py "two interfaces".
 
@@ -12,6 +12,9 @@ export interface WorldState {
   y: number;
   yaw: number;
   joints: Record<string, number>;
+  /** Ground truth of every manipulation prop (world.py GRASP_OBJECTS), keyed
+   * by name: [x, y, z, qw, qx, qy, qz]. Empty on servers that predate them. */
+  objects: Record<string, number[]>;
 }
 
 export class WorldStateController {
@@ -61,6 +64,13 @@ export class WorldStateController {
     await this.#open;
   }
 
+  /** Send a stage command (e.g. drop_objects) back up the observer socket.
+   * Dropped silently while the socket is (re)connecting -- it is a button
+   * press, not something worth queueing. */
+  send(cmd: object): void {
+    if (this.#ws.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(cmd));
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#ws.close();
@@ -72,10 +82,19 @@ export class WorldStateController {
       wall: number;
       pose: [number, number, number];
       joints: Record<string, number>;
+      objects?: Record<string, number[]> | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
     joints["joint6M"] = -(joints["joint6"] ?? 0);
-    this.onState?.({ t: msg.t, wall: msg.wall, x: msg.pose[0], y: msg.pose[1], yaw: msg.pose[2], joints });
+    this.onState?.({
+      t: msg.t,
+      wall: msg.wall,
+      x: msg.pose[0],
+      y: msg.pose[1],
+      yaw: msg.pose[2],
+      joints,
+      objects: msg.objects ?? {},
+    });
   }
 }

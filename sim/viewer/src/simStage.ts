@@ -41,7 +41,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   chips.style.cssText = "display:flex;gap:6px;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+  const newChip = (label: string) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
@@ -49,6 +49,11 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       // No backdrop-filter: re-blurring over an animated canvas costs fps.
       `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
       "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+    chips.appendChild(b);
+    return b;
+  };
+  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+    const b = newChip(label);
     let on = false;
     b.onclick = () => {
       on = !on;
@@ -56,10 +61,26 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       b.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
       onToggle(on);
     };
-    chips.appendChild(b);
   };
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
+  // Not a toggle with its own memory: the label follows the world, so a sim
+  // reset (which takes the props away) or another viewer's drop leaves this
+  // reading correctly. refreshObjectChip runs from the render loop.
+  const objectChip = newChip("drop objects");
+  let objectChipShowsRemove: boolean | null = null;
+  const refreshObjectChip = () => {
+    const present = session.objectsPresent;
+    if (present === objectChipShowsRemove) return;
+    objectChipShowsRemove = present;
+    objectChip.textContent = present ? "remove objects" : "drop objects";
+    objectChip.style.background = present ? ON_BG : OFF_BG;
+    objectChip.style.color = present ? "#7dffc4" : "rgba(255,255,255,.75)";
+  };
+  objectChip.onclick = () => {
+    if (session.objectsPresent) session.removeObjects();
+    else session.dropObjects();
+  };
   debugStack.appendChild(chips);
 
   // Loading indicator: a compact pill holding a progress bar, centered just
@@ -166,6 +187,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     session.tick(scene, dt);
+    refreshObjectChip();
 
     // Thumbnails first (scissor corner renders, blitted out), one tile per
     // slot -- see THUMB_FRAME_DIV.

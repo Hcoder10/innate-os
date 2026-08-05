@@ -40,6 +40,8 @@ def main() -> None:
     model = mujoco.MjModel.from_xml_string(world.build_world_xml(rooms))
     print(f"integrator={model.opt.integrator} (3 = implicitfast)")
     data = mujoco.MjData(model)
+    base = model.joint("base_free")
+    base_q, base_v = model.jnt_qposadr[base.id], model.jnt_dofadr[base.id]
     set_spawn(model, data, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG)
     mujoco.mj_forward(model, data)
 
@@ -62,10 +64,12 @@ def main() -> None:
             print(f"DIVERGED (non-finite qpos) at step {step}, t={data.time:.2f}s")
             return
 
-        speed = float(np.linalg.norm(data.qvel[0:3]))
+        speed = float(np.linalg.norm(data.qvel[base_v : base_v + 3]))
         max_speed = max(max_speed, speed)
         if speed > SPEED_ALARM:
-            print(f"SPEED SPIKE at step {step}, t={data.time:.2f}s: {speed:.1f} m/s, pos={data.qpos[:3]}")
+            print(
+                f"SPEED SPIKE at step {step}, t={data.time:.2f}s: {speed:.1f} m/s, pos={data.qpos[base_q : base_q + 3]}"
+            )
             return
 
     print(f"OK: {loops} loop(s) ({tour_length * loops:.0f}s) with no divergence, max speed {max_speed:.2f} m/s")

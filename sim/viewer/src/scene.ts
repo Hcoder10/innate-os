@@ -40,6 +40,22 @@ export interface ApartmentLayout {
   /** No manifest: streamApartment falls back to the monolith glb. */
   monolith: boolean;
 }
+// The manipulation props (world.py GRASP_OBJECTS). They are MuJoCo primitives,
+// so the browser rebuilds them here rather than loading a mesh -- keep the
+// dimensions and colours in step with world.py. THREE's cylinder is Y-up while
+// MuJoCo's is Z-up, hence the rotated geometry.
+const GRASP_OBJECT_SHAPES: Record<string, { geometry: () => THREE.BufferGeometry; color: number }> = {
+  cube: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.04), color: 0xd94739 },
+  sock: { geometry: () => new THREE.BoxGeometry(0.04, 0.04, 0.06), color: 0x73757f },
+  can: {
+    geometry: () => new THREE.CylinderGeometry(0.02, 0.02, 0.06, 40).rotateX(Math.PI / 2),
+    color: 0x408cd9,
+  },
+  bar: { geometry: () => new THREE.BoxGeometry(0.03, 0.1, 0.03), color: 0xcc541a },
+  // Finely tessellated: a coarse sphere casts a visibly polygonal shadow right
+  // where it meets the floor, which is the one place the eye checks for contact.
+  ball: { geometry: () => new THREE.SphereGeometry(0.0225, 32, 24), color: 0x66cc73 },
+};
 
 // These URDF links carry no real body geometry — just small marker spheres
 // used to visualize the end-effector / camera optical frames (e.g. in
@@ -62,6 +78,23 @@ function roomPriority(name: string): number {
   const i = ROOM_PRIORITY.findIndex((keyword) => lower.includes(keyword));
   return i === -1 ? ROOM_PRIORITY.length : i;
 }
+// Key light offset from whatever it is lighting; setPose slides it along with
+// the robot so the tight shadow box stays centred on it. The direction is the
+// original key light's, so the robot shades the same as it always did.
+const KEY_LIGHT_OFFSET: [number, number, number] = [2.0, -1.5, 3.0];
+
+// The shadow box covers the robot AND every prop in the world, so nothing
+// loses its shadow by being left behind -- but it shrinks to the minimum that
+// does, because texel size is 2 * box / map and that is what decides whether
+// shadows look sharp or blocky. 0.7m is the floor (a robot 0.35m across with
+// a 0.36m reach, props dropped within 0.35m): 0.68mm per texel at 2048. Past
+// SHADOW_BOX_MAX_M it stops growing and distant props lose their shadow
+// rather than blurring the robot's, which is the part being looked at.
+const SHADOW_BOX_MIN_M = 0.7;
+const SHADOW_BOX_MAX_M = 3.0;
+const SHADOW_BOX_STEP_M = 0.25; // quantised, so the box does not resize every frame
+const SHADOW_MARGIN_M = 0.5; // the robot's own extent plus the throw of its shadow
+const SHADOW_MAP_PX = 2048;
 
 // Chase-cam framing used when a pose is snapped in (see spawnAt below).
 const CHASE_DISTANCE = 1.8; // meters behind the robot
@@ -70,7 +103,10 @@ const CHASE_HEIGHT = 1.1; // meters above the ground
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
 export type CameraView = "orbit" | "main" | "arm";
-const ROBOT_CAMERA_VFOV = 80;
+// Track mars_sim_driver/constants.py: per-camera FOVs matching what the
+// driver renders (the head and wrist are different physical lenses), so the
+// operator's preview frames exactly what the robot consumes.
+const ROBOT_CAMERA_VFOV: Record<"main" | "arm", number> = { main: 68.5, arm: 80 };
 // Don't shrink to fix the near-clipped gripper: the origin sits inside the
 // wrist housing, so a smaller near renders the housing interior instead.
 const ROBOT_CAMERA_NEAR = 0.03;
@@ -103,6 +139,10 @@ export class SimScene {
   private robotCameras = new Map<CameraView, THREE.PerspectiveCamera>();
   private activeView: CameraView = "orbit";
   private lidarPoints?: THREE.Points;
+  private keyLight?: THREE.DirectionalLight;
+  private shadowCatcher?: THREE.Mesh;
+  private shadowBoxM = SHADOW_BOX_MIN_M;
+  private robotXY: [number, number] = [0, 0];
   private hullsGroup?: THREE.Group;
   private hullsPromise?: Promise<void>;
   private hullsVisible = false;
@@ -115,6 +155,12 @@ export class SimScene {
   // Set by the first spawnAt: after that the camera belongs to the robot, and
   // the layout overview framing must not yank it away.
   private spawned = false;
+  // The URDF's <collision> subtrees, one per link. They hang off the link in
+  // the robot's own graph, so they follow the joints for free.
+  private robotColliders: THREE.Object3D[] = [];
+  private hullMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+  // One mesh per manipulation prop, built on the first state that names it.
+  private objectMeshes = new Map<string, THREE.Mesh>();
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -127,7 +173,7 @@ export class SimScene {
     this.renderer.setPixelRatio(this.fixedSize ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, !this.fixedSize);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.5;
@@ -154,6 +200,7 @@ export class SimScene {
     // stream; loadRobot removes it once the meshes are in.
     this.robotBox = this.boxOutline(new THREE.Box3(new THREE.Vector3(-0.22, -0.22, 0), new THREE.Vector3(0.22, 0.22, 0.75)));
     this.robotRoot.add(this.robotBox);
+    this.addShadowCatcher();
     this.robotRoot.visible = false;
     this.scene.add(this.robotRoot);
 
@@ -166,27 +213,89 @@ export class SimScene {
     // "glossy" on the robot parts.
     this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
+    // The shadow map follows the robot (see setPose) over a 5m box rather than
+    // trying to cover the whole flat. That is 2.4mm per texel, fine enough for
+    // the arm's ~2cm detail and the manipulation props to cast real contact
+    // shadows -- without one under the gripper there is no depth cue to judge
+    // a grasp by. It also lets normalBias stay at 12mm; the 50mm it needed
+    // over a 16m box erased the shadow of anything smaller than 50mm, i.e.
+    // every part that matters here.
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
-    key.position.set(4, -3, 6);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
     key.shadow.camera.near = 0.1;
-    key.shadow.camera.far = 30;
-    key.shadow.camera.left = -8;
-    key.shadow.camera.right = 8;
-    key.shadow.camera.top = 8;
-    key.shadow.camera.bottom = -8;
-    // normalBias clears the shadow-acne stripes a coarse 16m shadow map
-    // paints on the robot's ~2cm detail, without depth-bias peter-panning.
-    key.shadow.bias = -0.0004;
-    key.shadow.normalBias = 0.05;
+    key.shadow.camera.far = 12;
+    key.shadow.camera.left = -SHADOW_BOX_MIN_M;
+    key.shadow.camera.right = SHADOW_BOX_MIN_M;
+    key.shadow.camera.top = SHADOW_BOX_MIN_M;
+    key.shadow.camera.bottom = -SHADOW_BOX_MIN_M;
+    // Both biases stay near zero, and that is safe rather than sloppy.
+    // Shadow bias exists to stop a surface shadowing ITSELF, and three renders
+    // the flipped side into the shadow map (WebGLShadowMap's shadowSide: a
+    // FrontSide material casts from its back faces), so the depth stored is
+    // already the far side of every closed mesh. The shadow catcher casts
+    // nothing at all, so it cannot self-shadow under any circumstances -- for
+    // the floor shadow, every millimetre of bias is pure daylight between an
+    // object and its own shadow, worst under a sphere or a cube corner. The
+    // 0.5mm left is a margin for the robot's own meshes, which do receive.
+    key.shadow.bias = 0;
+    key.shadow.normalBias = 0.0005;
+    // REQUIRED. DirectionalLightShadow builds its camera as
+    // OrthographicCamera(-5, 5, 5, -5, 0.5, 500) and computes the projection
+    // in that constructor; LightShadow.updateMatrices never recomputes it. So
+    // every frustum value set above is ignored until this call, which is why
+    // nothing cast a shadow: the box stayed the default 10m centred on the
+    // world origin, while the robot spawns 4.3m away and drives off from
+    // there. Delete this line and the shadows go away again.
+    key.shadow.camera.updateProjectionMatrix();
+    key.position.set(...KEY_LIGHT_OFFSET);
     this.scene.add(key);
+    this.scene.add(key.target);
+    this.keyLight = key;
 
     const fill = new THREE.DirectionalLight(0xaaccff, 0.8);
     fill.position.set(-4, 3, 3);
     this.scene.add(fill);
 
     this.scene.add(new THREE.HemisphereLight(0xaabbcc, 0x445566, 1.2));
+  }
+
+  /** A transparent plane under the robot that shows nothing but the shadows
+   * falling on it.
+   *
+   * The apartment glb is baked: every one of its materials carries
+   * KHR_materials_unlit, so GLTFLoader gives them MeshBasicMaterial, which
+   * ignores lights entirely. The shading you see in the flat -- including the
+   * shadow under the sofa -- is painted into the texture, and receiveShadow on
+   * those meshes does nothing. Without this plane no shadow can ever land on
+   * the floor, however the light is set up.
+   *
+   * It rides with the robot (see setPose) because it only needs to cover the
+   * shadow box, and sits ON the physics floor at z=0 so shadows start where
+   * the object touches. Where the visual floor is raised (a rug), the rug
+   * draws over the shadow. */
+  private addShadowCatcher(): void {
+    const mesh = new THREE.Mesh(
+      // Big enough to cover the widest shadow box; it costs nothing where no
+      // shadow lands. PlaneGeometry is already XY / +Z normal, i.e. our floor.
+      new THREE.PlaneGeometry(2 * SHADOW_BOX_MAX_M + 2, 2 * SHADOW_BOX_MAX_M + 2),
+      // Coplanar with the floor at z=0 rather than lifted off it: a plane
+      // floated even 4mm up starts the shadow 4mm up the object's side, which
+      // at this light angle is a visible gap under everything. polygonOffset
+      // wins the z-fight in depth instead, without moving it in world space.
+      new THREE.ShadowMaterial({
+        opacity: 0.42,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+    );
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.renderOrder = 1;
+    this.shadowCatcher = mesh;
+    this.scene.add(mesh);
   }
 
   private addGround(): void {
@@ -218,10 +327,12 @@ export class SimScene {
   }
 
   /**
-   * Wireframe overlay of the driver's collision hulls -- the same
-   * apartment_collisions_v2 set mars_sim_driver collides against, lazily
-   * fetched on first show (manifest.json lists the OBJs since a browser
-   * can't list a directory), rotated Y-up -> Z-up like the apartment glb.
+   * Wireframe overlay of everything the driver collides with: the robot's own
+   * <collision> primitives from mars.urdf (already posed by the URDF graph,
+   * so they track the joints) plus the apartment_collisions_v2 hull set
+   * mars_sim_driver collides against. The hulls are lazily fetched on first
+   * show (manifest.json lists the OBJs since a browser can't list a
+   * directory) and rotated Y-up -> Z-up like the apartment glb.
    */
   setCollisionHullsVisible(visible: boolean): void {
     this.hullsVisible = visible;
@@ -234,13 +345,14 @@ export class SimScene {
       });
     }
     if (this.hullsGroup) this.hullsGroup.visible = visible;
+    for (const collider of this.robotColliders) collider.visible = visible;
   }
 
   private async loadCollisionHulls(): Promise<void> {
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
     const baseUrl = "/physics/apartment_collisions_v2/";
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+    const material = this.hullMaterial;
 
     // Fast path: one binary triangle soup (float32 xyz), one fetch, no
     // parsing -- publish_assets writes it next to the per-hull OBJs.
@@ -392,6 +504,12 @@ export class SimScene {
   private dressRoom(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
+        // Does nothing, kept only so this doesn't look like an oversight: the
+        // glb's materials are all KHR_materials_unlit, so GLTFLoader makes
+        // them MeshBasicMaterial and they cannot receive a shadow. Their
+        // shading is baked into the texture. addShadowCatcher is what puts
+        // the robot's own shadow on the floor. castShadow is deliberately
+        // left off -- the flat already shades itself.
         obj.receiveShadow = true;
         const setFrontSide = (mat: THREE.Material) => {
           mat.side = THREE.FrontSide;
@@ -463,6 +581,7 @@ export class SimScene {
     };
     // The shipped .d.ts omits the `material` arg the runtime actually passes.
     loader.loadMeshCb = loadMesh as unknown as typeof loader.loadMeshCb;
+    loader.parseCollision = true; // the collisions overlay draws these
 
     const robot = await loader.loadAsync(ROBOT_URDF_URL); // loadMeshCb enqueued every STL during parse
     return { done: this.finishRobot(robot, meshLoads) };
@@ -477,7 +596,19 @@ export class SimScene {
       if (link) link.visible = false;
     }
 
+    // Collider subtrees first, so the visual restyle below can skip them.
     robot.traverse((obj) => {
+      if (!(obj as { isURDFCollider?: boolean }).isURDFCollider) return;
+      obj.visible = this.hullsVisible;
+      this.robotColliders.push(obj);
+      obj.traverse((child) => {
+        child.userData.collider = true;
+        if (child instanceof THREE.Mesh) child.material = this.hullMaterial;
+      });
+    });
+
+    robot.traverse((obj) => {
+      if (obj.userData.collider) return;
       if (obj instanceof THREE.Mesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
@@ -506,7 +637,7 @@ export class SimScene {
         continue;
       }
       const cam = new THREE.PerspectiveCamera(
-        ROBOT_CAMERA_VFOV,
+        ROBOT_CAMERA_VFOV[mount.view],
         this.viewSize().width / this.viewSize().height,
         ROBOT_CAMERA_NEAR,
         100,
@@ -520,6 +651,65 @@ export class SimScene {
       this.robotCameras.set(mount.view, cam);
     }
     return robot;
+  }
+
+  /** Fit the shadow box around the robot AND every prop in the world, then
+   * park the light and the catcher on it.
+   *
+   * Pinned to the robot, anything left behind stops having a shadow the moment
+   * it leaves the box, which just reads as a bug. Sized to the whole set
+   * always, one prop dropped across the room costs sharpness everywhere. So it
+   * tracks the actual spread, quantised so it is not resized every frame, and
+   * stops growing at SHADOW_BOX_MAX_M -- past that a distant prop loses its
+   * shadow rather than blurring the robot's, which is the part being looked
+   * at. normalBias follows the texel size, since its whole job is to clear
+   * about one texel. */
+  private updateShadowVolume(): void {
+    const key = this.keyLight;
+    if (!key) return;
+
+    // Props further than the box could ever reach are dropped rather than
+    // dragging the centre off the robot: at the cap, a midpoint between the
+    // two would push the robot itself out of its own shadow box.
+    const reach = SHADOW_BOX_MAX_M - SHADOW_MARGIN_M;
+    const points: Array<[number, number]> = [this.robotXY];
+    for (const mesh of this.objectMeshes.values()) {
+      if (!mesh.visible) continue;
+      const dx = mesh.position.x - this.robotXY[0];
+      const dy = mesh.position.y - this.robotXY[1];
+      if (Math.hypot(dx, dy) <= reach) points.push([mesh.position.x, mesh.position.y]);
+    }
+    const xs = points.map((pt) => pt[0]);
+    const ys = points.map((pt) => pt[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    // Radius, not half-width: the box is axis-aligned in the LIGHT's frame,
+    // not the world's. SHADOW_MARGIN_M covers the robot's own extent and the
+    // throw of its shadow beyond whichever point is furthest out.
+    const needed = Math.max(...points.map((pt) => Math.hypot(pt[0] - cx, pt[1] - cy))) + SHADOW_MARGIN_M;
+    const box = Math.min(
+      SHADOW_BOX_MAX_M,
+      Math.max(SHADOW_BOX_MIN_M, Math.ceil(needed / SHADOW_BOX_STEP_M) * SHADOW_BOX_STEP_M),
+    );
+    if (box !== this.shadowBoxM) {
+      this.shadowBoxM = box;
+      key.shadow.camera.left = -box;
+      key.shadow.camera.right = box;
+      key.shadow.camera.top = box;
+      key.shadow.camera.bottom = -box;
+      key.shadow.camera.updateProjectionMatrix(); // never automatic; see addLights
+      key.shadow.normalBias = Math.max(0.0005, ((2 * box) / SHADOW_MAP_PX) * 0.8);
+    }
+
+    // Snap to whole texels: slid continuously the map re-samples every frame
+    // and the shadow edges crawl, which reads as cheap however sharp they are.
+    const texel = (2 * box) / SHADOW_MAP_PX;
+    const sx = Math.round(cx / texel) * texel;
+    const sy = Math.round(cy / texel) * texel;
+    key.position.set(sx + KEY_LIGHT_OFFSET[0], sy + KEY_LIGHT_OFFSET[1], KEY_LIGHT_OFFSET[2]);
+    key.target.position.set(sx, sy, 0);
+    key.target.updateMatrixWorld();
+    this.shadowCatcher?.position.set(sx, sy, 0);
   }
 
   /** Views actually available (a frame can be missing from the URDF). */
@@ -537,6 +727,36 @@ export class SimScene {
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
   setJointAngles(joints: Record<string, number>): void {
     this.robot?.setJointValues(joints);
+  }
+
+  /** Mirror the manipulation props from ground truth, keyed by name
+   * ({name: [x, y, z, qw, qx, qy, qz]} -- world_server's "objects" block).
+   * Each mesh is built on first sight from GRASP_OBJECT_SHAPES; a prop the
+   * block stops naming has left the world (parked, or never dropped) and is
+   * hidden rather than left behind at its last pose. */
+  setObjectPoses(poses: Record<string, number[]>): void {
+    for (const [name, mesh] of this.objectMeshes) {
+      if (!poses[name]) mesh.visible = false;
+    }
+    for (const [name, pose] of Object.entries(poses)) {
+      let mesh = this.objectMeshes.get(name);
+      if (!mesh) {
+        const shape = GRASP_OBJECT_SHAPES[name];
+        if (!shape) continue; // a prop this build doesn't know how to draw
+        mesh = new THREE.Mesh(shape.geometry(), new THREE.MeshStandardMaterial({ color: shape.color, roughness: 0.7 }));
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.objectMeshes.set(name, mesh);
+        this.scene.add(mesh);
+      }
+      // Explicitly, not just on creation: a prop that was removed and dropped
+      // again reuses its hidden mesh, and would otherwise stay invisible until
+      // a page reload rebuilt it.
+      mesh.visible = true;
+      mesh.position.set(pose[0], pose[1], pose[2]);
+      mesh.quaternion.set(pose[4], pose[5], pose[6], pose[3]);
+    }
+    this.updateShadowVolume(); // the props moved; the box may need to grow or shrink
   }
 
   // Orange accent for the arm links (see ORANGE_LINKS). Cached so every mesh
@@ -602,6 +822,8 @@ export class SimScene {
   setPose(x: number, y: number, yaw: number): void {
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
+    this.robotXY = [x, y];
+    this.updateShadowVolume();
 
     if (this.followCamera) {
       const [prevX, prevY] = this.followPrevXY;

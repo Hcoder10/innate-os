@@ -28,6 +28,12 @@ KP_YAW = 3.0
 MAX_LINEAR = 0.4
 MAX_YAW = 1.0
 
+# Position hold for the stopped base (core._station_keeping). HOLD_SETTLE_S
+# outlasts a skill's per-camera-frame cmd_vel gaps.
+KP_HOLD_LINEAR = 300.0
+KP_HOLD_YAW = 6.0
+HOLD_SETTLE_S = 0.4
+
 # Safety governor against imperfect hull-seam contacts (see sim/sandbox
 # README): clamp base velocity so a bad single-step impulse is a recoverable
 # thump, not NaN.
@@ -36,6 +42,143 @@ MAX_BASE_ANGULAR_SPEED = 6.0
 
 DRIVEN_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"]
 MIMIC_JOINT = ("joint6M", "joint6", -1.0)  # (name, source, multiplier)
+
+# --- contact tuning (see tune_contacts) ----------------------------------
+#
+# The robot's collision SHAPES all live in mars.urdf -- one description the
+# browser viewer draws from too. What is tuned here is everything the URDF
+# has no way to say: MuJoCo's contact model and the finger servo.
+FINGER_LINKS = ("link61", "link62")
+
+# Wheels catch on door frames like the real ones but must be FRICTIONLESS:
+# the planar base pins z, so a tangent wheel answers every step with ~50N of
+# spurious normal force whose friction cone glues the base. condim 1; the
+# chassis box, 7mm narrower, does the gripping.
+WHEEL_GEOMS = ("base_wheel_left", "base_wheel_right")
+
+# Grasp contact model. priority makes the finger's params govern every pair
+# it is in, so condim must be 6 here: boxes need the torsion term or they
+# spin out of the pinch, cylinders/spheres need rolling too. Friction is a
+# grippy pad's -- the torsion/roll terms are the binding constraint, never
+# slide (44N of pinch vs 1.6N objects).
+FINGER_CONDIM = 6
+FINGER_FRICTION = (2.0, 0.05, 0.02)  # (slide, torsion, roll)
+FINGER_SOLREF = (0.005, 1.0)
+FINGER_SOLIMP = (0.95, 0.99, 0.001, 0.5, 2)  # (dmin, dmax, width, midpoint, power)
+# Sets closing speed: terminal rate = GRIPPER_EFFORT_LIMIT/FINGER_DAMPING
+# (~0.45s full close). Must live on the joint, not the servo's velocity term:
+# an explicit -kd*qvel on a 2e-5 inertia dof oscillates (see core.KD_GRIPPER).
+FINGER_DAMPING = 1.0
+# Reflected servo inertia: without it MuJoCo's mass-scaled contact stiffness
+# lets the 12g blades sink centimetres into whatever they pinch.
+FINGER_ARMATURE = 1e-4
+
+# Structural sag past the encoders (gear play, link flex): the link settles
+# gravity_torque/STRUCT_STIFFNESS + ARM_BACKLASH_RAD below the servo angle.
+# /joint_states reports ENCODER-side angles (core.encoder_positions), so the
+# sag is invisible to FK, like on the machine. Estimates (~19mm at the pick
+# pose) until measured on a real arm.
+STRUCT_STIFFNESS = 25.0  # N*m/rad, per arm joint
+# Geartrain free play, tanh-smoothed so unloaded joints get none.
+ARM_BACKLASH_RAD = 0.055
+BACKLASH_TANH_NM = 0.05  # torque scale over which the play takes up
+
+# --- manipulation props --------------------------------------------------
+#
+# Graspable free bodies for core.drop_objects (the viewer's "drop objects"
+# button), parked off-map at GRASP_PARK_XY until dropped; a reset re-parks
+# them. forward/lateral are robot-frame metres from the robot at drop time,
+# on a 0.22m arc around the arm's shoulder so each is reachable top-down.
+# Densities are real materials'; do NOT lighten them -- at 20-40g a prop
+# skitters metres off the lightest graze.
+GRASP_PARK_XY = (15.0, 15.0)
+GRASP_PARK_PITCH = 0.5
+
+GRASP_OBJECTS = (
+    {
+        "name": "cube",
+        "forward": 0.227,
+        "lateral": 0.116,
+        "z": 0.02,  # resting height of the body origin = half the footprint
+        "geom": 'type="box" size="0.02 0.02 0.02"',
+        "density": 700,
+        "condim": 4,
+        "rgba": "0.85 0.28 0.24 1",
+    },
+    {
+        "name": "can",
+        "forward": 0.296,
+        "lateral": 0.011,
+        # 40mm across: 50mm pinches at the fingertip and rolls out. 60mm
+        # tall: taller fills pick_any_object's optical-flow window with
+        # featureless colour and positioning livelocks.
+        "z": 0.03,
+        "geom": 'type="cylinder" size="0.020 0.03"',
+        "density": 1050,
+        "roll": 0.005,  # rolling resistance on the floor
+        "condim": 4,
+        "rgba": "0.25 0.55 0.85 1",
+    },
+    {
+        # pick_any_object's design target: its default prompt is "the sock",
+        # and its grasp band sits HIGH -- the shipped constants close the jaws
+        # with the pad centre ~50mm off a hard floor (floor_z is an ee target,
+        # the pads ride ~10mm above it, close_lift adds 10mm more). A sock is
+        # a 60-80mm lump you pinch by the top; the 40mm cube is below that
+        # band and is the HARD case on real hardware too. This prop is what
+        # "the skill works" should be measured against: a rolled-sock-sized,
+        # sock-weight box (65g of fabric).
+        "name": "sock",
+        "forward": 0.161,
+        "lateral": 0.154,
+        "z": 0.03,
+        # 60mm tall (the skill's closing band lands on its upper third);
+        # 40x40 so the worst-case diagonal clears the 81mm jaw at any yaw.
+        # Grey, not white: white on pale parquet starves the flow tracker.
+        "geom": 'type="box" size="0.020 0.020 0.030"',
+        "density": 450,
+        "condim": 6,
+        "rgba": "0.45 0.46 0.50 1",
+    },
+    {
+        "name": "bar",
+        "forward": 0.296,
+        "lateral": -0.117,
+        "z": 0.015,
+        "geom": 'type="box" size="0.015 0.05 0.015"',
+        "density": 700,
+        "condim": 4,
+        # Deep orange: yellow on pale parquet starves the flow tracker.
+        "rgba": "0.80 0.33 0.10 1",
+    },
+    {
+        # 40mm, the same width as the cube and can: a 50mm sphere left only
+        # 15mm of jaw clearance per side, so the descending blade grazed its
+        # flank on ordinary aim error, stalled the descent high, and the jaws
+        # closed over the top cap without ever moving the ball (measured: pad
+        # centre 31mm above ball centre at the close, ball displaced 4mm total,
+        # 0/4). A sphere needs the pads at its equator -- it is the least
+        # forgiving shape in the roster, so it gets the friendliest width.
+        # Density is a dense rubber ball's: at the sphere's tiny volume the
+        # real bouncy-ball ~1100 lands at 37g, inside the skitter zone the
+        # header comment warns about.
+        "name": "ball",
+        "forward": 0.227,
+        "lateral": -0.221,
+        "z": 0.0225,
+        "geom": 'type="sphere" size="0.0225"',
+        "density": 1000,
+        "condim": 6,
+        # Foam stress ball: a hard sphere is unpickable (the contact rolls
+        # around the curve and the arm rides up over it). ~3mm of dent stops
+        # the roll; much softer slips. Priority beats the fingers' pad model.
+        "priority": 4,
+        "friction": "2.0 0.4 0.1",
+        "solref": "0.012 1",
+        "solimp": "0.9 0.97 0.003",
+        "rgba": "0.4 0.8 0.45 1",
+    },
+)
 
 # Matches the webapp's ARM_HOME_POSITIONS.
 ARM_HOME = {
@@ -156,6 +299,31 @@ def capped_texture_path(png_path: Path, texture_max: int) -> Path:
     return cached
 
 
+def grasp_object_bodies() -> str:
+    """MJCF for the manipulation props (see GRASP_OBJECTS), each a free body
+    parked off-map. core.drop_objects brings them into the apartment; the
+    parked pose is also what mj_resetData restores them to."""
+    park_x, park_y = GRASP_PARK_XY
+    bodies = []
+    for i, obj in enumerate(GRASP_OBJECTS):
+        # Per-object contact overrides (the sock): friction/solref/solimp
+        # default to the rigid-prop values, priority is emitted only if set.
+        friction = obj.get("friction", f"1.0 0.02 {obj.get('roll', 0.001)}")
+        solref = obj.get("solref", "0.01 1")
+        extra = ""
+        if "priority" in obj:
+            extra += f' priority="{obj["priority"]}"'
+        if "solimp" in obj:
+            extra += f' solimp="{obj["solimp"]}"'
+        bodies.append(f"""
+    <body name="{obj["name"]}" pos="{park_x + i * GRASP_PARK_PITCH:.4f} {park_y:.4f} {obj["z"]}">
+      <freejoint name="{obj["name"]}_free"/>
+      <geom name="{obj["name"]}_geom" {obj["geom"]} density="{obj["density"]}" condim="{obj["condim"]}"
+            friction="{friction}" solref="{solref}"{extra} rgba="{obj["rgba"]}" group="{VISUAL_GROUP}"/>
+    </body>""")
+    return "".join(bodies)
+
+
 def build_world_xml(
     rooms: dict[str, list[Path]],
     include_placeholder_robot: bool = True,
@@ -163,7 +331,8 @@ def build_world_xml(
     texture_max: int | None = None,
 ) -> str:
     """The apartment environment MJCF (floor plane + decomposed room hulls,
-    optionally the textured visual rooms in their own geom group).
+    optionally the textured visual rooms in their own geom group, plus the
+    graspable props in front of the spawn).
     texture_max caps the visual textures' resolution (see capped_texture_path)."""
     collision_group = COLLISION_GROUP if visual_rooms else 0
 
@@ -231,7 +400,7 @@ def build_world_xml(
     <body name="apartment" quat="0.7071068 0.7071068 0 0">
 {chr(10).join(geom_lines)}
 {chr(10).join(visual_geom_lines)}
-    </body>{robot_body}
+    </body>{grasp_object_bodies()}{robot_body}
   </worldbody>
 </mujoco>
 """
@@ -266,11 +435,55 @@ def add_planar_base(robot_spec: mujoco.MjSpec) -> None:
         joint.axis = axis
 
 
+def tune_contacts(robot_spec: mujoco.MjSpec) -> None:
+    """Make mars.urdf's collision shapes behave in MuJoCo: a gripper contact
+    model that can actually hold something (grasp parameters on the finger
+    blades, and the 12g blades' joints re-scaled from the arm-sized damping to
+    the finger servo's own damping and rotor inertia), and frictionless drive
+    wheels (see WHEEL_GEOMS).
+
+    The finger hub pins overlap by ~1mm at joint6 = 0 (the two pivots are
+    18.3mm apart and each pin is 19mm across), so the fingers are excluded
+    from colliding with each other -- they cannot cross anyway, since joint6
+    stops at 0 and joint6M mirrors it. arm.srdf disables the same pair for
+    MoveIt."""
+    for name in WHEEL_GEOMS:
+        wheel = robot_spec.geom(name)
+        wheel.condim = 1
+        wheel.priority = 1  # else the floor's condim 3 wins the pair and the friction is back
+
+    for link in FINGER_LINKS:
+        blades = [g for g in robot_spec.body(link).geoms if g.contype]
+        if not blades:
+            raise RuntimeError(f"{link}: no collision geometry in mars.urdf")
+        for geom in blades:
+            geom.priority = 2
+            geom.condim = FINGER_CONDIM
+            geom.friction = FINGER_FRICTION
+            geom.solref = FINGER_SOLREF
+            geom.solimp = FINGER_SOLIMP
+
+    robot_spec.add_exclude(bodyname1=FINGER_LINKS[0], bodyname2=FINGER_LINKS[1])
+
+    mimic_name, source_name, _mult = MIMIC_JOINT
+    for name in (source_name, mimic_name):
+        joint = robot_spec.joint(name)
+        joint.damping = [FINGER_DAMPING, 0.0, 0.0]  # hinge: only the first entry applies
+        joint.armature = FINGER_ARMATURE
+
+
 def style_robot_geoms(model: mujoco.MjModel, prefix: str = "robot_") -> None:
     """Match sim/viewer's styling: orange arm links, hidden frame markers,
-    collision boxes into the hidden group, matt_black lifted to charcoal."""
+    collision boxes into the hidden group, matt_black lifted to charcoal.
+
+    Robot geoms only (`prefix`): every other collidable body in the world --
+    the apartment hulls, the manipulation props -- owns the group it was built
+    with, and sweeping those into the hidden group would erase them from every
+    render."""
     for i in range(model.ngeom):
         body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[i]) or ""
+        if not body_name.startswith(prefix):
+            continue
         link_name = body_name.removeprefix(prefix)
 
         if model.geom_contype[i] == 1:  # a <collision> geom

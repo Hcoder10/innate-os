@@ -67,7 +67,14 @@ export class SimSession {
   #stageReady = false;
 
   // Ground-truth snapshots on the sim clock.
-  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  #samples: {
+    t: number;
+    x: number;
+    y: number;
+    yaw: number;
+    joints: Record<string, number>;
+    objects: Record<string, number[]>;
+  }[] = [];
   #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
   #lastArrival = 0;
   // Playback position on the sim clock (see tick).
@@ -157,11 +164,11 @@ export class SimSession {
 
       const last = this.#samples[this.#samples.length - 1];
       if (last === undefined || s.t > last.t) {
-        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects });
         if (this.#samples.length > 60) this.#samples.shift();
       } else if (s.t < last.t - 0.5) {
         // Sim clock jumped backwards (world-server restart): restart playback.
-        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects }];
         this.#playT = null;
       }
       this.#live = true;
@@ -217,6 +224,26 @@ export class SimSession {
   setCollisionHullsVisible(on: boolean): void {
     this.#hullsOn = on;
     this.#overlaysDirty = true;
+  }
+
+  /** Lay the manipulation props out on the floor in front of the robot,
+   * wherever it currently is (stage "drop objects" button). */
+  dropObjects(): void {
+    this.#controller?.send({ op: "drop_objects" });
+  }
+
+  /** Send the props back off-map (stage "remove objects" button). */
+  removeObjects(): void {
+    this.#controller?.send({ op: "remove_objects" });
+  }
+
+  /** Whether any manipulation prop is currently in the world. Read from
+   * ground truth rather than from what this client last asked for, so the
+   * stage's button still reads right after a sim reset or another viewer's
+   * drop. False until the first state arrives. */
+  get objectsPresent(): boolean {
+    const last = this.#samples[this.#samples.length - 1];
+    return last !== undefined && Object.keys(last.objects).length > 0;
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.
@@ -293,6 +320,28 @@ export class SimSession {
       joints[name] = va + (vb - va) * u;
     }
     scene.setJointAngles(joints);
+    // Interpolate the props on the SAME timeline as the robot. Drawing them at
+    // sample b while the robot is drawn at u between a and b puts them up to
+    // one sample ahead: ~13ms at 75Hz, which at a 1.2m/s wrist is over 15mm of
+    // mismatch, and it shows as the gripper passing through whatever it is
+    // carrying -- only ever while moving, which is exactly when you look.
+    const objects: Record<string, number[]> = {};
+    for (const [name, pb] of Object.entries(b.objects)) {
+      const pa = a.objects[name] ?? pb;
+      // Shortest-arc quaternion blend; the props barely rotate, so a
+      // normalised lerp is indistinguishable from a slerp here.
+      const dot = pa[3] * pb[3] + pa[4] * pb[4] + pa[5] * pb[5] + pa[6] * pb[6];
+      const s = dot < 0 ? -1 : 1;
+      const q = [3, 4, 5, 6].map((i) => pa[i] + (s * pb[i] - pa[i]) * u);
+      const norm = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+      objects[name] = [
+        pa[0] + (pb[0] - pa[0]) * u,
+        pa[1] + (pb[1] - pa[1]) * u,
+        pa[2] + (pb[2] - pa[2]) * u,
+        ...q.map((v) => v / norm),
+      ];
+    }
+    scene.setObjectPoses(objects);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;
