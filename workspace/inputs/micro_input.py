@@ -194,7 +194,7 @@ class MicroInput(InputDevice):
             self._barge_in = BargeInDetector(
                 logger=self.logger,
                 on_trigger=self._on_barge_in_trigger,
-                threshold_db=float(cfg.get("barge_in_threshold_db", 6.0)),
+                threshold_db=float(cfg.get("barge_in_threshold_db", 10.0)),
                 min_ms=int(cfg.get("barge_in_min_ms", 250)),
                 debug_dump_dir=str(cfg.get("barge_in_debug_dir", "")),
             )

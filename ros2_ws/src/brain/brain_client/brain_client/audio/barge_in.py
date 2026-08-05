@@ -40,9 +40,13 @@ FRAME = 512
 HOP = 240  # 10 ms -> 100 frames/s
 N_MELS = 24
 FMIN, FMAX = 100.0, 8000.0
-# Bands used for scoring: human speech energy concentrates here, and it is
-# also where coupling is strongest, so "excess vs predicted echo" is the test.
+# Bands where the echo is strong and steady — used to track the learned
+# model's level drift (good SNR for ratio estimation).
 SPEECH_LO, SPEECH_HI = 200.0, 4000.0
+# Scoring uses every band above SPEECH_LO *including* 4-8 kHz: coupling is
+# 40 dB weaker up there, so an interrupter's consonants show the largest
+# excess exactly where the echo masks least (confirmed on live voice traces).
+SCORE_TOP_K = 5
 
 CLIP_PEAK = 32000  # mic saturates at TTS peaks; clipped frames are unusable
 ALIGN_SEARCH_FRAMES = 350  # ref can lead the mic by up to 3.5 s (TTFB + pipe)
@@ -119,7 +123,7 @@ class BargeInDetector:
         self,
         logger=None,
         on_trigger: Callable[[dict], None] | None = None,
-        threshold_db: float = 6.0,
+        threshold_db: float = 10.0,
         min_ms: int = 250,
         warmup_ms: int = 400,
         debug_dump_dir: str = "",
@@ -135,6 +139,7 @@ class BargeInDetector:
         freqs = np.fft.rfftfreq(FRAME, 1.0 / MIC_RATE)
         centers = np.array([freqs[np.argmax(self._fb[i])] for i in range(N_MELS)])
         self._speech_bands = (centers >= SPEECH_LO) & (centers <= SPEECH_HI)
+        self._score_bands = centers >= SPEECH_LO
         self._state_lock = threading.RLock()
 
         self._mic = _FramedStream(self._fb)
@@ -408,8 +413,11 @@ class BargeInDetector:
         floor = predicted + 4.0 * self._ambient + 1e-3
         with np.errstate(divide="ignore"):
             excess_db = 10.0 * np.log10(np.maximum(mic_p, 1e-6) / floor)
-        sb = excess_db[self._speech_bands]
-        score = float(np.mean(np.sort(sb)[len(sb) // 3 :]))  # trimmed: top 2/3 bands
+        # A voice only pokes above the echo in its few strongest bands; a wide
+        # mean averages those away (measured: 300+ frames of top-5 excess
+        # became 1 hot frame). Score the loudest K bands only.
+        sb = excess_db[self._score_bands]
+        score = float(np.mean(np.sort(sb)[-SCORE_TOP_K:]))
         self._max_score = max(self._max_score, score)
 
         hot = score > self.threshold_db and m >= self._suppress_until
