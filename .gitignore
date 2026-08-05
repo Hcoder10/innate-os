@@ -108,9 +108,6 @@ workspace/skill_storage/
 # Generated on-robot by the skill catalog (typed physical-skill refs).
 workspace/physical_skills/
 
-# Per-user sim challenge progress (mars_sim_driver/challenges.py).
-workspace/challenges.json
-
 # recordings folder
 recordings/
 
