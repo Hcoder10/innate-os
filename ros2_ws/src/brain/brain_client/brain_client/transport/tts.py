@@ -212,7 +212,8 @@ class TTSHandler:
         except OSError:
             pass
 
-        self._publish_ref({"e": "start", "seq": seq, "rate": 44100})
+        # text rides along so the mic input can drop self-echo transcripts
+        self._publish_ref({"e": "start", "seq": seq, "rate": 44100, "text": text})
         stripper = _WavHeaderStripper()
 
         # Queue + writer thread decouples the network download from

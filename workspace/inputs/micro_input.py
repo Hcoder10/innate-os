@@ -17,6 +17,7 @@ import re
 import subprocess
 import threading
 import time
+from collections import deque
 
 import sounddevice as sd
 
@@ -51,6 +52,8 @@ class MicroInput(InputDevice):
         self._barge_in: BargeInDetector | None = None
         self._ref_rate = 44100
         self._tts_mic_percent = 50
+        self._unduck_until = 0.0
+        self._recent_tts: deque[tuple[float, set]] = deque(maxlen=8)
         self._tail_to_send: list[bytes] = []
         self._reconnect_thread = None
         self._is_connected = False
@@ -84,6 +87,11 @@ class MicroInput(InputDevice):
         self._is_robot_talking = is_playing
         if is_playing != was:
             self._set_capture_gain(ducked=is_playing)
+        if was and not is_playing:
+            # Reverb rings past aplay exit (resonating room) and queued
+            # utterances restart within ~100ms; without this hold-off the tail
+            # reaches STT and gets transcribed as user speech (self-talk loop).
+            self._unduck_until = time.monotonic() + 0.4
         det = self._barge_in
         if det is None or is_playing or not was:
             return
@@ -102,6 +110,8 @@ class MicroInput(InputDevice):
         etype = event.get("e")
         if etype == "start":
             self._ref_rate = int(event.get("rate", 44100))
+            if event.get("text"):
+                self._recent_tts.append((time.monotonic(), _norm_tokens(str(event["text"]))))
             det.on_ref_start(int(event.get("seq", -1)))
         elif etype == "pcm":
             det.feed_ref(event.get("pcm", b""), self._ref_rate)
@@ -386,6 +396,10 @@ class MicroInput(InputDevice):
                         continue
                     ducking_logged = False
 
+                    # reverb-tail hold-off after the robot stops speaking
+                    if time.monotonic() < self._unduck_until:
+                        continue
+
                     # Replay mic audio captured right after a barge-in trigger
                     # (only populated when barge_in_flush_tail is enabled).
                     if self._tail_to_send:
@@ -506,10 +520,36 @@ class MicroInput(InputDevice):
 
     def _on_transcript(self, text: str):
         """Called when transcript is ready."""
-        if text:
-            self.logger.info(f"🎤 Transcript: {text}")
+        if not text:
+            return
+        if self._is_self_echo(text):
+            self.logger.info(f"🔁 Dropped self-echo transcript: {text[:80]}")
+            return
+        self.logger.info(f"🎤 Transcript: {text}")
 
-            self.send_data(text, data_type="chat_in")
+        self.send_data(text, data_type="chat_in")
+
+    def _is_self_echo(self, text: str) -> bool:
+        """True if the transcript is mostly the robot's own recent speech.
+
+        Reverb + STT hallucination can turn a leaked TTS tail into a full
+        plausible sentence; since the exact TTS text is known, a transcript
+        whose tokens mostly appear in a recent utterance is discarded.
+        """
+        tokens = _norm_tokens(text)
+        if not tokens:
+            return False
+        now = time.monotonic()
+        for stamp, tts_tokens in self._recent_tts:
+            if now - stamp > 30.0:
+                continue
+            if len(tokens & tts_tokens) / len(tokens) >= 0.7:
+                return True
+        return False
+
+
+def _norm_tokens(text: str) -> set:
+    return set(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
 
 
 # ========== Audio Streaming Helpers ==========
