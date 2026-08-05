@@ -751,7 +751,8 @@ class VirtualMars:
 
     def place_group(self, group: str = "manipulation") -> int:
         """Set down every prop in `group` at its own reach offset from the
-        robot's current pose, park the rest, and return how many landed."""
+        robot's current pose, and return how many landed. Props outside the
+        group stay where they are -- use remove_all_props() to clear."""
         placed = self.props.place_group(self.data, group, self.pose())
         mujoco.mj_forward(self.model, self.data)
         return placed

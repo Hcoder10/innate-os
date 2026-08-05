@@ -348,14 +348,12 @@ class PropRegistry:
         return list(dict.fromkeys(p.group for p in self.props.values() if p.group))
 
     def place_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
-        """Set down every prop in one group at its own reach offset and park
-        the rest, so the set out is exactly `group`. Returns how many landed."""
+        """Set down every prop in one group at its own reach offset, leaving
+        every other prop where it is. Returns how many landed."""
         placed = 0
         for name, prop in self.props.items():
             if prop.group == group:
                 placed += bool(self.place_at_robot(data, name, pose))
-            else:
-                self.park(data, name)
         return placed
 
     def park(self, data, name: str) -> bool:
