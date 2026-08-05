@@ -116,12 +116,24 @@ export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on
 
 # Tab completions for the `innate` CLI (mirrors scripts/update/post_update.sh).
 # scripts/ is bind-mounted at runtime, so generate on first login rather than at
-# build time. This block runs after oh-my-zsh's compinit, so re-run it to pick up
-# the completions dir added to fpath.
-fpath=("/root/innate-os/scripts/build/completions" $fpath)
-if [ -f /root/innate-os/scripts/innate ] && [ ! -f /root/innate-os/scripts/build/completions/_innate ]; then
-    mkdir -p /root/innate-os/scripts/build/completions
-    /root/innate-os/scripts/innate completions > /root/innate-os/scripts/build/completions/_innate 2>/dev/null
+# build time. The generated file lives under /root rather than in the bind mount:
+# the mount carries the host user's ownership, and compinit's security audit
+# rejects an fpath entry root doesn't own (and we'd be dropping root-owned files
+# into the developer's checkout). This block runs after oh-my-zsh's compinit, so
+# re-run it to pick up the completions dir added to fpath.
+fpath=("/root/.zsh/completions" $fpath)
+if [ -f /root/innate-os/scripts/innate ] && [ ! -s /root/.zsh/completions/_innate ]; then
+    mkdir -p /root/.zsh/completions
+    # Generate through a temp file so an interrupted or failing run leaves no
+    # partial _innate behind — the guard above would treat it as done and no
+    # later shell would retry.
+    innate_comp_tmp=$(mktemp /root/.zsh/completions/innate-completions.XXXXXX)
+    if /root/innate-os/scripts/innate completions > "$innate_comp_tmp" 2>/dev/null && [ -s "$innate_comp_tmp" ]; then
+        mv "$innate_comp_tmp" /root/.zsh/completions/_innate
+    else
+        rm -f "$innate_comp_tmp"
+    fi
+    unset innate_comp_tmp
 fi
 autoload -Uz compinit && compinit
 EOF
