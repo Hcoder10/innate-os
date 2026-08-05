@@ -226,8 +226,54 @@ robot on Wi-Fi**, where those topics are too large to stream smoothly; there you
 use the lighter `/mars/main_camera/remote/*` topics instead. See
 [Foxglove](../README.md#foxglove) in the main README for that case.
 
-Prefer your own ROS tooling? A rosbridge server is also available at
-`ws://localhost:9090`.
+### Everyday commands
+
+```bash
+./innate-sim status      # startup checks + health snapshot
+./innate-sim logs        # startup logs; `logs os` / `logs agent` follow live
+./innate-sim sh          # shell into the container (see next section)
+./innate-sim down        # stop
+./innate-sim clean       # remove containers/volumes (keeps .env + config)
+```
+
+### Working on the robot code
+
+`./innate-sim sh` drops you into the container, where the same `innate` CLI
+as on a real robot manages the ROS stack. Your checkout is bind-mounted into
+it (`ros2_ws/`, `workspace/`, `scripts/`, `config/`), so files you edit on
+the host are immediately visible inside — you only choose how to reload them:
+
+```bash
+innate                   # status: mode, node health, command hints
+innate view              # attach the tmux session running the stack (Ctrl-b d to detach)
+innate restart           # stop + relaunch all ROS nodes (no rebuild)
+innate build             # stop nodes, colcon-build ros2_ws, restart
+innate build <pkg…>      # same, but only the named packages (faster)
+innate build release     # optimized build (CMAKE_BUILD_TYPE=Release)
+innate skill list        # skills the brain currently offers
+innate skill run <id> @param=value   # trigger a skill from the shell
+```
+
+Which one you need depends on what you changed:
+
+- **`workspace/` agents & skills, `config/` parameters** — not compiled;
+  `innate restart` is enough.
+- **`ros2_ws/` packages** (nodes, messages, drivers) — `colcon` installs a
+  copy, so edits need `innate build` (which restarts for you). Passing the
+  package name (`innate build mars_nav`) keeps the cycle short.
+- **The simulated world itself** (`mars_sim_driver`'s `world.py` / `core.py` /
+  `world_server.py`) — on macOS the physics/render process runs on the
+  *host*, outside the container, importing straight from your checkout.
+  `innate build` doesn't touch it; restart it from the host instead:
+  `pkill -f mars_sim_driver.world_server && ./innate-sim up`.
+
+`innate view` is the fastest way to see why a node is unhappy: the tmux
+session has one window per subsystem (zenoh, rosbridge, sim-driver,
+nav-brain, behavior, arm-ik, vision-nav, console-webapp), each showing that
+process's live output.
+
+Prefer Foxglove? Open a Rosbridge connection to `ws://localhost:9090` for
+TF, `/scan`, `/mars/main_camera/points`, camera topics and `/cmd_vel` teleop.
 
 ### Configuration
 
