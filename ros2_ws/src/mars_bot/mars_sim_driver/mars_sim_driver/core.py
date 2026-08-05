@@ -714,7 +714,7 @@ class VirtualMars:
 
     def encoder_positions(self) -> dict[str, float]:
         """What the real servo encoders would read: link angle plus the
-        structural deflection. The driver publishes THIS on /joint_states --
+        structural deflection due to gravity. The driver publishes THIS on /joint_states --
         real sag happens past the encoders, invisible to FK. The observer
         truth stream keeps joint_positions(), so viewers draw the sag."""
         out = {}
@@ -730,43 +730,35 @@ class VirtualMars:
         return self.props.poses(self.data)
 
     def prop_manifest(self) -> list[dict]:
-        """What every prop is and how to draw it (props.py) -- handed to the
-        viewer so its buttons and models follow the sidecars, not a second
-        hard-coded table."""
+        """What every prop is and how to draw it (props.py), for the viewer."""
         return self.props.manifest()
 
     def drop_prop_at(self, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
-        """Release one prop above (x, y), yawed about +z, and let physics
-        settle it onto whatever is below (a floor, a sofa, a table). False if
-        this world has no such prop."""
+        """Release one prop above (x, y) and let physics settle it onto
+        whatever is below (floor, sofa, table). False when prop does not exist."""
         if not self.props.drop_at(self.data, name, x, y, yaw):
             return False
         mujoco.mj_forward(self.model, self.data)
         return True
 
     def place_prop_at_robot(self, name: str) -> bool:
-        """Set one prop down in front of the robot WHERE IT IS NOW, at rest,
-        at a specified reach offset."""
+        """Set one prop down at rest, at its own reach offset from the robot's
+        current pose. False when prop does not exist."""
         if not self.props.place_at_robot(self.data, name, self.pose()):
             return False
         mujoco.mj_forward(self.model, self.data)
         return True
 
     def place_group(self, group: str = "manipulation") -> int:
-        """Lay out a whole set of props in front of the robot WHERE IT IS NOW,
-        each at its own reach offset, and park everything outside the set.
-
-        This is the workflow the arm's props exist for: drive somewhere, put a
-        fresh set down, practise grabbing -- without resetting the robot's own
-        pose the way reset() does. Returns how many landed."""
+        """Set down every prop in `group` at its own reach offset from the
+        robot's current pose, park the rest, and return how many landed."""
         placed = self.props.place_group(self.data, group, self.pose())
         mujoco.mj_forward(self.model, self.data)
         return placed
 
     def remove_all_props(self) -> None:
         """Send every prop back off-map -- the state the world starts in, and
-        what reset() leaves behind. Lets an operator clear the floor without
-        resetting the robot's own pose."""
+        what reset() leaves behind."""
         self.props.park_all(self.data)
         mujoco.mj_forward(self.model, self.data)
 

@@ -143,13 +143,7 @@ class WorldServer:
     def _serve_scenario_commands(self, ws) -> None:
         """Read the observer socket for stage commands. This is the sim's own
         scenery, not robot control: the ops place props (see props.py) and take
-        them away again, so an operator can set a scene up -- or practise
-        grabbing -- without a full reset.
-
-        A prop can be put down two ways: at the robot, which uses the prop's
-        own reach offset so it lands where the arm can actually get at it, or
-        at a spot the user picked, which releases it there and lets physics
-        settle it onto whatever is below."""
+        them away again, without a full reset."""
         try:
             for raw in ws:
                 try:

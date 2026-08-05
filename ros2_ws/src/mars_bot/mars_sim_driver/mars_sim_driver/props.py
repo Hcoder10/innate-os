@@ -1,9 +1,6 @@
-"""Droppable props: one sidecar per prop, discovered from the props roots.
-
-A prop is a free-floating MuJoCo body parked off-map until something places it
--- the manipulation targets the arm practises on (cube, can, sock, bar, ball)
-and the scenery a scenario needs (a person, a soccer ball, a dog) are the same
-kind of thing here, differing only in what their sidecars say.
+"""Droppable props: free-floating MuJoCo bodies parked off-map until something
+places them. Manipulation targets (cube, can, sock, ...) and scenery (a person,
+a dog, ...) differ only in what their sidecars say.
 
 A sidecar is a Python module exporting ``PROP = Prop(...)`` (the same shape as
 sim/challenges/), found under any props root. Python rather than data because
@@ -14,16 +11,14 @@ Paths inside a sidecar resolve relative to that sidecar, so a tracked prop can
 point at a bundled mesh (``../assets/humans/casual_man.obj``) and a bundled
 pack can keep everything in its own directory.
 
-Meshes are OPTIONAL at every level: a prop whose mesh is missing from the
-installed asset bundle degrades to its collision primitive, drawn instead of
-hidden, so the world is always complete even when the assets are not.
+Meshes are OPTIONAL at every level: a prop whose mesh the installed bundle
+lacks degrades to its collision primitive, drawn instead of hidden, so the
+world is always complete even when the assets are not.
 
-Geom groups follow the rest of the world (see world.py): group VISUAL_GROUP is
-rendered and is the only thing lidar rays hit (a true surface, like a real
-lidar); group COLLISION_GROUP is physics-only and hidden from every render. A
-primitive-only prop is a single geom in VISUAL_GROUP doing all three jobs; a
-mesh-backed prop splits them -- the textured mesh is what cameras and lidar
-see, the collider underneath is what physics uses.
+Geom groups follow the rest of the world (see world.py): a primitive-only prop
+is one VISUAL_GROUP geom doing render, lidar and physics; a mesh-backed prop
+splits them -- the textured mesh in VISUAL_GROUP, the collider under it in
+COLLISION_GROUP.
 """
 
 import importlib.util
@@ -269,19 +264,9 @@ class PropRegistry:
     """The props in one world: their MJCF, their addresses in the compiled
     model, and which of them are currently out on the floor.
 
-    Two ways a prop gets there, and the verbs are load-bearing:
-
-    * ``drop_*`` RELEASES it from the prop's ``drop_z`` and lets physics settle
-      it onto whatever is below -- the honest answer when nobody knows what is
-      under the spot the user picked.
-    * ``place_*`` sets it down at ``rest_z`` already at rest: no fall, no
-      bounce, no drift off a tuned spot.
-
-    Everything below is one of those two; ``_set_pose`` is the shared write
-    that neither name would fit.
-
-    Parked props are deliberately NOT reported by poses(): a viewer should
-    draw nothing rather than draw a prop sitting in the parking row.
+    The method-name verbs are load-bearing: ``drop_*`` releases from ``drop_z``
+    and lets physics settle the prop onto whatever is below, ``place_*`` sets
+    it down at ``rest_z`` already at rest.
     """
 
     def __init__(self, props: dict[str, Prop]):
@@ -337,8 +322,7 @@ class PropRegistry:
 
     def drop_at(self, data, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
         """Release a prop at its drop_z above (x, y), yawed about +z, and let
-        physics settle it onto whatever is below -- floor, sofa, table, another
-        prop. False if this world has no such prop."""
+        physics settle it onto whatever is below. False when prop does not exist."""
         if name not in self._addr:
             return False
         self._set_pose(data, name, x, y, self.props[name].drop_z, yaw)
@@ -346,9 +330,7 @@ class PropRegistry:
 
     def place_at_robot(self, data, name: str, pose: tuple[float, float, float]) -> bool:
         """Set a prop down at rest_z at its `reach` offset from the robot's
-        current pose. The manipulation props' offsets put them where the arm
-        can actually reach them, so this places rather than drops: no fall, no
-        bounce, no drift off the tuned spot."""
+        current pose. False when prop does not exist."""
         if name not in self._addr:
             return False
         prop = self.props[name]
@@ -366,9 +348,8 @@ class PropRegistry:
         return list(dict.fromkeys(p.group for p in self.props.values() if p.group))
 
     def place_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
-        """Set down every prop in one group at its own reach offset, and park
-        the rest -- so the set that lands is exactly the set asked for, the way
-        the stage's one-click layout always behaved. Returns how many landed."""
+        """Set down every prop in one group at its own reach offset and park
+        the rest, so the set out is exactly `group`. Returns how many landed."""
         placed = 0
         for name, prop in self.props.items():
             if prop.group == group:
@@ -391,8 +372,8 @@ class PropRegistry:
             self.park(data, name)
 
     def mark_all_parked(self) -> None:
-        """After mj_resetData: every prop is back at its parked pose already,
-        so the registry only has to catch its bookkeeping up."""
+        """Catch the bookkeeping up after mj_resetData, which has already
+        restored every prop to its parked pose."""
         self.out.clear()
 
     # -- readout --
