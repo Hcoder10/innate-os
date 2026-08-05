@@ -118,6 +118,13 @@ class MicroInput(InputDevice):
         elif etype == "end":
             det.on_ref_end(int(event.get("seq", -1)))
 
+    def note_servo_motion(self):
+        """Arm/head servos are moving — their noise at the gripper mic must
+        not count as barge-in evidence (called by the manager at joint rate)."""
+        det = self._barge_in
+        if det is not None:
+            det.suppress_hot_until_wall = time.monotonic() + 0.35
+
     def _on_barge_in_trigger(self, info: dict):
         """Detector callback (audio thread): tell the brain to stop talking."""
         self.send_data(dict(info), data_type="barge_in")

@@ -31,7 +31,10 @@ FRAME = 512
 HOP = 240
 N_MELS = 24
 FMIN, FMAX = 100.0, 8000.0
-CONTEXT = 21  # frames of ref context per prediction (= echo_model.CONTEXT_FRAMES)
+# Context must span the room's reverb tail (~600ms measured), or the model
+# cannot predict the ring-out after loud syllables. Stored in the npz so the
+# robot-side loader follows automatically.
+CONTEXT = 63
 
 
 def mel_filterbank():
@@ -192,6 +195,7 @@ def save_npz(model: EchoNet, path):
         w1=sd["conv.0.weight"], b1=sd["conv.0.bias"],
         w2=sd["conv.2.weight"], b2=sd["conv.2.bias"],
         wh=sd["head.weight"], bh=sd["head.bias"],
+        ctx=np.array(CONTEXT),
     )
 
 

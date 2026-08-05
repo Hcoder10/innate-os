@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-CONTEXT_FRAMES = 21  # must match train_echo_model.py
+DEFAULT_CONTEXT_FRAMES = 21  # pre-ctx-field weight files; new files carry their own
 
 
 def _make_conv1d_same(w: np.ndarray, b: np.ndarray):
@@ -49,6 +49,7 @@ def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray]
         conv1 = _make_conv1d_same(weights["w1"], weights["b1"])
         conv2 = _make_conv1d_same(weights["w2"], weights["b2"])
         wh, bh = weights["wh"].astype(np.float32), weights["bh"].astype(np.float32)
+        n_ctx = int(weights["ctx"]) if "ctx" in weights else DEFAULT_CONTEXT_FRAMES
     except Exception as e:
         if logger:
             logger.error(f"failed to load barge-in echo model {path}: {e}")
@@ -56,9 +57,9 @@ def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray]
 
     def predict(ref_ctx: np.ndarray) -> np.ndarray:
         # pad/trim the context to the trained window, log-compress like training
-        ctx = ref_ctx[-CONTEXT_FRAMES:]
-        if len(ctx) < CONTEXT_FRAMES:
-            ctx = np.concatenate([np.tile(ctx[:1], (CONTEXT_FRAMES - len(ctx), 1)), ctx])
+        ctx = ref_ctx[-n_ctx:]
+        if len(ctx) < n_ctx:
+            ctx = np.concatenate([np.tile(ctx[:1], (n_ctx - len(ctx), 1)), ctx])
         x = np.log10(ctx.astype(np.float32) + 1.0).T  # (N_MELS, T)
         h = np.maximum(conv1(x), 0.0)
         h = np.maximum(conv2(h), 0.0)

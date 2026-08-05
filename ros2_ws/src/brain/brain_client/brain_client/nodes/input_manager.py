@@ -14,6 +14,7 @@ import rclpy
 from innate_proxy import ProxyClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 
@@ -43,6 +44,9 @@ class InputManagerNode(Node):
         self.create_subscription(String, "/input_manager/active_inputs", self._on_active_inputs, 10)
         self.create_subscription(String, "/tts/is_playing", self._on_tts_status, 10)
         self.create_subscription(String, "/tts/ref_audio", self._on_tts_ref, 50)
+        # Servo motion is loud at the gripper mic (measured -23 dBFS vs -50
+        # floor) and is not in the TTS reference; barge-in must ignore it.
+        self.create_subscription(JointState, "/joint_states", self._on_joint_state, 10)
         self.create_service(SetBool, "/input_manager/set_input_active", self._svc_set_input_active)
 
         mic_state_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -92,6 +96,9 @@ class InputManagerNode(Node):
 
     def _on_tts_ref(self, msg: String) -> None:
         self.manager.handle_tts_ref(msg.data)
+
+    def _on_joint_state(self, msg: JointState) -> None:
+        self.manager.handle_joint_state(msg.position)
 
     def _on_mic_enabled(self, msg: Bool) -> None:
         self.manager.set_mic_enabled(msg.data)

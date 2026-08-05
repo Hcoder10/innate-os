@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import audioop  # stdlib in py3.10 (removal in 3.13 doesn't affect this target)
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 
@@ -155,6 +156,9 @@ class BargeInDetector:
         self._model: Callable[[np.ndarray], np.ndarray] | None = None
         self._model_scale = 1.0
         self._last_model_p: np.ndarray | None = None
+        # External noise gate (wall clock): the host sets this while its own
+        # servos move — that noise is loud at the mic and not in the ref.
+        self.suppress_hot_until_wall = 0.0
 
         self._active = False
         self._reset_utterance_state()
@@ -420,7 +424,11 @@ class BargeInDetector:
         score = float(np.mean(np.sort(sb)[-SCORE_TOP_K:]))
         self._max_score = max(self._max_score, score)
 
-        hot = score > self.threshold_db and m >= self._suppress_until
+        hot = (
+            score > self.threshold_db
+            and m >= self._suppress_until
+            and time.monotonic() >= self.suppress_hot_until_wall
+        )
         self._hot.append(1 if hot else 0)
         self._max_hot = max(self._max_hot, sum(self._hot))
 
@@ -441,10 +449,11 @@ class BargeInDetector:
 
     def _predict_echo(self, r: int, ref_p: np.ndarray) -> np.ndarray:
         # Reverb smears the echo (resonating room), so the prediction follows
-        # the reference with an exponential decay tail (~0.8/frame ≈ RT60
-        # 0.5 s) instead of dropping instantly in speech gaps — but it still
-        # tracks the dips, which is where a quieter human is detectable.
-        self._reverb_env = np.maximum(ref_p, self._reverb_env * 0.8)
+        # the reference with an exponential decay tail instead of dropping
+        # instantly in speech gaps. 0.92/frame = the slowest-quartile decay
+        # measured from recorded utterance tails on this robot; the faster 0.8
+        # under-predicted the ring-out and fired on the robot's own tail.
+        self._reverb_env = np.maximum(ref_p, self._reverb_env * 0.92)
         predicted = self._gains * self._reverb_env
         if self._model is None:
             return predicted
@@ -453,7 +462,7 @@ class BargeInDetector:
         # live: 27 dB under-prediction bursts -> false triggers). An online
         # scalar tracks that common-mode drift, and the adaptive-gain estimate
         # floors the result so neither predictor can under-predict alone.
-        r0 = max(0, r - 20)
+        r0 = max(0, r - 70)  # enough for a reverb-spanning model context
         self._last_model_p = self._model(np.asarray(self._ref.band_power[r0 : r + 1]))
         return np.maximum(predicted, self._model_scale * self._last_model_p)
 
