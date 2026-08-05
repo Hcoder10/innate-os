@@ -730,12 +730,12 @@ class VirtualMars:
         return self.props.poses(self.data)
 
     def object_centers(self) -> dict[str, tuple[float, float]]:
-        """xy of each dropped prop's visual CENTRE (props.py center_offset),
-        which is what a distance to a prop should mean -- the human scan
-        stands feet-at-origin, so its raw body xy is where its feet are. The
-        challenge judge measures against these; parked props are absent."""
+        """xy of each out prop's visual CENTRE (props.py center_offset), which
+        is what a distance to a prop should mean -- the human scan stands
+        feet-at-origin, so its raw body xy is where its feet are. The challenge
+        judge measures against these; parked props are absent."""
         return {
-            name: center for name in self.props.dropped if (center := self.props.center_xy(self.data, name)) is not None
+            name: center for name in self.props.out if (center := self.props.center_xy(self.data, name)) is not None
         }
 
     def prop_manifest(self) -> list[dict]:
