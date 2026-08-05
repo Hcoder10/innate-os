@@ -194,9 +194,12 @@ def save_npz(model: EchoNet, path):
     sd = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
     np.savez(
         path,
-        w1=sd["conv.0.weight"], b1=sd["conv.0.bias"],
-        w2=sd["conv.2.weight"], b2=sd["conv.2.bias"],
-        wh=sd["head.weight"], bh=sd["head.bias"],
+        w1=sd["conv.0.weight"],
+        b1=sd["conv.0.bias"],
+        w2=sd["conv.2.weight"],
+        b2=sd["conv.2.bias"],
+        wh=sd["head.weight"],
+        bh=sd["head.bias"],
         ctx=np.array(CONTEXT),
     )
 

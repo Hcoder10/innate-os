@@ -438,9 +438,7 @@ class BargeInDetector:
         self._max_score = max(self._max_score, score)
 
         hot = (
-            score > self.threshold_db
-            and m >= self._suppress_until
-            and time.monotonic() >= self.suppress_hot_until_wall
+            score > self.threshold_db and m >= self._suppress_until and time.monotonic() >= self.suppress_hot_until_wall
         )
         self._hot.append(1 if hot else 0)
         self._max_hot = max(self._max_hot, sum(self._hot))
