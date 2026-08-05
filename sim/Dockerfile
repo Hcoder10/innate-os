@@ -122,10 +122,16 @@ export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on
 # into the developer's checkout). This block runs after oh-my-zsh's compinit, so
 # re-run it to pick up the completions dir added to fpath.
 fpath=("/root/.zsh/completions" $fpath)
-if [ -f /root/innate-os/scripts/innate ] && [ ! -s /root/.zsh/completions/_innate ]; then
+# Regenerate when the cached file is missing/empty, or older than the CLI it was
+# generated from: `innate update` and plain `git pull` both rewrite scripts/innate
+# through the bind mount, and a pure existence guard would serve its stale
+# completions for the rest of the container's life.
+if [ -f /root/innate-os/scripts/innate ] && \
+   { [ ! -s /root/.zsh/completions/_innate ] || \
+     [ /root/innate-os/scripts/innate -nt /root/.zsh/completions/_innate ]; }; then
     mkdir -p /root/.zsh/completions
     # Generate through a temp file so an interrupted or failing run leaves no
-    # partial _innate behind — the guard above would treat it as done and no
+    # partial _innate behind — the guard above would treat it as current and no
     # later shell would retry.
     innate_comp_tmp=$(mktemp /root/.zsh/completions/innate-completions.XXXXXX)
     if /root/innate-os/scripts/innate completions > "$innate_comp_tmp" 2>/dev/null && [ -s "$innate_comp_tmp" ]; then
