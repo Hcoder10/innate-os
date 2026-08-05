@@ -7,8 +7,20 @@
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
-import type { ChallengeBlock } from "./physics/worldStateController";
+import type { ChallengeActive, ChallengeBlock, ChallengeInfo, ChallengeProgress } from "./physics/worldStateController";
 import type { PropInfo } from "./props";
+
+/** One roster row as a renderer wants it: what the challenge is, plus how it
+ * has gone so far. Merged here from the two halves the server sends. */
+export interface ChallengeEntry extends ChallengeInfo, ChallengeProgress {}
+
+/** The challenge panel's whole world: the roster and the run in progress. */
+export interface ChallengeView {
+  list: ChallengeEntry[];
+  active: ChallengeActive | null;
+}
+
+const NO_PROGRESS: ChallengeProgress = { passed: false, best_time_s: null, attempts: 0 };
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
 export const THUMB_W = 240;
@@ -105,12 +117,16 @@ export class SimSession {
   #stateUrls: string[];
   #rosUrl: string;
 
-  // Challenge judge state relayed from the world server (see challenges.py):
-  // deduped by content so listeners see transitions (~10Hz worst case from
-  // the elapsed-time field), not the raw broadcast rate.
-  #challenge: ChallengeBlock | null = null;
+  // Challenge judge state relayed from the world server (see challenges.py).
+  // The server splits it in two -- what each challenge IS arrives once per
+  // connection, what changes rides the state stream -- and this is where the
+  // halves are put back together, so a renderer sees one roster. Deduped by
+  // content, so listeners see transitions (~10Hz worst case from the
+  // elapsed-time field), not the raw broadcast rate.
+  #challengeInfo: ChallengeInfo[] = [];
+  #challenge: ChallengeView | null = null;
   #challengeJson = "";
-  #challengeListeners = new Set<(block: ChallengeBlock) => void>();
+  #challengeListeners = new Set<(view: ChallengeView) => void>();
 
   constructor(opts: { stateUrl?: string; rosUrl?: string } = {}) {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
@@ -170,6 +186,12 @@ export class SimSession {
       this.#propsDirty = true; // handed to the scene on the next tick
       for (const cb of this.#propListeners) cb(props);
     };
+    this.#controller.onChallenges = (challenges) => {
+      // Arrives ahead of the stream, so the merge below has titles and briefs
+      // before the first block; on a reconnect it just replaces them.
+      this.#challengeInfo = challenges;
+      this.#challengeJson = "";
+    };
     this.#controller.onState = (s) => {
       const lag = Date.now() / 1000 - s.wall;
       if (lag < this.#lagMinS) this.#lagMinS = lag;
@@ -193,14 +215,7 @@ export class SimSession {
         this.#playT = null;
       }
       this.#live = true;
-      if (s.challenge) {
-        const json = JSON.stringify(s.challenge);
-        if (json !== this.#challengeJson) {
-          this.#challengeJson = json;
-          this.#challenge = s.challenge;
-          for (const cb of this.#challengeListeners) cb(s.challenge);
-        }
-      }
+      if (s.challenge) this.#publishChallenge(s.challenge);
       if (!this.#gotPose) {
         this.#gotPose = true;
         this.#maybeStreaming();
@@ -302,12 +317,26 @@ export class SimSession {
   }
 
   /** Subscribe to the challenge judge's state (roster + active run); fires
-   * immediately with the latest block once one has arrived. The webapp's
+   * immediately with the latest view once one has arrived. The webapp's
    * challenge panel keys off this method's existence to stay sim-only. */
-  onChallenge(cb: (block: ChallengeBlock) => void): () => void {
+  onChallenge(cb: (view: ChallengeView) => void): () => void {
     this.#challengeListeners.add(cb);
     if (this.#challenge) cb(this.#challenge);
     return () => this.#challengeListeners.delete(cb);
+  }
+
+  /** Merge the roster with the block that just arrived and notify listeners
+   * if anything actually changed. A challenge with no record yet reads as
+   * unattempted -- the server only sends progress for the ones it has. */
+  #publishChallenge(block: ChallengeBlock): void {
+    const json = JSON.stringify(block);
+    if (json === this.#challengeJson) return;
+    this.#challengeJson = json;
+    this.#challenge = {
+      list: this.#challengeInfo.map((info) => ({ ...info, ...(block.progress[info.id] ?? NO_PROGRESS) })),
+      active: block.active,
+    };
+    for (const cb of this.#challengeListeners) cb(this.#challenge);
   }
 
   /** Start a challenge by id (resets the world and drops its props). */

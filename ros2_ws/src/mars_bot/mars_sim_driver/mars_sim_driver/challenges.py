@@ -236,21 +236,31 @@ class Challenge:
     reset_world: bool = True  # robot back to spawn + props re-parked on start
 
 
-def load_challenges(directory: Path) -> dict[str, Challenge]:
-    """Import every sim/challenges/*.py and collect its CHALLENGE. A broken
-    file is skipped with a warning -- one bad challenge must not take out the
-    world server."""
+def load_challenges(roots: list[Path]) -> dict[str, Challenge]:
+    """Every challenge under `roots`, later roots overriding earlier ones by
+    id -- the same shape as props.load_props, so an asset bundle can ship a
+    challenge pack next to the props it needs. A broken file is skipped with a
+    warning: one bad challenge must not take out the world server.
+
+    Filenames sort the roster the user sees, so they are numbered by what the
+    challenge asks for rather than by when it was written: 10s skills, 20s
+    people, 30s moving things around."""
     found: dict[str, Challenge] = {}
-    for path in sorted(directory.glob("*.py")):
-        try:
-            spec = importlib.util.spec_from_file_location(f"sim_challenge_{path.stem}", path)
-            assert spec and spec.loader
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            challenge: Challenge = module.CHALLENGE
-            found[challenge.id] = challenge
-        except Exception as exc:  # noqa: BLE001
-            print(f"[challenges] skipping {path.name}: {exc!r}", flush=True)
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.py")):
+            if path.name.startswith("_"):
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(f"sim_challenge_{path.stem}", path)
+                assert spec and spec.loader
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                challenge: Challenge = module.CHALLENGE
+                found[challenge.id] = challenge
+            except Exception as exc:  # noqa: BLE001
+                print(f"[challenges] skipping {path.name}: {exc!r}", flush=True)
     return found
 
 
@@ -269,11 +279,15 @@ class ChallengeEngine:
     """
 
     def __init__(
-        self, sim, sim_lock: threading.Lock, challenges_dir: Path | None = None, progress_path: Path | None = None
+        self, sim, sim_lock: threading.Lock, roots: list[Path] | None = None, progress_path: Path | None = None
     ):
         self.sim = sim
         self.sim_lock = sim_lock
-        self.challenges = load_challenges(challenges_dir or world.repo_root() / "sim" / "challenges")
+        # Tracked source dir plus anything the asset bundle shipped, like the
+        # props (core.VirtualMars): a pack can carry its scenarios with it.
+        if roots is None:  # an explicitly empty list means "load nothing"
+            roots = [world.repo_root() / "sim" / "challenges", world.default_assets_dir() / "challenges"]
+        self.challenges = load_challenges(roots)
         self.progress_path = progress_path or world.repo_root() / "workspace" / "challenges.json"
         self.progress = self._load_progress()
         self._mutex = threading.Lock()  # engine state (active challenge, events)
@@ -396,19 +410,27 @@ class ChallengeEngine:
                         self._record(challenge.id, "failed", None)
             return self._block(challenge)
 
+    def roster(self) -> list[dict]:
+        """What each challenge IS. Nothing here changes while the server runs,
+        so it goes out once per observer connection (world_server.serve_state)
+        rather than ~75 times a second -- the briefs are paragraphs."""
+        return [{"id": c.id, "title": c.title, "brief": c.brief} for c in self.challenges.values()]
+
     def _block(self, challenge: Challenge | None) -> dict:
+        # Only what can change rides the state stream. Progress is a few
+        # numbers per attempted challenge, so it ships every tick rather than
+        # in a change-only frame: the stream is latest-wins, and a client that
+        # skips the one frame carrying an update would keep a stale roster.
         block = {
-            "list": [
-                {
-                    "id": c.id,
-                    "title": c.title,
-                    "brief": c.brief,
-                    "passed": bool(self.progress.get(c.id, {}).get("passed")),
-                    "best_time_s": self.progress.get(c.id, {}).get("best_time_s"),
-                    "attempts": self.progress.get(c.id, {}).get("attempts", 0),
+            "progress": {
+                cid: {
+                    "passed": bool(entry.get("passed")),
+                    "best_time_s": entry.get("best_time_s"),
+                    "attempts": entry.get("attempts", 0),
                 }
-                for c in self.challenges.values()
-            ],
+                for cid, entry in self.progress.items()
+                if cid in self.challenges
+            },
             "active": None,
         }
         if challenge is not None:

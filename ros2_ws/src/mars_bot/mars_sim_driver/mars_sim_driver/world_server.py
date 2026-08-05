@@ -212,11 +212,13 @@ class WorldServer:
         client skips states instead of queueing lag), and accept the stage
         commands above on the way back."""
         threading.Thread(target=self._serve_scenario_commands, args=(ws,), daemon=True).start()
-        # The prop roster (props.py sidecars) never changes while the server
-        # runs, so it goes out once per connection instead of riding every
-        # state broadcast. The viewer builds its models and buttons from it.
+        # The prop roster (props.py sidecars) and the challenge roster
+        # (challenges.py) never change while the server runs, so they go out
+        # once per connection instead of riding every state broadcast. The
+        # viewer builds its models and buttons from the props; the challenge
+        # panel gets titles and briefs here and progress from the stream.
         with contextlib.suppress(Exception):  # noqa: BLE001 -- client gone before the first frame
-            ws.send(json.dumps({"props": self.sim.prop_manifest()}))
+            ws.send(json.dumps({"props": self.sim.prop_manifest(), "challenges": self.challenges.roster()}))
         last_seq = -1
         try:
             while True:

@@ -1,4 +1,11 @@
-"""Victory Lap: celebrate good news with a lap."""
+"""Victory Lap: celebrate good news with a lap.
+
+victory_spin is deliberately not in workspace/innate_skills/: the user writes
+it during the onboarding tutorial, so this challenge is the tutorial's payoff
+-- the first thing their own skill gets used for. On a robot that skipped
+onboarding the goal simply never fires (SkillDone matches nothing), which is
+the same way every skill goal behaves with rosbridge down.
+"""
 
 from mars_sim_driver.challenges import Challenge, Goal, SkillDone
 
