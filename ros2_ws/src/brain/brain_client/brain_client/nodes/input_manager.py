@@ -61,11 +61,11 @@ class InputManagerNode(Node):
         self.declare_parameter("openai_transcribe_model", "gpt-4o-mini-transcribe")
         self.declare_parameter("cartesia_voice_id", "9fdaae0b-f885-4813-b589-3c07cf9d5fea")
         self.declare_parameter("barge_in_enabled", True)
-        self.declare_parameter("barge_in_threshold_db", 10.0)
-        self.declare_parameter("barge_in_min_ms", 250)
+        self.declare_parameter("barge_in_threshold_db", 6.0)
+        self.declare_parameter("barge_in_min_ms", 150)
         self.declare_parameter("barge_in_flush_tail", False)
         self.declare_parameter("barge_in_model_path", "")
-        self.declare_parameter("barge_in_reverb_decay", 0.92)
+        self.declare_parameter("barge_in_reverb_decay", 0.87)
         self.declare_parameter("barge_in_debug_dir", "")
         proxy_config = {
             "openai_realtime_model": self.get_parameter("openai_realtime_model").value,

@@ -124,10 +124,10 @@ class BargeInDetector:
         self,
         logger=None,
         on_trigger: Callable[[dict], None] | None = None,
-        threshold_db: float = 10.0,
-        min_ms: int = 250,
+        threshold_db: float = 6.0,
+        min_ms: int = 150,
         warmup_ms: int = 400,
-        reverb_decay: float = 0.92,
+        reverb_decay: float = 0.87,
         debug_dump_dir: str = "",
     ):
         self.logger = logger if logger is not None else _SilentLogger()

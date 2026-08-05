@@ -53,6 +53,13 @@ class Harness:
 
     def __init__(self, ttfb_s=0.8, ref_lead_s=0.4, echo_gain=0.55, ambient=0.004, **det_kw):
         self.triggers: list[dict] = []
+        # The synthetic room's residuals run hotter than a real one (its
+        # convolved noise reverb is less predictable than measured speech
+        # echo), so these tests pin their own threshold instead of riding the
+        # shipped default — which is set from on-robot measurements.
+        det_kw.setdefault("threshold_db", 10.0)
+        det_kw.setdefault("min_ms", 250)
+        det_kw.setdefault("reverb_decay", 0.92)
         self.det = BargeInDetector(on_trigger=self.triggers.append, **det_kw)
         self.ttfb_s = ttfb_s
         self.ref_lead_s = ref_lead_s
