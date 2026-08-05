@@ -50,6 +50,7 @@ class MicroInput(InputDevice):
         self._is_robot_talking = False  # For ducking (mic-specific)
         self._barge_in: BargeInDetector | None = None
         self._ref_rate = 44100
+        self._tts_mic_percent = 50
         self._tail_to_send: list[bytes] = []
         self._reconnect_thread = None
         self._is_connected = False
@@ -81,6 +82,8 @@ class MicroInput(InputDevice):
         """
         was = self._is_robot_talking
         self._is_robot_talking = is_playing
+        if is_playing != was:
+            self._set_capture_gain(ducked=is_playing)
         det = self._barge_in
         if det is None or is_playing or not was:
             return
@@ -135,6 +138,8 @@ class MicroInput(InputDevice):
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
 
             self._init_barge_in()
+            # a crash mid-TTS could have left the capture gain ducked
+            self._set_capture_gain(ducked=False)
 
             # Connect via proxy
             self._connect_via_proxy()
@@ -145,6 +150,27 @@ class MicroInput(InputDevice):
 
             traceback.print_exc()
 
+    def _set_capture_gain(self, ducked: bool):
+        """Drop the mic capture gain while the robot speaks, restore after.
+
+        At full gain the speaker-to-mic coupling clips the mic during TTS,
+        which blinds barge-in detection; but full gain is needed the rest of
+        the time for STT sensitivity (the gripper mic is weak). The two needs
+        never overlap in time, so switch at utterance boundaries. Nothing is
+        sent to STT while ducked, so OpenAI never sees the gain steps.
+        """
+        if self._barge_in is None:
+            return
+        pct = int(self._tts_mic_percent if ducked else 100)
+        try:
+            subprocess.Popen(
+                ["amixer", "-q", "-c", "Light", "sset", "Mic", f"{pct}%"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            self.logger.debug(f"capture gain set failed: {e}")
+
     def _init_barge_in(self):
         """Create the barge-in detector once; coupling gains persist across cycles."""
         if self._barge_in is not None:
@@ -153,6 +179,7 @@ class MicroInput(InputDevice):
         if not cfg.get("barge_in_enabled", True):
             self.logger.info("🙋 Barge-in detection disabled by config")
             return
+        self._tts_mic_percent = int(cfg.get("barge_in_tts_mic_percent", 50))
         try:
             self._barge_in = BargeInDetector(
                 logger=self.logger,

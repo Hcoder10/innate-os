@@ -156,6 +156,7 @@
 #     barge_in_min_ms: 250          # cumulative overlap-speech evidence before triggering
 #     barge_in_flush_tail: false    # replay post-trigger mic audio to STT after TTS stops
 #     barge_in_model_path: ""       # npz from scripts/audio/train_echo_model.py; empty = adaptive gains
+#     barge_in_tts_mic_percent: 50  # capture gain while the robot speaks (100 = never duck the mic gain)
 
 # ── Vision-language navigation (UniNavid) ─────────────────────────────
 # (The cloud endpoint URL is connectivity and lives in .env as UNINAVID_WS_URL.)
