@@ -114,13 +114,15 @@ export INNATE_OS_ROOT=/root/innate-os
 export CCACHE_DIR=/root/.cache/ccache
 export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on PATH
 
-# Tab completions for the `innate` CLI (mirrors scripts/update/post_update.sh).
-# scripts/ is bind-mounted at runtime, so generate on first login rather than at
-# build time. The generated file lives under /root rather than in the bind mount:
-# the mount carries the host user's ownership, and compinit's security audit
-# rejects an fpath entry root doesn't own (and we'd be dropping root-owned files
-# into the developer's checkout). This block runs after oh-my-zsh's compinit, so
-# re-run it to pick up the completions dir added to fpath.
+# Tab completions for the `innate` CLI — the container's answer to what
+# scripts/update/post_update.sh does on a physical robot, but deliberately NOT
+# to the same path: post_update writes scripts/build/completions, and here
+# scripts/ is a bind mount carrying the host user's ownership, which compinit's
+# security audit rejects for an fpath entry root doesn't own (and generating
+# there would drop root-owned files into the developer's checkout). So the file
+# lives under /root instead. The bind mount also means scripts/innate does not
+# exist at image build time, so this runs on login, not in a RUN layer. It lands
+# after oh-my-zsh's compinit, hence the second compinit to pick up the new fpath.
 fpath=("/root/.zsh/completions" $fpath)
 # Regenerate when the cached file is missing/empty, or older than the CLI it was
 # generated from: `innate update` and plain `git pull` both rewrite scripts/innate
@@ -134,7 +136,13 @@ if [ -f /root/innate-os/scripts/innate ] && \
     # partial _innate behind — the guard above would treat it as current and no
     # later shell would retry.
     innate_comp_tmp=$(mktemp /root/.zsh/completions/innate-completions.XXXXXX)
-    if /root/innate-os/scripts/innate completions > "$innate_comp_tmp" 2>/dev/null && [ -s "$innate_comp_tmp" ]; then
+    # Time-capped because this sits in the login path: a hung generator would
+    # otherwise hang every new shell. Stderr goes to a log next to the output
+    # rather than the terminal -- failing silently with no breadcrumb is worse
+    # than a file nobody reads.
+    if timeout 30 /root/innate-os/scripts/innate completions \
+           > "$innate_comp_tmp" 2>/root/.zsh/innate-completions.log \
+       && [ -s "$innate_comp_tmp" ]; then
         mv "$innate_comp_tmp" /root/.zsh/completions/_innate
     else
         rm -f "$innate_comp_tmp"
