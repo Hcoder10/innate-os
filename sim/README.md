@@ -254,10 +254,10 @@ and restarts in one step.
 
 The trap is the simulated world itself — `mars_sim_driver`'s `world.py`,
 `core.py` and `world_server.py`. That process runs on the **host**, outside
-the container, on every platform (in-container rendering was far too slow to
-be usable), importing straight from your checkout. `innate build` rebuilds
-the container's copy, but the world server never loads it. Restart that one
-from the host: `./innate-sim down && ./innate-sim up`.
+the container, on every platform, importing straight from your checkout.
+`innate build` rebuilds the container's copy, but the world server never
+loads it. Restart that one from the host:
+`./innate-sim down && ./innate-sim up`.
 
 `innate view` is the fastest way to see why a node is unhappy: the tmux
 session has one window per subsystem (zenoh, rosbridge-app, sim-driver,
