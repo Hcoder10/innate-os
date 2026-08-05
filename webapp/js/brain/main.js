@@ -4,9 +4,12 @@
 // Brain page — a live window into the local Gemini agent loop.
 //
 // Deep telemetry rides /brain/trace (JSON on std_msgs/String, published by
-// brain_client's BrainAgent): turn lifecycle with the exact frame the model
-// saw, tool calls with args + outcomes, think latencies, the event queue, and
-// a 1 Hz snapshot heartbeat. Everything else (mind stream, skill runs, pose,
+// brain_client's BrainAgent): turn lifecycle with every image the model was
+// sent (head camera, wrist camera, event images), the full input text and
+// system instruction, tool calls with args + outcomes, think latencies, the
+// event queue, and a 1 Hz snapshot heartbeat. Recent turns are kept so any
+// turn row can be opened in the inspector overlay — the complete model input
+// and output for that turn. Everything else (mind stream, skill runs, pose,
 // live camera fallback) comes from the public topics, so the page degrades
 // gracefully on robots without the trace publisher — the deep panels just
 // stay quiet.
@@ -69,6 +72,21 @@ function buildView(root) {
     cometAngle: -90,
   };
 
+  // Per-turn records for the filmstrip + inspector: turn -> {start, end}.
+  // Frames are full base64 JPEGs, so the store is deliberately shallow.
+  /** @type {Map<number, {start: any, end: any}>} */
+  const turns = new Map();
+  const TURNS_MAX = 24;
+  let shownTurn = 0; // turn on the vision stage
+  let inspecting = 0; // turn open in the inspector; 0 = closed
+
+  /** @param {any} d turn_start payload (frames already normalized) */
+  function rememberTurn(d) {
+    turns.set(d.turn, { start: d, end: null, request: null });
+    while (turns.size > TURNS_MAX) turns.delete(/** @type {number} */ (turns.keys().next().value));
+    /** @type {HTMLButtonElement} */ ($(".br-inspect-btn")).hidden = false;
+  }
+
   // ---- the loop ------------------------------------------------------------
   for (const [n, a] of Object.entries(NODE_ANGLE)) {
     const rad = (a * Math.PI) / 180;
@@ -99,8 +117,11 @@ function buildView(root) {
     if (d.ev === "turn_start") {
       S.turn = d.turn;
       $(".br-tools").textContent = d.tools ? `${d.tools.length} tool${d.tools.length === 1 ? "" : "s"} armed` : "";
-      if (d.frame) {
-        showFrame("data:image/jpeg;base64," + d.frame, `what the brain saw · turn ${d.turn}`);
+      // Older robots trace a single `frame`; current ones a labeled `frames` list.
+      d.frames = d.frames || (d.frame ? [{ label: "head camera", jpeg: d.frame }] : []);
+      if (d.frames.length) {
+        rememberTurn(d);
+        showTurn(d.turn, 0);
         sweep();
       }
       hidePing();
@@ -110,15 +131,26 @@ function buildView(root) {
         if (S.phase === "look") setPhase("think");
       }, 550);
     }
+    if (d.ev === "turn_request") {
+      // The exact request body, intercepted just before the wire.
+      const rec = turns.get(d.turn);
+      if (rec) {
+        rec.request = d.body;
+        if (inspecting === d.turn) renderInspector();
+      }
+    }
     if (d.ev === "turn_end") {
       S.streak = 0;
       renderStreak();
       S.history = d.history;
       S.latencies.push({ turn: d.turn, s: d.latency });
       if (S.latencies.length > 60) S.latencies.shift();
+      const rec = turns.get(d.turn);
+      if (rec) rec.end = d;
+      if (inspecting === d.turn) renderInspector();
       addTurnRow(d);
       renderVitals();
-      const point = (d.calls || []).find((/** @type {any} */ c) => c.name === "go_to_point");
+      const point = (d.calls || []).find((/** @type {any} */ c) => c.name === "go_to_point_in_view" || c.name === "go_to_point");
       if (point?.args) showPing(point.args.x, point.args.y);
       const acted = (d.calls || []).some((/** @type {any} */ c) => c.name !== "wait") || d.speech;
       setPhase(acted ? "act" : "wait");
@@ -142,6 +174,7 @@ function buildView(root) {
     if (d.ev === "event") {
       addQueueCard(d.kind, d.text);
       if (d.kind === "user") addMsg("user", "USER", d.text.replace(/^The user says: "(.*)"$/s, "$1"));
+      if (d.kind === "motion") motionCue();
     }
     if (d.ev === "snapshot") onSnapshot(d);
   }
@@ -230,7 +263,11 @@ function buildView(root) {
   /** @param {any} d */
   function addTurnRow(d) {
     const div = document.createElement("div");
-    div.className = "br-turn-row";
+    div.className = "br-turn-row" + (turns.has(d.turn) ? " click" : "");
+    if (turns.has(d.turn)) {
+      div.title = "Show the full model input for this turn";
+      div.addEventListener("click", () => openInspector(d.turn));
+    }
     const calls = (d.calls || [])
       .map((/** @type {any} */ c) => {
         const bad = /^(rejected|unknown|could not)/.test(c.outcome || "");
@@ -361,6 +398,194 @@ function buildView(root) {
   });
 
   // ---- vision --------------------------------------------------------------
+  /** Put one of a turn's frames on the stage and sync the filmstrip.
+   * @param {number} turn @param {number} idx */
+  function showTurn(turn, idx) {
+    const rec = turns.get(turn);
+    const f = rec?.start.frames[idx];
+    if (!f) return;
+    shownTurn = turn;
+    showFrame("data:image/jpeg;base64," + f.jpeg, `what the brain saw · turn ${turn} · ${f.label}`);
+    if (idx !== 0) hidePing(); // the go-to-point ping is grounded in the head frame
+    const film = $(".br-film");
+    film.innerHTML = "";
+    film.classList.toggle("multi", rec.start.frames.length > 1);
+    rec.start.frames.forEach((/** @type {any} */ fr, /** @type {number} */ i) => {
+      const b = document.createElement("button");
+      b.className = "br-thumb" + (i === idx ? " active" : "");
+      b.innerHTML = `<img alt=""><span></span>`;
+      /** @type {HTMLImageElement} */ (b.querySelector("img")).src = "data:image/jpeg;base64," + fr.jpeg;
+      /** @type {HTMLElement} */ (b.querySelector("span")).textContent = fr.label;
+      b.addEventListener("click", () => showTurn(turn, i));
+      film.append(b);
+    });
+  }
+
+  // ---- turn inspector ------------------------------------------------------
+  /** @param {number} turn */
+  function openInspector(turn) {
+    if (!turns.has(turn)) return;
+    inspecting = turn;
+    renderInspector();
+    $(".br-inspect").hidden = false;
+  }
+  function closeInspector() {
+    inspecting = 0;
+    $(".br-inspect").hidden = true;
+  }
+
+  /** A labeled block for the inspector's output section.
+   * @param {string} label @param {string} text @param {string} cls */
+  function iBlock(label, text, cls) {
+    const div = document.createElement("div");
+    div.className = "br-i-block " + cls;
+    div.innerHTML = `<div class="l"></div><div class="t"></div>`;
+    /** @type {HTMLElement} */ (div.querySelector(".l")).textContent = label;
+    /** @type {HTMLElement} */ (div.querySelector(".t")).textContent = text;
+    return div;
+  }
+
+  /** One request `contents` entry as a card: role tag + every part rendered —
+   * text as prose, inlineData as the actual image, function calls/responses
+   * as mono lines. Nothing summarized, nothing dropped.
+   * @param {any} content @param {boolean} isNew */
+  function contentCard(content, isNew) {
+    const card = document.createElement("div");
+    const role = content.role || "?";
+    card.className = "br-i-turncard " + role + (isNew ? " new" : "");
+    const tag = document.createElement("div");
+    tag.className = "role";
+    tag.textContent = role + (isNew ? " · this turn" : "");
+    card.append(tag);
+    let imgs = null;
+    for (const part of content.parts || []) {
+      if (part.inlineData) {
+        if (!imgs) {
+          imgs = document.createElement("div");
+          imgs.className = "imgs";
+          card.append(imgs);
+        }
+        const img = document.createElement("img");
+        img.src = `data:${part.inlineData.mimeType || "image/jpeg"};base64,${part.inlineData.data}`;
+        imgs.append(img);
+      } else if (part.functionCall) {
+        const div = document.createElement("div");
+        div.className = "fn";
+        div.textContent = `functionCall ${part.functionCall.name}(${JSON.stringify(part.functionCall.args ?? {})})`;
+        card.append(div);
+      } else if (part.functionResponse) {
+        const div = document.createElement("div");
+        div.className = "fn";
+        div.textContent =
+          `functionResponse ${part.functionResponse.name} → ` +
+          `${JSON.stringify(part.functionResponse.response?.outcome ?? part.functionResponse.response ?? "")}`;
+        card.append(div);
+      } else {
+        const div = document.createElement("div");
+        div.className = "txt";
+        div.textContent = part.text ?? JSON.stringify(part);
+        card.append(div);
+      }
+      if (part.thoughtSignature) {
+        const sig = document.createElement("div");
+        sig.className = "fn sig";
+        sig.textContent = `[thoughtSignature · ${String(part.thoughtSignature).length} chars]`;
+        card.append(sig);
+      }
+    }
+    return card;
+  }
+
+  function renderInspector() {
+    const rec = turns.get(inspecting);
+    if (!rec) return;
+    const { start, end, request: req } = rec;
+    const n = (start.frames || []).length;
+    // Count history images straight from the request body when we have it.
+    const reqImgs = req
+      ? (req.contents || []).reduce(
+          (a, /** @type {any} */ c) => a + (c.parts || []).filter((/** @type {any} */ p) => p.inlineData).length,
+          0,
+        )
+      : 0;
+    const nHist = req ? reqImgs - n : (start.history_images ?? 0) * n;
+    $(".br-i-title").textContent = `turn ${start.turn}`;
+    $(".br-i-meta").textContent =
+      `${n} new image${n === 1 ? "" : "s"}` +
+      (nHist > 0 ? ` + ${nHist} in history` : "") +
+      ` · history ${start.history} entries · ` +
+      (end ? `${end.latency.toFixed(1)}s think` : "thinking…");
+
+    const fr = $(".br-i-frames");
+    fr.innerHTML = "";
+    for (const f of start.frames || []) {
+      const fig = document.createElement("figure");
+      fig.innerHTML = `<img alt=""><figcaption></figcaption>`;
+      /** @type {HTMLImageElement} */ (fig.querySelector("img")).src = "data:image/jpeg;base64," + f.jpeg;
+      /** @type {HTMLElement} */ (fig.querySelector("figcaption")).textContent = f.label;
+      fr.append(fig);
+    }
+
+    // The request itself: every history entry and the new message, verbatim.
+    const conv = $(".br-i-conv");
+    conv.innerHTML = "";
+    $(".br-i-conv-h").hidden = /** @type {HTMLElement} */ (conv).hidden = !req;
+    if (req) {
+      const cfg = document.createElement("div");
+      cfg.className = "br-i-cfg";
+      cfg.textContent = `generationConfig ${JSON.stringify(req.generationConfig ?? {})}`;
+      conv.append(cfg);
+      const contents = req.contents || [];
+      contents.forEach((/** @type {any} */ c, /** @type {number} */ i) =>
+        conv.append(contentCard(c, i === contents.length - 1)),
+      );
+      const decl = document.createElement("details");
+      decl.className = "br-i-json";
+      decl.innerHTML = `<summary>tool declarations (json)</summary><pre></pre>`;
+      /** @type {HTMLElement} */ (decl.querySelector("pre")).textContent = JSON.stringify(req.tools ?? [], null, 2);
+      conv.append(decl);
+    }
+
+    $(".br-i-input").textContent = start.input || "—";
+
+    const tools = $(".br-i-tools");
+    tools.innerHTML = "";
+    for (const t of start.tools || []) {
+      const chip = document.createElement("span");
+      chip.className = "br-call";
+      chip.textContent = t;
+      tools.append(chip);
+    }
+
+    const out = $(".br-i-out");
+    out.innerHTML = "";
+    if (!end) {
+      out.innerHTML = `<div class="br-empty">still thinking…</div>`;
+    } else {
+      if (end.thoughts) out.append(iBlock("thoughts", end.thoughts, "thought"));
+      if (end.speech) out.append(iBlock("speech", end.speech, "speech"));
+      for (const c of end.calls || []) {
+        const args = c.args && Object.keys(c.args).length ? " " + JSON.stringify(c.args) : "";
+        out.append(iBlock(`call · ${c.name}${args}`, `→ ${c.outcome || ""}`, "call"));
+      }
+      if (!out.children.length) out.innerHTML = `<div class="br-empty">no output — observed only</div>`;
+    }
+
+    $(".br-i-sys pre").textContent =
+      req?.systemInstruction?.parts?.[0]?.text ||
+      start.system ||
+      "(system prompt not reported by this robot's trace)";
+  }
+
+  $(".br-inspect-btn").addEventListener("click", () => openInspector(shownTurn));
+  $(".br-i-close").addEventListener("click", closeInspector);
+  $(".br-inspect-back").addEventListener("click", closeInspector);
+  /** @param {KeyboardEvent} e */
+  const onKey = (e) => {
+    if (e.key === "Escape" && inspecting) closeInspector();
+  };
+  window.addEventListener("keydown", onKey);
+
   /** @param {string} src @param {string} caption */
   function showFrame(src, caption) {
     /** @type {HTMLImageElement} */ ($(".br-frame")).src = src;
@@ -374,6 +599,17 @@ function buildView(root) {
     scan.classList.remove("run");
     void scan.offsetWidth;
     scan.classList.add("run");
+  }
+
+  // Motion woke the brain: a soft glow + tag on the vision stage, nothing modal.
+  let motionTimer = 0;
+  function motionCue() {
+    const stage = $(".br-stage");
+    stage.classList.remove("motion");
+    void stage.offsetWidth; // restart the animation if motion re-fires quickly
+    stage.classList.add("motion");
+    window.clearTimeout(motionTimer);
+    motionTimer = window.setTimeout(() => stage.classList.remove("motion"), 1700);
   }
 
   let pingTimer = 0;
@@ -513,6 +749,8 @@ function buildView(root) {
     destroy() {
       cancelAnimationFrame(raf);
       window.clearTimeout(pingTimer);
+      window.clearTimeout(motionTimer);
+      window.removeEventListener("keydown", onKey);
       unsubs.forEach((u) => u());
       demoStop?.();
       root.innerHTML = "";
@@ -560,10 +798,13 @@ function template() {
         <img class="br-frame" alt="">
         <div class="br-stage-idle">NO SIGNAL</div>
         <div class="br-scan"></div>
+        <div class="br-motion-tag">◉ motion</div>
         <div class="br-ping"><span class="ringA"></span><span class="ringB"></span><span class="cross"></span></div>
       </div>
+      <div class="br-film"></div>
       <div class="br-vision-cap">
         <span class="br-frame-cap"></span>
+        <button class="br-inspect-btn" hidden title="Everything the model received and returned this turn">inspect turn</button>
         <span class="br-pose-strip">
           <svg class="br-heading" viewBox="0 0 16 16"><polygon class="br-needle" points="8,1.5 11,12 8,9.5 5,12"/></svg>
           <span class="br-pose-txt">pose —</span>
@@ -603,5 +844,27 @@ function template() {
         <div class="lab"><span>conversation history</span><span class="br-hist-txt">0 / ${HIST_MAX}</span></div>
       </div>
     </section>
+  </div>
+  <div class="br-inspect" hidden>
+    <div class="br-inspect-back"></div>
+    <div class="br-inspect-card">
+      <div class="br-i-head">
+        <b class="br-i-title">turn</b><span class="br-i-meta"></span>
+        <button class="br-i-close" aria-label="Close">✕</button>
+      </div>
+      <div class="br-i-body">
+        <h3>new images this turn</h3>
+        <div class="br-i-frames"></div>
+        <h3>input text</h3>
+        <pre class="br-i-input"></pre>
+        <h3>tools armed</h3>
+        <div class="br-i-tools"></div>
+        <h3 class="br-i-conv-h" hidden>full request — everything sent to gemini</h3>
+        <div class="br-i-conv" hidden></div>
+        <h3>model output</h3>
+        <div class="br-i-out"></div>
+        <details class="br-i-sys"><summary>system instruction</summary><pre></pre></details>
+      </div>
+    </div>
   </div>`;
 }

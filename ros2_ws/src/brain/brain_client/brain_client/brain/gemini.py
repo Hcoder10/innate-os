@@ -73,6 +73,7 @@ DIRECT_BASE_URL = "https://generativelanguage.googleapis.com"
 STREAM_PATH = "/v1beta/models/{model}:streamGenerateContent?alt=sse"
 
 _FRAME_REMOVED = {"text": "[older camera frame removed]"}
+_WRIST_FRAME_REMOVED = {"text": "[older wrist camera frame removed]"}
 
 # Skill input "type" strings (python annotation names from skill introspection)
 # -> Gemini schema types. Anything else is passed as a string with the expected
@@ -255,13 +256,30 @@ class GeminiSession:
         self._max_history = max_history
         self._max_image_turns = max_image_turns
         self._history: list[dict] = []
+        # The one history turn still carrying latest-only frames (wrist camera),
+        # as (content, part indexes) — absorbing a newer set prunes these.
+        self._latest_only_turn: tuple[dict, list[int]] | None = None
+        # Observability tap: called with the exact request body just before it
+        # goes on the wire (from generate's thread). The body must be treated
+        # as read-only — it shares structure with the live history.
+        self.on_request = None
 
     def clear(self) -> None:
         self._history = []
+        self._latest_only_turn = None
 
     @property
     def history_len(self) -> int:
         return len(self._history)
+
+    @property
+    def image_turn_count(self) -> int:
+        """History turns still carrying camera frames (pruning keeps the newest few)."""
+        return sum(
+            1
+            for c in self._history
+            if c.get("role") == "user" and any("inlineData" in p for p in c.get("parts") or [])
+        )
 
     @staticmethod
     def user_message(text: str, images: list[bytes]) -> dict:
@@ -270,23 +288,51 @@ class GeminiSession:
             parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg).decode()}})
         return {"role": "user", "parts": parts}
 
-    def generate(self, user_message: dict, tools: list[dict], system: str, on_speech=None) -> dict:
+    def generate(
+        self,
+        user_message: dict,
+        tools: list[dict],
+        system: str,
+        on_speech=None,
+        *,
+        latest_only_images: list[int] | None = None,
+    ) -> dict:
         """Blocking network call — safe on a worker thread (history is only read).
 
         The reply streams in; every plain-text delta is handed to ``on_speech``
         as it arrives, which is what lets the robot start talking at the first
         sentence boundary. Returns the fully assembled response.
+
+        ``latest_only_images`` mirrors :meth:`absorb`'s: when this message
+        carries wrist frames, the previous turn's copies are masked out of the
+        request here — absorb's durable prune runs only after the response, so
+        without this every request would ship two wrist frames. History is
+        masked via shallow copies, never mutated (an abandoned turn's orphaned
+        request may still be reading it).
         """
+        contents = [*self._history, user_message]
+        if latest_only_images and self._latest_only_turn is not None:
+            stale, indexes = self._latest_only_turn
+            masked = {
+                **stale,
+                "parts": [
+                    dict(_WRIST_FRAME_REMOVED) if i in indexes and "inlineData" in p else p
+                    for i, p in enumerate(stale["parts"])
+                ],
+            }
+            contents = [masked if content is stale else content for content in contents]
         thinking = {"includeThoughts": True}
         if self._thinking_level:
             thinking["thinkingLevel"] = self._thinking_level
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [*self._history, user_message],
+            "contents": contents,
             "generationConfig": {"thinkingConfig": thinking},
         }
         if tools:
             body["tools"] = tools
+        if self.on_request is not None:
+            self.on_request(body)
         parts: list[dict] = []
         for chunk in self._transport(self._model, body):
             content = _model_content(chunk) or {}
@@ -296,15 +342,33 @@ class GeminiSession:
                     on_speech(part["text"])
         return {"candidates": [{"content": {"role": "model", "parts": _merged(parts)}}]}
 
-    def absorb(self, user_message: dict, response: dict) -> Decision:
+    def absorb(self, user_message: dict, response: dict, *, latest_only_images: list[int] | None = None) -> Decision:
         """Commit the exchange to history and distill the model's Decision.
 
         Thought-summary parts are dropped from the stored model turn (they are
         display-only); everything else — including any thoughtSignature the
         model attached to its parts — is kept verbatim for the next request.
+
+        ``latest_only_images`` names positions in this message's image list
+        (order given to :meth:`user_message`) that must only ever appear in the
+        newest turn — the wrist camera: a stale gripper close-up reads as
+        current grasp state and misleads the model, so absorbing a new one
+        prunes the previous turn's copy on the spot.
         """
         decision = _decision_from(response)
         self._history.append(user_message)
+        if latest_only_images:
+            if self._latest_only_turn is not None:
+                content, indexes = self._latest_only_turn
+                content["parts"] = [
+                    dict(_WRIST_FRAME_REMOVED) if i in indexes and "inlineData" in p else p
+                    for i, p in enumerate(content["parts"])
+                ]
+            image_parts = [i for i, p in enumerate(user_message["parts"]) if "inlineData" in p]
+            self._latest_only_turn = (
+                user_message,
+                [image_parts[i] for i in latest_only_images if i < len(image_parts)],
+            )
         model_content = _model_content(response)
         if model_content is not None:
             kept = [p for p in model_content.get("parts") or [] if not p.get("thought")]

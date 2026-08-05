@@ -7,6 +7,17 @@
 
 const HIST_MAX = 60;
 
+// Abbreviated stand-in for the real system instruction (brain/prompt.py).
+const DEMO_SYSTEM = `You are the brain of an Innate home robot: a small wheeled base with a camera, \
+a robotic arm, and a speaker. You run on the robot itself.
+
+Each update you receive contains the latest camera frame, the robot's state, and any new events \
+(user speech, skill results, sensor input). You act by calling tools — the robot's skills. \
+Anything you write as plain text is spoken aloud through the robot's speaker.
+
+Your directive:
+explore`;
+
 /**
  * @param {{ onTrace: (d: any) => void, onChat: (d: any) => void, onSkill: (d: any) => void,
  *   onAgentStatus: (d: any) => void, onBrainStatus: (d: any) => void,
@@ -42,23 +53,76 @@ export function startDemo(h) {
     }, 500),
   );
 
+  /** The input text a real robot would trace: status line, queued events, image note. */
+  const inputText = () =>
+    [
+      `[t+${D.uptime}s] pose: x=1.10m y=0.40m heading=12°${D.running ? ` | running skill: ${D.running}` : ""}`,
+      ...D.queued.map((q) => `- ${q.text}`),
+      "(second image is the arm wrist camera)",
+    ].join("\n");
+
+  /** @param {boolean} withSock */
+  const frames = (withSock) => [
+    { label: "head camera", jpeg: frame(withSock) },
+    { label: "wrist camera", jpeg: wristFrame() },
+  ];
+
+  /** Rolling request history, pruned like the real session: images survive
+   * only in the newest 3 user turns.
+   * @type {any[]} */
+  const contents = [];
+  /** @param {any} userContent @param {any} modelContent */
+  const commit = (userContent, modelContent) => {
+    contents.push(userContent, modelContent);
+    const imgTurns = contents.filter((c) => c.role === "user" && c.parts.some((/** @type {any} */ p) => p.inlineData));
+    for (const c of imgTurns.slice(0, -3))
+      c.parts = c.parts.map((/** @type {any} */ p) => (p.inlineData ? { text: "[older camera frame removed]" } : p));
+    while (contents.length > 12) contents.shift();
+  };
+
+  const TOOLS = ["navigate_to_position", "wave", "pick_up_sock", "go_to_point", "wait"];
+
   /** @param {{withSock: boolean, think: number, thoughts: string | null, speech?: string | null, calls?: any[]}} opts */
   const turn = async ({ withSock, think, thoughts, speech = null, calls }) => {
     D.turn++;
     D.inFlight = true;
+    const fr = frames(withSock);
+    const input = inputText();
     h.onTrace({
-      ev: "turn_start", turn: D.turn, input: "[t+…]", images: 1,
-      tools: ["navigate_to_position", "wave", "pick_up_sock", "go_to_point", "wait"],
-      history: D.history, frame: frame(withSock),
+      ev: "turn_start", turn: D.turn, input, images: 2,
+      tools: TOOLS,
+      history: D.history, history_images: Math.min(D.turn - 1, 3),
+      system: DEMO_SYSTEM, frames: fr,
+    });
+    const userContent = {
+      role: "user",
+      parts: [{ text: input }, ...fr.map((f) => ({ inlineData: { mimeType: "image/jpeg", data: f.jpeg } }))],
+    };
+    h.onTrace({
+      ev: "turn_request", turn: D.turn,
+      body: {
+        systemInstruction: { parts: [{ text: DEMO_SYSTEM }] },
+        contents: [...contents.map((c) => ({ ...c })), userContent],
+        generationConfig: { thinkingConfig: { includeThoughts: true, thinkingLevel: "minimal" } },
+        tools: [{ functionDeclarations: TOOLS.map((name) => ({ name, description: `demo declaration for ${name}` })) }],
+      },
     });
     D.queued = [];
     await sleep(think);
     if (!on) return;
     D.inFlight = false;
     D.history = Math.min(D.history + 3, HIST_MAX);
+    const theCalls = calls || [{ name: "wait", args: {}, outcome: "ok" }];
+    commit(userContent, {
+      role: "model",
+      parts: [
+        ...(speech ? [{ text: speech }] : []),
+        ...theCalls.map((c) => ({ functionCall: { name: c.name, args: c.args } })),
+      ],
+    });
     h.onTrace({
       ev: "turn_end", turn: D.turn, latency: think / 1000, thoughts, speech,
-      calls: calls || [{ name: "wait", args: {}, outcome: "ok" }], history: D.history, next_in: D.nextIn,
+      calls: theCalls, history: D.history, next_in: D.nextIn,
     });
     if (thoughts) h.onChat({ sender: "robot_thoughts", text: thoughts, timestamp: Date.now() / 1000 });
     if (speech) {
@@ -75,6 +139,14 @@ export function startDemo(h) {
       await sleep(3200); if (!on) return;
       await turn({ withSock: false, think: 1400, thoughts: "Still quiet. I'll keep watching." });
       await sleep(2100); if (!on) return;
+
+      // Someone walks into view: the motion gate wakes the brain early.
+      const moved = "Motion detected in the camera view — something or someone is moving nearby.";
+      h.onTrace({ ev: "event", kind: "motion", text: moved });
+      D.queued = [{ kind: "motion", text: moved }];
+      await sleep(1100); if (!on) return;
+      await turn({ withSock: false, think: 1500, thoughts: "Something just moved at the edge of my view — the user is coming closer. I'll stay ready." });
+      await sleep(1400); if (!on) return;
 
       const ask = "Bring me the sock by the couch";
       h.onTrace({ ev: "event", kind: "user", text: `The user says: "${ask}"` });
@@ -110,7 +182,7 @@ export function startDemo(h) {
       // A transient inference failure, then recovery.
       D.turn++;
       D.inFlight = true;
-      h.onTrace({ ev: "turn_start", turn: D.turn, input: "[t+…]", images: 1, tools: ["wait"], history: D.history, frame: frame(true) });
+      h.onTrace({ ev: "turn_start", turn: D.turn, input: inputText(), images: 2, tools: ["wait"], history: D.history, system: DEMO_SYSTEM, frames: frames(true) });
       await sleep(900); if (!on) return;
       D.inFlight = false;
       D.streak = 1;
@@ -183,6 +255,37 @@ function frame(withSock) {
     g.fill();
   }
   g.fillStyle = "rgba(255,255,255,0.05)";
+  g.fillRect(0, 0, 640, 480);
+  return c.toDataURL("image/jpeg", 0.8).split(",")[1];
+}
+
+/** The arm wrist camera's view (base64 JPEG body) — floor close-up between
+ * the two gripper fingers. */
+function wristFrame() {
+  const c = Object.assign(document.createElement("canvas"), { width: 640, height: 480 });
+  const g = /** @type {CanvasRenderingContext2D} */ (c.getContext("2d"));
+  const floor = g.createLinearGradient(0, 0, 0, 480);
+  floor.addColorStop(0, "#6b573f");
+  floor.addColorStop(1, "#86705a");
+  g.fillStyle = floor;
+  g.fillRect(0, 0, 640, 480);
+  g.strokeStyle = "rgba(0,0,0,0.22)";
+  g.lineWidth = 3;
+  for (let i = 0; i < 5; i++) {
+    const y = 60 + i * 95;
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(640, y);
+    g.stroke();
+  }
+  g.fillStyle = "#23252a"; // gripper fingers, bottom corners
+  g.beginPath();
+  g.moveTo(0, 480); g.lineTo(150, 480); g.lineTo(85, 330); g.lineTo(0, 360);
+  g.fill();
+  g.beginPath();
+  g.moveTo(640, 480); g.lineTo(490, 480); g.lineTo(555, 330); g.lineTo(640, 360);
+  g.fill();
+  g.fillStyle = "rgba(255,255,255,0.06)";
   g.fillRect(0, 0, 640, 480);
   return c.toDataURL("image/jpeg", 0.8).split(",")[1];
 }

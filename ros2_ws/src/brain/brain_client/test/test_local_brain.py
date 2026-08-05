@@ -170,8 +170,91 @@ def test_prune_keeps_images_only_in_newest_turns():
 
     user_turns = [c for c in session._history if c["role"] == "user"]
     assert [images_in(c) for c in user_turns] == [0, 0, 0, 1, 1]
+    assert session.image_turn_count == 2  # what turn_start traces as history_images
     # Stripped frames leave a placeholder so the transcript still reads coherently.
     assert any("removed" in p.get("text", "") for p in user_turns[0]["parts"])
+
+
+def test_absorb_keeps_only_the_newest_wrist_frame():
+    # Head frames follow the image-turn window; wrist frames are latest-only —
+    # a stale gripper close-up reads as current grasp state.
+    session = make_session(max_image_turns=3)
+    for i in range(3):
+        message = GeminiSession.user_message(f"turn {i}", [JPEG, JPEG])  # head + wrist
+        session.absorb(message, model_response({"text": "ok"}), latest_only_images=[1])
+
+    user_turns = [c for c in session._history if c["role"] == "user"]
+    assert [images_in(c) for c in user_turns] == [1, 1, 2]
+    assert any("wrist camera frame removed" in p.get("text", "") for p in user_turns[0]["parts"])
+
+
+def test_wrist_frame_survives_turns_without_one():
+    # The arm camera going stale must not orphan-prune the one wrist frame left.
+    session = make_session(max_image_turns=3)
+    session.absorb(
+        GeminiSession.user_message("with wrist", [JPEG, JPEG]),
+        model_response({"text": "ok"}),
+        latest_only_images=[1],
+    )
+    session.absorb(GeminiSession.user_message("head only", [JPEG]), model_response({"text": "ok"}))
+    user_turns = [c for c in session._history if c["role"] == "user"]
+    assert [images_in(c) for c in user_turns] == [2, 1]
+
+
+def test_generate_ships_exactly_one_wrist_frame():
+    # Absorb's prune runs only after the response, so without send-time masking
+    # every request would carry the previous turn's wrist frame plus the new one.
+    captured = {}
+
+    def transport(model, body):
+        captured.update(body)
+        return [model_response({"text": "ok"})]
+
+    session = make_session(transport, max_image_turns=3)
+    session.absorb(
+        GeminiSession.user_message("turn 1", [JPEG, JPEG]),
+        model_response({"text": "ok"}),
+        latest_only_images=[1],
+    )
+    session.generate(GeminiSession.user_message("turn 2", [JPEG, JPEG]), [], "S", latest_only_images=[1])
+
+    contents = captured["contents"]
+    assert images_in(contents[0]) == 1  # previous turn on the wire: head frame only
+    assert any("wrist camera frame removed" in p.get("text", "") for p in contents[0]["parts"])
+    assert images_in(contents[-1]) == 2  # the new message: head + wrist
+    # Stored history is untouched until absorb commits the exchange.
+    assert images_in(session._history[0]) == 2
+
+
+def test_generate_keeps_the_old_wrist_frame_when_this_turn_has_none():
+    captured = {}
+
+    def transport(model, body):
+        captured.update(body)
+        return [model_response({"text": "ok"})]
+
+    session = make_session(transport, max_image_turns=3)
+    session.absorb(
+        GeminiSession.user_message("turn 1", [JPEG, JPEG]),
+        model_response({"text": "ok"}),
+        latest_only_images=[1],
+    )
+    session.generate(GeminiSession.user_message("turn 2", [JPEG]), [], "S", latest_only_images=[])
+    assert images_in(captured["contents"][0]) == 2  # arm camera stale: last wrist frame still shown
+
+
+def test_generate_taps_the_exact_request_body():
+    # The on_request hook must see the request verbatim: system, full history
+    # (images and all), and the new message — it feeds the /brain/trace monitor.
+    session = make_session(lambda model, body: [model_response({"text": "ok"})])
+    seen = []
+    session.on_request = seen.append
+    session.absorb(user_turn("earlier", True), model_response({"text": "old"}))
+    session.generate(user_turn("now", True), tools=[{"functionDeclarations": []}], system="sys")
+    (body,) = seen
+    assert body["systemInstruction"]["parts"][0]["text"] == "sys"
+    assert [c["role"] for c in body["contents"]] == ["user", "model", "user"]
+    assert images_in(body["contents"][0]) == 1 and images_in(body["contents"][-1]) == 1
 
 
 def test_prune_with_zero_image_turns_strips_every_frame():
@@ -365,7 +448,10 @@ def agent_factory(monkeypatch):
         state = BrainState()
         state.is_brain_active = True
         camera = SimpleNamespace(
-            fresh_image_jpeg=lambda max_age: JPEG, fresh_arm_jpeg=lambda max_age: None, current_head_pitch=-10.0
+            fresh_image_jpeg=lambda max_age: JPEG,
+            fresh_arm_jpeg=lambda max_age: None,
+            current_head_pitch=-10.0,
+            motion_peak=lambda: 0.0,
         )
         pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
         spoken = []
@@ -792,11 +878,23 @@ def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
     agent._snapshot()  # the telemetry heartbeat reports even while inactive
 
     events = [t["ev"] for t in traces]
-    assert events == ["event", "turn_start", "turn_error", "turn_start", "turn_end", "snapshot"]
+    # turn_request fires from the generate path itself, before the transport
+    # can fail — so even the erroring turn reports the request it tried to send.
+    assert events == [
+        "event",
+        "turn_start",
+        "turn_request",
+        "turn_error",
+        "turn_start",
+        "turn_request",
+        "turn_end",
+        "snapshot",
+    ]
     assert traces[0]["kind"] == "user"
-    assert traces[2]["streak"] == 1 and traces[2]["backoff"] == 5.0
-    assert traces[4]["calls"] == [{"name": "wait", "args": {}, "outcome": "ok"}]
-    snapshot = traces[5]
+    assert traces[3]["streak"] == 1 and traces[3]["backoff"] == 5.0
+    assert traces[5]["body"]["contents"][-1]["role"] == "user"
+    assert traces[6]["calls"] == [{"name": "wait", "args": {}, "outcome": "ok"}]
+    snapshot = traces[7]
     # History: the user turn, the model turn, and the wait call's functionResponse.
     assert snapshot["active"] is False and snapshot["backend"] == "gemini-direct" and snapshot["history"] == 3
 

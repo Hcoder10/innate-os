@@ -51,6 +51,10 @@ _FRESH_FRAME_SEC = 3.0
 # While the loop can't turn (feed down), only this many queued events are kept.
 _MAX_EVENTS_WHILE_BLIND = 30
 
+# Frame label for the arm wrist camera: these frames are latest-only in history
+# (a stale gripper close-up reads as current grasp state).
+_WRIST_LABEL = "wrist camera"
+
 
 class BrainAgent:
     def __init__(
@@ -115,6 +119,14 @@ class BrainAgent:
         self._runtime = LoopThread("brain-agent")
         self._new_event = asyncio.Event()  # something was queued (loop thread; set via runtime.post)
         self._user_spoke = asyncio.Event()  # like _new_event, but only user speech sets it
+
+        if self._session is not None:
+            # The observability tap: the exact request body, straight off the
+            # wire path (fires on generate's worker thread, like add_event's
+            # executor-thread traces). The monitor renders it verbatim.
+            self._session.on_request = lambda body: self._trace(
+                "turn_request", turn=self._turn_count, body=body
+            )
 
     # ================= lifecycle =================
     def start(self) -> None:
@@ -212,9 +224,11 @@ class BrainAgent:
         # the current turn's speaker: once it has spoken, no abandoning.
         speaker = self._speaker = self._chat.stream_speech()
         try:
-            text, images = self._look(events)
+            text, frames = self._look(events)
             if self._frame_at_capture is None:
                 return  # the feed died between the loop's freshness check and the look
+            images = [jpeg for _, jpeg in frames]
+            wrist_frames = [i for i, (label, _) in enumerate(frames) if label == _WRIST_LABEL]
             message = GeminiSession.user_message(text, images)
             tools = self._build_tools(events)
             directive = self._state.current_directive
@@ -228,7 +242,11 @@ class BrainAgent:
                 images=len(images),
                 tools=[d["name"] for d in tools[0]["functionDeclarations"]],
                 history=self._session.history_len,
-                frame=base64.b64encode(self._frame_at_capture).decode(),
+                history_images=self._session.image_turn_count,
+                system=system,
+                frames=[
+                    {"label": label, "jpeg": base64.b64encode(jpeg).decode()} for label, jpeg in frames
+                ],
             )
 
             # The only blocking call, on a worker thread. Cancellation unwinds
@@ -236,7 +254,12 @@ class BrainAgent:
             self._turn_in_flight = True
             try:
                 response = await asyncio.to_thread(
-                    self._session.generate, message, tools, system, speaker.feed if speaker else None
+                    self._session.generate,
+                    message,
+                    tools,
+                    system,
+                    speaker.feed if speaker else None,
+                    latest_only_images=wrist_frames,
                 )
             finally:
                 self._turn_in_flight = False
@@ -250,7 +273,7 @@ class BrainAgent:
                 self._trace("turn_dropped", turn=self._turn_count, latency=latency)
                 return
 
-            decision = self._session.absorb(message, response)
+            decision = self._session.absorb(message, response, latest_only_images=wrist_frames)
             del self._events[: len(events)]  # commit: consume exactly what this turn saw
             outcomes = self._act(decision, speaker)
             self._trace(
@@ -312,9 +335,12 @@ class BrainAgent:
         return round(time.monotonic() - self._turn_started_at, 2)
 
     # ================= look =================
-    def _look(self, events: list[dict]) -> tuple[str, list[bytes]]:
+    def _look(self, events: list[dict]) -> tuple[str, list[tuple[str, bytes]]]:
         """Snapshot the world + the given (peeked) events into one turn input.
 
+        Returns the input text and the turn's images as (label, jpeg) pairs —
+        only the bytes go to the model; the labels feed telemetry and mark
+        which frames are latest-only in history (the wrist camera).
         Frame, head pitch, and pose are captured together: go_to_point_in_view
         projections must use the geometry of the exact frame the model saw.
         """
@@ -336,13 +362,13 @@ class BrainAgent:
 
         self._frame_at_capture = self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)
         self._pitch_at_capture = self._camera.current_head_pitch
-        images = [self._frame_at_capture]
+        frames = [("head camera", self._frame_at_capture)]
         arm_jpeg = self._camera.fresh_arm_jpeg(_FRESH_FRAME_SEC)
         if arm_jpeg is not None:
-            images.append(arm_jpeg)
+            frames.append((_WRIST_LABEL, arm_jpeg))
             lines.append("(second image is the arm wrist camera)")
-        images += [event["image"] for event in events if event["image"]]
-        return "\n".join(lines), images
+        frames += [("event image", event["image"]) for event in events if event["image"]]
+        return "\n".join(lines), frames
 
     def _build_tools(self, events: list[dict]):
         running = self._state.primitive_running
@@ -542,4 +568,5 @@ class BrainAgent:
             running=running["primitive_name"] if running else None,
             history=self._session.history_len if self._session else 0,
             uptime=round(time.monotonic() - self._activated_at, 0) if self._state.is_brain_active else 0,
+            motion=round(self._camera.motion_peak(), 4),
         )

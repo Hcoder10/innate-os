@@ -157,6 +157,12 @@ class BrainClientNode(Node):
         # Terminal skill results and feedback land in the brain's next turn.
         self.runner.on_event = self.brain.on_skill_event
         self.runner.on_feedback = self.brain.on_skill_feedback
+        # Scene motion (someone walks in, waves) wakes the brain for an
+        # immediate turn instead of waiting out the idle interval. Suppressed
+        # while a skill runs: ego-motion changes every pixel, and the
+        # supervision interval already paces those turns.
+        self.camera.motion_suppressed = lambda: self.state.primitive_running is not None
+        self.camera.on_motion = self._on_camera_motion
         self.lifecycle = BrainLifecycle(
             self,
             state,
@@ -260,6 +266,12 @@ class BrainClientNode(Node):
                 )
             )
         )
+
+    def _on_camera_motion(self) -> None:
+        if not self.state.is_brain_active:
+            return
+        # kind="motion" lets the brain dashboard show the wake-up cue.
+        self.brain.add_event("Motion detected in the camera view — something or someone is moving nearby.", kind="motion")
 
     # ================= always-on subscription callbacks =================
     def _on_chat_in(self, msg: String) -> None:
