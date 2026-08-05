@@ -4,6 +4,7 @@
 // full-res every frame, PiP thumbnails scissor-rendered from the same GL
 // context and blitted out.
 
+import * as THREE from "three";
 import { SimScene, type CameraView } from "./scene";
 import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
@@ -17,6 +18,14 @@ const THUMB_FRAME_DIV = 2;
 const MIN_FRAME_MS = 1000 / 62;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
+
+// Droppable props offered by the placement picker; kind matches world.py
+// OBJECT_KINDS and scene.ts OBJECTS.
+const DROP_KINDS: { kind: string; label: string }[] = [
+  { kind: "human", label: "🧍" },
+  { kind: "soccer_ball", label: "⚽" },
+  { kind: "labrador", label: "🐕" },
+];
 
 export function createSimStage(parent: HTMLElement, session: SimSession): { audioEl: null; destroy: () => void } {
   const wrap = document.createElement("div");
@@ -41,7 +50,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   chips.style.cssText = "display:flex;gap:6px;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+  const addChip = (label: string, onToggle: (on: boolean) => void): ((on: boolean) => void) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
@@ -50,16 +59,34 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
       "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
     let on = false;
-    b.onclick = () => {
-      on = !on;
+    const set = (next: boolean) => {
+      on = next;
       b.style.background = on ? ON_BG : OFF_BG;
       b.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+    };
+    b.onclick = () => {
+      set(!on);
       onToggle(on);
     };
     chips.appendChild(b);
+    return set;
   };
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
+  // Drop-object picker: one chip per prop (world.py OBJECT_KINDS). Selecting a
+  // kind arms placement for it; the others disarm (mutually exclusive). A
+  // stepping stone toward per-challenge UI -- for now it just seeds the world.
+  const dropLabel = document.createElement("span");
+  dropLabel.textContent = "drop";
+  dropLabel.style.cssText = "align-self:center;color:rgba(255,255,255,.5);font:500 11px system-ui;margin-left:4px;";
+  chips.appendChild(dropLabel);
+  const dropChipSetters = new Map<string, (on: boolean) => void>();
+  for (const { kind, label } of DROP_KINDS) {
+    dropChipSetters.set(
+      kind,
+      addChip(label, (on) => armDrop(on ? kind : null)),
+    );
+  }
   debugStack.appendChild(chips);
 
   // Loading indicator: a compact pill holding a progress bar, centered just
@@ -143,6 +170,54 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
+
+  // Drop-object placement: while a kind is armed the orbit controls are paused
+  // -- press marks the spot on the floor, drag points the yaw (arrow preview,
+  // the human's head), release drops that body there and physics settles it.
+  let armedKind: string | null = null;
+  let dropStart: THREE.Vector3 | null = null;
+  let dropArrow: THREE.ArrowHelper | null = null;
+  const clearDropDrag = () => {
+    dropStart = null;
+    if (dropArrow) {
+      scene.scene.remove(dropArrow);
+      dropArrow.dispose();
+      dropArrow = null;
+    }
+  };
+  const armDrop = (kind: string | null) => {
+    armedKind = kind;
+    scene.placementMode = kind !== null;
+    canvas.style.cursor = kind !== null ? "crosshair" : "";
+    for (const [k, set] of dropChipSetters) set(k === kind); // reflect the armed kind, disarm the rest
+    if (kind === null) clearDropDrag();
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (armedKind === null || e.button !== 0) return;
+    dropStart = scene.screenToFloor(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dropStart) return;
+    const cur = scene.screenToFloor(e.clientX, e.clientY);
+    if (!cur) return;
+    const drag = cur.sub(dropStart).setZ(0);
+    if (drag.length() < 0.05) return;
+    if (!dropArrow) {
+      dropArrow = new THREE.ArrowHelper(drag.clone().normalize(), dropStart.clone().setZ(0.05), 1, 0xff8800, 0.25, 0.15);
+      scene.scene.add(dropArrow);
+    }
+    dropArrow.setDirection(drag.clone().normalize());
+    dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (armedKind === null || !dropStart) return;
+    const end = scene.screenToFloor(e.clientX, e.clientY);
+    const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
+    // An identity drop faces +y (the human's head); the drag vector is that direction.
+    const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
+    session.dropObject(armedKind, dropStart.x, dropStart.y, yaw);
+    armDrop(null);
+  });
 
   const resize = () => {
     const w = wrap.clientWidth;

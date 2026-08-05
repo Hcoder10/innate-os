@@ -12,6 +12,9 @@ export interface WorldState {
   y: number;
   yaw: number;
   joints: Record<string, number>;
+  /** Ground truth of every dropped scenario prop, keyed by kind (human,
+   * soccer_ball, labrador): [x, y, z, qw, qx, qy, qz]. Empty until a drop. */
+  objects: Record<string, number[]>;
 }
 
 export class WorldStateController {
@@ -61,6 +64,12 @@ export class WorldStateController {
     await this.#open;
   }
 
+  /** Send a scenario command up the observer socket (e.g. drop_object);
+   * dropped silently while the socket is (re)connecting. */
+  send(cmd: object): void {
+    if (this.#ws.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(cmd));
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#ws.close();
@@ -72,10 +81,19 @@ export class WorldStateController {
       wall: number;
       pose: [number, number, number];
       joints: Record<string, number>;
+      objects?: Record<string, number[]> | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
     joints["joint6M"] = -(joints["joint6"] ?? 0);
-    this.onState?.({ t: msg.t, wall: msg.wall, x: msg.pose[0], y: msg.pose[1], yaw: msg.pose[2], joints });
+    this.onState?.({
+      t: msg.t,
+      wall: msg.wall,
+      x: msg.pose[0],
+      y: msg.pose[1],
+      yaw: msg.pose[2],
+      joints,
+      objects: msg.objects ?? {},
+    });
   }
 }

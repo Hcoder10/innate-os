@@ -34,6 +34,36 @@ MAX_YAW = 1.0
 MAX_BASE_LINEAR_SPEED = 2.0
 MAX_BASE_ANGULAR_SPEED = 6.0
 
+# Scenario props a drop_object command can place (see core.drop_object). Each
+# is a free-floating MuJoCo body parked off-map (OBJECT_PARK) until dropped,
+# released from OBJECT_DROP_Z so it starts clear of furniture. The human is a
+# posed scan (centimeter units, Y-up, feet at origin -- identity quat lies it
+# on its back, head toward +y) that doubles as its own collision hull; the
+# ball and dog collide as primitives (a sphere rolls perfectly; the dog's
+# box can't snag hull seams) with the textured mesh drawn over them (Z-up
+# meters, bbox-centered -- sim/tools/convert_objects.py), so the robot
+# cameras see the same object the browser viewer draws. Meshes are optional:
+# older asset bundles fall back to visible bare primitives.
+HUMAN_MESH = "humans/casual_man.obj"
+OBJECT_MESHES = {
+    "soccer_ball": "objects/soccer_ball.obj",
+    "labrador": "objects/labrador.obj",
+}
+OBJECT_KINDS = ("human", "soccer_ball", "labrador")
+OBJECT_PARK = {
+    "human": (15.0, 15.0),
+    "soccer_ball": (16.5, 15.0),
+    "labrador": (18.0, 15.0),
+}
+# Release heights: high enough that each object's hull starts clear of
+# sofas/beds/tables instead of spawning inside them (the human's lying hull
+# reaches ~0.24m below its body origin).
+OBJECT_DROP_Z = {
+    "human": 1.5,
+    "soccer_ball": 0.6,
+    "labrador": 1.0,
+}
+
 DRIVEN_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"]
 MIMIC_JOINT = ("joint6M", "joint6", -1.0)  # (name, source, multiplier)
 
@@ -161,9 +191,14 @@ def build_world_xml(
     include_placeholder_robot: bool = True,
     visual_rooms: dict[str, Path] | None = None,
     texture_max: int | None = None,
+    human_obj: Path | None = None,
+    object_meshes: dict[str, Path] | None = None,
 ) -> str:
     """The apartment environment MJCF (floor plane + decomposed room hulls,
-    optionally the textured visual rooms in their own geom group).
+    optionally the textured visual rooms in their own geom group) plus the
+    droppable scenario props parked off-map (see OBJECT_KINDS; the human body
+    is included only when human_obj is given, and object_meshes supplies the
+    optional textured visuals for the primitive-collision props).
     texture_max caps the visual textures' resolution (see capped_texture_path)."""
     collision_group = COLLISION_GROUP if visual_rooms else 0
 
@@ -196,6 +231,91 @@ def build_world_xml(
             f'contype="0" conaffinity="0" group="{VISUAL_GROUP}"/>'
         )
 
+    # Droppable props (see OBJECT_KINDS): the human is mesh-backed and optional;
+    # the ball and dog are primitives, always present. Each body carries a
+    # freejoint "{kind}_free" and is parked at OBJECT_PARK[kind].
+    object_assets = ""
+    object_bodies = []
+
+    if human_obj is not None:
+        png = human_obj.with_name(f"{human_obj.stem}_basecolor.png")
+        object_assets += f"""
+    <mesh name="human" file="{human_obj.resolve()}" scale="0.01 0.01 0.01"/>
+    <texture name="tex_human" type="2d" file="{png.resolve()}"/>
+    <material name="mat_human" texture="tex_human" specular="0.1" shininess="0.1"/>"""
+        hx, hy = OBJECT_PARK["human"]
+        # Visual mesh carries no mass/contacts; the auto convex hull collides
+        # (density gives ~70kg) so a dropped body settles on floor/furniture.
+        object_bodies.append(f"""
+    <body name="human" pos="{hx} {hy} 0.3">
+      <freejoint name="human_free"/>
+      <geom name="human_visual" mesh="human" type="mesh" material="mat_human"
+            contype="0" conaffinity="0" group="{VISUAL_GROUP}" density="0"/>
+      <geom name="human_collision" mesh="human" type="mesh" friction="0.9 0.01 0.001"
+            condim="3" margin="0.007" solref="0.02 1" density="500" group="{COLLISION_GROUP}"/>
+    </body>""")
+
+    def prop_visual(kind: str, fallback_rgba: str) -> tuple[str, str, str]:
+        """(assets, visual geom, collision extras) for a primitive-collision
+        prop: with a converted mesh (see convert_objects.py) the textured mesh
+        is the visible surface and the primitive hides in COLLISION_GROUP;
+        without one the primitive itself stays visible."""
+        mesh = (object_meshes or {}).get(kind)
+        if mesh is None:
+            return "", "", f' rgba="{fallback_rgba}"'
+        png = mesh.with_name(f"{mesh.stem}_basecolor.png")
+        assets = f"""
+    <mesh name="{kind}" file="{mesh.resolve()}"/>
+    <texture name="tex_{kind}" type="2d" file="{png.resolve()}"/>
+    <material name="mat_{kind}" texture="tex_{kind}" specular="0.1" shininess="0.1"/>"""
+        visual = f"""
+      <geom name="{kind}_visual" mesh="{kind}" type="mesh" material="mat_{kind}"
+            contype="0" conaffinity="0" group="{VISUAL_GROUP}" density="0"/>"""
+        return assets, visual, f' group="{COLLISION_GROUP}"'
+
+    # Soccer ball: a physics sphere (regulation ~0.11m radius, ~0.43kg via
+    # density). condim 6 adds rolling friction so a kicked ball rolls and
+    # gently stops instead of rolling forever.
+    assets, visual, extras = prop_visual("soccer_ball", "0.9 0.9 0.9 1")
+    object_assets += assets
+    bx, by = OBJECT_PARK["soccer_ball"]
+    object_bodies.append(f"""
+    <body name="soccer_ball" pos="{bx} {by} 0.3">
+      <freejoint name="soccer_ball_free"/>{visual}
+      <geom name="soccer_ball_geom" type="sphere" size="0.11"
+            friction="0.7 0.01 0.002" condim="6" margin="0.007" solref="0.02 1" density="80"{extras}/>
+    </body>""")
+
+    # Labrador: collides as its real shape via CoACD convex pieces (see
+    # convert_objects.py DECOMPOSE) when the bundle ships them -- legs, head
+    # and the gap under the belly are all live; density ~ flesh gives a
+    # realistic ~30kg. Falls back to a bbox box stand-in (~34kg) otherwise.
+    assets, visual, extras = prop_visual("labrador", "0.82 0.68 0.44 1")
+    object_assets += assets
+    dog_mesh = (object_meshes or {}).get("labrador")
+    dog_pieces = sorted(dog_mesh.parent.glob("labrador_collision_*.obj")) if dog_mesh else []
+    if dog_pieces:
+        for i, piece in enumerate(dog_pieces):
+            object_assets += f'\n    <mesh name="labrador_col{i}" file="{piece.resolve()}"/>'
+        dog_collision = "".join(
+            f"""
+      <geom name="labrador_col{i}" mesh="labrador_col{i}" type="mesh" friction="0.9 0.01 0.001"
+            condim="4" margin="0.007" solref="0.02 1" density="1000" group="{COLLISION_GROUP}"/>"""
+            for i in range(len(dog_pieces))
+        )
+    else:
+        dog_collision = f"""
+      <geom name="labrador_geom" type="box" size="0.124 0.5 0.256"
+            friction="0.9 0.01 0.001" condim="4" margin="0.007" solref="0.02 1"
+            density="250"{extras}/>"""
+    dgx, dgy = OBJECT_PARK["labrador"]
+    object_bodies.append(f"""
+    <body name="labrador" pos="{dgx} {dgy} 0.4">
+      <freejoint name="labrador_free"/>{visual}{dog_collision}
+    </body>""")
+
+    object_body_xml = "".join(object_bodies)
+
     robot_body = (
         """
     <body name="robot_base" pos="0 0 0">
@@ -221,7 +341,7 @@ def build_world_xml(
   <statistic center="{lx} {ly} {lz}" extent="{extent}"/>
   <asset>
 {chr(10).join(mesh_lines)}
-{chr(10).join(visual_mesh_lines)}
+{chr(10).join(visual_mesh_lines)}{object_assets}
   </asset>
   <worldbody>
     <light pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
@@ -231,7 +351,7 @@ def build_world_xml(
     <body name="apartment" quat="0.7071068 0.7071068 0 0">
 {chr(10).join(geom_lines)}
 {chr(10).join(visual_geom_lines)}
-    </body>{robot_body}
+    </body>{object_body_xml}{robot_body}
   </worldbody>
 </mujoco>
 """

@@ -127,9 +127,18 @@ class WorldServer:
         with self.lock:
             x, y, yaw = self.sim.pose()
             joints = self.sim.joint_positions()
+            objects = self.sim.object_poses()
             sim_time = float(self.sim.data.time)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
-        payload = json.dumps({"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints})
+        payload = json.dumps(
+            {
+                "t": sim_time,
+                "wall": time.time(),
+                "pose": [x, y, yaw],
+                "joints": joints,
+                "objects": objects,
+            }
+        )
         with self.state_cond:
             self.state_payload = payload
             self.state_seq += 1
@@ -137,16 +146,40 @@ class WorldServer:
 
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
-        client skips states instead of queueing lag)."""
-        last_seq = -1
+        client skips states instead of queueing lag). The receive side takes
+        scenario commands ({"op": "drop_object", ...}) -- world manipulation
+        stays on the observer channel, never in the robot's RPC surface."""
+
+        def push() -> None:
+            last_seq = -1
+            try:
+                while True:
+                    with self.state_cond:
+                        self.state_cond.wait_for(lambda seen=last_seq: self.state_seq != seen)
+                        payload, last_seq = self.state_payload, self.state_seq
+                    ws.send(payload)
+            except Exception:  # noqa: BLE001,S110 -- client gone; the stream just ends
+                pass
+
+        threading.Thread(target=push, daemon=True).start()
         try:
-            while True:
-                with self.state_cond:
-                    self.state_cond.wait_for(lambda seen=last_seq: self.state_seq != seen)
-                    payload, last_seq = self.state_payload, self.state_seq
-                ws.send(payload)
-        except Exception:  # noqa: BLE001,S110 -- client gone; the stream just ends
+            for message in ws:
+                self.handle_observer_command(json.loads(message))
+        except Exception:  # noqa: BLE001,S110 -- client gone or bad JSON; drop the connection
             pass
+
+    def handle_observer_command(self, cmd: dict) -> None:
+        op = cmd.get("op")
+        if op == "drop_object":
+            kind = str(cmd.get("kind", "human"))
+            with self.lock:
+                ok = self.sim.drop_object(kind, float(cmd["x"]), float(cmd["y"]), float(cmd["yaw"]))
+            if not ok:
+                print(
+                    f"[world-server] drop_object ignored: '{kind}' not in the world (unknown or asset missing)",
+                    flush=True,
+                )
+            self.publish_state()
 
     # --- renders (main thread only: macOS GL is main-thread-sensitive) ---
 

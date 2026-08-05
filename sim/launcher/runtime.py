@@ -1256,12 +1256,15 @@ def health_score(level: str) -> float:
 # Directories wholly owned by the published asset bundle: each is replaced
 # atomically on refresh. work/* land under sim/assets/, viewer/* under
 # sim/viewer/. Must stay in sync with sim/tools/publish_assets.py's layout.
+# Keep the work/ entries in sync with publish_assets.py's WORK_DIRS: a dir
+# missing here downloads fine but is silently dropped at extraction.
 SIM_ASSET_UNITS = [
     "work/apartment_split",
     "work/apartment_split_v2",
     "work/apartment_visual",
     "work/sdf_shells",
     "work/map",
+    "work/humans",
     # (The bundle's viewer/public/physics/apartment_sdf is demo-only and not
     # extracted; the hulls feed the webapp's "collisions" overlay.)
     "viewer/public/physics/apartment_collisions_v2",

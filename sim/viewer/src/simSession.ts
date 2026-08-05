@@ -67,7 +67,14 @@ export class SimSession {
   #stageReady = false;
 
   // Ground-truth snapshots on the sim clock.
-  #samples: { t: number; x: number; y: number; yaw: number; joints: Record<string, number> }[] = [];
+  #samples: {
+    t: number;
+    x: number;
+    y: number;
+    yaw: number;
+    joints: Record<string, number>;
+    objects: Record<string, number[]>;
+  }[] = [];
   #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
   #lastArrival = 0;
   // Playback position on the sim clock (see tick).
@@ -157,11 +164,11 @@ export class SimSession {
 
       const last = this.#samples[this.#samples.length - 1];
       if (last === undefined || s.t > last.t) {
-        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints });
+        this.#samples.push({ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects });
         if (this.#samples.length > 60) this.#samples.shift();
       } else if (s.t < last.t - 0.5) {
         // Sim clock jumped backwards (world-server restart): restart playback.
-        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints }];
+        this.#samples = [{ t: s.t, x: s.x, y: s.y, yaw: s.yaw, joints: s.joints, objects: s.objects }];
         this.#playT = null;
       }
       this.#live = true;
@@ -217,6 +224,13 @@ export class SimSession {
   setCollisionHullsVisible(on: boolean): void {
     this.#hullsOn = on;
     this.#overlaysDirty = true;
+  }
+
+  /** Drop a scenario prop (see scene.ts OBJECTS: human, soccer_ball,
+   * labrador) above (x, y), yawed about +z; the world server's physics settles
+   * it onto whatever is below (stage "drop object" picker). */
+  dropObject(kind: string, x: number, y: number, yaw: number): void {
+    this.#controller?.send({ op: "drop_object", kind, x, y, yaw });
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.
@@ -293,6 +307,9 @@ export class SimSession {
       joints[name] = va + (vb - va) * u;
     }
     scene.setJointAngles(joints);
+    // No interpolation for the props: 75Hz raw samples are smooth enough even
+    // during a fall, and they're static almost all the time.
+    scene.setObjectPoses(b.objects);
 
     if (this.#overlaysDirty) {
       this.#overlaysDirty = false;

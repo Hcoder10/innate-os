@@ -18,6 +18,53 @@ const APARTMENT_URL = "/models/appartement.glb";
 const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
 const ROBOT_URDF_URL = "/robot/mars.urdf";
 
+// Droppable scenario props (world.py OBJECT_KINDS / core.drop_object): the
+// browser draws a GLB for each at its MuJoCo body's ground-truth pose. Each
+// model is normalized into the SAME local frame its physics body uses, so the
+// one pose quaternion orients both identically:
+//   - human: MuJoCo loads its OBJ Y-up with feet at the origin; the GLB shares
+//     that convention, so it is NOT rotated Y-up->Z-up and its feet sit at the
+//     origin (identity quat -> lying on its back).
+//   - ball/dog: their MuJoCo geoms are primitives centered on the body origin,
+//     so the GLB is rotated Y-up->Z-up (standard glTF) and centered; sizes
+//     match the sphere diameter / box footprint in world.py.
+interface ObjectDef {
+  url: string;
+  rotateToZUp: boolean; // standard glTF Y-up -> scene Z-up (false for the human)
+  fitSizeM: number; // rescale so fitDim spans this many meters
+  fitDim: "height" | "max"; // "height" = up-axis extent (human); "max" = largest bbox side
+  origin: "base" | "center"; // where the body origin sits: feet-down vs geometric center
+  /** The prop's MuJoCo collision shape (world.py's geoms, body frame), drawn
+   * as a wireframe when the collision overlay is on: a primitive, or a "soup"
+   * of CoACD hull triangles (float32 xyz, written by convert_objects.py next
+   * to the GLBs). The human has none here: it collides as the convex hull of
+   * its visual mesh. */
+  collision?:
+    | { type: "sphere"; radius: number }
+    | { type: "box"; size: [number, number, number] }
+    | { type: "soup"; url: string };
+}
+
+const OBJECTS: Record<string, ObjectDef> = {
+  human: { url: "/models/human.glb", rotateToZUp: false, fitSizeM: 1.727, fitDim: "height", origin: "base" },
+  soccer_ball: {
+    url: "/models/soccer_ball.glb",
+    rotateToZUp: true,
+    fitSizeM: 0.22,
+    fitDim: "max",
+    origin: "center",
+    collision: { type: "sphere", radius: 0.11 },
+  },
+  labrador: {
+    url: "/models/labrador.glb",
+    rotateToZUp: true,
+    fitSizeM: 1.0,
+    fitDim: "max",
+    origin: "center",
+    collision: { type: "soup", url: "/models/labrador_hulls.f32" },
+  },
+};
+
 /** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
  * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
 interface ApartmentManifest {
@@ -115,6 +162,17 @@ export class SimScene {
   // Set by the first spawnAt: after that the camera belongs to the robot, and
   // the layout overview framing must not yank it away.
   private spawned = false;
+  // One posed GLB per dropped prop (see OBJECTS); each loads lazily on its
+  // first real pose. The collision wireframes ride along under the same
+  // roots, toggled with the apartment hull overlay.
+  private objectRoots = new Map<string, THREE.Group>();
+  private objectPromises = new Map<string, Promise<void>>();
+  private objectHulls: THREE.Mesh[] = [];
+  private hullMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+
+  /** While true the orbit controls stay off even in the orbit view -- a
+   * placement drag (drop-object picker) owns the pointer. */
+  placementMode = false;
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -234,13 +292,14 @@ export class SimScene {
       });
     }
     if (this.hullsGroup) this.hullsGroup.visible = visible;
+    for (const hull of this.objectHulls) hull.visible = visible;
   }
 
   private async loadCollisionHulls(): Promise<void> {
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
     const baseUrl = "/physics/apartment_collisions_v2/";
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+    const material = this.hullMaterial;
 
     // Fast path: one binary triangle soup (float32 xyz), one fetch, no
     // parsing -- publish_assets writes it next to the per-hull OBJs.
@@ -531,12 +590,124 @@ export class SimScene {
    * Falls back to orbit if the requested view's frame wasn't in the URDF. */
   setView(view: CameraView): void {
     this.activeView = view === "orbit" || this.robotCameras.has(view) ? view : "orbit";
-    this.controls.enabled = this.activeView === "orbit";
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
   }
 
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
   setJointAngles(joints: Record<string, number>): void {
     this.robot?.setJointValues(joints);
+  }
+
+  /** Mirror every dropped scenario prop from ground truth, keyed by kind
+   * ({kind: [x, y, z, qw, qx, qy, qz]}, the same quat MuJoCo applies to each
+   * body). Kinds absent from the map are hidden; each GLB loads lazily on its
+   * first real pose. */
+  setObjectPoses(poses: Record<string, number[]>): void {
+    for (const kind of Object.keys(OBJECTS)) {
+      const pose = poses[kind];
+      if (!pose) {
+        const root = this.objectRoots.get(kind);
+        if (root) root.visible = false;
+        continue;
+      }
+      if (!this.objectPromises.has(kind)) {
+        this.objectPromises.set(
+          kind,
+          this.loadObject(kind).catch((err) => console.error(`[sim-viewer] object '${kind}' failed to load:`, err)),
+        );
+      }
+      const root = this.objectRoots.get(kind);
+      if (!root) continue; // still loading; the next state places it
+      root.visible = true;
+      root.position.set(pose[0], pose[1], pose[2]);
+      root.quaternion.set(pose[4], pose[5], pose[6], pose[3]);
+    }
+  }
+
+  private async loadObject(kind: string): Promise<void> {
+    const def = OBJECTS[kind];
+    const gltf = await new GLTFLoader().loadAsync(def.url);
+    this.normalizeModel(gltf.scene, def);
+    gltf.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+    const root = new THREE.Group();
+    root.visible = false;
+    root.add(gltf.scene);
+    if (def.collision) {
+      let geometry: THREE.BufferGeometry | null = null;
+      if (def.collision.type === "sphere") {
+        geometry = new THREE.SphereGeometry(def.collision.radius, 16, 12);
+      } else if (def.collision.type === "box") {
+        geometry = new THREE.BoxGeometry(...(def.collision.size.map((s) => s * 2) as [number, number, number]));
+      } else {
+        // CoACD hull soup, already in the body frame (see convert_objects.py).
+        const res = await fetch(def.collision.url);
+        if (res.ok) {
+          geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(await res.arrayBuffer()), 3));
+        } else {
+          console.warn(`[sim-viewer] collision soup missing for '${kind}' (${res.status}); overlay skipped`);
+        }
+      }
+      if (geometry) {
+        const hull = new THREE.Mesh(geometry, this.hullMaterial);
+        hull.visible = this.hullsVisible; // honor a toggle made before the drop
+        this.objectHulls.push(hull);
+        root.add(hull);
+      }
+    }
+    this.objectRoots.set(kind, root);
+    this.scene.add(root);
+  }
+
+  /** Rescale + re-origin a raw GLB into its MuJoCo body's local frame (GLB
+   * exports bake arbitrary origins, orientations, and unit scales). See
+   * OBJECTS for each kind's convention. */
+  private normalizeModel(scene: THREE.Object3D, def: ObjectDef): void {
+    if (def.rotateToZUp) scene.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
+    scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = box.getSize(new THREE.Vector3());
+    const upExtent = def.rotateToZUp ? size.z : size.y;
+    const span = def.fitDim === "max" ? Math.max(size.x, size.y, size.z) : upExtent;
+    scene.scale.multiplyScalar(def.fitSizeM / span);
+
+    // Re-measure post-scale to place the origin.
+    scene.updateMatrixWorld(true);
+    const scaled = new THREE.Box3().setFromObject(scene);
+    const center = scaled.getCenter(new THREE.Vector3());
+    if (def.origin === "center") {
+      scene.position.sub(center);
+    } else {
+      // base: centered in the ground plane, up-axis min sitting at the origin.
+      scene.position.x -= center.x;
+      if (def.rotateToZUp) {
+        scene.position.y -= center.y;
+        scene.position.z -= scaled.min.z;
+      } else {
+        scene.position.z -= center.z;
+        scene.position.y -= scaled.min.y;
+      }
+    }
+  }
+
+  /** Intersect a canvas pointer position with the floor plane (z=0) through
+   * the active view's camera; null when it points above the horizon. */
+  screenToFloor(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const cam = (this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined) ?? this.camera;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, cam);
+    const hit = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
   }
 
   // Orange accent for the arm links (see ORANGE_LINKS). Cached so every mesh
