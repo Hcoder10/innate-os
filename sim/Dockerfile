@@ -124,23 +124,17 @@ export PATH="/root/innate-os/scripts:$PATH"  # put the `innate` developer CLI on
 # exist at image build time, so this runs on login, not in a RUN layer. It lands
 # after oh-my-zsh's compinit, hence the second compinit to pick up the new fpath.
 fpath=("/root/.zsh/completions" $fpath)
-# Regenerate when the cached file is missing/empty, or older than the CLI it was
-# generated from: `innate update` and plain `git pull` both rewrite scripts/innate
-# through the bind mount, and a pure existence guard would serve its stale
-# completions for the rest of the container's life.
-if [ -f /root/innate-os/scripts/innate ] && \
-   { [ ! -s /root/.zsh/completions/_innate ] || \
-     [ /root/innate-os/scripts/innate -nt /root/.zsh/completions/_innate ]; }; then
+# Generation costs ~60ms, so just regenerate every shell instead of tracking
+# whether scripts/innate has outrun the cached file. Written through a temp
+# file and renamed into place because the sim's tmux session opens nine windows
+# at once and every one of them sources this: a plain `>` would let them
+# truncate the file out from under each other's compinit. Capped at 3s (50x the
+# nominal cost) and stderr to a log -- this is in the login path of every shell
+# now, so a wedged generator must not be able to wedge the shell with it.
+if [ -f /root/innate-os/scripts/innate ]; then
     mkdir -p /root/.zsh/completions
-    # Generate through a temp file so an interrupted or failing run leaves no
-    # partial _innate behind — the guard above would treat it as current and no
-    # later shell would retry.
     innate_comp_tmp=$(mktemp /root/.zsh/completions/innate-completions.XXXXXX)
-    # Time-capped because this sits in the login path: a hung generator would
-    # otherwise hang every new shell. Stderr goes to a log next to the output
-    # rather than the terminal -- failing silently with no breadcrumb is worse
-    # than a file nobody reads.
-    if timeout 30 /root/innate-os/scripts/innate completions \
+    if timeout 3 /root/innate-os/scripts/innate completions \
            > "$innate_comp_tmp" 2>/root/.zsh/innate-completions.log \
        && [ -s "$innate_comp_tmp" ]; then
         mv "$innate_comp_tmp" /root/.zsh/completions/_innate
