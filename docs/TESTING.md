@@ -14,8 +14,8 @@ Build is the broad safety net for refactors (all 19 packages). Tests are the beh
 
 **Unit (fast, pure Python, no ROS)** — `pytest`:
 - `brain_client/test/test_fake_cloud_selftest.py` — the FakeCloud test double speaks the cloud protocol correctly.
-- `brain_client/test/test_manipulation_surface.py` — the arm interface's released (0.6.0) API surface is intact.
-- `brain_client/test/test_manipulation_unit.py` — arm interface behaviors (IK gripper padding, gripper math, lifecycle invariants).
+- `brain_client/test/test_manipulation_surface.py` — the arm SDK's API surface (signatures, defaults, constants) is intact.
+- `brain_client/test/test_manipulation_unit.py` — arm interface behaviors (gripper math, non-blocking motions, lifecycle invariants).
 - `manipulation/test/test_config_validation.py` — manipulation config validation.
 
 **Integration (real ROS nodes)** — `colcon test`:

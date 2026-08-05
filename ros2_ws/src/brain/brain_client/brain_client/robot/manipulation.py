@@ -4,12 +4,19 @@
 """Manipulation — the arm + gripper command interface for skills.
 
 Injected as ``self.manipulation`` when a skill declares
-``manipulation: Manipulation``. Every command blocks until the motion settles
-and raises :class:`ArmFailed` / :class:`ArmUnhealthy` on failure; reads return
-the ROS-free :class:`~brain_client.state.arm.Arm` dataclass (the same type as
-the ambient ``arm:`` feed).
+``manipulation: Manipulation``. By default every command blocks until the
+motion settles and raises :class:`ArmFailed` / :class:`ArmUnhealthy` on
+failure; reads return the ROS-free :class:`~brain_client.state.arm.Arm`
+dataclass (the same type as the ambient ``arm:`` feed).
 
-Arm motion is a short atomic commitment: no method here is interrupted by a
+Every motion method also takes ``block=False`` to return as soon as the
+command is accepted — the skill keeps running (drive the base, watch a
+camera) while the arm travels. A non-blocking motion is unverified until
+joined: ``wait()`` blocks until it completes and returns the settled pose
+(raising on failure), ``moving`` reports whether one is still in flight, and
+issuing any new motion supersedes it.
+
+A blocking motion is a short atomic commitment: it is not interrupted by a
 skill cancel — cancellation lands between calls — so every method is safe in
 ``finally``-block teardown. ``duration`` is advisory: the hardware jerk
 limiter may extend it, the joint-2 self-collision clamp can silently alter
@@ -21,20 +28,14 @@ error IS the grip force, so re-commanding j6 from its *measured* position
 drops a held object. The interface therefore tracks the last *commanded* j6
 (the standing grip target) and every motion default carries it — grip an
 object once, then move freely.
-
-The methods under ``_LegacyManipulationMixin`` are the released (0.6.0)
-surface, kept as deprecated delegating shims for field-authored skills.
 """
-
-# Legacy mixin borrows Manipulation's attrs; drop with it in 0.8.0.
-# pyright: reportAttributeAccessIssue=false
 
 import math
 import threading
 import time
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import rclpy
 import rclpy.executors
@@ -47,7 +48,6 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
 
-from brain_client.common.geometry import quat_to_rpy
 from brain_client.state.arm import Arm
 
 
@@ -84,8 +84,8 @@ class Safety:
 
     ``max_ee_speed`` (m/s; None = uncapped) stretches any cartesian move's
     duration to keep the straight-line EE speed under the cap. A tuning aid on
-    the driver's jerk limiter, not a certified limit: joint-space moves and
-    the 0.6.0 shims are not covered, and ``stop()`` resets it.
+    the driver's jerk limiter, not a certified limit: joint-space moves are
+    not covered, and ``stop()`` resets it.
     """
 
     def __init__(self, logger):
@@ -117,187 +117,16 @@ class Safety:
         return stretched
 
 
-# One warning per shim per process: migration path without log spam.
-_LEGACY_WARNINGS_ENABLED = True
-_legacy_warned: set[str] = set()
+@dataclass
+class _PendingMotion:
+    """A non-blocking motion in flight: the service future and its patience."""
+
+    future: Any  # rclpy.task.Future (untyped upstream)
+    name: str
+    deadline: float  # monotonic; command duration + result margin
 
 
-class _LegacyManipulationMixin:
-    """The released (0.6.0) arm API, preserved verbatim for field skills.
-
-    Same signatures, same bool/None/dict returns, same non-blocking defaults,
-    same gripper re-seed-from-measured behavior. Each method delegates to the
-    shared plumbing and (once enabled) warns once per process.
-    These will be removed in the 0.8.0 release.
-    """
-
-    def _warn_legacy(self, method: str, replacement: str) -> None:
-        if not _LEGACY_WARNINGS_ENABLED or method in _legacy_warned:
-            return
-        _legacy_warned.add(method)
-        msg = f"Manipulation.{method}() is deprecated; use {replacement}"
-        self.logger.warning(msg)  # on-robot
-        warnings.warn(msg, FutureWarning, stacklevel=3)  # pytest/dev
-
-    def solve_ik(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        roll: float = 0.0,
-        pitch: float = 0.0,
-        yaw: float = 0.0,
-        timeout: float = 2.0,
-    ) -> list[float] | None:
-        """Deprecated: reachability is `clamp_reach()` + `move_to()` raising.
-
-        Returns the 5 arm joint angles (no gripper), or None if IK fails.
-        """
-        self._warn_legacy("solve_ik", "move_to()")
-        return self._solve_ik(x, y, z, roll, pitch, yaw, timeout=timeout)
-
-    def move_to_joint_positions(
-        self, joint_positions: list[float], duration: float = 3.0, blocking: bool = False
-    ) -> bool:
-        """Deprecated: use `move_joints()`. Requires exactly 6 joints."""
-        self._warn_legacy("move_to_joint_positions", "move_joints()")
-        return self._goto(list(joint_positions), duration, wait=blocking)
-
-    def move_to_cartesian_pose(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        roll: float = 0.0,
-        pitch: float = 0.0,
-        yaw: float = 0.0,
-        duration: float = 3.0,
-        ik_timeout: float = 2.0,
-        blocking: bool = False,
-        gripper_position: float | None = None,
-    ) -> bool:
-        """Deprecated: use `move_to()` (verified, raising, grip-preserving)."""
-        self._warn_legacy("move_to_cartesian_pose", "move_to()")
-        joint_positions = self.solve_ik(x, y, z, roll, pitch, yaw, timeout=ik_timeout)
-        if joint_positions is None:
-            self.logger.error("Failed to solve IK for target pose")
-            return False
-        if len(joint_positions) == 5:
-            # 0.6.0 footgun, preserved: re-seeding j6 from measured drops a held object.
-            if gripper_position is not None:
-                joint_positions.append(gripper_position)
-            else:
-                joint_positions.append(self._measured_gripper() or 0.0)
-        return self._goto(joint_positions, duration, wait=blocking)
-
-    def move_cartesian_trajectory(
-        self,
-        poses: list[dict],
-        segment_duration: float = 1.0,
-        segment_durations: list[float] | None = None,
-        ik_timeout: float = 2.0,
-        gripper_position: float | None = None,
-    ) -> bool:
-        """Deprecated: use `follow()` with `Waypoint`s."""
-        self._warn_legacy("move_cartesian_trajectory", "follow()")
-        if len(poses) < 2:
-            self.logger.error("[Manipulation] Need at least 2 poses for trajectory")
-            return False
-        if self.torque_enabled is False:
-            self.logger.error("[Manipulation] Arm torque is disabled")
-            return False
-
-        if gripper_position is None:
-            self._spin_briefly(count=5, timeout_sec=0.01)
-            gripper_position = self._measured_gripper() or 0.0
-
-        waypoint_joints = []
-        for i, p in enumerate(poses):
-            joints = self.solve_ik(
-                p["x"],
-                p["y"],
-                p["z"],
-                p.get("roll", 0.0),
-                p.get("pitch", 0.0),
-                p.get("yaw", 0.0),
-                timeout=ik_timeout,
-            )
-            if joints is None:
-                self.logger.error(f"[Manipulation] IK failed for trajectory pose {i}: {p}")
-                return False
-            if len(joints) == 5:
-                joints.append(gripper_position)
-            waypoint_joints.append(joints)
-
-        if segment_durations is not None:
-            seg_durations = list(segment_durations)
-        else:
-            seg_durations = [segment_duration] * (len(waypoint_joints) - 1)
-        return self._send_trajectory(waypoint_joints, seg_durations)
-
-    def open_gripper(self, percent: float = 100.0, duration: float = 0.5, blocking: bool = False) -> bool:
-        """Deprecated: use `gripper_open()` (blocking, verifying, raising)."""
-        self._warn_legacy("open_gripper", "gripper_open()")
-        percent = max(0.0, min(100.0, percent))
-        target = self.GRIPPER_CLOSED + (self.GRIPPER_OPEN - self.GRIPPER_CLOSED) * (percent / 100.0)
-        for attempt in (1, 2):
-            if not self._command_gripper(target, duration, blocking):
-                return False
-            # Only a blocking move above the shut threshold is verifiable.
-            if not blocking or target < self._GRIPPER_SHUT_J6:
-                return True
-            self._spin_briefly(count=5, timeout_sec=0.01)
-            j6 = self._measured_gripper()
-            if j6 is None or j6 >= self._GRIPPER_SHUT_J6:
-                return True
-            if attempt == 1:
-                self.logger.warning(f"Gripper did not open (j6={j6:.3f}); rebooting servos, then retrying")
-                self.recover()
-        self.logger.error("Gripper did not open (servo tripped shut)")
-        return False
-
-    def close_gripper(self, strength: float = 0.0, duration: float = 0.5, blocking: bool = False) -> bool:
-        """Deprecated: use `gripper_close()` (blocking, raising)."""
-        self._warn_legacy("close_gripper", "gripper_close()")
-        strength = min(abs(strength), self.GRIPPER_MAX_STRENGTH)
-        return self._command_gripper(self.GRIPPER_CLOSED - strength, duration, blocking)
-
-    def get_current_end_effector_pose(self) -> dict | None:
-        """Deprecated: use the `pose` property (typed Arm, raising)."""
-        self._warn_legacy("get_current_end_effector_pose", "the pose property")
-        self._spin_briefly()
-        if self._fk_pose is None:
-            self.logger.warn("No FK pose available yet")
-            return None
-        pose = self._fk_pose.pose
-        return {
-            "position": {"x": pose.position.x, "y": pose.position.y, "z": pose.position.z},
-            "orientation": {
-                "x": pose.orientation.x,
-                "y": pose.orientation.y,
-                "z": pose.orientation.z,
-                "w": pose.orientation.w,
-            },
-            "frame_id": self._fk_pose.header.frame_id,
-        }
-
-    def get_current_orientation_rpy(self) -> dict | None:
-        """Deprecated: use `pose.rpy` / `pose.pitch`."""
-        self._warn_legacy("get_current_orientation_rpy", "pose.rpy")
-        if self._fk_pose is None:
-            self.logger.warn("No FK pose available yet")
-            return None
-        q = self._fk_pose.pose.orientation
-        roll, pitch, yaw = quat_to_rpy(q.x, q.y, q.z, q.w)
-        return {"roll": roll, "pitch": pitch, "yaw": yaw}
-
-    def spin_node_to_refresh_topics(self, count: int = 10, timeout_sec: float = 0.001):
-        """Deprecated internal: state feeds refresh on their own executor."""
-        self._warn_legacy("spin_node_to_refresh_topics", "nothing — reads are already live")
-        self._spin_briefly(count=count, timeout_sec=timeout_sec)
-
-
-class Manipulation(_LegacyManipulationMixin):
+class Manipulation:
     """Arm + gripper command interface. See the module docstring for the
     contract: blocking, raising, grip-preserving, teardown-safe."""
 
@@ -360,6 +189,8 @@ class Manipulation(_LegacyManipulationMixin):
         # error IS the grip force, so motions carry this rather than the
         # measured (stalled) position, which would release a held object.
         self._grip_target: float | None = None
+        # The one non-blocking motion in flight (any new command supersedes it).
+        self._pending: _PendingMotion | None = None
 
         # Created once in start() and kept for the node's lifetime: destroying
         # one while the executor spins races _take_subscription (InvalidHandle
@@ -439,6 +270,7 @@ class Manipulation(_LegacyManipulationMixin):
         self._ik_solution_fk = None
         self._fk_pose = None
         self._arm_state = None
+        self._pending = None  # an unjoined motion doesn't outlive the run
         # _grip_target survives: a skill can end while still holding an object.
         self.safety.reset()  # per-run knob: a forgotten cap must not slow later skills
 
@@ -451,10 +283,10 @@ class Manipulation(_LegacyManipulationMixin):
         """Framework brake hook (Skill._halt_interfaces on cancel/run end).
 
         Deliberately a no-op: the goto services cannot preempt an in-flight
-        motion, arm moves are short atomic commitments, and teardown
-        legitimately moves the arm after halt fires. It must NOT freeze at
-        the measured joints (that would re-seed j6 and drop a held object)
-        and must NOT torque off (the arm would fall).
+        motion (blocking or not), arm moves are short atomic commitments, and
+        teardown legitimately moves the arm after halt fires. It must NOT
+        freeze at the measured joints (that would re-seed j6 and drop a held
+        object) and must NOT torque off (the arm would fall).
         """
         self.logger.debug("[Manipulation] halt(): arm motions are committed; nothing to brake")
 
@@ -556,7 +388,8 @@ class Manipulation(_LegacyManipulationMixin):
         grip: float | None = None,
         tolerance_xy: float | None = 0.05,
         tolerance_z: float | None = 0.10,
-    ) -> Arm:
+        block: bool = True,
+    ) -> Arm | None:
         """Move the end-effector to a cartesian pose; return the settled pose.
 
         IK + execute + FK verify. If the arm doesn't track the target within
@@ -566,6 +399,11 @@ class Manipulation(_LegacyManipulationMixin):
         With BOTH tolerances None the move is unverified: the service result
         is trusted, failure raises ArmFailed, and no recovery runs — for
         callers whose targets legitimately settle off-pose (joint limits).
+
+        With ``block=False`` the call returns None as soon as the command is
+        accepted (IK still runs inline; rejection still raises ArmFailed).
+        The move is unverified — tolerances don't apply — until joined with
+        :meth:`wait`.
 
         Args:
             x: Target end-effector x in metres, ``base_link`` frame.
@@ -586,9 +424,11 @@ class Manipulation(_LegacyManipulationMixin):
                 shortfall usually means the fingers met the object or floor
                 early, which is expected while descending, whereas xy error
                 means the move is off target.
+            block: When False, return None once the command is accepted
+                instead of waiting for the arm to settle.
 
         Returns:
-            The settled end-effector pose.
+            The settled end-effector pose, or None when ``block=False``.
 
         Raises:
             ArmFailed: Pose unreachable, command rejected, or the move did not
@@ -601,6 +441,10 @@ class Manipulation(_LegacyManipulationMixin):
         if self.safety.max_ee_speed is not None:
             duration = self.safety.capped_duration(math.dist(self.pose.position, (x, y, z)), duration)
         target = joints + [self._grip_or(grip)]
+        if not block:
+            if not self._goto(target, duration, wait=False):
+                raise ArmFailed(f"arm move to ({x:.2f}, {y:.2f}, {z:.2f}) rejected")
+            return None
         verified = tolerance_xy is not None or tolerance_z is not None
         for attempt in (1, 2) if verified else (1,):
             ok = self._goto(target, duration, wait=True)
@@ -641,12 +485,13 @@ class Manipulation(_LegacyManipulationMixin):
         grip: float | None = None,
         tolerance_xy: float | None = 0.05,
         tolerance_z: float | None = 0.10,
-    ) -> Arm:
+        block: bool = True,
+    ) -> Arm | None:
         """Nudge the end-effector by offsets from its measured pose.
 
         Adds the deltas to the live FK pose and delegates to :meth:`move_to`
-        (same verify/recover/grip contract, same speed cap). Measured, not
-        last-commanded, so a servoing loop corrects from where the arm
+        (same verify/recover/grip/block contract, same speed cap). Measured,
+        not last-commanded, so a servoing loop corrects from where the arm
         actually is. RPY deltas add per axis — fine for nudges, wrong for
         large rotations.
         """
@@ -663,9 +508,10 @@ class Manipulation(_LegacyManipulationMixin):
             grip=grip,
             tolerance_xy=tolerance_xy,
             tolerance_z=tolerance_z,
+            block=block,
         )
 
-    def follow(self, waypoints: Sequence[Waypoint], *, grip: float | None = None) -> Arm:
+    def follow(self, waypoints: Sequence[Waypoint], *, grip: float | None = None, block: bool = True) -> Arm | None:
         """Sweep through cartesian waypoints as one smooth trajectory.
 
         The arm interpolates linearly between waypoints with no deceleration
@@ -676,7 +522,8 @@ class Manipulation(_LegacyManipulationMixin):
         if IK fails for any waypoint or the trajectory is rejected/preempted.
 
         ``grip``: j6 to hold along the path; default carries the standing
-        grip target.
+        grip target. ``block=False`` returns None once the trajectory is
+        accepted; join it with :meth:`wait`.
         """
         wps = list(waypoints)
         if not wps:
@@ -698,7 +545,7 @@ class Manipulation(_LegacyManipulationMixin):
                 )
             # The single-move service honors duration; the trajectory service
             # would pace the approach at a fixed 0.5 s instead.
-            if not self._goto(waypoint_joints[0], duration, wait=True):
+            if not self._goto(waypoint_joints[0], duration, wait=block):
                 raise ArmFailed("arm move rejected or did not complete")
         else:
             seg_durations = [wp.duration for wp in wps[1:]]
@@ -710,26 +557,29 @@ class Manipulation(_LegacyManipulationMixin):
                 ]
                 # a copy of seg_durations[0] also paces the driver's prepended approach
                 seg_durations[0] = self.safety.capped_duration(math.dist(pts[0], pts[1]), seg_durations[0])
-            if not self._send_trajectory(waypoint_joints, seg_durations):
+            if not self._send_trajectory(waypoint_joints, seg_durations, wait=block):
                 raise ArmFailed("trajectory rejected, failed, or preempted")
+        if not block:
+            return None
         settled = self._read_pose_after_motion()
         if settled is None:
             raise ArmFailed("no end-effector pose after trajectory — is the IK node running?")
         return settled
 
-    def move_joints(self, joints: Sequence[float], *, duration: float = 3.0) -> None:
-        """Move to joint positions (radians), blocking.
+    def move_joints(self, joints: Sequence[float], *, duration: float = 3.0, block: bool = True) -> None:
+        """Move to joint positions (radians), blocking by default.
 
         5 values command j1-j5 and keep the standing grip; 6 values command
         j6 too (and become the new standing grip target). Raises ArmFailed
-        if the command is rejected or does not complete.
+        if the command is rejected or does not complete. ``block=False``
+        returns once the command is accepted; join it with :meth:`wait`.
         """
         target = [float(j) for j in joints]
         if len(target) == 5:
             target.append(self._grip_or(None))
         if len(target) != 6:
             raise ArmFailed(f"expected 5 or 6 joint positions, got {len(target)}")
-        if not self._goto(target, duration, wait=True):
+        if not self._goto(target, duration, wait=block):
             raise ArmFailed("arm move rejected or did not complete")
 
     def rest(self, *, duration: float = 3.0) -> None:
@@ -746,18 +596,59 @@ class Manipulation(_LegacyManipulationMixin):
         if not self._goto(target, 1.0, wait=True):
             raise ArmFailed("rest settle move rejected or did not complete")
 
+    # --- non-blocking motion ---
+
+    @property
+    def moving(self) -> bool:
+        """True while a non-blocking motion is still in flight.
+
+        Blocking motions never show here — they've settled by the time the
+        call returns.
+        """
+        pending = self._pending
+        return pending is not None and not pending.future.done()
+
+    def wait(self, timeout: float | None = None) -> Arm:
+        """Join the in-flight non-blocking motion; return the settled pose.
+
+        Blocks until the motion completes (or, with nothing in flight, just
+        reads the pose). ``timeout`` overrides the default patience of the
+        motion's own duration plus a margin. Committed like every other
+        motion call: a skill cancel lands after it returns.
+
+        Raises:
+            ArmFailed: The motion failed, timed out, or no end-effector pose
+                is available.
+        """
+        pending = self._pending
+        self._pending = None
+        if pending is not None:
+            budget = timeout if timeout is not None else max(0.0, pending.deadline - time.monotonic())
+            if not self._await_motion_result(pending.future, pending.name, budget):
+                raise ArmFailed(f"{pending.name} motion failed or did not complete in time")
+        settled = self._read_pose_after_motion()
+        if settled is None:
+            raise ArmFailed("no end-effector pose after motion — is the IK node running?")
+        return settled
+
     # --- gripper ---
 
-    def gripper_open(self, percent: float = 100.0, *, duration: float = 0.5) -> None:
-        """Open the claw to ``percent`` (100 = fully open), blocking.
+    def gripper_open(self, percent: float = 100.0, *, duration: float = 0.5, block: bool = True) -> None:
+        """Open the claw to ``percent`` (100 = fully open), blocking by default.
 
         Verifies the claw physically opened — the servo can overcurrent-trip
         and stay shut — and reboots + retries once if not; raises ArmUnhealthy
         when it stays shut, ArmFailed when the command itself is rejected.
         The reached opening becomes the standing grip target (nothing held).
+        ``block=False`` returns once the command is accepted, unverified;
+        join it with :meth:`wait`.
         """
         percent = max(0.0, min(100.0, percent))
         target = self.GRIPPER_CLOSED + (self.GRIPPER_OPEN - self.GRIPPER_CLOSED) * (percent / 100.0)
+        if not block:
+            if not self._command_gripper(target, duration, False):
+                raise ArmFailed("gripper command rejected")
+            return
         for attempt in (1, 2):
             if not self._command_gripper(target, duration, True):
                 raise ArmFailed("gripper command rejected or did not complete")
@@ -773,15 +664,17 @@ class Manipulation(_LegacyManipulationMixin):
                 self.recover()
         raise ArmUnhealthy("gripper did not open (servo tripped shut)")
 
-    def gripper_close(self, strength: float = 0.0, *, duration: float = 0.5) -> None:
-        """Close the claw, blocking; raises ArmFailed on rejection.
+    def gripper_close(self, strength: float = 0.0, *, duration: float = 0.5, block: bool = True) -> None:
+        """Close the claw, blocking by default; raises ArmFailed on rejection.
 
         ``strength`` is radians past the closed stop — the grip preload on an
         object, clamped to GRIPPER_MAX_STRENGTH (beyond trips the servo). It
         becomes the standing grip target, carried by every following move.
+        ``block=False`` returns once the command is accepted; join it with
+        :meth:`wait`.
         """
         strength = min(abs(strength), self.GRIPPER_MAX_STRENGTH)
-        if not self._command_gripper(self.GRIPPER_CLOSED - strength, duration, True):
+        if not self._command_gripper(self.GRIPPER_CLOSED - strength, duration, block):
             raise ArmFailed("gripper command rejected or did not complete")
 
     # --- servo power / recovery ---
@@ -908,7 +801,8 @@ class Manipulation(_LegacyManipulationMixin):
         return None
 
     def _goto(self, joint_positions: list[float], duration: float, wait: bool) -> bool:
-        """Send a 6-joint GotoJS command; when ``wait``, block to completion.
+        """Send a 6-joint GotoJS command; when ``wait``, block to completion,
+        otherwise leave the in-flight motion joinable via ``_pending``.
 
         The commanded j6 becomes the standing grip target on success.
         """
@@ -927,10 +821,14 @@ class Manipulation(_LegacyManipulationMixin):
         request.data.data = [float(j) for j in joint_positions]
         request.time = float(duration)
 
+        self._pending = None  # a new command supersedes any unjoined motion
         try:
             future = self._goto_js_client.call_async(request)
-            if wait and not self._await_motion_result(future, "GotoJS v2", duration + 1.0):
-                return False
+            if wait:
+                if not self._await_motion_result(future, "GotoJS v2", duration + 1.0):
+                    return False
+            else:
+                self._pending = _PendingMotion(future, "GotoJS v2", time.monotonic() + duration + 1.0)
         except Exception as e:
             self.logger.error(f"[Manipulation] Exception calling GotoJS v2: {e}")
             return False
@@ -938,8 +836,11 @@ class Manipulation(_LegacyManipulationMixin):
         self._grip_target = float(joint_positions[5])
         return True
 
-    def _send_trajectory(self, waypoint_joints: list[list[float]], seg_durations: list[float]) -> bool:
-        """Send a multi-waypoint GotoJSTrajectory and block to completion.
+    def _send_trajectory(
+        self, waypoint_joints: list[list[float]], seg_durations: list[float], wait: bool = True
+    ) -> bool:
+        """Send a multi-waypoint GotoJSTrajectory; when ``wait``, block to
+        completion, otherwise leave the motion joinable via ``_pending``.
 
         The driver prepends the current measured pose as waypoint 0 (gripper
         seeded from the last commanded goal, preserving grip preload) and
@@ -963,10 +864,14 @@ class Manipulation(_LegacyManipulationMixin):
 
         # + the driver's prepended approach segment
         total_time = sum(seg_durations) + (seg_durations[0] if seg_durations else 0.5)
+        self._pending = None  # a new command supersedes any unjoined motion
         try:
             future = self._goto_js_traj_client.call_async(request)
-            if not self._await_motion_result(future, "GotoJSTrajectory", total_time + 5.0):
-                return False
+            if wait:
+                if not self._await_motion_result(future, "GotoJSTrajectory", total_time + 5.0):
+                    return False
+            else:
+                self._pending = _PendingMotion(future, "GotoJSTrajectory", time.monotonic() + total_time + 5.0)
         except Exception as e:
             self.logger.error(f"[Manipulation] Exception calling GotoJSTrajectory: {e}")
             return False

@@ -416,8 +416,8 @@ class RobotStateProvider:
         return lidar
 
     def current_arm(self) -> Arm | None:
-        # last_fk_pose, not get_current_end_effector_pose(): the dict getter
-        # spins the node and warn-logs on None — both wrong at 50 Hz
+        # last_fk_pose, not the pose property: pose blocks waiting for a
+        # first fix and raises on None — both wrong at 50 Hz
         fk = self._manipulation.last_fk_pose
         if fk is None:
             return None

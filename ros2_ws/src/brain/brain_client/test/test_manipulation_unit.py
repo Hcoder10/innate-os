@@ -2,12 +2,12 @@
 # Copyright (c) 2026 Innate Inc
 """No-ROS behavioral tests for the arm interface.
 
-Pins the behaviors field skills depend on — IK 5→6 gripper padding, gripper
-percent/strength math, the reach clamp, the open-verify self-heal, the
-standing grip target, and the start()/stop() lifecycle invariants
-(subscriptions are created once and never destroyed; destroying one under
-the spinning private executor crashes the process with InvalidHandle →
-rmw_zenoh SIGABRT).
+Pins the behaviors field skills depend on — gripper percent/strength math,
+the reach clamp, the open-verify self-heal, the standing grip target,
+non-blocking motions (``block=False`` + ``wait()``/``moving``), and the
+start()/stop() lifecycle invariants (subscriptions are created once and never
+destroyed; destroying one under the spinning private executor crashes the
+process with InvalidHandle → rmw_zenoh SIGABRT).
 
 Instances are built with ``Manipulation.__new__`` + hand-set attributes; no
 node, no executor, no rclpy.init. These tests stub internal seams and may be
@@ -17,7 +17,6 @@ test_manipulation_surface.py, which stubs nothing.
 
 import math
 import threading
-import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -27,30 +26,31 @@ ros_stubs.install()
 
 import rclpy.executors  # noqa: E402  (real or stubbed, both fine)
 
-from brain_client.robot import manipulation as manipulation_mod  # noqa: E402
-from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation, Safety, Waypoint  # noqa: E402
+from brain_client.robot.manipulation import (  # noqa: E402
+    ArmFailed,
+    ArmUnhealthy,
+    Manipulation,
+    Safety,
+    Waypoint,
+    _PendingMotion,
+)
 from brain_client.state.arm import Arm  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def reset_legacy_warned():
-    manipulation_mod._legacy_warned.clear()
-    yield
-    manipulation_mod._legacy_warned.clear()
-
-
 class FakeFuture:
-    def __init__(self, result):
+    def __init__(self, result, done=True):
         self._result = result
+        self._done = done
 
     def done(self):
-        return True
+        return self._done
 
     def result(self):
         return self._result
 
     def add_done_callback(self, callback):
-        callback(self)
+        if self._done:
+            callback(self)
 
 
 class FakeClient:
@@ -101,6 +101,7 @@ def bare_manipulation(**overrides):
     m._status_torque = None
     m._status_stamp = 0.0
     m._grip_target = None
+    m._pending = None
     m._spin_briefly = lambda *a, **k: None
     for key, value in overrides.items():
         setattr(m, key, value)
@@ -134,167 +135,6 @@ def capture_gotos(m, ok=True):
     return calls
 
 
-# --- legacy shims: IK 5→6 gripper padding ------------------------------------
-
-
-def test_legacy_cartesian_pads_gripper_with_explicit_position():
-    m = bare_manipulation()
-    m.solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
-    calls = capture_gotos(m)
-    assert m.move_to_cartesian_pose(0.3, 0.0, 0.1, gripper_position=0.7)
-    assert calls[0][0] == [0.1, 0.2, 0.3, 0.4, 0.5, 0.7]
-
-
-def test_legacy_cartesian_reseeds_gripper_from_measured_state():
-    # The released 0.6.0 default: j6 re-seeded from the MEASURED position
-    # (the drop-the-object footgun move_to() fixes; preserved in the shim).
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.42]))
-    m.solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
-    calls = capture_gotos(m)
-    assert m.move_to_cartesian_pose(0.3, 0.0, 0.1)
-    assert calls[0][0][5] == 0.42
-
-
-def test_legacy_cartesian_pads_gripper_zero_when_unknown():
-    m = bare_manipulation()
-    m.solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
-    calls = capture_gotos(m)
-    assert m.move_to_cartesian_pose(0.3, 0.0, 0.1)
-    assert calls[0][0][5] == 0.0
-
-
-def test_legacy_cartesian_fails_when_ik_fails():
-    m = bare_manipulation()
-    m.solve_ik = lambda *a, **k: None
-    calls = capture_gotos(m)
-    assert not m.move_to_cartesian_pose(0.3, 0.0, 0.1)
-    assert calls == []
-
-
-def test_legacy_cartesian_defaults_to_non_blocking():
-    m = bare_manipulation()
-    m.solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
-    calls = capture_gotos(m)
-    assert m.move_to_cartesian_pose(0.3, 0.0, 0.1)
-    assert calls[0][2] is False  # blocking=False is released field behavior
-
-
-def test_legacy_trajectory_pads_every_waypoint_and_flattens():
-    client = FakeClient()
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.3]), _goto_js_traj_client=client)
-    m.solve_ik = lambda x, y, z, *a, **k: [x, y, z, 0.0, 0.0]
-    poses = [{"x": 0.30, "y": 0.0, "z": 0.20}, {"x": 0.30, "y": 0.0, "z": 0.10}]
-    assert m.move_cartesian_trajectory(poses, segment_durations=[0.8])
-    request = client.requests[0]
-    assert request.num_joints == 6
-    assert list(request.segment_durations) == [0.8]
-    assert list(request.waypoints.data) == [0.30, 0.0, 0.20, 0.0, 0.0, 0.3, 0.30, 0.0, 0.10, 0.0, 0.0, 0.3]
-
-
-def test_legacy_trajectory_prefers_explicit_gripper():
-    client = FakeClient()
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.3]), _goto_js_traj_client=client)
-    m.solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
-    poses = [{"x": 0.3, "y": 0.0, "z": 0.2}, {"x": 0.3, "y": 0.0, "z": 0.1}]
-    assert m.move_cartesian_trajectory(poses, gripper_position=0.55)
-    data = list(client.requests[0].waypoints.data)
-    assert data[5] == 0.55 and data[11] == 0.55
-
-
-def test_legacy_trajectory_still_requires_two_poses():
-    m = bare_manipulation()
-    assert m.move_cartesian_trajectory([{"x": 0.3, "y": 0.0, "z": 0.2}]) is False
-
-
-# --- legacy shims: gripper math ----------------------------------------------
-
-
-def capture_gripper(m):
-    calls = []
-
-    def fake_command(j6, duration, blocking):
-        calls.append(j6)
-        return True
-
-    m._command_gripper = fake_command
-    return calls
-
-
-def test_legacy_open_gripper_percent_math():
-    m = bare_manipulation()
-    calls = capture_gripper(m)
-    assert m.open_gripper(100.0)
-    assert m.open_gripper(50.0)
-    assert m.open_gripper(0.0)
-    assert m.open_gripper(250.0)  # clamped to 100
-    assert calls == pytest.approx([0.85, 0.425, 0.0, 0.85])
-
-
-def test_legacy_close_gripper_strength_clamped():
-    m = bare_manipulation()
-    calls = capture_gripper(m)
-    assert m.close_gripper()  # released default = just closed
-    assert m.close_gripper(strength=0.3)
-    assert m.close_gripper(strength=5.0)  # clamped to GRIPPER_MAX_STRENGTH
-    assert calls == pytest.approx([0.0, -0.3, -Manipulation.GRIPPER_MAX_STRENGTH])
-
-
-def test_legacy_open_gripper_blocking_self_heals_tripped_servo():
-    # Servo reads shut (< the tripped threshold) after a blocking open:
-    # recover once, retry once, then give up with False.
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.02]))
-    m._command_gripper = lambda j6, duration, blocking: True
-    recoveries = []
-    m.recover = lambda *a, **k: recoveries.append(1)
-    assert m.open_gripper(100.0, blocking=True) is False
-    assert len(recoveries) == 1
-
-
-def test_legacy_open_gripper_blocking_passes_when_open():
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.8]))
-    m._command_gripper = lambda j6, duration, blocking: True
-    m.recover = lambda *a, **k: pytest.fail("recover must not run when the claw opened")
-    assert m.open_gripper(100.0, blocking=True) is True
-
-
-# --- legacy shims: deprecation warnings ---------------------------------------
-
-
-def test_legacy_methods_warn_once_per_process():
-    m = bare_manipulation(_grip_target=0.3)
-    capture_gotos(m)
-    with pytest.warns(FutureWarning, match="move_to_joint_positions.*move_joints"):
-        m.move_to_joint_positions([0, 0, 0, 0, 0, 0])
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        m.move_to_joint_positions([0, 0, 0, 0, 0, 0])
-    assert caught == []  # warned once per process per method
-    # ... and the on-robot log line fired exactly once too.
-    log_lines = [msg for level, msg in m.logger.messages if "deprecated" in msg]
-    assert len(log_lines) == 1
-
-
-def test_each_legacy_method_warns_under_its_own_name():
-    m = bare_manipulation()
-    m._command_gripper = lambda j6, duration, blocking: True
-    with pytest.warns(FutureWarning, match="close_gripper.*gripper_close"):
-        m.close_gripper()
-    with pytest.warns(FutureWarning, match="open_gripper.*gripper_open"):
-        m.open_gripper(0.0)
-
-
-def test_new_api_never_warns():
-    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.8]))
-    capture_gotos(m)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        m.move_joints([0, 0, 0, 0, 0, 0])
-        m.gripper_close(0.2)
-        m.gripper_open(100.0)
-        m.halt()
-    assert [w for w in caught if issubclass(w.category, FutureWarning)] == []
-
-
 # --- reach clamp ---------------------------------------------------------------
 
 
@@ -314,7 +154,8 @@ def test_clamp_reach_corners():
 def test_moves_refused_while_torque_known_off():
     client = FakeClient()
     m = bare_manipulation(_torque_enabled=False, _torque_stamp=1.0, _goto_js_client=client)
-    assert m.move_to_joint_positions([0, 0, 0, 0, 0, 0]) is False
+    with pytest.raises(ArmFailed):
+        m.move_joints([0, 0, 0, 0, 0, 0])
     assert client.requests == []
 
 
@@ -435,7 +276,7 @@ def test_follow_multi_waypoint_sends_one_trajectory():
     m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10), _grip_target=0.3)
     m._solve_ik = lambda x, y, z, *a, **k: [x, y, z, 0.0, 0.0]
     sent = []
-    m._send_trajectory = lambda wps, durs: (sent.append((wps, durs)), True)[1]
+    m._send_trajectory = lambda wps, durs, wait=True: (sent.append((wps, durs)), True)[1]
     m.follow(
         [Waypoint(0.30, 0.0, 0.20, duration=0.4), Waypoint(0.30, 0.0, 0.15), Waypoint(0.30, 0.0, 0.10, duration=0.8)]
     )
@@ -491,6 +332,97 @@ def test_move_by_raises_when_feed_dead(monkeypatch):
         bare_manipulation().move_by(dz=-0.05)
 
 
+# --- new API: non-blocking motion (block=False + wait/moving) --------------------
+
+
+def test_move_to_nonblocking_returns_none_and_registers_pending():
+    client = FakeClient()
+    m = bare_manipulation(_goto_js_client=client)
+    m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
+    assert m.move_to(0.30, 0.00, 0.10, block=False) is None
+    assert len(client.requests) == 1
+    assert m._pending is not None and m._pending.name == "GotoJS v2"
+    assert m._grip_target == 0.0  # commanded j6 becomes the standing grip immediately
+
+
+def test_move_to_nonblocking_raises_on_rejected_command():
+    m = bare_manipulation(_torque_enabled=False, _torque_stamp=1.0)
+    m._solve_ik = lambda *a, **k: [0.1, 0.2, 0.3, 0.4, 0.5]
+    with pytest.raises(ArmFailed):
+        m.move_to(0.30, 0.00, 0.10, block=False)
+
+
+def test_move_joints_nonblocking_does_not_wait():
+    m = bare_manipulation()
+    calls = capture_gotos(m)
+    m.move_joints([0, 0, 0, 0, 0, 0], block=False)
+    assert calls[0][2] is False
+
+
+def test_gripper_nonblocking_does_not_wait():
+    m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.8]))
+    calls = capture_gotos(m)
+    m.recover = lambda: pytest.fail("non-blocking gripper must not verify or recover")
+    m.gripper_close(0.3, block=False)
+    m.gripper_open(100.0, block=False)
+    assert [wait for _, _, wait in calls] == [False, False]
+
+
+def test_follow_nonblocking_returns_none():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10), _grip_target=0.3)
+    m._solve_ik = lambda x, y, z, *a, **k: [x, y, z, 0.0, 0.0]
+    sent = []
+    m._send_trajectory = lambda wps, durs, wait=True: (sent.append(wait), True)[1]
+    assert m.follow([Waypoint(0.30, 0.0, 0.20), Waypoint(0.30, 0.0, 0.10)], block=False) is None
+    assert sent == [False]
+
+
+def test_moving_reflects_pending_future():
+    m = bare_manipulation()
+    assert m.moving is False
+    m._pending = _PendingMotion(FakeFuture(None, done=False), "GotoJS v2", 1e12)
+    assert m.moving is True
+    m._pending = _PendingMotion(FakeFuture(SimpleNamespace(success=True)), "GotoJS v2", 1e12)
+    assert m.moving is False  # settled, just not joined yet
+
+
+def test_wait_joins_pending_and_returns_settled_pose():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10))
+    m._pending = _PendingMotion(FakeFuture(SimpleNamespace(success=True)), "GotoJS v2", 1e12)
+    settled = m.wait()
+    assert isinstance(settled, Arm) and settled.position == (0.30, 0.00, 0.10)
+    assert m._pending is None
+
+
+def test_wait_raises_when_motion_failed():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10))
+    m._pending = _PendingMotion(FakeFuture(SimpleNamespace(success=False)), "GotoJS v2", 1e12)
+    with pytest.raises(ArmFailed):
+        m.wait()
+    assert m._pending is None  # a failed motion is consumed, not re-raised forever
+
+
+def test_wait_idle_returns_current_pose():
+    m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.10))
+    assert m.wait().position == (0.30, 0.00, 0.10)
+
+
+def test_new_command_supersedes_pending():
+    client = FakeClient()
+    m = bare_manipulation(_goto_js_client=client)
+    stale = _PendingMotion(FakeFuture(SimpleNamespace(success=False)), "GotoJS v2", 1e12)
+    m._pending = stale
+    m.move_joints([0, 0, 0, 0, 0, 0], block=False)
+    assert m._pending is not None and m._pending is not stale
+
+
+def test_stop_clears_pending():
+    m = bare_manipulation()
+    m._pending = _PendingMotion(FakeFuture(None, done=False), "GotoJS v2", 1e12)
+    m.stop()
+    assert m._pending is None
+
+
 # --- new API: safety speed cap ---------------------------------------------------
 
 
@@ -534,7 +466,7 @@ def test_follow_caps_approach_and_each_segment():
     m = bare_manipulation(_fk_pose=fk_pose(0.30, 0.00, 0.50), _grip_target=0.3)
     m._solve_ik = lambda x, y, z, *a, **k: [x, y, z, 0.0, 0.0]
     sent = []
-    m._send_trajectory = lambda wps, durs: (sent.append(durs), True)[1]
+    m._send_trajectory = lambda wps, durs, wait=True: (sent.append(durs), True)[1]
     m.safety.max_ee_speed = 0.1
     m.follow(
         [

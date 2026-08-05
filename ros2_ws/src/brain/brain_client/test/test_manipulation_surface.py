@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""API-surface snapshot for the arm interface's released (0.6.0) contract.
+"""API-surface snapshot for the arm SDK.
 
-Customer skills in the field were written against the 0.6.0 surface below and
-must keep working across the arm-SDK refactor: same names, same signatures
-(defaults included — a changed default like ``blocking=False`` is a silent
-field regression), same constants. This test is the tripwire: it must pass
-unchanged before AND after the refactor.
+Skills are written against the surface below and must keep working across
+refactors: same names, same parameter order, same defaults (a changed default
+like ``block=True`` is a silent field regression), same constants. This test
+is the tripwire — an intentional API change updates the table here in the
+same commit.
 
 Runs without ROS via ros_stubs (no-op inside the CI image).
 """
@@ -21,54 +21,86 @@ ros_stubs.install()
 from brain_client.robot import manipulation as manipulation_mod  # noqa: E402
 from brain_client.robot.manipulation import Manipulation  # noqa: E402
 
-# str(inspect.signature(...)) of every method released in 0.6.0
-# (`git show 0.6.0:.../manipulation.py`, class then named ManipulationInterface).
+REQUIRED = inspect.Parameter.empty  # sentinel: parameter has no default
+
+# Method → ordered (parameter, default) pairs, `self` omitted.
 EXPECTED_SURFACE = {
-    "move_to_cartesian_pose": (
-        "(self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0, "
-        "yaw: float = 0.0, duration: float = 3.0, ik_timeout: float = 2.0, "
-        "blocking: bool = False, gripper_position: float | None = None) -> bool"
-    ),
-    "move_to_joint_positions": (
-        "(self, joint_positions: list[float], duration: float = 3.0, blocking: bool = False) -> bool"
-    ),
-    "move_cartesian_trajectory": (
-        "(self, poses: list[dict], segment_duration: float = 1.0, "
-        "segment_durations: list[float] | None = None, ik_timeout: float = 2.0, "
-        "gripper_position: float | None = None) -> bool"
-    ),
-    "solve_ik": (
-        "(self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0, "
-        "yaw: float = 0.0, timeout: float = 2.0) -> list[float] | None"
-    ),
-    "open_gripper": "(self, percent: float = 100.0, duration: float = 0.5, blocking: bool = False) -> bool",
-    "close_gripper": "(self, strength: float = 0.0, duration: float = 0.5, blocking: bool = False) -> bool",
-    "torque_on": "(self) -> bool",
-    "torque_off": "(self) -> bool",
-    "reboot_servos": "(self) -> bool",
-    "get_current_end_effector_pose": "(self) -> dict | None",
-    "get_current_orientation_rpy": "(self) -> dict | None",
-    "spin_node_to_refresh_topics": "(self, count: int = 10, timeout_sec: float = 0.001)",
-    "start": "(self)",
-    "stop": "(self)",
-    "shutdown": "(self)",
+    "move_to": [
+        ("x", REQUIRED),
+        ("y", REQUIRED),
+        ("z", REQUIRED),
+        ("roll", 0.0),
+        ("pitch", 0.0),
+        ("yaw", 0.0),
+        ("duration", 1.5),
+        ("grip", None),
+        ("tolerance_xy", 0.05),
+        ("tolerance_z", 0.10),
+        ("block", True),
+    ],
+    "move_by": [
+        ("dx", 0.0),
+        ("dy", 0.0),
+        ("dz", 0.0),
+        ("droll", 0.0),
+        ("dpitch", 0.0),
+        ("dyaw", 0.0),
+        ("duration", 0.5),
+        ("grip", None),
+        ("tolerance_xy", 0.05),
+        ("tolerance_z", 0.10),
+        ("block", True),
+    ],
+    "follow": [("waypoints", REQUIRED), ("grip", None), ("block", True)],
+    "move_joints": [("joints", REQUIRED), ("duration", 3.0), ("block", True)],
+    "rest": [("duration", 3.0)],
+    "wait": [("timeout", None)],
+    "gripper_open": [("percent", 100.0), ("duration", 0.5), ("block", True)],
+    "gripper_close": [("strength", 0.0), ("duration", 0.5), ("block", True)],
+    "torque_on": [],
+    "torque_off": [],
+    "reboot_servos": [],
+    "recover": [],
+    "halt": [],
+    "start": [],
+    "stop": [],
+    "shutdown": [],
 }
 
-# 0.6.0 gripper constants.
-EXPECTED_CONSTANTS = {"GRIPPER_CLOSED": 0.0, "GRIPPER_OPEN": 0.85}
+EXPECTED_CONSTANTS = {"GRIPPER_CLOSED": 0.0, "GRIPPER_OPEN": 0.85, "GRIPPER_MAX_STRENGTH": 0.6}
+
+EXPECTED_PROPERTIES = ("pose", "moving", "torque_enabled", "joint_names", "last_fk_pose")
+
+# The pre-0.7 (0.6.0) compat shims were removed; they must not creep back.
+REMOVED_LEGACY = (
+    "solve_ik",
+    "move_to_joint_positions",
+    "move_to_cartesian_pose",
+    "move_cartesian_trajectory",
+    "open_gripper",
+    "close_gripper",
+    "get_current_end_effector_pose",
+    "get_current_orientation_rpy",
+    "spin_node_to_refresh_topics",
+)
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_SURFACE))
-def test_legacy_method_signature_unchanged(name):
+def test_method_signature_unchanged(name):
     method = getattr(Manipulation, name, None)
-    assert method is not None, f"released method Manipulation.{name} disappeared"
-    normalized = str(inspect.signature(method)).replace('"', "'")
-    assert normalized == EXPECTED_SURFACE[name].replace('"', "'")
+    assert method is not None, f"Manipulation.{name} disappeared"
+    params = [(p.name, p.default) for p in inspect.signature(method).parameters.values() if p.name != "self"]
+    assert params == EXPECTED_SURFACE[name]
 
 
 def test_constants_unchanged():
     for name, value in EXPECTED_CONSTANTS.items():
         assert getattr(Manipulation, name) == value
+
+
+@pytest.mark.parametrize("name", REMOVED_LEGACY)
+def test_legacy_surface_stays_removed(name):
+    assert not hasattr(Manipulation, name), f"removed 0.6.0 shim Manipulation.{name} reappeared"
 
 
 def test_constructor_contract():
@@ -83,12 +115,13 @@ def test_constructor_contract():
 def test_framework_attributes_survive():
     # RobotStateProvider hangs its subscriptions off .node and reads
     # .last_fk_pose at 50 Hz — both are load-bearing framework surface.
-    assert isinstance(Manipulation.last_fk_pose, property)
+    for name in EXPECTED_PROPERTIES:
+        assert isinstance(getattr(Manipulation, name), property), f"Manipulation.{name} is no longer a property"
     assert "node" in inspect.signature(Manipulation.__init__).parameters
 
 
 def test_exceptions_defined_here():
-    # pick-era code and shims raise/catch these; the import path is contract.
+    # skills raise/catch these; the import path is contract.
     assert issubclass(manipulation_mod.ArmFailed, RuntimeError)
     assert issubclass(manipulation_mod.ArmUnhealthy, RuntimeError)
 
