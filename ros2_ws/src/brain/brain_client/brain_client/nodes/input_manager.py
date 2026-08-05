@@ -65,6 +65,7 @@ class InputManagerNode(Node):
         self.declare_parameter("barge_in_min_ms", 250)
         self.declare_parameter("barge_in_flush_tail", False)
         self.declare_parameter("barge_in_model_path", "")
+        self.declare_parameter("barge_in_reverb_decay", 0.92)
         self.declare_parameter("barge_in_debug_dir", "")
         proxy_config = {
             "openai_realtime_model": self.get_parameter("openai_realtime_model").value,
@@ -76,6 +77,7 @@ class InputManagerNode(Node):
             "barge_in_min_ms": self.get_parameter("barge_in_min_ms").value,
             "barge_in_flush_tail": self.get_parameter("barge_in_flush_tail").value,
             "barge_in_model_path": self.get_parameter("barge_in_model_path").value,
+            "barge_in_reverb_decay": self.get_parameter("barge_in_reverb_decay").value,
             "barge_in_debug_dir": self.get_parameter("barge_in_debug_dir").value,
         }
         try:

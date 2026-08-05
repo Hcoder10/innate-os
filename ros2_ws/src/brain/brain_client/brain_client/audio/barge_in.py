@@ -127,6 +127,7 @@ class BargeInDetector:
         threshold_db: float = 10.0,
         min_ms: int = 250,
         warmup_ms: int = 400,
+        reverb_decay: float = 0.92,
         debug_dump_dir: str = "",
     ):
         self.logger = logger if logger is not None else _SilentLogger()
@@ -134,6 +135,7 @@ class BargeInDetector:
         self.threshold_db = float(threshold_db)
         self.min_ms = int(min_ms)
         self.warmup_ms = int(warmup_ms)
+        self.reverb_decay = float(reverb_decay)
         self.debug_dump_dir = debug_dump_dir
 
         self._fb = _mel_filterbank(FRAME, MIC_RATE, N_MELS, FMIN, FMAX)
@@ -450,10 +452,10 @@ class BargeInDetector:
     def _predict_echo(self, r: int, ref_p: np.ndarray) -> np.ndarray:
         # Reverb smears the echo (resonating room), so the prediction follows
         # the reference with an exponential decay tail instead of dropping
-        # instantly in speech gaps. 0.92/frame = the slowest-quartile decay
-        # measured from recorded utterance tails on this robot; the faster 0.8
-        # under-predicted the ring-out and fired on the robot's own tail.
-        self._reverb_env = np.maximum(ref_p, self._reverb_env * 0.92)
+        # instantly in speech gaps. Set from measured utterance tails (median
+        # 0.87/frame on MARS): too fast fires on the robot's own ring-out, too
+        # slow buries short interruptions in the dips.
+        self._reverb_env = np.maximum(ref_p, self._reverb_env * self.reverb_decay)
         predicted = self._gains * self._reverb_env
         if self._model is None:
             return predicted
