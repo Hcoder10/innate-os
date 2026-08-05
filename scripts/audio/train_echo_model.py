@@ -179,8 +179,20 @@ def main():
             best_val = val
             scripted = torch.jit.trace(model.cpu().eval(), xt[:2])
             scripted.save(str(args.out))
+            save_npz(model, args.out.with_suffix(".npz"))
             model.to(dev)
-    print(f"saved best model (val {best_val:.4f}) -> {args.out}")
+    print(f"saved best model (val {best_val:.4f}) -> {args.out} (+ .npz for torch-free inference)")
+
+
+def save_npz(model: EchoNet, path):
+    """Weights as npz so the robot runs inference in numpy (no torch import)."""
+    sd = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
+    np.savez(
+        path,
+        w1=sd["conv.0.weight"], b1=sd["conv.0.bias"],
+        w2=sd["conv.2.weight"], b2=sd["conv.2.bias"],
+        wh=sd["head.weight"], bh=sd["head.bias"],
+    )
 
 
 if __name__ == "__main__":

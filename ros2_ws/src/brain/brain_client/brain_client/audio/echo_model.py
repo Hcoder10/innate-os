@@ -7,8 +7,10 @@ TTS/mic pairs) maps a context window of reference log-mel frames to the mic's
 expected echo log-mel frame. It replaces the adaptive per-band gains, which
 cannot capture the speaker's nonlinearity at high levels.
 
-torch is an optional dependency at this call site: if it or the model file is
-missing, callers fall back to the adaptive-gain baseline.
+Inference is a hand-rolled numpy forward pass of the training script's EchoNet
+(conv5-relu-conv5-relu-linear, last time step) from an .npz weight file —
+torch-CPU took ~8 ms per 10 ms audio frame on the Orin and torch import
+alone costs seconds in the input manager, so torch never loads on the robot.
 """
 
 from __future__ import annotations
@@ -21,19 +23,32 @@ import numpy as np
 CONTEXT_FRAMES = 21  # must match train_echo_model.py
 
 
+def _make_conv1d_same(w: np.ndarray, b: np.ndarray):
+    """Compile a conv1d ('same' padding) into a single GEMM: x (C_in,T) -> (C_out,T)."""
+    c_out, c_in, k = w.shape
+    w2d = np.ascontiguousarray(w.transpose(0, 2, 1).reshape(c_out, k * c_in))
+    bcol = b[:, None].astype(np.float32)
+
+    def conv(x: np.ndarray) -> np.ndarray:
+        t = x.shape[1]
+        xp = np.pad(x, ((0, 0), (k // 2, k // 2)))
+        cols = np.empty((k * c_in, t), dtype=np.float32)
+        for i in range(k):
+            cols[i * c_in : (i + 1) * c_in] = xp[:, i : i + t]
+        return w2d @ cols + bcol
+
+    return conv
+
+
 def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray] | None:
     """Return a (ctx_frames, N_MELS) band-power -> (N_MELS,) predictor, or None."""
     if not path or not os.path.isfile(path):
         return None
     try:
-        import torch
-    except ImportError:
-        if logger:
-            logger.warning(f"barge-in model {path} present but torch unavailable; using adaptive gains")
-        return None
-    try:
-        model = torch.jit.load(path, map_location="cpu")
-        model.eval()
+        weights = np.load(path)
+        conv1 = _make_conv1d_same(weights["w1"], weights["b1"])
+        conv2 = _make_conv1d_same(weights["w2"], weights["b2"])
+        wh, bh = weights["wh"].astype(np.float32), weights["bh"].astype(np.float32)
     except Exception as e:
         if logger:
             logger.error(f"failed to load barge-in echo model {path}: {e}")
@@ -44,10 +59,11 @@ def load_predictor(path: str, logger=None) -> Callable[[np.ndarray], np.ndarray]
         ctx = ref_ctx[-CONTEXT_FRAMES:]
         if len(ctx) < CONTEXT_FRAMES:
             ctx = np.concatenate([np.tile(ctx[:1], (CONTEXT_FRAMES - len(ctx), 1)), ctx])
-        x = np.log10(ctx.astype(np.float32) + 1.0)
-        with torch.no_grad():
-            y = model(torch.from_numpy(x[None])).numpy()[0]
-        return 10.0**y - 1.0
+        x = np.log10(ctx.astype(np.float32) + 1.0).T  # (N_MELS, T)
+        h = np.maximum(conv1(x), 0.0)
+        h = np.maximum(conv2(h), 0.0)
+        y = wh @ h[:, -1] + bh
+        return np.maximum(10.0**y - 1.0, 0.0)
 
     if logger:
         logger.info(f"🧠 barge-in learned echo model loaded: {path}")

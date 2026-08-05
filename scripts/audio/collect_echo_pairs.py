@@ -82,34 +82,43 @@ class Collector(Node):
         self.saw_end = False
         self.ref_chunks = []
 
-        rec = subprocess.Popen(
-            ["arecord", "-D", MIC_DEV, "-f", "S16_LE", "-r", str(MIC_RATE), "-c", "1", "-t", "raw", "-q", "-"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        t_rec_start = time.monotonic()
-        time.sleep(0.3)  # let capture start before audio does
+        mic_path = self.out / f"{idx:04d}_mic.raw"
+        # record straight to the file — a stdout pipe nobody drains blocks
+        # arecord after ~1.4s (64KB pipe at 48KB/s)
+        with open(mic_path, "wb") as mic_file:
+            rec = subprocess.Popen(
+                ["arecord", "-D", MIC_DEV, "-f", "S16_LE", "-r", str(MIC_RATE), "-c", "1", "-t", "raw", "-q", "-"],
+                stdout=mic_file,
+                stderr=subprocess.PIPE,
+            )
+            t_rec_start = time.monotonic()
+            time.sleep(0.3)  # let capture start before audio does
 
-        self.tts_pub.publish(String(data=sentence))
-        if not self._spin_until(lambda: self.playing, 15.0):
-            print(f"  [{idx}] TTS never started — skipping")
-            rec.kill()
+            self.tts_pub.publish(String(data=sentence))
+            ok = self._spin_until(lambda: self.playing, 15.0)
+            t_play = time.monotonic()
+            if ok:
+                ok = self._spin_until(lambda: self.saw_end and not self.playing, 120.0)
+            if ok:
+                time.sleep(0.5)  # capture the reverb tail
+            rec.terminate()
+            try:
+                _, err = rec.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                rec.kill()
+                _, err = rec.communicate()
+        if not ok:
+            print(f"  [{idx}] TTS never {'finished' if self.playing else 'started'} — skipping")
+            mic_path.unlink(missing_ok=True)
             return False
-        t_play = time.monotonic()
-        if not self._spin_until(lambda: self.saw_end and not self.playing, 120.0):
-            print(f"  [{idx}] TTS never finished — skipping")
-            rec.kill()
-            return False
-        time.sleep(0.5)  # capture the reverb tail
-        rec.terminate()
-        mic_pcm, err = rec.communicate(timeout=5)
+        mic_pcm = mic_path.read_bytes()
         if len(mic_pcm) < MIC_RATE:  # < 0.5 s of audio: arecord failed
             print(f"  [{idx}] mic capture failed: {err.decode(errors='replace')[:200]}")
+            mic_path.unlink(missing_ok=True)
             return False
 
         ref_pcm = b"".join(self.ref_chunks)
         stem = self.out / f"{idx:04d}"
-        (stem.parent / f"{stem.name}_mic.raw").write_bytes(mic_pcm)
         (stem.parent / f"{stem.name}_ref.raw").write_bytes(ref_pcm)
         meta = {
             "sentence": sentence,
