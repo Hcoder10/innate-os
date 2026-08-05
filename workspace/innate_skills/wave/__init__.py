@@ -3,9 +3,9 @@
 
 Same class either way:
 
-    from physical_skills import Wave
+    from physical_skills import WaveInnateOs as Wave
 """
 
-from physical_skills import Wave
+from physical_skills import WaveInnateOs as Wave
 
 __all__ = ["Wave"]

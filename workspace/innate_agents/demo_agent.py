@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 from innate_skills.navigate_to_position import NavigateToPosition
-from innate_skills.navigate_with_vision import NavigateWithVision
 from innate_skills.pick_any_object import PickAnyObject
 from innate_skills.wave import Wave
 from inputs.micro_input import MicroInput
@@ -25,7 +24,7 @@ class DemoAgent(Agent):
     def get_skills(self) -> list[SkillRef]:
         """Navigation code skills plus the recorded wave — Wave is the typed
         ref generated inside the recording folder (see skills/physical_refs.py)."""
-        return [NavigateToPosition, Wave, NavigateWithVision, PickAnyObject]
+        return [NavigateToPosition, Wave, PickAnyObject]
 
     def get_inputs(self) -> list[InputRef]:
         """Enable microphone input to hear user"""
