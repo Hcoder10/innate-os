@@ -7,6 +7,7 @@
 import type { SimScene } from "./scene";
 import { RosbridgePhysicsController } from "./physics/rosbridgeController";
 import { WorldStateController } from "./physics/worldStateController";
+import type { ChallengeBlock } from "./physics/worldStateController";
 import type { PropInfo } from "./props";
 
 /** PiP tile render size; square to match the webapp's .cam-tile. */
@@ -104,6 +105,13 @@ export class SimSession {
   #stateUrls: string[];
   #rosUrl: string;
 
+  // Challenge judge state relayed from the world server (see challenges.py):
+  // deduped by content so listeners see transitions (~10Hz worst case from
+  // the elapsed-time field), not the raw broadcast rate.
+  #challenge: ChallengeBlock | null = null;
+  #challengeJson = "";
+  #challengeListeners = new Set<(block: ChallengeBlock) => void>();
+
   constructor(opts: { stateUrl?: string; rosUrl?: string } = {}) {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const proxied = `${scheme}://${location.host}/worldstate`;
@@ -185,6 +193,14 @@ export class SimSession {
         this.#playT = null;
       }
       this.#live = true;
+      if (s.challenge) {
+        const json = JSON.stringify(s.challenge);
+        if (json !== this.#challengeJson) {
+          this.#challengeJson = json;
+          this.#challenge = s.challenge;
+          for (const cb of this.#challengeListeners) cb(s.challenge);
+        }
+      }
       if (!this.#gotPose) {
         this.#gotPose = true;
         this.#maybeStreaming();
@@ -283,6 +299,25 @@ export class SimSession {
   get objectsPresent(): boolean {
     const last = this.#samples[this.#samples.length - 1];
     return last !== undefined && Object.keys(last.objects).length > 0;
+  }
+
+  /** Subscribe to the challenge judge's state (roster + active run); fires
+   * immediately with the latest block once one has arrived. The webapp's
+   * challenge panel keys off this method's existence to stay sim-only. */
+  onChallenge(cb: (block: ChallengeBlock) => void): () => void {
+    this.#challengeListeners.add(cb);
+    if (this.#challenge) cb(this.#challenge);
+    return () => this.#challengeListeners.delete(cb);
+  }
+
+  /** Start a challenge by id (resets the world and drops its props). */
+  startChallenge(id: string): void {
+    this.#controller?.send({ op: "start_challenge", id });
+  }
+
+  /** Abort the active challenge (or dismiss a finished one). */
+  abortChallenge(): void {
+    this.#controller?.send({ op: "abort_challenge" });
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.

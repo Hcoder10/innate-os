@@ -35,6 +35,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
+from .challenges import ChallengeEngine, SkillEventBridge
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
@@ -95,6 +96,9 @@ class WorldServer:
         self.state_payload = "{}"
         self.state_seq = 0
         self.state_cond = threading.Condition()
+        # Challenge judge: evaluated on each published state, driven by
+        # observer commands, fed skill events by SkillEventBridge (main()).
+        self.challenges = ChallengeEngine(sim, self.lock)
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
 
@@ -130,10 +134,23 @@ class WorldServer:
             x, y, yaw = self.sim.pose()
             joints = self.sim.joint_positions()
             objects = self.sim.object_poses()
+            # Prop CENTRES for the judge (props.py center_offset): a distance
+            # to the human has to mean its body, not the feet its origin sits
+            # at. Gathered here because the judge runs without the sim.
+            centers = self.sim.object_centers()
             sim_time = float(self.sim.data.time)
+        # Judged outside the sim lock: pure evaluation over the gathered state.
+        challenge = self.challenges.tick(sim_time, (x, y, yaw), centers)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
-            {"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints, "objects": objects}
+            {
+                "t": sim_time,
+                "wall": time.time(),
+                "pose": [x, y, yaw],
+                "joints": joints,
+                "objects": objects,
+                "challenge": challenge,
+            }
         )
         with self.state_cond:
             self.state_payload = payload
@@ -176,6 +193,14 @@ class WorldServer:
             with self.lock:
                 self.sim.remove_all_props()
             ok = True
+        elif op == "start_challenge":  # sets its own scene up; see challenges.py
+            self.challenges.start(str(cmd.get("id", "")))
+            self.publish_state()
+            return
+        elif op == "abort_challenge":
+            self.challenges.abort()
+            self.publish_state()
+            return
         else:
             return
         if not ok:
@@ -412,6 +437,7 @@ def main() -> None:
         print(f"[world-server] observer state stream on port {args.state_port} ({', '.join(binds)})", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()
+    SkillEventBridge(server.challenges)  # robot skill events for challenge goals (best-effort)
 
     def accept_loop(listener: socket.socket) -> None:
         while True:

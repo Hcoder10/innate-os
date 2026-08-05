@@ -5,6 +5,33 @@
 
 import type { PropInfo } from "../props";
 
+/** One challenge's roster entry (challenge block "list"). */
+export interface ChallengeInfo {
+  id: string;
+  title: string;
+  brief: string;
+  passed: boolean;
+  best_time_s: number | null;
+  attempts: number;
+}
+
+/** The currently running (or just finished) challenge. */
+export interface ChallengeActive {
+  id: string;
+  state: "running" | "passed" | "failed";
+  reason: string;
+  elapsed_s: number;
+  time_limit_s: number | null;
+  goals: { label: string; done: boolean }[];
+}
+
+/** The world server's challenge judge state (challenges.py), embedded in
+ * every state broadcast so any frontend is a thin renderer. */
+export interface ChallengeBlock {
+  list: ChallengeInfo[];
+  active: ChallengeActive | null;
+}
+
 export interface WorldState {
   /** Sim clock (s) -- the playback timeline. */
   t: number;
@@ -17,6 +44,8 @@ export interface WorldState {
   /** Ground truth of every manipulation prop (world.py GRASP_OBJECTS), keyed
    * by name: [x, y, z, qw, qx, qy, qz]. Empty on servers that predate them. */
   objects: Record<string, number[]>;
+  /** Challenge judge state; null on servers that predate it. */
+  challenge: ChallengeBlock | null;
 }
 
 export class WorldStateController {
@@ -94,6 +123,7 @@ export class WorldStateController {
       pose: [number, number, number];
       joints: Record<string, number>;
       objects?: Record<string, number[]> | null;
+      challenge?: ChallengeBlock | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
@@ -106,6 +136,7 @@ export class WorldStateController {
       yaw: msg.pose[2],
       joints,
       objects: msg.objects ?? {},
+      challenge: msg.challenge ?? null,
     });
   }
 }
