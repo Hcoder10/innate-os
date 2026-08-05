@@ -180,7 +180,7 @@ class BargeInDetector:
         # overlap, so evidence is sparse: require `need` hot frames within a
         # 15x window (measured live: interrupters give 9-16 hot frames/1.5s,
         # echo-only gives 0-1). Clipped frames don't consume window slots.
-        self._need_hot = max(6, self.min_ms // 25)
+        self._need_hot = max(3, self.min_ms // 25)
         self._hot = deque(maxlen=15 * self._need_hot)
         self._clip_win = deque(maxlen=15 * self._need_hot)
         self._gain_init_frames = 0
