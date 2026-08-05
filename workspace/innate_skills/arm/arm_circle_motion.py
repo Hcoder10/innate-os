@@ -16,7 +16,7 @@ class ArmCircleMotion(Skill):
 
     def execute(
         self,
-        center_x: float = 0.2,
+        center_x: float = 0.3,
         center_y: float = -0.05,
         center_z: float = 0.2,
         radius: float = 0.1,
