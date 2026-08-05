@@ -308,7 +308,7 @@ class VirtualMars:
             self.data.qpos[qadr] = home
         mq, _md, source, mult = self._mimic
         self.data.qpos[mq] = mult * ARM_HOME[source]
-        self.props.forget_dropped()  # mj_resetData already re-parked every prop
+        self.props.mark_all_parked()  # mj_resetData already re-parked every prop
         self._cmd_vx = self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
         self._hold = None
@@ -725,10 +725,8 @@ class VirtualMars:
         return out
 
     def object_poses(self) -> dict[str, list[float]]:
-        """Ground-truth [x, y, z, qw, qx, qy, qz] per prop actually in the
-        world -- what the viewer draws them from. Props still parked off-map
-        are omitted, not reported at their parking spot, so a viewer never
-        draws one."""
+        """[x, y, z, qw, qx, qy, qz] per prop in world frame. Props parked off-map
+        are omitted."""
         return self.props.poses(self.data)
 
     def prop_manifest(self) -> list[dict]:
@@ -746,34 +744,26 @@ class VirtualMars:
         mujoco.mj_forward(self.model, self.data)
         return True
 
-    def drop_prop_at_robot(self, name: str) -> bool:
+    def place_prop_at_robot(self, name: str) -> bool:
         """Set one prop down in front of the robot WHERE IT IS NOW, at rest,
-        at the prop's own reach offset -- the manipulation props' offsets put
-        them on an arc the arm can reach top-down, so this places rather than
-        drops. Drive somewhere, set a fresh one down, practise grabbing --
-        without resetting the robot's own pose the way reset() does."""
-        if not self.props.drop_at_robot(self.data, name, self.pose()):
+        at a specified reach offset."""
+        if not self.props.place_at_robot(self.data, name, self.pose()):
             return False
         mujoco.mj_forward(self.model, self.data)
         return True
 
-    def drop_group(self, group: str = "manipulation") -> int:
+    def place_group(self, group: str = "manipulation") -> int:
         """Lay out a whole set of props in front of the robot WHERE IT IS NOW,
         each at its own reach offset, and park everything outside the set.
 
         This is the workflow the arm's props exist for: drive somewhere, put a
         fresh set down, practise grabbing -- without resetting the robot's own
         pose the way reset() does. Returns how many landed."""
-        placed = self.props.drop_group(self.data, group, self.pose())
+        placed = self.props.place_group(self.data, group, self.pose())
         mujoco.mj_forward(self.model, self.data)
         return placed
 
-    def drop_objects(self) -> None:
-        """Back-compat alias for the stage's original one-click layout, which
-        has always meant the manipulation set specifically."""
-        self.drop_group("manipulation")
-
-    def remove_objects(self) -> None:
+    def remove_all_props(self) -> None:
         """Send every prop back off-map -- the state the world starts in, and
         what reset() leaves behind. Lets an operator clear the floor without
         resetting the robot's own pose."""

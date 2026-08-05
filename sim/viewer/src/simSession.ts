@@ -239,28 +239,22 @@ export class SimSession {
     this.#overlaysDirty = true;
   }
 
-  /** Lay the manipulation props out on the floor in front of the robot,
-   * wherever it currently is (stage "drop objects" button). */
-  dropObjects(): void {
-    this.#controller?.send({ op: "drop_objects" });
+  /** Send every prop back off-map (stage "clear" chip). */
+  removeAllProps(): void {
+    this.#controller?.send({ op: "remove_all_props" });
   }
 
-  /** Send every prop back off-map (stage "clear" button). */
-  removeObjects(): void {
-    this.#controller?.send({ op: "remove_objects" });
-  }
-
-  /** Lay a whole set of props out in front of the robot at once, each at its
+  /** Set a whole set of props down in front of the robot at once, each at its
    * own reach offset (props.py `group`), parking everything outside the set. */
-  dropPropGroup(group: string): void {
-    this.#controller?.send({ op: "drop_group", group });
+  placePropGroup(group: string): void {
+    this.#controller?.send({ op: "place_group", group });
   }
 
-  /** Put one prop down in front of the robot, at the prop's own reach offset
-   * -- for the manipulation props that is an arc the arm can reach top-down,
-   * so it is placed at rest rather than dropped. */
-  dropPropAtRobot(name: string): void {
-    this.#controller?.send({ op: "drop_prop_at_robot", name });
+  /** Set one prop down in front of the robot at the prop's own reach offset --
+   * for the manipulation props that is an arc the arm can reach top-down, so
+   * it lands at rest rather than falling. */
+  placePropAtRobot(name: string): void {
+    this.#controller?.send({ op: "place_prop_at_robot", name });
   }
 
   /** Release one prop above a spot the user picked, yawed about +z; the world

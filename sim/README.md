@@ -326,9 +326,12 @@ robot adapter; humans and tools see it only through the observer stream):
 - **observer stream** (WebSocket, port 8800; the webapp proxies it at
   `/worldstate`) — ground truth `{t, wall, pose, joints, objects}` pushed after
   every physics slice (~75Hz), latest-wins per client, and stage commands
-  (`{"op": "drop_objects"}` / `{"op": "remove_objects"}`, the viewer's
-  drop/remove button -- the manipulation props are parked off-map until asked
-  for) accepted back on the same socket. Scenery, never robot control. The 3D view consumes this;
+  (the viewer's prop chips: `drop_prop_at` releases a prop over a spot you
+  picked and lets physics settle it, `place_prop_at_robot` / `place_group` set
+  props down at rest at their own reach offsets, `remove_prop` /
+  `remove_all_props` send them back off-map, which is where every prop starts)
+  accepted back on the same socket.
+  Scenery, never robot control. The 3D view consumes this;
   future challenge UIs/graders are just more clients.
 
 Physics steps against the wall clock in <=25ms slices (a stall replays as

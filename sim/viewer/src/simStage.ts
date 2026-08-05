@@ -96,13 +96,16 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   propRows.style.cssText = "display:flex;flex-direction:column;gap:6px;align-items:flex-start;";
   debugStack.appendChild(propRows);
 
-  // Slide switch: place | at robot. Defaults to "at robot" -- that is the
-  // one-click layout the props have always had, and the destructive-feeling
-  // one (taking over the pointer) is the one you opt into.
-  let placeMode = false;
+  // Slide switch: drop | at robot -- the two verbs props.py uses, so what the
+  // chip does is what the switch says. "drop" takes over the pointer and lets
+  // the prop fall onto whatever you aimed at; "at robot" sets it down at rest
+  // at its own reach offset. Defaults to "at robot": that is the one-click
+  // layout the props have always had, and the pointer-grabbing mode is the one
+  // you opt into.
+  let dropMode = false;
   const modeSwitch = document.createElement("button");
   modeSwitch.type = "button";
-  modeSwitch.title = "How clicking a prop places it";
+  modeSwitch.title = "Where clicking a prop puts it";
   modeSwitch.style.cssText =
     // Equal grid columns, so the half-width knob lands exactly on a label
     // whatever the two words measure.
@@ -115,23 +118,23 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   knob.style.cssText =
     "position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;" +
     "background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
-  const placeLabel = document.createElement("span");
+  const dropLabel = document.createElement("span");
   const robotLabel = document.createElement("span");
-  placeLabel.textContent = "place";
+  dropLabel.textContent = "drop";
   robotLabel.textContent = "at robot";
-  for (const label of [placeLabel, robotLabel]) {
+  for (const label of [dropLabel, robotLabel]) {
     label.style.cssText =
       "position:relative;z-index:1;padding:4px 12px;text-align:center;white-space:nowrap;transition:color .15s ease;";
   }
-  modeSwitch.append(knob, placeLabel, robotLabel);
+  modeSwitch.append(knob, dropLabel, robotLabel);
   const refreshModeSwitch = () => {
-    knob.style.transform = placeMode ? "translateX(0)" : "translateX(100%)";
-    placeLabel.style.color = placeMode ? ON_FG : OFF_FG;
-    robotLabel.style.color = placeMode ? OFF_FG : ON_FG;
+    knob.style.transform = dropMode ? "translateX(0)" : "translateX(100%)";
+    dropLabel.style.color = dropMode ? ON_FG : OFF_FG;
+    robotLabel.style.color = dropMode ? OFF_FG : ON_FG;
   };
   modeSwitch.onclick = () => {
-    placeMode = !placeMode;
-    if (!placeMode) armDrop(null); // leaving place mode disarms whatever was armed
+    dropMode = !dropMode;
+    if (!dropMode) armDrop(null); // leaving drop mode disarms whatever was armed
     refreshModeSwitch();
   };
   refreshModeSwitch();
@@ -140,7 +143,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const clearChip = makeChip("clear", "Send every prop back off-map");
   clearChip.onclick = () => {
     armDrop(null);
-    session.removeObjects();
+    session.removeAllProps();
   };
   propControls.appendChild(clearChip);
 
@@ -179,7 +182,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
         const chip = makeChip(`+${group}`, `Set down all ${members.length} ${group} props in front of the robot`);
         chip.onclick = () => {
           armDrop(null);
-          session.dropPropGroup(group);
+          session.placePropGroup(group);
         };
         row.appendChild(chip);
       }
@@ -189,8 +192,8 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
         // A roster can arrive mid-drag; keep whatever was armed looking armed.
         setChipOn(chip, prop.name === armedProp);
         chip.onclick = () => {
-          if (placeMode) armDrop(armedProp === prop.name ? null : prop.name);
-          else session.dropPropAtRobot(prop.name);
+          if (dropMode) armDrop(armedProp === prop.name ? null : prop.name);
+          else session.placePropAtRobot(prop.name);
         };
         propChips.set(prop.name, chip);
         row.appendChild(chip);

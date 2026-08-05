@@ -166,21 +166,21 @@ class WorldServer:
             yaw = float(cmd.get("yaw", 0.0))
             with self.lock:
                 ok = self.sim.drop_prop_at(name, x, y, yaw)
-        elif op == "drop_prop_at_robot":  # the prop's own reach offset
+        elif op == "place_prop_at_robot":  # at rest, at the prop's own reach offset
             name = str(cmd["name"])
             with self.lock:
-                ok = self.sim.drop_prop_at_robot(name)
+                ok = self.sim.place_prop_at_robot(name)
         elif op == "remove_prop":
             name = str(cmd["name"])
             with self.lock:
                 ok = self.sim.remove_prop(name)
-        elif op == "drop_group":  # a whole set at once, each at its own offset
+        elif op == "place_group":  # a whole set at once, each at its own offset
             with self.lock:
-                self.sim.drop_group(str(cmd.get("group", "manipulation")))
+                self.sim.place_group(str(cmd.get("group", "manipulation")))
             ok = True
-        elif op in ("drop_objects", "remove_objects"):  # whole-set shortcuts
+        elif op == "remove_all_props":  # the stage's "clear" chip
             with self.lock:
-                getattr(self.sim, op)()
+                self.sim.remove_all_props()
             ok = True
         else:
             return

@@ -83,7 +83,7 @@ class Prop:
     # to clear furniture, then physics settles it).
     rest_z: float = 0.02
     drop_z: float | None = None
-    # Where the robot puts this prop when asked to drop it in front of itself:
+    # Where the robot puts this prop when asked to place it in front of itself:
     # robot-frame metres. The manipulation props' values place them on an arc
     # the arm can reach top-down -- do NOT round them off.
     reach: tuple[float, float] = (0.6, 0.0)
@@ -269,6 +269,17 @@ class PropRegistry:
     """The props in one world: their MJCF, their addresses in the compiled
     model, and which of them are currently out on the floor.
 
+    Two ways a prop gets there, and the verbs are load-bearing:
+
+    * ``drop_*`` RELEASES it from the prop's ``drop_z`` and lets physics settle
+      it onto whatever is below -- the honest answer when nobody knows what is
+      under the spot the user picked.
+    * ``place_*`` sets it down at ``rest_z`` already at rest: no fall, no
+      bounce, no drift off a tuned spot.
+
+    Everything below is one of those two; ``_set_pose`` is the shared write
+    that neither name would fit.
+
     Parked props are deliberately NOT reported by poses(): a viewer should
     draw nothing rather than draw a prop sitting in the parking row.
     """
@@ -276,7 +287,7 @@ class PropRegistry:
     def __init__(self, props: dict[str, Prop]):
         self.props = props
         self._addr: dict[str, tuple[int, int, int]] = {}  # name -> (body id, qpos adr, dof adr)
-        self.dropped: set[str] = set()
+        self.out: set[str] = set()  # on the floor rather than parked off-map
 
     @classmethod
     def load(cls, roots: list[Path]) -> "PropRegistry":
@@ -315,24 +326,27 @@ class PropRegistry:
 
     # -- placement (callers hold the sim lock) --
 
-    def _place(self, data, name: str, x: float, y: float, z: float, yaw: float) -> None:
+    def _set_pose(self, data, name: str, x: float, y: float, z: float, yaw: float) -> None:
+        """Write one prop's pose and zero its velocity. The z is the caller's
+        choice of drop_z or rest_z -- that choice IS drop-vs-place."""
         _bid, qadr, dadr = self._addr[name]
         half = yaw / 2
         data.qpos[qadr : qadr + 7] = [x, y, z, math.cos(half), 0.0, 0.0, math.sin(half)]
         data.qvel[dadr : dadr + 6] = 0.0
-        self.dropped.add(name)
+        self.out.add(name)
 
     def drop_at(self, data, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
-        """Release a prop above (x, y) yawed about +z and let physics settle it
-        onto whatever is below. False if this world has no such prop."""
+        """Release a prop at its drop_z above (x, y), yawed about +z, and let
+        physics settle it onto whatever is below -- floor, sofa, table, another
+        prop. False if this world has no such prop."""
         if name not in self._addr:
             return False
-        self._place(data, name, x, y, self.props[name].drop_z, yaw)
+        self._set_pose(data, name, x, y, self.props[name].drop_z, yaw)
         return True
 
-    def drop_at_robot(self, data, name: str, pose: tuple[float, float, float]) -> bool:
-        """Set a prop down at rest at its `reach` offset from the robot's
-        current pose -- the manipulation props' offsets put them where the arm
+    def place_at_robot(self, data, name: str, pose: tuple[float, float, float]) -> bool:
+        """Set a prop down at rest_z at its `reach` offset from the robot's
+        current pose. The manipulation props' offsets put them where the arm
         can actually reach them, so this places rather than drops: no fall, no
         bounce, no drift off the tuned spot."""
         if name not in self._addr:
@@ -343,7 +357,7 @@ class PropRegistry:
         cos, sin = math.cos(ryaw), math.sin(ryaw)
         x = rx + cos * forward - sin * lateral
         y = ry + sin * forward + cos * lateral
-        self._place(data, name, x, y, prop.rest_z, 0.0)
+        self._set_pose(data, name, x, y, prop.rest_z, 0.0)
         return True
 
     def groups(self) -> list[str]:
@@ -351,14 +365,14 @@ class PropRegistry:
         contribute nothing)."""
         return list(dict.fromkeys(p.group for p in self.props.values() if p.group))
 
-    def drop_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
+    def place_group(self, data, group: str, pose: tuple[float, float, float]) -> int:
         """Set down every prop in one group at its own reach offset, and park
         the rest -- so the set that lands is exactly the set asked for, the way
         the stage's one-click layout always behaved. Returns how many landed."""
         placed = 0
         for name, prop in self.props.items():
             if prop.group == group:
-                placed += bool(self.drop_at_robot(data, name, pose))
+                placed += bool(self.place_at_robot(data, name, pose))
             else:
                 self.park(data, name)
         return placed
@@ -368,18 +382,18 @@ class PropRegistry:
         if name not in self._addr:
             return False
         park_x, park_y = self.park_xy(name)
-        self._place(data, name, park_x, park_y, self.props[name].rest_z, 0.0)
-        self.dropped.discard(name)
+        self._set_pose(data, name, park_x, park_y, self.props[name].rest_z, 0.0)
+        self.out.discard(name)
         return True
 
     def park_all(self, data) -> None:
         for name in list(self.props):
             self.park(data, name)
 
-    def forget_dropped(self) -> None:
+    def mark_all_parked(self) -> None:
         """After mj_resetData: every prop is back at its parked pose already,
-        so the registry only has to forget which ones were out."""
-        self.dropped.clear()
+        so the registry only has to catch its bookkeeping up."""
+        self.out.clear()
 
     # -- readout --
 
@@ -389,13 +403,14 @@ class PropRegistry:
         return {
             name: [*map(float, data.xpos[bid]), *map(float, data.xquat[bid])]
             for name, (bid, _q, _d) in self._addr.items()
-            if name in self.dropped
+            if name in self.out
         }
 
     def center_xy(self, data, name: str) -> tuple[float, float] | None:
-        """xy of a dropped prop's visual centre, correcting for an off-centre
-        body origin (the human stands feet-at-origin). None while parked."""
-        if name not in self.dropped or name not in self._addr:
+        """xy of a prop's visual centre while it is out, correcting for an
+        off-centre body origin (the human stands feet-at-origin). None while
+        parked."""
+        if name not in self.out or name not in self._addr:
             return None
         bid, _q, _d = self._addr[name]
         ox, oy, oz = self.props[name].center_offset

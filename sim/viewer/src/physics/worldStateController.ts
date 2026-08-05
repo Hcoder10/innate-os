@@ -68,7 +68,7 @@ export class WorldStateController {
     await this.#open;
   }
 
-  /** Send a stage command (e.g. drop_objects) back up the observer socket.
+  /** Send a stage command (e.g. place_group) back up the observer socket.
    * Dropped silently while the socket is (re)connecting -- it is a button
    * press, not something worth queueing. */
   send(cmd: object): void {
