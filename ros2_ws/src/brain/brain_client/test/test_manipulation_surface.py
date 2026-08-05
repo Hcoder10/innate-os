@@ -68,9 +68,6 @@ EXPECTED_SURFACE = {
 }
 
 EXPECTED_CONSTANTS = {"GRIPPER_CLOSED": 0.0, "GRIPPER_OPEN": 0.85, "GRIPPER_MAX_STRENGTH": 0.6}
-
-EXPECTED_PROPERTIES = ("pose", "moving", "torque_enabled", "joint_names", "last_fk_pose")
-
 # The pre-0.7 (0.6.0) compat shims were removed; they must not creep back.
 REMOVED_LEGACY = (
     "solve_ik",
@@ -83,6 +80,8 @@ REMOVED_LEGACY = (
     "get_current_orientation_rpy",
     "spin_node_to_refresh_topics",
 )
+
+EXPECTED_PROPERTIES = ("pose", "moving", "torque_enabled", "joint_names", "last_fk_pose")
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_SURFACE))
@@ -98,26 +97,25 @@ def test_constants_unchanged():
         assert getattr(Manipulation, name) == value
 
 
-@pytest.mark.parametrize("name", REMOVED_LEGACY)
-def test_legacy_surface_stays_removed(name):
-    assert not hasattr(Manipulation, name), f"removed 0.6.0 shim Manipulation.{name} reappeared"
+def test_legacy_surface_stays_removed():
+    back = [name for name in REMOVED_LEGACY if hasattr(Manipulation, name)]
+    assert back == [], f"removed 0.6.0 shims reappeared: {back}"
 
 
 def test_constructor_contract():
     # skills_server constructs Manipulation(node, logger, lazy=True); the
     # annotation renders as Node or 'Node' depending on lazy-eval, so compare
-    # parameter names and the lazy default only.
+    # parameter names and the lazy default only. RobotStateProvider also hangs
+    # its subscriptions off .node, so that name is load-bearing framework surface.
     params = inspect.signature(Manipulation.__init__).parameters
     assert list(params) == ["self", "node", "logger", "lazy"]
     assert params["lazy"].default is False
 
 
-def test_framework_attributes_survive():
-    # RobotStateProvider hangs its subscriptions off .node and reads
-    # .last_fk_pose at 50 Hz — both are load-bearing framework surface.
-    for name in EXPECTED_PROPERTIES:
-        assert isinstance(getattr(Manipulation, name), property), f"Manipulation.{name} is no longer a property"
-    assert "node" in inspect.signature(Manipulation.__init__).parameters
+@pytest.mark.parametrize("name", EXPECTED_PROPERTIES)
+def test_reads_stay_properties(name):
+    # .last_fk_pose in particular is read at 50 Hz by RobotStateProvider.
+    assert isinstance(getattr(Manipulation, name), property)
 
 
 def test_exceptions_defined_here():

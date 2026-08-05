@@ -54,31 +54,21 @@ class FakeFuture:
 
 
 class FakeClient:
-    def __init__(self, success=True):
+    def __init__(self):
         self.requests = []
-        self._success = success
 
     def service_is_ready(self):
         return True
 
     def call_async(self, request):
         self.requests.append(request)
-        return FakeFuture(SimpleNamespace(success=self._success))
+        return FakeFuture(SimpleNamespace(success=True))
 
 
 class FakeLogger:
-    def __init__(self):
-        self.messages = []
-
-    def _log(self, level):
-        def log(msg, *args, **kwargs):
-            self.messages.append((level, str(msg)))
-
-        return log
-
     def __getattr__(self, name):
         if name in ("debug", "info", "warn", "warning", "error", "fatal"):
-            return self._log(name)
+            return lambda *args, **kwargs: None
         raise AttributeError(name)
 
 
@@ -87,13 +77,10 @@ def bare_manipulation(**overrides):
     m = Manipulation.__new__(Manipulation)
     m.logger = FakeLogger()
     m.safety = Safety(m.logger)
-    m._ik_lock = threading.Lock()
     m._lifecycle_lock = threading.Lock()
     m._active = True
     m._executor = None
     m._executor_thread = None
-    m._ik_solution = None
-    m._ik_solution_fk = None
     m._fk_pose = None
     m._arm_state = None
     m._torque_enabled = None
@@ -102,7 +89,7 @@ def bare_manipulation(**overrides):
     m._status_stamp = 0.0
     m._grip_target = None
     m._pending = None
-    m._spin_briefly = lambda *a, **k: None
+    m._settle = lambda *a, **k: None
     for key, value in overrides.items():
         setattr(m, key, value)
     return m
@@ -112,9 +99,9 @@ def joint_state(positions):
     return SimpleNamespace(position=list(positions))
 
 
-def fk_pose(x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0, frame_id="base_link"):
+def fk_pose(x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
     return SimpleNamespace(
-        header=SimpleNamespace(frame_id=frame_id),
+        header=SimpleNamespace(frame_id="base_link"),
         pose=SimpleNamespace(
             position=SimpleNamespace(x=x, y=y, z=z),
             orientation=SimpleNamespace(x=qx, y=qy, z=qz, w=qw),
@@ -510,8 +497,8 @@ def test_cameras_mapping_names_the_frame_types():
 def test_gripper_close_sets_standing_grip_target():
     m = bare_manipulation(_arm_state=joint_state([0, 0, 0, 0, 0, 0.8]))
     capture_gotos(m)
-    m.gripper_close(0.6)
-    assert m._grip_target == pytest.approx(-0.6)
+    m.gripper_close(0.3)  # below the clamp, so this pins "sets", not "clamps"
+    assert m._grip_target == pytest.approx(-0.3)
 
 
 def test_gripper_close_strength_clamped():
@@ -603,18 +590,14 @@ def test_halt_is_a_committed_noop():
 
 
 class FakeExecutor:
-    def __init__(self):
-        self.nodes = []
-        self.shutdowns = 0
-
     def add_node(self, node):
-        self.nodes.append(node)
+        pass
 
     def spin(self):
         pass
 
     def shutdown(self):
-        self.shutdowns += 1
+        pass
 
 
 class FakeNode:
@@ -626,7 +609,7 @@ class FakeNode:
         return SimpleNamespace()
 
 
-SUBSCRIPTION_COUNT = 5  # ik_solution, ik_solution_fk, fk_pose, arm state, arm status
+SUBSCRIPTION_COUNT = 4  # ik_solution, fk_pose, arm state, arm status
 
 
 def lifecycle_manipulation(monkeypatch):
@@ -634,7 +617,6 @@ def lifecycle_manipulation(monkeypatch):
     node = FakeNode()
     m = bare_manipulation(node=node, _active=False)
     m._ik_solution_sub = None
-    m._ik_solution_fk_sub = None
     m._fk_pose_sub = None
     m._arm_state_sub = None
     m._arm_status_sub = None

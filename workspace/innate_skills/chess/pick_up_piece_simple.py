@@ -173,6 +173,8 @@ class PickUpPieceSimple(Skill):
 
         for i, wp in enumerate(waypoints, start=1):
             try:
+                # wp.duration is already speed-scaled; pre-multiply so _move_arm's
+                # own _d() divide lands back on it rather than scaling twice.
                 self._move_arm(wp.x, wp.y, wp.z, wp.pitch, wp.yaw, wp.duration * self._speed)
             except (ArmFailed, ArmUnhealthy) as e:
                 self.fail(f"Failed at {direction} step {i}/{n} z={wp.z:.3f}m: {e}")

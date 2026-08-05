@@ -176,7 +176,6 @@ class Manipulation:
 
         # Cached state
         self._ik_solution: JointState | None = None
-        self._ik_solution_fk: PoseStamped | None = None
         self._fk_pose: PoseStamped | None = None
         self._arm_state: JointState | None = None
         # Two sources: local service results and the 0.2 Hz /mars/arm/status
@@ -197,7 +196,6 @@ class Manipulation:
         # crash). stop() gates the callbacks via _active instead.
         self._active = False
         self._ik_solution_sub: Subscription | None = None
-        self._ik_solution_fk_sub: Subscription | None = None
         self._fk_pose_sub: Subscription | None = None
         self._arm_state_sub: Subscription | None = None
         self._arm_status_sub: Subscription | None = None
@@ -240,9 +238,6 @@ class Manipulation:
             self._ik_solution_sub = self.node.create_subscription(
                 JointState, "/ik_solution", self._ik_solution_callback, 10
             )
-            self._ik_solution_fk_sub = self.node.create_subscription(
-                PoseStamped, "/ik_solution_fk", self._ik_solution_fk_callback, 10
-            )
             self._fk_pose_sub = self.node.create_subscription(PoseStamped, "/fk_pose", self._fk_pose_callback, 10)
             self._arm_state_sub = self.node.create_subscription(
                 JointState, "/mars/arm/state", self._arm_state_callback, 10
@@ -267,7 +262,6 @@ class Manipulation:
                 self._executor = None
                 self._executor_thread = None
         self._ik_solution = None
-        self._ik_solution_fk = None
         self._fk_pose = None
         self._arm_state = None
         self._pending = None  # an unjoined motion doesn't outlive the run
@@ -297,11 +291,6 @@ class Manipulation:
         if self._active:
             self.logger.debug(f"IK solution received: {msg}")
             self._ik_solution = msg
-
-    def _ik_solution_fk_callback(self, msg: PoseStamped):
-        """Store the FK of the latest IK solution (what commanded joints map to)."""
-        if self._active:
-            self._ik_solution_fk = msg
 
     def _fk_pose_callback(self, msg: PoseStamped):
         """Store the latest FK pose."""
@@ -342,18 +331,7 @@ class Manipulation:
                 msg = self._fk_pose
             if msg is None:
                 raise ArmFailed("no end-effector pose on /fk_pose — is the IK node running?")
-        p = msg.pose
-        return Arm(
-            x=p.position.x,
-            y=p.position.y,
-            z=p.position.z,
-            qx=p.orientation.x,
-            qy=p.orientation.y,
-            qz=p.orientation.z,
-            qw=p.orientation.w,
-            gripper=self._measured_gripper(),
-            frame_id=msg.header.frame_id,
-        )
+        return self._arm_from_fk(msg)
 
     @property
     def joint_names(self) -> tuple[str, ...]:
@@ -441,36 +419,30 @@ class Manipulation:
         if self.safety.max_ee_speed is not None:
             duration = self.safety.capped_duration(math.dist(self.pose.position, (x, y, z)), duration)
         target = joints + [self._grip_or(grip)]
-        if not block:
-            if not self._goto(target, duration, wait=False):
-                raise ArmFailed(f"arm move to ({x:.2f}, {y:.2f}, {z:.2f}) rejected")
-            return None
-        verified = tolerance_xy is not None or tolerance_z is not None
-        for attempt in (1, 2) if verified else (1,):
+        where = f"({x:.2f}, {y:.2f}, {z:.2f})"
+
+        # Unverified: trust the service result, never recover. Covers both
+        # block=False and callers who opted out of both tolerances.
+        if not block or (tolerance_xy is None and tolerance_z is None):
+            if not self._goto(target, duration, wait=block):
+                raise ArmFailed(f"arm move to {where} rejected or did not complete")
+            return self._settled_pose("move") if block else None
+
+        for attempt in (1, 2):
             ok = self._goto(target, duration, wait=True)
             settled = self._read_pose_after_motion()
-            if not verified:
-                if not ok:
-                    raise ArmFailed(f"arm move to ({x:.2f}, {y:.2f}, {z:.2f}) rejected or did not complete")
-                if settled is None:
-                    raise ArmFailed("no end-effector pose after move — is the IK node running?")
-                return settled
-            err_xy = math.hypot(settled.x - x, settled.y - y) if settled is not None else None
-            err_z = abs(settled.z - z) if settled is not None else None
-            if (
-                ok
-                and settled is not None
-                and (tolerance_xy is None or (err_xy is not None and err_xy <= tolerance_xy))
-                and (tolerance_z is None or (err_z is not None and err_z <= tolerance_z))
-            ):
-                return settled
-            self.logger.warning(
-                f"[arm] not tracking (ok={ok} err_xy={err_xy} err_z={err_z}) — "
-                f"{'recovering' if attempt == 1 else 'giving up'}"
-            )
+            if ok and settled is not None:
+                err_xy = math.hypot(settled.x - x, settled.y - y)
+                err_z = abs(settled.z - z)
+                if (tolerance_xy is None or err_xy <= tolerance_xy) and (tolerance_z is None or err_z <= tolerance_z):
+                    return settled
+                why = f"err_xy={err_xy:.3f} err_z={err_z:.3f}"
+            else:
+                why = f"ok={ok} settled={settled}"
+            self.logger.warning(f"[arm] not tracking ({why}) — {'recovering' if attempt == 1 else 'giving up'}")
             if attempt == 1:
                 self.recover()
-        raise ArmUnhealthy(f"arm failed to reach ({x:.2f}, {y:.2f}, {z:.2f})")
+        raise ArmUnhealthy(f"arm failed to reach {where}")
 
     def move_by(
         self,
@@ -559,12 +531,7 @@ class Manipulation:
                 seg_durations[0] = self.safety.capped_duration(math.dist(pts[0], pts[1]), seg_durations[0])
             if not self._send_trajectory(waypoint_joints, seg_durations, wait=block):
                 raise ArmFailed("trajectory rejected, failed, or preempted")
-        if not block:
-            return None
-        settled = self._read_pose_after_motion()
-        if settled is None:
-            raise ArmFailed("no end-effector pose after trajectory — is the IK node running?")
-        return settled
+        return self._settled_pose("trajectory") if block else None
 
     def move_joints(self, joints: Sequence[float], *, duration: float = 3.0, block: bool = True) -> None:
         """Move to joint positions (radians), blocking by default.
@@ -626,10 +593,7 @@ class Manipulation:
             budget = timeout if timeout is not None else max(0.0, pending.deadline - time.monotonic())
             if not self._await_motion_result(pending.future, pending.name, budget):
                 raise ArmFailed(f"{pending.name} motion failed or did not complete in time")
-        settled = self._read_pose_after_motion()
-        if settled is None:
-            raise ArmFailed("no end-effector pose after motion — is the IK node running?")
-        return settled
+        return self._settled_pose("motion")
 
     # --- gripper ---
 
@@ -655,7 +619,7 @@ class Manipulation:
             # Only targets above the shut threshold are verifiable.
             if target < self._GRIPPER_SHUT_J6:
                 return
-            self._spin_briefly(count=5, timeout_sec=0.01)
+            self._settle()
             j6 = self._measured_gripper()
             if j6 is None or j6 >= self._GRIPPER_SHUT_J6:
                 return
@@ -726,10 +690,9 @@ class Manipulation:
 
     # --- internals ---
 
-    def _spin_briefly(self, count: int = 10, timeout_sec: float = 0.001):
-        """Yield briefly while the private executor delivers callbacks."""
-        for _ in range(count):
-            time.sleep(timeout_sec)
+    def _settle(self, seconds: float = 0.05):
+        """Yield while the private executor thread delivers pending callbacks."""
+        time.sleep(seconds)
 
     def _measured_gripper(self) -> float | None:
         """Measured j6, or None while arm state is missing/short."""
@@ -749,15 +712,6 @@ class Manipulation:
         measured = self._measured_gripper()
         return float(measured) if measured is not None else 0.0
 
-    def _wait_for_future(self, future, timeout_sec: float | None = None) -> bool:
-        """Wait for a ROS future without spinning or re-adding this node."""
-        if future.done():
-            return True
-
-        done_event = threading.Event()
-        future.add_done_callback(lambda _future: done_event.set())
-        return done_event.wait(timeout=timeout_sec)
-
     def _solve_ik(
         self,
         x: float,
@@ -776,7 +730,6 @@ class Manipulation:
         """
         with self._ik_lock:
             self._ik_solution = None
-            self._ik_solution_fk = None
 
             target = Twist()  # /ik_delta is an ABSOLUTE pose despite the name
             target.linear.x = x
@@ -789,7 +742,7 @@ class Manipulation:
 
             start_time = time.time()
             while time.time() - start_time < timeout:
-                self._spin_briefly(count=1, timeout_sec=0.01)
+                self._settle(0.01)
                 if self._ik_solution is not None:
                     joint_positions = list(self._ik_solution.position)
                     if len(joint_positions) == 0:
@@ -885,7 +838,7 @@ class Manipulation:
             self.logger.error("No arm state available")
             return False
 
-        self._spin_briefly(count=5, timeout_sec=0.01)
+        self._settle()
 
         positions = list(self._arm_state.position)
         if len(positions) < 6:
@@ -893,12 +846,8 @@ class Manipulation:
         positions[5] = j6
         return self._goto(positions, duration, wait=blocking)
 
-    def _read_pose_after_motion(self) -> Arm | None:
-        """Fresh-ish FK after a blocking move (10 Hz feed), or None."""
-        self._spin_briefly(count=5, timeout_sec=0.01)
-        msg = self._fk_pose
-        if msg is None:
-            return None
+    def _arm_from_fk(self, msg: PoseStamped) -> Arm:
+        """The typed Arm for an /fk_pose message, gripper from measured j6."""
         p = msg.pose
         return Arm(
             x=p.position.x,
@@ -912,14 +861,40 @@ class Manipulation:
             frame_id=msg.header.frame_id,
         )
 
-    def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
-        """Block on a motion-service future; return True iff it completed successfully."""
-        if not self._wait_for_future(future, timeout_sec=timeout_sec):
-            self.logger.error(f"[Manipulation] {name} call timed out")
-            return False
+    def _read_pose_after_motion(self) -> Arm | None:
+        """Fresh-ish FK after a blocking move (10 Hz feed), or None."""
+        self._settle()
+        msg = self._fk_pose
+        return None if msg is None else self._arm_from_fk(msg)
+
+    def _settled_pose(self, what: str) -> Arm:
+        """Where the arm ended up after ``what``; raises if FK is silent."""
+        settled = self._read_pose_after_motion()
+        if settled is None:
+            raise ArmFailed(f"no end-effector pose after {what} — is the IK node running?")
+        return settled
+
+    def _await_result(self, future, name: str, timeout_sec: float):
+        """Block on a service future; its result, or None on timeout.
+
+        Waits without spinning or re-adding this node — the private executor
+        thread is already delivering.
+        """
+        if not future.done():
+            done = threading.Event()
+            future.add_done_callback(lambda _future: done.set())
+            if not done.wait(timeout=timeout_sec):
+                self.logger.error(f"[Manipulation] {name} call timed out")
+                return None
         result = future.result()
         if result is None:
             self.logger.error(f"[Manipulation] {name} call timed out")
+        return result
+
+    def _await_motion_result(self, future, name: str, timeout_sec: float) -> bool:
+        """Block on a motion-service future; True iff it completed successfully."""
+        result = self._await_result(future, name, timeout_sec)
+        if result is None:
             return False
         if not result.success:
             self.logger.error(f"[Manipulation] {name} returned failure")
@@ -933,13 +908,8 @@ class Manipulation:
             return False
 
         try:
-            future = client.call_async(Trigger.Request())
-            if not self._wait_for_future(future, timeout_sec=timeout_sec):
-                self.logger.error(f"{action_name} service call timed out")
-                return False
-            result = future.result()
+            result = self._await_result(client.call_async(Trigger.Request()), action_name, timeout_sec)
             if result is None:
-                self.logger.error(f"{action_name} service call timed out")
                 return False
             if not result.success:
                 self.logger.error(f"{action_name} failed: {result.message}")

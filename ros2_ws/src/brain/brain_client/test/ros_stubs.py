@@ -79,7 +79,6 @@ class _Quaternion:
 class _Header:
     def __init__(self):
         self.frame_id = ""
-        self.stamp = None
 
 
 class _Pose:
@@ -113,47 +112,25 @@ class Float64MultiArray:
         self.data = []
 
 
-class Int32:
-    def __init__(self):
-        self.data = 0
-
-
 class String:
     def __init__(self):
         self.data = ""
 
 
-def _service(request_attrs: dict, response_attrs: dict) -> type:
+def _service(request_attrs: dict) -> type:
+    """A service type with just the Request half — tests hand-roll responses."""
+
     class Request:
         def __init__(self):
             for key, value in request_attrs.items():
                 setattr(self, key, value() if callable(value) else value)
 
-    class Response:
-        def __init__(self):
-            for key, value in response_attrs.items():
-                setattr(self, key, value() if callable(value) else value)
-
-    return type("Service", (), {"Request": Request, "Response": Response})
+    return type("Service", (), {"Request": Request})
 
 
 class _FakeExecutor:
-    """Parked stand-in for SingleThreadedExecutor: spin() returns at once."""
-
-    def __init__(self):
-        self.nodes = []
-
-    def add_node(self, node):
-        self.nodes.append(node)
-
-    def remove_node(self, node):
-        self.nodes.remove(node)
-
-    def spin(self):
-        pass
-
-    def shutdown(self):
-        pass
+    """Name for `monkeypatch.setattr` to replace; the body never runs (tests
+    build instances with __new__, so no executor is ever created here)."""
 
 
 def _no_node(*_args, **_kwargs):
@@ -169,22 +146,17 @@ def install() -> None:
     _stub("rclpy.executors", SingleThreadedExecutor=_FakeExecutor)
     _stub("rclpy.node", Node=type("Node", (), {}))
     _stub("rclpy.subscription", Subscription=type("Subscription", (), {}))
-    _stub("rclpy.timer", Timer=type("Timer", (), {}))
 
     _stub("geometry_msgs.msg", PoseStamped=PoseStamped, Twist=Twist)
     _stub("sensor_msgs.msg", JointState=JointState)
-    _stub("std_msgs.msg", Float64MultiArray=Float64MultiArray, Int32=Int32, String=String)
-    _stub(
-        "std_srvs.srv",
-        Trigger=_service({}, {"success": False, "message": ""}),
-        SetBool=_service({"data": False}, {"success": False, "message": ""}),
-    )
+    _stub("std_msgs.msg", Float64MultiArray=Float64MultiArray, String=String)
+    _stub("std_srvs.srv", Trigger=_service({}))
     # The workspace's own messages: present only once colcon has built them,
     # so this is the stub a bare `pytest ros2_ws/...` actually leans on.
     _stub(
         "mars_msgs.srv",
-        GotoJS=_service({"data": None, "time": 0.0}, {"success": False}),
-        GotoJSTrajectory=_service({"waypoints": None, "num_joints": 0, "segment_durations": list}, {"success": False}),
+        GotoJS=_service({"data": None, "time": 0.0}),
+        GotoJSTrajectory=_service({"waypoints": None, "num_joints": 0, "segment_durations": list}),
     )
     _stub(
         "mars_msgs.msg",
