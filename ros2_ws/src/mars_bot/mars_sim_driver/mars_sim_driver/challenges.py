@@ -305,9 +305,13 @@ class ChallengeEngine:
 
     def _load_progress(self) -> dict:
         try:
-            return json.loads(self.progress_path.read_text())["challenges"]
+            data = json.loads(self.progress_path.read_text())["challenges"]
         except Exception:  # noqa: BLE001 -- first run or corrupt file: start fresh
             return {}
+        # Valid JSON of the wrong shape raises nothing here but would blow up
+        # later in _block(), outside any per-goal guard, taking the physics
+        # thread with it -- a hand-edited file must degrade, never stop the sim.
+        return data if isinstance(data, dict) else {}
 
     def _save_progress(self) -> None:
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
@@ -475,9 +479,16 @@ class SkillEventBridge:
                         print(f"[challenges] skill events connected ({self.url})", flush=True)
                         announced = True
                     for message in ws:
-                        frame = json.loads(message)
-                        if frame.get("topic") == self.TOPIC:
-                            self.engine.post_event(json.loads(frame["msg"]["data"]))
+                        # Per message: the topic is an open std_msgs/String bus,
+                        # so one malformed frame must cost that frame and not
+                        # the connection -- a teardown here sleeps 5s, and
+                        # rosbridge does not replay what was published meanwhile.
+                        try:
+                            frame = json.loads(message)
+                            if frame.get("topic") == self.TOPIC:
+                                self.engine.post_event(json.loads(frame["msg"]["data"]))
+                        except Exception as exc:  # noqa: BLE001 -- junk on the bus; keep listening
+                            print(f"[challenges] ignoring skill event: {exc!r}", flush=True)
             except Exception:  # noqa: BLE001,S110 -- rosbridge down/restarting; retry
                 pass
             time.sleep(5)
