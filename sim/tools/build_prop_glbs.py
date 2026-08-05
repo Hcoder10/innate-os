@@ -1,18 +1,18 @@
-"""Rebuild the viewer's prop GLBs from the converted MuJoCo assets.
+"""Restore the viewer's prop GLBs after an asset-bundle re-fetch wipes them.
 
 The browser viewer draws GLBs from sim/viewer/public/models/ -- a gitignored,
-bundle-managed directory that any asset re-fetch replaces wholesale. The
-originals (Sketchfab downloads) are not in any repo, so this tool makes the
-GLBs REGENERABLE: it builds them from sim/assets/objects/{kind}.obj +
-{kind}_basecolor.png, the exact mesh+texture the robot's physics and cameras
-use (convert_objects.py output). Visual and physics geometry therefore cannot
-drift apart. It also rebuilds labrador_hulls.f32 (the collision-overlay soup)
-from the CoACD pieces, and installs human.glb from the source-asset checkout
-(../assets/humans, untouched original -- scene.ts normalizes it).
+bundle-managed directory that any asset re-fetch replaces wholesale. This
+tool restores each prop's GLB, preferring the ORIGINAL (full PBR maps) from
+the source-asset checkout next to the repos (../assets, see SOURCE_GLBS), and
+falling back to synthesizing one from sim/assets/objects/{kind}.obj +
+{kind}_basecolor.png -- the exact mesh+texture the robot's physics and
+cameras use (convert_objects.py output) -- so a lost original degrades the
+looks, never the availability. It also rebuilds labrador_hulls.f32 (the
+collision-overlay soup) from the CoACD pieces.
 
 Converted OBJs are Z-up (MuJoCo body frame); glTF is Y-up and scene.ts
-rotates props back with rotateToZUp, so vertices are rotated Z-up -> Y-up
-here ((x, y, z) -> (x, z, -y)).
+rotates props back with rotateToZUp, so synthesized vertices are rotated
+Z-up -> Y-up here ((x, y, z) -> (x, z, -y)).
 
 Usage: cd sim && uv run tools/build_prop_glbs.py
 """
@@ -28,9 +28,17 @@ from PIL import Image
 SIM = Path(__file__).resolve().parent.parent
 OBJECTS = SIM / "assets" / "objects"
 MODELS = SIM / "viewer" / "public" / "models"
-HUMAN_SOURCE = SIM.parent.parent / "assets" / "humans" / "casual-man-in-navy-t-shirt-and-jeans" / "source"
+SRC_ASSETS = SIM.parent.parent / "assets"
 
 PROPS = ["soccer_ball", "labrador"]
+
+# kind (viewer name) -> original download in the source-asset checkout.
+SOURCE_GLBS = {
+    "soccer_ball": SRC_ASSETS / "objects" / "generic_soccer_ball.glb",
+    "labrador": SRC_ASSETS / "objects" / "labrador_dog.glb",
+    "human": SRC_ASSETS / "humans" / "casual-man-in-navy-t-shirt-and-jeans" / "source"
+    / "Casual man in navy t-shirt and jeans.glb",
+}
 
 
 def load_obj_with_uv(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -101,14 +109,19 @@ def build_hull_soup(kind: str) -> None:
 def main() -> None:
     MODELS.mkdir(parents=True, exist_ok=True)
     for kind in PROPS:
-        build_glb(kind)
+        source = SOURCE_GLBS.get(kind)
+        if source is not None and source.exists():
+            shutil.copy2(source, MODELS / f"{kind}.glb")
+            print(f"{kind}.glb: installed original ({source.name})")
+        else:
+            build_glb(kind)
         build_hull_soup(kind)
-    human_src = next(HUMAN_SOURCE.glob("*.glb"), None)
-    if human_src is not None:
+    human_src = SOURCE_GLBS["human"]
+    if human_src.exists():
         shutil.copy2(human_src, MODELS / "human.glb")
         print(f"human.glb: installed from {human_src.name}")
     elif not (MODELS / "human.glb").exists():
-        print(f"WARNING: no human.glb and no source at {HUMAN_SOURCE} -- the viewer will miss the human")
+        print(f"WARNING: no human.glb and no source at {human_src} -- the viewer will miss the human")
 
 
 if __name__ == "__main__":

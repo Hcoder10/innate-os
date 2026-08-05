@@ -46,7 +46,8 @@ WORK_DIRS = ["apartment_split", "apartment_split_v2", "apartment_visual", "sdf_s
 ATTRIBUTION = (
     "# Attribution\n\n"
     + 'The apartment environment is derived from ["Appartement"](https://sketchfab.com/3d-models/appartement-6a7a5fe208344b2e8123a88923dbd5b3) by [SrMonteiro](https://sketchfab.com/crispimrafael), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: split per room, convex-decomposed for collision, re-exported for rendering (GLB/MuJoCo meshes), and rasterized into a navigation map.\n\n'
-    + 'The scenario human is derived from ["Casual Man In Navy T-shirt And Jeans"](https://sketchfab.com/3d-models/casual-man-in-navy-t-shirt-and-jeans-bddc55b5a9d4406b982ec6de9b99531b) by [restore50](https://sketchfab.com/restore50), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: converted to a normalized MuJoCo OBJ (y-up centimeters, feet at origin) with the basecolor texture extracted.'
+    + 'The scenario human is derived from ["Casual Man In Navy T-shirt And Jeans"](https://sketchfab.com/3d-models/casual-man-in-navy-t-shirt-and-jeans-bddc55b5a9d4406b982ec6de9b99531b) by [restore50](https://sketchfab.com/restore50), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: converted to a normalized MuJoCo OBJ (y-up centimeters, feet at origin) with the basecolor texture extracted.\n\n'
+    + 'The scenario dog is derived from ["Labrador Dog"](https://sketchfab.com/3d-models/labrador-dog-1f56cfbab07e4fe49b5d9e521c82073a) by [kenchoo](https://sketchfab.com/kenchoo), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes were made: scene debris removed, converted to a normalized MuJoCo OBJ (z-up meters, bbox-centered) with the basecolor texture extracted, and convex-decomposed (CoACD) for collision.'
 )
 VIEWER_CARRYOVER = ["public/models", "public/robot", "assets/apartment_obj"]
 
@@ -190,7 +191,8 @@ def main() -> None:
                     f"regenerate with sim/tools/ (see sandbox/README.md), republish with tools/publish_assets.py. "
                     f"Apartment model: 'Appartement' by SrMonteiro (sketchfab.com/crispimrafael), CC BY 4.0; "
                     f"human model: 'Casual Man In Navy T-shirt And Jeans' by restore50 (sketchfab.com/restore50), "
-                    f"CC BY 4.0; see ATTRIBUTION.md in the bundle.",
+                    f"CC BY 4.0; dog model: 'Labrador Dog' by kenchoo (sketchfab.com/kenchoo), CC BY 4.0; "
+                    f"see ATTRIBUTION.md in the bundle.",
                 ],
                 check=True,
             )
