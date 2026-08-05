@@ -6,6 +6,8 @@
 // judging happens server-side against ground truth; this panel is a thin
 // renderer plus two commands (start/abort).
 
+import { maybeShowChallengeIntro, showChallengeIntro } from "./challengeIntro.js";
+
 /**
  * @param {HTMLElement} container
  * @param {any} session sim session exposing onChallenge/startChallenge/abortChallenge
@@ -21,7 +23,31 @@ export function createChallengePanel(container, session) {
   const title = document.createElement("span");
   title.className = "microlabel";
   title.textContent = "Challenges";
-  head.append(title);
+  // Subtle standing hint back to the docs — reopens the first-run intro
+  // (challengeIntro.js) with the tutorial link and preview.
+  const tutorial = document.createElement("button");
+  tutorial.type = "button";
+  tutorial.className = "challenge-tutorial-link";
+  // Circled "?" so the hint reads as a clickable help control, not a label
+  // like the CHALLENGES microlabel next to it.
+  const q = document.createElement("span");
+  q.className = "challenge-tutorial-q";
+  q.textContent = "?";
+  q.setAttribute("aria-hidden", "true");
+  const tutorialLabel = document.createElement("span");
+  tutorialLabel.textContent = "Tutorial";
+  tutorial.append(q, tutorialLabel);
+  tutorial.title = "How challenges work, and the tutorial that builds your first skill";
+  tutorial.addEventListener("click", () => {
+    intro?.close();
+    intro = showChallengeIntro();
+  });
+  head.append(title, tutorial);
+
+  /** Open intro dialog, if any — closed on page teardown, not leaked. */
+  /** @type {{ close: () => void } | null} */
+  let intro = null;
+  let revealed = false;
 
   const body = document.createElement("div");
   body.className = "challenge-body";
@@ -36,6 +62,14 @@ export function createChallengePanel(container, session) {
 
   const unsub = session.onChallenge((/** @type {any} */ block) => {
     panel.hidden = false;
+    // First-ever reveal: one-time welcome -- but only once the panel is really
+    // on screen. Phones hide the whole corner stack (.overlay-stack-top-left,
+    // see app.css), and a modal introducing a panel that isn't there -- over
+    // the app promo, which does show there -- is worse than no intro at all.
+    if (!revealed && panel.getClientRects().length > 0) {
+      revealed = true;
+      intro = maybeShowChallengeIntro();
+    }
     const active = block.active;
     if (timerEl && active) timerEl.textContent = timerText(active);
     const key = JSON.stringify({ ...block, active: active && { ...active, elapsed_s: null } });
@@ -175,6 +209,7 @@ export function createChallengePanel(container, session) {
 
   return {
     destroy() {
+      intro?.close();
       unsub();
       panel.remove();
     },
