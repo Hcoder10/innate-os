@@ -423,18 +423,7 @@ class RobotStateProvider:
             return None
         js = self.last_joint_states
         gripper = js.position[5] if js is not None and len(js.position) > 5 else None
-        pose = fk.pose
-        return Arm(
-            x=pose.position.x,
-            y=pose.position.y,
-            z=pose.position.z,
-            qx=pose.orientation.x,
-            qy=pose.orientation.y,
-            qz=pose.orientation.z,
-            qw=pose.orientation.w,
-            gripper=gripper,
-            frame_id=fk.header.frame_id,
-        )
+        return Arm.from_fk(fk, gripper=gripper)
 
     # --- state injection ---
     def _injection_pairs(self, skill) -> list[tuple[RobotStateType, Callable[[], object]]]:

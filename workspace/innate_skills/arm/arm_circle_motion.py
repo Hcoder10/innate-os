@@ -9,7 +9,7 @@ class ArmCircleMotion(Skill):
     """Move the arm in a circular motion pattern. The circle is traced in the YZ
     plane (vertical) while maintaining a constant X position. You can specify the
     center position, radius, number of loops, and speed. A good default center
-    position is x=0.2, y=-0.05, z=0.2 (roughly in front of the robot with arm
+    position is x=0.3, y=-0.05, z=0.2 (roughly in front of the robot with arm
     extended)."""
 
     manipulation: Manipulation
@@ -50,8 +50,13 @@ class ArmCircleMotion(Skill):
             )
             for loop in range(num_loops):
                 self.logger.info(f"Starting loop {loop + 1}/{num_loops}")
-                self.manipulation.follow(circle)
-                self.check_cancelled()
+                # Non-blocking + cancellable poll: a Stop lands within 0.1 s
+                # instead of after the full ~8 s loop (the in-flight loop
+                # still finishes — the goto services cannot preempt).
+                self.manipulation.follow(circle, block=False)
+                while self.manipulation.moving:
+                    self.sleep(0.1)
+                self.manipulation.wait()
         except (ArmFailed, ArmUnhealthy) as e:
             self.fail(f"Circular motion failed: {e}")
 

@@ -6128,6 +6128,70 @@ button {
   cursor: default;
 }
 
+/* ---- arm protection alert ------------------------------------------------ */
+/* Discrete amber card pinned top-right on every page while a servo sits in
+   latched (overcurrent) protection; carries the reboot remedy. */
+
+.arm-alert {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 40;
+  width: 216px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--accent-dim);
+  border-radius: 11px;
+}
+
+.arm-alert-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.arm-alert-head .microlabel {
+  flex: 1;
+  color: var(--accent);
+}
+
+.arm-alert-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 9px var(--accent);
+}
+
+.arm-alert-dismiss {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.arm-alert-dismiss:hover {
+  color: var(--text);
+}
+
+.arm-alert-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.arm-alert-text.warn {
+  color: var(--danger);
+}
+
 /* ---- mobile teleop layout ------------------------------------------------- */
 /* On a phone the centered joystick and the bottom-right arm panel collide, and
    the keyboard-only WASD chips are dead weight (and overlap the speech bar).

@@ -20,6 +20,7 @@ find_package(nav_msgs REQUIRED)
 find_package(brain_messages REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -40,6 +41,7 @@ ament_target_dependencies(app.cpp
   brain_messages
   std_msgs
   std_srvs
+  sensor_msgs
   mars_msgs
 )
 

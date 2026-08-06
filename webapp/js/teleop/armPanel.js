@@ -16,18 +16,19 @@ import { DynamixelLeader } from "../dynamixel.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
 import {
   LEADER_POSITIONS_TOPIC,
-  ARM_REBOOT_SERVICE,
+  ARM_REBOOT_CONFIRM,
   ARM_TORQUE_ON_SERVICE,
   ARM_TORQUE_OFF_SERVICE,
   ARM_STATUS_TOPIC,
 } from "../constants.js";
+import { rebootArmAndEnableTorque } from "../armReboot.js";
 
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
 const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
-// The reboot power-cycles the servos and "takes a few seconds" — give the
-// service call more room than the 10s default before timing out.
-const REBOOT_TIMEOUT_MS = 20_000;
+// Ticks are the leader's own encoder frame; radians are what every consumer
+// (skills, /mars/arm/commands) speaks, so that is what the copy button emits.
+const TICK_TO_RAD = (2 * Math.PI) / 4096;
 
 /**
  * @param {HTMLElement} parent
@@ -319,7 +320,7 @@ function divider() {
  * rosbridge socket (no WebSerial). Torque state is read from /mars/arm/status
  * (ArmStatus, ~0.2 Hz) so the toggle reflects reality even when changed
  * elsewhere; clicking it calls torque_on/torque_off. Reboot power-cycles the
- * servos, then re-enables torque automatically once they've re-initialized.
+ * servos, then re-enables torque automatically (see armReboot.js).
  * @param {import("../rosClient.js").RosClient} rosClient
  * @returns {{ el: HTMLElement, destroy: () => void }}
  */
@@ -393,33 +394,16 @@ function buildArmServices(rosClient) {
 
   rebootBtn.addEventListener("click", async () => {
     if (rebooting || toggling) return;
-    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and torque re-enables automatically after the power-cycle.")) {
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) {
       return;
     }
     rebooting = true;
     msg.hidden = true;
     render();
     try {
-      const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      if (res && res.success === false) {
-        flash(res.message || "Reboot failed", true);
-      } else {
-        // Torque back on by default — a rebooted arm is limp, and every caller
-        // ended up re-enabling it by hand anyway. The pause lets the servos
-        // finish re-initializing first (mirrors Manipulation.recover()).
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        try {
-          const tres = await rosClient.callService(ARM_TORQUE_ON_SERVICE, {});
-          if (tres && tres.success === false) {
-            flash(tres.message || "Rebooted — torque re-enable failed", true);
-          } else {
-            torqueOn = true;
-            flash("Servos rebooted, torque on", false);
-          }
-        } catch {
-          flash("Rebooted — torque re-enable failed", true);
-        }
-      }
+      const res = await rebootArmAndEnableTorque(rosClient);
+      if (res.torqueOn) torqueOn = true;
+      flash(res.message, !res.ok || !res.torqueOn);
     } catch (err) {
       flash(err instanceof Error ? err.message : "Reboot failed", true);
     } finally {

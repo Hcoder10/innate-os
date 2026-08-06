@@ -9,11 +9,8 @@
 // automatically once the servos have re-initialized, matching teleop.
 
 import { ros } from "../rosClient.js";
-import { ARM_REBOOT_SERVICE, ARM_TORQUE_ON_SERVICE } from "../constants.js";
-
-// Power-cycling walks the six servos and "takes a few seconds" — give the call
-// the same generous headroom the teleop panel does.
-const REBOOT_TIMEOUT_MS = 20_000;
+import { ARM_REBOOT_CONFIRM } from "../constants.js";
+import { rebootArmAndEnableTorque } from "../armReboot.js";
 
 export function buildRebootArm() {
   const btn = document.createElement("button");
@@ -36,31 +33,12 @@ export function buildRebootArm() {
 
   btn.addEventListener("click", async () => {
     if (rebooting) return;
-    if (
-      !window.confirm(
-        "Reboot the arm servos? Any running task stops, the head recenters to level, and torque re-enables automatically after the power-cycle."
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) return;
     rebooting = true;
     sync();
-    let outcome = "Reboot failed";
-    try {
-      const res = await ros.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      if (!(res && res.success === false)) {
-        // Torque back on by default — a rebooted arm is limp, and every eval
-        // continued by re-enabling it anyway. The pause lets the servos finish
-        // re-initializing first (mirrors Manipulation.recover()).
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const tres = await ros.callService(ARM_TORQUE_ON_SERVICE, {}).catch(() => null);
-        outcome = tres && tres.success !== false ? "Rebooted, torque on ✓" : "Rebooted — torque failed";
-      }
-    } catch (err) {
-      console.error("[profiling] arm reboot:", err);
-    }
+    const res = await rebootArmAndEnableTorque(ros);
     rebooting = false;
-    sync(outcome);
+    sync(res.ok && res.torqueOn ? "Rebooted, torque on \u2713" : res.message);
     setTimeout(() => sync(), 1600);
   });
 

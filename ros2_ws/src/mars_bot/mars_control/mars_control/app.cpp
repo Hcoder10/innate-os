@@ -15,6 +15,7 @@
 #include <brain_messages/msg/recorder_status.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <mars_msgs/srv/set_robot_name.hpp>
 #include <mars_msgs/srv/trigger_update.hpp>
@@ -463,6 +464,15 @@ class AppControl : public rclcpp::Node {
         // Arm goto client for the Mad-mode safe fold (see fold_arm_for_mad_mode).
         arm_goto_client_ = this->create_client<mars_msgs::srv::GotoJS>("/mars/arm/goto_js_v2");
 
+        // Track the last COMMANDED j6 (the standing grip target) so the Mad
+        // fold can carry it — re-commanding a held claw drops the object.
+        arm_command_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "/mars/arm/command_state", 10, [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
+                if (msg->position.size() >= 6) {
+                    last_commanded_j6_ = msg->position[5];
+                }
+            });
+
         // Publisher for robot info
         robot_info_pub_ = this->create_publisher<std_msgs::msg::String>("/robot/info", 10);
 
@@ -842,9 +852,9 @@ class AppControl : public rclcpp::Node {
      * the parameter write that engages the mode never blocks on the 2 s motion.
      */
     void fold_arm_for_mad_mode() {
-        // Hardware-verified command radians (j1 at its configured limit — the
-        // demonstrated pose sat ~12 deg past it; j6 = 0: claw closed so a held
-        // object keeps a light grip instead of releasing).
+        // Hardware-verified command radians for j1-j5 (j1 at its configured
+        // limit — the demonstrated pose sat ~12 deg past it); j6 is replaced
+        // below with the standing grip target.
         static constexpr std::array<double, 6> POSE_RAD{1.5708, -0.3912, 1.4511, -1.6276, -0.0890, 0.0};
         if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
             RCLCPP_WARN(this->get_logger(), "Mad mode: arm goto service not ready; skipping the safe fold");
@@ -852,6 +862,10 @@ class AppControl : public rclcpp::Node {
         }
         auto request = std::make_shared<mars_msgs::srv::GotoJS::Request>();
         request->data.data.assign(POSE_RAD.begin(), POSE_RAD.end());
+        // Keep the grip: commanding j6 above the last commanded target zeroes
+        // the preload (current-based position control) and drops a held
+        // object. An open claw still closes to 0 for the brace.
+        request->data.data[5] = std::min(0.0, last_commanded_j6_);
         request->time = 2.0;
         RCLCPP_INFO(this->get_logger(), "Mad mode: folding the arm to its bracing pose");
         arm_goto_client_->async_send_request(
@@ -1480,6 +1494,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_command_state_sub_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
     // Service clients
@@ -1514,6 +1529,9 @@ class AppControl : public rclcpp::Node {
     double smoothing_dt_ = drive::CONTROL_DT;
     // Last speed mode watch_mad_mode() observed, so the arm folds on entry only.
     bool mad_engaged_ = false;
+    // Last commanded j6 from /mars/arm/command_state (radians): the standing
+    // grip target the Mad fold carries.
+    double last_commanded_j6_ = 0.0;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;
