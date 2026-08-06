@@ -44,6 +44,17 @@ class Agent(ABC):
     # agent declares one and it loads.
     display_icon_data: str | None = None
 
+    # Every subclass registers itself here at definition time, the same model
+    # as Skill._registry: defining an Agent in an imported module is what puts
+    # it on the roster. Keyed by (module, qualname) so a re-import of the same
+    # module replaces its own entries; stale entries are pruned at collect
+    # time (see agents/loader.py).
+    _registry: "dict[tuple[str, str], type[Agent]]" = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        Agent._registry[(cls.__module__, cls.__qualname__)] = cls
+
     @property
     @abstractmethod
     def id(self) -> str:
