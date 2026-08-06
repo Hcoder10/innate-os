@@ -9,10 +9,9 @@ The whole agent is one sequential coroutine on a dedicated loop thread
   the task; a turn still thinking unwinds at its await and can never absorb
   its response.
 * **Turns are transactional.** Events are consumed only when a turn commits,
-  so a failed or abandoned turn re-sends them. This is what makes abandoning
-  free: user speech aborts any turn that has not yet begun to speak, and the
-  rerun sees everything it saw plus the new message — a correction prevents a
-  stale action instead of cancelling it after it started.
+  so a failed or abandoned turn re-sends them. User speech abandons any turn
+  that has not begun to speak, and the rerun sees everything it saw plus the
+  new message.
 
 Threading contract: ROS callbacks (executor thread) only queue events and wake
 the loop; observing, history, and acting all happen in the coroutine.
@@ -40,23 +39,15 @@ from brain_client.brain.gemini import (
 )
 from brain_client.brain.loop import LoopThread
 from brain_client.brain.prompt import build_system_prompt
-from brain_client.perception import pose as pose_math
+from brain_client.brain.utils import adjust_nav_goal, in_image, observation_text, parse_view_point
 from brain_client.perception.scan_health import ScanHealthReporter
 from brain_client.transport.chat import SpeechStreamer
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
-
-# A camera frame older than this means the feed is broken; don't think blind.
-_FRESH_FRAME_SEC = 3.0
-
-# The most queued events a turn will look at; the oldest beyond it are dropped
-# (stale stimuli). Bounds the backlog while the loop can't turn — camera down,
-# or an API outage with a chatty scene.
-_MAX_EVENTS_QUEUED = 30
-
-# Frame label for the arm wrist camera: these frames are latest-only in history
-# (a stale gripper close-up reads as current grasp state).
-_WRIST_LABEL = "wrist camera"
+_FRESH_FRAME_SEC = 3.0  # an older camera frame means the feed is broken; don't think blind
+_MAX_EVENTS_QUEUED = 30  # the oldest beyond this are dropped as stale stimuli
+_MAX_RERUNS = 2  # nonstop user speech cannot starve the loop
+_WRIST_LABEL = "wrist camera"  # wrist frames are latest-only in history: a stale close-up reads as current grasp state
 
 
 class BrainAgent:
@@ -103,8 +94,8 @@ class BrainAgent:
             else None
         )
 
-        # Pending {"text", "image", "kind"} stimuli. The executor appends to the
-        # tail; the coroutine pops from the head — and only when a turn commits.
+        # Pending {"text", "image", "kind"} stimuli: the executor appends to
+        # the tail, the coroutine pops the head — only when a turn commits.
         self._events: list[dict] = []
         self._pose_at_capture = None
         self._frame_at_capture: bytes | None = None
@@ -115,32 +106,24 @@ class BrainAgent:
         self._turn_count = 0
         self._turn_started_at = 0.0
         self._turn_in_flight = False
-        self._speaker: SpeechStreamer | None = None  # the in-flight turn's streamer (loop reads .spoke)
+        self._speaker: SpeechStreamer | None = None  # the in-flight turn's streamer (the racing loop reads it)
         self._pause_until = 0.0  # monotonic deadline of the current between-turns pause
 
         self._runtime = LoopThread("brain-agent")
         self._new_event = asyncio.Event()  # something was queued (loop thread; set via runtime.post)
         self._user_spoke = asyncio.Event()  # like _new_event, but only user speech sets it
 
-        # Set by the composition root: whether anything subscribes to
-        # /brain/trace. Gates only the HEAVY traces (full request bodies,
-        # base64 frames) — hundreds of KB per turn that would otherwise be
-        # serialized and published for nobody. Small events always publish.
+        # Set by the composition root: gates only the HEAVY traces (request
+        # bodies, frames) — hundreds of KB per turn, otherwise serialized and
+        # published for nobody. Small events always publish.
         self.trace_has_audience = lambda: True
 
         if self._session is not None:
-            # The observability tap: the exact request body, straight off the
-            # wire path (fires on generate's worker thread, like add_event's
-            # executor-thread traces). The monitor renders it verbatim.
-            self._session.on_request = self._trace_request
+            self._session.on_request = self._trace_request  # the monitor renders the exact request body
 
     @property
     def available(self) -> bool:
-        """Whether the brain can reach Gemini — true exactly when a session exists.
-
-        Derived rather than stored so the two can never disagree: every guard
-        that reads this also narrows ``_session`` for the type checker.
-        """
+        """Whether the brain can reach Gemini — true exactly when a session exists."""
         return self._session is not None
 
     @property
@@ -160,7 +143,7 @@ class BrainAgent:
             return True
         if not self._runtime.unwound:
             # A previous loop is stuck mid-unwind (stop() timed out): spawning
-            # over it would interleave two conversations. Same guard as reset().
+            # over it would interleave two conversations.
             self._chat.emit_system("⚠️ The previous brain loop is still unwinding — try activating again shortly.")
             return False
         self._activated_at = time.monotonic()
@@ -180,8 +163,6 @@ class BrainAgent:
         """Forget the conversation; a turn thinking under the old one dies with it."""
         was_running = self._runtime.running
         if not self.stop():
-            # The old loop is stuck mid-unwind: spawning a second one over it
-            # would interleave two conversations. Stay down instead.
             self._chat.emit_system("⚠️ Brain loop is stuck — stop and start the brain to recover.")
             return
         if self._session is not None:
@@ -195,10 +176,9 @@ class BrainAgent:
 
     # ================= the loop =================
     async def _loop(self) -> None:
-        """Root task: turns forever, with the 1 Hz telemetry heartbeat alongside.
-
-        A crash (a bug, not a transport failure — those back off per turn) is
-        reported in chat and leaves the loop down until the brain is restarted.
+        """Root task: turns forever, each racing the user's voice, with the 1 Hz
+        telemetry heartbeat alongside. A crash (a bug — transport failures back
+        off per turn) is reported in chat and leaves the loop down until restart.
         """
         session = self._session
         if session is None:
@@ -209,29 +189,16 @@ class BrainAgent:
         try:
             while True:
                 await self._await_camera()
-
-                # Every turn races the user's voice. Abandoning is free —
-                # nothing is consumed until a turn commits, so the rerun sees
-                # everything this one saw plus the new message — with two
-                # bounds: a turn that began speaking finishes what it says,
-                # and the third rerun runs to completion, so nonstop speech
-                # cannot starve the loop.
                 self._user_spoke.clear()
                 turn = asyncio.ensure_future(self._turn(session))
                 spoke = asyncio.ensure_future(self._user_spoke.wait())
                 await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
                 spoke.cancel()
-                speaker = self._speaker  # _turn publishes it before its first await
-                # try_abandon is the atomic spoke-check-and-mute: the reply
-                # streams on a worker thread, and a plain check-then-mute could
-                # let its first sentence slip out after the decision to abandon.
-                if not turn.done() and speaker is not None and reruns < 2 and speaker.try_abandon():
-                    self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
-                    turn.cancel()
+                if reruns < _MAX_RERUNS and self._abandon(turn):
                     await asyncio.wait({turn})  # fully unwound before the rerun looks
                     reruns += 1
                     continue
-                await turn  # committed (or holding the floor): run to completion
+                await turn
                 reruns = 0
                 if not self._events:
                     await self._pause(self._interval())
@@ -246,86 +213,105 @@ class BrainAgent:
                 if task is not None:
                     task.cancel()  # stop() can land mid-race; the turn dies with the loop
 
+    def _abandon(self, turn) -> bool:
+        """Cancel a thinking turn the user just talked over — unless it already
+        holds the floor. try_abandon is atomic with the reply stream: a plain
+        check-then-mute could let the first sentence slip out after the decision.
+        """
+        speaker = self._speaker  # _turn publishes it before its first await
+        if turn.done() or speaker is None or not speaker.try_abandon():
+            return False
+        self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
+        turn.cancel()
+        return True
+
     async def _turn(self, session: GeminiSession) -> None:
-        """One turn: look at the world, think with Gemini, commit, act."""
+        """One turn: look at the world, think with Gemini, commit, act.
+
+        ``events`` is a peek at the queue — consumed only when the turn
+        commits, so a failed or abandoned turn re-sends the same events.
+        """
         del self._events[:-_MAX_EVENTS_QUEUED]  # bound the backlog after an outage
-        events = list(self._events)  # a peek — consumed only if the turn commits
+        events = list(self._events)
         self._turn_count += 1
         self._turn_started_at = time.monotonic()
-        # Published before the first await, so the racing loop always reads
-        # the current turn's speaker: once it has spoken, no abandoning.
-        speaker = self._speaker = self._chat.stream_speech()
+        self._speaker = self._chat.stream_speech()  # published before the first await, for the racing loop
         try:
-            text, frames = self._look(events)
-            if self._frame_at_capture is None:
-                return  # the feed died between the loop's freshness check and the look
-            images = [jpeg for _, jpeg in frames]
-            wrist_frames = [i for i, (label, _) in enumerate(frames) if label == _WRIST_LABEL]
-            message = GeminiSession.user_message(text, images)
-            tools = self._build_tools(events)
-            directive = self._state.current_directive
-            system = build_system_prompt(directive.get_prompt() if directive else None)
-            if self._state.log_everything:
-                self._logger.info(f"[Brain] Turn input:\n{text}")
-            self._trace_turn_start(text, frames, tools, system, session)
-
-            # The only blocking call, on a worker thread. Cancellation unwinds
-            # HERE — the orphaned HTTP call finishes and its result is dropped.
-            self._turn_in_flight = True
-            try:
-                response = await asyncio.to_thread(
-                    session.generate,
-                    message,
-                    tools,
-                    system,
-                    speaker.feed if speaker else None,
-                    latest_only_images=wrist_frames,
-                )
-            finally:
-                self._turn_in_flight = False
-
-            latency = self._elapsed()
-            if self._error_streak:
-                self._error_streak = 0
-                self._chat.emit_system("✅ Brain recovered.")
-            if not self._state.is_brain_active:
-                # Deactivation raced this turn's response: drop the whole exchange.
-                self._trace("turn_dropped", turn=self._turn_count, latency=latency)
-                return
-
-            decision = session.absorb(message, response, latest_only_images=wrist_frames)
-            del self._events[: len(events)]  # commit: consume exactly what this turn saw
-            # Committed: the peeked events are consumed, so a failure below must
-            # back off against an empty count — any newly queued event ends it.
-            events = []
-            outcomes = self._act(decision, speaker, session)
-            self._trace(
-                "turn_end",
-                turn=self._turn_count,
-                latency=latency,
-                thoughts=decision.thoughts,
-                speech=decision.speech,
-                calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
-                history=session.history_len,
-                next_in=round(self._interval(), 1),
-            )
+            await self._think(session, events)
         except asyncio.CancelledError:
             self._trace("turn_dropped", turn=self._turn_count, latency=self._elapsed())
             raise
         except Exception as error:
-            # Inference failures and turn-level bugs alike: retry, never die.
-            self._error_streak += 1
-            self._logger.error(f"[Brain] Turn failed ({self._error_streak}x): {error!r}")
-            if self._error_streak == 1:
-                self._chat.emit_system(f"⚠️ Brain turn failed: {error} — retrying.")
-            backoff = min(5.0 * self._error_streak, 30.0)
-            self._trace(
-                "turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff
+            await self._back_off(error, seen=len(events))
+
+    async def _think(self, session: GeminiSession, events: list[dict]) -> None:
+        text, frames = self._look(events)
+        if self._frame_at_capture is None:
+            return  # the feed died between the loop's freshness check and the look
+        speaker = self._speaker
+        wrist_frames = [i for i, (label, _) in enumerate(frames) if label == _WRIST_LABEL]
+        message = GeminiSession.user_message(text, [jpeg for _, jpeg in frames])
+        tools = self._build_tools(events)
+        directive = self._state.current_directive
+        system = build_system_prompt(directive.get_prompt() if directive else None)
+        if self._state.log_everything:
+            self._logger.info(f"[Brain] Turn input:\n{text}")
+        self._trace_turn_start(text, frames, tools, system, session)
+
+        response = await self._generate(session, message, tools, system, speaker, wrist_frames)
+        latency = self._elapsed()
+        self._report_recovered()
+        if not self._state.is_brain_active:
+            # Deactivation raced this turn's response: drop the whole exchange.
+            self._trace("turn_dropped", turn=self._turn_count, latency=latency)
+            return
+
+        decision = session.absorb(message, response, latest_only_images=wrist_frames)
+        del self._events[: len(events)]
+        events.clear()  # committed: a failure below backs off against an empty peek
+        outcomes = self._act(decision, speaker, session)
+        self._trace(
+            "turn_end",
+            turn=self._turn_count,
+            latency=latency,
+            thoughts=decision.thoughts,
+            speech=decision.speech,
+            calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
+            history=session.history_len,
+            next_in=round(self._interval(), 1),
+        )
+
+    async def _generate(self, session: GeminiSession, message, tools, system, speaker, wrist_frames) -> dict:
+        """The only blocking call, on a worker thread. Cancellation unwinds HERE —
+        the orphaned HTTP call finishes and its result is dropped."""
+        self._turn_in_flight = True
+        try:
+            return await asyncio.to_thread(
+                session.generate, message, tools, system, speaker.feed, latest_only_images=wrist_frames
             )
-            # Events stay queued; only the user speaking ends the backoff early
-            # (motion/feedback chatter must not turn a failing API into a hot
-            # retry loop).
-            await self._pause(backoff, seen=len(events), user_only=True)
+        finally:
+            self._turn_in_flight = False
+
+    def _report_recovered(self) -> None:
+        if not self._error_streak:
+            return
+        self._error_streak = 0
+        self._chat.emit_system("✅ Brain recovered.")
+
+    async def _back_off(self, error: Exception, seen: int) -> None:
+        """Inference failures and turn-level bugs alike: retry, never die.
+
+        Events stay queued; only the user speaking ends the backoff early
+        (motion and feedback chatter must not turn a failing API into a hot
+        retry loop).
+        """
+        self._error_streak += 1
+        self._logger.error(f"[Brain] Turn failed ({self._error_streak}x): {error!r}")
+        if self._error_streak == 1:
+            self._chat.emit_system(f"⚠️ Brain turn failed: {error} — retrying.")
+        backoff = min(5.0 * self._error_streak, 30.0)
+        self._trace("turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff)
+        await self._pause(backoff, seen=seen, user_only=True)
 
     async def _await_camera(self) -> None:
         """Hold turns while the camera feed is down; tell the user if it stays down."""
@@ -343,14 +329,14 @@ class BrainAgent:
     async def _pause(self, seconds: float, *, seen: int = 0, user_only: bool = False) -> None:
         """Sleep up to ``seconds``; the queue growing past ``seen`` events ends it early.
 
-        ``user_only`` narrows the early wake to user speech: the error backoff
-        must stay a backoff under motion and feedback chatter, while a human
-        speaking still gets an immediate retry.
+        ``user_only`` narrows the early wake to user speech (the error backoff).
         """
         wake = self._user_spoke if user_only else self._new_event
         wake.clear()
         fresh = self._events[seen:]
-        if any(event["kind"] == "user" for event in fresh) if user_only else fresh:
+        if user_only:
+            fresh = [event for event in fresh if event["kind"] == "user"]
+        if fresh:
             return
         self._pause_until = time.monotonic() + seconds
         try:
@@ -369,46 +355,45 @@ class BrainAgent:
 
     # ================= look =================
     def _look(self, events: list[dict]) -> tuple[str, list[tuple[str, bytes]]]:
-        """Snapshot the world + the given (peeked) events into one turn input.
+        """Snapshot the world + the peeked events into one turn input.
 
-        Returns the input text and the turn's images as (label, jpeg) pairs —
-        only the bytes go to the model; the labels feed telemetry and mark
-        which frames are latest-only in history (the wrist camera).
         Frame, head pitch, and pose are captured together: go_to_point_in_view
         projections must use the geometry of the exact frame the model saw.
+        Returns the input text and the turn's (label, jpeg) frames — only the
+        bytes go to the model; the labels feed telemetry and mark which frames
+        are latest-only in history (the wrist camera).
         """
-        pose = self._pose_at_capture = self._pose.current_pose_xyt()
-        status = f"[t+{int(time.monotonic() - self._activated_at)}s]"
-        if pose is not None:
-            status += f" pose: x={pose[0]:.2f}m y={pose[1]:.2f}m heading={math.degrees(pose[2]):.0f}°"
-        running = self._state.primitive_running
-        if running:
-            status += f" | running skill: {running['primitive_name']}"
-
-        lines = [status]
-        if running:
-            meta = self._state.registry.primitives.get(running.get("skill_id")) or {}
-            guidance = (meta.get("guidelines_when_running") or "").strip()
-            if guidance:
-                lines.append(f"(guidance while this skill runs: {guidance})")
-        lines += [f"- {event['text']}" for event in events]
-
+        self._pose_at_capture = self._pose.current_pose_xyt()
         head_jpeg = self._frame_at_capture = self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)
         self._pitch_at_capture = self._camera.current_head_pitch
-        # A dead feed means the caller abandons the turn on _frame_at_capture,
-        # so the frames it gets back here are moot — no None goes downstream.
-        frames: list[tuple[str, bytes]] = [("head camera", head_jpeg)] if head_jpeg is not None else []
         arm_jpeg = self._camera.fresh_arm_jpeg(_FRESH_FRAME_SEC)
+
+        frames: list[tuple[str, bytes]] = [("head camera", head_jpeg)] if head_jpeg is not None else []
         if arm_jpeg is not None:
             frames.append((_WRIST_LABEL, arm_jpeg))
-            lines.append("(second image is the arm wrist camera)")
         frames += [("event image", event["image"]) for event in events if event["image"]]
-        return "\n".join(lines), frames
+
+        running = self._state.primitive_running
+        text = observation_text(
+            uptime_s=int(time.monotonic() - self._activated_at),
+            pose=self._pose_at_capture,
+            running_skill=running["primitive_name"] if running else None,
+            guidance=self._running_guidance(running),
+            events=events,
+            has_wrist_frame=arm_jpeg is not None,
+        )
+        return text, frames
+
+    def _running_guidance(self, running: dict | None) -> str:
+        if not running:
+            return ""
+        meta = self._state.registry.primitives.get(running.get("skill_id")) or {}
+        return (meta.get("guidelines_when_running") or "").strip()
 
     def _build_tools(self, events: list[dict]):
         running = self._state.primitive_running
+        user_spoke = any(event["kind"] == "user" for event in events)
         if running is not None:
-            user_spoke = any(event["kind"] == "user" for event in events)
             return build_tools([], running["primitive_name"], user_spoke=user_spoke)
         active_ids = set(self._roster.active_skill_ids())
         skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
@@ -427,30 +412,32 @@ class BrainAgent:
         if decision.thoughts:
             self._chat.emit_thoughts(decision.thoughts)
         speech = decision.speech
-        if speech and not speaker.spoke and any(event["kind"] == "user" for event in self._events):
-            # Never started talking and the user has already said something
-            # newer — voicing this reply now would talk over the conversation.
-            self._logger.info(f"[Brain] Speech suppressed (newer user message pending): {speech[:60]!r}")
-            speaker.mute()
-            # History already holds the reply verbatim, but the user never heard
-            # it — say so, or the "never repeat yourself" rule buries the answer.
-            self.add_event(
-                "(Your previous reply was not spoken — the user had already said "
-                "something newer. Answer their latest message.)"
-            )
+        user_waiting = any(event["kind"] == "user" for event in self._events)
+        if speech and not speaker.spoke and user_waiting:
+            self._suppress_reply(speaker, speech)
         speaker.flush()  # the reply's last sentence has no trailing boundary
         if speaker.spoke and speech:
-            # Audio went out sentence-by-sentence; the panel still gets the
-            # full reply as one message.
-            self._chat.emit("robot", speech, speak=False)
+            self._chat.emit("robot", speech, speak=False)  # audio went out per sentence; the panel gets one message
         return outcomes
+
+    def _suppress_reply(self, speaker, speech: str) -> None:
+        """A reply that never started speaking loses to a newer user message.
+
+        History already holds it verbatim, but the user never heard it — say
+        so, or the "never repeat yourself" rule buries the answer.
+        """
+        self._logger.info(f"[Brain] Speech suppressed (newer user message pending): {speech[:60]!r}")
+        speaker.mute()
+        self.add_event(
+            "(Your previous reply was not spoken — the user had already said "
+            "something newer. Answer their latest message.)"
+        )
 
     def _execute(self, call) -> str:
         """Run one tool call; the returned string is the model-facing outcome.
 
         Never raises: the turn has already committed, so an escaping error
-        would orphan the model's function calls in history and rerun the turn
-        without the events that triggered it.
+        would orphan the model's function calls in history.
         """
         self._logger.info(f"[Brain] Tool call: {call.name}({call.args})")
         try:
@@ -468,10 +455,8 @@ class BrainAgent:
             return "rejected — another skill is already running; stop it first"
         if call.name == GO_TO_POINT_IN_VIEW:
             return self._go_to_point_in_view(call.args)
-
         # Only names declared this turn resolve: falling back to the full
-        # registry would let a hallucinated call bypass the directive's
-        # active-skill allowlist.
+        # registry would let a hallucinated call bypass the active-skill allowlist.
         skill_id = self._tool_map.get(call.name)
         if skill_id is None:
             return f"unknown skill '{call.name}'"
@@ -492,22 +477,18 @@ class BrainAgent:
 
     def _go_to_point_in_view(self, args: dict) -> str:
         """Project the pointed-at floor pixel into a local navigate_to_position goal."""
-        # Gate on the ACTIVE set, not the registry: the tool is only declared
-        # when navigate_to_position is active, and a hallucinated call must not
-        # bypass the directive's allowlist through the full registry.
+        # Gate on the ACTIVE set, not the registry: a hallucinated call must
+        # not drive the base by resolving through the full registry.
         if _NAV_TO_POSITION not in self._roster.active_skill_ids():
             return "rejected — navigate_to_position is not available"
         if self._frame_at_capture is None:
             return "rejected — no camera frame to ground the point in"
-        try:
-            v_norm, u_norm = float(args["y"]), float(args["x"])
-        except (KeyError, TypeError, ValueError):
+        point = parse_view_point(args)
+        if point is None:
             return "rejected — give integer y and x in 0-1000 image coordinates"
-        if not (0.0 <= v_norm <= 1000.0 and 0.0 <= u_norm <= 1000.0):
-            # Out-of-range values still produce finite tan() rays that ground a
-            # plausible-looking but wrong goal — reject so the model re-points.
+        if not in_image(*point):
             return "rejected — y and x must be within 0-1000 image coordinates"
-
+        v_norm, u_norm = point
         floor = grounding.pixel_to_floor(
             u_norm,
             v_norm,
@@ -519,7 +500,6 @@ class BrainAgent:
         )
         if floor is None:
             return "rejected — that point is at or above the horizon; point at the floor"
-
         inputs = self._adjust_nav_goal(_NAV_TO_POSITION, grounding.approach_goal(*floor))
         self._logger.info(
             f"[Brain] go_to_point_in_view ({v_norm:.0f},{u_norm:.0f}) -> floor ({floor[0]:.2f}, {floor[1]:.2f})m, "
@@ -537,24 +517,17 @@ class BrainAgent:
         self._runner.start_task(skill_id, f"local-{uuid.uuid4().hex[:8]}", inputs)
 
     def _adjust_nav_goal(self, skill_id: str, inputs: dict) -> dict:
-        """Ground a nav goal in the robot's current pose before sending it."""
         if skill_id != _NAV_TO_POSITION:
             return inputs
-        current = self._pose.current_pose_xyt()
-        if not inputs.get("local_frame", False):
-            # Mapfree has no map frame: re-base the model's absolute (odom)
-            # goal onto the robot — the map planner would only reject it.
-            if not self._pose.is_mapfree or current is None:
-                return inputs
-            rebased = pose_math.absolute_to_local_nav_command(inputs, current)
-            self._logger.info(f"[Brain] mapfree: absolute goal re-based to local: {rebased}")
-            return rebased
-        # Local goals are relative to the frame the model saw; re-express them
-        # if the robot moved since that frame was captured.
-        if self._pose_at_capture is None or current is None:
-            return inputs
-        delta = pose_math.compute_pose_delta(self._pose_at_capture, current)
-        return pose_math.adjust_local_nav_command(inputs, delta)
+        adjusted = adjust_nav_goal(
+            inputs,
+            capture_pose=self._pose_at_capture,
+            current_pose=self._pose.current_pose_xyt(),
+            is_mapfree=self._pose.is_mapfree,
+        )
+        if adjusted is not inputs:
+            self._logger.info(f"[Brain] nav goal re-based to the current pose: {adjusted}")
+        return adjusted
 
     # ================= events (executor thread) =================
     def add_event(self, text: str, image: bytes | None = None, kind: str = "info") -> None:
@@ -599,7 +572,6 @@ class BrainAgent:
         self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
 
     def _trace_request(self, body: dict) -> None:
-        """Trace the exact request body (heavy: carries every history image)."""
         self._trace("turn_request", heavy=True, turn=self._turn_count, body=body)
 
     def _trace_turn_start(
