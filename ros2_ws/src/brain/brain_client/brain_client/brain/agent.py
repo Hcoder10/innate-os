@@ -42,6 +42,7 @@ from brain_client.brain.loop import LoopThread
 from brain_client.brain.prompt import build_system_prompt
 from brain_client.perception import pose as pose_math
 from brain_client.perception.scan_health import ScanHealthReporter
+from brain_client.transport.chat import SpeechStreamer
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
 
@@ -88,7 +89,6 @@ class BrainAgent:
         )
 
         transport, self.backend = pick_transport(proxy)
-        self.available = transport is not None
         self._session = (
             GeminiSession(
                 transport,
@@ -97,7 +97,7 @@ class BrainAgent:
                 max_history=config.history_max_entries,
                 max_image_turns=config.history_max_image_turns,
             )
-            if self.available
+            if transport is not None
             else None
         )
 
@@ -113,7 +113,7 @@ class BrainAgent:
         self._turn_count = 0
         self._turn_started_at = 0.0
         self._turn_in_flight = False
-        self._speaker = None  # the in-flight turn's SpeechStreamer (loop reads .spoke)
+        self._speaker: SpeechStreamer | None = None  # the in-flight turn's streamer (loop reads .spoke)
         self._pause_until = 0.0  # monotonic deadline of the current between-turns pause
 
         self._runtime = LoopThread("brain-agent")
@@ -125,6 +125,15 @@ class BrainAgent:
             # wire path (fires on generate's worker thread, like add_event's
             # executor-thread traces). The monitor renders it verbatim.
             self._session.on_request = lambda body: self._trace("turn_request", turn=self._turn_count, body=body)
+
+    @property
+    def available(self) -> bool:
+        """Whether the brain can reach Gemini — true exactly when a session exists.
+
+        Derived rather than stored so the two can never disagree: every guard
+        that reads this also narrows ``_session`` for the type checker.
+        """
+        return self._session is not None
 
     # ================= lifecycle =================
     def start(self) -> None:
@@ -171,8 +180,9 @@ class BrainAgent:
         A crash (a bug, not a transport failure — those back off per turn) is
         reported in chat and leaves the loop down until the brain is restarted.
         """
-        if not self.available:
-            return await self._heartbeat()
+        session = self._session
+        if session is None:
+            return await self._heartbeat()  # no transport: telemetry only, no turns
         heartbeat = asyncio.ensure_future(self._heartbeat())
         turn = spoke = None
         reruns = 0
@@ -187,13 +197,14 @@ class BrainAgent:
                 # and the third rerun runs to completion, so nonstop speech
                 # cannot starve the loop.
                 self._user_spoke.clear()
-                turn = asyncio.ensure_future(self._turn())
+                turn = asyncio.ensure_future(self._turn(session))
                 spoke = asyncio.ensure_future(self._user_spoke.wait())
                 await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
                 spoke.cancel()
-                if not turn.done() and not self._speaker.spoke and reruns < 2:
+                speaker = self._speaker  # _turn publishes it before its first await
+                if not turn.done() and speaker is not None and not speaker.spoke and reruns < 2:
                     self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
-                    self._speaker.mute()  # the orphaned reply must not keep talking
+                    speaker.mute()  # the orphaned reply must not keep talking
                     turn.cancel()
                     await asyncio.wait({turn})  # fully unwound before the rerun looks
                     reruns += 1
@@ -213,7 +224,7 @@ class BrainAgent:
                 if task is not None:
                     task.cancel()  # stop() can land mid-race; the turn dies with the loop
 
-    async def _turn(self) -> None:
+    async def _turn(self, session: GeminiSession) -> None:
         """One turn: look at the world, think with Gemini, commit, act."""
         events = list(self._events)  # a peek — consumed only if the turn commits
         self._turn_count += 1
@@ -233,14 +244,14 @@ class BrainAgent:
             system = build_system_prompt(directive.get_prompt() if directive else None)
             if self._state.log_everything:
                 self._logger.info(f"[Brain] Turn input:\n{text}")
-            self._trace_turn_start(text, frames, tools, system)
+            self._trace_turn_start(text, frames, tools, system, session)
 
             # The only blocking call, on a worker thread. Cancellation unwinds
             # HERE — the orphaned HTTP call finishes and its result is dropped.
             self._turn_in_flight = True
             try:
                 response = await asyncio.to_thread(
-                    self._session.generate,
+                    session.generate,
                     message,
                     tools,
                     system,
@@ -259,9 +270,9 @@ class BrainAgent:
                 self._trace("turn_dropped", turn=self._turn_count, latency=latency)
                 return
 
-            decision = self._session.absorb(message, response, latest_only_images=wrist_frames)
+            decision = session.absorb(message, response, latest_only_images=wrist_frames)
             del self._events[: len(events)]  # commit: consume exactly what this turn saw
-            outcomes = self._act(decision, speaker)
+            outcomes = self._act(decision, speaker, session)
             self._trace(
                 "turn_end",
                 turn=self._turn_count,
@@ -269,7 +280,7 @@ class BrainAgent:
                 thoughts=decision.thoughts,
                 speech=decision.speech,
                 calls=[{"name": call.name, "args": call.args, "outcome": outcome} for call, outcome in outcomes],
-                history=self._session.history_len,
+                history=session.history_len,
                 next_in=round(self._interval(), 1),
             )
         except asyncio.CancelledError:
@@ -346,9 +357,11 @@ class BrainAgent:
                 lines.append(f"(guidance while this skill runs: {guidance})")
         lines += [f"- {event['text']}" for event in events]
 
-        self._frame_at_capture = self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)
+        head_jpeg = self._frame_at_capture = self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC)
         self._pitch_at_capture = self._camera.current_head_pitch
-        frames = [("head camera", self._frame_at_capture)]
+        # A dead feed means the caller abandons the turn on _frame_at_capture,
+        # so the frames it gets back here are moot — no None goes downstream.
+        frames: list[tuple[str, bytes]] = [("head camera", head_jpeg)] if head_jpeg is not None else []
         arm_jpeg = self._camera.fresh_arm_jpeg(_FRESH_FRAME_SEC)
         if arm_jpeg is not None:
             frames.append((_WRIST_LABEL, arm_jpeg))
@@ -367,11 +380,11 @@ class BrainAgent:
         return build_tools(skills, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
-    def _act(self, decision, speaker) -> list:
+    def _act(self, decision, speaker, session: GeminiSession) -> list:
         # Execute and answer the calls before any chat I/O: a functionCall
         # left unanswered in history poisons every later request.
         outcomes = [(call, self._execute(call)) for call in decision.calls]
-        self._session.add_tool_outcomes(outcomes)
+        session.add_tool_outcomes(outcomes)
         if decision.thoughts:
             self._chat.emit_thoughts(decision.thoughts)
         speech = decision.speech
@@ -529,7 +542,9 @@ class BrainAgent:
         if self._trace_sink is not None:
             self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
 
-    def _trace_turn_start(self, text: str, frames: list[tuple[str, bytes]], tools: list, system: str) -> None:
+    def _trace_turn_start(
+        self, text: str, frames: list[tuple[str, bytes]], tools: list, system: str, session: GeminiSession
+    ) -> None:
         if self._trace_sink is None:
             return  # don't base64 the frames for nobody
         self._trace(
@@ -538,8 +553,8 @@ class BrainAgent:
             input=text,
             images=len(frames),
             tools=[d["name"] for d in tools[0]["functionDeclarations"]],
-            history=self._session.history_len,
-            history_images=self._session.image_turn_count,
+            history=session.history_len,
+            history_images=session.image_turn_count,
             system=system,
             frames=[{"label": label, "jpeg": base64.b64encode(jpeg).decode()} for label, jpeg in frames],
         )

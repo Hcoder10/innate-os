@@ -31,6 +31,7 @@ import base64
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -262,7 +263,7 @@ class GeminiSession:
         # Observability tap: called with the exact request body just before it
         # goes on the wire (from generate's thread). The body must be treated
         # as read-only — it shares structure with the live history.
-        self.on_request = None
+        self.on_request: Callable[[dict], None] | None = None
 
     def clear(self) -> None:
         self._history = []
@@ -281,7 +282,7 @@ class GeminiSession:
 
     @staticmethod
     def user_message(text: str, images: list[bytes]) -> dict:
-        parts = [{"text": text}]
+        parts: list[dict] = [{"text": text}]
         for jpeg in images:
             parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg).decode()}})
         return {"role": "user", "parts": parts}
@@ -319,7 +320,7 @@ class GeminiSession:
                 ],
             }
             contents = [masked if content is stale else content for content in contents]
-        thinking = {"includeThoughts": True}
+        thinking: dict = {"includeThoughts": True}
         if self._thinking_level:
             thinking["thinkingLevel"] = self._thinking_level
         body = {

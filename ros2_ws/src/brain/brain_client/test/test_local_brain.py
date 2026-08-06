@@ -485,7 +485,8 @@ def agent_factory(monkeypatch):
 
 def run_turn(agent: BrainAgent) -> None:
     """Run one turn to completion on the agent's own loop thread."""
-    asyncio.run_coroutine_threadsafe(agent._turn(), agent._runtime.loop).result(timeout=5)
+    assert agent._session is not None  # the loop hands _turn the session it guarded on
+    asyncio.run_coroutine_threadsafe(agent._turn(agent._session), agent._runtime.loop).result(timeout=5)
 
 
 def no_pause(agent: BrainAgent, monkeypatch) -> None:
