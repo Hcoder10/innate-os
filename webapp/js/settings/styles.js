@@ -165,10 +165,10 @@ export const SETTINGS_STYLE = `
 .set-status.err { color: #ff6b6b; }
 .set-status.muted { color: var(--muted, #8a90a0); }
 .set-ctl :is(input, select).set-text { box-sizing: border-box; width: 100%; padding: 6px 10px; border-radius: 6px;
-  border: 1px solid var(--hairline, #2a2f3a); background: rgba(255,255,255,.03); color: inherit;
+  border: 1px solid var(--hairline, #2a2f3a); background-color: rgba(255,255,255,.03); color: inherit;
   font: inherit; font-size: 13px; }
-.set-ctl :is(input, select).set-text:focus { outline: none; border-color: rgba(117,105,253,.55); background: rgba(0,0,0,.2); }
-.set-ctl select.set-text { cursor: pointer; }
+.set-ctl :is(input, select).set-text:focus { outline: none; border-color: rgba(117,105,253,.55); background-color: rgba(0,0,0,.2); }
+.set-ctl select.set-text { padding: 6px 30px 6px 10px; cursor: pointer; }
 /* Custom range; content-box keeps the 10px center inside the 4px thumb border. */
 .set-slider { -webkit-appearance: none; appearance: none;
   width: 100%; height: 20px; margin: 0;
