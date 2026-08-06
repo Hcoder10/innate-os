@@ -13,6 +13,12 @@ Motions are not interrupted by a skill cancel — cancellation lands between
 calls — so every method is safe in ``finally`` teardown. ``duration`` is
 advisory: the hardware jerk limiter may extend it.
 
+For continuous control (a UI slider, a visual-servoing loop), the goto
+motions are the wrong shape — each is a rest-to-rest spline and they
+serialize in the driver, so chaining them is inherently stop-start. Use
+:meth:`Manipulation.stream_joints` instead: it feeds the driver's teleop
+pass-through, which retargets the control loop smoothly.
+
 The gripper (j6) runs current-based position control: the standing position
 error IS the grip force, so re-commanding j6 from its measured position
 drops a held object. Motions therefore carry the last *commanded* j6 (the
@@ -134,6 +140,12 @@ class Manipulation:
     REACH_X = (0.22, 0.40)
     REACH_Y = (-0.10, 0.10)
 
+    # stream_joints: slew-loop rate, per-joint speed clamp, and how long the
+    # stream survives without a fresh target before idling out.
+    STREAM_RATE_HZ = 30.0
+    STREAM_MAX_SPEED = 1.8  # rad/s
+    STREAM_IDLE_S = 0.4
+
     def __init__(self, node: Node, logger, lazy: bool = False):
         """``lazy`` defers the state feeds until :meth:`start`."""
         self.node = rclpy.create_node(f"{node.get_name()}_manipulation_interface")
@@ -147,6 +159,16 @@ class Manipulation:
         self._ik_lock = threading.Lock()
 
         self._ik_target_pub = self.node.create_publisher(Twist, "/ik_delta", 10)
+
+        # stream_joints state: the latest requested target, what the slew loop
+        # last published, and the thread that walks one toward the other.
+        self._stream_pub = self.node.create_publisher(Float64MultiArray, "/mars/arm/commands", 10)
+        self._stream_lock = threading.Lock()
+        self._stream_target: list[float] | None = None
+        self._stream_cmd: list[float] | None = None
+        self._stream_speed = self.STREAM_MAX_SPEED
+        self._stream_stamp = 0.0
+        self._stream_thread: threading.Thread | None = None
 
         self._ik_solution: JointState | None = None
         self._fk_pose: PoseStamped | None = None
@@ -216,6 +238,7 @@ class Manipulation:
     def stop(self):
         """Park the executor and clear cached state; the subscriptions stay
         alive (see __init__)."""
+        self.stream_stop()
         with self._lifecycle_lock:
             self._active = False
             if self._executor is not None:
@@ -236,13 +259,15 @@ class Manipulation:
         self.node.destroy_node()
 
     def halt(self) -> None:
-        """Framework brake hook (Skill._halt_interfaces); deliberately a no-op.
+        """Framework brake hook (Skill._halt_interfaces).
 
-        The goto services cannot preempt an in-flight motion, and halting must
-        not freeze at measured joints (the j6 re-seed would drop a held
-        object) nor torque off (the arm would fall).
+        A joint stream is braked by stopping it — the arm holds where it is.
+        Goto motions run out: the services cannot preempt an in-flight motion,
+        and halting must not freeze at measured joints (the j6 re-seed would
+        drop a held object) nor torque off (the arm would fall).
         """
-        self.logger.debug("[Manipulation] halt(): arm motions are committed; nothing to brake")
+        self.stream_stop()
+        self.logger.debug("[Manipulation] halt(): stream stopped; goto motions are committed")
 
     # --- callbacks (private executor thread) ---
 
@@ -465,6 +490,73 @@ class Manipulation:
         if not self._goto(target, 1.0, wait=True):
             raise ArmFailed("rest settle move rejected or did not complete")
 
+    # --- streaming ---
+
+    def stream_joints(self, joints: Sequence[float], *, max_speed: float | None = None) -> None:
+        """Continuously retarget the arm (teleop-style streaming); returns at
+        once.
+
+        Feeds the driver's ``/mars/arm/commands`` pass-through — the smooth
+        path leader-arm teleop uses, soft gains, no per-step splines — via a
+        STREAM_RATE_HZ slew loop that clamps each joint to ``max_speed``
+        (default STREAM_MAX_SPEED rad/s), so a far target ramps instead of
+        snapping. Call repeatedly from a UI or servoing loop; the stream idles
+        out STREAM_IDLE_S after the last call, and the last streamed j6
+        becomes the standing grip target. 5 values keep the standing grip,
+        6 set it. Any discrete motion stops the stream first, and a skill
+        halt stops it too. Unverified by design — no FK check, no recovery;
+        use :meth:`move_to` for verified positioning.
+        """
+        target = [float(j) for j in joints]
+        if len(target) == 5:
+            target.append(self._grip_or(None))
+        if len(target) != 6:
+            raise ArmFailed(f"expected 5 or 6 joint positions, got {len(target)}")
+        if self.torque_enabled is False:
+            raise ArmFailed("arm torque is disabled")
+        with self._stream_lock:
+            self._stream_target = target
+            self._stream_speed = float(max_speed) if max_speed is not None else self.STREAM_MAX_SPEED
+            self._stream_stamp = time.monotonic()
+            if self._stream_thread is None or not self._stream_thread.is_alive():
+                # Seed the slew from measured state so the first tick ramps
+                # from where the arm actually is.
+                state = self._arm_state
+                has_seed = state is not None and len(state.position) >= 6
+                self._stream_cmd = [float(p) for p in state.position[:6]] if has_seed else list(target)
+                self._stream_thread = threading.Thread(target=self._stream_run, daemon=True)
+                self._stream_thread.start()
+
+    def stream_stop(self) -> None:
+        """Stop streaming; the arm holds its current position. Idempotent."""
+        with self._stream_lock:
+            self._stream_target = None
+
+    def _stream_run(self) -> None:
+        dt = 1.0 / self.STREAM_RATE_HZ
+        while True:
+            time.sleep(dt)  # own daemon thread, not skill context
+            with self._stream_lock:
+                idle = (
+                    self._stream_target is None or time.monotonic() - self._stream_stamp > self.STREAM_IDLE_S
+                )
+                if idle:
+                    # The streamed j6 is where the claw was left — hand it to
+                    # the standing grip target or the next motion yanks the
+                    # claw back to a stale one.
+                    if self._stream_cmd is not None:
+                        self._grip_target = float(self._stream_cmd[5])
+                    self._stream_target = None
+                    return
+                step = self._stream_speed * dt
+                assert self._stream_cmd is not None  # seeded before the thread starts
+                for i in range(6):
+                    delta = self._stream_target[i] - self._stream_cmd[i]
+                    self._stream_cmd[i] += max(-step, min(step, delta))
+                msg = Float64MultiArray()
+                msg.data = [float(v) for v in self._stream_cmd]
+            self._stream_pub.publish(msg)
+
     # --- non-blocking motion ---
 
     @property
@@ -634,6 +726,7 @@ class Manipulation:
     def _goto(self, joint_positions: list[float], duration: float, wait: bool) -> bool:
         """Send a 6-joint GotoJS command; the commanded j6 becomes the
         standing grip target on success."""
+        self.stream_stop()  # a discrete motion supersedes any live stream
         if len(joint_positions) != 6:
             self.logger.error(f"Expected 6 joint positions, got {len(joint_positions)}")
             return False
@@ -670,6 +763,7 @@ class Manipulation:
         """Send a multi-waypoint GotoJSTrajectory. The driver prepends the
         current pose as waypoint 0, paced by a copy of the first segment
         duration."""
+        self.stream_stop()  # a discrete motion supersedes any live stream
         if self._goto_js_traj_client is None or not self._goto_js_traj_client.service_is_ready():
             self.logger.error("[Manipulation] GotoJSTrajectory service not ready")
             return False
