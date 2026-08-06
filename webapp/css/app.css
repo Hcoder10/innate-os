@@ -125,7 +125,7 @@ button {
 .modal-select,
 .prof-select,
 .record-skill,
-.set-ctl > select.set-text,
+.set-ctl select.set-text,
 select.episodes-tool,
 select.skill-input {
   -webkit-appearance: none;
