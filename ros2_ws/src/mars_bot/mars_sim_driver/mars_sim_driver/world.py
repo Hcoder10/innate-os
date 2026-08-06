@@ -10,6 +10,7 @@ from VIRTUAL_MARS_ASSETS (default: <repo>/sim/assets in a dev checkout).
 import math
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mujoco
 
@@ -28,6 +29,12 @@ KP_YAW = 3.0
 MAX_LINEAR = 0.4
 MAX_YAW = 1.0
 
+# Position hold for the stopped base (core._station_keeping). HOLD_SETTLE_S
+# outlasts a skill's per-camera-frame cmd_vel gaps.
+KP_HOLD_LINEAR = 300.0
+KP_HOLD_YAW = 6.0
+HOLD_SETTLE_S = 0.4
+
 # Safety governor against imperfect hull-seam contacts (see sim/sandbox
 # README): clamp base velocity so a bad single-step impulse is a recoverable
 # thump, not NaN.
@@ -36,6 +43,46 @@ MAX_BASE_ANGULAR_SPEED = 6.0
 
 DRIVEN_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint_head"]
 MIMIC_JOINT = ("joint6M", "joint6", -1.0)  # (name, source, multiplier)
+
+# --- contact tuning (see tune_contacts) ----------------------------------
+#
+# The robot's collision SHAPES all live in mars.urdf -- one description the
+# browser viewer draws from too. What is tuned here is everything the URDF
+# has no way to say: MuJoCo's contact model and the finger servo.
+FINGER_LINKS = ("link61", "link62")
+
+# Wheels catch on door frames like the real ones but must be FRICTIONLESS:
+# the planar base pins z, so a tangent wheel answers every step with ~50N of
+# spurious normal force whose friction cone glues the base. condim 1; the
+# chassis box, 7mm narrower, does the gripping.
+WHEEL_GEOMS = ("base_wheel_left", "base_wheel_right")
+
+# Grasp contact model. priority makes the finger's params govern every pair
+# it is in, so condim must be 6 here: boxes need the torsion term or they
+# spin out of the pinch, cylinders/spheres need rolling too. Friction is a
+# grippy pad's -- the torsion/roll terms are the binding constraint, never
+# slide (44N of pinch vs 1.6N objects).
+FINGER_CONDIM = 6
+FINGER_FRICTION = (2.0, 0.05, 0.02)  # (slide, torsion, roll)
+FINGER_SOLREF = (0.005, 1.0)
+FINGER_SOLIMP = (0.95, 0.99, 0.001, 0.5, 2)  # (dmin, dmax, width, midpoint, power)
+# Sets closing speed: terminal rate = GRIPPER_EFFORT_LIMIT/FINGER_DAMPING
+# (~0.45s full close). Must live on the joint, not the servo's velocity term:
+# an explicit -kd*qvel on a 2e-5 inertia dof oscillates (see core.KD_GRIPPER).
+FINGER_DAMPING = 1.0
+# Reflected servo inertia: without it MuJoCo's mass-scaled contact stiffness
+# lets the 12g blades sink centimetres into whatever they pinch.
+FINGER_ARMATURE = 1e-4
+
+# Structural sag past the encoders (gear play, link flex): the link settles
+# gravity_torque/STRUCT_STIFFNESS + ARM_BACKLASH_RAD below the servo angle.
+# /joint_states reports ENCODER-side angles (core.encoder_positions), so the
+# sag is invisible to FK, like on the machine. Estimates (~19mm at the pick
+# pose) until measured on a real arm.
+STRUCT_STIFFNESS = 25.0  # N*m/rad, per arm joint
+# Geartrain free play, tanh-smoothed so unloaded joints get none.
+ARM_BACKLASH_RAD = 0.055
+BACKLASH_TANH_NM = 0.05  # torque scale over which the play takes up
 
 # Matches the webapp's ARM_HOME_POSITIONS.
 ARM_HOME = {
@@ -65,6 +112,10 @@ _PALETTE = [
     "0.2 0.9 0.7 1",
     "0.6 0.6 0.9 1",
 ]
+
+
+if TYPE_CHECKING:
+    from .props import PropRegistry
 
 
 def repo_root() -> Path:
@@ -161,10 +212,14 @@ def build_world_xml(
     include_placeholder_robot: bool = True,
     visual_rooms: dict[str, Path] | None = None,
     texture_max: int | None = None,
+    props: "PropRegistry | None" = None,
 ) -> str:
     """The apartment environment MJCF (floor plane + decomposed room hulls,
-    optionally the textured visual rooms in their own geom group).
+    optionally the textured visual rooms in their own geom group, plus every
+    droppable prop parked off-map -- see props.py).
     texture_max caps the visual textures' resolution (see capped_texture_path)."""
+    prop_assets = props.assets_xml(VISUAL_GROUP) if props else ""
+    prop_bodies = props.bodies_xml(VISUAL_GROUP, COLLISION_GROUP) if props else ""
     collision_group = COLLISION_GROUP if visual_rooms else 0
 
     mesh_lines = []
@@ -221,7 +276,7 @@ def build_world_xml(
   <statistic center="{lx} {ly} {lz}" extent="{extent}"/>
   <asset>
 {chr(10).join(mesh_lines)}
-{chr(10).join(visual_mesh_lines)}
+{chr(10).join(visual_mesh_lines)}{prop_assets}
   </asset>
   <worldbody>
     <light pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
@@ -231,7 +286,7 @@ def build_world_xml(
     <body name="apartment" quat="0.7071068 0.7071068 0 0">
 {chr(10).join(geom_lines)}
 {chr(10).join(visual_geom_lines)}
-    </body>{robot_body}
+    </body>{prop_bodies}{robot_body}
   </worldbody>
 </mujoco>
 """
@@ -266,11 +321,55 @@ def add_planar_base(robot_spec: mujoco.MjSpec) -> None:
         joint.axis = axis
 
 
+def tune_contacts(robot_spec: mujoco.MjSpec) -> None:
+    """Make mars.urdf's collision shapes behave in MuJoCo: a gripper contact
+    model that can actually hold something (grasp parameters on the finger
+    blades, and the 12g blades' joints re-scaled from the arm-sized damping to
+    the finger servo's own damping and rotor inertia), and frictionless drive
+    wheels (see WHEEL_GEOMS).
+
+    The finger hub pins overlap by ~1mm at joint6 = 0 (the two pivots are
+    18.3mm apart and each pin is 19mm across), so the fingers are excluded
+    from colliding with each other -- they cannot cross anyway, since joint6
+    stops at 0 and joint6M mirrors it. arm.srdf disables the same pair for
+    MoveIt."""
+    for name in WHEEL_GEOMS:
+        wheel = robot_spec.geom(name)
+        wheel.condim = 1
+        wheel.priority = 1  # else the floor's condim 3 wins the pair and the friction is back
+
+    for link in FINGER_LINKS:
+        blades = [g for g in robot_spec.body(link).geoms if g.contype]
+        if not blades:
+            raise RuntimeError(f"{link}: no collision geometry in mars.urdf")
+        for geom in blades:
+            geom.priority = 2
+            geom.condim = FINGER_CONDIM
+            geom.friction = FINGER_FRICTION
+            geom.solref = FINGER_SOLREF
+            geom.solimp = FINGER_SOLIMP
+
+    robot_spec.add_exclude(bodyname1=FINGER_LINKS[0], bodyname2=FINGER_LINKS[1])
+
+    mimic_name, source_name, _mult = MIMIC_JOINT
+    for name in (source_name, mimic_name):
+        joint = robot_spec.joint(name)
+        joint.damping = [FINGER_DAMPING, 0.0, 0.0]  # hinge: only the first entry applies
+        joint.armature = FINGER_ARMATURE
+
+
 def style_robot_geoms(model: mujoco.MjModel, prefix: str = "robot_") -> None:
     """Match sim/viewer's styling: orange arm links, hidden frame markers,
-    collision boxes into the hidden group, matt_black lifted to charcoal."""
+    collision boxes into the hidden group, matt_black lifted to charcoal.
+
+    Robot geoms only (`prefix`): every other collidable body in the world --
+    the apartment hulls, the manipulation props -- owns the group it was built
+    with, and sweeping those into the hidden group would erase them from every
+    render."""
     for i in range(model.ngeom):
         body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[i]) or ""
+        if not body_name.startswith(prefix):
+            continue
         link_name = body_name.removeprefix(prefix)
 
         if model.geom_contype[i] == 1:  # a <collision> geom
