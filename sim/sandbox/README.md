@@ -94,6 +94,10 @@ store) and repin sim/sim-assets.lock.
   5 stress-tour loops clean. Don't lower it without re-gating.
 - **implicitfast integrator**: what makes 1200+ hulls stable at all --
   damps single-step seam impulses that explode under Euler.
+- **The robot's own collision geometry** lives in `mars.urdf` as named
+  `<collision>` primitives -- one description the driver, MoveIt and the
+  viewer's "collisions" overlay all read. MuJoCo-only contact settings (grasp
+  parameters, frictionless drive wheels) stay in `world.tune_contacts`.
 - **SDF shells** (experimental no-decomposition alternative): MuJoCo >= 3.3.5
   builds octree SDFs natively -- no hulls, no seams, ~2min bake. But the SDF
   sign is brutally sensitive to mesh topology: raw meshes and binary

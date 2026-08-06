@@ -4,7 +4,9 @@
 // full-res every frame, PiP thumbnails scissor-rendered from the same GL
 // context and blitted out.
 
+import * as THREE from "three";
 import { SimScene, type CameraView } from "./scene";
+import type { PropInfo } from "./props";
 import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
@@ -37,30 +39,168 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   debugStack.style.cssText =
     "position:absolute;left:14px;bottom:132px;display:flex;flex-direction:column;gap:8px;z-index:5;";
   wrap.appendChild(debugStack);
-  const chips = document.createElement("div");
-  chips.style.cssText = "display:flex;gap:6px;";
+  // One controls row, built here because newChip fills it but appended after
+  // the prop rows so it sits beneath them: what a prop click does, then the
+  // view overlays. Four stacked rows crowded the WASD overlay underneath.
+  const propControls = document.createElement("div");
+  propControls.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
   const OFF_BG = "rgba(0,0,0,.45)";
   const ON_BG = "rgba(0,255,136,.22)";
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+  const ON_FG = "#7dffc4";
+  const OFF_FG = "rgba(255,255,255,.75)";
+  /** The one place a chip's lit/unlit look is decided. Every chip goes through
+   * it, so the toggles and an armed prop can never drift apart. */
+  const setChipOn = (el: HTMLElement, on: boolean) => {
+    el.style.background = on ? ON_BG : OFF_BG;
+    el.style.color = on ? ON_FG : OFF_FG;
+  };
+  // No backdrop-filter: re-blurring over an animated canvas costs fps.
+  const CHIP_CSS =
+    "padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);" +
+    "font:500 11px system-ui;cursor:pointer;line-height:1;";
+  const makeChip = (label: string, title?: string) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
-    b.style.cssText =
-      // No backdrop-filter: re-blurring over an animated canvas costs fps.
-      `padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:${OFF_BG};` +
-      "color:rgba(255,255,255,.75);font:500 11px system-ui;cursor:pointer;";
+    if (title) b.title = title;
+    b.style.cssText = CHIP_CSS;
+    setChipOn(b, false);
+    return b;
+  };
+  const newChip = (label: string) => {
+    const b = makeChip(label);
+    propControls.appendChild(b);
+    return b;
+  };
+  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+    const b = newChip(label);
     let on = false;
     b.onclick = () => {
       on = !on;
-      b.style.background = on ? ON_BG : OFF_BG;
-      b.style.color = on ? "#7dffc4" : "rgba(255,255,255,.75)";
+      setChipOn(b, on);
       onToggle(on);
     };
-    chips.appendChild(b);
   };
+  // Props, in two rows: the objects themselves, and under them the controls
+  // that say what a click on one does. One chip per prop the world server
+  // offers (props.py sidecars, relayed by session.onProps), so adding a prop
+  // is a sidecar and nothing here.
+  //
+  // The switch picks between the two ways to put a prop down:
+  //   at robot -- one click, using the prop's own reach offset. The
+  //     manipulation props' offsets put them on an arc the arm can reach
+  //     top-down, so this is the one that matters for practising grabs.
+  //   place    -- click the floor to mark the spot, drag to point the yaw,
+  //     release; physics settles it onto whatever is under it.
+  const propRows = document.createElement("div");
+  propRows.style.cssText = "display:flex;flex-direction:column;gap:6px;align-items:flex-start;";
+  debugStack.appendChild(propRows);
+
+  // Slide switch: drop | at robot -- the two verbs props.py uses, so what the
+  // chip does is what the switch says. "drop" takes over the pointer and lets
+  // the prop fall onto whatever you aimed at; "at robot" sets it down at rest
+  // at its own reach offset. Defaults to "at robot": that is the one-click
+  // layout the props have always had, and the pointer-grabbing mode is the one
+  // you opt into.
+  let dropMode = false;
+  const modeSwitch = document.createElement("button");
+  modeSwitch.type = "button";
+  modeSwitch.title = "Where clicking a prop puts it";
+  modeSwitch.style.cssText =
+    // Equal grid columns, so the half-width knob lands exactly on a label
+    // whatever the two words measure.
+    "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;" +
+    "padding:2px;border-radius:999px;border:1px solid rgba(255,255,255,.28);" +
+    // Darker than a chip: the 3D scene behind this is often bright wall or
+    // floor, where 45% black leaves the inactive label unreadable.
+    "background:rgba(0,0,0,.62);cursor:pointer;font:500 11px system-ui;line-height:1;";
+  const knob = document.createElement("span");
+  knob.style.cssText =
+    "position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;" +
+    "background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
+  const dropLabel = document.createElement("span");
+  const robotLabel = document.createElement("span");
+  dropLabel.textContent = "drop";
+  robotLabel.textContent = "at robot";
+  for (const label of [dropLabel, robotLabel]) {
+    label.style.cssText =
+      "position:relative;z-index:1;padding:4px 12px;text-align:center;white-space:nowrap;transition:color .15s ease;";
+  }
+  modeSwitch.append(knob, dropLabel, robotLabel);
+  const refreshModeSwitch = () => {
+    knob.style.transform = dropMode ? "translateX(0)" : "translateX(100%)";
+    dropLabel.style.color = dropMode ? ON_FG : OFF_FG;
+    robotLabel.style.color = dropMode ? OFF_FG : ON_FG;
+  };
+  modeSwitch.onclick = () => {
+    dropMode = !dropMode;
+    if (!dropMode) armDrop(null); // leaving drop mode disarms whatever was armed
+    refreshModeSwitch();
+  };
+  refreshModeSwitch();
+  propControls.appendChild(modeSwitch);
+
+  const clearChip = makeChip("clear", "Send every prop back off-map");
+  clearChip.onclick = () => {
+    armDrop(null);
+    session.removeAllProps();
+  };
+  propControls.appendChild(clearChip);
+
+  // Hairline between what places props and what draws overlays -- same row,
+  // different jobs.
+  const divider = document.createElement("span");
+  divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
+  propControls.appendChild(divider);
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
-  debugStack.appendChild(chips);
+  debugStack.appendChild(propControls);
+
+  // Rebuilt whenever the roster arrives (once per observer connection).
+  //
+  // One row per group, headed by that group's set chip, then a loose row for
+  // the props that belong to no set. A set chip floating in a row of everything
+  // says nothing about WHICH props it lays out; heading its own row, it does.
+  const propChips = new Map<string, HTMLButtonElement>();
+  const unsubscribeProps = session.onProps((props: PropInfo[]) => {
+    propRows.replaceChildren();
+    propChips.clear();
+
+    const buckets = new Map<string | null, PropInfo[]>();
+    for (const prop of props) {
+      const key = prop.group || null;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(prop);
+      else buckets.set(key, [prop]);
+    }
+
+    for (const [group, members] of buckets) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
+      // A set of one is just the prop's own chip, so it gets no set chip.
+      if (group && members.length > 1) {
+        const chip = makeChip(`+${group}`, `Set down all ${members.length} ${group} props in front of the robot`);
+        chip.onclick = () => {
+          armDrop(null);
+          session.placePropGroup(group);
+        };
+        row.appendChild(chip);
+      }
+      for (const prop of members) {
+        const chip = makeChip(prop.label, prop.title);
+        chip.style.fontSize = "13px"; // emoji read small at the chip's 11px
+        // A roster can arrive mid-drag; keep whatever was armed looking armed.
+        setChipOn(chip, prop.name === armedProp);
+        chip.onclick = () => {
+          if (dropMode) armDrop(armedProp === prop.name ? null : prop.name);
+          else session.placePropAtRobot(prop.name);
+        };
+        propChips.set(prop.name, chip);
+        row.appendChild(chip);
+      }
+      propRows.appendChild(row);
+    }
+  });
 
   // Loading indicator: a compact pill holding a progress bar, centered just
   // below the camera thumbnail strip (webapp's .cam-strip pins tiles at the top
@@ -143,6 +283,60 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
+
+  // Placement drag (mode "place"): while a prop is armed the orbit controls
+  // are off -- press marks the spot on the floor, drag points the yaw (arrow
+  // preview), release drops it there and physics settles it.
+  let armedProp: string | null = null;
+  let dropStart: THREE.Vector3 | null = null;
+  let dropArrow: THREE.ArrowHelper | null = null;
+  const clearDropDrag = () => {
+    dropStart = null;
+    if (dropArrow) {
+      scene.scene.remove(dropArrow);
+      dropArrow.dispose();
+      dropArrow = null;
+    }
+  };
+  function armDrop(name: string | null): void {
+    armedProp = name;
+    scene.setPlacementMode(name !== null);
+    canvas.style.cursor = name !== null ? "crosshair" : "";
+    for (const [propName, chip] of propChips) {
+      const on = propName === name;
+      setChipOn(chip, on);
+    }
+    if (name === null) clearDropDrag();
+  }
+  canvas.addEventListener("pointerdown", (e) => {
+    if (armedProp === null || e.button !== 0) return;
+    dropStart = scene.screenToFloor(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dropStart) return;
+    const cur = scene.screenToFloor(e.clientX, e.clientY);
+    if (!cur) return;
+    const drag = cur.sub(dropStart).setZ(0);
+    if (drag.length() < 0.05) return;
+    if (!dropArrow) {
+      dropArrow = new THREE.ArrowHelper(drag.clone().normalize(), dropStart.clone().setZ(0.05), 1, 0xff8800, 0.25, 0.15);
+      scene.scene.add(dropArrow);
+    }
+    dropArrow.setDirection(drag.clone().normalize());
+    dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
+  });
+  // On window, not canvas: releasing outside the canvas must still finish (or
+  // cancel) the drag rather than leaving the prop armed and the arrow behind.
+  window.addEventListener("pointerup", (e) => {
+    if (armedProp === null || !dropStart) return;
+    const end = scene.screenToFloor(e.clientX, e.clientY);
+    const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
+    // An identity drop faces +y (the human's head); the drag vector is that
+    // direction, so subtract the quarter turn between them.
+    const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
+    session.dropPropAt(armedProp, dropStart.x, dropStart.y, yaw);
+    armDrop(null);
+  });
 
   const resize = () => {
     const w = wrap.clientWidth;
@@ -247,6 +441,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       disposed = true;
       queue.cancel(); // stop pulling new downloads for a stage that's gone
       unsubscribe();
+      unsubscribeProps();
       cancelAnimationFrame(raf);
       observer.disconnect();
       longTaskObserver?.disconnect();

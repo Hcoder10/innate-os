@@ -122,7 +122,7 @@ If something stops you anyway, we want to hear about it —
 
 ```bash
 ./innate-sim status      # startup checks + health snapshot
-./innate-sim logs        # startup logs; `logs os` / `logs agent` follow live
+./innate-sim logs startup   # startup logs; `logs brain` / `logs cloud-agent` for the running stack
 ./innate-sim sh          # shell into the container; `innate build` rebuilds ros2_ws
 ./innate-sim down        # stop the container + world server (keeps data)
 ./innate-sim clean       # remove containers/volumes (keeps .env + config)
@@ -139,18 +139,62 @@ real robot runs — develop here, deploy there. Start with the docs:
 - [Agents](https://docs.innate.bot/software/agents) — give the AI brain
   goals, personality, and access to your skills.
 
+### Challenges
+
+Scored tasks for what you build: find a collapsed person and stay with them,
+push a soccer ball to the dog, celebrate good news with the skill you wrote.
+Pick one from the panel at the top-left of the Agent page — it resets the
+world, drops the props the scenario needs, and ticks a goal checklist with a
+timer. Results (passed, attempts, best time) persist in
+`workspace/challenges.json`.
+
+The **world server** judges, not the robot: goals are read from MuJoCo's own
+state, and the robot stack is never told a challenge exists. Passing means
+the robot really did the thing, not that it reported doing it.
+
+A challenge is a sidecar in [`sim/challenges/`](challenges/) — the same shape
+as a prop's — exporting `CHALLENGE = Challenge(...)`:
+
+```python
+from mars_sim_driver.challenges import Challenge, Drop, Goal, Near
+
+CHALLENGE = Challenge(
+    id="shepherd",
+    title="Shepherd",
+    brief="A soccer ball is lying in the apartment. Find it and push it to the dog.",
+    setup=[Drop("soccer_ball", -4.69, 1.29), Drop("labrador", -0.49, 2.89, yaw_deg=90)],
+    goals=[
+        Goal("Get to the ball", Near("robot", "soccer_ball", 0.8)),
+        Goal("Push it to the dog", Near("soccer_ball", "labrador", 1.2)),
+    ],
+    time_limit_s=600,
+)
+```
+
+`setup` drops props by name (the sidecars in [`sim/props/`](props/)). Goals
+are judged strictly in order and latch once true. The predicates are `Near`,
+`InCircle`, `InRect`, `Hold` (a dwell — true for N seconds without a break),
+`SkillDone` (optionally guarded by another predicate, so "wave WHILE next to
+the person" counts and a wave across the room does not), and `AllOf`/`AnyOf`.
+Everything but `SkillDone` is read from the world; skill completions arrive
+from the robot over rosbridge, so with rosbridge down the world-state goals
+still work and skill goals simply never fire.
+
 ### When do changes take effect?
 
 | You edited | What to do |
 |---|---|
 | skills or agents in `workspace/` | **nothing** — they hot-reload on save (fallback: `ros2 service call /brain/reload std_srvs/srv/Trigger` in the container) |
-| ROS code in `ros2_ws/src/` | inside the container: `innate build` then `innate restart` |
+| parameters in `config/` | inside the container: `innate restart` |
+| ROS code in `ros2_ws/src/` | inside the container: `innate build` (it stops the nodes, builds, and restarts them) |
 | the simulated world (`mars_sim_driver/` world/server) | `./innate-sim down && ./innate-sim up` — this part runs on the host |
+| challenge or prop sidecars (`sim/challenges/`, `sim/props/`) | same restart — they are loaded by the host world server at startup |
 | launcher / webapp files | just rerun `./innate-sim up` / reload the browser |
 
 The container's ROS session lives in tmux (`./innate-sim sh`, then
-`tmux attach -t innate`): one window per subsystem (zenoh, rosbridge,
-sim-driver, nav-brain, behavior, arm-ik, vision-nav, console-webapp).
+`tmux attach -t innate`): one window per subsystem (zenoh, rosbridge-app,
+sim-driver, nav-brain, behavior, arm-ik, vision-nav, console-webapp,
+foxglove).
 
 ---
 
@@ -226,6 +270,42 @@ robot on Wi-Fi**, where those topics are too large to stream smoothly; there you
 use the lighter `/mars/main_camera/remote/*` topics instead. See
 [Foxglove](../README.md#foxglove) in the main README for that case.
 
+### Working on the robot code
+
+`./innate-sim sh` drops you into the container, where the same `innate` CLI
+as on a real robot manages the ROS stack. Your checkout is bind-mounted into
+it (`ros2_ws/`, `workspace/`, `scripts/`, `config/`), so files you edit on
+the host are immediately visible inside — you only choose how to reload them:
+
+```bash
+innate                   # status: mode, node health, command hints
+innate view              # attach the tmux session running the stack (Ctrl-b d to detach)
+innate restart           # stop + relaunch all ROS nodes (no rebuild)
+innate build             # stop nodes, colcon-build ros2_ws, restart
+innate build <pkg…>      # same, but only the named packages (faster)
+innate build release     # optimized build (CMAKE_BUILD_TYPE=Release)
+innate skill list        # skills the brain currently offers
+innate skill run <id> @param=value   # trigger a skill from the shell
+```
+
+[When do changes take effect?](#when-do-changes-take-effect) above has the
+answer for each kind of edit. `ros2_ws/` is the one worth knowing by heart:
+`colcon` installs a *copy*, so editing a node and restarting is not enough —
+`innate build mars_nav` (naming the package keeps the cycle short) rebuilds
+and restarts in one step.
+
+The trap is the simulated world itself — `mars_sim_driver`'s `world.py`,
+`core.py` and `world_server.py`. That process runs on the **host**, outside
+the container, on every platform, importing straight from your checkout.
+`innate build` rebuilds the container's copy, but the world server never
+loads it. Restart that one from the host:
+`./innate-sim down && ./innate-sim up`.
+
+`innate view` is the fastest way to see why a node is unhappy: the tmux
+session has one window per subsystem (zenoh, rosbridge-app, sim-driver,
+nav-brain, behavior, arm-ik, vision-nav, console-webapp, foxglove), each
+showing that process's live output.
+
 Prefer your own ROS tooling? A rosbridge server is also available at
 `ws://localhost:9090`.
 
@@ -286,9 +366,17 @@ robot adapter; humans and tools see it only through the observer stream):
   and rate-limited like real hardware. Renders are demand-paced: a camera
   or depth product renders once per client pull (~8Hz), never free-running.
 - **observer stream** (WebSocket, port 8800; the webapp proxies it at
-  `/worldstate`) — ground truth `{t, wall, pose, joints}` pushed after
-  every physics slice (~75Hz), latest-wins per client. The 3D view consumes
-  this; future challenge UIs/graders are just more clients.
+  `/worldstate`) — ground truth `{t, wall, pose, joints, objects, challenge}`
+  pushed after every physics slice (~75Hz), latest-wins per client, and stage
+  commands (the viewer's prop chips: `drop_prop_at` releases a prop over a spot
+  you picked and lets physics settle it, `place_prop_at_robot` / `place_group`
+  set props down at rest at their own reach offsets, `remove_prop` /
+  `remove_all_props` send them back off-map, which is where every prop starts;
+  plus `start_challenge` / `abort_challenge`) accepted back on the same socket.
+  Scenery and scoring, never robot control. Rosters that never change while the
+  server runs (the props, the challenges) go out once per connection instead of
+  riding every broadcast. The 3D view and the challenge panel are just two
+  clients of the same stream.
 
 Physics steps against the wall clock in <=25ms slices (a stall replays as
 several smooth slices, never one teleport), with all GL work on the main
@@ -298,6 +386,31 @@ prerequisite): native/WSLg GL renders ~7x faster than software GL in
 Docker, and physics never competes with the ROS stack for the container's
 CPU. The container ships no MuJoCo at all — the driver node is a pure RPC
 client. `./innate-sim logs world-server` shows the host server log.
+
+### challenges.py — the judge
+
+Hosted by the world server, which is what makes the verification honest: the
+judge reads the same MuJoCo state the physics runs on, and nothing about a
+challenge is ever published to the robot stack. A run is a `Challenge`
+sidecar (see [Challenges](#challenges)) plus three pieces of engine:
+
+- `tick()` runs on every state broadcast, judges the next unmet goal against
+  the world it was handed, and returns the `challenge` block the stream
+  carries. It never touches the sim itself — the poses and prop centres are
+  gathered under the sim lock by the caller — so any frontend is a renderer,
+  never a grader.
+- `start()`/`abort()` arrive as observer commands. `start()` deactivates,
+  resets the world and drops the scenario's props, and only then publishes
+  the run, so a tick landing mid-setup can never judge a half-built scene.
+- `SkillEventBridge` subscribes to `/brain/skill_status_update` over the
+  stack's rosbridge for `SkillDone`. Entirely best-effort: the sim never
+  waits on it and never fails because of it.
+
+Distances are measured to a prop's visual centre, not its body origin (a
+human scan stands feet-at-origin), which the prop sidecar already knows —
+see `PropRegistry.center_xy`. Results land in `workspace/challenges.json`,
+written atomically. A broken challenge file is skipped at load; a predicate
+that raises fails that run and nothing else.
 
 ### node.py — mars_sim_driver (the digital twin's hardware)
 

@@ -50,12 +50,18 @@ class ReloadCoordinator:
 
     # --- watcher lifecycle ---
     def start_watcher(self) -> None:
+        # Agent packages are watched as recursive roots — helper modules,
+        # folder agents, and subpackages all trigger — and any .py change
+        # means "re-import the agent packages": the import model has no
+        # per-file reload (same as the SAS catalog watcher). Skill changes
+        # are PEAS/SAS's watcher, not this one.
         self._watcher = HotReloadWatcher(
             logger=self._logger,
             skills_directories=[],  # skill hot reload is handled by PEAS/SAS
-            agents_directories=[str(p) for p in get_agent_directories()],
-            on_reload=self.queue,
+            agents_directories=[],
+            on_reload=lambda _skills, _agents: self.queue([], ["agents"]),
             debounce_seconds=1.0,
+            workspace_roots=[str(p) for p in get_agent_directories()],
         )
         self._watcher.start()
         self._timer = self._node.create_timer(0.5, self.process_queue)
@@ -114,7 +120,10 @@ class ReloadCoordinator:
                     reloaded_skills = list(result.reloaded_skills)
 
             if agent_names:
-                reloaded_agents = self._reload_agents(agent_names)
+                # The roster swap is wholesale: an empty roster (every agent
+                # now broken) still replaced the previous one. The brain reads
+                # the rebuilt state on its next turn — nothing to re-register.
+                reloaded_agents = self._reload_agents()
 
             self._logger.info(
                 f"[BrainClient] Selective reload complete: {len(reloaded_skills)} skills, {len(reloaded_agents)} agents"
@@ -132,6 +141,7 @@ class ReloadCoordinator:
         try:
             self._lifecycle.deactivate_brain()
             self._state.directives = {}
+            self._state.broken_agents = {}
             self._state.registry = SkillRegistry()
             self._state.current_directive = None
             self._state.active_skill_ids = []
@@ -152,8 +162,10 @@ class ReloadCoordinator:
             else:
                 self._state.registry = registry
 
-            self._state.directives, self._state.current_directive = initialize_agents(
-                self._logger, self._state.registry.primitives
+            # `or None` skips per-agent skill validation against an empty
+            # registry (every agent would "fail" it) — same as _startup.
+            self._state.directives, self._state.current_directive, self._state.broken_agents = initialize_agents(
+                self._logger, self._state.registry.primitives or None
             )
             self._state.active_skill_ids = (
                 list(self._state.current_directive.skill_ids()) if self._state.current_directive else []
@@ -199,35 +211,37 @@ class ReloadCoordinator:
             executor.remove_node(waiter)
             waiter.destroy_node()
 
-    def _reload_agents(self, agent_names: list) -> list:
-        from brain_client.agents.loader import AgentLoader
-        from brain_client.common.script_paths import classify_source
+    def _reload_agents(self) -> list:
+        """Re-import the agent packages and swap the roster wholesale — the
+        import model has no per-file reload (same as the skill catalog).
 
-        agent_loader = AgentLoader(self._logger)
-        agents_directories = [str(p) for p in get_agent_directories()]
-
-        reloaded = []
-        for agent_name in agent_names:
-            entry = agent_loader.reload_agent_by_name(agent_name, agents_directories)
-            if entry is None:
-                continue
-            agent_class, source_file = entry
-            try:
-                agent_instance = agent_class()
-                agent_instance.source = classify_source(source_file)
-                agent_loader._load_display_icon(agent_instance, str(source_file.parent))
-                if self._state.registry:
-                    agent_loader._validate_agent_skills(agent_instance, self._state.registry.primitives)
-                self._state.directives[agent_name] = agent_instance
-                reloaded.append(agent_name)
-                if self._state.current_directive and self._state.current_directive.id == agent_name:
-                    self._state.current_directive = agent_instance
-                    previous_skill_ids = set(self._state.active_skill_ids or agent_instance.skill_ids())
-                    self._state.active_skill_ids = [
-                        skill_id for skill_id in agent_instance.skill_ids() if skill_id in previous_skill_ids
-                    ]
-                    self._logger.info(f"Updated current directive: {agent_name}")
-                self._logger.info(f"Reloaded agent: {agent_name} [source={agent_instance.source}]")
-            except Exception as e:
-                self._logger.error(f"Error instantiating agent {agent_name}: {e}")
-        return reloaded
+        The current directive survives by id: its new instance is rebound and
+        the active skill set intersected, so a mid-session edit doesn't widen
+        the skills the user had narrowed. If it no longer loads (now broken),
+        fall back to the default idle agent rather than keep running a stale
+        instance whose file no longer says what it does.
+        """
+        agents, default_agent, broken = initialize_agents(self._logger, self._state.registry.primitives or None)
+        current_id = self._state.current_directive.id if self._state.current_directive else None
+        self._state.directives = agents
+        self._state.broken_agents = broken
+        if current_id is not None:
+            replacement = agents.get(current_id)
+            if replacement is not None:
+                self._state.current_directive = replacement
+                # None means "never narrowed"; [] is a deliberate everything-off
+                # choice and must not re-widen.
+                previous_skill_ids = (
+                    set(self._state.active_skill_ids)
+                    if self._state.active_skill_ids is not None
+                    else set(replacement.skill_ids())
+                )
+                self._state.active_skill_ids = [
+                    skill_id for skill_id in replacement.skill_ids() if skill_id in previous_skill_ids
+                ]
+                self._logger.info(f"Updated current directive: {current_id}")
+            else:
+                self._logger.warning(f"Current directive '{current_id}' did not survive reload; using default")
+                self._state.current_directive = default_agent
+                self._state.active_skill_ids = list(default_agent.skill_ids()) if default_agent else []
+        return sorted(agents)
