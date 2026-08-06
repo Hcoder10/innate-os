@@ -313,6 +313,7 @@ export function mount(stage) {
     const val = /** @type {HTMLElement} */ (row.querySelector(".armsdk-jval"));
     sl.addEventListener("input", () => {
       dragging = i;
+      if (i === 5) j6Touched = true;
       // Latch the card out of live sync while driving — otherwise the state
       // poll would snap the thumb back under the pointer.
       setDirty(true);
@@ -331,10 +332,17 @@ export function mount(stage) {
    * can't overwrite them mid-interaction. Cleared once the arm settles. */
   let slidersDirty = false;
 
+  /** True once the j6 slider itself was touched this interaction. Only then
+   * is j6 streamed: streaming the measured j6 (which the poll wrote into the
+   * slider) would re-command a gripped claw's stalled position and drop the
+   * object — the SDK's 5-joint form keeps the standing grip instead. */
+  let j6Touched = false;
+
   /** @param {boolean} dirty */
   function setDirty(dirty) {
     slidersDirty = dirty;
     el("jdirty").hidden = !dirty;
+    if (!dirty) j6Touched = false;
   }
 
   // --- live joint streaming -------------------------------------------------
@@ -351,15 +359,35 @@ export function mount(stage) {
 
   function queueLive() {
     clearTimeout(liveResyncTimer);
-    livePending = sliders.map((sl) => +sl.value);
+    const vals = sliders.map((sl) => +sl.value);
+    livePending = j6Touched ? vals : vals.slice(0, 5);
     if (!liveInFlight) void pumpLive();
   }
 
   async function pumpLive() {
     liveInFlight = true;
-    while (livePending) {
-      const joints = livePending;
+    /** @type {number[] | null} */
+    let lastSent = null;
+    let deadline = performance.now() + 5000;
+    while (!destroyed) {
+      let joints = livePending;
       livePending = null;
+      if (joints) {
+        deadline = performance.now() + 5000;
+      } else {
+        // The SDK's stream idles out 0.4 s after the last call, which would
+        // strand a big slider jump ~0.7 rad short of its target — keep
+        // feeding the deadman until the arm converges (arm joints only; a
+        // gripped j6 never reaches its goal by design). Capped so an
+        // obstructed arm isn't pushed forever.
+        const measured = lastState?.joints;
+        if (!lastSent || !measured || performance.now() > deadline) break;
+        const err = Math.max(...lastSent.slice(0, 5).map((v, i) => Math.abs(v - (measured[i] ?? v))));
+        if (err < 0.03) break;
+        joints = lastSent;
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      lastSent = joints;
       try {
         // Not via cmd(): no busy gate, no per-step log spam. A 409 while a
         // command motion runs just drops this step — the pill shows why.
@@ -415,11 +443,15 @@ export function mount(stage) {
 
   /** @param {string} name @param {Record<string, any>} [body] @returns {Promise<boolean>} success */
   async function cmd(name, body = {}) {
-    if (busy) {
-      log("busy — wait for the current motion", "err");
+    // Torque off is the abort path — it must fire even while a motion is in
+    // flight (the server exempts it from the motion lock; the motion then
+    // fails fast on the disabled arm). It leaves the busy latch alone.
+    const bypass = busy && name === "torque_off";
+    if (busy && !bypass) {
+      log("busy — wait for the current motion (Torque off aborts)", "err");
       return false;
     }
-    busy = true;
+    if (!bypass) busy = true;
     body.verify = input("verify").checked;
     const t0 = performance.now();
     let ok = false;
@@ -438,10 +470,10 @@ export function mount(stage) {
         // Commanded target vs where the arm actually settled, in the 3D view.
         if (data.target && data.settled) viz?.showResult(data.target, data.settled);
       }
-      busy = false;
+      if (!bypass) busy = false;
       if (data.state) render(data.state);
     } catch (e) {
-      busy = false;
+      if (!bypass) busy = false;
       log(`${name}: ${e}`, "err");
     }
     return ok;

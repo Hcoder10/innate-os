@@ -52,7 +52,7 @@ export function buildRebootArm() {
         // Torque back on by default — a rebooted arm is limp, and every eval
         // continued by re-enabling it anyway. The pause lets the servos finish
         // re-initializing first (mirrors Manipulation.recover()).
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         const tres = await ros.callService(ARM_TORQUE_ON_SERVICE, {}).catch(() => null);
         outcome = tres && tres.success !== false ? "Rebooted, torque on ✓" : "Rebooted — torque failed";
       }

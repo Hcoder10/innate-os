@@ -33,6 +33,16 @@ function vec3(s) {
   return new THREE.Vector3(x, y, z);
 }
 
+/** Write a 2-point line geometry in place — setFromPoints would allocate a
+ * fresh GPU buffer per call and leak the old one (it runs per pointermove).
+ * @param {THREE.BufferGeometry} geo @param {THREE.Vector3} a @param {THREE.Vector3} b */
+function setLine(geo, a, b) {
+  const pos = /** @type {THREE.BufferAttribute} */ (geo.getAttribute("position"));
+  pos.setXYZ(0, a.x, a.y, a.z);
+  pos.setXYZ(1, b.x, b.y, b.z);
+  pos.needsUpdate = true;
+}
+
 /**
  * @param {HTMLElement} container
  * @param {{ onDragMove?: (p: {x:number,y:number,z:number}) => void,
@@ -43,6 +53,15 @@ function vec3(s) {
  * @returns {Promise<{ setJoints: (joints: number[]) => void, destroy: () => void }>}
  */
 export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
+  // Fetch and parse the URDF before creating any GPU resources — the fetch is
+  // the likely failure (server down), and failing here leaks nothing.
+  const urdfText = await fetch(`${MODEL}/urdf/mars.urdf`).then((r) => {
+    if (!r.ok) throw new Error(`URDF fetch failed (${r.status})`);
+    return r.text();
+  });
+  const doc = new DOMParser().parseFromString(urdfText, "text/xml");
+  if (doc.querySelector("parsererror")) throw new Error("URDF parse failed");
+
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -81,12 +100,6 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
   const matAccent = new THREE.MeshStandardMaterial({ color: 0xe8a33d, metalness: 0.4, roughness: 0.35 });
 
   // ---- build the kinematic tree from the URDF -----------------------------
-  const urdfText = await fetch(`${MODEL}/urdf/mars.urdf`).then((r) => {
-    if (!r.ok) throw new Error(`URDF fetch failed (${r.status})`);
-    return r.text();
-  });
-  const doc = new DOMParser().parseFromString(urdfText, "text/xml");
-
   /** @type {Map<string, THREE.Group>} link name -> its frame */
   const links = new Map();
   doc.querySelectorAll("robot > link").forEach((el) => {
@@ -129,7 +142,7 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
     }
   });
 
-  // Root = any link never appearing as a child (base_footprint).
+  // Root = any link never appearing as a child.
   const root = [...links.values()].find((l) => !childLinks.has(l.name));
   if (root) scene.add(root);
 
@@ -199,7 +212,11 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
   const dragPlane = new THREE.Plane();
   const eeWorld = new THREE.Vector3();
   const dragPoint = new THREE.Vector3();
+  const dragStart = new THREE.Vector3();
   let dragging = false;
+  // Only a real drag commits a move — a bare click on the handle must not
+  // command the arm (5 mm threshold).
+  let dragMoved = false;
 
   /** @param {PointerEvent} ev */
   function setRay(ev) {
@@ -214,8 +231,10 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
     setRay(ev);
     if (raycaster.intersectObject(grabZone, false).length === 0) return;
     dragging = true;
+    dragMoved = false;
     controls.enabled = false;
     ee.getWorldPosition(eeWorld);
+    dragStart.copy(eeWorld);
     dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(dragPoint), eeWorld);
     ghost.position.copy(eeWorld);
     ghost.visible = true;
@@ -235,28 +254,40 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
     }
     if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
       dragPoint.z = Math.max(0.005, dragPoint.z); // never below the floor
+      if (!dragMoved && dragPoint.distanceTo(dragStart) > 0.005) dragMoved = true;
       ghost.position.copy(dragPoint);
       ee.getWorldPosition(eeWorld);
-      lineGeo.setFromPoints([eeWorld, ghost.position]);
+      setLine(lineGeo, eeWorld, ghost.position);
       onDragMove?.({ x: dragPoint.x, y: dragPoint.y, z: dragPoint.z });
     }
   }
 
-  function onPointerUp() {
-    if (!dragging) return;
+  /** Shared drag teardown; commits nothing. */
+  function endDrag() {
     dragging = false;
     controls.enabled = true;
     renderer.domElement.style.cursor = "";
     ghost.visible = false;
     dragLine.visible = false;
-    onDragEnd?.({ x: ghost.position.x, y: ghost.position.y, z: ghost.position.z });
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    const commit = dragMoved;
+    endDrag();
+    if (commit) onDragEnd?.({ x: ghost.position.x, y: ghost.position.y, z: ghost.position.z });
+  }
+
+  // An OS gesture / palm rejection mid-drag aborts the move, never commits it.
+  function onPointerCancel() {
+    if (dragging) endDrag();
   }
 
   renderer.domElement.style.touchAction = "none";
   renderer.domElement.addEventListener("pointerdown", onPointerDown);
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("pointerup", onPointerUp);
-  renderer.domElement.addEventListener("pointercancel", onPointerUp);
+  renderer.domElement.addEventListener("pointercancel", onPointerCancel);
 
   // ---- meshes -------------------------------------------------------------
   const loader = new STLLoader();
@@ -282,7 +313,16 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
       );
     }
   }
-  await Promise.all(meshJobs);
+  try {
+    await Promise.all(meshJobs);
+  } catch (err) {
+    // A mesh failed to load — free the GPU context instead of stranding it
+    // (repeated failed mounts would otherwise hit the browser's WebGL cap).
+    controls.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+    throw err;
+  }
 
   // ---- animation ----------------------------------------------------------
   // Targets keyed by SDK joint order (Manipulation.JOINT_NAMES).
@@ -342,7 +382,7 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
     showResult(target, settled) {
       targetMarker.position.set(target.x, target.y, target.z);
       settledMarker.position.set(settled.x, settled.y, settled.z);
-      errGeo.setFromPoints([targetMarker.position, settledMarker.position]);
+      setLine(errGeo, targetMarker.position, settledMarker.position);
       targetMarker.visible = settledMarker.visible = errLine.visible = true;
     },
     destroy() {
@@ -352,7 +392,7 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerCancel);
       controls.dispose();
       geometries.forEach((g) => g.dispose());
       [handle, grabZone, ghost, targetMarker, settledMarker].forEach((m) => m.geometry.dispose());

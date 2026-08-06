@@ -25,9 +25,6 @@ import {
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
 const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
-// Ticks are the leader's own encoder frame; radians are what every consumer
-// (skills, /mars/arm/commands) speaks, so that is what the copy button emits.
-const TICK_TO_RAD = (2 * Math.PI) / 4096;
 // The reboot power-cycles the servos and "takes a few seconds" — give the
 // service call more room than the 10s default before timing out.
 const REBOOT_TIMEOUT_MS = 20_000;
@@ -144,12 +141,12 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   engageBtn.className = "arm-button arm-engage";
   engageBtn.type = "button";
 
-  // Copy the live joint angles — paste straight into a skill.
+  // Copy the live joint ticks — handy for pasting a pose into a skill.
   const copyBtn = document.createElement("button");
   copyBtn.className = "arm-button arm-copy";
   copyBtn.type = "button";
-  copyBtn.title = "Copy joint positions (radians)";
-  copyBtn.setAttribute("aria-label", "Copy joint positions in radians");
+  copyBtn.title = "Copy joint positions";
+  copyBtn.setAttribute("aria-label", "Copy joint positions");
   copyBtn.innerHTML = ICON_COPY;
 
   // Engage + copy share a row; the row (not the button) is what hides when
@@ -260,8 +257,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   copyBtn.addEventListener("click", () => {
     const positions = leader.state.positions;
     if (!positions) return; // row is hidden without a read, but be safe
-    const radians = positions.map((t) => ((t - TICK_CENTER) * TICK_TO_RAD).toFixed(4));
-    void copyToButton(`[${radians.join(", ")}]`, copyBtn, "copied");
+    void copyToButton(`[${positions.join(", ")}]`, copyBtn, "copied");
   });
 
   const unsubLeader = leader.onChange((state) => {
@@ -411,7 +407,7 @@ function buildArmServices(rosClient) {
         // Torque back on by default — a rebooted arm is limp, and every caller
         // ended up re-enabling it by hand anyway. The pause lets the servos
         // finish re-initializing first (mirrors Manipulation.recover()).
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         try {
           const tres = await rosClient.callService(ARM_TORQUE_ON_SERVICE, {});
           if (tres && tres.success === false) {

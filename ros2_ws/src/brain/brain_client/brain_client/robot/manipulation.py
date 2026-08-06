@@ -515,21 +515,42 @@ class Manipulation:
         if self.torque_enabled is False:
             raise ArmFailed("arm torque is disabled")
         with self._stream_lock:
+            # The exiting slew thread clears _stream_thread under this lock, so
+            # this check can't see a dying thread as alive and strand a target.
+            starting = self._stream_thread is None or not self._stream_thread.is_alive()
+            if starting:
+                # Seed the slew from measured state so the first tick ramps
+                # from where the arm actually is. Without a measurement the
+                # clamp would be seeded at the target — one unclamped snap —
+                # so refuse instead.
+                state = self._arm_state
+                if state is None or len(state.position) < 6:
+                    raise ArmFailed("no measured joint state to seed the stream — is /mars/arm/state up?")
+                seed = [float(p) for p in state.position[:6]]
+                # ...except j6: seeding the claw from its MEASURED position is
+                # the drop-the-object operation (module docstring) — a gripped
+                # claw stalls short of its goal and that error is the grip
+                # force. Seed from the standing grip target instead.
+                seed[5] = self._grip_or(None)
+                self._stream_cmd = seed
             self._stream_target = target
             self._stream_speed = float(max_speed) if max_speed is not None else self.STREAM_MAX_SPEED
             self._stream_stamp = time.monotonic()
-            if self._stream_thread is None or not self._stream_thread.is_alive():
-                # Seed the slew from measured state so the first tick ramps
-                # from where the arm actually is.
-                state = self._arm_state
-                has_seed = state is not None and len(state.position) >= 6
-                self._stream_cmd = [float(p) for p in state.position[:6]] if has_seed else list(target)
+            if starting:
                 self._stream_thread = threading.Thread(target=self._stream_run, daemon=True)
                 self._stream_thread.start()
 
     def stream_stop(self) -> None:
-        """Stop streaming; the arm holds its current position. Idempotent."""
+        """Stop streaming; the arm holds its current position. Idempotent.
+
+        The grip handoff happens here, synchronously — if the slew thread did
+        it on exit, a motion issued right after stream_stop (``_goto`` sets
+        its own grip target) could lose the race and have its j6 stomped by
+        the dying thread up to a tick later.
+        """
         with self._stream_lock:
+            if self._stream_target is not None and self._stream_cmd is not None:
+                self._grip_target = float(self._stream_cmd[5])
             self._stream_target = None
 
     def _stream_run(self) -> None:
@@ -537,16 +558,16 @@ class Manipulation:
         while True:
             time.sleep(dt)  # own daemon thread, not skill context
             with self._stream_lock:
-                idle = (
-                    self._stream_target is None or time.monotonic() - self._stream_stamp > self.STREAM_IDLE_S
-                )
-                if idle:
-                    # The streamed j6 is where the claw was left — hand it to
-                    # the standing grip target or the next motion yanks the
-                    # claw back to a stale one.
-                    if self._stream_cmd is not None:
+                stopped = self._stream_target is None
+                if stopped or time.monotonic() - self._stream_stamp > self.STREAM_IDLE_S:
+                    # Idle-timeout: hand the streamed j6 to the standing grip
+                    # target or the next motion yanks the claw back to a stale
+                    # one. An explicit stream_stop already did this — writing
+                    # here again could stomp a grip a motion set since.
+                    if not stopped and self._stream_cmd is not None:
                         self._grip_target = float(self._stream_cmd[5])
                     self._stream_target = None
+                    self._stream_thread = None  # under the lock: see stream_joints
                     return
                 step = self._stream_speed * dt
                 assert self._stream_cmd is not None  # seeded before the thread starts
@@ -555,7 +576,11 @@ class Manipulation:
                     self._stream_cmd[i] += max(-step, min(step, delta))
                 msg = Float64MultiArray()
                 msg.data = [float(v) for v in self._stream_cmd]
-            self._stream_pub.publish(msg)
+                # Publish INSIDE the lock: once stream_stop returns, no further
+                # frame can land — a goto issued right after can't have its
+                # gains flipped or its target overwritten by a straggler, and
+                # shutdown can't destroy the node under an in-flight publish.
+                self._stream_pub.publish(msg)
 
     # --- non-blocking motion ---
 
@@ -628,6 +653,7 @@ class Manipulation:
         return success
 
     def torque_off(self) -> bool:
+        self.stream_stop()  # never stream into a limp arm
         success = self._call_trigger(self._torque_off_client, "Torque off", "Torque disabled on arm")
         if success:
             self._torque_enabled = False
@@ -637,6 +663,7 @@ class Manipulation:
 
     def reboot_servos(self) -> bool:
         """Reboot the arm servos, clearing hardware errors; leaves torque off."""
+        self.stream_stop()  # never stream across a servo power-cycle
         success = self._call_trigger(
             self._reboot_servos_client,
             "Reboot servos",

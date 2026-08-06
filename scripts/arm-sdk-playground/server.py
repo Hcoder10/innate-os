@@ -42,7 +42,8 @@ manip = Manipulation(node, node.get_logger())
 manip.safety.max_ee_speed = 0.20  # m/s — stretches cartesian move durations
 
 # One motion at a time; concurrent clicks get a 409 instead of queueing up.
-# (joints_stream is exempt below — streaming is continuous by design.)
+# joints_stream takes it too (briefly): during a blocking move the stream gets
+# a 409 and drops the step, so sliders can't fight a discrete motion.
 motion_lock = threading.Lock()
 
 
@@ -201,7 +202,10 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
 
-        if not motion_lock.acquire(blocking=False):
+        # torque_off is the abort path: it must work WHILE a motion holds the
+        # lock (the motion then fails fast on the de-energized arm).
+        needs_lock = cmd != "torque_off"
+        if needs_lock and not motion_lock.acquire(blocking=False):
             self._json(409, {"error": "arm busy — wait for the current motion"})
             return
         try:
@@ -214,7 +218,8 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._json(500, {"error": f"{type(e).__name__}: {e}"})
         finally:
-            motion_lock.release()
+            if needs_lock:
+                motion_lock.release()
 
 
 def main():

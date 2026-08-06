@@ -39,6 +39,7 @@ import ssl
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 from aiohttp import web
@@ -280,13 +281,19 @@ async def restart_handler(request: web.Request) -> web.Response:
 # The Arm SDK playground page (/armsdk) drives a standalone SDK test server —
 # scripts/arm-sdk-playground/server.py, which runs the arm SDK's Python
 # Manipulation class against the live arm — bound to localhost. Relaying it
-# here keeps the page same-origin (no mixed-content block on HTTPS) without
-# exposing the raw arm-control port off-box.
+# here keeps the page same-origin (no mixed-content block on HTTPS). Like the
+# rest of the webapp this is unauthenticated on the LAN; the localhost bind
+# stops other hosts hitting 8090 directly, and the Origin gate below stops a
+# drive-by page in the operator's browser from POSTing arm commands
+# cross-origin.
 ARMSDK_URL = "http://127.0.0.1:8090"
 
 # The page's 3D view renders the same URDF + STL meshes the IK node solves
 # against (the installed mars_sim share), served read-only under /armsdk/model/.
-MARS_MODEL_ROOT = ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim"
+# resolve(): the containment check below compares resolved targets, so the
+# base must be resolved too or a symlinked install (colcon --symlink-install)
+# would 404 every model file.
+MARS_MODEL_ROOT = (ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim").resolve()
 
 
 async def armsdk_model(request: web.Request) -> web.StreamResponse:
@@ -298,6 +305,13 @@ async def armsdk_model(request: web.Request) -> web.StreamResponse:
 
 async def armsdk_proxy(request: web.Request) -> web.Response:
     """Relay /armsdk/api/<tail> to the playground server's /api/<tail>."""
+    # Cross-origin POSTs are simple requests (no preflight) — refuse any
+    # browser-attributed origin that is not this host, so a random page the
+    # operator has open cannot drive the arm. Origin-less requests (curl,
+    # same-origin GETs) pass.
+    origin = request.headers.get("Origin")
+    if origin and urlsplit(origin).hostname != request.url.host:
+        raise web.HTTPForbidden(text="cross-origin arm commands are refused")
     upstream = f"{ARMSDK_URL}/api/{request.match_info['tail']}"
     session = request.app[CLIENT]
     try:
