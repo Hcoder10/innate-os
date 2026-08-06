@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agents.types import Agent
+from innate_skills.navigate_to_position import NavigateToPosition
+from innate_skills.navigate_with_vision import NavigateWithVision
+from innate_skills.pick_any_object import PickAnyObject
+from innate_skills.wave import Wave
+from inputs.micro_input import MicroInput
+
+from brain_client.agents.types import Agent, InputRef, SkillRef
 
 
 class DemoAgent(Agent):
@@ -16,13 +22,14 @@ class DemoAgent(Agent):
     def display_name(self) -> str:
         return "Demo Agent"
 
-    def get_skills(self) -> list[str]:
-        """Return skill IDs for navigation and waving."""
-        return ["innate-os/navigate_to_position", "innate-os/wave", "innate-os/navigate_with_vision"]
+    def get_skills(self) -> list[SkillRef]:
+        """Navigation code skills plus the recorded wave — Wave is the typed
+        ref generated inside the recording folder (see skills/physical_refs.py)."""
+        return [NavigateToPosition, Wave, NavigateWithVision, PickAnyObject]
 
-    def get_inputs(self) -> list[str]:
+    def get_inputs(self) -> list[InputRef]:
         """Enable microphone input to hear user"""
-        return ["micro"]
+        return [MicroInput]
 
     def get_prompt(self) -> str:
         """Return the prompt that defines the robot's personality and behavior"""

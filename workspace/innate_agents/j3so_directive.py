@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from brain_client.agents.types import Agent
+from innate_skills.navigate_to_position import NavigateToPosition
+from inputs.micro_input import MicroInput
+
+from brain_client.agents.types import Agent, InputRef, SkillRef
 
 
 class J3SOAgent(Agent):
@@ -21,15 +24,13 @@ class J3SOAgent(Agent):
     def display_icon(self) -> str:
         return "assets/j3so.png"
 
-    def get_skills(self) -> list[str]:
-        """Return the list of skill IDs this directive can use"""
-        return [
-            "innate-os/navigate_to_position",
-        ]
+    def get_skills(self) -> list[SkillRef]:
+        """Return the skills this directive can use"""
+        return [NavigateToPosition]
 
-    def get_inputs(self) -> list[str]:
+    def get_inputs(self) -> list[InputRef]:
         """This directive needs microphone input to hear user"""
-        return ["micro"]
+        return [MicroInput]
 
     def get_prompt(self) -> str:
         """Return the prompt that defines the robot's personality and behavior"""
