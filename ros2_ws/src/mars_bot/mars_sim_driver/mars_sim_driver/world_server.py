@@ -99,6 +99,7 @@ class WorldServer:
         # Challenge judge: evaluated on each published state, driven by
         # observer commands, fed skill events by SkillEventBridge (main()).
         self.challenges = ChallengeEngine(sim, self.lock)
+        self._challenge_error_at = 0.0  # last throttled challenge-failure log
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
 
@@ -144,7 +145,19 @@ class WorldServer:
             # tick() cannot get them judged against its fresh run.
             epoch = self.challenges.world_epoch
         # Judged outside the sim lock: pure evaluation over the gathered state.
-        challenge = self.challenges.tick(sim_time, (x, y, yaw), centers, epoch)
+        # Wrapped because this runs on the physics thread and physics_loop has
+        # no guard of its own: a predicate bug, a hand-edited challenges.json,
+        # anything at all in the challenge layer would otherwise kill that
+        # thread and freeze the world for every viewer. The block goes missing
+        # for a frame instead -- which is the module's own contract, that a
+        # broken challenge degrades that challenge and never the sim.
+        try:
+            challenge = self.challenges.tick(sim_time, (x, y, yaw), centers, epoch)
+        except Exception as exc:  # noqa: BLE001 -- degrade the challenge, never the sim
+            challenge = None
+            if time.time() - self._challenge_error_at > 5.0:  # 75Hz: do not flood the log
+                self._challenge_error_at = time.time()
+                print(f"[world-server] challenge tick failed: {exc!r}", flush=True)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
             {

@@ -326,26 +326,12 @@ class ChallengeEngine:
             data = json.loads(self.progress_path.read_text())["challenges"]
         except Exception:  # noqa: BLE001 -- first run or corrupt file: start fresh
             return {}
-        # Valid JSON of the wrong shape raises nothing here but would blow up
-        # later, outside any per-goal guard, taking the physics thread with it
-        # -- a hand-edited file must degrade, never stop the sim. Per ENTRY as
-        # well as at the top: _block() reads these fields on every broadcast,
-        # _record() and start() on a transition, all unguarded.
-        if not isinstance(data, dict):
-            return {}
-        clean: dict = {}
-        for cid, entry in data.items():
-            if not isinstance(entry, dict):
-                continue  # not an entry at all: the challenge reads as unattempted
-            attempts, best = entry.get("attempts"), entry.get("best_time_s")
-            clean[cid] = {
-                **entry,
-                "passed": bool(entry.get("passed")),
-                # bools are ints in Python, so exclude them explicitly.
-                "attempts": attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0,
-                "best_time_s": float(best) if isinstance(best, (int, float)) and not isinstance(best, bool) else None,
-            }
-        return clean
+        # Valid JSON of the wrong shape raises nothing here, only later where
+        # the fields are read. Entries of the wrong shape are not screened out
+        # field by field: world_server catches the whole challenge layer off
+        # the physics thread, which covers every shape rather than the ones
+        # thought of here.
+        return data if isinstance(data, dict) else {}
 
     def _save_progress(self) -> None:
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)

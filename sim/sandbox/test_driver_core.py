@@ -258,33 +258,37 @@ def check_stale_tick(sim: VirtualMars) -> None:
 
 
 def check_poisoned_progress(sim: VirtualMars) -> None:
-    """A hand-edited challenges.json must not stop the sim.
+    """A broken challenge layer must not take the physics thread with it.
 
-    _block() renders progress on EVERY broadcast, active challenge or not, and
-    runs at the end of tick() -- outside the per-goal guard, on the physics
-    thread, which has none. An entry of the wrong shape therefore doesn't
-    degrade one challenge, it freezes the world for every viewer."""
+    tick() runs on the physics thread and physics_loop has no guard, so
+    anything that raises in there -- here a hand-edited challenges.json whose
+    entry is not a dict, but equally a predicate bug -- would stop the world
+    for every viewer rather than degrade one challenge."""
+    from mars_sim_driver.world_server import WorldServer
+
     path = OUT_DIR / "challenges_poisoned.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "challenges": {
-                    "probe": 5,  # not a dict at all
-                    "junk": {"attempts": "3", "best_time_s": "fast", "passed": "yes"},
-                },
-            }
-        )
-    )
-    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=path)
-    engine.challenges["probe"] = Challenge(id="probe", title="Probe", brief="", setup=[], goals=[])
-    engine.challenges["junk"] = Challenge(id="junk", title="Junk", brief="", setup=[], goals=[])
+    path.write_text(json.dumps({"version": 1, "challenges": {"probe": 5}}))  # entry is not a dict
 
-    progress = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["progress"]
-    assert progress["junk"] == {"passed": True, "best_time_s": None, "attempts": 0}, progress["junk"]
-    assert "probe" not in progress or progress["probe"]["attempts"] == 0, progress
-    print("challenge progress: a hand-edited entry degrades to unattempted, the tick survives")
+    server = WorldServer(sim)
+    server.challenges = ChallengeEngine(sim, server.lock, roots=[], progress_path=path)
+    server.challenges.challenges["probe"] = Challenge(id="probe", title="Probe", brief="", setup=[], goals=[])
+
+    # The engine really does blow up on it: _block() reads entry.get("passed")
+    # on every broadcast, active challenge or not.
+    try:
+        server.challenges.tick(0.0, sim.pose(), {}, server.challenges.world_epoch)
+        raised = False
+    except Exception:  # noqa: BLE001 -- the point of the test
+        raised = True
+    assert raised, "expected a non-dict progress entry to raise inside the engine"
+
+    # ...and publish_state has to contain it, leaving the world stepping.
+    server.publish_state()
+    payload = json.loads(server.state_payload)
+    assert payload["challenge"] is None, f"expected the block to go missing, got {payload['challenge']}"
+    assert payload["pose"], "the state broadcast lost its world"
+    print("challenge layer: a poisoned progress file drops the block, not the physics thread")
 
 
 if __name__ == "__main__":
