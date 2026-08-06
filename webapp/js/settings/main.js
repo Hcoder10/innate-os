@@ -68,8 +68,6 @@ const MAX_SEARCH_RESULTS = 20;
 /** @type {HTMLElement | null} */
 let bodyEl = null;
 
-// Created fresh in build() each mount, so re-mounting never double-binds their
-// click handlers.
 /** @type {HTMLButtonElement} */ let saveBtn;
 /** @type {HTMLButtonElement} */ let resetAllBtn;
 /** @type {HTMLButtonElement} */ let restartBtn;
@@ -422,7 +420,7 @@ function selectSettingsPage(/** @type {PageUI | null} */ ui) {
   bodyEl?.classList.toggle("is-detail", ui !== null);
 }
 
-function build() {
+function buildSettingsPage() {
   styleEl = document.createElement("style");
   styleEl.textContent = SETTINGS_STYLE;
   document.head.appendChild(styleEl);
@@ -1116,7 +1114,7 @@ export function mount(stageEl) {
   pages.length = 0;
   searchTargets.length = 0;
   bodyEl = null;
-  build();
+  buildSettingsPage();
   load();
   return {
     destroy() {
