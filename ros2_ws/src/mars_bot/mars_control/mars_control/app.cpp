@@ -6,20 +6,29 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
+
+#include "drive_smoother.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <brain_messages/msg/recorder_status.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <mars_msgs/srv/set_robot_name.hpp>
 #include <mars_msgs/srv/trigger_update.hpp>
 #include <mars_msgs/srv/shutdown.hpp>
 #include <mars_msgs/srv/set_volume.hpp>
+#include <mars_msgs/srv/goto_js.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
+#include <algorithm>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -37,17 +46,6 @@ using namespace std::chrono_literals;
 namespace mars_control {
 
 // Joystick teleop tuning (mobile-app drive joystick -> /cmd_vel).
-namespace joy_tuning {
-// Defaults match the original pre-tuning feel: 15% deadband, quadratic
-// response, 0.4 m/s / 1.0 rad/s caps, no speed-dependent turn bonus.
-constexpr double DEADZONE = 0.15;
-constexpr double EXPONENT = 2.0;     // quadratic; 1.0 = linear
-constexpr double MAX_LINEAR = 0.4;   // m/s
-constexpr double MAX_ANGULAR = 1.0;  // rad/s
-// Car-like steering inversion while reversing is the `reverse_steering` ROS
-// parameter (default off); the app's Dev tab toggles it live via set_parameters.
-constexpr double REVERSE_STEER_RAMP = 0.15;  // m/s
-}  // namespace joy_tuning
 
 /**
  * Check if running inside a Docker container.
@@ -395,8 +393,40 @@ class AppControl : public rclcpp::Node {
         // the app's Dev tab toggles it at runtime through set_parameters.
         this->declare_parameter("reverse_steering", false);
         // Drive-speed caps; settings.yaml's /** motion_control overrides these, else joy_tuning defaults.
-        this->declare_parameter("motion_control.max_speed", joy_tuning::MAX_LINEAR);
-        this->declare_parameter("motion_control.max_angular_speed", joy_tuning::MAX_ANGULAR);
+        this->declare_parameter("motion_control.max_speed", drive::MAX_LINEAR);
+        this->declare_parameter("motion_control.max_angular_speed", drive::MAX_ANGULAR);
+        // Speed mode (slow / medium / fast); the app and webapp write it live via set_parameters.
+        this->declare_parameter("motion_control.speed_scale", drive::SPEED_SCALE);
+        // Teleop ramp tuning. Only this node declares motion_control.*, so a settings.yaml
+        // `/**` override reaches the app joystick without touching the USB gamepad node.
+        this->declare_parameter("motion_control.dt", drive::CONTROL_DT);
+        this->declare_parameter("motion_control.speed_time_constant", drive::SPEED_TIME_CONSTANT);
+        this->declare_parameter("motion_control.angular_speed_time_constant", drive::ANGULAR_SPEED_TIME_CONSTANT);
+        this->declare_parameter("motion_control.max_acceleration", drive::MAX_ACCELERATION);
+        this->declare_parameter("motion_control.max_deceleration", drive::MAX_DECELERATION);
+        this->declare_parameter("motion_control.max_angular_acceleration", drive::MAX_ANGULAR_ACCELERATION);
+        this->declare_parameter("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION);
+        this->declare_parameter("motion_control.max_jerk", drive::MAX_JERK);
+        this->declare_parameter("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK);
+        this->declare_parameter("motion_control.settle_epsilon", drive::SETTLE_EPSILON);
+        this->declare_parameter("motion_control.input_timeout", drive::INPUT_TIMEOUT);
+        // Mad-mode absolutes, used in place of the scaled limits while that mode is selected.
+        this->declare_parameter("mad.max_acceleration", drive::MAD_MAX_ACCELERATION);
+        this->declare_parameter("mad.max_angular_acceleration", drive::MAD_MAX_ANGULAR_ACCELERATION);
+
+        // Registered after every declare_parameter: the callback fires on declaration too,
+        // and a compiled default that failed its own check would abort construction.
+        param_callback_handle_ = this->add_on_set_parameters_callback(
+            [this](const std::vector<rclcpp::Parameter>& params) { return validate_parameters(params); });
+        // Heading hold. Gain 0 disables it, which is why these are not read through
+        // smoothing_param -- zero is a legitimate value here, not a broken one.
+        this->declare_parameter("heading_hold.gain", drive::HEADING_GAIN);
+        this->declare_parameter("heading_hold.max_correction", drive::HEADING_MAX_CORRECTION);
+        this->declare_parameter("heading_hold.leak", drive::HEADING_LEAK);
+        this->declare_parameter("heading_hold.min_speed", drive::HEADING_MIN_SPEED);
+        this->declare_parameter("heading_hold.straight_yaw", drive::HEADING_STRAIGHT_YAW);
+        this->declare_parameter("heading_hold.deadband", drive::HEADING_DEADBAND);
+        this->declare_parameter("heading_hold.slew", drive::HEADING_SLEW);
 
         // Log if running in Docker (system hostname operations will be skipped)
         if (is_running_in_docker()) {
@@ -406,6 +436,20 @@ class AppControl : public rclcpp::Node {
         // Subscribe to joystick messages (Vector3)
         joystick_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
             "/joystick", 10, std::bind(&AppControl::joystick_callback, this, std::placeholders::_1));
+
+        // An episode starting is a real event, so the policy lives here and covers both clients.
+        recorder_sub_ = this->create_subscription<brain_messages::msg::RecorderStatus>(
+            "/brain/recorder/status", 10, [this](const brain_messages::msg::RecorderStatus::SharedPtr msg) {
+                // "active" alone only means the recorder node is up; an episode is in progress
+                // only once it also names one. Same test as profile_recorder_node.py.
+                recording_ = (msg->status == "active" && !msg->episode_number.empty());
+                apply_speed_policy();
+            });
+
+        // Heading feedback. /odom's x,y are dead-reckoned from commanded speeds and are
+        // useless as feedback, but its orientation is genuine IMU heading from the MCU.
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/odom", rclcpp::SensorDataQoS(), std::bind(&AppControl::odom_callback, this, std::placeholders::_1));
 
         // Subscribe to leader positions messages (Int32MultiArray)
         leader_sub_ = this->create_subscription<std_msgs::msg::Int32MultiArray>(
@@ -417,8 +461,36 @@ class AppControl : public rclcpp::Node {
         // Publisher for leader arm commands (Float64MultiArray) on /mars/arm/commands
         cmd_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/mars/arm/commands", 10);
 
+        // Arm goto client for the Mad-mode safe fold (see fold_arm_for_mad_mode).
+        arm_goto_client_ = this->create_client<mars_msgs::srv::GotoJS>("/mars/arm/goto_js_v2");
+
+        // Last COMMANDED j6 (standing grip target) so the Mad fold can carry
+        // it. Transient local: a node restart while an object is held must
+        // not reset it to zero.
+        arm_command_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "/mars/arm/command_state", rclcpp::QoS(1).transient_local(),
+            [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
+                if (msg->position.size() >= 6) {
+                    last_commanded_j6_ = msg->position[5];
+                }
+            });
+
         // Publisher for robot info
         robot_info_pub_ = this->create_publisher<std_msgs::msg::String>("/robot/info", 10);
+
+        // Fixed-rate drive smoother, on its own timer rather than in joystick_callback:
+        // /joystick arrives irregularly, so integrating on message arrival would tie the ramp
+        // rate to how fast the operator moves the stick. The period is fixed here, which makes
+        // motion_control.rate a startup knob; the rest are live-tunable.
+        smoothing_dt_ = smoothing_param("motion_control.dt", drive::CONTROL_DT);
+        drive_smoother_timer_ = this->create_wall_timer(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
+            std::bind(&AppControl::drive_smoother_callback, this));
+
+        // Seed the edge detector from the value that was actually declared: booting into
+        // Mad is a starting state, not a transition, and the arm services are not up yet.
+        mad_engaged_ = drive::is_mad_scale(drive_speed_scale());
+        mad_mode_timer_ = this->create_wall_timer(100ms, std::bind(&AppControl::watch_mad_mode, this));
 
         // Timer for publishing robot info
         robot_info_timer_ = this->create_wall_timer(1000ms, std::bind(&AppControl::publish_robot_info_callback, this));
@@ -653,40 +725,357 @@ class AppControl : public rclcpp::Node {
         return _cached_update_available;
     }
 
-    /** Apply deadband and a power-law (joy_tuning::EXPONENT) response curve to a [-1, 1] axis. */
-    double apply_curve(double value, double deadband = joy_tuning::DEADZONE) {
-        if (std::abs(value) < deadband) {
-            return 0.0;
+    /** Speed-mode multiplier, clamped to the published preset range — Mad exceeds 1.0, so the
+     *  ceiling comes from the table rather than a literal. std::clamp passes NaN through, hence
+     *  the finite check. */
+    double drive_speed_scale() {
+        const double value = this->get_parameter("motion_control.speed_scale").as_double();
+        if (!std::isfinite(value)) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+                                 "motion_control.speed_scale must be finite (got %.3f); using %.3f.", value,
+                                 drive::SPEED_SCALE);
+            return drive::SPEED_SCALE;
+        }
+        return std::clamp(value, 0.05, drive::max_speed_scale());
+    }
+
+    /** Ramp tunable, falling back to its default unless finite and positive. Every knob here is
+     *  divided by or clamped to, so 0 breaks the ramp rather than removing a limit. (0 *does*
+     *  mean "disabled" for mars_arm's max_jerk.) */
+    double smoothing_param(const char* name, double fallback) {
+        const double value = this->get_parameter(name).as_double();
+        if (std::isfinite(value) && value > 0.0) {
+            return value;
+        }
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+                             "%s must be finite and positive (got %.3f); using %.3f. Neither 0 nor inf disables "
+                             "this limit.",
+                             name, value, fallback);
+        return fallback;
+    }
+
+    // Bounded here, not just in validate_parameters: settings.yaml is read at
+    // declare_parameter time, before the callback exists, so file overrides
+    // never pass through validation.
+    double bounded_param(const char* name, double fallback, double lo, double hi) {
+        const double value = smoothing_param(name, fallback);
+        const double bounded = std::clamp(value, lo, hi);
+        if (bounded != value) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "%s is %.6f; using %.3f (limit %g-%g).",
+                                 name, value, bounded, lo, hi);
+        }
+        return bounded;
+    }
+
+    // Preset the current activity wants, or 0 when none applies. Mapping is
+    // deliberately absent: mode_manager drops repeat change_mode requests, so
+    // there is no transition to key on.
+    double policy_scale() const {
+        if (recording_) {
+            return drive::scale_for_mode(drive::RECORDING_SCALE_ID);
+        }
+        return 0.0;
+    }
+
+    // Acts only on a transition, so an operator who picks another mode
+    // mid-activity keeps it; restores only what it set.
+    void apply_speed_policy() {
+        const double desired = policy_scale();
+        if (desired == policy_desired_) {
+            return;  // no transition
+        }
+        const double previous_desired = policy_desired_;
+        policy_desired_ = desired;
+
+        const double current = this->get_parameter("motion_control.speed_scale").as_double();
+        if (policy_owns_scale_ && std::abs(current - previous_desired) > 1e-9) {
+            policy_owns_scale_ = false;  // someone else moved it; it is theirs now
         }
 
-        double sign = (value > 0) ? 1.0 : -1.0;
-        double normalized = (std::abs(value) - deadband) / (1.0 - deadband);
-        double curved = std::pow(normalized, joy_tuning::EXPONENT);
+        if (!policy_owns_scale_) {
+            if (desired == 0.0) {
+                return;  // nothing to enter, nothing of ours to restore
+            }
+            policy_restore_scale_ = current;  // entering afresh: remember what to give back
+            policy_owns_scale_ = true;
+        }
 
-        return sign * curved;
+        const double next = (desired > 0.0) ? desired : policy_restore_scale_;
+        if (desired == 0.0) {
+            policy_owns_scale_ = false;
+        }
+        if (std::abs(next - current) < 1e-9) {
+            return;
+        }
+        this->set_parameter(rclcpp::Parameter("motion_control.speed_scale", next));
+        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f", desired > 0.0 ? "recording" : "idle",
+                    next);
+    }
+
+    // Polled: Humble has no post-set parameter hook, and the pre-set callback
+    // only validates — a rejected batch would brace the arm for a mode never
+    // entered. Reading the applied value covers every writer.
+    void watch_mad_mode() {
+        const bool mad = drive::is_mad_scale(drive_speed_scale());
+        if (!mad) {
+            mad_engaged_ = false;
+            return;
+        }
+        if (mad_engaged_ || mad_fold_in_flight_ || std::chrono::steady_clock::now() < mad_fold_retry_at_) {
+            return;
+        }
+        mad_engaged_ = fold_arm_for_mad_mode();
+    }
+
+    // At Mad's speeds a collision can break an extended arm.
+    bool fold_arm_for_mad_mode() {
+        // Hardware-verified command radians for j1-j5 (j1 at its configured
+        // limit — the demonstrated pose sat ~12 deg past it); j6 is replaced
+        // below with the standing grip target.
+        static constexpr std::array<double, 6> POSE_RAD{1.5708, -0.3912, 1.4511, -1.6276, -0.0890, 0.0};
+        // The poll is 100 ms: without this a rejecting arm gets ten 2 s gotos a second.
+        mad_fold_retry_at_ = std::chrono::steady_clock::now() + 2s;
+        if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "Mad mode: arm goto service not ready; retrying the safe fold");
+            return false;
+        }
+        auto request = std::make_shared<mars_msgs::srv::GotoJS::Request>();
+        request->data.data.assign(POSE_RAD.begin(), POSE_RAD.end());
+        // j6 is current-based position control: raising it above the standing
+        // grip target zeroes the preload and drops a held object.
+        request->data.data[5] = std::min(0.0, last_commanded_j6_);
+        request->time = 2.0;
+        RCLCPP_INFO(this->get_logger(), "Mad mode: folding the arm to its bracing pose");
+        mad_fold_in_flight_ = true;
+        arm_goto_client_->async_send_request(
+            request, [this](rclcpp::Client<mars_msgs::srv::GotoJS>::SharedFuture future) {
+                mad_fold_in_flight_ = false;
+                const auto response = future.get();
+                if (!response || !response->success) {
+                    RCLCPP_WARN(this->get_logger(), "Mad mode: arm safe-fold goto was rejected; retrying");
+                    mad_engaged_ = false;
+                }
+            });
+        return true;
+    }
+
+    // Without this the node accepts anything and the read-side fallbacks kick
+    // in, so `param get` reports a value that is not controlling the robot.
+    rcl_interfaces::msg::SetParametersResult validate_parameters(const std::vector<rclcpp::Parameter>& params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto& param : params) {
+            const std::string& name = param.get_name();
+            if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE) {
+                continue;
+            }
+            const double value = param.as_double();
+            const bool is_ramp = name.rfind("motion_control.", 0) == 0 || name.rfind("mad.", 0) == 0;
+            const bool is_hold = name.rfind("heading_hold.", 0) == 0;
+            if (!is_ramp && !is_hold) {
+                continue;
+            }
+
+            if (!std::isfinite(value)) {
+                result.successful = false;
+                result.reason = name + " must be finite";
+                return result;
+            }
+            if (name == "motion_control.speed_scale") {
+                if (value < 0.05 || value > drive::max_speed_scale()) {
+                    result.successful = false;
+                    result.reason = "motion_control.speed_scale must be within the published preset range";
+                    return result;
+                }
+                // The Mad-mode arm fold reacts to the APPLIED value (watch_mad_mode).
+                continue;
+            }
+            if (name == "motion_control.dt" && std::abs(value - smoothing_dt_) > 1e-9) {
+                result.successful = false;
+                result.reason = "motion_control.dt fixes the control timer at startup; restart to change it";
+                return result;
+            }
+            // heading_hold's thresholds may legitimately be 0, meaning "always"; every ramp
+            // knob is divided by or clamped to, so 0 breaks it rather than removing a limit.
+            if (is_ramp && value <= 0.0) {
+                result.successful = false;
+                result.reason = name + " must be greater than 0";
+                return result;
+            }
+            if ((name == "motion_control.max_deceleration" || name == "motion_control.max_angular_deceleration") &&
+                value < drive::MIN_DECELERATION) {
+                result.successful = false;
+                result.reason = name + " must be >= 0.05; below that a stop holds the teleop mux slot for minutes";
+                return result;
+            }
+            if (is_hold && value < 0.0) {
+                result.successful = false;
+                result.reason = name + " must not be negative";
+                return result;
+            }
+            // A long input_timeout is the dangerous direction: while it has not expired the
+            // smoother keeps republishing the retained target at 50 Hz, which both drives the
+            // robot and refreshes the top-priority mux slot, so a dropped link keeps moving
+            // for that long before the ramp-down even begins. The ceiling is the mux's own
+            // 0.5 s teleop window, which is the constraint INPUT_TIMEOUT is documented
+            // against: past it we would be holding the slot longer than the mux would have.
+            if (name == "motion_control.input_timeout" && value > drive::MUX_TELEOP_WINDOW) {
+                result.successful = false;
+                result.reason = "motion_control.input_timeout must be <= 0.5 s, the cmd_vel mux's teleop window";
+                return result;
+            }
+        }
+        return result;
+    }
+
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        const auto& q = msg->pose.pose.orientation;
+        smoother_.heading().set_measured(std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+                                         this->now().seconds());
+    }
+
+    /**
+     * Yaw correction to add to the published twist while driving straight.
+     *
+     * Engages on the *requested* yaw reaching zero, not the smoothed one. Testing the
+     * smoothed value meant the hold stayed disengaged for the whole ramp-down after a turn
+     * -- 460 ms and 12 deg of rotation -- and then latched the heading it had drifted to,
+     * adopting the overshoot as its target. Latching on the request instead captures the
+     * heading the operator stopped turning at, so the residual is corrected rather than
+     * accepted.
+     *
+     * The latch drops whenever a turn is requested, the robot reverses (the caster flips,
+     * so the old target means nothing), it stops, or /odom goes stale.
+     *
+     * Applied after the smoother, deliberately, so the smoother's lag is not inside the
+     * feedback loop. It is slew-limited because nothing else would stop it stepping when
+     * the hold engages or drops out.
+     */
+    /** Non-negative heading_hold tunable — unlike the ramps, 0 means "always", not "broken". */
+    double heading_param(const char* name, double fallback) {
+        const double value = this->get_parameter(name).as_double();
+        return (std::isfinite(value) && value >= 0.0) ? value : fallback;
     }
 
     void joystick_callback(const geometry_msgs::msg::Vector3::SharedPtr msg) {
-        double shaped_x = apply_curve(msg->x);  // steering
-        double shaped_y = apply_curve(msg->y);  // throttle
+        double stick_x = msg->x;  // steering
+        double stick_y = msg->y;  // throttle
+        drive::square_stick(stick_x, stick_y);
 
-        double linear = shaped_y * this->get_parameter("motion_control.max_speed").as_double();
-        double angular = -shaped_x * this->get_parameter("motion_control.max_angular_speed").as_double();
+        double shaped_x = drive::apply_curve(stick_x);
+        double shaped_y = drive::apply_curve(stick_y);
+
+        // Scale after the curve, never before: scaling the raw axis pushes the stick range
+        // down toward the deadband and costs most of its resolution.
+        const double scale = drive_speed_scale();
+        double linear = shaped_y * this->get_parameter("motion_control.max_speed").as_double() * scale;
+        double angular = -shaped_x * this->get_parameter("motion_control.max_angular_speed").as_double() * scale;
 
         if (this->get_parameter("reverse_steering").as_bool() && linear < 0.0) {
             // Invert steering while reversing, ramped over REVERSE_STEER_RAMP to avoid a snap at zero throttle.
-            double blend = std::min(1.0, -linear / joy_tuning::REVERSE_STEER_RAMP);
+            // The ramp scales with the speed mode so the blend still completes at full reverse stick.
+            double blend = std::min(1.0, -linear / (drive::REVERSE_STEER_RAMP * scale));
             angular *= (1.0 - 2.0 * blend);
         }
 
+        // Publishing belongs to drive_smoother_callback; this only moves the target it ramps toward.
+        target_linear_ = linear;
+        target_angular_ = angular;
+        last_joystick_time_ = this->now().seconds();
+        drive_active_ = true;
+    }
+
+    /**
+     * Ramp the published teleop twist toward the joystick target at a fixed rate.
+     *
+     * Publishes only while driving. Teleop is top priority in the cmd_vel mux, so streaming
+     * zeros forever would pin the slot and starve skills and nav; once settled at rest this
+     * goes quiet until the next /joystick message.
+     */
+    void drive_smoother_callback() {
+        const double now = this->now().seconds();
+        // Capped at the mux window here too: a settings.yaml override skips validation, and
+        // a long timeout keeps republishing the retained target while it has not expired.
+        const bool input_fresh =
+            (now - last_joystick_time_) <
+            bounded_param("motion_control.input_timeout", drive::INPUT_TIMEOUT, 0.0, drive::MUX_TELEOP_WINDOW);
+
+        // Stale input is a stop request, not a hold: ramp down under our own limit rather than
+        // let the mux window expire into a hard zero.
+        const double target_linear = input_fresh ? target_linear_ : 0.0;
+        const double target_angular = input_fresh ? target_angular_ : 0.0;
+
+        if (!drive_active_ && target_linear == 0.0 && target_angular == 0.0 && smoother_.at_rest()) {
+            return;
+        }
+
+        // The dt the timer was built with: recomputing it live would scale real acceleration
+        // without changing how often we run.
+        const double dt = smoothing_dt_;
+        const double speed_tc = smoothing_param("motion_control.speed_time_constant", drive::SPEED_TIME_CONSTANT);
+        const double angular_tc =
+            smoothing_param("motion_control.angular_speed_time_constant", drive::ANGULAR_SPEED_TIME_CONSTANT);
+        // Limits scale with the speed mode, so slow mode is a lower ceiling, not a snappier ramp.
+        const double scale = drive_speed_scale();
+        // Not scaled: this one is a floor set by the wire, which quantises to int(v * 100)
+        // regardless of speed mode.
+        const double settle = smoothing_param("motion_control.settle_epsilon", drive::SETTLE_EPSILON);
+
+        // Mad states its accelerations outright; every other mode scales them.
+        const bool mad = drive::is_mad_scale(scale);
+        // Floored before the speed-mode scale, which cancels out of the stop time: the cap
+        // and the deceleration scale together, so 0.05 is an 8 s stop in every mode.
+        const double linear_decel = bounded_param("motion_control.max_deceleration", drive::MAX_DECELERATION,
+                                                  drive::MIN_DECELERATION, std::numeric_limits<double>::infinity()) *
+                                    scale;
+        const double angular_decel =
+            bounded_param("motion_control.max_angular_deceleration", drive::MAX_ANGULAR_DECELERATION,
+                          drive::MIN_DECELERATION, std::numeric_limits<double>::infinity()) *
+            scale;
+        const drive::AxisLimits linear_limits{
+            mad ? smoothing_param("mad.max_acceleration", drive::MAD_MAX_ACCELERATION)
+                : smoothing_param("motion_control.max_acceleration", drive::MAX_ACCELERATION) * scale,
+            linear_decel,
+            drive::effective_jerk(smoothing_param("motion_control.max_jerk", drive::MAX_JERK) * scale, linear_decel,
+                                  speed_tc),
+            speed_tc, settle};
+        const drive::AxisLimits angular_limits{
+            mad ? smoothing_param("mad.max_angular_acceleration", drive::MAD_MAX_ANGULAR_ACCELERATION)
+                : smoothing_param("motion_control.max_angular_acceleration", drive::MAX_ANGULAR_ACCELERATION) * scale,
+            angular_decel,
+            drive::effective_jerk(smoothing_param("motion_control.max_angular_jerk", drive::MAX_ANGULAR_JERK) * scale,
+                                  angular_decel, angular_tc),
+            angular_tc, settle};
+
+        smoother_.step(target_linear, target_angular, linear_limits, angular_limits, dt);
+
+        const drive::HeadingTuning heading_tuning{
+            this->get_parameter("heading_hold.gain").as_double(),
+            this->get_parameter("heading_hold.max_correction").as_double(),
+            this->get_parameter("heading_hold.leak").as_double(),
+            heading_param("heading_hold.deadband", drive::HEADING_DEADBAND),
+            heading_param("heading_hold.slew", drive::HEADING_SLEW),
+            heading_param("heading_hold.straight_yaw", drive::HEADING_STRAIGHT_YAW),
+            heading_param("heading_hold.min_speed", drive::HEADING_MIN_SPEED)};
+        const double correction =
+            smoother_.heading().correction(smoother_.linear(), target_angular, now, dt, heading_tuning);
+
         geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = linear;
+        twist_msg.linear.x = smoother_.linear();
         twist_msg.linear.y = 0.0;
         twist_msg.linear.z = 0.0;
         twist_msg.angular.x = 0.0;
         twist_msg.angular.y = 0.0;
-        twist_msg.angular.z = angular;
+        twist_msg.angular.z = smoother_.angular() + correction;
         cmd_vel_pub_->publish(twist_msg);
+
+        // That publish was the settling zero, so the next tick can stop publishing. The
+        // correction has to be spent too, or we would fall silent still holding one.
+        if (target_linear == 0.0 && target_angular == 0.0 && smoother_.at_rest() && correction == 0.0) {
+            drive_active_ = false;
+        }
     }
 
     /**
@@ -756,6 +1145,15 @@ class AppControl : public rclcpp::Node {
             data_to_publish_dict["color_variant"] = robot_info.value("color_variant", "black");
             data_to_publish_dict["volume_percent"] = robot_info.value("volume_percent", 80);
             data_to_publish_dict["microphone_enabled"] = robot_info.value("microphone_enabled", true);
+            // Global robot state, so clients mirror it rather than trusting their last write.
+            data_to_publish_dict["drive_speed_scale"] = drive_speed_scale();
+            // ...and the presets, so the robot is the single source of truth for what the
+            // pickers offer. Older clients fall back to their built-in table.
+            data_to_publish_dict["drive_speed_modes"] = json::array();
+            for (const auto& mode : drive::SPEED_MODES) {
+                data_to_publish_dict["drive_speed_modes"].push_back(
+                    {{"id", mode.id}, {"label", mode.label}, {"scale", mode.scale}});
+            }
 
             // Read minimum_app_version from os_config.json
             if (app_config_.contains("minimum_app_version")) {
@@ -1064,6 +1462,13 @@ class AppControl : public rclcpp::Node {
     // Subscribers
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr joystick_sub_;
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_command_state_sub_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
+    // Service clients
+    rclcpp::Client<mars_msgs::srv::GotoJS>::SharedPtr arm_goto_client_;
 
     // Publishers
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
@@ -1074,6 +1479,31 @@ class AppControl : public rclcpp::Node {
     // Timers
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
     rclcpp::TimerBase::SharedPtr hostname_sync_timer_;
+    rclcpp::TimerBase::SharedPtr drive_smoother_timer_;
+    rclcpp::TimerBase::SharedPtr mad_mode_timer_;
+
+    // Drive smoother state. Only touched from joystick_callback and drive_smoother_callback,
+    // which the single-threaded executor serialises, so no locking is needed.
+    double target_linear_ = 0.0;
+    double target_angular_ = 0.0;
+    drive::DriveSmoother smoother_;
+    double last_joystick_time_ = 0.0;
+    bool drive_active_ = false;
+    // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
+    // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
+    bool recording_ = false;
+    double policy_desired_ = 0.0;
+    double policy_restore_scale_ = 1.0;
+    bool policy_owns_scale_ = false;
+    // Integration step, fixed to the period the smoother timer was created with.
+    double smoothing_dt_ = drive::CONTROL_DT;
+    // Braced for the current Mad session; a failed fold leaves it clear to retry.
+    bool mad_engaged_ = false;
+    bool mad_fold_in_flight_ = false;
+    std::chrono::steady_clock::time_point mad_fold_retry_at_{};
+    // Last commanded j6 from /mars/arm/command_state (radians): the standing
+    // grip target the Mad fold carries.
+    double last_commanded_j6_ = 0.0;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 import httpx
 from dotenv import load_dotenv
+
 from innate_proxy import ProxyClient
 
 load_dotenv()

@@ -14,6 +14,24 @@ void MarsArmNode::initializeServos() {
     configureServosLocked();
 }
 
+void MarsArmNode::reapplyGoalCurrentLocked(int servo_id) {
+    for (const auto& c : joint_configs_) {
+        if (c.servo_id != servo_id || c.goal_current <= 0) {
+            continue;
+        }
+        try {
+            dynamixel_->setGoalCurrent(servo_id, c.goal_current);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            RCLCPP_INFO(this->get_logger(), "  Servo %d goal current = %d mA (mode %d torque cap)", servo_id,
+                        c.goal_current, c.control_mode);
+        } catch (const std::exception& e) {
+            // Left unset the gripper holds with ~no force, so this is loud.
+            RCLCPP_ERROR(this->get_logger(), "Failed to set goal current on servo %d: %s", servo_id, e.what());
+        }
+        return;
+    }
+}
+
 void MarsArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) {
     // Find the config for this servo
     const JointConfig* config_ptr = nullptr;
@@ -106,6 +124,8 @@ void MarsArmNode::configureServoByIdLocked(int servo_id, bool enable_torque) {
         RCLCPP_DEBUG(this->get_logger(), "  Enabling torque on servo %d", config.servo_id);
         retryServoOp(config.servo_id, "enableTorque", [&] { dynamixel_->enableTorque(config.servo_id); });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        reapplyGoalCurrentLocked(config.servo_id);
     }
 
     RCLCPP_DEBUG(this->get_logger(), "Servo %d configured and torque %s", config.servo_id,
@@ -300,6 +320,7 @@ void MarsArmNode::armTorqueOnCallback(const std::shared_ptr<std_srvs::srv::Trigg
             RCLCPP_INFO(this->get_logger(), "  Enabling torque on servo %d", id);
             dynamixel_->enableTorque(id);
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            reapplyGoalCurrentLocked(id);
         }
         try {
             syncTargetToMotorPositions();
@@ -351,6 +372,16 @@ void MarsArmNode::armRebootServosCallback(const std::shared_ptr<std_srvs::srv::T
 
         RCLCPP_INFO(this->get_logger(), "Reapplying configuration after reboot (arm torque off)");
         configureServosLocked(false);
+
+        // Drop the pre-reboot command target. The 200 Hz pass-through keeps
+        // writing it into the goal registers while torque is off, and
+        // torque_on syncs to measured only AFTER its per-servo enable walk —
+        // so a stale target here makes the arm lunge back toward wherever it
+        // was headed when it tripped, the moment torque returns.
+        {
+            std::lock_guard<std::mutex> cmd_lock(arm_command_mutex_);
+            has_target_ = false;
+        }
 
         // Re-enable torque only for head servo
         RCLCPP_INFO(this->get_logger(), "Enabling torque on head servo (ID 7)");

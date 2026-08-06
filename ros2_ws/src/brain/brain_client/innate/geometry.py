@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+"""Head-camera <-> floor (z=0) via pinhole + URDF.
+
+Import as ``from innate import geometry`` (moved from workspace/skill_lib)."""
+
+import math
+
+HEAD_ORIGIN = (-0.040751, -0.0002, 0.25882)  # base_link -> head joint (URDF)
+CAM_IN_HEAD = (0.04327, 0.0297, -0.000275)  # head -> left camera optical
+IMG_W, IMG_H = 640, 480
+HFOV_DEG = 70.0
+
+FX = IMG_W / (2.0 * math.tan(math.radians(HFOV_DEG) / 2.0))
+CX, CY = IMG_W / 2.0, IMG_H / 2.0
+
+
+def _head_rot(tilt_rad):
+    c, s = math.cos(tilt_rad), math.sin(tilt_rad)
+    return ((c, 0.0, -s), (0.0, 1.0, 0.0), (s, 0.0, c))
+
+
+def _rot(R, v):
+    return tuple(sum(R[i][k] * v[k] for k in range(3)) for i in range(3))
+
+
+def _cam_pose(head_tilt_deg):
+    """Camera origin + (fwd, right, down) axes in base_link for a head tilt."""
+    R = _head_rot(math.radians(head_tilt_deg))
+    off = _rot(R, CAM_IN_HEAD)
+    cam = tuple(HEAD_ORIGIN[i] + off[i] for i in range(3))
+    return cam, _rot(R, (1, 0, 0)), _rot(R, (0, -1, 0)), _rot(R, (0, 0, -1))
+
+
+def pixel_to_floor(u, v, head_tilt_deg):
+    """Pixel (u,v) -> floor (x,y) in base_link, or None."""
+    cam, fwd, right, down = _cam_pose(head_tilt_deg)
+    xo, yo = (u - CX) / FX, (v - CY) / FX
+    d = tuple(fwd[i] + xo * right[i] + yo * down[i] for i in range(3))
+    if d[2] >= -1e-6:
+        return None
+    t = -cam[2] / d[2]
+    x, y = cam[0] + t * d[0], cam[1] + t * d[1]
+    return (x, y) if x > 0 else None
+
+
+def floor_to_pixel(x, y, head_tilt_deg):
+    """Floor (x,y) -> pixel, or None. Inverse of pixel_to_floor."""
+    cam, fwd, right, down = _cam_pose(head_tilt_deg)
+    D = (x - cam[0], y - cam[1], -cam[2])
+    a = sum(D[i] * fwd[i] for i in range(3))
+    if a <= 1e-6:
+        return None
+    b = sum(D[i] * right[i] for i in range(3))
+    c = sum(D[i] * down[i] for i in range(3))
+    return (CX + (b / a) * FX, CY + (c / a) * FX)

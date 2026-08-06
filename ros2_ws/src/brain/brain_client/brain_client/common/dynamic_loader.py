@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Shared machinery for the dynamic skill/agent/input loaders.
+"""Shared machinery for the agent and input-device loaders.
 
-Each loader discovers subclasses of a base type in user/shipped script
-directories and loads them by file path. The per-type logic (class validation,
-naming, and instance creation) lives in the subclasses; the file discovery and
-module-execution boilerplate lives here.
+Discovers subclasses of a base type in script directories and loads them by
+file path. Per-type validation/naming lives in subclasses. Skills no longer
+use this (see skills/workspace_import.py); agents and inputs still do.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import inspect
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,23 +30,62 @@ def class_name_to_snake_case(class_name: str, *, strip_suffixes: tuple[str, ...]
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", class_name).lower()
 
 
+def evict_modules_under(directories: list[str]) -> list[str]:
+    """Drop cached modules whose source file lives under one of ``directories``.
+
+    Enables reload by forcing the next discovery pass to re-import. Namespace
+    packages (no ``__file__``) are evicted by their ``__path__``: a recording
+    folder imported before the catalog wrote its ``__init__.py`` shim caches
+    as an *empty* namespace package, and skipping it would pin that failed
+    import across every reload — the shim could never take effect and any
+    agent doing ``from innate_skills.<x> import <X>`` would stay broken for
+    the life of the process. Returns the evicted names.
+    """
+    roots = [Path(os.path.realpath(d)) for d in directories]
+    evicted = []
+    # Deepest names first: materializing a namespace package's __path__ makes
+    # the import machinery re-derive it from the PARENT's sys.modules entry
+    # (KeyError if we already evicted the parent), so children must be
+    # examined while their parents are still cached.
+    for name, module in sorted(sys.modules.items(), key=lambda item: -item[0].count(".")):
+        module_file = getattr(module, "__file__", None)
+        if module_file:
+            path = Path(os.path.realpath(module_file))
+            if not any(root in path.parents for root in roots):
+                continue
+        else:
+            try:
+                dirs = [Path(os.path.realpath(p)) for p in getattr(module, "__path__", None) or []]
+            except Exception:  # noqa: BLE001 — unreadable __path__: leave it cached
+                continue
+            if not dirs or not any(root == d or root in d.parents for d in dirs for root in roots):
+                continue
+        del sys.modules[name]
+        evicted.append(name)
+        # Also drop parent.attr bindings or `from pkg import child` stays stale.
+        if "." in name:
+            parent_name, _, child = name.rpartition(".")
+            parent = sys.modules.get(parent_name)
+            if parent is not None and hasattr(parent, child):
+                delattr(parent, child)
+    return evicted
+
+
 class DynamicLoader:
     """Discovers and loads classes of a given base type from script directories.
 
     Subclasses set :attr:`base_class` (and optionally :attr:`name_suffixes`) and
-    implement :meth:`_validate_class` and :meth:`_get_name`. The discovery/loading
-    flow, ``INNATE_OS_ROOT`` handling, and conflict reporting are shared here.
+    implement :meth:`_validate_class` and :meth:`_get_name`.
     """
 
-    #: Base class that discovered classes must inherit from. Set by subclasses.
     base_class: type
-    #: Class-name suffixes stripped when deriving a fallback snake_case name.
     name_suffixes: tuple[str, ...] = ()
 
     def __init__(self, logger):
         self.logger = logger
+        # Load errors by file path; cleared on success. Surfaced as broken entries in the UI.
+        self.file_errors: dict[str, str] = {}
 
-    # --- subclass hooks ---
     def _iter_candidate_files(self, directory: Path) -> list[Path]:
         """Python files in ``directory`` that may define classes. Override for custom globs."""
         return [f for f in directory.glob("*.py") if f.name != "__init__.py" and not f.name.startswith("_")]
@@ -65,38 +104,61 @@ class DynamicLoader:
         """Module name of a stored entry, for conflict reporting."""
         return entry[0].__module__
 
-    # --- shared machinery ---
     def _exec_module(self, file_path: Path) -> ModuleType | None:
         """Import a module from a file path, exposing ``INNATE_OS_ROOT`` on ``sys.path``.
 
-        Returns the executed module, or ``None`` if it could not be loaded.
+        Returns the executed module, or ``None`` if it could not be loaded —
+        in which case ``file_errors`` records why.
         """
         module_name = file_path.stem
         spec = importlib.util.spec_from_file_location(module_name, file_path)
         if spec is None or spec.loader is None:
             self.logger.warning(f"Could not load spec for {file_path}")
+            self.file_errors[str(file_path)] = "could not load module spec"
             return None
 
         module = importlib.util.module_from_spec(spec)
 
+        # Scoped to this exec (removed in the finally): leaking these would
+        # leave every script directory permanently at the front of sys.path,
+        # where a workspace package named `types` or `logging` shadows the
+        # stdlib on the next lazy import anywhere in the process.
+        added_paths = []
         root = str(get_innate_os_root())
-        added = root not in sys.path
-        if added:
-            sys.path.insert(0, root)
+        workspace = str(get_innate_os_root() / "workspace")
+        parent = str(file_path.parent)
+        for entry in (root, workspace, parent):
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+                added_paths.append(entry)
+        # Temporary sys.modules entry so annotation resolution works during exec.
+        previous = sys.modules.get(module_name)
+        sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
         except ModuleNotFoundError as e:
             self.logger.warning(f"Skipping module {module_name}: missing dependency '{e.name or e}'")
+            self.file_errors[str(file_path)] = f"missing dependency '{e.name or e}'"
             return None
         except ImportError as e:
             self.logger.warning(f"Skipping module {module_name}: import failed ({e})")
+            self.file_errors[str(file_path)] = f"import failed: {e}"
             return None
         except Exception as e:
             self.logger.error(f"Error executing module {module_name}: {e}")
+            self.file_errors[str(file_path)] = f"{type(e).__name__}: {e}"
             return None
         finally:
-            if added:
-                sys.path.remove(root)
+            for entry in added_paths:
+                try:
+                    sys.path.remove(entry)
+                except ValueError:
+                    pass
+            if previous is not None:
+                sys.modules[module_name] = previous
+            else:
+                sys.modules.pop(module_name, None)
+        self.file_errors.pop(str(file_path), None)
         return module
 
     def _find_classes(self, module: ModuleType) -> list[type]:
@@ -106,6 +168,16 @@ class DynamicLoader:
             if obj is self.base_class or not issubclass(obj, self.base_class):
                 continue
             if obj.__module__ != module.__name__:
+                continue
+            if name.startswith("_"):
+                self.logger.debug(f"Skipping helper base class {name} in {module.__name__}")
+                continue
+            if inspect.isabstract(obj):
+                missing = ", ".join(sorted(getattr(obj, "__abstractmethods__", ())))
+                self.logger.warning(
+                    f"Skipping abstract class {name} in {module.__name__} (unimplemented: {missing}); "
+                    "implement the missing methods, or prefix the class with '_' if it is a helper base."
+                )
                 continue
             if self._validate_class(obj):
                 found.append(obj)

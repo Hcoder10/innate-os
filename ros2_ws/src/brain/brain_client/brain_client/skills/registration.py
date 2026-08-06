@@ -1,12 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Skill catalog: track available skills and register them with the cloud agent.
-
-Subscribes to the latched ``/brain/available_skills`` topic, rebuilds the shared
-:class:`~brain_client.skills.registry.SkillRegistry`, and sends the registration
-payload (skills filtered to the current directive + the directive prompt). Also
-handles re-registration deferral while a primitive is running.
-"""
+"""Track available skills (from /brain/available_skills) and register them
+with the cloud agent, deferring re-registration while a primitive runs."""
 
 from __future__ import annotations
 
@@ -28,13 +23,15 @@ AVAILABLE_SKILLS_QOS = QoSProfile(
 REGISTRATION_RETRY_SEC = 0.5
 
 
-def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
-    """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message."""
-    metadata = [
+def _metadata_from_msg(msg: AvailableSkills) -> list[dict]:
+    # Skills with a load_error are on the roster for the UI only — never
+    # registered with the cloud agent (they aren't runnable).
+    return [
         {
             "id": s.id,
             "name": s.name,
             "type": s.type,
+            "group": s.group,
             "guidelines": s.guidelines,
             "guidelines_when_running": s.guidelines_when_running,
             "inputs": json.loads(s.inputs_json) if s.inputs_json else {},
@@ -44,8 +41,13 @@ def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRe
             "wheeled": s.wheeled,
         }
         for s in msg.skills
+        if not s.load_error
     ]
-    return SkillRegistry.from_metadata(metadata, on_duplicate=on_duplicate)
+
+
+def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRegistry:
+    """Build a :class:`SkillRegistry` from an ``AvailableSkills`` message."""
+    return SkillRegistry.from_metadata(_metadata_from_msg(msg), on_duplicate=on_duplicate)
 
 
 class SkillCatalog:
@@ -55,45 +57,27 @@ class SkillCatalog:
         self._ws = ws_bridge
         self._state = state
 
-        # Callable returning whether the execute_skill action server is
-        # discoverable (PrimitiveRunner.action_client.server_is_ready); None
-        # disables the wait.
+        # returns whether the execute_skill server is discoverable; None disables the wait
         self._execute_skill_ready = execute_skill_ready
         self._register_retry_timer = None
 
-        self._last_skills_signature: tuple | None = None
+        self._last_skills_metadata: list | None = None
         self._sub = node.create_subscription(
             AvailableSkills, "/brain/available_skills", self._on_available_skills, AVAILABLE_SKILLS_QOS
         )
 
     def _on_available_skills(self, msg: AvailableSkills) -> None:
-        # The roster is latched and re-published on a heartbeat so late
-        # subscribers (the webapp, via rws) can catch it. Ignore unchanged
-        # repeats here so each beat doesn't rebuild the registry and re-hit the
-        # cloud agent.
-        signature = tuple(
-            (
-                s.id,
-                s.name,
-                s.type,
-                s.guidelines,
-                s.guidelines_when_running,
-                s.inputs_json,
-                s.in_training,
-                s.episode_count,
-                s.directory,
-                s.wheeled,
-            )
-            for s in msg.skills
-        )
-        if signature == self._last_skills_signature:
+        # ignore unchanged heartbeat repeats so each beat doesn't rebuild the
+        # registry and re-hit the cloud agent
+        metadata = _metadata_from_msg(msg)
+        if metadata == self._last_skills_metadata:
             return
-        self._last_skills_signature = signature
+        self._last_skills_metadata = metadata
 
         def _warn_dup(name, existing_id, new_id):
             self._logger.warn(f"Duplicate skill name '{name}': ID '{existing_id}' overwritten by '{new_id}'")
 
-        self._state.registry = registry_from_skills_msg(msg, on_duplicate=_warn_dup)
+        self._state.registry = SkillRegistry.from_metadata(metadata, on_duplicate=_warn_dup)
 
         counts = {t: sum(1 for s in msg.skills if s.type == t) for t in ("code", "learned", "replay")}
         self._logger.info(
@@ -110,13 +94,9 @@ class SkillCatalog:
                 self._state.pending_reregistration = True
 
     def register(self) -> None:
-        """Send the skills + directive registration to the cloud.
-
-        Registering is the cloud's licence to trigger skills, so it waits for
-        the execute_skill server to be reachable first — otherwise the very
-        first trigger races graph discovery and the dispatch fails (INN-711's
-        root cause). While the server isn't ready, a short timer re-runs this.
-        """
+        """Send the skills + directive registration to the cloud, waiting for
+        the execute_skill server first — registering earlier lets the first
+        trigger race graph discovery and fail (INN-711)."""
         if self._state.current_directive is None:
             self._stop_waiting_for_server()
             return
@@ -167,7 +147,7 @@ class SkillCatalog:
         current_skill_ids = (
             self._state.active_skill_ids
             if self._state.active_skill_ids is not None
-            else list(self._state.current_directive.get_skills())
+            else list(self._state.current_directive.skill_ids())
         )
         current_skill_set = set(current_skill_ids)
         return [skill_id for skill_id in self.available_skill_ids() if skill_id in current_skill_set]

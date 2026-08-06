@@ -51,6 +51,10 @@ class Dynamixel {
     void setMaxPositionLimit(int motor_id, int max_position);
     void setPwmLimit(int motor_id, int limit);
     void setCurrentLimit(int motor_id, int current_limit);
+    // Goal Current (RAM): in mode 5 this is what actually caps output torque.
+    // Current Limit (addr 38) only bounds what may be written here and sets
+    // the overload-detection threshold — it does NOT throttle the motor.
+    void setGoalCurrent(int motor_id, int goal_current);
     void setP(int motor_id, int p);
     void setI(int motor_id, int i);
     void setD(int motor_id, int d);
@@ -111,6 +115,7 @@ class Dynamixel {
     static constexpr int ADDR_MIN_POSITION_LIMIT = 52;
     static constexpr int ADDR_MAX_POSITION_LIMIT = 48;
     static constexpr int ADDR_CURRENT_LIMIT = 38;
+    static constexpr int ADDR_GOAL_CURRENT = 102;  // RAM; the real torque cap in modes 0/5
     static constexpr int ADDR_PRESENT_POSITION = 132;
     static constexpr int ADDR_PRESENT_VELOCITY = 128;
     static constexpr int ADDR_HOMING_OFFSET = 20;

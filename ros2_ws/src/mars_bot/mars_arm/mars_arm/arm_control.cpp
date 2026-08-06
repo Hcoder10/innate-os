@@ -109,6 +109,36 @@ void MarsArmNode::controlTimerCallback() {
         if (++gs_cycle_counter_ >= kGainScheduleInterval) {
             gs_cycle_counter_ = 0;
 
+            // Decay the post-trajectory stiff hold once the arm has been quiet
+            // (see last_trajectory_end_): holding scheduled gains indefinitely
+            // ran joint 2 up to 70 C. Never while a trajectory is executing —
+            // its end stamp is stale mid-flight, and decaying then flipped a
+            // carry move onto soft gains 3 ms in and shook the object loose.
+            // And only while the shoulder/elbow bear ~no load: soft gains under
+            // real load sag the arm, and that jolt at the end of a pick shook
+            // the carried object out of the gripper. A loaded pose (carrying)
+            // stays stiff instead; the temperature warning covers the rare
+            // carry-for-hours case.
+            const auto trajectory_end = last_trajectory_end_.load();
+            if (gain_mode_ == GainMode::SCHEDULED && !trajectory_executing_ &&
+                trajectory_end.time_since_epoch().count() != 0) {
+                double idle_s =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - trajectory_end).count();
+                bool unloaded =
+                    loads.size() > 2 && std::abs(loads[1]) < kDecayMaxLoad && std::abs(loads[2]) < kDecayMaxLoad;
+                if (idle_s > kScheduledHoldTimeoutS && unloaded) {
+                    gain_mode_ = GainMode::TELEOP;
+                    RCLCPP_INFO(this->get_logger(), "Gain mode -> TELEOP (idle %.1fs, arm unloaded)", idle_s);
+                } else if (idle_s > kScheduledHoldTimeoutS && loads.size() <= 2) {
+                    // A short state read leaves the load unknown; staying stiff is
+                    // the safe call, but say so — silently holding scheduled gains
+                    // is exactly what ran joint 2 up to 70 C.
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 30000,
+                                         "Idle gain decay blocked: no shoulder/elbow load reading — holding "
+                                         "scheduled (stiff) gains");
+                }
+            }
+
             bool gs_changed = false;
             std::vector<std::tuple<int, int, int, int, int, int>> gs_pid_data;
 

@@ -36,6 +36,11 @@ class BrainState:
     # --- skills + directives ---
     registry: SkillRegistry = field(default_factory=SkillRegistry)
     directives: dict = field(default_factory=dict)
+    # agent/module name -> load-error text for agents that failed to load;
+    # published on get_available_directives so a broken agent shows up in the
+    # UI with its error instead of silently vanishing (same contract as
+    # SkillCatalog's broken skills).
+    broken_agents: dict = field(default_factory=dict)
     current_directive: object | None = None
     active_skill_ids: list[str] | None = None
 

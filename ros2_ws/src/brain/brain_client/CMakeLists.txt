@@ -15,7 +15,7 @@ ament_python_install_package(${PROJECT_NAME}
   PACKAGE_DIR brain_client
 )
 
-# Public authoring namespace for skill files (`from innate.skills import ...`)
+# Public authoring namespace for skill files (`from innate import Skill, Mobility, ...`)
 ament_python_install_package(innate
   PACKAGE_DIR innate
 )
@@ -25,6 +25,7 @@ install(PROGRAMS
   brain_client/nodes/brain_client_node.py
   brain_client/nodes/skills_server.py
   brain_client/nodes/input_manager.py
+  brain_client/nodes/arm_sdk_server.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

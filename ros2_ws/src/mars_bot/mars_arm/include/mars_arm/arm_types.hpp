@@ -17,6 +17,15 @@ static constexpr int kX330MaxCurrentLimit = 1750;
 static constexpr int kLoadWarningThreshold = 800;  // ~80% load (0.1% units)
 static constexpr int kTemperatureWarningC = 70;
 static constexpr int kGainScheduleInterval = 20;  // control cycles between updates
+// How long scheduled (stiff) gains hold after a trajectory before decaying to
+// teleop gains. Long enough to span the gaps between a skill's stepped moves,
+// short enough that an idle arm is not held stiff and overheating.
+static constexpr double kScheduledHoldTimeoutS = 5.0;
+// The decay additionally requires shoulder+elbow present load below this
+// (0.1% units, so 100 = 10%): a gain drop under real load sags the arm, and
+// that jolt shook a carried object out of the gripper. At the folded rest
+// pose — the long-idle case the decay exists for — these loads are ~0.
+static constexpr int kDecayMaxLoad = 100;
 
 inline bool isX330(const std::string& motor_type) {
     return motor_type.find("330") != std::string::npos;
@@ -29,6 +38,10 @@ struct JointConfig {
     double max_pos_rad;
     int pwm_limit;
     int current_limit = 0;
+    // Mode 5 (current-based position) torque cap, mA. 0 = leave at the servo
+    // default, which is near-zero — a mode-5 joint MUST set this or it stalls
+    // under its own friction.
+    int goal_current = 0;
     int homing_offset = 0;
     int control_mode;
     int kp, ki, kd;

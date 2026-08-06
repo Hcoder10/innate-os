@@ -16,15 +16,18 @@ find_package(rclcpp REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(mars_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(brain_messages REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # ============================================================================
 # C++ Executable: app.cpp
 # ============================================================================
-add_executable(app.cpp mars_control/app.cpp)
+add_executable(app.cpp mars_control/app.cpp mars_control/drive_smoother.cpp)
 
 target_link_libraries(app.cpp
   nlohmann_json::nlohmann_json
@@ -34,8 +37,11 @@ target_link_libraries(app.cpp
 ament_target_dependencies(app.cpp
   rclcpp
   geometry_msgs
+  nav_msgs
+  brain_messages
   std_msgs
   std_srvs
+  sensor_msgs
   mars_msgs
 )
 
@@ -67,6 +73,7 @@ install(PROGRAMS
   mars_control/keyboard.py
   mars_control/joystick.py
   mars_control/leader.py
+  mars_control/motor_sound.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

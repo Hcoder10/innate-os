@@ -23,8 +23,8 @@ import numpy as np
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 
-from brain_client.robot.head import HeadInterface
-from brain_client.robot.mobility import MobilityInterface
+from brain_client.robot.head import Head
+from brain_client.robot.mobility import Mobility
 
 
 class FaceDetector:
@@ -171,8 +171,8 @@ class ROSPersonTracker:
         self._frame_lock = threading.Lock()
 
         # Hardware interfaces
-        self._head = HeadInterface(node, node.get_logger())
-        self._mobility = MobilityInterface(node, node.get_logger(), "/cmd_vel")
+        self._head = Head(node, node.get_logger())
+        self._mobility = Mobility(node, node.get_logger(), "/cmd_vel")
 
         # Gaze controller
         self._gaze = GazeController(

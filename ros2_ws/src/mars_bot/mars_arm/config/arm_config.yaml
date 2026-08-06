@@ -101,8 +101,28 @@
       motor_type: "XC330-M288"
       position_limits: [-0.8727, 0.3491]
       pwm_limit: 885
-      current_limit: 100
-      control_mode: 4
+      # Mode 5 = current-based position control: the gripper drives toward its
+      # goal position with output capped at goal_current, so a deep close
+      # squeezes any object at constant safe force — no overload trips, no
+      # software force loops.
+      #
+      # goal_current is the REAL torque cap (RAM addr 102). current_limit
+      # (EEPROM addr 38) only bounds what goal_current may be and sets the
+      # overload-detection threshold, so it must stay comfortably ABOVE the
+      # grip current or the servo trips overload while gripping — that is what
+      # the old current_limit: 100 did in mode 4, where nothing capped output
+      # and a grip drew 1724 mA against a 100 mA trip threshold.
+      #
+      # 700 mA: the metal-robot pick that gripped well ran ~930-1110 mA before
+      # tripping, and the health warning fires at 800, so this grips firmly
+      # with headroom. Raised from 600 after a rigid figurine slipped out
+      # during the verify backup (2026-07-23); 800 is the ceiling here.
+      current_limit: 1300
+      goal_current: 700
+      control_mode: 5
+      # Close gently — the current cap means it presses in rather than impacts.
+      profile_velocity: 60
+      profile_acceleration: 30
       gains_near: [400, 0, 0, 0, 0]
       gains_teleop: [400, 0, 0, 0, 0]     # November teleop gains
 
