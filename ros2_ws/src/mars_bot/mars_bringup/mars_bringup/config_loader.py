@@ -186,7 +186,8 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "auto_localize_timeout",
         # brain_client_node
         "vertical_fov",
-        "pose_image_interval",
+        "idle_turn_interval",
+        "supervision_turn_interval",
         "scan_stale_after_sec",
         # uninavid_node
         "forward_speed",
