@@ -74,6 +74,12 @@ const SECTIONS = [
     icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="11.5" cy="12.5" r="3.4"/>',
   },
   {
+    key: "armsdk",
+    label: "Arm SDK",
+    // Articulated-arm motif: base, two links with a joint, and a claw.
+    icon: '<circle cx="6" cy="19" r="2"/><path d="M7.5 17.5L10.5 10"/><circle cx="11" cy="8.8" r="1.4"/><path d="M12.3 8L17 5.5"/><path d="M17 5.5l2.5 1M17 5.5l.5 2.7"/>',
+  },
+  {
     key: "settings",
     label: "Settings",
     // Sliders motif: two tracks, each with a knob.

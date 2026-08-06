@@ -277,6 +277,51 @@ async def restart_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
+# The Arm SDK playground page (/armsdk) drives a standalone SDK test server —
+# scripts/arm-sdk-playground/server.py, which runs the arm SDK's Python
+# Manipulation class against the live arm — bound to localhost. Relaying it
+# here keeps the page same-origin (no mixed-content block on HTTPS) without
+# exposing the raw arm-control port off-box.
+ARMSDK_URL = "http://127.0.0.1:8090"
+
+# The page's 3D view renders the same URDF + STL meshes the IK node solves
+# against (the installed mars_sim share), served read-only under /armsdk/model/.
+MARS_MODEL_ROOT = ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim"
+
+
+async def armsdk_model(request: web.Request) -> web.StreamResponse:
+    target = _safe_resolve(MARS_MODEL_ROOT / request.match_info["tail"])
+    if target is None or not target.is_file() or not target.is_relative_to(MARS_MODEL_ROOT):
+        raise web.HTTPNotFound(text="not found")
+    return _serve_static(target)
+
+
+async def armsdk_proxy(request: web.Request) -> web.Response:
+    """Relay /armsdk/api/<tail> to the playground server's /api/<tail>."""
+    upstream = f"{ARMSDK_URL}/api/{request.match_info['tail']}"
+    session = request.app[CLIENT]
+    try:
+        async with session.request(
+            request.method,
+            upstream,
+            data=await request.read(),
+            # Motions block until the arm settles; give slow moves room.
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            return web.Response(
+                body=await resp.read(),
+                status=resp.status,
+                content_type="application/json",
+                headers={"Cache-Control": "no-cache"},
+            )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        return web.json_response(
+            {"error": f"arm SDK server unreachable ({err.__class__.__name__}) — run scripts/arm-sdk-playground/run.sh"},
+            status=502,
+            headers={"Cache-Control": "no-cache"},
+        )
+
+
 async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:
     """Relay every frame from src to dst until either side closes."""
     async for msg in src:
@@ -339,6 +384,9 @@ def build_app() -> web.Application:
     app.router.add_get("/settings.json", settings_get)
     app.router.add_post("/settings.json", settings_apply)
     app.router.add_get("/restart", restart_handler)
+    # Before the catch-all; the bare /armsdk page route stays on the SPA shell.
+    app.router.add_route("*", "/armsdk/api/{tail:.*}", armsdk_proxy)
+    app.router.add_get("/armsdk/model/{tail:.*}", armsdk_model)
     # Prefix routes must precede the catch-all so /models/foo.glb doesn't fall to
     # the SPA shell — first matching resource wins in add order.
     for prefix in SIM_VIEWER_ROUTES:
