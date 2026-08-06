@@ -300,6 +300,15 @@ class ChallengeEngine:
         # interleave and publish one challenge over the other's world. Always
         # taken OUTERMOST -- never while holding _mutex or the sim lock.
         self._run_lock = threading.Lock()
+        # Which build of the world a state snapshot came from. Bumped by
+        # start() at the top of its scene build and read by publish_state()
+        # beside t/pose/centers -- both under the SIM lock, which is what
+        # guards it. _run_epoch (ordinary _mutex state) is the epoch the
+        # active run was built at: publish_state ticks AFTER releasing the sim
+        # lock, so a start() completing in that gap would otherwise have its
+        # fresh run judged against the previous one's clock and props.
+        self.world_epoch = 0
+        self._run_epoch = 0
         self._events: list[dict] = []
         self.active: Challenge | None = None
         self.state = "running"  # of the active challenge: running | passed | failed
@@ -366,12 +375,17 @@ class ChallengeEngine:
         with self._run_lock:
             self._deactivate()
             with self.sim_lock:
+                # First, so any snapshot gathered before this build carries the
+                # old epoch -- including one already sitting in publish_state's
+                # gap, waiting to be ticked.
+                self.world_epoch += 1
                 if challenge.reset_world:
                     self.sim.reset()  # also re-parks every prop (props.py)
                 for drop in challenge.setup:
                     if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg)):
                         print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
                 started_t = float(self.sim.data.time)
+                epoch = self.world_epoch
             with self._mutex:
                 for goal in challenge.goals:
                     try:
@@ -382,6 +396,7 @@ class ChallengeEngine:
                 self.reason = ""
                 self.goal_done = [False] * len(challenge.goals)
                 self.started_t = started_t
+                self._run_epoch = epoch
                 self.elapsed_s = 0.0
                 self._events.clear()  # anything that happened during setup is not this run's
                 entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
@@ -411,11 +426,24 @@ class ChallengeEngine:
 
     # -- evaluation (physics thread, after state gathering; no sim access) --
 
-    def tick(self, t: float, pose: tuple[float, float, float], centers: dict[str, tuple[float, float]]) -> dict:
-        """Advance the active challenge and return the state-stream block."""
+    def tick(
+        self, t: float, pose: tuple[float, float, float], centers: dict[str, tuple[float, float]], epoch: int
+    ) -> dict:
+        """Advance the active challenge and return the state-stream block.
+
+        `epoch` is world_epoch, read under the sim lock with t/pose/centers. A
+        snapshot from before the active run's scene build carries an older one
+        and is rendered but never judged: its t is the previous run's clock (a
+        whole server uptime ahead of started_t once the run reset the world --
+        an instant "time limit") and its centers are the previous run's props.
+        Names the world the numbers came from, so it holds whether or not the
+        run rewound the clock."""
         with self._mutex:
-            challenge, events, self._events = self.active, self._events, []
-            if challenge is not None and self.state == "running":
+            challenge = self.active
+            if challenge is not None and self.state == "running" and epoch == self._run_epoch:
+                # Drained only when judged: a skipped tick must leave this
+                # run's skill completions for the next current one.
+                events, self._events = self._events, []
                 state = WorldState(t=t, robot=pose, centers=centers)
                 self.elapsed_s = max(0.0, t - self.started_t)
                 try:

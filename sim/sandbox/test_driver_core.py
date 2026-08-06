@@ -82,6 +82,7 @@ def main() -> None:
 
     check_challenges(sim)  # last: it moves the sim clock and leaves a prop out
     check_concurrent_start(sim)
+    check_stale_tick(sim)
     print("PASS")
 
 
@@ -114,7 +115,7 @@ def check_challenges(sim: VirtualMars) -> None:
     real_reset, real_drop = sim.reset, sim.drop_prop_at
 
     def tick_now():
-        mid_ticks.append(engine.tick(float(sim.data.time), sim.pose(), sim.object_centers()))
+        mid_ticks.append(engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch))
 
     def reset_and_tick():
         tick_now()  # before the reset: the OLD world, on the OLD clock (900s)
@@ -131,7 +132,7 @@ def check_challenges(sim: VirtualMars) -> None:
     assert len(mid_ticks) >= 2, "the setup window was never ticked on both sides of the reset"
     assert all(tick["active"] is None for tick in mid_ticks), "judged a run that had not started"
 
-    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers())["active"]
+    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
     assert block["state"] == "running", f"fresh run born {block['state']} ({block['reason']})"
     assert block["elapsed_s"] == 0.0, f"fresh run started at {block['elapsed_s']}s"
     assert block["goals"][0]["done"], "judging never resumed after the setup window"
@@ -209,6 +210,45 @@ def check_concurrent_start(sim: VirtualMars) -> None:
     out = set(sim.props.out)
     assert out == {"can"}, f"world does not match the active run (expected just b's can, got {sorted(out)})"
     print("challenge start: concurrent starts serialize, and the world matches the run that won")
+
+    engine.abort()
+    sim.remove_all_props()
+    sim.reset()
+
+
+def check_stale_tick(sim: VirtualMars) -> None:
+    """A snapshot gathered before start() must not be judged after it.
+
+    publish_state() gathers (t, pose, centers) under the sim lock and ticks
+    once it has let go, so a start() completing in that gap resets the world
+    and the clock under a snapshot already in flight: t=900 against a
+    started_t of ~0 is an instant "time limit" on a 60s challenge, and goal 0
+    would be judged against the previous run's props. The gap is between two
+    calls this test makes itself, so making them in that order -- snapshot,
+    start, stale tick -- reproduces it without threads."""
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=OUT_DIR / "challenges_stale.json")
+    engine.challenges["probe"] = Challenge(
+        id="probe",
+        title="Probe",
+        brief="",
+        setup=[Drop("human", world.SPAWN_X, world.SPAWN_Y)],
+        goals=[Goal("reach", Near("robot", "human", 1.5))],
+        time_limit_s=60.0,
+    )
+
+    sim.data.time = 900.0  # server up 15 minutes, against a 60s limit
+    stale = (float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)
+    engine.start("probe")  # lands in publish_state's snapshot -> tick gap
+    engine.post_event({"status": "completed", "skill_id": "x"})  # belongs to THIS run
+
+    block = engine.tick(*stale)["active"]
+    assert block is not None and block["state"] == "running", f"stale snapshot killed the fresh run: {block}"
+    assert block["elapsed_s"] == 0.0, f"stale snapshot aged the fresh run to {block['elapsed_s']}s"
+    assert engine._events, "the skipped tick swallowed this run's events"
+
+    live = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
+    assert live["state"] == "passed", f"judging never resumed after the stale tick ({live['state']}: {live['reason']})"
+    print("challenge start: a snapshot from before the run is rendered, never judged")
 
     engine.abort()
     sim.remove_all_props()

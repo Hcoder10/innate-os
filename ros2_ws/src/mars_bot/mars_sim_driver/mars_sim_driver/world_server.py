@@ -139,8 +139,12 @@ class WorldServer:
             # at. Gathered here because the judge runs without the sim.
             centers = self.sim.object_centers()
             sim_time = float(self.sim.data.time)
+            # Under the same lock hold as the snapshot: names WHICH world these
+            # numbers came from, so a challenge start landing between here and
+            # tick() cannot get them judged against its fresh run.
+            epoch = self.challenges.world_epoch
         # Judged outside the sim lock: pure evaluation over the gathered state.
-        challenge = self.challenges.tick(sim_time, (x, y, yaw), centers)
+        challenge = self.challenges.tick(sim_time, (x, y, yaw), centers, epoch)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
             {
