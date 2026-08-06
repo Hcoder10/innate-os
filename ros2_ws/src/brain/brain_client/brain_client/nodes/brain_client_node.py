@@ -271,7 +271,9 @@ class BrainClientNode(Node):
         if not self.state.is_brain_active:
             return
         # kind="motion" lets the brain dashboard show the wake-up cue.
-        self.brain.add_event("Motion detected in the camera view — something or someone is moving nearby.", kind="motion")
+        self.brain.add_event(
+            "Motion detected in the camera view — something or someone is moving nearby.", kind="motion"
+        )
 
     # ================= always-on subscription callbacks =================
     def _on_chat_in(self, msg: String) -> None:

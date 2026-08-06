@@ -124,9 +124,7 @@ class BrainAgent:
             # The observability tap: the exact request body, straight off the
             # wire path (fires on generate's worker thread, like add_event's
             # executor-thread traces). The monitor renders it verbatim.
-            self._session.on_request = lambda body: self._trace(
-                "turn_request", turn=self._turn_count, body=body
-            )
+            self._session.on_request = lambda body: self._trace("turn_request", turn=self._turn_count, body=body)
 
     # ================= lifecycle =================
     def start(self) -> None:
@@ -235,19 +233,7 @@ class BrainAgent:
             system = build_system_prompt(directive.get_prompt() if directive else None)
             if self._state.log_everything:
                 self._logger.info(f"[Brain] Turn input:\n{text}")
-            self._trace(
-                "turn_start",
-                turn=self._turn_count,
-                input=text,
-                images=len(images),
-                tools=[d["name"] for d in tools[0]["functionDeclarations"]],
-                history=self._session.history_len,
-                history_images=self._session.image_turn_count,
-                system=system,
-                frames=[
-                    {"label": label, "jpeg": base64.b64encode(jpeg).decode()} for label, jpeg in frames
-                ],
-            )
+            self._trace_turn_start(text, frames, tools, system)
 
             # The only blocking call, on a worker thread. Cancellation unwinds
             # HERE — the orphaned HTTP call finishes and its result is dropped.
@@ -542,6 +528,21 @@ class BrainAgent:
         """Publish one JSON telemetry event on /brain/trace (no-op when unwired)."""
         if self._trace_sink is not None:
             self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
+
+    def _trace_turn_start(self, text: str, frames: list[tuple[str, bytes]], tools: list, system: str) -> None:
+        if self._trace_sink is None:
+            return  # don't base64 the frames for nobody
+        self._trace(
+            "turn_start",
+            turn=self._turn_count,
+            input=text,
+            images=len(frames),
+            tools=[d["name"] for d in tools[0]["functionDeclarations"]],
+            history=self._session.history_len,
+            history_images=self._session.image_turn_count,
+            system=system,
+            frames=[{"label": label, "jpeg": base64.b64encode(jpeg).decode()} for label, jpeg in frames],
+        )
 
     async def _heartbeat(self) -> None:
         while True:

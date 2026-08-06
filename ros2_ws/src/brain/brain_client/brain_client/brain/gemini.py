@@ -276,9 +276,7 @@ class GeminiSession:
     def image_turn_count(self) -> int:
         """History turns still carrying camera frames (pruning keeps the newest few)."""
         return sum(
-            1
-            for c in self._history
-            if c.get("role") == "user" and any("inlineData" in p for p in c.get("parts") or [])
+            1 for c in self._history if c.get("role") == "user" and any("inlineData" in p for p in c.get("parts") or [])
         )
 
     @staticmethod

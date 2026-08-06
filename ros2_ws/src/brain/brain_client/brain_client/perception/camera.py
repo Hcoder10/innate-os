@@ -82,7 +82,7 @@ class _MotionGate:
         moved_fraction = float((cv2.absdiff(prev, frame) > _MOTION_PIXEL_DELTA).mean())
         self.peak_fraction = max(self.peak_fraction, moved_fraction)
         self._recent.append(moved_fraction >= _MOTION_MIN_FRACTION)
-        del self._recent[: -_MOTION_WINDOW]
+        del self._recent[:-_MOTION_WINDOW]
         if not self._recent[-1] or sum(self._recent) < _MOTION_HOT_SAMPLES:
             return False
         if now - self._last_fired < _MOTION_COOLDOWN_SEC:
