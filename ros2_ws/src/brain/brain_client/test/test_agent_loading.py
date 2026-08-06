@@ -324,6 +324,50 @@ def test_broken_multi_agent_module_rosters_every_agent(workspace):
     assert set(agents) == {"pairone", "pairtwo"} and broken == {}
 
 
+def test_probe_failed_module_keeps_identity_through_import_failure(workspace):
+    # healthy -> every agent fails probing -> module fails to import. The
+    # probe-fail round builds no instances, so rebuilding the ids-by-module
+    # carryover from live agents alone would erase the module's identity and
+    # the final round would collapse to one module-derived row.
+    write(workspace, "innate_agents/pair.py", agent_src("PairOne") + agent_src("PairTwo"))
+    agents, _default, broken = initialize_agents(LOGGER)
+    assert set(agents) == {"pairone", "pairtwo"} and broken == {}
+
+    probe_fail = 'def get_inputs(self):\n    raise ValueError("probe boom")'
+    write(
+        workspace,
+        "innate_agents/pair.py",
+        agent_src("PairOne", body=probe_fail) + agent_src("PairTwo", body=probe_fail),
+    )
+    agents, _default, broken = initialize_agents(LOGGER)
+    assert agents == {}
+    assert set(broken) == {"pair_one", "pair_two"}  # probe rows key by class name
+
+    write(workspace, "innate_agents/pair.py", "raise RuntimeError('pair boom')\n")
+    agents, _default, broken = initialize_agents(LOGGER)
+    assert agents == {}
+    assert set(broken) == {"pairone", "pairtwo"}  # ids survived the probe-fail round
+    assert all("RuntimeError: pair boom" in err for err in broken.values())
+
+
+def test_partially_probe_failed_module_keeps_both_ids(workspace):
+    # Same, but only one of the two agents fails probing: the carryover must
+    # union the still-live id with the remembered one, not keep just the
+    # survivor.
+    write(workspace, "innate_agents/pair.py", agent_src("PairOne") + agent_src("PairTwo"))
+    initialize_agents(LOGGER)
+
+    probe_fail = 'def get_inputs(self):\n    raise ValueError("probe boom")'
+    write(workspace, "innate_agents/pair.py", agent_src("PairOne") + agent_src("PairTwo", body=probe_fail))
+    agents, _default, broken = initialize_agents(LOGGER)
+    assert set(agents) == {"pairone"}
+    assert set(broken) == {"pair_two"}
+
+    write(workspace, "innate_agents/pair.py", "raise RuntimeError('pair boom')\n")
+    _agents, _default, broken = initialize_agents(LOGGER)
+    assert set(broken) == {"pairone", "pairtwo"}
+
+
 # ------------------------------------------------------------ loader pieces
 
 

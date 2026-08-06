@@ -58,6 +58,19 @@ def initialize_agents(
     ids_by_module: dict[str, list[str]] = {}
     for agent_id, agent in agents.items():
         ids_by_module.setdefault(type(agent).__module__, []).append(agent_id)
+    # A probe failure must not erase module identity: its class imported (it's
+    # in `classes`) but built no instance, so the live roster alone would drop
+    # the module from the carryover — and a later *import* failure would then
+    # collapse the module to one row instead of its known agent ids. Keep the
+    # ids from the last build that had them. A module whose classes all build
+    # never merges, so a genuinely removed agent still ages out.
+    built = {type(agent) for agent in agents.values()}
+    for cls, _source in classes:
+        prior = _agent_ids_by_module.get(cls.__module__)
+        if cls in built or not prior:
+            continue
+        ids = ids_by_module.setdefault(cls.__module__, [])
+        ids.extend(agent_id for agent_id in prior if agent_id not in ids)
     broken: dict[str, str] = {}
     for module_name, error in import_errors.items():
         known_ids = _agent_ids_by_module.get(module_name)
