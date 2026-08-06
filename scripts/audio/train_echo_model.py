@@ -148,6 +148,16 @@ def main():
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--val-split", type=float, default=0.1)
+    ap.add_argument(
+        "--quantile",
+        type=float,
+        default=0.95,
+        help="Pinball-loss quantile. The runtime uses the prediction as a floor, so "
+        "under-prediction causes false triggers while over-prediction only costs a "
+        "little sensitivity: fit a high quantile, not the mean. The speaker's "
+        "level-dependent distortion lives in exactly the tail MSE ignores. "
+        "0.5 = plain median (symmetric).",
+    )
     args = ap.parse_args()
 
     print(f"loading pairs from {args.data} ...")
@@ -162,6 +172,12 @@ def main():
 
     model = EchoNet().to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    q = args.quantile
+
+    def pinball(pred, target):
+        e = target - pred
+        return torch.mean(torch.maximum(q * e, (q - 1) * e))
+
     best_val = float("inf")
     for epoch in range(args.epochs):
         model.train()
@@ -170,16 +186,17 @@ def main():
         for i in range(0, len(tr), args.batch):
             idx = tr[i : i + args.batch]
             xb, yb = xt[idx].to(dev), yt[idx].to(dev)
-            loss = nn.functional.mse_loss(model(xb), yb)
+            loss = pinball(model(xb), yb)
             opt.zero_grad()
             loss.backward()
             opt.step()
             tot += loss.item() * len(idx)
         model.eval()
         with torch.no_grad():
-            val = nn.functional.mse_loss(model(xt[va].to(dev)), yt[va].to(dev)).item()
-        # loss is in log10-power units; x10 gives an intuitive dB scale
-        print(f"epoch {epoch + 1}: train {tot / len(tr):.4f}  val {val:.4f}  (~{10 * np.sqrt(val):.2f} dB rms)")
+            pv = model(xt[va].to(dev))
+            val = pinball(pv, yt[va].to(dev)).item()
+            under = torch.mean(((yt[va].to(dev) - pv) > 0.3).float()).item()  # >3dB under-predicted
+        print(f"epoch {epoch + 1}: train {tot / len(tr):.4f}  val {val:.4f}  frames>3dB-under: {under * 100:.1f}%")
         if val < best_val:
             best_val = val
             scripted = torch.jit.trace(model.cpu().eval(), xt[:2])
