@@ -39,11 +39,62 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 187.8mm x 182mm x 167.6mm, front face 35.2mm forward -->
-    <collision>
+    <!-- Collision: the chassis block plus every part of base.STL that sticks
+         out of it. Measured off the mesh; see sim/sandbox/README.md. -->
+    <!-- Chassis: box 187.8mm x 182mm x 167.6mm, front face 35.2mm forward -->
+    <collision name="base_chassis">
       <origin xyz="-0.0587 0 0.0838" rpy="0 0 0"/>
       <geometry>
         <box size="0.1878 0.182 0.1676"/>
+      </geometry>
+    </collision>
+    <!-- Rear tray: overhangs the chassis by 76mm, the robot's furthest-back point -->
+    <collision name="base_rear_tray">
+      <origin xyz="-0.1895 0 0.0466" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0789 0.1658 0.0594"/>
+      </geometry>
+    </collision>
+    <!-- Drive wheels: 74.4mm across, 7mm proud of the chassis on each side.
+         The robot's widest point, so what actually catches on door frames. -->
+    <collision name="base_wheel_left">
+      <origin xyz="0 0.0877 0.0372" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.0372" length="0.021"/>
+      </geometry>
+    </collision>
+    <collision name="base_wheel_right">
+      <origin xyz="0 -0.0877 0.0372" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="0.0372" length="0.021"/>
+      </geometry>
+    </collision>
+    <!-- Arm mount: bracket forward of the chassis on the arm's side -->
+    <collision name="base_arm_mount">
+      <origin xyz="0.0636 -0.0545 0.0391" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0672 0.0384 0.0443"/>
+      </geometry>
+    </collision>
+    <!-- Lidar turret on the chassis lid -->
+    <collision name="base_turret">
+      <origin xyz="-0.0527 0 0.1828" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.1255 0.104 0.0304"/>
+      </geometry>
+    </collision>
+    <!-- Neck: the arch carrying the head, in two segments up to z=272mm.
+         Without it the head's collision box floats free of the body. -->
+    <collision name="base_neck_lower">
+      <origin xyz="-0.0357 0 0.2155" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.051 0.0854 0.039"/>
+      </geometry>
+    </collision>
+    <collision name="base_neck_upper">
+      <origin xyz="-0.0466 0 0.2533" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0374 0.036 0.0366"/>
       </geometry>
     </collision>
   </link>
@@ -70,11 +121,23 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 67mm x 40mm x 82mm -->
-    <collision>
-      <origin xyz="-0.005 0 0.018" rpy="0 0 0"/>
+    <!-- Collision: stepped bracket, 3 boxes (54% of the enclosing box's volume) -->
+    <collision name="link1_hub">
+      <origin xyz="0.0089 0 0.0003" rpy="0 0 0"/>
       <geometry>
-        <box size="0.067 0.040 0.082"/>
+        <box size="0.0403 0.0226 0.0466"/>
+      </geometry>
+    </collision>
+    <collision name="link1_plate">
+      <origin xyz="-0.0046 0 0.0303" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0672 0.04 0.0133"/>
+      </geometry>
+    </collision>
+    <collision name="link1_yoke">
+      <origin xyz="-0.012 0 0.0477" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0465 0.04 0.0216"/>
       </geometry>
     </collision>
   </link>
@@ -101,11 +164,25 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 37mm x 54mm x 156mm -->
-    <collision>
-      <origin xyz="0 0 0.061" rpy="0 0 0"/>
+    <!-- Collision: upper-arm shaft + elbow boss, 3 boxes (55% of the enclosing
+         box). The boss reaches x=39.5mm, past the shaft the old single box
+         covered. -->
+    <collision name="link2_shoulder">
+      <origin xyz="0 0 0.0207" rpy="0 0 0"/>
       <geometry>
-        <box size="0.037 0.054 0.156"/>
+        <box size="0.035 0.054 0.0763"/>
+      </geometry>
+    </collision>
+    <collision name="link2_shaft">
+      <origin xyz="-0.0009 0 0.0806" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0244 0.0475 0.0436"/>
+      </geometry>
+    </collision>
+    <collision name="link2_elbow">
+      <origin xyz="0.0147 0 0.1204" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0496 0.04 0.0361"/>
       </geometry>
     </collision>
   </link>
@@ -132,11 +209,25 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 134mm x 54mm x 35mm -->
-    <collision>
-      <origin xyz="0.050 0 0" rpy="0 0 0"/>
+    <!-- Collision: tapered forearm, 3 boxes. The old single box stopped at
+         x=117mm, leaving the last 30mm of the beam (the part nearest whatever
+         the arm reaches into) with no collision at all. -->
+    <collision name="link3_root">
+      <origin xyz="0.0165 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.134 0.054 0.035"/>
+        <box size="0.0677 0.054 0.035"/>
+      </geometry>
+    </collision>
+    <collision name="link3_mid">
+      <origin xyz="0.0644 0 0.002" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.028 0.0467 0.031"/>
+      </geometry>
+    </collision>
+    <collision name="link3_shaft">
+      <origin xyz="0.1127 0 0.0035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0686 0.0359 0.028"/>
       </geometry>
     </collision>
   </link>
@@ -163,8 +254,8 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 32mm x 39mm x 20mm -->
-    <collision>
+    <!-- Collision: box 32mm x 39mm x 20mm, the mesh's own extents -->
+    <collision name="link4_body">
       <origin xyz="0.006 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.032 0.039 0.020"/>
@@ -194,8 +285,8 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 54mm x 44mm x 93mm -->
-    <collision>
+    <!-- Collision: box 54mm x 44mm x 93mm, the mesh's own extents -->
+    <collision name="link5_body">
       <origin xyz="0.027 0 0.031" rpy="0 0 0"/>
       <geometry>
         <box size="0.054 0.044 0.093"/>
@@ -230,11 +321,104 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 48mm x 16mm x 38.9mm -->
-    <collision>
-      <origin xyz="0.024 0 0" rpy="0 0 0"/>
+    <!-- Collision: the blade is a curved hook, and one bounding box across it
+         leaves the closed fingertips 2.4mm apart so nothing can be pinched.
+         What replaces it is a pivot pin, 8 boxes stepping along the hook, and
+         4 more across the pad. Both chains follow one rule: the surface the
+         object touches stays smooth, and all the discretisation goes on the
+         back where nothing touches it.
+
+         Hook boxes are yawed to the local grip-side surface, not to whatever
+         minimises their area. A min-area box is free to rotate, and over a
+         curving span it settles diagonally and bulges up to 3.3mm into the
+         jaw opening; a sphere rolls straight off that ridge.
+
+         The pad is a wedge: its inner face is a flat plane 9.25mm off the
+         blade axis right to the tip while the BACK tapers from 8.8mm thick to
+         2.8mm. Its 4 steps all share that one plane, so the grip face is a
+         single continuous surface. Any seam in it (min-area boxes per step,
+         or a split anywhere along it) loses the ball.
+
+         Together this leaves 8% of the enclosed volume outside the real blade
+         (one box for the whole thing: 30%), 0.5mm of overhang on average.
+         link62 mirrors it all in y; the blade is a constant-height extrusion
+         (38.90mm to the tip), so every box is full depth. -->
+    <collision name="link61_hub">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.048 0.016 0.0389"/>
+        <cylinder radius="0.0101" length="0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg1">
+      <origin xyz="0.0070 -0.0012 0" rpy="0 0 -0.7857"/>
+      <geometry>
+        <box size="0.0138 0.0112 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg2">
+      <origin xyz="0.0120 -0.0030 0" rpy="0 0 -0.3401"/>
+      <geometry>
+        <box size="0.0073 0.0099 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg3">
+      <origin xyz="0.0165 -0.0032 0" rpy="0 0 -0.1611"/>
+      <geometry>
+        <box size="0.0054 0.0083 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg4">
+      <origin xyz="0.0209 -0.0028 0" rpy="0 0 -0.0133"/>
+      <geometry>
+        <box size="0.0043 0.0070 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg5">
+      <origin xyz="0.0251 -0.0021 0" rpy="0 0 0.1358"/>
+      <geometry>
+        <box size="0.0051 0.0059 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg6">
+      <origin xyz="0.0294 -0.0009 0" rpy="0 0 0.2739"/>
+      <geometry>
+        <box size="0.0059 0.0052 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg7">
+      <origin xyz="0.0337 0.0005 0" rpy="0 0 0.4329"/>
+      <geometry>
+        <box size="0.0069 0.0052 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_seg8">
+      <origin xyz="0.0383 0.0027 0" rpy="0 0 0.6999"/>
+      <geometry>
+        <box size="0.0092 0.0056 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_pad1">
+      <origin xyz="0.0411 0.0049 0" rpy="0 0 0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0088 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_pad2">
+      <origin xyz="0.0433 0.0054 0" rpy="0 0 0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0076 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_pad3">
+      <origin xyz="0.0455 0.0061 0" rpy="0 0 0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0062 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link61_pad4">
+      <origin xyz="0.0477 0.0070 0" rpy="0 0 0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0045 0.0389"/>
       </geometry>
     </collision>
   </link>
@@ -264,11 +448,83 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 48mm x 16mm x 38.9mm -->
-    <collision>
-      <origin xyz="0.024 0 0" rpy="0 0 0"/>
+    <!-- Collision: link61's blade boxes mirrored in y (see link61) -->
+    <collision name="link62_hub">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.048 0.016 0.0389"/>
+        <cylinder radius="0.0101" length="0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg1">
+      <origin xyz="0.0070 0.0012 0" rpy="0 0 0.7857"/>
+      <geometry>
+        <box size="0.0138 0.0112 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg2">
+      <origin xyz="0.0120 0.0030 0" rpy="0 0 0.3401"/>
+      <geometry>
+        <box size="0.0073 0.0099 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg3">
+      <origin xyz="0.0165 0.0032 0" rpy="0 0 0.1611"/>
+      <geometry>
+        <box size="0.0054 0.0083 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg4">
+      <origin xyz="0.0209 0.0028 0" rpy="0 0 0.0133"/>
+      <geometry>
+        <box size="0.0043 0.0070 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg5">
+      <origin xyz="0.0251 0.0021 0" rpy="0 0 -0.1358"/>
+      <geometry>
+        <box size="0.0051 0.0059 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg6">
+      <origin xyz="0.0294 0.0009 0" rpy="0 0 -0.2739"/>
+      <geometry>
+        <box size="0.0059 0.0052 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg7">
+      <origin xyz="0.0337 -0.0005 0" rpy="0 0 -0.4329"/>
+      <geometry>
+        <box size="0.0069 0.0052 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_seg8">
+      <origin xyz="0.0383 -0.0027 0" rpy="0 0 -0.6999"/>
+      <geometry>
+        <box size="0.0092 0.0056 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_pad1">
+      <origin xyz="0.0411 -0.0049 0" rpy="0 0 -0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0088 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_pad2">
+      <origin xyz="0.0433 -0.0054 0" rpy="0 0 -0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0076 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_pad3">
+      <origin xyz="0.0455 -0.0061 0" rpy="0 0 -0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0062 0.0389"/>
+      </geometry>
+    </collision>
+    <collision name="link62_pad4">
+      <origin xyz="0.0477 -0.0070 0" rpy="0 0 -0.0000"/>
+      <geometry>
+        <box size="0.0022 0.0045 0.0389"/>
       </geometry>
     </collision>
   </link>
@@ -331,8 +587,8 @@
       </geometry>
       <material name="matt_black"/>
     </visual>
-    <!-- Simplified collision: Box 113mm x 121mm x 36mm -->
-    <collision>
+    <!-- Collision: box 113mm x 121mm x 36mm, the mesh's own extents -->
+    <collision name="head_body">
       <origin xyz="0.007 0 0" rpy="0 0 0"/>
       <geometry>
         <box size="0.113 0.121 0.036"/>

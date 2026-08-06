@@ -13,6 +13,7 @@
 // The thought-grouping + skill-run rendering here is the canonical chat stream
 // (it originated in the old teleop chat pane, since removed).
 
+import { copyText } from "../clipboard.js";
 import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
 
 /**
@@ -110,9 +111,12 @@ export function createAgentPanel(root, rosClient, agentState) {
   // Stop -> Start resumes the same one even though the brain reports "" when idle.
   let lastDirective = "";
   let applying = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let flashTimer = null;
 
   function renderRoster() {
-    const { agents, currentDirective, brainActive } = agentState.get();
+    if (flashTimer) return; // keep the copy-feedback row until it expires
+    const { agents, broken, currentDirective, brainActive } = agentState.get();
     if (currentDirective) lastDirective = currentDirective;
 
     directiveSelect.replaceChildren();
@@ -120,6 +124,16 @@ export function createAgentPanel(root, rosClient, agentState) {
       directiveSelect.appendChild(new Option("No agents available", ""));
     } else {
       for (const a of agents) directiveSelect.appendChild(new Option(a.name, a.id));
+    }
+    // Agents that failed to load stay visible instead of silently vanishing:
+    // a picker row with the start of the load error, the full error in the
+    // tooltip, and selecting the row copies it to the clipboard.
+    for (const b of broken ?? []) {
+      const preview = b.error.length > 60 ? b.error.slice(0, 59) + "…" : b.error;
+      const opt = new Option(`⚠ ${b.name} — ${preview}`, `__broken__:${b.id}`);
+      opt.title = `${b.error}\n\nSelect to copy the full error.`;
+      opt.dataset.error = b.error;
+      directiveSelect.appendChild(opt);
     }
     // Show the running directive when active, else the armed/last one. With no
     // prior choice, default to "Demo Agent" if the roster has it.
@@ -133,13 +147,21 @@ export function createAgentPanel(root, rosClient, agentState) {
     toggleBtn.textContent = applying ? "…" : brainActive ? "Stop" : "Start";
     toggleBtn.classList.toggle("stop", brainActive);
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
-    directiveSelect.disabled = applying || agents.length === 0;
+    // Keep the picker openable when only broken agents exist, so their rows
+    // stay reachable; the change handler ignores non-agent values.
+    directiveSelect.disabled = applying || (agents.length === 0 && (broken ?? []).length === 0);
     resetBtn.disabled = applying;
     input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
 
   /** @param {() => Promise<any>} fn */
   async function withApplying(fn) {
+    // A real action supersedes the copy-feedback flash: without this, the
+    // flash guard in renderRoster would hide the applying state for up to 1.2s.
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+      flashTimer = null;
+    }
     applying = true;
     renderRoster();
     try {
@@ -152,6 +174,24 @@ export function createAgentPanel(root, rosClient, agentState) {
 
   directiveSelect.addEventListener("change", () => {
     const id = directiveSelect.value;
+    if (id.startsWith("__broken__:")) {
+      // Copy the full load error, flash the result in the closed box, then
+      // re-render (which re-arms the previous choice).
+      const opt = directiveSelect.selectedOptions[0];
+      void copyText(opt?.dataset.error ?? "").then(
+        () => {
+          if (opt) opt.text = "✓ load error copied";
+        },
+        () => {
+          if (opt) opt.text = "✗ copy failed — see tooltip";
+        },
+      );
+      flashTimer = setTimeout(() => {
+        flashTimer = null;
+        renderRoster();
+      }, 1200);
+      return;
+    }
     if (!id) return;
     lastDirective = id;
     // Switch live only when already running; otherwise just arm for Start.
@@ -167,7 +207,8 @@ export function createAgentPanel(root, rosClient, agentState) {
     if (brainActive) {
       void withApplying(() => agentState.setDirective(""));
     } else {
-      const id = directiveSelect.value || lastDirective;
+      const selected = directiveSelect.value.startsWith("__broken__:") ? "" : directiveSelect.value;
+      const id = selected || lastDirective;
       if (id) void withApplying(() => agentState.setDirective(id));
     }
   });
@@ -496,6 +537,7 @@ export function createAgentPanel(root, rosClient, agentState) {
 
   return {
     destroy() {
+      if (flashTimer) clearTimeout(flashTimer);
       unsubAgents();
       unsubConn();
       unsubIn();

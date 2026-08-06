@@ -19,6 +19,7 @@ import {
 /**
  * @typedef {{
  *   agents: Array<{ id: string, name: string, skills: string[] }>,
+ *   broken: Array<{ id: string, name: string, error: string }>,
  *   currentDirective: string,
  *   activeSkills: Set<string>,
  *   brainActive: boolean,
@@ -30,7 +31,7 @@ import {
  */
 export function createAgentState(rosClient) {
   /** @type {AgentSnapshot} */
-  let state = { agents: [], currentDirective: "", activeSkills: new Set(), brainActive: false };
+  let state = { agents: [], broken: [], currentDirective: "", activeSkills: new Set(), brainActive: false };
   /** @type {Set<(s: AgentSnapshot) => void>} */
   const listeners = new Set();
 
@@ -104,6 +105,15 @@ export function createAgentState(rosClient) {
           name: String(a.display_name || a.id),
           skills: Array.isArray(a.skills) ? a.skills.map(String) : [],
         }));
+      // Agents that failed to load (broken module/class). Shown disabled with
+      // their error — same treatment as broken skills in the skills menu.
+      const broken = (Array.isArray(meta?.broken_agents) ? meta.broken_agents : [])
+        .filter((a) => a && a.id)
+        .map((a) => ({
+          id: String(a.id),
+          name: String(a.display_name || a.id),
+          error: String(a.load_error || "failed to load"),
+        }));
       const activeSkills = new Set((Array.isArray(meta?.active_skills) ? meta.active_skills : []).map(String));
       const brainActive =
         typeof meta?.brain_active === "boolean"
@@ -111,7 +121,7 @@ export function createAgentState(rosClient) {
           : typeof v?.brain_active === "boolean"
             ? v.brain_active
             : false;
-      if (agents.length === 0) {
+      if (agents.length === 0 && broken.length === 0) {
         // Empty roster: almost always a transient stall/lost race rather than a
         // brain with no agents. Keep whatever we already have and retry.
         scheduleRetry();
@@ -119,7 +129,13 @@ export function createAgentState(rosClient) {
       }
       resetRetry();
       // Idle brain → no current directive (toggles disabled, picker shows None).
-      state = { agents, currentDirective: brainActive ? String(v?.current_directive ?? "") : "", activeSkills, brainActive };
+      state = {
+        agents,
+        broken,
+        currentDirective: brainActive ? String(v?.current_directive ?? "") : "",
+        activeSkills,
+        brainActive,
+      };
       emit();
     } catch {
       // Dropped query / timeout — keep the last known roster, retry with backoff.

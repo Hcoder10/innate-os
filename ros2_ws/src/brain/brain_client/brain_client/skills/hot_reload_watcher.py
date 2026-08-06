@@ -255,7 +255,7 @@ class HotReloadWatcher:
             # Empty lists mean "reload everything", which also covers whatever
             # individual skills changed inside the same debounce window.
             skills, agents = [], []
-            self.logger.info("🔄 Hot reload triggered - shared helper changed, reloading all skills")
+            self.logger.info("🔄 Hot reload triggered - change under a watched root, reloading everything it holds")
         else:
             self.logger.info(f"🔄 Hot reload triggered - skills: {skills}, agents: {agents}")
 

@@ -17,6 +17,7 @@ import {
   PARAMETER_DOUBLE,
   SPEED_MODES,
 } from "../constants.js";
+import { confirmDialog } from "../nav/confirm.js";
 
 // A click's optimistic paint has to survive long enough for the robot to apply the
 // parameter and emit a fresh /robot/info (published at 1 Hz), or the picker would
@@ -108,8 +109,24 @@ export function createSpeedModes(parent, rosClient) {
     button.textContent = mode.label;
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", "false");
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       if (mode.id === selectedId) return;
+      // Above 1.0 the mode exceeds the robot's configured caps (that's what "Mad"
+      // is) — at those speeds a collision can break the arm, so the operator has
+      // to say they mean it. Gate on scale, not id, so any future above-cap mode
+      // the robot publishes gets the same warning.
+      if (mode.scale > 1.0) {
+        const ok = await confirmDialog({
+          title: `Engage ${mode.label} MARS mode?`,
+          body: "Beyond full speed, one high-speed collision can break the arm of the robot. Go mad, but with great power comes great responsibility.",
+          confirmLabel: "Yes I am ready to handle the heat.",
+          cancelLabel: "No I wanna go back to my safe space.",
+          danger: true,
+        });
+        // Re-check after the await: a /robot/info update while the dialog was
+        // open may have already landed the picker on this mode.
+        if (!ok || mode.id === selectedId) return;
+      }
       const previousId = selectedId;
       paint(mode.id);
       optimisticUntil = performance.now() + OPTIMISTIC_HOLD_MS;

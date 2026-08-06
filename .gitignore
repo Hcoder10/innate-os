@@ -99,6 +99,9 @@ workspace/physical_skills/
 # Runtime start_training resume markers (innate_training_node).
 workspace/.training_pending/
 
+# Per-machine challenge state, written at runtime.
+workspace/challenges.json
+
 # Per-skill persistent key-value stores (Skill.storage, skills/types.py).
 workspace/skill_storage/
 

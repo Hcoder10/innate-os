@@ -34,17 +34,32 @@ def evict_modules_under(directories: list[str]) -> list[str]:
     """Drop cached modules whose source file lives under one of ``directories``.
 
     Enables reload by forcing the next discovery pass to re-import. Namespace
-    packages (no ``__file__``) are skipped. Returns the evicted names.
+    packages (no ``__file__``) are evicted by their ``__path__``: a recording
+    folder imported before the catalog wrote its ``__init__.py`` shim caches
+    as an *empty* namespace package, and skipping it would pin that failed
+    import across every reload — the shim could never take effect and any
+    agent doing ``from innate_skills.<x> import <X>`` would stay broken for
+    the life of the process. Returns the evicted names.
     """
     roots = [Path(os.path.realpath(d)) for d in directories]
     evicted = []
-    for name, module in list(sys.modules.items()):
+    # Deepest names first: materializing a namespace package's __path__ makes
+    # the import machinery re-derive it from the PARENT's sys.modules entry
+    # (KeyError if we already evicted the parent), so children must be
+    # examined while their parents are still cached.
+    for name, module in sorted(sys.modules.items(), key=lambda item: -item[0].count(".")):
         module_file = getattr(module, "__file__", None)
-        if not module_file:
-            continue
-        path = Path(os.path.realpath(module_file))
-        if not any(root in path.parents for root in roots):
-            continue
+        if module_file:
+            path = Path(os.path.realpath(module_file))
+            if not any(root in path.parents for root in roots):
+                continue
+        else:
+            try:
+                dirs = [Path(os.path.realpath(p)) for p in getattr(module, "__path__", None) or []]
+            except Exception:  # noqa: BLE001 — unreadable __path__: leave it cached
+                continue
+            if not dirs or not any(root == d or root in d.parents for d in dirs for root in roots):
+                continue
         del sys.modules[name]
         evicted.append(name)
         # Also drop parent.attr bindings or `from pkg import child` stays stale.
