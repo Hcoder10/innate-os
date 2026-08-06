@@ -18,8 +18,10 @@ import { installPressActivate } from "./pressActivate.js";
 // In sim mode (config.simControls) only these sections make sense — the rest
 // (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
 // with no sim backing — the sim has no real stereo camera or ChArUco board to
-// calibrate against — so they're hidden from the rail.
-const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
+// calibrate against — so they're hidden from the rail. Arm SDK stays: the sim
+// runs the same IK node and answers the goto services, so the page exercises
+// the real Manipulation SDK against the simulated arm.
+const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "armsdk", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
