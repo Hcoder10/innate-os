@@ -13,10 +13,12 @@ move across the rank 6/7 boundary relays through rank 5.
 """
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
-from innate import ArmFailed, ArmUnhealthy, Manipulation, Skill, SkillReturn, Waypoint
+from innate import Manipulation, Skill, SkillReturn, Waypoint
+from innate.exceptions import ArmFailed, ArmUnhealthy, SkillCancelled
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 PieceType = Literal["king", "queen", "rook", "bishop", "knight", "pawn"]
@@ -304,30 +306,33 @@ class PickUpPieceSimple(Skill):
         if dst_pos is None:
             self.fail(f"Invalid target square '{place_square}'")
 
-        # The trailing safe pose is part of the contract: the next move assumes
-        # the arm starts folded and clear of the board, so its failure fails
-        # the skill — folded into the move's own error when both went wrong.
-        try:
-            self._move_piece(square, place_square, piece, is_capture, calibration, src_pos, dst_pos)
-        except BaseException as move_error:
-            safe_pose_error = self._return_to_safe_pose()
-            if safe_pose_error is not None and isinstance(move_error, Exception):
-                self.fail(
-                    f"{move_error} — and the arm then failed to return to safe pose, "
-                    f"so its position is unknown: {safe_pose_error}"
-                )
-            raise
-
-        safe_pose_error = self._return_to_safe_pose()
-        if safe_pose_error is not None:
-            self.fail(
-                f"Moved piece from {square} to {place_square}, but the arm failed to return "
-                f"to safe pose and is in an unknown position: {safe_pose_error}"
-            )
-
         msg = f"Moved piece from {square} to {place_square}"
+        with self._ending_at_safe_pose(msg):
+            self._move_piece(square, place_square, piece, is_capture, calibration, src_pos, dst_pos)
+
         self.feedback(msg)
         return msg
+
+    @contextmanager
+    def _ending_at_safe_pose(self, done: str):
+        """The trailing safe pose is part of the contract — the next move
+        assumes the arm starts folded and clear of the board — so a miss is
+        reported on every exit path, folded into the run's own outcome."""
+        stranded = " the arm then failed to return to safe pose, so its position is unknown: "
+        try:
+            yield
+        except BaseException as err:
+            safe_pose_error = self._return_to_safe_pose()
+            if safe_pose_error is None:
+                raise
+            if isinstance(err, SkillCancelled):
+                raise SkillCancelled(f"Cancelled — and{stranded}{safe_pose_error}") from err
+            if isinstance(err, Exception):
+                self.fail(f"{err} — and{stranded}{safe_pose_error}")
+            raise
+        safe_pose_error = self._return_to_safe_pose()
+        if safe_pose_error is not None:
+            self.fail(f"{done}, but{stranded}{safe_pose_error}")
 
     def _return_to_safe_pose(self) -> Exception | None:
         """Trailing safe pose that reports failure instead of raising, so the
