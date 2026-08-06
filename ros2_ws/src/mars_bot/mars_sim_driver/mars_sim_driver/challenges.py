@@ -46,6 +46,12 @@ from pathlib import Path
 
 from . import world
 
+# How far sim time may run backwards before tick() reads it as the world
+# having been rebuilt under the run. Two publish_state callers (the physics
+# thread and an observer command) can legitimately deliver snapshots about one
+# physics slice apart, ~25ms; a reset drops the clock by the whole uptime.
+CLOCK_REWIND_S = 0.5
+
 # --- world-state view handed to predicates ---
 
 
@@ -315,6 +321,7 @@ class ChallengeEngine:
         self.reason = ""
         self.goal_done: list[bool] = []
         self.started_t = 0.0
+        self._last_judged_t = 0.0  # newest sim time judged; see CLOCK_REWIND_S
         self.elapsed_s = 0.0
         if self.challenges:
             print(f"[challenges] loaded: {', '.join(self.challenges)}", flush=True)
@@ -398,6 +405,7 @@ class ChallengeEngine:
                 self.reason = ""
                 self.goal_done = [False] * len(challenge.goals)
                 self.started_t = started_t
+                self._last_judged_t = started_t
                 self._run_epoch = epoch
                 self.elapsed_s = 0.0
                 self._events.clear()  # anything that happened during setup is not this run's
@@ -442,7 +450,20 @@ class ChallengeEngine:
         run rewound the clock."""
         with self._mutex:
             challenge = self.active
-            if challenge is not None and self.state == "running" and epoch == self._run_epoch:
+            judging = challenge is not None and self.state == "running" and epoch == self._run_epoch
+            if judging and t < self._last_judged_t - CLOCK_REWIND_S:
+                # Sim time only runs backwards when something rebuilt the world
+                # under the run: /virtual_mars/reset, the observer reset op, or
+                # core.step()'s NaN recovery -- none of which tell the engine.
+                # The run's props are parked, so no goal can pass, and
+                # started_t is now ahead of the clock, so elapsed_s clamps to
+                # 0.0 and the time limit can never fire either. Left alone that
+                # is a 0:00 run nothing but a manual abort can end.
+                self.state, self.reason = "failed", "the sim was reset"
+                self._record(challenge.id, "failed", None)
+                judging = False
+            if judging:
+                self._last_judged_t = t
                 # Drained only when judged: a skipped tick must leave this
                 # run's skill completions for the next current one.
                 events, self._events = self._events, []

@@ -85,6 +85,7 @@ def main() -> None:
     check_concurrent_start(sim)
     check_stale_tick(sim)
     check_poisoned_progress(sim)
+    check_external_reset(sim)
     print("PASS")
 
 
@@ -289,6 +290,40 @@ def check_poisoned_progress(sim: VirtualMars) -> None:
     assert payload["challenge"] is None, f"expected the block to go missing, got {payload['challenge']}"
     assert payload["pose"], "the state broadcast lost its world"
     print("challenge layer: a poisoned progress file drops the block, not the physics thread")
+
+
+def check_external_reset(sim: VirtualMars) -> None:
+    """A reset that bypasses the engine must end the run, not strand it.
+
+    /virtual_mars/reset, the observer reset op and core.step()'s NaN recovery
+    all call sim.reset() directly: props re-park and data.time zeroes without
+    the engine hearing about it. started_t is then ahead of the clock, so
+    elapsed_s clamps to 0.0 and the time limit can never fire, while the
+    parked props mean no goal can pass -- a 0:00 run only a manual abort ends.
+    A backwards sim clock is the one signal that catches all three paths."""
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=OUT_DIR / "challenges_reset.json")
+    engine.challenges["probe"] = Challenge(
+        id="probe",
+        title="Probe",
+        brief="",
+        setup=[Drop("human", world.SPAWN_X, world.SPAWN_Y)],
+        goals=[Goal("never", Near("robot", "nothing_here", 1.0))],
+        time_limit_s=600.0,
+    )
+    engine.start("probe")
+
+    block = engine.tick(50.0, sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
+    assert block["state"] == "running", f"the run should still be going at 50s: {block}"
+
+    sim.reset()  # what /virtual_mars/reset does, behind the engine's back
+    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
+    assert block["state"] == "failed", f"a reset left the run {block['state']} at {block['elapsed_s']}s"
+    assert block["reason"] == "the sim was reset", block["reason"]
+    print("challenge reset: a world rebuilt behind the engine fails the run instead of stranding it")
+
+    engine.abort()
+    sim.remove_all_props()
+    sim.reset()
 
 
 if __name__ == "__main__":
