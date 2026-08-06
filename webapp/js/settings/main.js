@@ -289,8 +289,8 @@ function buildVolumeSection() {
 
   const row = textEl("div", "set-row");
 
-  const ctl = textEl("div", "set-ctl");
-  const main = textEl("div", "set-ctl-main is-wide");
+  const controlContainer = textEl("div", "set-ctl");
+  const controlGroup = textEl("div", "set-ctl-main is-wide");
 
   const slider = inputEl("range", "set-slider");
   slider.title = `${SET_VOLUME_SERVICE} — live value from ${ROBOT_INFO_TOPIC}`;
@@ -303,16 +303,16 @@ function buildVolumeSection() {
   slider.disabled = true;
   initSlider(slider);
 
-  const read = textEl("span", "set-slider-read");
-  read.textContent = "—"; // nothing until /robot/info reports the live volume
-  const sliderWrap = textEl("div", "set-slider-wrap");
-  sliderWrap.append(read, slider);
+  const valueLabel = textEl("span", "set-slider-read");
+  valueLabel.textContent = "—"; // nothing until /robot/info reports the live volume
+  const sliderContainer = textEl("div", "set-slider-wrap");
+  sliderContainer.append(valueLabel, slider);
 
   const status = textEl("span", "set-card-volume-status set-status muted");
-  main.append(textEl("span", "set-validation-slot"), sliderWrap, status);
-  ctl.appendChild(main);
+  controlGroup.append(textEl("span", "set-validation-slot"), sliderContainer, status);
+  controlContainer.appendChild(controlGroup);
 
-  row.append(buildRowText(labelText, descriptionText), ctl);
+  row.append(buildRowText(labelText, descriptionText), controlContainer);
   enableRowClick(row);
   section.appendChild(row);
 
@@ -330,7 +330,7 @@ function buildVolumeSection() {
   const renderValue = (/** @type {number} */ percent) => {
     slider.value = String(percent);
     syncSliderFill(slider);
-    read.textContent = percent + "%";
+    valueLabel.textContent = percent + "%";
   };
 
   // Disabled until connected AND the live volume has loaded (so the page never
@@ -374,7 +374,7 @@ function buildVolumeSection() {
 
   slider.addEventListener("input", () => {
     dragging = true;
-    read.textContent = slider.value + "%";
+    valueLabel.textContent = slider.value + "%";
   });
 
   slider.addEventListener("change", async () => {
@@ -731,7 +731,7 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
   const row = textEl("div", "set-row");
   if (knob.type === "bool") row.classList.add("set-row-toggle");
 
-  const ctl = textEl("div", "set-ctl");
+  const controlContainer = textEl("div", "set-ctl");
 
   /** @type {Entry} */
   const entry = {
@@ -744,12 +744,12 @@ function buildRow(/** @type {import("./catalog.js").Knob} */ knob) {
     row,
   };
 
-  buildKnobControl(ctl, entry);
+  buildKnobControl(controlContainer, entry);
   const link = knob.docHref
     ? { href: knob.docHref, text: knob.docLinkText || "Learn more" }
     : null;
 
-  row.append(buildRowText(knob.label, knob.doc, link), ctl);
+  row.append(buildRowText(knob.label, knob.doc, link), controlContainer);
   enableRowClick(row);
   entries.push(entry);
   return row;
@@ -765,21 +765,21 @@ function enableRowClick(/** @type {HTMLElement} */ row) {
 }
 
 function activateRowControl(/** @type {HTMLElement} */ row) {
-  const el = row.querySelector(
+  const control = row.querySelector(
     "input.set-num, input.set-text, input[type=checkbox], input[type=range], select.set-text",
   );
-  if (!(el instanceof HTMLElement)) return;
-  if (el instanceof HTMLInputElement && el.type === "checkbox") {
-    el.click();
+  if (!(control instanceof HTMLElement)) return;
+  if (control instanceof HTMLInputElement && control.type === "checkbox") {
+    control.click();
     return;
   }
-  focusControl(el);
-  if (el instanceof HTMLSelectElement) {
-    el.click();
+  focusControl(control);
+  if (control instanceof HTMLSelectElement) {
+    control.click();
     return;
   }
-  if (el instanceof HTMLInputElement && el.type !== "range" && typeof el.select === "function") {
-    el.select();
+  if (control instanceof HTMLInputElement && control.type !== "range" && typeof control.select === "function") {
+    control.select();
   }
 }
 
