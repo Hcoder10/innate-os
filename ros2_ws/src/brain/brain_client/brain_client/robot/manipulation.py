@@ -661,10 +661,11 @@ class Manipulation:
     REACH_Y = (-0.10, 0.10)
 
     # joints 1-6 = base yaw, shoulder, elbow, wrist pitch, wrist roll, gripper.
-    # Folded rest with j4 lifted so the gripper clears the floor (verified live:
-    # ee_link z ~0.042 m). j1/j2 clamp to their limits, so this is what the arm
-    # actually reaches and holds.
-    REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+    # Folded rest with j4 lifted so the gripper clears the floor. j1/j2 clamp to
+    # their limits, so this is what the arm actually reaches and holds.
+    # j4: negative pitches the gripper UP in this fold; -0.3 chosen live on
+    # hardware (2026-08) via /mars/arm/goto_js_v2 previews. Was 0.30 (z ~0.042m).
+    REST = [1.5708, -1.2195, 1.5723, -0.3, 0.0, 0.0031]
     ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     @classmethod
