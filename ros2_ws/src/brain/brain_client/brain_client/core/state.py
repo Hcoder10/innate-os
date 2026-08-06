@@ -10,8 +10,22 @@ node as bare attributes, they live here in one named place.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from brain_client.skills.registry import SkillRegistry
+
+if TYPE_CHECKING:
+    from brain_client.agents.types import Agent
+
+
+@dataclass(frozen=True)
+class RunningSkill:
+    """The skill occupying the execution slot — the robot runs one at a time."""
+
+    primitive_name: str
+    skill_id: str
+    primitive_id: str | None = None
+    manual: bool = False  # a webapp/CLI run the brain didn't start (mirrored, not owned)
 
 
 @dataclass
@@ -23,7 +37,7 @@ class BrainState:
     log_everything: bool = False
 
     # --- skill execution (owned by PrimitiveRunner; read by BrainAgent) ---
-    primitive_running: dict | None = None
+    primitive_running: RunningSkill | None = None
 
     # --- skills + directives ---
     registry: SkillRegistry = field(default_factory=SkillRegistry)
@@ -33,5 +47,5 @@ class BrainState:
     # UI with its error instead of silently vanishing (same contract as
     # SkillCatalog's broken skills).
     broken_agents: dict = field(default_factory=dict)
-    current_directive: object | None = None
+    current_directive: Agent | None = None
     active_skill_ids: list[str] | None = None

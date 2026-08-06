@@ -16,7 +16,7 @@ import json
 from brain_messages.msg import AvailableSkills
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
-from brain_client.skills.registry import SkillRegistry
+from brain_client.skills.registry import SkillMeta, SkillRegistry
 
 AVAILABLE_SKILLS_QOS = QoSProfile(
     depth=1,
@@ -31,7 +31,7 @@ def registry_from_skills_msg(msg: AvailableSkills, on_duplicate=None) -> SkillRe
     Skills that failed to load are on the roster for the UI only — they are
     left out of the registry so the brain never declares one as a tool.
     """
-    metadata = [
+    metadata: list[SkillMeta] = [
         {
             "id": s.id,
             "name": s.name,
@@ -56,7 +56,7 @@ class SkillRoster:
         self._node = node
         self._logger = node.get_logger()
         self._state = state
-        self._last_skills: list | None = None
+        self._last_skills: object = None  # last msg.skills, compared field-wise (rosidl __eq__)
         self._sub = node.create_subscription(
             AvailableSkills, "/brain/available_skills", self._on_available_skills, AVAILABLE_SKILLS_QOS
         )

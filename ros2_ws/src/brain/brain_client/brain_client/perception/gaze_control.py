@@ -27,13 +27,9 @@ class GazeController:
     def update(self) -> None:
         """Start or stop the tracker to match brain state + directive preference."""
         directive = self._state.current_directive
-        wants_gaze = (
-            self._state.is_brain_active
-            and directive is not None
-            and hasattr(directive, "uses_gaze")
-            and directive.uses_gaze()
-        )
-        if wants_gaze and self._tracker is None:
+        if not self._state.is_brain_active or directive is None or not directive.uses_gaze():
+            directive = None
+        if directive is not None and self._tracker is None:
             try:
                 self._tracker = _tracker_class()(self._node)
                 self._tracker.start()
@@ -41,7 +37,7 @@ class GazeController:
             except Exception as e:
                 self._logger.error(f"Failed to start gaze tracker: {e}")
                 self._tracker = None
-        elif not wants_gaze and self._tracker is not None:
+        elif directive is None and self._tracker is not None:
             self.stop()
 
     def stop(self) -> None:

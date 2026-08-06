@@ -170,15 +170,15 @@ class CameraProvider(Node):
         if not dead:
             return
         self._stop_spin()
-        if "main" in dead:
+        if "main" in dead and self._main_sub is not None:
             self.destroy_subscription(self._main_sub)
             self._main_sub = None
             self._main_camera_raw = None
-        if "wrist" in dead:
+        if "wrist" in dead and self._wrist_sub is not None:
             self.destroy_subscription(self._wrist_sub)
             self._wrist_sub = None
             self._wrist_camera_raw = None
-        if "depth" in dead:
+        if "depth" in dead and self._depth_sub is not None:
             self.destroy_subscription(self._depth_sub)
             self._depth_sub = None
             self._depth_msg = None
@@ -188,6 +188,8 @@ class CameraProvider(Node):
     # ---- callbacks (as cheap as possible) ----
 
     def _spin(self):
+        if self._executor is None:
+            return
         try:
             self._executor.spin()
         except Exception:

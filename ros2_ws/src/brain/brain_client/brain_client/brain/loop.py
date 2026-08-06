@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 
 
 class LoopThread:
@@ -17,7 +19,7 @@ class LoopThread:
 
     def __init__(self, name: str):
         self.loop = asyncio.new_event_loop()
-        self._task = None
+        self._task: Future[None] | None = None
         self._done = threading.Event()
         self._done.set()  # no task has ever run: fully unwound
         self._thread = threading.Thread(target=self.loop.run_forever, name=name, daemon=True)
@@ -36,7 +38,7 @@ class LoopThread:
         """
         return self._done.is_set()
 
-    def spawn(self, coro) -> None:
+    def spawn(self, coro: Coroutine[object, object, None]) -> None:
         assert self._task is None, "root task already running"
         done = self._done = threading.Event()
 
@@ -56,7 +58,7 @@ class LoopThread:
         task.cancel()
         return self._done.wait(timeout)
 
-    def post(self, fn, *args) -> None:
+    def post(self, fn: Callable[..., None], *args: object) -> None:
         """Run ``fn`` on the loop thread (thread-safe, no-op after shutdown)."""
         if not self.loop.is_closed():
             self.loop.call_soon_threadsafe(fn, *args)

@@ -25,6 +25,7 @@ from std_srvs.srv import SetBool, Trigger
 
 from brain_client.agents.initializer import initialize_agents
 from brain_client.brain.agent import BrainAgent
+from brain_client.brain.utils import EventKind
 from brain_client.core.config import BrainConfig
 from brain_client.core.lifecycle import BrainLifecycle
 from brain_client.core.state import BrainState
@@ -195,7 +196,7 @@ class BrainClientNode(Node):
         self.create_subscription(String, "/brain/chat_in", self._on_chat_in, 10)
         self.create_subscription(String, "/input_manager/custom", self._on_custom_input, 10)
         self.create_subscription(String, "/brain/tts", self._on_tts, 10)
-        self.create_subscription(String, "/brain/set_directive", lambda m: self.lifecycle.set_directive(m.data), 10)
+        self.create_subscription(String, "/brain/set_directive", self._on_set_directive, 10)
         self.create_subscription(String, "/brain/set_active_skills", self._on_set_active_skills, 10)
         self.create_subscription(String, "/brain/manual_skill_event", self._on_manual_skill_event, 10)
 
@@ -287,9 +288,9 @@ class BrainClientNode(Node):
     def _on_camera_motion(self) -> None:
         if not self.state.is_brain_active:
             return
-        # kind="motion" lets the brain dashboard show the wake-up cue.
+        # MOTION lets the brain dashboard show the wake-up cue.
         self.brain.add_event(
-            "Motion detected in the camera view — something or someone is moving nearby.", kind="motion"
+            "Motion detected in the camera view — something or someone is moving nearby.", kind=EventKind.MOTION
         )
 
     # ================= always-on subscription callbacks =================
@@ -328,6 +329,9 @@ class BrainClientNode(Node):
         if text and text.strip():
             self.get_logger().info(f"TTS request received: {text[:50]}...")
             self.chat.speak(text)
+
+    def _on_set_directive(self, msg: String) -> None:
+        self.lifecycle.set_directive(msg.data)
 
     def _on_set_active_skills(self, msg: String) -> None:
         """Update which skills are enabled for the current directive."""

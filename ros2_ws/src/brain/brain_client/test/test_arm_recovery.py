@@ -7,7 +7,7 @@ Exercised on bare instances (no ROS node) like the runner tests.
 
 from types import SimpleNamespace
 
-from brain_client.core.state import BrainState
+from brain_client.core.state import BrainState, RunningSkill
 from brain_client.robot import arm_recovery
 from brain_client.robot.arm_recovery import ArmRecovery
 
@@ -88,7 +88,7 @@ def test_attempts_cap_and_rearm_on_healthy(monkeypatch):
 
 
 def test_recover_stops_the_running_skill_and_reports(monkeypatch):
-    r, log = make_recovery(running={"primitive_name": "pick_any_object"}, has_goal=True)
+    r, log = make_recovery(running=RunningSkill(primitive_name="pick_any_object", skill_id="local/pick"), has_goal=True)
     r._call_fix_error = lambda: (True, "rebooted servo(s) 3 and re-enabled their torque")
     r._recover(HW_ERROR, attempt=1)
     assert log["cancelled"] == ["goal"]

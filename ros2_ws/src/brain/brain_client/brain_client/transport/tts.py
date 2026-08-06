@@ -166,6 +166,8 @@ class TTSHandler:
 
     def _stream_tts_bytes(self, text: str, voice: dict[str, Any]):
         """Yield raw WAV bytes from Cartesia as they stream in."""
+        if self._cartesia_client is None:
+            raise RuntimeError("Cartesia client unavailable (is_available() gates all callers)")
         return self._cartesia_client.tts.bytes_stream(
             model_id="sonic-3.5",
             transcript=text,

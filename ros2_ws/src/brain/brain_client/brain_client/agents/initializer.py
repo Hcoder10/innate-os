@@ -12,6 +12,7 @@ from brain_client.agents.loader import build_agent_instances, discover_agent_cla
 from brain_client.agents.types import Agent
 from brain_client.common.script_paths import ensure_user_directories, get_workspace_dir
 from brain_client.skills.physical_refs import render_dir_shims, render_refs, write_dir_shims, write_refs
+from brain_client.skills.registry import SkillMeta
 from brain_client.skills.workspace_import import unique_key
 
 # module name -> agent ids it registered on its last clean import, carried
@@ -23,7 +24,7 @@ _agent_ids_by_module: dict[str, list[str]] = {}
 
 
 def initialize_agents(
-    logger, skills_dict: dict[str, dict] | None = None
+    logger, skills_dict: dict[str, SkillMeta] | None = None
 ) -> tuple[dict[str, Agent], Agent | None, dict[str, str]]:
     """
     Initialize all agents by importing the agent packages.
@@ -113,7 +114,7 @@ def initialize_agents(
     return agents, default_agent, broken
 
 
-def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> None:
+def _regenerate_physical_refs(logger, skills_dict: dict[str, SkillMeta] | None) -> None:
     """Write workspace/physical_skills/ from the roster metadata, only when
     the generated package doesn't exist yet. Skipped when no roster is
     available (nothing to generate from) or when the skills server has

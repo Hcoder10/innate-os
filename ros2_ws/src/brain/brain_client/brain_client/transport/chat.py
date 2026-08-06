@@ -14,9 +14,19 @@ import re
 import threading
 import time
 
-from brain_client.brain.gemini import split_tool_narration
+from brain_client.brain.context import split_tool_narration
+from brain_client.common.enums import StrEnum
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+class Sender(StrEnum):
+    """Chat-entry senders — the webapp switches on these exact values."""
+
+    ROBOT = "robot"
+    ROBOT_THOUGHTS = "robot_thoughts"
+    SYSTEM = "system"
+    SKILL_OUTPUT = "skill_output"
 
 
 class ChatManager:
@@ -28,14 +38,14 @@ class ChatManager:
         self.history: list[dict] = []
 
     @staticmethod
-    def entry(sender: str, text: str) -> dict:
+    def entry(sender: Sender, text: str) -> dict:
         return {"sender": sender, "text": text, "timestamp": time.time()}
 
-    def emit(self, sender: str, text: str, speak: bool | None = None) -> None:
+    def emit(self, sender: Sender, text: str, speak: bool | None = None) -> None:
         """Append a chat entry, publish it, and (for robot speech) speak it.
 
-        ``speak`` defaults to True only for the ``"robot"`` sender, matching the
-        old behaviour where thoughts/anticipation were published but not spoken.
+        ``speak`` defaults to True only for the ROBOT sender, matching the old
+        behaviour where thoughts/anticipation were published but not spoken.
         """
         chat_entry = self.entry(sender, text)
         self.history.append(chat_entry)
@@ -45,19 +55,19 @@ class ChatManager:
         self._chat_out_pub.publish(String(data=json.dumps(chat_entry)))
 
         if speak is None:
-            speak = sender == "robot"
+            speak = sender == Sender.ROBOT
         if speak and text and text.strip():
             self.speak(text)
 
     def emit_system(self, text: str) -> None:
         """Publish a system message (never spoken)."""
-        self.emit("system", text, speak=False)
+        self.emit(Sender.SYSTEM, text, speak=False)
 
     def emit_thoughts(self, thoughts: str) -> None:
         """Publish a thought summary, trimmed — the panel wants a glimpse, not a log."""
         if len(thoughts) > 600:
             thoughts = thoughts[:600].rsplit(" ", 1)[0] + " …"
-        self.emit("robot_thoughts", thoughts, speak=False)
+        self.emit(Sender.ROBOT_THOUGHTS, thoughts, speak=False)
 
     def publish_task_status(
         self,

@@ -11,8 +11,8 @@ is the ROS-facing source of poses.
 
 from __future__ import annotations
 
-import rclpy
 from nav_msgs.msg import Odometry
+from rclpy.time import Time
 from std_msgs.msg import String
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -85,7 +85,7 @@ class PoseTracker:
                 transform = self.tf_buffer.lookup_transform(
                     target_frame="map",
                     source_frame="base_link",
-                    time=rclpy.time.Time(),
+                    time=Time(),
                 )
                 pos = transform.transform.translation
                 ori = transform.transform.rotation

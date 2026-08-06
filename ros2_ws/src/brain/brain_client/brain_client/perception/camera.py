@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 
 import cv2
 import numpy as np
@@ -109,8 +110,8 @@ class CameraCapture:
         # Motion wiring, set by the composition root: on_motion fires (no args)
         # on sustained scene change; motion_suppressed returns True while the
         # robot is moving itself, so ego-motion never reads as scene motion.
-        self.on_motion = None
-        self.motion_suppressed = lambda: False
+        self.on_motion: Callable[[], None] | None = None
+        self.motion_suppressed: Callable[[], bool] = lambda: False
         self._motion = _MotionGate()
 
     def start(self) -> None:

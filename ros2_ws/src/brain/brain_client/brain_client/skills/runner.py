@@ -18,8 +18,10 @@ from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
 from std_srvs.srv import Trigger
 
+from brain_client.core.state import RunningSkill
 from brain_client.skills.lifecycle import PRIMITIVE_LIFECYCLE_STATUSES, decode_substep_feedback
 from brain_client.skills.types import SkillResult
+from brain_client.transport.chat import Sender
 
 
 class PrimitiveRunner:
@@ -42,7 +44,7 @@ class PrimitiveRunner:
         self._goal_handle = None
         # Bumped whenever the brain disowns its goal (reset/deactivation). Late
         # callbacks from a disowned goal compare against it and stand down, so
-        # they can never clear a newer run's state or feed a fresh session.
+        # they can never clear a newer run's state or feed a fresh context.
         self._generation = 0
         # Serializes every primitive_running transition (and the generation
         # reads/bumps they pair with) across the two threads that make them:
@@ -66,11 +68,7 @@ class PrimitiveRunner:
         the "running" entry in the chat.
         """
         skill_name = self._state.registry.name_for(skill_id)
-        claim = {
-            "primitive_name": skill_name,
-            "primitive_id": primitive_id,
-            "skill_id": skill_id,
-        }
+        claim = RunningSkill(primitive_name=skill_name, skill_id=skill_id, primitive_id=primitive_id)
         generation = 0
         with self._slot_lock:
             occupant = self._state.primitive_running
@@ -84,7 +82,7 @@ class PrimitiveRunner:
                 primitive_name=skill_name,
                 primitive_id=primitive_id,
                 skill_id=skill_id,
-                reason=f"another skill ({occupant['primitive_name']}) is already running",
+                reason=f"another skill ({occupant.primitive_name}) is already running",
             )
             # This start paused the gaze, and the occupant (a manual run — the
             # only writer that can win the claim race) never manages it: resume.
@@ -111,26 +109,22 @@ class PrimitiveRunner:
         with self._slot_lock:
             if status == "running":
                 if self._state.primitive_running is None:
-                    self._state.primitive_running = {
-                        "primitive_name": primitive_name,
-                        "primitive_id": primitive_id,
-                        "skill_id": skill_id,
-                        "manual": True,
-                    }
+                    self._state.primitive_running = RunningSkill(
+                        primitive_name=primitive_name, skill_id=skill_id, primitive_id=primitive_id, manual=True
+                    )
             elif status in ("completed", "failed", "interrupted"):
                 running = self._state.primitive_running
-                if running is None or not running.get("manual"):
+                if running is None or not running.manual:
                     return
                 # Match ids when both sides carry one: a delayed terminal from
                 # an older manual run must not clear a newer run's mirror. A
                 # publisher that omits ids falls back to any-manual — requiring
                 # a match there would wedge the slot shut forever.
-                running_id = running.get("primitive_id")
-                if primitive_id and running_id and primitive_id != running_id:
+                if primitive_id and running.primitive_id and primitive_id != running.primitive_id:
                     return
                 self._state.primitive_running = None
 
-    def _release(self, claim: dict) -> None:
+    def _release(self, claim: RunningSkill) -> None:
         """Free the slot iff it still holds ``claim`` (identity, not equality)."""
         with self._slot_lock:
             if self._state.primitive_running is claim:
@@ -178,7 +172,7 @@ class PrimitiveRunner:
         """Stop the brain's primitive without announcing an interruption (used on reset)."""
         with self._slot_lock:
             running = self._state.primitive_running
-        if running and not running.get("manual"):
+        if running is not None and not running.manual:
             self._stop_robot()
         self.interrupt_for_deactivation()
 
@@ -200,7 +194,7 @@ class PrimitiveRunner:
         """
         with self._slot_lock:
             running = self._state.primitive_running
-            if running and running.get("manual"):
+            if running is not None and running.manual:
                 return
             self._generation += 1
             handle, self._goal_handle = self._goal_handle, None
@@ -242,8 +236,8 @@ class PrimitiveRunner:
             image = None
             if feedback_wrapper.feedback.image_b64:
                 image = base64.b64decode(feedback_wrapper.feedback.image_b64)
-            running = self._state.primitive_running or {}
-            self.on_feedback(running.get("primitive_name", "unknown"), feedback_text, image)
+            running = self._state.primitive_running
+            self.on_feedback(running.primitive_name if running else "unknown", feedback_text, image)
         except Exception as e:
             self._logger.error(f"Error in feedback handler: {e}")
 
@@ -267,7 +261,7 @@ class PrimitiveRunner:
         )
         output = substep.get("output")
         if event == "completed" and output and output.strip():
-            self._chat.emit("skill_output", output, speak=False)
+            self._chat.emit(Sender.SKILL_OUTPUT, output, speak=False)
 
     def _on_goal_response(self, future, generation: int) -> None:
         goal_handle = future.result()
@@ -288,15 +282,15 @@ class PrimitiveRunner:
             return
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
-            if running:
+            if running is not None:
                 self._chat.publish_task_status(
-                    primitive_name=running["primitive_name"],
-                    primitive_id=running["primitive_id"],
+                    primitive_name=running.primitive_name,
+                    primitive_id=running.primitive_id,
                     status="failed",
-                    skill_id=running.get("skill_id"),
+                    skill_id=running.skill_id,
                     reason="Goal rejected by action server",
                 )
-                self.on_event("failed", running["primitive_name"], "Goal rejected by action server")
+                self.on_event("failed", running.primitive_name, "Goal rejected by action server")
             self._on_task_finished()
             return
         self._logger.info("Primitive execution goal accepted.")
@@ -323,15 +317,15 @@ class PrimitiveRunner:
                 running, self._state.primitive_running = self._state.primitive_running, None
                 self._goal_handle = None
         if stale:
-            # A disowned goal ending: a newer run (or a fresh session) may own
+            # A disowned goal ending: a newer run (or a fresh context) may own
             # the state and the event queue now — this result concerns neither.
             return
         self._stop_robot()
 
         skill_id = result.skill_type
         primitive_name = self._state.registry.name_for(skill_id)
-        if running and running.get("skill_id") != skill_id:
-            self._logger.warn(f"Skill ID mismatch in result ({skill_id}) and running ({running.get('skill_id')})")
+        if running is not None and running.skill_id != skill_id:
+            self._logger.warn(f"Skill ID mismatch in result ({skill_id}) and running ({running.skill_id})")
         self._on_task_finished()
 
         is_code = self._is_code_skill(skill_id)
@@ -350,7 +344,7 @@ class PrimitiveRunner:
     def _emit_skill_output(self, result, is_code: bool) -> None:
         """Surface a successful code skill's output in the chat (never spoken)."""
         if is_code and result.success and result.success_type == SkillResult.SUCCESS.value and result.message.strip():
-            self._chat.emit("skill_output", result.message, speak=False)
+            self._chat.emit(Sender.SKILL_OUTPUT, result.message, speak=False)
 
     def _classify_result(self, result, is_code: bool) -> tuple[str | None, str | None]:
         """Map an action result to the brain-facing (status, detail) event."""

@@ -181,14 +181,21 @@ class InputDevice(ABC):
         """
         return self._proxy
 
-    def set_proxy(self, proxy: ProxyClient):
+    def set_proxy(self, proxy: ProxyClient | None):
         """
         Set the proxy client (called by InputLoader).
 
         Args:
-            proxy: ProxyClient instance
+            proxy: ProxyClient instance, or None when the proxy is not configured
         """
         self._proxy = proxy
+
+    def set_tts_playing(self, is_playing: bool) -> None:  # noqa: B027 — optional hook, no-op by default
+        """TTS ducking hook: the robot started/stopped speaking. Default: ignore.
+
+        Devices that listen to audio (e.g. the microphone) override this to
+        avoid hearing the robot's own speech.
+        """
 
     @property
     def node(self):

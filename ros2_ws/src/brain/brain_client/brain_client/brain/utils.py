@@ -1,14 +1,59 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Pure helpers for the agent loop: no ROS, no I/O, no state."""
+"""Pure helpers and shared types for the agent loop: no ROS, no I/O, no state."""
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
+from brain_client.common.enums import StrEnum
 from brain_client.perception import pose as pose_math
+from brain_client.perception.pose import Pose
 
-Pose = tuple[float, float, float]  # x, y, theta
+
+class EventKind(StrEnum):
+    """What queued a stimulus — USER is load-bearing: only user speech preempts a turn."""
+
+    INFO = "info"
+    USER = "user"
+    MOTION = "motion"
+
+
+@dataclass(frozen=True)
+class Event:
+    """One queued stimulus: user speech, a skill result, sensor input."""
+
+    text: str
+    image: bytes | None = None
+    kind: EventKind = EventKind.INFO
+
+
+class FrameLabel(StrEnum):
+    """Where a turn image came from. WRIST frames are latest-only in history —
+    a stale gripper close-up reads as current grasp state."""
+
+    HEAD = "head camera"
+    WRIST = "wrist camera"
+    EVENT = "event image"
+
+
+Frame = tuple[FrameLabel, bytes]
+"""A turn image as (label, jpeg) — only the bytes go to the model; the labels
+feed telemetry and mark which frames are latest-only in history."""
+
+
+class TraceEvent(StrEnum):
+    """Telemetry event names on /brain/trace — the monitor keys off these values."""
+
+    EVENT = "event"
+    TURN_START = "turn_start"
+    TURN_REQUEST = "turn_request"
+    TURN_END = "turn_end"
+    TURN_ERROR = "turn_error"
+    TURN_DROPPED = "turn_dropped"
+    TURN_PREEMPTED = "turn_preempted"
+    SNAPSHOT = "snapshot"
 
 
 def observation_text(
@@ -17,7 +62,7 @@ def observation_text(
     pose: Pose | None,
     running_skill: str | None,
     guidance: str,
-    events: list[dict],
+    events: list[Event],
     has_wrist_frame: bool,
 ) -> str:
     """The text half of a turn input: robot status, guidance, and new events."""
@@ -29,7 +74,7 @@ def observation_text(
     lines = [status]
     if guidance:
         lines.append(f"(guidance while this skill runs: {guidance})")
-    lines += [f"- {event['text']}" for event in events]
+    lines += [f"- {event.text}" for event in events]
     if has_wrist_frame:
         lines.append("(second image is the arm wrist camera)")
     return "\n".join(lines)
