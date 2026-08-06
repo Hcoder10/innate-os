@@ -237,7 +237,12 @@ class Challenge:
     title: str
     brief: str  # shown to the user; what to tell (or do with) the robot
     setup: list[Drop]
-    goals: list[Goal]  # strictly ordered: goal N is judged only after N-1
+    # Strictly ordered: goal N is judged only after N-1, and skill completions
+    # are NOT deferred -- one that arrives while an earlier goal is open is
+    # discarded (logged), not saved for the goal it would have satisfied. Order
+    # the goals the way the robot will actually do them, and give a SkillDone
+    # guard enough slack that the step really can pass when it fires.
+    goals: list[Goal]
     time_limit_s: float | None = None
     reset_world: bool = True  # robot back to spawn + props re-parked on start
 
@@ -470,9 +475,28 @@ class ChallengeEngine:
                 state = WorldState(t=t, robot=pose, centers=centers)
                 self.elapsed_s = max(0.0, t - self.started_t)
                 try:
-                    idx = self.goal_done.index(False)
-                    if challenge.goals[idx].predicate.update(state, events):
+                    idx = first = self.goal_done.index(False)
+                    # Goals stay strictly ordered, but a batch that satisfies
+                    # several of them in sequence has to advance all of them:
+                    # ticks only happen when physics stepped, so one stall or a
+                    # rosbridge reconnect hands a single tick several
+                    # completions, and stopping at the first would drop the
+                    # later goal's event even though the robot did things in
+                    # the right order.
+                    while idx < len(challenge.goals) and challenge.goals[idx].predicate.update(state, events):
                         self.goal_done[idx] = True
+                        idx += 1
+                    if idx == first and any(ev.get("status") == "completed" for ev in events):
+                        # Nothing took them, and ordered goals do not defer:
+                        # these completions are gone. Say so, or a challenge
+                        # author watches a run die on the clock with both tasks
+                        # apparently done and no explanation anywhere.
+                        skills = sorted({str(ev.get("skill_id") or ev.get("skill_name") or "?") for ev in events})
+                        print(
+                            f"[challenges] {challenge.id}: dropped completion(s) {', '.join(skills)} -- "
+                            f"goals are ordered and {challenge.goals[first].label!r} is still open",
+                            flush=True,
+                        )
                 except ValueError:  # no False left: all goals done
                     pass
                 except Exception as exc:  # noqa: BLE001 -- challenge bug fails the run, not the sim

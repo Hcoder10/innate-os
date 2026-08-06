@@ -13,7 +13,7 @@ import time
 
 import _driver_pkg  # noqa: F401
 from mars_sim_driver import world
-from mars_sim_driver.challenges import AllOf, Challenge, ChallengeEngine, Drop, Goal, Hold, Near, WorldState
+from mars_sim_driver.challenges import AllOf, Challenge, ChallengeEngine, Drop, Goal, Hold, Near, SkillDone, WorldState
 from mars_sim_driver.core import VirtualMars, joint2_min_target
 
 OUT_DIR = world.default_assets_dir() / "virtual_mars_test"
@@ -86,6 +86,7 @@ def main() -> None:
     check_stale_tick(sim)
     check_poisoned_progress(sim)
     check_external_reset(sim)
+    check_event_ordering(sim)
     print("PASS")
 
 
@@ -323,6 +324,43 @@ def check_external_reset(sim: VirtualMars) -> None:
 
     engine.abort()
     sim.remove_all_props()
+    sim.reset()
+
+
+def check_event_ordering(sim: VirtualMars) -> None:
+    """Two skill completions in one batch must advance both goals.
+
+    Ticks only happen when the physics thread stepped, so a stall or a
+    rosbridge reconnect hands one tick several completions. Judging only the
+    first unmet goal per tick would drop the second even though the robot did
+    both things in the right order -- which is not what "strictly ordered"
+    means. An event that arrives while an EARLIER goal is still open is a
+    different case and is still discarded, by design."""
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=OUT_DIR / "challenges_events.json")
+    engine.challenges["probe"] = Challenge(
+        id="probe",
+        title="Probe",
+        brief="",
+        setup=[],
+        goals=[Goal("wave", SkillDone("wave")), Goal("email", SkillDone("send_email"))],
+    )
+
+    engine.start("probe")
+    engine.post_event({"status": "completed", "skill_id": "wave"})
+    engine.post_event({"status": "completed", "skill_id": "send_email"})  # same batch
+    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
+    assert block["state"] == "passed", f"one batch did not advance both ordered goals: {block['goals']}"
+
+    # The out-of-order case stays discarded: email first, while "wave" is open.
+    engine.start("probe")
+    engine.post_event({"status": "completed", "skill_id": "send_email"})
+    engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)
+    engine.post_event({"status": "completed", "skill_id": "wave"})
+    block = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["active"]
+    assert block["goals"][0]["done"] and not block["goals"][1]["done"], block["goals"]
+    print("challenge events: one batch advances goals in order; an early completion is dropped and logged")
+
+    engine.abort()
     sim.reset()
 
 
