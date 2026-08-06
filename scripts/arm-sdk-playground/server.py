@@ -27,12 +27,7 @@ sys.path.insert(0, str(REPO / "ros2_ws" / "src" / "brain" / "brain_client"))
 
 import rclpy  # noqa: E402
 
-from brain_client.robot.manipulation import (  # noqa: E402
-    ArmFailed,
-    ArmUnhealthy,
-    Manipulation,
-    Waypoint,
-)
+from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation  # noqa: E402
 
 PORT = 8090
 
@@ -128,26 +123,6 @@ def do_command(cmd, body):
             out["err_xy"] = math.hypot(settled.x - target[0], settled.y - target[1])
             out["err_z"] = abs(settled.z - target[2])
         return out
-
-    if cmd == "joints":
-        joints = [float(j) for j in body["joints"]]
-        manip.move_joints(joints, duration=float(body.get("duration", 1.5)))
-        return {}
-
-    if cmd == "square":
-        # A small square in the YZ plane around the current pose, via follow().
-        msg = manip.last_fk_pose
-        if msg is None:
-            raise ArmFailed("no FK pose yet")
-        c = manip._arm_from_fk(msg)
-        r, p, y = c.rpy
-        s = float(body.get("size", 0.05))
-        d = float(body.get("duration", 1.2))
-        corners = [(0, s, 0), (0, s, s), (0, -s, s), (0, -s, 0), (0, 0, 0)]
-        wps = [Waypoint(c.x + dx, c.y + dy, c.z + dz, roll=r, pitch=p, yaw=y, duration=d)
-               for dx, dy, dz in corners]
-        settled = manip.follow(wps)
-        return {"settled": arm_to_dict(settled)}
 
     if cmd == "gripper_open":
         manip.gripper_open(float(body.get("percent", 100.0)))

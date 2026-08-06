@@ -201,7 +201,6 @@ const PAGE_HTML = `
         <div class="armsdk-row">
           <button class="armsdk-go" data-el="goBtn">Go</button>
           <button data-el="fillBtn">← from current</button>
-          <button data-el="squareBtn">follow(): 5 cm square</button>
         </div>
       </div>
 
@@ -219,16 +218,15 @@ const PAGE_HTML = `
 
   <div class="armsdk-bottom">
     <div class="armsdk-card">
-      <h2>Joints · move_joints (rad)
+      <h2>Joints · stream_joints (rad)
         <button class="armsdk-copy" data-el="copyJoints" title="Copy measured joint positions">${ICON_COPY}</button>
         <span class="armsdk-dirty" data-el="jdirty" hidden>driving live — sync paused</span></h2>
       <div data-el="sliders"></div>
       <div class="armsdk-row">
-        <button class="armsdk-go" data-el="jointsBtn" title="Re-send all six sliders as one smooth 1.5 s move">Send joints</button>
         <button data-el="syncBtn">Sync from measured</button>
         <button data-cmd="zero">Zero pose</button>
       </div>
-      <div class="armsdk-hint">sliders drive the arm live as you drag — Send re-issues all six as one smooth move</div>
+      <div class="armsdk-hint">sliders drive the arm live as you drag; they resume tracking the arm once it settles</div>
     </div>
     <div class="armsdk-card">
       <h2>Log</h2>
@@ -441,7 +439,7 @@ export function mount(stage) {
     }
   }
 
-  /** @param {string} name @param {Record<string, any>} [body] @returns {Promise<boolean>} success */
+  /** @param {string} name @param {Record<string, any>} [body] */
   async function cmd(name, body = {}) {
     // Torque off is the abort path — it must fire even while a motion is in
     // flight (the server exempts it from the motion lock; the motion then
@@ -449,12 +447,11 @@ export function mount(stage) {
     const bypass = busy && name === "torque_off";
     if (busy && !bypass) {
       log("busy — wait for the current motion (Torque off aborts)", "err");
-      return false;
+      return;
     }
     if (!bypass) busy = true;
     body.verify = input("verify").checked;
     const t0 = performance.now();
-    let ok = false;
     try {
       const resp = await fetch(`${API}/cmd/${name}`, { method: "POST", body: JSON.stringify(body) });
       const data = await resp.json();
@@ -462,7 +459,6 @@ export function mount(stage) {
       if (!resp.ok) {
         log(`${name}: ${data.error}`, "err");
       } else {
-        ok = true;
         let msg = `${name} ok (${dt}s)`;
         if (data.settled) msg += ` → (${fmt(data.settled.x)}, ${fmt(data.settled.y)}, ${fmt(data.settled.z)})`;
         if (data.err_xy != null) msg += `  err_xy=${(data.err_xy * 1000).toFixed(0)}mm err_z=${(data.err_z * 1000).toFixed(0)}mm`;
@@ -476,7 +472,6 @@ export function mount(stage) {
       if (!bypass) busy = false;
       log(`${name}: ${e}`, "err");
     }
-    return ok;
   }
 
   /** @param {string} axis @param {number} sign */
@@ -521,11 +516,6 @@ export function mount(stage) {
     input("ar").value = deg(s.pose.roll).toFixed(0);
     input("ap").value = deg(s.pose.pitch).toFixed(0);
     input("aw").value = deg(s.pose.yaw).toFixed(0);
-  });
-  el("squareBtn").addEventListener("click", () => cmd("square", { size: 0.05, duration: 1.2 }));
-  el("jointsBtn").addEventListener("click", async () => {
-    const ok = await cmd("joints", { joints: sliders.map((sl) => +sl.value), duration: 1.5 });
-    if (ok) setDirty(false); // arm is where the sliders say — resume live sync
   });
   el("syncBtn").addEventListener("click", async () => {
     setDirty(false);
