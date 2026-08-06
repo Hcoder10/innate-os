@@ -14,8 +14,6 @@ Build is the broad safety net for refactors (all 19 packages). Tests are the beh
 
 **Unit (fast, pure Python, no ROS)** — `pytest`:
 - `brain_client/test/test_fake_cloud_selftest.py` — the FakeCloud test double speaks the cloud protocol correctly.
-- `brain_client/test/test_manipulation_surface.py` — the arm SDK's API surface (signatures, defaults, constants) is intact.
-- `brain_client/test/test_manipulation_unit.py` — arm interface behaviors (gripper math, non-blocking motions, lifecycle invariants).
 - `manipulation/test/test_config_validation.py` — manipulation config validation.
 
 **Integration (real ROS nodes)** — `colcon test`:
@@ -39,8 +37,6 @@ INNATE_TEST_IMAGE=innate-os-test:latest \
 Just the fast unit tests, no Docker:
 ```bash
 pytest ros2_ws/src/brain/brain_client/test/test_fake_cloud_selftest.py \
-       ros2_ws/src/brain/brain_client/test/test_manipulation_surface.py \
-       ros2_ws/src/brain/brain_client/test/test_manipulation_unit.py \
        ros2_ws/src/brain/manipulation/test/test_config_validation.py
 ```
 
@@ -53,4 +49,4 @@ pytest ros2_ws/src/brain/brain_client/test/test_fake_cloud_selftest.py \
 
 - `mars_bt_provisioner/test/test_command_layer.py` — needs system `gi`/GLib; verify it's in the image, then add to `--packages-select` + `-R`.
 - `innate_training_node/test/test_training_node.py` — needs `rclpy`/a live node; wire as a launch test once verified.
-- **Untested behaviorally:** teleop (joystick/UDP/arm), nav, camera. Same recipe — fake the seam, assert the ROS output. For these, Gates 1–2 (lint + build) are the only net today.
+- **Untested behaviorally:** teleop (joystick/UDP/arm), nav, camera, and the arm SDK (`brain_client/robot/manipulation.py` — its unit/surface suite was dropped with the ROS stubs). Same recipe — fake the seam, assert the ROS output. For these, Gates 1–2 (lint + build) are the only net today.
