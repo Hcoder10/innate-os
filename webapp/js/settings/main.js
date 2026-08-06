@@ -919,7 +919,7 @@ function buildKnobControl(/** @type {HTMLElement} */ controlContainer, /** @type
   entry.render(); // initialise the control from entry.value (the default at build time)
 }
 
-async function load() {
+async function loadSettings() {
   let data;
   try {
     const res = await fetch("/settings.json", { cache: "no-store" });
@@ -1115,7 +1115,7 @@ export function mount(stageEl) {
   searchTargets.length = 0;
   bodyEl = null;
   buildSettingsPage();
-  load();
+  loadSettings();
   return {
     destroy() {
       for (const fn of cleanups.splice(0)) fn();
