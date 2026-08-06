@@ -16,7 +16,9 @@ import { DynamixelLeader } from "../dynamixel.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
 import {
   LEADER_POSITIONS_TOPIC,
+  ARM_REBOOT_CONFIRM,
   ARM_REBOOT_SERVICE,
+  ARM_REBOOT_TIMEOUT_MS,
   ARM_TORQUE_ON_SERVICE,
   ARM_TORQUE_OFF_SERVICE,
   ARM_STATUS_TOPIC,
@@ -28,9 +30,6 @@ const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
 // Ticks are the leader's own encoder frame; radians are what every consumer
 // (skills, /mars/arm/commands) speaks, so that is what the copy button emits.
 const TICK_TO_RAD = (2 * Math.PI) / 4096;
-// The reboot power-cycles the servos and "takes a few seconds" — give the
-// service call more room than the 10s default before timing out.
-const REBOOT_TIMEOUT_MS = 20_000;
 
 /**
  * @param {HTMLElement} parent
@@ -397,14 +396,14 @@ function buildArmServices(rosClient) {
 
   rebootBtn.addEventListener("click", async () => {
     if (rebooting || toggling) return;
-    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it.")) {
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) {
       return;
     }
     rebooting = true;
     msg.hidden = true;
     render();
     try {
-      const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
+      const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, ARM_REBOOT_TIMEOUT_MS);
       if (res && res.success === false) flash(res.message || "Reboot failed", true);
       else flash("Servos rebooted", false);
     } catch (err) {

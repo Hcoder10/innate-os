@@ -168,6 +168,14 @@ export const LEADER_POSITIONS_TOPIC = "/leader_positions";
 // app's "Reboot Arm Servos" button calls.
 export const ARM_REBOOT_SERVICE = "/mars/arm/reboot";
 
+// The reboot power-cycles the servos and "takes a few seconds" — give the
+// service call more room than the 10s default before timing out.
+export const ARM_REBOOT_TIMEOUT_MS = 20_000;
+
+// One confirm for every reboot entry point (arm panel, protection alert).
+export const ARM_REBOOT_CONFIRM =
+  "Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it.";
+
 // Enable/disable torque on the 6 arm servos (std_srvs/Trigger). torque_on syncs
 // the target to the current pose first, so the arm holds where it is rather
 // than snapping. A reboot leaves the arm torque-off.

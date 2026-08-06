@@ -9,6 +9,7 @@ import { initTtsAudio } from "./ttsAudio.js";
 import { getConfig } from "./config.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
+import { createArmAlert } from "./armAlert.js";
 import { maybeShowAppPromo } from "./appPromo.js";
 import { installPressActivate } from "./pressActivate.js";
 
@@ -176,6 +177,13 @@ export function initShell(navigate) {
   // page to take control. It's persistent (built once); setActive hides it while
   // the Agent page — which has its own Start/Stop — is open.
   const agentIndicator = createAgentIndicator(createAgentState(ros), "/agent");
+
+  // A servo latched into (overcurrent) protection shows a discrete amber card
+  // with the reboot remedy, on every page. Real robots only — the sim's arm
+  // services are no-ops and /mars/arm/status never publishes.
+  void getConfig().then((config) => {
+    if (!config?.simControls) createArmAlert(ros);
+  });
 
   // On a phone/tablet, nudge toward the native app (shown once, then remembered).
   maybeShowAppPromo("/");
