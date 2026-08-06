@@ -4,6 +4,7 @@
 # (brain_client/skills/physical_refs.py) on every roster publish. They must
 # never be tracked: a robot writes them before its checkout advances, and any
 # tracked copy then aborts `git pull` / `innate update` with "untracked
-# working tree files would be overwritten". Hand-written shims are rare and
-# deliberate — `git add -f` one if it must ship.
+# working tree files would be overwritten". Catches hand-written subpackage
+# __init__.py files (arm/, chess/, ...) too — `git add -f` one if it must ship.
 */__init__.py
+*/__init__.py.*.tmp

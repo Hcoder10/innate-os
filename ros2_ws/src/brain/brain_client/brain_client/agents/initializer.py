@@ -8,9 +8,17 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
+import os
+
 from brain_client.agents.loader import build_agent_instances, discover_agent_classes
 from brain_client.agents.types import Agent
-from brain_client.common.script_paths import ensure_user_directories, get_workspace_dir
+from brain_client.common.script_paths import (
+    ensure_user_directories,
+    get_skill_directories,
+    get_workspace_dir,
+    skill_id_prefix_for,
+)
+from brain_client.skills.physical import has_physical_metadata
 from brain_client.skills.physical_refs import render_dir_shims, render_refs, write_dir_shims, write_refs
 from brain_client.skills.workspace_import import unique_key
 
@@ -48,6 +56,9 @@ def initialize_agents(
     # agents load before the skills server has written it). The skills server
     # is the authoritative writer; this only fills the ordering gap.
     _regenerate_physical_refs(logger, skills_dict)
+    # Same gap for `from innate_skills.wave import Wave` — the folder shims are
+    # runtime-only too.
+    _ensure_dir_shims(logger)
 
     classes, import_errors = discover_agent_classes(logger)
     agents, probe_errors = build_agent_instances(classes, logger, available_skills=skills_dict)
@@ -121,26 +132,38 @@ def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> No
     publish from its full pre-dedupe roster, while this roster has
     display-name dedupe applied — rewriting here from the (possibly smaller)
     deduped set would make the two processes overwrite each other's file
-    forever, each write triggering the watcher's full reload.
-
-    The per-recording-folder ``__init__.py`` shims are written under the same
-    guard, for the same reason the package is: agents also spell refs as
-    ``from innate_skills.<x> import <X>``, and importing a recording folder
-    before its shim exists caches it as an *empty namespace package* —
-    a state a reload can only undo because ``evict_modules_under`` evicts
-    namespace packages by ``__path__``. Since the shims stopped being
-    committed (they made ``git pull`` abort on robots whose running code was
-    ahead of their checkout), the runtime is their only writer, so this
-    ordering gap is real on any fresh workspace. No prune_dir_shims sweep
-    here: the server owns cleanup of folders that left the roster."""
+    forever, each write triggering the watcher's full reload."""
     if not skills_dict:
         return
     if (get_workspace_dir() / "physical_skills" / "__init__.py").exists():
         return
     # Everything on the roster that isn't a code skill is a physical skill
     # (learned/replay/eval/poses/...; broken entries never reach the registry).
-    # The roster's `directory` is the recording folder, keyed as `dir` for
-    # render_dir_shims — same mapping the catalog does in _write_physical_refs.
-    entries = [{**meta, "dir": meta.get("directory")} for meta in skills_dict.values() if meta.get("type") != "code"]
+    entries = [meta for meta in skills_dict.values() if meta.get("type") != "code"]
     write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), logger)
-    write_dir_shims(render_dir_shims(entries), logger)
+
+
+def _ensure_dir_shims(logger) -> None:
+    """Create missing recording-folder shims before agents import: importing a
+    folder before its shim exists caches it as an empty namespace package until
+    a reload evicts it. Scans metadata.json rather than the roster, so it works
+    before the skills server is up. Create-only: the server owns updates and
+    pruning, so neither writer can clobber the other."""
+    entries = []
+    for root in get_skill_directories():
+        try:
+            children = list(os.scandir(root))
+        except OSError:
+            continue
+        for child in children:
+            # same skips as the catalog's folder scan (__pycache__, .git)
+            if child.name.startswith((".", "__")) or not child.is_dir():
+                continue
+            if has_physical_metadata(child.path):
+                entries.append({"id": f"{skill_id_prefix_for(child.path)}/{child.name}", "dir": child.path})
+    missing = {
+        path: content
+        for path, content in render_dir_shims(entries).items()
+        if content is not None and not os.path.exists(path)
+    }
+    write_dir_shims(missing, logger)

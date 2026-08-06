@@ -179,8 +179,8 @@ if [ "$SERVICE_KEY_MISSING" = true ]; then
     echo ""
 fi
 
-# Play startup sound after processes initialize (backgrounded, detached from terminal)
-(sleep 20 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
+# Play five seconds after the ordered speaker keep-alive service (backgrounded)
+(sleep 5 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
 disown
 
 # Every pane has sourced the env file by now, so drop it: the service key should
