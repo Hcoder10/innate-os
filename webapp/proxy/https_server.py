@@ -34,6 +34,7 @@ import json
 import logging
 import mimetypes
 import os
+import posixpath
 import shutil
 import ssl
 import subprocess
@@ -290,15 +291,34 @@ ARMSDK_URL = "http://127.0.0.1:8090"
 
 # The page's 3D view renders the same URDF + STL meshes the IK node solves
 # against (the installed mars_sim share), served read-only under /armsdk/model/.
-# resolve(): the containment check below compares resolved targets, so the
-# base must be resolved too or a symlinked install (colcon --symlink-install)
-# would 404 every model file.
-MARS_MODEL_ROOT = (ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim").resolve()
+MARS_MODEL_ROOT = ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim"
+
+
+def _model_target(tail: str) -> "Path | None":
+    """MARS_MODEL_ROOT / tail, with traversal blocked on the *requested* path.
+
+    Deliberately does not resolve() the result. The sim builds the workspace
+    with colcon --symlink-install (scripts/validate_sim_ros_install.zsh), which
+    installs every model file as a symlink into ros2_ws/src — so resolving and
+    then demanding containment 404s the whole model there. The robot installs
+    real files (plain colcon build) and never hit it.
+
+    Prefixing "/" before normpath collapses any leading "..", so the join
+    cannot escape the base and the symlinks we do follow are the build's own.
+    """
+    rel = posixpath.normpath("/" + tail).lstrip("/")
+    if not rel:
+        return None
+    try:
+        target = MARS_MODEL_ROOT / rel
+        return target if target.is_file() else None
+    except (OSError, ValueError):  # illegal path bytes (e.g. a decoded NUL)
+        return None
 
 
 async def armsdk_model(request: web.Request) -> web.StreamResponse:
-    target = _safe_resolve(MARS_MODEL_ROOT / request.match_info["tail"])
-    if target is None or not target.is_file() or not target.is_relative_to(MARS_MODEL_ROOT):
+    target = _model_target(request.match_info["tail"])
+    if target is None:
         raise web.HTTPNotFound(text="not found")
     return _serve_static(target)
 
