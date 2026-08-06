@@ -453,6 +453,16 @@ class BargeInDetector:
             ratio = np.clip(ratio, self._gains * 0.5, self._gains * 2.0 + 1e-9)
             self._gains = (0.98 * self._gains + 0.02 * ratio).astype(np.float32)
             self._adapt_model_scale(mic_p, ref_p, r)
+        # Persistent excess is the robot, not a human: the speaker's nonlinear
+        # distortion sprays energy into bands the linear gains can never enter
+        # through the <3dB adapt mask above, so it would read as interruption
+        # forever. Leak upward at a fixed +1 dB/s while excess persists — a
+        # real interruption (1-3s) loses at most ~3 dB before it has already
+        # accumulated its trigger evidence; distortion present through minutes
+        # of speech is fully absorbed. Gains persist across utterances.
+        leak = ref_active & (excess_db >= 3.0)
+        if np.any(leak):
+            self._gains = np.where(leak, self._gains * 1.0023, self._gains).astype(np.float32)
 
         if self.debug_dump_dir:
             self._trace.append((m, score, sum(self._hot), 0.0, self._lag or -1))
