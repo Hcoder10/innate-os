@@ -1,13 +1,13 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Arm SDK playground page — a jog console for the theo/arm-sdk Manipulation
-// API, with a live 3D view of the robot (see viz.js). Unlike every other page
-// this one doesn't speak rosbridge: it drives the standalone SDK test server
-// (~/arm-sdk-playground/server.py, which runs the branch's actual Python
-// Manipulation class against the live arm) through the front door's
-// /armsdk/api/* proxy — so what you exercise here is the real SDK code path
-// (IK topics + goto_js services), not a JS reimplementation of it.
+// Arm SDK page — a jog console for the Manipulation API, with a live 3D view
+// of the robot (see viz.js). Unlike every other page this one doesn't speak
+// rosbridge: it drives the arm SDK server (brain_client's arm_sdk_server.py,
+// launched with the stack, which runs the actual Python Manipulation class
+// against the live arm) through the front door's /armsdk/api/* proxy — so
+// what you exercise here is the real SDK code path (IK topics + goto_js
+// services), not a JS reimplementation of it.
 
 import { createArmViz } from "./viz.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
@@ -123,10 +123,10 @@ const CSS = `
 const PAGE_HTML = `
   <div class="armsdk-head page-head">
     <h1 class="page-title">Arm SDK</h1>
-    <span class="armsdk-sub">theo/arm-sdk · live Manipulation API · URDF mirror</span>
+    <span class="armsdk-sub">live Manipulation API · URDF mirror</span>
   </div>
   <p class="armsdk-banner" data-el="banner">
-    SDK server unreachable — start it on the robot with <code>scripts/arm-sdk-playground/run.sh</code>
+    SDK server unreachable — it launches with the stack (<code>arm_sdk_server</code>); try <code>innate restart</code>
   </p>
   <div class="armsdk-toolbar">
     <span class="armsdk-pill" data-el="torque">torque ?</span>

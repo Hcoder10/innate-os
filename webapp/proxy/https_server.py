@@ -278,8 +278,8 @@ async def restart_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
-# The Arm SDK playground page (/armsdk) drives a standalone SDK test server —
-# scripts/arm-sdk-playground/server.py, which runs the arm SDK's Python
+# The Arm SDK page (/armsdk) drives the arm SDK server — brain_client's
+# arm_sdk_server.py, launched with the stack, which runs the arm SDK's Python
 # Manipulation class against the live arm — bound to localhost. Relaying it
 # here keeps the page same-origin (no mixed-content block on HTTPS). Like the
 # rest of the webapp this is unauthenticated on the LAN; the localhost bind
@@ -304,7 +304,7 @@ async def armsdk_model(request: web.Request) -> web.StreamResponse:
 
 
 async def armsdk_proxy(request: web.Request) -> web.Response:
-    """Relay /armsdk/api/<tail> to the playground server's /api/<tail>."""
+    """Relay /armsdk/api/<tail> to the arm SDK server's /api/<tail>."""
     # Cross-origin POSTs are simple requests (no preflight) — refuse any
     # browser-attributed origin that is not this host, so a random page the
     # operator has open cannot drive the arm. Origin-less requests (curl,
@@ -330,7 +330,7 @@ async def armsdk_proxy(request: web.Request) -> web.Response:
             )
     except (aiohttp.ClientError, asyncio.TimeoutError) as err:
         return web.json_response(
-            {"error": f"arm SDK server unreachable ({err.__class__.__name__}) — run scripts/arm-sdk-playground/run.sh"},
+            {"error": f"arm SDK server unreachable ({err.__class__.__name__}) — it launches with the stack; try `innate restart`"},
             status=502,
             headers={"Cache-Control": "no-cache"},
         )

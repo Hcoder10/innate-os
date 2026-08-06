@@ -1,45 +1,77 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Arm SDK playground backend — the server behind the webapp's /armsdk page.
+"""Arm SDK server — the backend behind the webapp's /armsdk page.
 
-Runs the actual brain_client Manipulation SDK (imported from the source tree,
-shadowing any installed build) against the live arm, and exposes it as a tiny
-localhost JSON API. The webapp front door proxies /armsdk/api/* here, so the
-page is same-origin and the raw arm-control port never leaves the robot.
+Drives the brain_client Manipulation SDK against the live arm and exposes it
+as a tiny localhost JSON API. Launched with the stack (brain_client.launch.py),
+so the page is always available; the webapp front door proxies /armsdk/api/*
+here, which keeps the raw arm-control port on-box and same-origin.
+
+The Manipulation feeds cost ~600 msg/s of callback dispatch while live, so
+they only run while the page does: constructed lazy, started on the first
+request, and parked again after IDLE_PARK_S without one (the page polls every
+250 ms, so an open tab keeps them warm).
 
 Not skill code — plain time.sleep and blocking calls are fine here.
-Run with ./run.sh, then open the webapp's Arm SDK page.
 """
 
 import json
 import math
 import sys
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
-# The point of the playground is to exercise the SDK as it exists in this
-# checkout, not whatever build is installed — put the source tree first.
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "ros2_ws" / "src" / "brain" / "brain_client"))
+import rclpy
 
-import rclpy  # noqa: E402
-
-from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation  # noqa: E402
+from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation
 
 PORT = 8090
+IDLE_PARK_S = 60.0  # park the state feeds this long after the last request
 
-rclpy.init()
-node = rclpy.create_node("arm_sdk_playground")
-manip = Manipulation(node, node.get_logger())
+rclpy.init(args=sys.argv)  # honor the launch file's --ros-args
+node = rclpy.create_node("arm_sdk_server")
+manip = Manipulation(node, node.get_logger(), lazy=True)
 manip.safety.max_ee_speed = 0.20  # m/s — stretches cartesian move durations
 
 # One motion at a time; concurrent clicks get a 409 instead of queueing up.
 # joints_stream takes it too (briefly): during a blocking move the stream gets
 # a 409 and drops the step, so sliders can't fight a discrete motion.
 motion_lock = threading.Lock()
+
+# Written on every request, read by the parker thread. Plain float — a torn
+# read is impossible under the GIL and a stale one just delays the park a tick.
+last_request = time.monotonic()
+
+
+def touch():
+    """Mark activity and make sure the state feeds are live (idempotent)."""
+    global last_request
+    last_request = time.monotonic()
+    if manip._executor is None:  # log the resume, not every poll
+        node.get_logger().info("request while parked — starting arm-state feeds")
+    manip.start()
+
+
+def parker():
+    """Park the Manipulation feeds once the page has gone quiet."""
+    while rclpy.ok():
+        time.sleep(5.0)
+        if manip._executor is None:  # already parked
+            continue
+        if time.monotonic() - last_request < IDLE_PARK_S:
+            continue
+        # Skip while a motion holds the lock — stop() would clear its state
+        # out from under it. The lock also serializes us against new commands.
+        if motion_lock.acquire(blocking=False):
+            try:
+                if time.monotonic() - last_request >= IDLE_PARK_S:
+                    node.get_logger().info("page idle — parking arm-state feeds")
+                    manip.stop()
+            finally:
+                motion_lock.release()
 
 
 def arm_to_dict(arm):
@@ -165,6 +197,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/state":
+            touch()
             self._json(200, state())
         else:
             self._json(404, {"error": "not found — the UI is the webapp's /armsdk page"})
@@ -176,6 +209,7 @@ class Handler(BaseHTTPRequestHandler):
         cmd = self.path[len("/api/cmd/"):]
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
+        touch()
 
         # torque_off is the abort path: it must work WHILE a motion holds the
         # lock (the motion then fails fast on the de-energized arm).
@@ -201,15 +235,21 @@ def main():
     # Localhost only: the webapp front door proxies /armsdk/api/* here, so the
     # raw arm-control API is never exposed off-box.
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Arm SDK playground on http://127.0.0.1:{PORT}  (Ctrl-C to stop)")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=parker, daemon=True).start()
+    node.get_logger().info(f"Arm SDK server on http://127.0.0.1:{PORT}")
+    # rclpy's signal handlers flip rclpy.ok() on the SIGINT/SIGTERM that
+    # ros2 launch sends, so this loop is the shutdown latch either way.
     try:
-        server.serve_forever()
+        while rclpy.ok():
+            time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
         server.shutdown()
         manip.shutdown()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
     return 0
 
 
