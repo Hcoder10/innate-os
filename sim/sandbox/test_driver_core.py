@@ -6,6 +6,7 @@ frames to sim/assets/virtual_mars_test/ for eyeballing.
 Usage: uv run sandbox/test_driver_core.py
 """
 
+import json
 import math
 import threading
 import time
@@ -83,6 +84,7 @@ def main() -> None:
     check_challenges(sim)  # last: it moves the sim clock and leaves a prop out
     check_concurrent_start(sim)
     check_stale_tick(sim)
+    check_poisoned_progress(sim)
     print("PASS")
 
 
@@ -253,6 +255,36 @@ def check_stale_tick(sim: VirtualMars) -> None:
     engine.abort()
     sim.remove_all_props()
     sim.reset()
+
+
+def check_poisoned_progress(sim: VirtualMars) -> None:
+    """A hand-edited challenges.json must not stop the sim.
+
+    _block() renders progress on EVERY broadcast, active challenge or not, and
+    runs at the end of tick() -- outside the per-goal guard, on the physics
+    thread, which has none. An entry of the wrong shape therefore doesn't
+    degrade one challenge, it freezes the world for every viewer."""
+    path = OUT_DIR / "challenges_poisoned.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "challenges": {
+                    "probe": 5,  # not a dict at all
+                    "junk": {"attempts": "3", "best_time_s": "fast", "passed": "yes"},
+                },
+            }
+        )
+    )
+    engine = ChallengeEngine(sim, threading.Lock(), roots=[], progress_path=path)
+    engine.challenges["probe"] = Challenge(id="probe", title="Probe", brief="", setup=[], goals=[])
+    engine.challenges["junk"] = Challenge(id="junk", title="Junk", brief="", setup=[], goals=[])
+
+    progress = engine.tick(float(sim.data.time), sim.pose(), sim.object_centers(), engine.world_epoch)["progress"]
+    assert progress["junk"] == {"passed": True, "best_time_s": None, "attempts": 0}, progress["junk"]
+    assert "probe" not in progress or progress["probe"]["attempts"] == 0, progress
+    print("challenge progress: a hand-edited entry degrades to unattempted, the tick survives")
 
 
 if __name__ == "__main__":
