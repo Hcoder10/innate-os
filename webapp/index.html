@@ -13,6 +13,14 @@
   </head>
   <body>
     <main id="stage" class="stage"></main>
+    <!-- Boot splash: painted on first paint (app.css is render-blocking), long
+         before router.js and its module graph finish downloading and build the
+         page. Without it the whole shell is black on a cold/slow load. router.js
+         removes it once the first page has mounted. -->
+    <div id="boot-splash" class="boot-splash">
+      <div class="boot-splash__mark">loading</div>
+      <div class="boot-splash__bar"><span></span></div>
+    </div>
     <script type="module" src="/js/router.js"></script>
   </body>
 </html>

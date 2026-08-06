@@ -13,20 +13,22 @@
 // or serial failure.
 
 import { DynamixelLeader } from "../dynamixel.js";
+import { copyToButton, ICON_COPY } from "../clipboard.js";
 import {
   LEADER_POSITIONS_TOPIC,
-  ARM_REBOOT_SERVICE,
+  ARM_REBOOT_CONFIRM,
   ARM_TORQUE_ON_SERVICE,
   ARM_TORQUE_OFF_SERVICE,
   ARM_STATUS_TOPIC,
 } from "../constants.js";
+import { rebootArmAndEnableTorque } from "../armReboot.js";
 
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
 const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
-// The reboot power-cycles the servos and "takes a few seconds" — give the
-// service call more room than the 10s default before timing out.
-const REBOOT_TIMEOUT_MS = 20_000;
+// Ticks are the leader's own encoder frame; radians are what every consumer
+// (skills, /mars/arm/commands) speaks, so that is what the copy button emits.
+const TICK_TO_RAD = (2 * Math.PI) / 4096;
 
 /**
  * @param {HTMLElement} parent
@@ -140,10 +142,24 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   engageBtn.className = "arm-button arm-engage";
   engageBtn.type = "button";
 
+  // Copy the live joint ticks — handy for pasting a pose into a skill.
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "arm-button arm-copy";
+  copyBtn.type = "button";
+  copyBtn.title = "Copy joint positions";
+  copyBtn.setAttribute("aria-label", "Copy joint positions");
+  copyBtn.innerHTML = ICON_COPY;
+
+  // Engage + copy share a row; the row (not the button) is what hides when
+  // there's nothing to read.
+  const engageRow = document.createElement("div");
+  engageRow.className = "arm-engage-row";
+  engageRow.append(engageBtn, copyBtn);
+
   const note = document.createElement("p");
   note.className = "arm-note microlabel";
 
-  wrap.append(status, joints, connectBtn, engageBtn, note, ...(armSvc ? [divider(), armSvc.el] : []));
+  wrap.append(status, joints, connectBtn, engageRow, note, ...(armSvc ? [divider(), armSvc.el] : []));
 
   // ---- state ------------------------------------------------------------
 
@@ -197,7 +213,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
     connectBtn.disabled = false;
     connectBtn.textContent = state.error ? "Reconnect arm" : "Connect arm";
 
-    engageBtn.hidden = !reading;
+    engageRow.hidden = !reading;
     engageBtn.textContent = engaged ? "Live — click to stop" : "Engage follow";
     engageBtn.classList.toggle("active", engaged);
 
@@ -238,6 +254,12 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   });
 
   engageBtn.addEventListener("click", () => setEngaged(!engaged));
+
+  copyBtn.addEventListener("click", () => {
+    const positions = leader.state.positions;
+    if (!positions) return; // row is hidden without a read, but be safe
+    void copyToButton(`[${positions.join(", ")}]`, copyBtn, "copied");
+  });
 
   const unsubLeader = leader.onChange((state) => {
     if (destroyed) return;
@@ -298,7 +320,7 @@ function divider() {
  * rosbridge socket (no WebSerial). Torque state is read from /mars/arm/status
  * (ArmStatus, ~0.2 Hz) so the toggle reflects reality even when changed
  * elsewhere; clicking it calls torque_on/torque_off. Reboot power-cycles the
- * servos and leaves the arm limp (torque goes red until re-enabled).
+ * servos, then re-enables torque automatically (see armReboot.js).
  * @param {import("../rosClient.js").RosClient} rosClient
  * @returns {{ el: HTMLElement, destroy: () => void }}
  */
@@ -372,16 +394,16 @@ function buildArmServices(rosClient) {
 
   rebootBtn.addEventListener("click", async () => {
     if (rebooting || toggling) return;
-    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it.")) {
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) {
       return;
     }
     rebooting = true;
     msg.hidden = true;
     render();
     try {
-      const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      if (res && res.success === false) flash(res.message || "Reboot failed", true);
-      else flash("Servos rebooted", false);
+      const res = await rebootArmAndEnableTorque(rosClient);
+      if (res.torqueOn) torqueOn = true;
+      flash(res.message, !res.ok || !res.torqueOn);
     } catch (err) {
       flash(err instanceof Error ? err.message : "Reboot failed", true);
     } finally {

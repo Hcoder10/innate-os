@@ -17,6 +17,7 @@ const OUTER_R = 84;
 const KNOB_R = 13;
 const MAX_DIST = OUTER_R - KNOB_R;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const TOGGLE_KEY = "KeyJ"; // press j to hide/show the on-screen joystick
 
 /**
  * @param {string} tag
@@ -147,6 +148,26 @@ export function createJoystick(parent, driveController) {
   svg.addEventListener("pointercancel", release);
   svg.addEventListener("lostpointercapture", release);
 
+  // Hide/show with the j key. Releasing on hide clears any latched command so
+  // the robot never keeps driving from a joystick the operator can't see.
+  let hidden = false;
+  function toggleHidden() {
+    hidden = !hidden;
+    if (hidden) release();
+    svg.style.display = hidden ? "none" : "";
+  }
+
+  /** @param {KeyboardEvent} e */
+  function onKeyDown(e) {
+    if (e.code !== TOGGLE_KEY || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = document.activeElement;
+    if (el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+      return;
+    }
+    toggleHidden();
+  }
+  window.addEventListener("keydown", onKeyDown);
+
   // Mirror keyboard drive so the knob always shows what the robot was told.
   const unsubActive = driveController.onActiveChange((state) => {
     if (pointerEngaged) return;
@@ -163,6 +184,7 @@ export function createJoystick(parent, driveController) {
   return {
     destroy() {
       release();
+      window.removeEventListener("keydown", onKeyDown);
       unsubActive();
       svg.remove();
     },

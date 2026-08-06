@@ -37,6 +37,7 @@ const ROUTES = [
   { path: "/training", key: "training", load: () => import("./training/main.js") },
   { path: "/profiling", key: "profiling", load: () => import("./profiling/main.js") },
   { path: "/calibration", key: "calibration", load: () => import("./calibration/main.js") },
+  { path: "/armsdk", key: "armsdk", load: () => import("./armsdk/main.js") },
   { path: "/settings", key: "settings", load: () => import("./settings/main.js") },
 ];
 
@@ -99,7 +100,23 @@ async function render(route) {
     }
   } catch (err) {
     console.error(`[router] failed to load ${route.path}:`, err);
+  } finally {
+    // The first page has now built its DOM (a sim stage brings up its own
+    // loading scrim here), so hand off from the boot splash. In `finally` so a
+    // failed first mount still clears it rather than stranding the splash.
+    dismissBootSplash();
   }
+}
+
+// Boot splash lives in index.html so it paints before this module's graph
+// loads; drop it once the first page mounts. Fade then remove; a fallback
+// timer covers a missed transitionend (reduced-motion, pre-paint start).
+function dismissBootSplash() {
+  const splash = document.getElementById("boot-splash");
+  if (!splash) return;
+  splash.classList.add("is-leaving");
+  splash.addEventListener("transitionend", () => splash.remove(), { once: true });
+  setTimeout(() => splash.remove(), 600);
 }
 
 /**

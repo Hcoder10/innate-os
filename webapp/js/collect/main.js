@@ -18,6 +18,7 @@ import { createVideoStage, createAudioToggle } from "../teleop/videoStage.js";
 import { createJoystick } from "../teleop/joystick.js";
 import { createKeyboardDrive, createWasdChips } from "../teleop/keyboardDrive.js";
 import { createHeadTilt } from "../teleop/headTilt.js";
+import { createSpeedModes } from "../teleop/speedModes.js";
 import { createTtsBar } from "../teleop/ttsBar.js";
 import { createTelemetry } from "../teleop/telemetry.js";
 import { createArmPanel } from "../teleop/armPanel.js";
@@ -83,6 +84,10 @@ function buildCockpit(root) {
     videoStage,
     createTelemetry(telemetryOverlay, ros),
     ...(videoStage.audioEl ? [createAudioToggle(rightRail, session, videoStage.audioEl)] : []),
+    // Driving speed matters here: episodes are more repeatable at a consistent pace, and
+    // mars_app already nudges the robot to Medium when a recording starts. The picker is
+    // shown so that default is visible and overridable rather than a mystery.
+    createSpeedModes(rightRail, ros),
     headTilt,
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),

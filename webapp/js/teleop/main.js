@@ -20,12 +20,14 @@ import { createVideoStage, createAudioToggle } from "./videoStage.js";
 import { createJoystick } from "./joystick.js";
 import { createKeyboardDrive, createWasdChips } from "./keyboardDrive.js";
 import { createHeadTilt } from "./headTilt.js";
+import { createSpeedModes } from "./speedModes.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
 import { createCameraSwitch } from "./cameraSwitch.js";
+import { dismissAllConfirms } from "../nav/confirm.js";
 
 // Runtime feature flags (config.json, served static). Sim-only debug controls are
 // off unless a deployment opts in. Fetched once when this module first loads (the
@@ -83,6 +85,7 @@ function buildCockpit(root) {
     parts.push(createAudioToggle(rightRail, session, videoStage.audioEl));
   }
   parts.push(
+    createSpeedModes(rightRail, ros),
     createHeadTilt(rightRail, ros),
     createWasdChips(chipsOverlay, keyboard),
     createJoystick(stickOverlay, drive),
@@ -100,6 +103,9 @@ function buildCockpit(root) {
   return {
     destroy() {
       drive.haltAll();
+      // Confirm dialogs (speed picker) live on document.body — sweep them so
+      // navigating away doesn't leave one floating over the next page.
+      dismissAllConfirms();
       for (const part of parts) part.destroy();
       session.destroy();
       root.innerHTML = "";

@@ -6,9 +6,29 @@
 
 export const ROSBRIDGE_PORT = 9090;
 
-// Drive: {x, y} in [-1, 1], y > 0 = forward. The robot's mars_app node maps
-// every /joystick message straight to one /cmd_vel publish.
+// Drive: {x, y} in [-1, 1], y > 0 = forward. The robot's mars_app node shapes
+// each message into a velocity *target*; a 50 Hz smoother there ramps
+// /cmd_vel_teleop toward it under acceleration limits, so what we publish is a
+// request, not the twist the motors see.
 export const JOYSTICK_TOPIC = "/joystick";
+
+// ---- Manual-drive speed mode ----------------------------------------------
+// A multiplier on the robot's configured motion_control speed caps, held as a
+// live ROS parameter on mars_app (rcl_interfaces/srv/SetParameters, PARAMETER_DOUBLE).
+// It scales the caps rather than replacing them, so a client can only ever slow
+// the robot down, never drive it past what settings.yaml allows.
+export const APP_CONTROL_NODE = "/mars_app";
+export const SET_PARAMETERS_SERVICE = `${APP_CONTROL_NODE}/set_parameters`;
+export const SPEED_SCALE_PARAM = "motion_control.speed_scale";
+export const PARAMETER_DOUBLE = 3;
+// The picker's presets. `scale` must match the mobile app's table so the two
+// clients label the same robot state identically — the value is global, and
+// whichever client changed it last wins.
+export const SPEED_MODES = [
+  { id: "slow", label: "Slow", scale: 0.35 },
+  { id: "medium", label: "Med", scale: 0.65 },
+  { id: "fast", label: "Fast", scale: 1.0 },
+];
 
 // Head tilt: std_msgs/Int32 degrees in [HEAD_MIN_DEG, HEAD_MAX_DEG].
 export const HEAD_SET_POSITION_TOPIC = "/mars/head/set_position";
@@ -147,6 +167,14 @@ export const LEADER_POSITIONS_TOPIC = "/leader_positions";
 // 0°, re-torques the head, and leaves the *arm* limp. Same service the mobile
 // app's "Reboot Arm Servos" button calls.
 export const ARM_REBOOT_SERVICE = "/mars/arm/reboot";
+
+// The reboot power-cycles the servos and "takes a few seconds" — give the
+// service call more room than the 10s default before timing out.
+export const ARM_REBOOT_TIMEOUT_MS = 20_000;
+
+// One confirm for every reboot entry point (arm panel, protection alert).
+export const ARM_REBOOT_CONFIRM =
+  "Reboot the arm servos? Any running task stops, the head recenters to level, and torque re-enables automatically once the servos come back.";
 
 // Enable/disable torque on the 6 arm servos (std_srvs/Trigger). torque_on syncs
 // the target to the current pose first, so the arm holds where it is rather
