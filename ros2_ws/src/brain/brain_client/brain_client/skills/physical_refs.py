@@ -44,11 +44,14 @@ from innate import TrainedSkill
 # removes files that start with it, so a hand-written __init__.py is safe.
 _SHIM_MARKER = "# AUTO-GENERATED physical-skill ref"
 
-# Dir shims are runtime-owned and gitignored (workspace/innate_skills/
-# .gitignore): committing one gives the path two writers, and a robot whose
-# running code is ahead of its checkout then aborts `git pull`/`innate update`
-# on the untracked collision. {imported} is just "{name}", or
-# "{qualified} as {name}" when another skill took the plain name.
+# Dir shims are runtime-owned and must stay untracked: committing one gives
+# the path two writers, and a robot whose running code is ahead of its
+# checkout then aborts `git pull`/`innate update` on the untracked collision.
+# Any package root with tracked recording folders needs the */__init__.py
+# ignore (see workspace/innate_skills/.gitignore). Interpolating {name} into
+# quote characters is safe because class_name_for() only ever returns a valid
+# identifier. {imported} is just "{name}", or "{qualified} as {name}" when
+# another skill took the plain name.
 
 _DIR_SHIM = (
     _SHIM_MARKER

@@ -8,14 +8,24 @@ This module contains initialization functions for skills and agents
 to keep the main brain_client_node.py clean and focused.
 """
 
+import os
+
 from brain_client.agents.loader import AgentLoader
 from brain_client.agents.types import Agent
 from brain_client.common.script_paths import (
     ensure_user_directories,
     get_agent_directories,
+    get_skill_directories,
     get_workspace_dir,
+    skill_id_prefix_for,
 )
-from brain_client.skills.physical_refs import render_refs, write_refs
+from brain_client.skills.physical import has_physical_metadata
+from brain_client.skills.physical_refs import (
+    render_dir_shims,
+    render_refs,
+    write_dir_shims,
+    write_refs,
+)
 
 
 def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tuple[dict[str, Agent], Agent | None]:
@@ -42,6 +52,9 @@ def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tup
     # agents load before the skills server has written it). The skills server
     # is the authoritative writer; this only fills the ordering gap.
     _regenerate_physical_refs(logger, skills_dict)
+    # Same gap for the pack-local spelling (`from innate_skills.wave import
+    # Wave`): the folder shims are runtime-only, so recreate missing ones too.
+    _ensure_dir_shims(logger)
 
     agents_directories = [str(p) for p in get_agent_directories()]
 
@@ -90,3 +103,32 @@ def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> No
     # (learned/replay/eval/poses/...; broken entries never reach the registry).
     entries = [meta for meta in skills_dict.values() if meta.get("type") != "code"]
     write_refs(get_workspace_dir() / "physical_skills", render_refs(entries), logger)
+
+
+def _ensure_dir_shims(logger) -> None:
+    """Create *missing* recording-folder ``__init__.py`` shims before agents
+    import — a tracked agent may `from innate_skills.wave import Wave`, and the
+    shims are runtime-only (gitignored). Unlike the refs above this needs no
+    roster: metadata.json marks the folders on disk, so it also covers the
+    skills server still booting past the 60s wait, and the one update that
+    deletes the once-tracked shims from the worktree. Create-only: existing
+    shims are never rewritten or pruned here — the skills server owns updates,
+    so the two writers can't fight over content."""
+    entries = []
+    for root in get_skill_directories():
+        try:
+            children = list(os.scandir(root))
+        except OSError:
+            continue
+        for child in children:
+            # same skip set as the catalog's folder scan (__pycache__, .git)
+            if child.name.startswith((".", "__")) or not child.is_dir():
+                continue
+            if has_physical_metadata(child.path):
+                entries.append({"id": f"{skill_id_prefix_for(child.path)}/{child.name}", "dir": child.path})
+    missing = {
+        path: content
+        for path, content in render_dir_shims(entries).items()
+        if content is not None and not os.path.exists(path)
+    }
+    write_dir_shims(missing, logger)

@@ -70,8 +70,9 @@ def validate_physical_skill(skill_dir: str, metadata: dict, logger) -> tuple:
         if not execution.get("replay_file") and os.path.isdir(os.path.join(skill_dir, "data")):
             return (True, True)
         # A named replay_file that isn't on disk is the not-fetched-yet state, not
-        # damage: recording folders ship in git with metadata.json + the generated
-        # ref shim but without the trajectory (see metadata["downloads"]). Mirror
+        # damage: recording folders ship in git with metadata.json but without the
+        # trajectory (see metadata["downloads"]); the catalog writes the ref shim
+        # at runtime. Mirror
         # the missing-checkpoint treatment learned skills get — roster it as
         # in_training so the typed ref keeps existing (agents importing it stay
         # loadable) and execution is refused with a reason, not "unknown skill".
