@@ -119,8 +119,16 @@ class PrimitiveRunner:
                     }
             elif status in ("completed", "failed", "interrupted"):
                 running = self._state.primitive_running
-                if running is not None and running.get("manual"):
-                    self._state.primitive_running = None
+                if running is None or not running.get("manual"):
+                    return
+                # Match ids when both sides carry one: a delayed terminal from
+                # an older manual run must not clear a newer run's mirror. A
+                # publisher that omits ids falls back to any-manual — requiring
+                # a match there would wedge the slot shut forever.
+                running_id = running.get("primitive_id")
+                if primitive_id and running_id and primitive_id != running_id:
+                    return
+                self._state.primitive_running = None
 
     def _release(self, claim: dict) -> None:
         """Free the slot iff it still holds ``claim`` (identity, not equality)."""

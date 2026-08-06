@@ -169,6 +169,26 @@ def test_manual_terminal_only_clears_a_manual_occupant():
     assert state2.primitive_running is None
 
 
+def test_stale_manual_terminal_with_a_different_id_keeps_the_newer_manual_run():
+    # A delayed terminal from an OLDER manual run must not clear the mirror of
+    # a newer manual run that has since claimed the slot.
+    runner, state = make_runner(None)
+    runner.mirror_manual_event("running", primitive_name="wave", primitive_id="m2", skill_id="local/wave")
+    runner.mirror_manual_event("completed", primitive_name="wave", primitive_id="m1", skill_id="local/wave")
+    assert state.primitive_running is not None
+    runner.mirror_manual_event("completed", primitive_name="wave", primitive_id="m2", skill_id="local/wave")
+    assert state.primitive_running is None
+
+
+def test_manual_terminal_without_ids_still_clears_the_mirror():
+    # Publishers that omit primitive_id fall back to any-manual clearing —
+    # requiring a match there would wedge the slot shut forever.
+    runner, state = make_runner(None)
+    runner.mirror_manual_event("running", primitive_name="wave", primitive_id=None, skill_id="local/wave")
+    runner.mirror_manual_event("completed", primitive_name="wave", primitive_id=None, skill_id="local/wave")
+    assert state.primitive_running is None
+
+
 def test_generation_is_captured_at_claim_time_so_a_mid_send_disown_orphans_the_goal():
     # A reset can land while start_task is blocked in wait_for_server. The
     # goal's callbacks must carry the claim-time generation: the disown bumps

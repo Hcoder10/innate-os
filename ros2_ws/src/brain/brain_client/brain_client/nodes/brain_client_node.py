@@ -379,8 +379,11 @@ class BrainClientNode(Node):
         self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
         # The runner mirrors the run into the skill slot (under its slot lock,
         # so a concurrent brain-owned start can't be clobbered or cleared).
+        # The RAW payload id goes to the mirror, not the synthesized fallback:
+        # a per-message synthesized id would make the terminal's id "mismatch"
+        # the running one and wedge the slot shut for id-less publishers.
         self.runner.mirror_manual_event(
-            status, primitive_name=primitive_name, primitive_id=primitive_id, skill_id=skill_id
+            status, primitive_name=primitive_name, primitive_id=payload.get("primitive_id"), skill_id=skill_id
         )
         if self.state.is_brain_active:
             detail = reason or "triggered manually from the app"
