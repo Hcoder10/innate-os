@@ -6,7 +6,7 @@ sim/README.md "world_server.py"):
   then one binary frame iff the JSON says "blob": <nbytes>.
 - observer state stream (--state-port): a WebSocket broadcasting ground
   truth ({t, wall, pose, joints, objects}) after every physics slice, and
-  accepting stage commands ({"op": "drop_objects"}) back. Ground truth and
+  accepting stage commands ({"op": "drop_prop_at", ...}) back. Ground truth and
   scenery only -- robot software must never consume or drive it.
 
 Always runs on the host (the launcher starts it via uv): in-container
@@ -18,6 +18,7 @@ reads take the physics lock directly.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import socket
@@ -34,6 +35,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
+from .challenges import ChallengeEngine, SkillEventBridge
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
@@ -94,6 +96,10 @@ class WorldServer:
         self.state_payload = "{}"
         self.state_seq = 0
         self.state_cond = threading.Condition()
+        # Challenge judge: evaluated on each published state, driven by
+        # observer commands, fed skill events by SkillEventBridge (main()).
+        self.challenges = ChallengeEngine(sim, self.lock)
+        self._challenge_error_at = 0.0  # last throttled challenge-failure log
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---
 
@@ -129,10 +135,39 @@ class WorldServer:
             x, y, yaw = self.sim.pose()
             joints = self.sim.joint_positions()
             objects = self.sim.object_poses()
+            # Prop CENTRES for the judge (props.py center_offset): a distance
+            # to the human has to mean its body, not the feet its origin sits
+            # at. Gathered here because the judge runs without the sim.
+            centers = self.sim.object_centers()
             sim_time = float(self.sim.data.time)
+            # Under the same lock hold as the snapshot: names WHICH world these
+            # numbers came from, so a challenge start landing between here and
+            # tick() cannot get them judged against its fresh run.
+            epoch = self.challenges.world_epoch
+        # Judged outside the sim lock: pure evaluation over the gathered state.
+        # Wrapped because this runs on the physics thread and physics_loop has
+        # no guard of its own: a predicate bug, a hand-edited challenges.json,
+        # anything at all in the challenge layer would otherwise kill that
+        # thread and freeze the world for every viewer. The block goes missing
+        # for a frame instead -- which is the module's own contract, that a
+        # broken challenge degrades that challenge and never the sim.
+        try:
+            challenge = self.challenges.tick(sim_time, (x, y, yaw), centers, epoch)
+        except Exception as exc:  # noqa: BLE001 -- degrade the challenge, never the sim
+            challenge = None
+            if time.time() - self._challenge_error_at > 5.0:  # 75Hz: do not flood the log
+                self._challenge_error_at = time.time()
+                print(f"[world-server] challenge tick failed: {exc!r}", flush=True)
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
-            {"t": sim_time, "wall": time.time(), "pose": [x, y, yaw], "joints": joints, "objects": objects}
+            {
+                "t": sim_time,
+                "wall": time.time(),
+                "pose": [x, y, yaw],
+                "joints": joints,
+                "objects": objects,
+                "challenge": challenge,
+            }
         )
         with self.state_cond:
             self.state_payload = payload
@@ -141,23 +176,66 @@ class WorldServer:
 
     def _serve_scenario_commands(self, ws) -> None:
         """Read the observer socket for stage commands. This is the sim's own
-        scenery, not robot control: the ops lay the manipulation props out in
-        front of the robot and take them away again (see core.drop_objects),
-        so an operator can practise grabbing without a full reset."""
+        scenery, not robot control: the ops place props (see props.py) and take
+        them away again, without a full reset."""
         try:
             for raw in ws:
-                op = json.loads(raw).get("op")
-                if op in ("drop_objects", "remove_objects"):  # allowlist: it names the method
-                    with self.lock:
-                        getattr(self.sim, op)()
+                try:
+                    self._run_scenario_command(json.loads(raw))
+                except Exception as exc:  # noqa: BLE001 -- one bad command must not drop the connection
+                    print(f"[world-server] ignoring stage command: {exc!r}", flush=True)
         except Exception:  # noqa: BLE001,S110 -- client gone, or junk on the wire
             pass
+
+    def _run_scenario_command(self, cmd: dict) -> None:
+        op = cmd.get("op")
+        if op == "drop_prop_at":  # user picked the spot: release + settle
+            name, x, y = str(cmd["name"]), float(cmd["x"]), float(cmd["y"])
+            yaw = float(cmd.get("yaw", 0.0))
+            with self.lock:
+                ok = self.sim.drop_prop_at(name, x, y, yaw)
+        elif op == "place_prop_at_robot":  # at rest, at the prop's own reach offset
+            name = str(cmd["name"])
+            with self.lock:
+                ok = self.sim.place_prop_at_robot(name)
+        elif op == "remove_prop":
+            name = str(cmd["name"])
+            with self.lock:
+                ok = self.sim.remove_prop(name)
+        elif op == "place_group":  # a whole set at once, each at its own offset
+            with self.lock:
+                self.sim.place_group(str(cmd.get("group", "manipulation")))
+            ok = True
+        elif op == "remove_all_props":  # the stage's "clear" chip
+            with self.lock:
+                self.sim.remove_all_props()
+            ok = True
+        elif op == "start_challenge":  # sets its own scene up; see challenges.py
+            self.challenges.start(str(cmd.get("id", "")))
+            self.publish_state()
+            return
+        elif op == "abort_challenge":
+            self.challenges.abort()
+            self.publish_state()
+            return
+        else:
+            return
+        if not ok:
+            print(f"[world-server] {op} ignored: no prop {cmd.get('name')!r} in this world", flush=True)
+        self.publish_state()
 
     def serve_state(self, ws) -> None:
         """One observer connection: push each new state, latest-wins (a slow
         client skips states instead of queueing lag), and accept the stage
         commands above on the way back."""
         threading.Thread(target=self._serve_scenario_commands, args=(ws,), daemon=True).start()
+        # The prop roster (props.py sidecars) and the challenge roster
+        # (challenges.py) never change while the server runs, so they go out
+        # once per connection instead of riding every state broadcast. The
+        # viewer builds its models and buttons from the props; the challenge
+        # panel gets titles and briefs here and progress from the stream.
+        with contextlib.suppress(Exception):  # noqa: BLE001 -- client gone before the first frame
+            ws.send(json.dumps({"props": self.sim.prop_manifest(), "challenges": self.challenges.roster()}))
         last_seq = -1
         try:
             while True:
@@ -378,6 +456,7 @@ def main() -> None:
         print(f"[world-server] observer state stream on port {args.state_port} ({', '.join(binds)})", flush=True)
 
     threading.Thread(target=server.physics_loop, daemon=True).start()
+    SkillEventBridge(server.challenges)  # robot skill events for challenge goals (best-effort)
 
     def accept_loop(listener: socket.socket) -> None:
         while True:

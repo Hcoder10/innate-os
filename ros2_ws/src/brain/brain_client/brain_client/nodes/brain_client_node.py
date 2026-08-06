@@ -37,6 +37,7 @@ from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.lifecycle import primitive_lifecycle_message
 from brain_client.skills.registration import SkillCatalog
 from brain_client.skills.runner import PrimitiveRunner
+from brain_client.skills.workspace_import import format_load_error, unique_key
 from brain_client.transport.chat import ChatManager
 from brain_client.transport.messages import MessageIn, MessageInType, MessageOutType
 from brain_client.transport.tts import TTSHandler
@@ -285,7 +286,7 @@ class BrainClientNode(Node):
 
         # None skips per-agent skill validation: against an empty registry every
         # agent would "fail" it.
-        self.state.directives, self.state.current_directive = initialize_agents(
+        self.state.directives, self.state.current_directive, self.state.broken_agents = initialize_agents(
             self.get_logger(), self.state.registry.primitives or None
         )
         self.state.active_skill_ids = (
@@ -490,17 +491,26 @@ class BrainClientNode(Node):
 
     def _svc_get_directives(self, request, response):
         details = []
-        for directive in self.state.directives.values():
-            details.append(
-                {
-                    "id": directive.id,
-                    "display_name": directive.display_name,
-                    "display_icon": directive.display_icon_data,
-                    "prompt": directive.get_prompt(),
-                    "skills": directive.skill_ids(),
-                    "source": getattr(directive, "source", "user"),
-                }
-            )
+        # Load-time broken agents, plus any that pass loading but fail while
+        # this response is built — those roster broken too instead of silently
+        # dropping out of the picker (the vanishing this field exists to end).
+        broken = dict(self.state.broken_agents)
+        for agent_id, directive in self.state.directives.items():
+            try:
+                details.append(
+                    {
+                        "id": directive.id,
+                        "display_name": directive.display_name,
+                        "display_icon": directive.display_icon_data,
+                        "prompt": directive.get_prompt(),
+                        "skills": directive.skill_ids(),
+                        "source": getattr(directive, "source", "user"),
+                    }
+                )
+            except Exception as e:  # noqa: BLE001 — one bad agent must not take the roster down
+                error = format_load_error(e)
+                broken[unique_key(broken, agent_id)] = error
+                self.get_logger().error(f"Error reading directive '{agent_id}': {error}")
         response.directives = [
             json.dumps(details),
             json.dumps(
@@ -508,6 +518,14 @@ class BrainClientNode(Node):
                     "skills": self.state.registry.metadata,
                     "active_skills": self.catalog.active_skill_ids_for_registration(),
                     "brain_active": self.state.is_brain_active,
+                    # Agents whose module failed to import or whose class failed
+                    # to build — not selectable, shown disabled with the error.
+                    # In the meta dict (not the agent list) so clients that
+                    # don't know the field never offer them for selection.
+                    "broken_agents": [
+                        {"id": name, "display_name": name, "load_error": error}
+                        for name, error in sorted(broken.items())
+                    ],
                 }
             ),
         ]

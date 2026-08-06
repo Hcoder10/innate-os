@@ -22,6 +22,7 @@ from PIL import Image
 
 from . import world
 from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, WRIST_CAMERA_FOVY
+from .props import PropRegistry
 from .world import ARM_HOME, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG
 
 # Stop the base if the last Twist is stale, like a real base watchdog.
@@ -185,11 +186,15 @@ class VirtualMars:
         visual_dir = ASSETS_DIR / "apartment_visual"
         visual_rooms = world.find_visual_rooms(visual_dir) if visual_dir.is_dir() else {}
 
+        # Droppable props: sidecars from the tracked source dir plus any the
+        # asset bundle shipped, each parked off-map until something places it.
+        self.props = PropRegistry.load([world.repo_root() / "sim" / "props", ASSETS_DIR / "props"])
         xml = world.build_world_xml(
             rooms,
             include_placeholder_robot=False,
             visual_rooms=visual_rooms,
             texture_max=_texture_cap(self._render_w),
+            props=self.props,
         )
         # Lidar rays hit only the textured visual meshes (true surfaces, like
         # a real lidar) when available -- without them, fall back to all
@@ -212,6 +217,8 @@ class VirtualMars:
             *(f for pieces in rooms.values() for f in pieces),
             *(p for obj in visual_rooms.values() for p in (obj, obj.with_suffix(".png"))),
             *(f for f in urdf_path.parent.rglob("*") if f.suffix in (".stl", ".dae", ".obj", ".png", ".urdf")),
+            # A prop mesh appearing (or being republished) changes the world.
+            *self.props.asset_files(),
         ]
         cache_path = _model_cache_path(xml, asset_files)
         self.model = None
@@ -276,19 +283,11 @@ class VirtualMars:
         for dadr in (self._joints[mimic_source][1], self._mimic[1]):
             self._servo[dadr] = (KD_GRIPPER, GRIPPER_EFFORT_LIMIT)
 
-        # Manipulation props: parked off-map in the model, so they exist only
-        # once drop_objects places them (and only then does anything report
-        # them). mj_resetData restores the parked pose, so reset() just has to
-        # forget which ones were out.
-        self._dropped: set[str] = set()
-        self._objects = {}  # name -> (body id, freejoint qpos_adr, dof_adr)
-        for obj in world.GRASP_OBJECTS:
-            jid = self.model.joint(f"{obj['name']}_free").id
-            self._objects[obj["name"]] = (
-                self.model.body(obj["name"]).id,
-                self.model.jnt_qposadr[jid],
-                self.model.jnt_dofadr[jid],
-            )
+        # Props are parked off-map in the model, so they exist only once
+        # something places them (and only then does anything report them).
+        # mj_resetData restores the parked pose, so reset() just has to forget
+        # which ones were out.
+        self.props.bind(self.model)
 
         self._renderer: mujoco.Renderer | None = None
         self._depth_renderer: mujoco.Renderer | None = None
@@ -309,7 +308,7 @@ class VirtualMars:
             self.data.qpos[qadr] = home
         mq, _md, source, mult = self._mimic
         self.data.qpos[mq] = mult * ARM_HOME[source]
-        self._dropped.clear()  # mj_resetData already re-parked every prop
+        self.props.mark_all_parked()  # mj_resetData already re-parked every prop
         self._cmd_vx = self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
         self._hold = None
@@ -715,7 +714,7 @@ class VirtualMars:
 
     def encoder_positions(self) -> dict[str, float]:
         """What the real servo encoders would read: link angle plus the
-        structural deflection. The driver publishes THIS on /joint_states --
+        structural deflection due to gravity. The driver publishes THIS on /joint_states --
         real sag happens past the encoders, invisible to FK. The observer
         truth stream keeps joint_positions(), so viewers draw the sag."""
         out = {}
@@ -726,44 +725,56 @@ class VirtualMars:
         return out
 
     def object_poses(self) -> dict[str, list[float]]:
-        """Ground-truth [x, y, z, qw, qx, qy, qz] per manipulation prop that is
-        actually in the world -- what the viewer draws them from. Empty until
-        drop_objects; props still parked off-map are omitted, not reported at
-        their parking spot, so a viewer never draws one."""
+        """[x, y, z, qw, qx, qy, qz] per prop in world frame. Props parked off-map
+        are omitted."""
+        return self.props.poses(self.data)
+
+    def object_centers(self) -> dict[str, tuple[float, float]]:
+        """xy of each out prop's visual CENTRE (props.py center_offset), which
+        is what a distance to a prop should mean -- the human scan stands
+        feet-at-origin, so its raw body xy is where its feet are. The challenge
+        judge measures against these; parked props are absent."""
         return {
-            name: [*map(float, self.data.xpos[bid]), *map(float, self.data.xquat[bid])]
-            for name, (bid, _q, _d) in self._objects.items()
-            if name in self._dropped
+            name: center for name in self.props.out if (center := self.props.center_xy(self.data, name)) is not None
         }
 
-    def _place_object(self, obj: dict, x: float, y: float) -> None:
-        """Teleport one prop upright and at rest to (x, y), resting height."""
-        _bid, qadr, dadr = self._objects[obj["name"]]
-        self.data.qpos[qadr : qadr + 7] = [x, y, obj["z"], 1.0, 0.0, 0.0, 0.0]
-        self.data.qvel[dadr : dadr + 6] = 0.0
+    def prop_manifest(self) -> list[dict]:
+        """What every prop is and how to draw it (props.py), for the viewer."""
+        return self.props.manifest()
 
-    def drop_objects(self) -> None:
-        """Bring the manipulation props into the world, on the floor in front
-        of the robot WHERE IT IS NOW and at rest (world.GRASP_OBJECTS' robot-
-        frame offsets). They are parked off-map until this is called, so this
-        is the only way they ever appear; calling it again re-lays them.
-        Drive somewhere, drop a fresh set, practise grabbing -- without
-        resetting the robot's own pose the way reset() does."""
-        x, y, yaw = self.pose()
-        cos, sin = math.cos(yaw), math.sin(yaw)
-        for obj in world.GRASP_OBJECTS:
-            forward, lateral = obj["forward"], obj["lateral"]
-            self._place_object(obj, x + cos * forward - sin * lateral, y + sin * forward + cos * lateral)
-        self._dropped.update(obj["name"] for obj in world.GRASP_OBJECTS)
+    def drop_prop_at(self, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
+        """Release one prop above (x, y) and let physics settle it onto
+        whatever is below (floor, sofa, table). False when prop does not exist."""
+        if not self.props.drop_at(self.data, name, x, y, yaw):
+            return False
+        mujoco.mj_forward(self.model, self.data)
+        return True
+
+    def place_prop_at_robot(self, name: str) -> bool:
+        """Set one prop down at rest, at its own reach offset from the robot's
+        current pose. False when prop does not exist."""
+        if not self.props.place_at_robot(self.data, name, self.pose()):
+            return False
+        mujoco.mj_forward(self.model, self.data)
+        return True
+
+    def place_group(self, group: str = "manipulation") -> int:
+        """Set down every prop in `group` at its own reach offset from the
+        robot's current pose, and return how many landed. Props outside the
+        group stay where they are -- use remove_all_props() to clear."""
+        placed = self.props.place_group(self.data, group, self.pose())
+        mujoco.mj_forward(self.model, self.data)
+        return placed
+
+    def remove_all_props(self) -> None:
+        """Send every prop back off-map -- the state the world starts in, and
+        what reset() leaves behind."""
+        self.props.park_all(self.data)
         mujoco.mj_forward(self.model, self.data)
 
-    def remove_objects(self) -> None:
-        """Send the props back off-map to GRASP_PARK_XY -- the state the world
-        starts in, and what reset() leaves behind. The counterpart of
-        drop_objects, so an operator can clear the floor without resetting the
-        robot's own pose."""
-        park_x, park_y = world.GRASP_PARK_XY
-        for i, obj in enumerate(world.GRASP_OBJECTS):
-            self._place_object(obj, park_x + i * world.GRASP_PARK_PITCH, park_y)
-        self._dropped.clear()
+    def remove_prop(self, name: str) -> bool:
+        """Send one prop back off-map."""
+        if not self.props.park(self.data, name):
+            return False
         mujoco.mj_forward(self.model, self.data)
+        return True

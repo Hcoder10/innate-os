@@ -3,6 +3,41 @@
 // (proxied at /worldstate) -- the 3D view's only state source. See
 // world_server.py "two interfaces".
 
+import type { PropInfo } from "../props";
+
+/** What a challenge IS: sent once per connection, like the prop roster,
+ * because none of it changes while the server runs (challenges.py roster). */
+export interface ChallengeInfo {
+  id: string;
+  title: string;
+  brief: string;
+}
+
+/** A challenge's persisted record (workspace/challenges.json). */
+export interface ChallengeProgress {
+  passed: boolean;
+  best_time_s: number | null;
+  attempts: number;
+}
+
+/** The currently running (or just finished) challenge. */
+export interface ChallengeActive {
+  id: string;
+  state: "running" | "passed" | "failed";
+  reason: string;
+  elapsed_s: number;
+  time_limit_s: number | null;
+  goals: { label: string; done: boolean }[];
+}
+
+/** The world server's challenge judge state (challenges.py) embedded in every
+ * state broadcast -- only the parts that can change, keyed by challenge id
+ * for the ones that were attempted. */
+export interface ChallengeBlock {
+  progress: Record<string, ChallengeProgress>;
+  active: ChallengeActive | null;
+}
+
 export interface WorldState {
   /** Sim clock (s) -- the playback timeline. */
   t: number;
@@ -15,10 +50,16 @@ export interface WorldState {
   /** Ground truth of every manipulation prop (world.py GRASP_OBJECTS), keyed
    * by name: [x, y, z, qw, qx, qy, qz]. Empty on servers that predate them. */
   objects: Record<string, number[]>;
+  /** Challenge judge state; null on servers that predate it. */
+  challenge: ChallengeBlock | null;
 }
 
 export class WorldStateController {
   onState?: (state: WorldState) => void;
+  /** The prop roster, sent once per connection (props.py sidecars). */
+  onProps?: (props: PropInfo[]) => void;
+  /** The challenge roster, sent in the same opening frame (challenges.py). */
+  onChallenges?: (challenges: ChallengeInfo[]) => void;
 
   #url: string;
   #ws!: WebSocket;
@@ -64,7 +105,7 @@ export class WorldStateController {
     await this.#open;
   }
 
-  /** Send a stage command (e.g. drop_objects) back up the observer socket.
+  /** Send a stage command (e.g. place_group) back up the observer socket.
    * Dropped silently while the socket is (re)connecting -- it is a button
    * press, not something worth queueing. */
   send(cmd: object): void {
@@ -77,12 +118,21 @@ export class WorldStateController {
   }
 
   #onMessage(raw: string): void {
-    const msg = JSON.parse(raw) as {
+    const parsed = JSON.parse(raw) as { props?: PropInfo[]; challenges?: ChallengeInfo[] };
+    if (parsed.props || parsed.challenges) {
+      // Roster frame, not a state frame: it has no clock and arrives once,
+      // ahead of the stream (see world_server.serve_state).
+      if (parsed.props) this.onProps?.(parsed.props);
+      if (parsed.challenges) this.onChallenges?.(parsed.challenges);
+      return;
+    }
+    const msg = parsed as unknown as {
       t: number;
       wall: number;
       pose: [number, number, number];
       joints: Record<string, number>;
       objects?: Record<string, number[]> | null;
+      challenge?: ChallengeBlock | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
@@ -95,6 +145,7 @@ export class WorldStateController {
       yaw: msg.pose[2],
       joints,
       objects: msg.objects ?? {},
+      challenge: msg.challenge ?? null,
     });
   }
 }

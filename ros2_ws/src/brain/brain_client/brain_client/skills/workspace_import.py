@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import sys
+import traceback
 from pathlib import Path
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
@@ -79,15 +80,53 @@ def _iter_module_names(directory: Path, prefix: str):
 
 
 def import_workspace_packages(logger) -> dict[str, str]:
-    """Import every module in every workspace package.
+    """Import every module in every skill package.
 
     Returns ``{module_name: error}`` for modules that failed — the catalog
     rosters these as broken so nothing silently vanishes. Modules already in
     ``sys.modules`` are cheap no-ops; a reload evicts first.
     """
+    return import_packages([get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()], logger)
+
+
+def unique_key(taken: dict, base: str) -> str:
+    """``base``, or ``base.2``, ``base.3``… — the first key not in ``taken``.
+
+    Every broken-roster merge goes through this so no entry can silently
+    shadow another (class over module, module over module, probe over import);
+    a collision costs a numbered suffix, never a vanished error.
+    """
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}.{n}", n + 1
+    return key
+
+
+def format_load_error(e: BaseException) -> str:
+    """``<file>:<line>: ExcType: msg``, pointing at the deepest workspace frame
+    so the roster error names the user's file, not just the exception.
+    Falls back to plain ``ExcType: msg`` when no workspace frame is involved
+    (e.g. instantiating an abstract class)."""
+    workspace = get_workspace_dir()
+    location = ""
+    # lookup_lines=False: only filename/lineno are used, don't read sources.
+    for frame in traceback.StackSummary.extract(traceback.walk_tb(e.__traceback__), lookup_lines=False):
+        try:
+            rel = Path(frame.filename).relative_to(workspace)
+        except ValueError:
+            continue  # not under workspace/ (a prefix sibling like workspace_old/ must not match)
+        location = f"{rel}:{frame.lineno}: "
+    return f"{location}{type(e).__name__}: {e}"
+
+
+def import_packages(package_dirs: list[Path], logger) -> dict[str, str]:
+    """Import every module in every given workspace package; the shared core
+    of skill discovery, also used for agent packages (agents/loader.py).
+
+    Returns ``{module_name: error}`` for modules that failed to import.
+    """
     ensure_import_roots()
     errors: dict[str, str] = {}
-    package_dirs = [get_innate_skills_dir(), get_custom_skills_dir(), *get_workspace_package_dirs()]
     for package_dir in package_dirs:
         if not package_dir.is_dir():
             continue
@@ -95,8 +134,8 @@ def import_workspace_packages(logger) -> dict[str, str]:
             try:
                 importlib.import_module(module_name)
             except Exception as e:  # noqa: BLE001 — a broken user module must not stop discovery
-                errors[module_name] = f"{type(e).__name__}: {e}"
-                logger.warning(f"Module {module_name} failed to import: {type(e).__name__}: {e}")
+                errors[module_name] = format_load_error(e)
+                logger.warning(f"Module {module_name} failed to import: {errors[module_name]}")
     return errors
 
 
@@ -136,55 +175,72 @@ def _live_class(module, qualname: str):
     return obj
 
 
-def registered_workspace_skills(logger) -> dict[str, tuple[str, type[Skill], Path]]:
-    """Live skills from the registry: ``{skill_id: (class_name, cls, source_path)}``.
+def live_registered_classes(registry: dict, kind: str, logger, *, include_abstract: bool = False) -> tuple[list, list]:
+    """Live ``(cls, source_path)`` pairs from a ``__init_subclass__`` registry
+    (``Skill._registry``, ``Agent._registry``), pruning stale entries as it
+    goes: an entry whose module is no longer in ``sys.modules`` (evicted for
+    reload) or no longer binds this exact class object (module re-imported,
+    file edited to remove the class) is dead. ``_``-prefixed classes are
+    helper bases. Abstract classes warn and are kept only with
+    ``include_abstract`` (agents roster them broken; skills skip them).
 
-    Prunes stale registrations as it goes: an entry whose module is no longer
-    in ``sys.modules`` (evicted for reload) or no longer binds this exact
-    class object (module re-imported, file edited to remove the class) is
-    dead. Abstract and ``_``-prefixed classes are helper bases, never skills.
+    Returns ``(classes, rejected)``: ``rejected`` is ``(cls, error)`` for
+    function-local classes in live modules — unreachable from their module by
+    design, so unloadable; callers roster them broken rather than let them
+    vanish with only a log line.
     """
-    skills: dict[str, tuple[str, type[Skill], Path]] = {}
-    for (module_name, qualname), cls in list(Skill._registry.items()):
+    out: list[tuple[type, Path]] = []
+    rejected: list[tuple[type, str]] = []
+    for (module_name, qualname), cls in list(registry.items()):
         module = sys.modules.get(module_name)
         bound = _live_class(module, qualname) if module is not None else None
         if bound is not cls:
-            # A live module with a function-local Skill is an authoring
-            # mistake, not staleness — pruning it silently would be the exact
-            # vanishing this import model exists to eliminate.
+            # A live module with a function-local class is an authoring
+            # mistake, not staleness — it must surface, not silently vanish.
             if module is not None and "<locals>" in qualname:
-                logger.warning(
-                    f"Skill {qualname} in {module_name} is defined inside a function and cannot be "
+                error = (
+                    f"{qualname} in {module_name} is defined inside a function and cannot be "
                     "loaded; define it at module level."
                 )
-            del Skill._registry[(module_name, qualname)]
-            continue
-        if cls.__name__.startswith("_"):
-            continue  # helper base by convention, deliberately not a skill
-        if inspect.isabstract(cls):
-            # Usually an unimplemented abstract method (e.g. a misspelled
-            # execute()) — the class silently vanishing from the roster was
-            # undiagnosable for the author (same warning the old file-exec
-            # loader carried; it must not regress here).
-            missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
-            logger.warning(
-                f"Skipping abstract class {cls.__name__} in {module_name} (unimplemented: {missing}); "
-                "implement the missing methods, or prefix the class with '_' if it is a helper base."
-            )
+                logger.warning(f"{kind} {error}")
+                rejected.append((cls, error))
+            del registry[(module_name, qualname)]
             continue
         if module_name.startswith("workspace."):
             # The same file imported via the compat `workspace.<pkg>` path is a
-            # *second* module object; the bare-name import above already owns
-            # the registration, so skip the double to avoid duplicate ids.
+            # *second* module object; the bare-name import already owns the
+            # registration, so skip the double to avoid duplicate ids.
             continue
+        if cls.__name__.startswith("_"):
+            continue  # helper base by convention
+        if inspect.isabstract(cls):
+            # Usually a misspelled abstract method — silently vanishing from
+            # the roster was undiagnosable for the author.
+            missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
+            logger.warning(
+                f"{kind} {cls.__name__} in {module_name} is abstract (unimplemented: {missing}); "
+                "implement the missing members, or prefix the class with '_' if it is a helper base."
+            )
+            if not include_abstract:
+                continue
         source_file = getattr(module, "__file__", None)
         if source_file is None:
             continue
+        out.append((cls, Path(source_file)))
+    return out, rejected
+
+
+def registered_workspace_skills(logger) -> tuple[dict[str, tuple[str, type[Skill], Path]], dict[str, str]]:
+    """Live skills from the registry, plus function-local rejects as broken:
+    ``({skill_id: (class_name, cls, source_path)}, {skill_id: error})``."""
+    classes, rejected = live_registered_classes(Skill._registry, "Skill", logger)
+    skills: dict[str, tuple[str, type[Skill], Path]] = {}
+    for cls, source_file in classes:
         skill_id = skill_id_for_class(cls)
         if skill_id in skills:
             logger.warning(
                 f"Skill id conflict: '{skill_id}' defined by both "
                 f"{skills[skill_id][2]} and {source_file}. Using the latter."
             )
-        skills[skill_id] = (cls.__name__, cls, Path(source_file))
-    return skills
+        skills[skill_id] = (cls.__name__, cls, source_file)
+    return skills, {skill_id_for_class(cls): error for cls, error in rejected}
