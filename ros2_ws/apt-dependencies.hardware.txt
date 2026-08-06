@@ -33,12 +33,34 @@ nvidia-l4t-dla-compiler
 
 # Navigation / SLAM full stack (sim assembles a trimmed nav stack from the
 # nav2 sub-packages in apt-dependencies.sim.txt)
-ros-humble-navigation2
-ros-humble-nav2-bringup
-ros-humble-nav2-amcl
-ros-humble-nav2-map-server
-ros-humble-nav2-velocity-smoother
-ros-humble-spatio-temporal-voxel-layer
+# Full explicit innate nav2 set. Deliberately NOT the stock metapackage or
+# nav2-bringup: their versioned Depends anchor the stock stack and cannot be
+# satisfied by the innate debs' Provides, yielding a stock/innate hybrid
+# (observed live: stock mppi -> accel limits silently ignored).
+ros-humble-innate-nav-2d-msgs
+ros-humble-innate-nav-2d-utils
+ros-humble-innate-nav2-amcl
+ros-humble-innate-nav2-behavior-tree
+ros-humble-innate-nav2-behaviors
+ros-humble-innate-nav2-bt-navigator
+ros-humble-innate-nav2-collision-monitor
+ros-humble-innate-nav2-common
+ros-humble-innate-nav2-constrained-smoother
+ros-humble-innate-nav2-controller
+ros-humble-innate-nav2-core
+ros-humble-innate-nav2-costmap-2d
+ros-humble-innate-nav2-lifecycle-manager
+ros-humble-innate-nav2-map-server
+ros-humble-innate-nav2-mppi-controller
+ros-humble-innate-nav2-msgs
+ros-humble-innate-nav2-planner
+ros-humble-innate-nav2-simple-commander
+ros-humble-innate-nav2-smac-planner
+ros-humble-innate-nav2-smoother
+ros-humble-innate-nav2-util
+ros-humble-innate-nav2-velocity-smoother
+ros-humble-innate-nav2-voxel-grid
+ros-humble-innate-spatio-temporal-voxel-layer
 ros-humble-slam-toolbox-humble-lifecycle
 
 # Manipulation (sim pulls only ros-humble-moveit-msgs)

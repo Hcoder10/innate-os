@@ -1,86 +1,54 @@
 # CLAUDE.md
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+Project instructions for Claude. See [AGENTS.md](AGENTS.md) for the system overview, the
+`innate` CLI, and the ROS package map.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+## Comments: minimal, why-only
 
-## 1. Think Before Coding
+Write code clear enough to need no comment; a comment is a last resort, not a habit.
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+A comment earns its place only when it states something the code *cannot* say — and then it
+is 1-3 lines, no more:
 
-Before implementing:
+- a physical/hardware fact (`# preload beyond this overcurrent-trips the servo`)
+- a crash or race being designed around (`# destroying a sub under the spinning executor → InvalidHandle`)
+- a deliberate exception to a project rule (`# committed: teardown must not be cancellable`)
+- a misleading external interface (`# /ik_delta is an ABSOLUTE pose despite the name`)
 
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+Never write comments that narrate the next line, restate the function name, label obvious
+sections of a short function, justify the change to a reviewer, or repeat something already
+said once elsewhere (say the invariant in one place and reference it). Docstrings follow the
+same rule: one tight paragraph of contract — no Args/Returns lists that restate
+self-explanatory parameter names, no prose repeating the signature. If a comment is needed to
+make code understandable, first try renaming or restructuring so it isn't.
 
-## 2. Simplicity First
+## Writing skills
 
-**Minimum code that solves the problem. Nothing speculative.**
+### Never `time.sleep` — always `self.sleep`
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+**In skill code, use `self.sleep(seconds)`. Never `time.sleep(seconds)`.**
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+`self.sleep` wakes and raises `SkillCancelled` the moment a Stop lands; `time.sleep` blocks
+to completion, so a skill that uses it keeps running (and keeps the robot moving) after the
+user pressed Stop. Sleeping is the only cancel point a loop needs — write the loop as if
+cancel didn't exist and let the framework halt the base and report `CANCELLED`.
 
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+```python
+while traveled < target:
+    self.mobility.send_cmd_vel(linear_x=velocity, duration=0.5)
+    self.sleep(0.1)          # ✅ cancellable
+    # time.sleep(0.1)        # ❌ Stop is ignored until the sleep finishes
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+`time` itself is fine for *measuring* — `time.time()` / `time.monotonic()` for deadlines and
+elapsed checks. The rule is only about blocking.
 
-## 5. Clean, Readable Code
+`self.wait_for(read, timeout)` and `self.check_cancelled()` are cancel-aware too; cleanup
+belongs in `try/finally`.
 
-**You are a senior engineer. Write clean, maintainable code.**
+**The one exception:** teardown and already-committed physical actions must *not* be
+cancellable, so they use `time.sleep` deliberately — e.g. once `pick_any_object` closes the
+gripper, a cancel must not unwind mid-grip and drop the object. If you write such a section,
+comment it, or the next reader will "fix" it back to `self.sleep` and reintroduce the bug.
 
-Clean code is understood without reading the comments:
-
-- Use clear, descriptive variable and function names that state intent.
-- Keep complexity low. Avoid deep, multiple-levels-of-nesting indentation.
-- Use early returns to flatten control flow instead of nesting.
-- Keep things simple, always.
-
-When handling errors, don't overdo it:
-
-- Avoid scattering multiple try/catch blocks where one is enough.
-- Catch errors at the level where you can actually do something about them.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+See [AGENTS.md](AGENTS.md#writing-skills) for the full cancellation contract.

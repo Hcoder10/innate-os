@@ -135,6 +135,9 @@ You will find skills in two different directories:
 
 - **Built-in skills** — Located in `workspace/innate_skills/`.
 - **Your custom skills** — Stored in `workspace/custom_skills/`. Gitignored and yours to play with.
+- **Skill packs** — Any other folder dropped into `workspace/` loads as its own package (ids `<folder>/<name>`). A pack that lives elsewhere on disk is symlinked in (`ln -s /opt/team/skills workspace/team_skills`) and works the same, hot reload included.
+
+Helpers work like normal Python: any `.py` in your skills folder that doesn't define a `Skill` is just a module — `import` it, use relative imports inside subfolders, share across packages by bare name (`from innate_skills import arm_utils`). Device helpers are methods on the interfaces (`self.manipulation.move_to(...)`, `self.mobility.rotate_by(...)`); camera math and Gemini live under `innate` (`from innate import geometry, vision, gemini`).
 
 ### Skill definition
 
@@ -164,52 +167,27 @@ You will find skills in two different directories:
     <td width="50%" valign="top">
       <strong>Code skill</strong> — call the mobility interface to move forward.<br>
       Saved as <code>workspace/custom_skills/move_forward.py</code>:
-      <pre lang="python">from brain_client.skills.types import Interface, InterfaceType, Skill, SkillResult
-import time
+      <pre lang="python">from innate import Mobility, Skill, SkillReturn
 
 
 class MoveForward(Skill):
-    """Move the robot forward by a given distance."""
+    """Move the robot forward by a given distance in meters."""
 
-    mobility = Interface(InterfaceType.MOBILITY)
+    mobility: Mobility          # declare what you use; the runtime injects it
 
-    def __init__(self, logger):
-        super().__init__(logger)
-        self._cancelled = False
-
-    @property
-    def name(self):
-        return "move_forward"
-
-    def guidelines(self):
-        return "Move the robot forward by a given distance in meters."
-
-    def execute(self, distance_m: float = 0.5):
-        self._cancelled = False
-
-        if self.mobility is None:
-            return "Mobility interface not available", SkillResult.FAILURE
-
+    def execute(self, distance_m: float = 0.5) -> SkillReturn:
         speed = 0.2  # m/s
         duration = distance_m / speed
         self.mobility.send_cmd_vel(linear_x=speed, duration=duration)
-
-        stop_at = time.time() + duration
-        while True:
-            remaining = stop_at - time.time()
-            if not remaining > 0:
-                break
-            if self._cancelled:
-                self.mobility.send_cmd_vel(linear_x=0.0)
-                return "Move cancelled", SkillResult.CANCELLED
-            time.sleep(min(0.05, remaining))
-
-        return f"Moved forward {distance_m} m", SkillResult.SUCCESS
-
-    def cancel(self):
-        self._cancelled = True
-        return "Move cancelled"
+        self.sleep(duration)    # like time.sleep, but a Stop unwinds it
+        return f"Moved forward {distance_m} m"
 </pre>
+      The return value is the run's result message; call
+      <code>self.fail(message)</code> to end the run as a failure.
+      Cancellation is the framework's job: <code>self.sleep</code> (and every
+      blocking framework call) raises the moment a Stop lands, the base is
+      braked automatically, and the run reports CANCELLED — skills carry no
+      cancel code.
     </td>
   </tr>
 </table>
@@ -336,7 +314,7 @@ Input devices live in [`workspace/inputs/`](workspace/inputs/) and are pure Pyth
 import threading
 import time
 
-from brain_client.input_types import InputDevice
+from brain_client.inputs.types import InputDevice
 
 
 def read_thermometer_celsius() -> float:

@@ -15,16 +15,36 @@
 #   <repo>/skills/*                        -> <repo>/workspace/custom_skills/
 #   <repo>/primitives/**/*.{h5,pt,pth}     -> <repo>/workspace/innate_skills/<rel>
 #   <repo>/inputs/*                        -> <repo>/workspace/inputs/
+#   ~/agents/*                             -> <repo>/workspace/custom_agents/
+#   ~/skills/*                             -> <repo>/workspace/custom_skills/
 #   <repo>/maps/*                          -> <repo>/data/maps/
 #   <repo>/.last_mode                      -> <repo>/data/.last_mode
 #   <repo>/.last_map                       -> <repo>/data/.last_map
+#   settings.yaml extra_skill_dirs entries -> <repo>/workspace/custom_skills/<name> (symlink)
+#   settings.yaml extra_agent_dirs entries -> <repo>/workspace/custom_agents/*     (symlinks)
 #
-# Home-directory skills/agents (~/skills, ~/agents) are NOT handled here; they
-# are migrated at brain startup by
-# brain_client.script_paths.migrate_legacy_home_directories().
+# The home-dir lanes (~/skills, ~/agents) were scanned in place through 0.6.x;
+# 0.7 loads only from workspace/, so they are migrated here rather than left to
+# stop loading silently. custom_skills/custom_agents keeps their ids unchanged
+# (local/<name>).
+#
+# The extra-dirs lanes (config/settings.yaml script_paths.extra_skill_dirs /
+# extra_agent_dirs, shipped 0.6.0 through 0.7.0-rc1) pointed the loaders at
+# directories anywhere on the machine; the setting is gone in 0.7. Configured
+# dirs are symlinked into workspace/ so their content keeps loading — never
+# moved, since an extra dir may be shared state (e.g. /opt/team/skills).
+# A skill dir becomes a custom_skills/ *subpackage* rather than a
+# workspace-root pack: that keeps the local/<name> skill ids its skills had
+# (agents and anything persisted reference those), where a root pack would
+# re-namespace them <dirname>/<name>. Agent dirs have no pack equivalent
+# (agents load from custom_agents/ top-level files only), so their top-level
+# entries are linked into custom_agents/ one by one — non-Python assets too,
+# because display icons resolve relative to the agent file's directory.
 #
 # Optional env: MIGRATE_CHOWN_USER — when set and running as root, moved files
 # are chowned to this user (best-effort). Unset (e.g. in CI) => no chown.
+# Optional env: MIGRATE_HOME — home dir to migrate the ~/ lanes from; defaults
+# to $HOME. post_update.sh passes ACTUAL_HOME so sudo doesn't scan /root.
 
 # Log via the host script's log() *function* if defined (post_update.sh), else
 # stdout. Uses `declare -F` so we don't accidentally match an external `log`
@@ -72,11 +92,10 @@ _mig_move() {
     fi
 }
 
-# Move every child of <repo>/$old_rel into <repo>/workspace/$new_rel.
-_migrate_dir_into_workspace() {
-    local repo="$1" old_rel="$2" new_rel="$3"
-    local old_path="$repo/$old_rel"
-    local new_path="$repo/workspace/$new_rel"
+# Move every child of $old_path into $new_path. $old_label is what the logs
+# call the source ("skills/", "~/skills/").
+_migrate_path_into_workspace() {
+    local old_path="$1" new_path="$2" old_label="$3" new_rel="$4"
     [ -d "$old_path" ] || return 0
 
     shopt -s dotglob nullglob
@@ -84,7 +103,7 @@ _migrate_dir_into_workspace() {
     shopt -u dotglob nullglob
 
     if [ ${#items[@]} -gt 0 ]; then
-        _mig_log "Migrating $old_rel/ -> workspace/$new_rel/"
+        _mig_log "Migrating $old_label/ -> workspace/$new_rel/"
         _mig_mkdir "$new_path"
         local item name
         for item in "${items[@]}"; do
@@ -93,11 +112,32 @@ _migrate_dir_into_workspace() {
                 rm -rf "$item"
                 continue
             fi
-            _mig_move "$item" "$new_path/$name" "$old_rel/$name -> workspace/$new_rel/$name"
+            _mig_move "$item" "$new_path/$name" "$old_label/$name -> workspace/$new_rel/$name"
         done
     fi
 
-    rmdir "$old_path" 2>/dev/null && _mig_log "Removed empty $old_rel/" || true
+    rmdir "$old_path" 2>/dev/null && _mig_log "Removed empty $old_label/" || true
+}
+
+# Move every child of <repo>/$old_rel into <repo>/workspace/$new_rel.
+_migrate_dir_into_workspace() {
+    local repo="$1" old_rel="$2" new_rel="$3"
+    _migrate_path_into_workspace "$repo/$old_rel" "$repo/workspace/$new_rel" "$old_rel" "$new_rel"
+}
+
+# Same, for the home-dir lanes (~/skills, ~/agents). These were scanned in
+# place through 0.6.x and are not scanned at all as of 0.7, so without this
+# their content would silently stop loading. MIGRATE_HOME is the *invoking
+# user's* home (post_update.sh passes ACTUAL_HOME): under sudo, $HOME is
+# /root and the real content would be missed.
+_migrate_home_dir_into_workspace() {
+    local repo="$1" home_rel="$2" new_rel="$3"
+    local home="${MIGRATE_HOME:-${HOME:-}}"
+    [ -n "$home" ] || return 0
+    # INNATE_OS_ROOT=~ collapses ~/skills onto <repo>/skills, already migrated
+    # above by the repo-relative pass; skip so it isn't reported twice.
+    [ "$home" != "$repo" ] || return 0
+    _migrate_path_into_workspace "$home/$home_rel" "$repo/workspace/$new_rel" "~/$home_rel" "$new_rel"
 }
 
 # Move trained-model files out of the legacy primitives/ tree into innate_skills,
@@ -159,12 +199,180 @@ _migrate_nav_state() {
     done
 }
 
+# Symlink $src to $dst unless $dst exists. A symlink already pointing at $src
+# is the previous run's work — silent no-op, keeping re-runs idempotent.
+_mig_symlink() {
+    local src="$1" dst="$2" label="$3"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+        return 0
+    fi
+    if [ -e "$dst" ] || [ -L "$dst" ]; then
+        _mig_log "  Kept $label (already exists at destination — reconcile manually)"
+        return 0
+    fi
+    _mig_mkdir "$(dirname "$dst")"
+    ln -s "$src" "$dst"
+    if [ -n "${MIGRATE_CHOWN_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+        chown -h "$MIGRATE_CHOWN_USER:$MIGRATE_CHOWN_USER" "$dst" 2>/dev/null || true
+    fi
+    _mig_log "  Linked $label"
+}
+
+# True if $1 has any visible entry besides __pycache__ (i.e. is worth linking).
+_dir_has_content() {
+    [ -n "$(find "$1" -mindepth 1 -maxdepth 1 ! -name '.*' ! -name '__pycache__' -print -quit 2>/dev/null)" ]
+}
+
+# Print "<kind>\t<abs-dir>\t<pack-name>" per configured extra dir, kind in
+# {skill, agent}. Needs python3 + PyYAML (both ship with the robot's ROS
+# stack): exit 3 = no PyYAML, 4 = settings.yaml unparseable. ``~`` expands
+# against MIGRATE_HOME, not $HOME — under sudo, $HOME is /root. Pack names
+# must be Python identifiers (a custom_skills subpackage is imported); the
+# old exec-based scanner had no such constraint, so sanitize.
+_extra_dirs_plan() {
+    MIGRATE_HOME="${MIGRATE_HOME:-${HOME:-}}" python3 - "$1" <<'PY'
+import os
+import re
+import sys
+
+try:
+    import yaml
+except ImportError:
+    sys.exit(3)
+
+home = os.environ.get("MIGRATE_HOME") or os.path.expanduser("~")
+try:
+    with open(sys.argv[1]) as f:
+        data = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(4)
+
+section = data.get("script_paths")
+params = section.get("ros__parameters") if isinstance(section, dict) else None
+params = params if isinstance(params, dict) else {}
+
+
+def dirs(key):
+    # Same shapes load_extra_script_dirs() accepted: YAML list or
+    # os.pathsep-joined string, blanks dropped, ~ and $VARS expanded.
+    value = params.get(key)
+    if isinstance(value, str):
+        parts = value.split(os.pathsep)
+    elif isinstance(value, list):
+        parts = [str(p) for p in value]
+    else:
+        parts = []
+    out = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if part == "~" or part.startswith("~/"):
+            part = home + part[1:]
+        part = os.path.abspath(os.path.expandvars(os.path.expanduser(part)))
+        if part not in out:
+            out.append(part)
+    return out
+
+
+def pack_name(src):
+    name = re.sub(r"[^0-9A-Za-z_]", "_", os.path.basename(src.rstrip("/")))
+    if not name or name[0].isdigit() or name.startswith("_"):
+        # _-prefixed packages are skipped by discovery; digits can't start one.
+        name = "pack_" + name.lstrip("_")
+    return name
+
+
+for src in dirs("extra_skill_dirs"):
+    print(f"skill\t{src}\t{pack_name(src)}")
+for src in dirs("extra_agent_dirs"):
+    print(f"agent\t{src}\t-")
+PY
+}
+
+# Symlink the dirs configured in settings.yaml script_paths (see header) into
+# workspace/. Must run AFTER the move passes: an extra dir pointing at a moved
+# lane (~/skills, <repo>/skills) is empty or gone by the time this runs, and
+# is skipped here rather than left as a hollow link.
+_migrate_extra_script_dirs() {
+    local repo="$1"
+    local settings="$repo/config/settings.yaml"
+    [ -f "$settings" ] || return 0
+    # Cheap pre-filter: nothing to do (and no parser needed) unless the
+    # setting appears outside a comment.
+    grep -Eq '^[^#]*extra_(skill|agent)_dirs' "$settings" || return 0
+
+    local plan
+    if ! plan=$(_extra_dirs_plan "$settings"); then
+        _mig_log "WARNING: settings.yaml sets script_paths.extra_*_dirs but the section could not be parsed (python3/PyYAML missing, or malformed YAML)."
+        _mig_log "WARNING: 0.7 no longer scans extra dirs — symlink them into workspace/ by hand (see config/settings.yaml.template)."
+        return 0
+    fi
+    [ -n "$plan" ] || return 0
+
+    local home="${MIGRATE_HOME:-${HOME:-}}"
+    # Canonicalize the paths compared against below, so a symlinked repo or
+    # home still matches. _canon leaves a non-existent path as-is.
+    _canon() { readlink -f "$1" 2>/dev/null || echo "$1"; }
+    local ws_resolved repo_resolved home_resolved
+    ws_resolved=$(_canon "$repo/workspace")
+    repo_resolved=$(_canon "$repo")
+    home_resolved=$(_canon "${home:-//nonexistent}")
+
+    _mig_log "Migrating settings.yaml extra script dirs -> workspace/ symlinks"
+    local kind src name resolved entry base
+    while IFS=$'\t' read -r kind src name; do
+        [ -n "$kind" ] || continue
+        if [ ! -d "$src" ]; then
+            _mig_log "  Skipped $kind dir $src (not a directory — moved by a pass above, or never existed)"
+            continue
+        fi
+        resolved=$(_canon "$src")
+        case "$resolved" in
+            "$ws_resolved" | "$ws_resolved"/*)
+                _mig_log "  Skipped $kind dir $src (already inside workspace/ — loads without migration)"
+                continue
+                ;;
+        esac
+        # Lanes the move passes above own; their contents already moved (any
+        # leftovers are name clashes those passes logged for manual review).
+        case "$resolved" in
+            "$repo_resolved"/skills | "$repo_resolved"/agents | "$repo_resolved"/directives | \
+                "$home_resolved"/skills | "$home_resolved"/agents)
+                _mig_log "  Skipped $kind dir $src (contents moved by the migration above)"
+                continue
+                ;;
+        esac
+        if ! _dir_has_content "$src"; then
+            _mig_log "  Skipped $kind dir $src (empty)"
+            continue
+        fi
+        if [ "$kind" = "skill" ]; then
+            _mig_symlink "$src" "$repo/workspace/custom_skills/$name" \
+                "extra skill dir $src -> workspace/custom_skills/$name"
+        else
+            # Per-entry links: agents load from custom_agents/ itself, and a
+            # linked subdirectory would not be scanned.
+            for entry in "$src"/*; do
+                [ -e "$entry" ] || continue
+                base=$(basename "$entry")
+                [ "$base" = "__pycache__" ] && continue
+                _mig_symlink "$entry" "$repo/workspace/custom_agents/$base" \
+                    "extra agent entry $src/$base -> workspace/custom_agents/$base"
+            done
+        fi
+    done <<< "$plan"
+}
+
 run_user_data_migrations() {
     local repo="${1:?run_user_data_migrations: repo dir required}"
     _migrate_dir_into_workspace "$repo" agents     custom_agents
     _migrate_dir_into_workspace "$repo" directives custom_agents
     _migrate_dir_into_workspace "$repo" skills     custom_skills
     _migrate_dir_into_workspace "$repo" inputs     inputs
+    _migrate_home_dir_into_workspace "$repo" agents custom_agents
+    _migrate_home_dir_into_workspace "$repo" skills custom_skills
+    _migrate_extra_script_dirs  "$repo"
     _migrate_primitives_models  "$repo"
     _migrate_nav_state          "$repo"
 }

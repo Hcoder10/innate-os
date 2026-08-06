@@ -36,7 +36,6 @@ dynamixel-sdk
 pyserial
 trimesh
 smbus2
-sounddevice
 bluezero
 python-chess
 

@@ -42,11 +42,11 @@ pytest ros2_ws/src/brain/brain_client/test/test_fake_cloud_selftest.py \
 
 ## Adding a test
 
-- **Pure-Python (no ROS):** drop a `test_*.py` next to the code, then add its path to the `pytest` line in `ci/docker-compose.test.yml`.
+- **Pure-Python (no ROS):** drop a `test_*.py` next to the code, then add its path to the `pytest` line in `ci/run_integration_tests.sh` (the "unit tests (fast, no ROS)" block).
 - **Needs real ROS nodes:** write a `*.launch.py` `launch_testing` test (copy `test_fake_cloud_loop.launch.py`), register it with `add_ros_isolated_launch_test(...)` in the package `CMakeLists.txt`, and add its name to the `-R` regex in `ci/docker-compose.test.yml`.
 
 ## Known gaps (not yet wired — honest list, not coverage)
 
 - `mars_bt_provisioner/test/test_command_layer.py` — needs system `gi`/GLib; verify it's in the image, then add to `--packages-select` + `-R`.
 - `innate_training_node/test/test_training_node.py` — needs `rclpy`/a live node; wire as a launch test once verified.
-- **Untested behaviorally:** teleop (joystick/UDP/arm), nav, camera. Same recipe — fake the seam, assert the ROS output. For these, Gates 1–2 (lint + build) are the only net today.
+- **Untested behaviorally:** teleop (joystick/UDP/arm), nav, camera, and the arm SDK (`brain_client/robot/manipulation.py` — its unit/surface suite was dropped with the ROS stubs). Same recipe — fake the seam, assert the ROS output. For these, Gates 1–2 (lint + build) are the only net today.

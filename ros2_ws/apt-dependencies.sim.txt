@@ -35,22 +35,22 @@ ros-humble-behaviortree-cpp-v3
 ros-humble-dwb-core
 ros-humble-dwb-critics
 ros-humble-dwb-plugins
-ros-humble-nav2-behavior-tree
-ros-humble-nav2-core
-ros-humble-nav2-costmap-2d
+ros-humble-innate-nav2-behavior-tree
+ros-humble-innate-nav2-core
+ros-humble-innate-nav2-costmap-2d
 ros-humble-nav2-dwb-controller
-ros-humble-nav2-msgs
+ros-humble-innate-nav2-msgs
 ros-humble-nav2-navfn-planner
-ros-humble-nav2-planner
-ros-humble-nav2-util
-ros-humble-nav2-voxel-grid
+ros-humble-innate-nav2-planner
+ros-humble-innate-nav2-util
+ros-humble-innate-nav2-voxel-grid
 # Real navigation stack (mode_manager.launch) now runs in sim too.
-ros-humble-nav2-amcl
-ros-humble-nav2-map-server
-ros-humble-nav2-velocity-smoother
-ros-humble-nav2-mppi-controller
-ros-humble-nav2-smac-planner
+ros-humble-innate-nav2-amcl
+ros-humble-innate-nav2-map-server
+ros-humble-innate-nav2-velocity-smoother
+ros-humble-innate-nav2-mppi-controller
+ros-humble-innate-nav2-smac-planner
 # Innate's lifecycle build of slam_toolbox: mode_manager must be able to
 # deactivate SLAM in navigation mode or it clobbers /map.
 ros-humble-slam-toolbox-humble-lifecycle
-ros-humble-spatio-temporal-voxel-layer
+ros-humble-innate-spatio-temporal-voxel-layer
