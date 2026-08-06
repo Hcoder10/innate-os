@@ -173,5 +173,23 @@ def generate_launch_description():
                     }
                 ],
             ),
+            # Backend for the webapp's /armsdk page, same as on the robot. The
+            # sim serves everything Manipulation drives — mars_arm's ik.py is
+            # the same hardware-independent KDL node, and mars_sim_driver
+            # answers goto_js_v2/goto_js_trajectory and publishes
+            # /mars/arm/state. Two gaps, both cosmetic here: /mars/arm/status
+            # never publishes (the page shows "torque ?") and torque/reboot are
+            # no-op stubs, so recover() cannot actually fix anything.
+            Node(
+                package="brain_client",
+                executable="arm_sdk_server.py",
+                name="arm_sdk_server",
+                output="screen",
+                respawn=True,
+                respawn_delay=2.0,
+                # Manipulation spins in-process helper nodes that can share a
+                # name; mute the benign "Publisher already registered" warning.
+                arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
+            ),
         ]
     )
