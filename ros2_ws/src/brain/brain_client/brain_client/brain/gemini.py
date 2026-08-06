@@ -99,8 +99,15 @@ class Decision:
 
 
 def tool_name(skill_name: str) -> str:
-    """Skill name -> valid function name."""
-    return re.sub(r"[^a-zA-Z0-9_.\-]", "_", skill_name)[:64] or "skill"
+    """Skill name -> valid function name.
+
+    Gemini requires function names to start with a letter or underscore — a
+    digit-leading skill ("3d_scan") would 400 every request while active.
+    """
+    name = re.sub(r"[^a-zA-Z0-9_.\-]", "_", skill_name) or "skill"
+    if not re.match(r"[a-zA-Z_]", name):
+        name = "_" + name
+    return name[:64]
 
 
 def assign_tool_names(skills: list[dict]) -> list[tuple[str, dict]]:
@@ -226,10 +233,14 @@ def pick_transport(proxy):
 
 def direct_transport(api_key: str):
     """Reach Google's Gemini API directly with GEMINI_API_KEY."""
+    # One client for the process: reuses the TLS connection across turns
+    # instead of a fresh handshake per generate call. Single-threaded use by
+    # construction (one turn at a time on the agent's worker thread).
+    client = httpx.Client(headers={"x-goog-api-key": api_key}, timeout=90.0)
 
     def stream(model: str, body: dict):
         url = DIRECT_BASE_URL + STREAM_PATH.format(model=model)
-        with httpx.stream("POST", url, headers={"x-goog-api-key": api_key}, json=body, timeout=90.0) as resp:
+        with client.stream("POST", url, json=body) as resp:
             if resp.status_code != 200:
                 resp.read()
                 raise RuntimeError(f"gemini direct: HTTP {resp.status_code}: {resp.text[:200]}")
@@ -330,12 +341,20 @@ class GeminiSession:
         if self.on_request is not None:
             self.on_request(body)
         parts: list[dict] = []
+        last_chunk: dict = {}
         for chunk in self._transport(self._model, body):
+            last_chunk = chunk
             content = _model_content(chunk) or {}
             for part in content.get("parts") or []:
                 parts.append(part)
                 if on_speech and part.get("text") and not part.get("thought"):
                     on_speech(part["text"])
+        if not parts:
+            # A 200 stream with no content at all: a safety block, a malformed
+            # function call, or an empty candidate. Committing it would record
+            # a silent, answerless exchange — raise instead, so the turn's
+            # retry path keeps the events queued and the failure is visible.
+            raise RuntimeError(f"gemini returned no content: {_empty_stream_reason(last_chunk)}")
         return {"candidates": [{"content": {"role": "model", "parts": _merged(parts)}}]}
 
     def absorb(self, user_message: dict, response: dict, *, latest_only_images: list[int] | None = None) -> Decision:
@@ -425,6 +444,17 @@ def _merged(parts: list[dict]) -> list[dict]:
 def _model_content(response: dict) -> dict | None:
     candidates = response.get("candidates") or []
     return candidates[0].get("content") if candidates else None
+
+
+def _empty_stream_reason(last_chunk: dict) -> str:
+    """Why a stream carried no parts, from whatever the API did say."""
+    candidates = last_chunk.get("candidates") or [{}]
+    reason = {
+        "finishReason": candidates[0].get("finishReason"),
+        "blockReason": (last_chunk.get("promptFeedback") or {}).get("blockReason"),
+    }
+    details = ", ".join(f"{k}={v}" for k, v in reason.items() if v)
+    return details or "empty stream"
 
 
 def _decision_from(response: dict) -> Decision:

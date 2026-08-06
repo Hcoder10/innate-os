@@ -66,6 +66,14 @@ def test_tool_name_sanitizes_invalid_characters():
     assert len(tool_name("x" * 100)) == 64
 
 
+def test_tool_name_never_starts_with_a_digit():
+    # Gemini requires function names to start with a letter or underscore; a
+    # digit-leading skill would 400 every request while it is active.
+    assert tool_name("3d_scan") == "_3d_scan"
+    assert tool_name("-dash") == "_-dash"
+    assert len(tool_name("3" + "x" * 100)) == 64
+
+
 def test_assign_tool_names_disambiguates_collisions_and_builtins():
     colliding = [
         {"id": "a", "name": "Wave Hello!"},
@@ -359,6 +367,25 @@ def test_generate_streams_speech_deltas_and_assembles_the_response():
     assert [c.name for c in decision.calls] == ["wave"]
 
 
+def test_generate_raises_on_an_empty_stream_instead_of_committing_silence():
+    # A 200 stream with no parts (safety block, malformed function call, empty
+    # candidate) must fail the turn — committing it would record a silent,
+    # answerless exchange and consume the user's message with no reply.
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}}
+    session = make_session(transport=lambda model, body: iter([blocked]))
+    with pytest.raises(RuntimeError, match="SAFETY"):
+        session.generate(user_turn("hi", False), [], "S")
+
+    empty_candidate = {"candidates": [{"finishReason": "MALFORMED_FUNCTION_CALL"}]}
+    session = make_session(transport=lambda model, body: iter([empty_candidate]))
+    with pytest.raises(RuntimeError, match="MALFORMED_FUNCTION_CALL"):
+        session.generate(user_turn("hi", False), [], "S")
+
+    session = make_session(transport=lambda model, body: iter([]))
+    with pytest.raises(RuntimeError, match="empty stream"):
+        session.generate(user_turn("hi", False), [], "S")
+
+
 # ---------- visual grounding (pixel -> floor target) ----------
 
 from brain_client.brain import grounding  # noqa: E402
@@ -494,7 +521,7 @@ def run_turn(agent: BrainAgent) -> None:
 def no_pause(agent: BrainAgent, monkeypatch) -> None:
     """Skip the between-turns / backoff pauses so tests don't sleep."""
 
-    async def skip(seconds, *, seen=0):
+    async def skip(seconds, *, seen=0, user_only=False):
         pass
 
     monkeypatch.setattr(agent, "_pause", skip)
@@ -515,6 +542,40 @@ def test_failed_turn_leaves_events_queued_for_the_retry(agent_factory, monkeypat
     assert [e["text"] for e in agent._events] == ['The user says: "bring me a snack"']
     assert agent._session._history == []  # the failed exchange never entered history
     assert agent._error_streak == 1
+
+
+def test_error_backoff_ignores_chatter_but_wakes_for_user_speech(agent_factory):
+    # The backoff must stay a backoff under motion/feedback chatter — only the
+    # user speaking earns a failing API an immediate retry.
+    agent, state = agent_factory()
+    future = asyncio.run_coroutine_threadsafe(agent._pause(10.0, seen=0, user_only=True), agent._runtime.loop)
+    time.sleep(0.1)
+    agent.add_event("Motion detected in the camera view", kind="motion")
+    time.sleep(0.3)
+    assert not future.done()
+    agent.on_user_message("are you there?")
+    future.result(timeout=2)
+
+
+def test_turn_start_drops_the_oldest_backlog_beyond_the_cap(agent_factory):
+    # An outage plus a chatty scene must not grow the turn input without
+    # bound: the oldest stimuli are dropped at the cap (they are stale).
+    agent, state = agent_factory()
+    captured = {}
+
+    def transport(model, body):
+        captured["contents"] = body["contents"]
+        return iter([model_response(call_part("wait", {}))])
+
+    agent._session._transport = transport
+    for i in range(40):
+        agent.add_event(f"stimulus {i}")
+    run_turn(agent)
+
+    text = captured["contents"][-1]["parts"][0]["text"]
+    assert "stimulus 9" not in text  # the 10 oldest were dropped
+    assert "stimulus 10" in text and "stimulus 39" in text
+    assert agent._events == []  # the survivors were consumed by the commit
 
 
 def test_committed_turn_consumes_exactly_the_events_it_saw(agent_factory):
@@ -847,6 +908,25 @@ def test_speech_streamer_mute_drops_everything_not_yet_spoken():
     streamer.feed("ond. Third.")
     streamer.flush()
     assert spoken == ["First."]
+
+
+def test_speech_streamer_try_abandon_is_atomic_with_spoke():
+    # The loop's preemption check: abandon must succeed only while nothing has
+    # been voiced, and a successful abandon must silence the rest of the reply.
+    spoken = []
+    chat = SimpleNamespace(speak=lambda text, replace_pending=False: spoken.append(text))
+    unspoken = SpeechStreamer(chat)
+    unspoken.feed("Not yet a full sentence")
+    assert unspoken.try_abandon() is True
+    unspoken.feed(". The rest.")
+    unspoken.flush()
+    assert spoken == []
+
+    talking = SpeechStreamer(chat)
+    talking.feed("Already said. ")
+    assert talking.try_abandon() is False  # holds the floor: finish the reply
+    talking.flush()
+    assert spoken == ["Already said."]
 
 
 def test_user_turn_streams_sentences_to_tts_before_commit(agent_factory):

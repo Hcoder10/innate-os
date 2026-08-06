@@ -21,6 +21,7 @@ import time
 
 import cv2
 import numpy as np
+from geometry_msgs.msg import Twist
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
@@ -32,6 +33,7 @@ _MOTION_HOT_SAMPLES = 2  # hot samples within the window before firing
 _MOTION_WINDOW = 4  # samples the debounce looks back over (~1s of frames)
 _MOTION_COOLDOWN_SEC = 10.0  # minimum gap between fires; sustained motion re-fires at this rate
 _MOTION_HEAD_PITCH_EPS = 0.8  # deg between samples; more means the head is moving, not the scene
+_DRIVE_SUPPRESS_SEC = 1.5  # after a nonzero cmd_vel: frames lag the command and blur outlasts the stop
 
 
 class _MotionGate:
@@ -99,8 +101,10 @@ class CameraCapture:
         self._image_sub = None
         self._arm_sub = None
         self._head_sub = None
+        self._cmd_vel_sub = None
         self._image: tuple[float, bytes] | None = None  # (monotonic arrival time, jpeg)
         self._arm: tuple[float, bytes] | None = None
+        self._last_drive = 0.0  # monotonic time of the last nonzero cmd_vel
         self.current_head_pitch = 0.0  # degrees; negative = looking down
         # Motion wiring, set by the composition root: on_motion fires (no args)
         # on sustained scene change; motion_suppressed returns True while the
@@ -125,14 +129,17 @@ class CameraCapture:
                 CompressedImage, self._config.arm_camera_image_topic, self._on_arm, image_qos
             )
         self._head_sub = self._node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
+        # The base being driven (joystick teleop, nav) is ego-motion the
+        # primitive_running check can't see — a manual drive runs no skill.
+        self._cmd_vel_sub = self._node.create_subscription(Twist, self._config.cmd_vel_topic, self._on_cmd_vel, 10)
 
     def stop(self) -> None:
         # Destroying here is safe only because brain_client_node is spun
         # single-threaded and stop() runs on that spin thread (between callbacks).
-        for sub in (self._image_sub, self._arm_sub, self._head_sub):
+        for sub in (self._image_sub, self._arm_sub, self._head_sub, self._cmd_vel_sub):
             if sub is not None:
                 self._node.destroy_subscription(sub)
-        self._image_sub = self._arm_sub = self._head_sub = None
+        self._image_sub = self._arm_sub = self._head_sub = self._cmd_vel_sub = None
         self._image = self._arm = None
         self._motion = _MotionGate()  # a restart must not diff against pre-stop frames
 
@@ -147,6 +154,15 @@ class CameraCapture:
     def _on_arm(self, msg: CompressedImage) -> None:
         if msg.data:
             self._arm = (time.monotonic(), bytes(msg.data))
+
+    def _on_cmd_vel(self, msg: Twist) -> None:
+        if any((msg.linear.x, msg.linear.y, msg.angular.z)):
+            self._last_drive = time.monotonic()
+
+    @property
+    def recently_driven(self) -> bool:
+        """A drive command within the last moment: ego-motion, not scene motion."""
+        return time.monotonic() - self._last_drive < _DRIVE_SUPPRESS_SEC
 
     def _on_head(self, msg: String) -> None:
         try:

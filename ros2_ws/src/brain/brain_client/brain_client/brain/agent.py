@@ -49,8 +49,10 @@ _NAV_TO_POSITION = "innate-os/navigate_to_position"
 # A camera frame older than this means the feed is broken; don't think blind.
 _FRESH_FRAME_SEC = 3.0
 
-# While the loop can't turn (feed down), only this many queued events are kept.
-_MAX_EVENTS_WHILE_BLIND = 30
+# The most queued events a turn will look at; the oldest beyond it are dropped
+# (stale stimuli). Bounds the backlog while the loop can't turn — camera down,
+# or an API outage with a chatty scene.
+_MAX_EVENTS_QUEUED = 30
 
 # Frame label for the arm wrist camera: these frames are latest-only in history
 # (a stale gripper close-up reads as current grasp state).
@@ -141,23 +143,30 @@ class BrainAgent:
         """
         return self._session is not None
 
+    @property
+    def error_streak(self) -> int:
+        """Consecutive failed turns (0 = healthy); the node's health topic reads it."""
+        return self._error_streak
+
     # ================= lifecycle =================
-    def start(self) -> None:
+    def start(self) -> bool:
+        """Spawn the agent loop; False when it refused (caller must not report active)."""
         if not self.available:
             self._chat.emit_system(
                 "⚠️ The brain has no way to reach Gemini — configure the Innate proxy "
                 "(INNATE_SERVICE_KEY) or set GEMINI_API_KEY in innate-os/.env and restart."
             )
         if self._runtime.running:
-            return
+            return True
         if not self._runtime.unwound:
             # A previous loop is stuck mid-unwind (stop() timed out): spawning
             # over it would interleave two conversations. Same guard as reset().
             self._chat.emit_system("⚠️ The previous brain loop is still unwinding — try activating again shortly.")
-            return
+            return False
         self._activated_at = time.monotonic()
         self._error_streak = 0
         self._runtime.spawn(self._loop())
+        return True
 
     def stop(self) -> bool:
         """Synchronous: when this returns True, no turn is thinking and none will act."""
@@ -213,9 +222,11 @@ class BrainAgent:
                 await asyncio.wait((turn, spoke), return_when=asyncio.FIRST_COMPLETED)
                 spoke.cancel()
                 speaker = self._speaker  # _turn publishes it before its first await
-                if not turn.done() and speaker is not None and not speaker.spoke and reruns < 2:
+                # try_abandon is the atomic spoke-check-and-mute: the reply
+                # streams on a worker thread, and a plain check-then-mute could
+                # let its first sentence slip out after the decision to abandon.
+                if not turn.done() and speaker is not None and reruns < 2 and speaker.try_abandon():
                     self._trace("turn_preempted", turn=self._turn_count, after=self._elapsed())
-                    speaker.mute()  # the orphaned reply must not keep talking
                     turn.cancel()
                     await asyncio.wait({turn})  # fully unwound before the rerun looks
                     reruns += 1
@@ -237,6 +248,7 @@ class BrainAgent:
 
     async def _turn(self, session: GeminiSession) -> None:
         """One turn: look at the world, think with Gemini, commit, act."""
+        del self._events[:-_MAX_EVENTS_QUEUED]  # bound the backlog after an outage
         events = list(self._events)  # a peek — consumed only if the turn commits
         self._turn_count += 1
         self._turn_started_at = time.monotonic()
@@ -310,7 +322,10 @@ class BrainAgent:
             self._trace(
                 "turn_error", turn=self._turn_count, error=str(error), streak=self._error_streak, backoff=backoff
             )
-            await self._pause(backoff, seen=len(events))  # events stay queued; a new one ends this early
+            # Events stay queued; only the user speaking ends the backoff early
+            # (motion/feedback chatter must not turn a failing API into a hot
+            # retry loop).
+            await self._pause(backoff, seen=len(events), user_only=True)
 
     async def _await_camera(self) -> None:
         """Hold turns while the camera feed is down; tell the user if it stays down."""
@@ -321,19 +336,26 @@ class BrainAgent:
         self._logger.error("[Brain] Camera feed is down; holding turns until it returns")
         self._chat.emit_system("⚠️ No camera frames — the brain is waiting for the feed to return.")
         while self._camera.fresh_image_jpeg(_FRESH_FRAME_SEC) is None:
-            del self._events[:-_MAX_EVENTS_WHILE_BLIND]  # don't hoard stimuli while blind
+            del self._events[:-_MAX_EVENTS_QUEUED]  # don't hoard stimuli while blind
             await asyncio.sleep(0.2)
         self._chat.emit_system("✅ Camera feed is back.")
 
-    async def _pause(self, seconds: float, *, seen: int = 0) -> None:
-        """Sleep up to ``seconds``; the queue growing past ``seen`` events ends it early."""
-        self._new_event.clear()
-        if len(self._events) > seen:
+    async def _pause(self, seconds: float, *, seen: int = 0, user_only: bool = False) -> None:
+        """Sleep up to ``seconds``; the queue growing past ``seen`` events ends it early.
+
+        ``user_only`` narrows the early wake to user speech: the error backoff
+        must stay a backoff under motion and feedback chatter, while a human
+        speaking still gets an immediate retry.
+        """
+        wake = self._user_spoke if user_only else self._new_event
+        wake.clear()
+        fresh = self._events[seen:]
+        if any(event["kind"] == "user" for event in fresh) if user_only else fresh:
             return
         self._pause_until = time.monotonic() + seconds
         try:
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._new_event.wait(), seconds)
+                await asyncio.wait_for(wake.wait(), seconds)
         finally:
             self._pause_until = 0.0
 

@@ -54,7 +54,17 @@ class BrainLifecycle:
         self._camera.start()
         self._pose.start()
         self._gaze.update()
-        self._brain.start()
+        if not self._brain.start():
+            # The loop refused to spawn (the previous one is stuck unwinding).
+            # Roll the activation back: a status claiming active with no loop
+            # behind it would stick — re-activating is a no-op while
+            # is_brain_active is set. brain.start() already told the user.
+            self._state.is_brain_active = False
+            self._camera.stop()
+            self._pose.stop()
+            self._gaze.stop()
+            self._publish_status()
+            return
         self.activate_directive_inputs()
         self._publish_status()
         # Announce in the shared chat so EVERY client sees it, not just the

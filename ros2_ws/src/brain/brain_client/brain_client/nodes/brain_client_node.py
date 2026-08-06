@@ -163,9 +163,9 @@ class BrainClientNode(Node):
         self.runner.on_feedback = self.brain.on_skill_feedback
         # Scene motion (someone walks in, waves) wakes the brain for an
         # immediate turn instead of waiting out the idle interval. Suppressed
-        # while a skill runs: ego-motion changes every pixel, and the
-        # supervision interval already paces those turns.
-        self.camera.motion_suppressed = lambda: self.state.primitive_running is not None
+        # while the robot moves itself — a skill running, or the base driven
+        # directly (joystick teleop): ego-motion changes every pixel.
+        self.camera.motion_suppressed = lambda: self.state.primitive_running is not None or self.camera.recently_driven
         self.camera.on_motion = self._on_camera_motion
         self.arm_recovery = ArmRecovery(self, state, runner=self.runner, chat=self.chat, brain=self.brain)
         self.lifecycle = BrainLifecycle(
@@ -259,14 +259,25 @@ class BrainClientNode(Node):
                 )
             )
         )
+        # Health is live, not just configured: a couple of consecutive failed
+        # turns (bad key, network down, model gone) flips the report to
+        # "error"/offline instead of staying green while nothing works.
+        streak = self.brain.error_streak
+        if not self.brain.available:
+            state = "invalid_config"
+        elif streak >= 2:
+            state = "error"
+        else:
+            state = "ready"
         self.brain_status_pub.publish(
             String(
                 data=json.dumps(
                     {
-                        "connected": self.brain.available,
+                        "connected": state == "ready",
                         "hosted": False,
-                        "state": "ready" if self.brain.available else "invalid_config",
+                        "state": state,
                         "backend": self.brain.backend,
+                        **({"error_streak": streak} if streak else {}),
                     }
                 )
             )

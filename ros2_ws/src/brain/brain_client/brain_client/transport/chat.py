@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 
 from brain_client.brain.gemini import split_tool_narration
@@ -97,12 +98,20 @@ class ChatManager:
 
 class SpeechStreamer:
     """Feeds a streaming reply to TTS one sentence at a time, so the robot
-    starts talking at the first sentence boundary instead of the last."""
+    starts talking at the first sentence boundary instead of the last.
+
+    ``feed`` runs on the generate call's worker thread while the agent loop
+    reads ``spoke`` and mutes: the lock makes each sentence's mute-check-then-
+    speak atomic, and :meth:`try_abandon` decides mute-if-unspoken atomically —
+    without it, a reply could voice its first sentence right after the loop
+    decided to abandon it.
+    """
 
     def __init__(self, chat: ChatManager):
         self._chat = chat
         self._buffer = ""
         self._muted = False
+        self._lock = threading.Lock()
         self.spoke = False
 
     def feed(self, text: str) -> None:
@@ -117,10 +126,29 @@ class SpeechStreamer:
 
     def mute(self) -> None:
         """Drop everything not yet spoken — the reply went stale mid-stream."""
-        self._muted = True
-        self._buffer = ""
+        with self._lock:
+            self._muted = True
+            self._buffer = ""
+
+    def try_abandon(self) -> bool:
+        """Mute iff nothing has been spoken yet; True when the reply was abandoned.
+
+        The agent loop's preemption check: a turn that already started talking
+        holds the floor and must finish, one that hasn't is silenced before its
+        first sentence can slip out.
+        """
+        with self._lock:
+            if self.spoke:
+                return False
+            self._muted = True
+            self._buffer = ""
+            return True
 
     def _say(self, sentence: str) -> None:
+        with self._lock:
+            return self._say_locked(sentence)
+
+    def _say_locked(self, sentence: str) -> None:
         if self._muted:
             return
         # Leaked tool narration, never speech — cut mid-sentence too (the model
