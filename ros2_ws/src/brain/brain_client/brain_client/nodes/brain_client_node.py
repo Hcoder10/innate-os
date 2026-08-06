@@ -32,6 +32,7 @@ from brain_client.perception.camera import CameraCapture
 from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.perception.scan_health import ScanHealthMonitor
+from brain_client.robot.arm_recovery import ArmRecovery
 from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.roster import SkillRoster
 from brain_client.skills.runner import PrimitiveRunner
@@ -163,6 +164,7 @@ class BrainClientNode(Node):
         # supervision interval already paces those turns.
         self.camera.motion_suppressed = lambda: self.state.primitive_running is not None
         self.camera.on_motion = self._on_camera_motion
+        self.arm_recovery = ArmRecovery(self, state, runner=self.runner, chat=self.chat, brain=self.brain)
         self.lifecycle = BrainLifecycle(
             self,
             state,
