@@ -412,7 +412,7 @@ function buildVolumeSection() {
 const INDEX_CHEV =
   '<svg class="set-index-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
 
-function selectPage(/** @type {PageUI | null} */ ui) {
+function selectSettingsPage(/** @type {PageUI | null} */ ui) {
   for (const page of pages) {
     const on = page === ui;
     page.panel.classList.toggle("active", on);
@@ -463,7 +463,7 @@ function build() {
   const returnToIndex = () => {
     search.value = "";
     renderSearchResults("", indexCard, searchResults);
-    selectPage(null);
+    selectSettingsPage(null);
   };
 
   const detail = textEl("div", "set-detail");
@@ -517,7 +517,7 @@ function build() {
 
     /** @type {PageUI} */
     const ui = { panel, row, dot, entries: [] };
-    row.addEventListener("click", () => selectPage(ui));
+    row.addEventListener("click", () => selectSettingsPage(ui));
     pages.push(ui);
 
     if (volumeControl) {
@@ -712,7 +712,7 @@ function renderSearchResults(
       unshownTerms = unshownTerms.filter((term) => !normalizedSourceText.includes(term));
     }
     resultButton.addEventListener("click", () => {
-      selectPage(target.page);
+      selectSettingsPage(target.page);
       requestAnimationFrame(() => {
         target.row.scrollIntoView({ block: "center", behavior: "smooth" });
         const targetControl = target.row.querySelector("input, select, textarea, button");
