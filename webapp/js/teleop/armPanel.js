@@ -323,7 +323,7 @@ function divider() {
  * rosbridge socket (no WebSerial). Torque state is read from /mars/arm/status
  * (ArmStatus, ~0.2 Hz) so the toggle reflects reality even when changed
  * elsewhere; clicking it calls torque_on/torque_off. Reboot power-cycles the
- * servos and leaves the arm limp (torque goes red until re-enabled).
+ * servos, then re-enables torque automatically once they've re-initialized.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @returns {{ el: HTMLElement, destroy: () => void }}
  */
@@ -397,7 +397,7 @@ function buildArmServices(rosClient) {
 
   rebootBtn.addEventListener("click", async () => {
     if (rebooting || toggling) return;
-    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it.")) {
+    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and torque re-enables automatically after the power-cycle.")) {
       return;
     }
     rebooting = true;
@@ -405,8 +405,25 @@ function buildArmServices(rosClient) {
     render();
     try {
       const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      if (res && res.success === false) flash(res.message || "Reboot failed", true);
-      else flash("Servos rebooted", false);
+      if (res && res.success === false) {
+        flash(res.message || "Reboot failed", true);
+      } else {
+        // Torque back on by default — a rebooted arm is limp, and every caller
+        // ended up re-enabling it by hand anyway. The pause lets the servos
+        // finish re-initializing first (mirrors Manipulation.recover()).
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+          const tres = await rosClient.callService(ARM_TORQUE_ON_SERVICE, {});
+          if (tres && tres.success === false) {
+            flash(tres.message || "Rebooted — torque re-enable failed", true);
+          } else {
+            torqueOn = true;
+            flash("Servos rebooted, torque on", false);
+          }
+        } catch {
+          flash("Rebooted — torque re-enable failed", true);
+        }
+      }
     } catch (err) {
       flash(err instanceof Error ? err.message : "Reboot failed", true);
     } finally {
