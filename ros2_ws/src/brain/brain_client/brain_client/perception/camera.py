@@ -150,9 +150,11 @@ class CameraCapture:
 
     def _on_head(self, msg: String) -> None:
         try:
-            self.current_head_pitch = float(json.loads(msg.data).get("current_position", 0.0))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            self.current_head_pitch = 0.0
+            self.current_head_pitch = float(json.loads(msg.data)["current_position"])
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+            # Keep the last known pitch: one corrupted message must not make the
+            # grounding believe the head snapped level (pitch drives pixel->floor).
+            pass
 
     def motion_peak(self) -> float:
         """Largest moved-pixel fraction since the last call (1 Hz snapshot telemetry)."""

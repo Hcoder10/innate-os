@@ -67,7 +67,9 @@ class ScanHealthReporter:
 
     def tick(self) -> None:
         if not self._enabled or self._pose.is_mapfree:
-            self._reported = False
+            # Quiet here, but keep _reported: an already-announced dropout must
+            # still get its recovery message (and not a duplicate warning) once
+            # the robot leaves mapfree.
             return
         problem = self._monitor.stale_problem()
         if problem is None:

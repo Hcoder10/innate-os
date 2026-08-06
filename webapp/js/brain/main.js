@@ -72,13 +72,26 @@ function buildView(root) {
     cometAngle: -90,
   };
 
-  // Per-turn records for the filmstrip + inspector: turn -> {start, end}.
+  // Per-turn records for the filmstrip + inspector: turn -> {start, end, request}.
   // Frames are full base64 JPEGs, so the store is deliberately shallow.
-  /** @type {Map<number, {start: any, end: any}>} */
+  /** @type {Map<number, {start: any, end: any, request: any}>} */
   const turns = new Map();
   const TURNS_MAX = 24;
   let shownTurn = 0; // turn on the vision stage
   let inspecting = 0; // turn open in the inspector; 0 = closed
+
+  // One-shot UI timers (phase eases, queue drain), all cleared on destroy so
+  // none fires against the wiped DOM after the page unmounts.
+  /** @type {Set<number>} */
+  const uiTimers = new Set();
+  /** @param {() => void} fn @param {number} ms */
+  function later(fn, ms) {
+    const id = window.setTimeout(() => {
+      uiTimers.delete(id);
+      fn();
+    }, ms);
+    uiTimers.add(id);
+  }
 
   /** @param {any} d turn_start payload (frames already normalized) */
   function rememberTurn(d) {
@@ -127,7 +140,7 @@ function buildView(root) {
       hidePing();
       drainQueue();
       setPhase("look");
-      window.setTimeout(() => {
+      later(() => {
         if (S.phase === "look") setPhase("think");
       }, 550);
     }
@@ -157,7 +170,7 @@ function buildView(root) {
       S.waitUntil = performance.now() + d.next_in * 1000;
       S.waitTotal = d.next_in * 1000;
       if (acted)
-        window.setTimeout(() => {
+        later(() => {
           if (S.phase === "act") setPhase("wait");
         }, 1100);
     }
@@ -240,6 +253,16 @@ function buildView(root) {
   // ---- renderers -----------------------------------------------------------
   /** @param {string | undefined} s @param {number} n */
   const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
+  // Model- and skill-supplied strings go through here before any innerHTML —
+  // tool names, args, and failure reasons are attacker-influenceable text.
+  /** @param {unknown} s */
+  const esc = (s) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   /** @param {number} [ts] */
   const hhmmss = (ts) => new Date((ts ?? Date.now() / 1000) * 1000).toLocaleTimeString([], { hour12: false });
 
@@ -280,8 +303,8 @@ function buildView(root) {
                 .join(" ") +
               ")"
             : "";
-        const title = (c.outcome || "").replace(/"/g, "&quot;");
-        return `<span class="br-call ${bad ? "bad" : quiet ? "quiet" : "go"}" title="${title}">${c.name}${trunc(args, 46)}</span>`;
+        const title = esc(c.outcome || "");
+        return `<span class="br-call ${bad ? "bad" : quiet ? "quiet" : "go"}" title="${title}">${esc(c.name)}${esc(trunc(args, 46))}</span>`;
       })
       .join("");
     div.innerHTML =
@@ -297,6 +320,12 @@ function buildView(root) {
   function onSkill(d) {
     const key = d.primitive_id || d.skill_name;
     let row = skillRows.get(key);
+    if (row && !row.isConnected) {
+      // Evicted from the feed by prepend's cap: writing into the detached
+      // node would swallow this update, so start a fresh row.
+      skillRows.delete(key);
+      row = undefined;
+    }
     if (!row) {
       row = document.createElement("div");
       skillRows.set(key, row);
@@ -305,9 +334,9 @@ function buildView(root) {
     }
     row.className = "br-skill-row " + d.status;
     row.innerHTML =
-      `<span class="st"></span><span>${d.skill_name || d.primitive_name}</span>` +
-      (d.reason ? `<span class="reason">${trunc(d.reason, 60)}</span>` : "") +
-      `<span class="status">${d.status}</span>`;
+      `<span class="st"></span><span>${esc(d.skill_name || d.primitive_name)}</span>` +
+      (d.reason ? `<span class="reason">${esc(trunc(d.reason, 60))}</span>` : "") +
+      `<span class="status">${esc(d.status)}</span>`;
   }
 
   /** @param {string} kind @param {string} text */
@@ -332,7 +361,7 @@ function buildView(root) {
 
   function drainQueue() {
     for (const c of root.querySelectorAll(".br-qcard")) c.classList.add("drain");
-    window.setTimeout(() => renderQueue([]), 420);
+    later(() => renderQueue([]), 420);
   }
 
   function renderStreak() {
@@ -750,6 +779,7 @@ function buildView(root) {
       cancelAnimationFrame(raf);
       window.clearTimeout(pingTimer);
       window.clearTimeout(motionTimer);
+      for (const id of uiTimers) window.clearTimeout(id);
       window.removeEventListener("keydown", onKey);
       unsubs.forEach((u) => u());
       demoStop?.();

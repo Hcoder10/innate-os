@@ -125,13 +125,17 @@ def assign_tool_names(skills: list[dict]) -> list[tuple[str, dict]]:
 
 
 def build_tools(
-    skills: list[dict],
+    named_skills: list[tuple[str, dict]],
     running_skill_name: str | None,
     *,
     can_go_to_point_in_view: bool = False,
     user_spoke: bool = False,
 ) -> list[dict]:
     """One function declaration per available skill, in a native tools block.
+
+    ``named_skills`` is :func:`assign_tool_names`'s output — the caller derives
+    its dispatch map from the same pairs, so the declared names and the
+    dispatched names can never diverge.
 
     While a skill runs, the robot's only action is stopping it, so the
     declarations collapse. The shape depends on whether the user just spoke:
@@ -140,26 +144,19 @@ def build_tools(
     the reply channel, and the description steers stop away from questions.
     """
     if running_skill_name is not None:
-        if user_spoke:
-            stop = {
-                "name": STOP_SKILL,
-                "description": (
-                    f"Abort the currently running skill ({running_skill_name}). Only when the user "
-                    "asks you to stop or switch task, or the skill is clearly failing. Questions "
-                    "and conversation are NOT reasons to stop — answer those in text and let the "
-                    "skill continue."
-                ),
-            }
-            return [{"functionDeclarations": [stop]}]
         stop = {
             "name": STOP_SKILL,
-            "description": (
-                f"Abort the currently running skill ({running_skill_name}). Use when it is clearly "
-                "failing, no longer makes sense, or the user asks for something else."
+            "description": f"Abort the currently running skill ({running_skill_name}). "
+            + (
+                "Only when the user asks you to stop or switch task, or the skill is clearly "
+                "failing. Questions and conversation are NOT reasons to stop — answer those "
+                "in text and let the skill continue."
+                if user_spoke
+                else "Use when it is clearly failing, no longer makes sense, or the user asks for something else."
             ),
         }
-        return [{"functionDeclarations": [stop, _WAIT_DECLARATION]}]
-    declarations = [_declaration(name, meta) for name, meta in assign_tool_names(skills)]
+        return [{"functionDeclarations": [stop] if user_spoke else [stop, _WAIT_DECLARATION]}]
+    declarations = [_declaration(name, meta) for name, meta in named_skills]
     if can_go_to_point_in_view:
         declarations.append(_GO_TO_POINT_IN_VIEW_DECLARATION)
     declarations.append(_WAIT_DECLARATION)
@@ -397,6 +394,11 @@ class GeminiSession:
             history[0].get("role") != "user" or any("functionResponse" in p for p in history[0].get("parts") or [])
         ):
             history.pop(0)
+        # A pruned turn must not stay pinned as the latest-only holder: absorb
+        # would "prune" an orphan dict nothing reads, and the reference would
+        # keep its base64 wrist frame alive for as long as the arm feed is stale.
+        if self._latest_only_turn is not None and not any(c is self._latest_only_turn[0] for c in history):
+            self._latest_only_turn = None
         # Keep camera frames only in the newest few user turns (none at all if
         # the configured keep-count is zero or nonsensical).
         keep = max(self._max_image_turns, 0)
@@ -446,10 +448,26 @@ def _decision_from(response: dict) -> Decision:
     return decision
 
 
+_TOOL_NARRATION = re.compile(r"Calling tool\b")
+
+
+def split_tool_narration(text: str) -> tuple[str, bool]:
+    """Cut leaked tool-call narration ("Calling tool ..." to end of text).
+
+    gemini-3 preview sometimes appends it to its reply, without a sentence
+    boundary. Returns ``(clean text, whether narration was found)`` — the one
+    scrub both the chat transcript (:func:`_clean_speech`) and the audio path
+    (``SpeechStreamer._say``) apply, so the two can never diverge.
+    """
+    match = _TOOL_NARRATION.search(text)
+    if match is None:
+        return text, False
+    return text[: match.start()].rstrip(), True
+
+
 def _clean_speech(speech: str | None) -> str | None:
     """Drop unspeakable output: placeholders and leaked tool-call narration."""
     if not speech:
         return None
-    # gemini-3 preview sometimes appends "Calling tool default_api:..." to its text.
-    speech = re.sub(r"Calling tool\b.*", "", speech, flags=re.DOTALL).strip()
+    speech, _ = split_tool_narration(speech)
     return speech if re.search(r"[a-zA-Z0-9]", speech) else None

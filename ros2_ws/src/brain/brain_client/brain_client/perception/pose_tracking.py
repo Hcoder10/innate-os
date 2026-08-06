@@ -2,21 +2,18 @@
 # Copyright (c) 2026 Innate Inc
 """Robot pose source: TF (map->base_link) with odometry fallback in mapfree mode.
 
-Owns the on-demand ``/odom`` and nav-mode subscriptions and the 30 Hz transform
-timer (created via :meth:`start` when the brain activates, torn down via
-:meth:`stop`). The pure ``(x, y, theta)`` math lives in :mod:`perception.pose`;
-this module is the ROS-facing source of poses.
+Owns the on-demand ``/odom`` and nav-mode subscriptions (created via
+:meth:`start` when the brain activates, torn down via :meth:`stop`); the
+always-on TF listener keeps the transform buffer warm for on-demand lookups.
+The pure ``(x, y, theta)`` math lives in :mod:`perception.pose`; this module
+is the ROS-facing source of poses.
 """
 
 from __future__ import annotations
 
-import traceback
-
 import rclpy
 from nav_msgs.msg import Odometry
-from rclpy.duration import Duration
 from std_msgs.msg import String
-from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
@@ -40,7 +37,6 @@ class PoseTracker:
 
         self._odom_sub = None
         self._nav_mode_sub = None
-        self._transform_timer = None
 
     # --- on-demand lifecycle (brain active) ---
     def start(self) -> None:
@@ -48,7 +44,6 @@ class PoseTracker:
             return
         self._odom_sub = self._node.create_subscription(Odometry, self._odom_topic, self._on_odom, 10)
         self._nav_mode_sub = self._node.create_subscription(String, self._nav_mode_topic, self._on_nav_mode, 10)
-        self._transform_timer = self._node.create_timer(1.0 / 30.0, self._fetch_transform)
 
     def stop(self) -> None:
         # Destroying here is safe only because brain_client_node is spun
@@ -61,9 +56,6 @@ class PoseTracker:
                 self._node.destroy_subscription(sub)
         self._odom_sub = None
         self._nav_mode_sub = None
-        if self._transform_timer is not None:
-            self._transform_timer.cancel()
-            self._transform_timer = None
 
     @property
     def is_mapfree(self) -> bool:
@@ -77,30 +69,6 @@ class PoseTracker:
         self.cur_nav_mode = msg.data
         self._logger.debug(f"Current Navigation Mode is {self.cur_nav_mode}")
 
-    def _fetch_transform(self) -> None:
-        """30 Hz: refresh ``last_odom`` from the map->base_link TF (non-mapfree)."""
-        try:
-            if self.cur_nav_mode == "mapfree":
-                return
-            base, mapf, when = "base_link", "map", rclpy.time.Time()
-            if self.tf_buffer.can_transform(mapf, base, when, timeout=Duration(seconds=0.1)):
-                t = self.tf_buffer.lookup_transform(mapf, base, when, timeout=Duration(seconds=0.1))
-                odom = Odometry()
-                odom.header.stamp = self._node.get_clock().now().to_msg()
-                odom.header.frame_id = mapf
-                odom.child_frame_id = base
-                odom.pose.pose.position.x = t.transform.translation.x
-                odom.pose.pose.position.y = t.transform.translation.y
-                odom.pose.pose.position.z = t.transform.translation.z
-                odom.pose.pose.orientation = t.transform.rotation
-                self.last_odom = odom
-            else:
-                self._logger.warn(f"Could not get transform '{base}'->'{mapf}'. Waiting...")
-        except TransformException as ex:
-            self._logger.error(f"TransformException '{base}'->'{mapf}': {ex}")
-        except Exception as e:
-            self._logger.error(f"Error in _fetch_transform: {e}, {traceback.format_exc()}")
-
     # --- pose queries ---
     def current_pose_xyt(self) -> Pose | None:
         """Current robot pose as (x, y, theta); None if unavailable."""
@@ -109,11 +77,15 @@ class PoseTracker:
                 pos = self.last_odom.pose.pose.position
                 ori = self.last_odom.pose.pose.orientation
             else:
+                # No timeout: this runs on the agent's loop thread (twice per
+                # turn), and tf2's timeout is a sleep-poll — waiting 0.5s here
+                # whenever the map frame is missing stalls turns and telemetry.
+                # The listener keeps the buffer warm; if the transform isn't
+                # there yet, None now beats a pose half a second late.
                 transform = self.tf_buffer.lookup_transform(
                     target_frame="map",
                     source_frame="base_link",
                     time=rclpy.time.Time(),
-                    timeout=rclpy.time.Duration(seconds=0.5),
                 )
                 pos = transform.transform.translation
                 ori = transform.transform.rotation

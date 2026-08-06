@@ -82,12 +82,12 @@ def test_assign_tool_names_disambiguates_collisions_and_builtins():
     assert len(names) == len(set(names)) and WAIT not in names
     assert all(len(name) <= 64 for name in names)
     # The declarations use the same disambiguated names.
-    declared = [d["name"] for d in build_tools(colliding, None)[0]["functionDeclarations"]]
+    declared = [d["name"] for d in build_tools(named, None)[0]["functionDeclarations"]]
     assert declared[:5] == names
 
 
 def test_build_tools_declares_one_function_per_skill_plus_wait():
-    tools = build_tools([NAV_SKILL, WAVE_SKILL], None)
+    tools = build_tools(assign_tool_names([NAV_SKILL, WAVE_SKILL]), None)
     declarations = tools[0]["functionDeclarations"]
     assert [d["name"] for d in declarations] == ["navigate_to_position", "wave", "wait"]
 
@@ -105,7 +105,7 @@ def test_build_tools_declares_one_function_per_skill_plus_wait():
 
 
 def test_build_tools_while_running_offers_only_stop_and_wait():
-    declarations = build_tools([NAV_SKILL, WAVE_SKILL], "navigate_to_position")[0]["functionDeclarations"]
+    declarations = build_tools([], "navigate_to_position")[0]["functionDeclarations"]
     assert [d["name"] for d in declarations] == [STOP_SKILL, "wait"]
     assert "navigate_to_position" in declarations[0]["description"]
 
@@ -125,7 +125,9 @@ def test_build_tools_with_no_skills_still_offers_wait():
 
 def test_unknown_param_type_falls_back_to_annotated_string():
     skill = {"id": "s", "name": "s", "guidelines": "g", "inputs": {"blob": {"type": "list[str]", "required": True}}}
-    schema = build_tools([skill], None)[0]["functionDeclarations"][0]["parameters"]["properties"]["blob"]
+    schema = build_tools(assign_tool_names([skill]), None)[0]["functionDeclarations"][0]["parameters"]["properties"][
+        "blob"
+    ]
     assert schema["type"] == "STRING"
     assert "list[str]" in schema["description"]
 
@@ -316,7 +318,7 @@ def test_generate_builds_a_complete_native_request():
         return [model_response({"text": "ok"})]
 
     session = make_session(transport=transport)
-    tools = build_tools([WAVE_SKILL], None)
+    tools = build_tools(assign_tool_names([WAVE_SKILL]), None)
     session.generate(user_turn("hello", True), tools, "SYSTEM")
     assert captured["model"] == "test-model"
     assert captured["systemInstruction"] == {"parts": [{"text": "SYSTEM"}]}
@@ -543,6 +545,46 @@ def test_a_call_outside_the_active_skill_set_is_rejected(agent_factory):
     assert started == []
     outcome = agent._session._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
     assert outcome == "unknown skill 'pick'"
+
+
+def test_go_to_point_outside_the_active_skill_set_is_rejected(agent_factory):
+    # navigate_to_position is installed (registry) but not active for the
+    # directive: a hallucinated go_to_point_in_view call must not drive the
+    # base by resolving through the full registry.
+    from brain_client.skills.registry import SkillRegistry
+
+    agent, state = agent_factory()
+    state.registry = SkillRegistry.from_metadata([NAV_SKILL])
+    started = []
+    agent._runner.start_task = lambda *a, **k: started.append(a)
+    agent._session._transport = lambda model, body: [
+        model_response(call_part("go_to_point_in_view", {"y": 800, "x": 500}))
+    ]
+    run_turn(agent)
+
+    assert started == []
+    outcome = agent._session._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
+    assert outcome == "rejected — navigate_to_position is not available"
+
+
+def test_go_to_point_rejects_out_of_range_coordinates(agent_factory):
+    # Out-of-range pixels still produce finite tan() rays that ground a wrong
+    # goal; they must bounce back to the model instead of driving the robot.
+    from brain_client.skills.registry import SkillRegistry
+
+    agent, state = agent_factory()
+    state.registry = SkillRegistry.from_metadata([NAV_SKILL])
+    agent._roster.active_skill_ids = lambda: [NAV_SKILL["id"]]
+    started = []
+    agent._runner.start_task = lambda *a, **k: started.append(a)
+    agent._session._transport = lambda model, body: [
+        model_response(call_part("go_to_point_in_view", {"y": 2000, "x": 500}))
+    ]
+    run_turn(agent)
+
+    assert started == []
+    outcome = agent._session._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
+    assert outcome == "rejected — y and x must be within 0-1000 image coordinates"
 
 
 def test_chat_failure_after_commit_still_answers_the_models_calls(agent_factory, monkeypatch):
@@ -824,6 +866,27 @@ def test_housekeeping_turn_speech_streams_like_any_other(agent_factory):
     )
     run_turn(agent)  # the started-speaking guard protects it, so it may stream too
     assert agent._chat.spoken == [("One.", True), ("Two.", False)]
+
+
+def test_suppressed_reply_tells_the_model_it_went_unspoken(agent_factory):
+    # A reply that never started speaking is suppressed when a newer user
+    # message is pending — but history already holds it verbatim, so the model
+    # must learn it went unspoken or "never repeat yourself" buries the answer.
+    agent, state = agent_factory()
+
+    def transport(model, body):
+        # The user speaks again while the model is thinking.
+        agent._events.append({"text": 'The user says: "wait, actually…"', "image": None, "kind": "user"})
+        return iter([model_response({"text": "Here is my answer."})])
+
+    agent._session._transport = transport
+    agent.on_user_message("question?")
+    run_turn(agent)
+
+    assert agent._chat.spoken == []  # muted: nothing reached TTS
+    texts = [e["text"] for e in agent._events]
+    assert texts[0] == 'The user says: "wait, actually…"'
+    assert "was not spoken" in texts[1]
 
 
 def test_running_skill_guidance_reads_registry_metadata(agent_factory):

@@ -155,6 +155,9 @@ class BrainClientNode(Node):
             scan_health=self.scan_health,
             trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
+        # Heavy traces (request bodies, frames — hundreds of KB per turn) are
+        # only serialized while a monitor actually subscribes to /brain/trace.
+        self.brain.trace_has_audience = lambda: self.brain_trace_pub.get_subscription_count() > 0
         # Terminal skill results and feedback land in the brain's next turn.
         self.runner.on_event = self.brain.on_skill_event
         self.runner.on_feedback = self.brain.on_skill_feedback
@@ -316,7 +319,14 @@ class BrainClientNode(Node):
 
     def _on_set_active_skills(self, msg: String) -> None:
         """Update which skills are enabled for the current directive."""
-        payload = json.loads(msg.data)
+        try:
+            payload = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            self.get_logger().warn("[BrainClient] Ignoring /brain/set_active_skills: invalid JSON payload.")
+            return
+        if not isinstance(payload, dict):
+            self.get_logger().warn("[BrainClient] Ignoring /brain/set_active_skills: payload must be a JSON object.")
+            return
         if self.state.current_directive is None:
             self.get_logger().warn("No directive selected; ignoring active skills update")
             return
@@ -339,18 +349,18 @@ class BrainClientNode(Node):
         )
         self.publish_agent_status()
 
-    def _skill_name_for_id(self, skill_id: str) -> str:
-        for metadata in self.state.registry.metadata:
-            if metadata.get("id") == skill_id:
-                return str(metadata.get("name") or skill_id)
-        return skill_id
-
     def _on_manual_skill_event(self, msg: String) -> None:
         """Record manually-triggered skill runs in the chat and the brain's context."""
-        payload = json.loads(msg.data)
-        status = payload["status"]
-        skill_id = payload["skill_id"]
-        primitive_name = payload.get("skill_name") or self._skill_name_for_id(skill_id)
+        try:
+            payload = json.loads(msg.data)
+            status = payload["status"]
+            skill_id = payload["skill_id"]
+        except (json.JSONDecodeError, TypeError, KeyError):
+            self.get_logger().warn(
+                "[BrainClient] Ignoring /brain/manual_skill_event: expected a JSON object with 'status' and 'skill_id'."
+            )
+            return
+        primitive_name = payload.get("skill_name") or self.state.registry.name_for(skill_id)
         primitive_id = payload.get("primitive_id") or f"manual_{skill_id}_{int(time.time() * 1000)}"
         reason = payload.get("reason")
 

@@ -19,12 +19,22 @@ class LoopThread:
         self.loop = asyncio.new_event_loop()
         self._task = None
         self._done = threading.Event()
+        self._done.set()  # no task has ever run: fully unwound
         self._thread = threading.Thread(target=self.loop.run_forever, name=name, daemon=True)
         self._thread.start()
 
     @property
     def running(self) -> bool:
         return self._task is not None
+
+    @property
+    def unwound(self) -> bool:
+        """True when no root task is running or lingering mid-cancellation.
+
+        False after a :meth:`cancel` timed out: the disowned task is still
+        unwinding, and spawning over it would run two root tasks at once.
+        """
+        return self._done.is_set()
 
     def spawn(self, coro) -> None:
         assert self._task is None, "root task already running"

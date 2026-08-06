@@ -56,77 +56,57 @@ class BrainConfig:
 
     @classmethod
     def load(cls, node) -> BrainConfig:
-        """Declare every parameter on ``node`` and read it into a frozen config."""
-        string_params = {
-            "image_topic": "/mars/main_camera/left/image_raw/compressed",
-            "cmd_vel_topic": "/cmd_vel",
-            "arm_camera_image_topic": "/mars/arm/image_raw/compressed",
-            "odom_topic": "/odom",
-            "current_nav_mode_topic": "/nav/current_mode",
-            "scan_topic": "/scan",
-            "gemini_model": "gemini-3.6-flash",
-            # "minimal" | "low" | "medium" | "high"; "" = model default.
-            # Measured on 3.6-flash (2026-08): minimal is ~3x faster than the
-            # default level (0.96s vs 3.08s median turn) and passed the same
-            # single-turn discipline probes (wait on idle, ignore STT noise,
-            # tool choice, go_to_point_in_view grounding). An earlier model's "low"
-            # measurably hurt multi-turn instruction-following (skill re-runs,
-            # chatter) — if that resurfaces, revert to "" here.
-            "gemini_thinking_level": "minimal",
-            "cartesia_voice_id": "9fdaae0b-f885-4813-b589-3c07cf9d5fea",
-        }
-        bool_params = {
-            "send_arm_camera_image": True,
-            "log_everything": False,
-            "simulator_mode": False,
-        }
-        int_params = {
-            "history_max_entries": 60,
-            "history_max_image_turns": 3,
-        }
-        double_params = {
-            "idle_turn_interval": 3.0,
-            "supervision_turn_interval": 5.0,
-            "scan_stale_after_sec": 10.0,
-            "vertical_fov": 80.0,
-            "x_cam": 0.0197,
-            "height_cam": 0.19663,
-        }
+        """Declare every parameter on ``node`` and read it into a frozen config.
 
-        for name, default in {**string_params, **bool_params, **int_params, **double_params}.items():
+        Each default's Python type picks the ROS accessor, and ``cls(**...)``
+        makes a name that drifts from the dataclass fail loudly instead of
+        being silently declared-and-ignored.
+        """
+        accessor = {str: "string_value", bool: "bool_value", int: "integer_value", float: "double_value"}
+        for name, default in _PARAM_DEFAULTS.items():
             node.declare_parameter(name, default)
-
-        def s(name: str) -> str:
-            return node.get_parameter(name).get_parameter_value().string_value
-
-        def b(name: str) -> bool:
-            return node.get_parameter(name).get_parameter_value().bool_value
-
-        def i(name: str) -> int:
-            return node.get_parameter(name).get_parameter_value().integer_value
-
-        def d(name: str) -> float:
-            return node.get_parameter(name).get_parameter_value().double_value
-
         return cls(
-            image_topic=s("image_topic"),
-            cmd_vel_topic=s("cmd_vel_topic"),
-            arm_camera_image_topic=s("arm_camera_image_topic"),
-            odom_topic=s("odom_topic"),
-            current_nav_mode_topic=s("current_nav_mode_topic"),
-            scan_topic=s("scan_topic"),
-            send_arm_camera_image=b("send_arm_camera_image"),
-            log_everything=b("log_everything"),
-            simulator_mode=b("simulator_mode"),
-            vertical_fov=d("vertical_fov"),
-            x_cam=d("x_cam"),
-            height_cam=d("height_cam"),
-            gemini_model=s("gemini_model"),
-            gemini_thinking_level=s("gemini_thinking_level"),
-            idle_turn_interval=d("idle_turn_interval"),
-            supervision_turn_interval=d("supervision_turn_interval"),
-            history_max_entries=i("history_max_entries"),
-            history_max_image_turns=i("history_max_image_turns"),
-            scan_stale_after_sec=d("scan_stale_after_sec"),
-            cartesia_voice_id=s("cartesia_voice_id"),
+            **{
+                name: getattr(node.get_parameter(name).get_parameter_value(), accessor[type(default)])
+                for name, default in _PARAM_DEFAULTS.items()
+            }
         )
+
+
+# One default per BrainConfig field, in field order; a value's type must match
+# its field's (it selects the ROS parameter accessor in ``load``).
+_PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
+    # --- Topics ---
+    "image_topic": "/mars/main_camera/left/image_raw/compressed",
+    "cmd_vel_topic": "/cmd_vel",
+    "arm_camera_image_topic": "/mars/arm/image_raw/compressed",
+    "odom_topic": "/odom",
+    "current_nav_mode_topic": "/nav/current_mode",
+    "scan_topic": "/scan",
+    # --- Feature flags ---
+    "send_arm_camera_image": True,
+    "log_everything": False,
+    "simulator_mode": False,
+    # --- Camera geometry ---
+    "vertical_fov": 80.0,
+    "x_cam": 0.0197,
+    "height_cam": 0.19663,
+    # --- Local brain (Gemini) ---
+    "gemini_model": "gemini-3.6-flash",
+    # "minimal" | "low" | "medium" | "high"; "" = model default.
+    # Measured on 3.6-flash (2026-08): minimal is ~3x faster than the
+    # default level (0.96s vs 3.08s median turn) and passed the same
+    # single-turn discipline probes (wait on idle, ignore STT noise,
+    # tool choice, go_to_point_in_view grounding). An earlier model's "low"
+    # measurably hurt multi-turn instruction-following (skill re-runs,
+    # chatter) — if that resurfaces, revert to "" here.
+    "gemini_thinking_level": "minimal",
+    "idle_turn_interval": 3.0,
+    "supervision_turn_interval": 5.0,
+    "history_max_entries": 60,
+    "history_max_image_turns": 3,
+    # --- Timing ---
+    "scan_stale_after_sec": 10.0,
+    # --- Proxy service config ---
+    "cartesia_voice_id": "9fdaae0b-f885-4813-b589-3c07cf9d5fea",
+}

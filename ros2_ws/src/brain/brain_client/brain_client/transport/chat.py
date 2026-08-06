@@ -13,6 +13,8 @@ import json
 import re
 import time
 
+from brain_client.brain.gemini import split_tool_narration
+
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
@@ -119,10 +121,16 @@ class SpeechStreamer:
         self._buffer = ""
 
     def _say(self, sentence: str) -> None:
-        sentence = sentence.strip()
-        if sentence.startswith("Calling tool"):  # leaked tool narration, never speech
+        if self._muted:
+            return
+        # Leaked tool narration, never speech — cut mid-sentence too (the model
+        # appends it without a boundary) and mute the rest of the reply. Shared
+        # with gemini._clean_speech so the audio never carries text the chat
+        # transcript scrubbed.
+        sentence, truncated = split_tool_narration(sentence.strip())
+        if truncated:
             self._muted = True
-        if self._muted or not re.search(r"[a-zA-Z0-9]", sentence):
+        if not re.search(r"[a-zA-Z0-9]", sentence):
             return
         # The first sentence supersedes any stale queued utterances; the rest
         # of the reply queues in order behind it.

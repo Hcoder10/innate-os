@@ -120,11 +120,17 @@ class BrainAgent:
         self._new_event = asyncio.Event()  # something was queued (loop thread; set via runtime.post)
         self._user_spoke = asyncio.Event()  # like _new_event, but only user speech sets it
 
+        # Set by the composition root: whether anything subscribes to
+        # /brain/trace. Gates only the HEAVY traces (full request bodies,
+        # base64 frames) — hundreds of KB per turn that would otherwise be
+        # serialized and published for nobody. Small events always publish.
+        self.trace_has_audience = lambda: True
+
         if self._session is not None:
             # The observability tap: the exact request body, straight off the
             # wire path (fires on generate's worker thread, like add_event's
             # executor-thread traces). The monitor renders it verbatim.
-            self._session.on_request = lambda body: self._trace("turn_request", turn=self._turn_count, body=body)
+            self._session.on_request = self._trace_request
 
     @property
     def available(self) -> bool:
@@ -143,6 +149,11 @@ class BrainAgent:
                 "(INNATE_SERVICE_KEY) or set GEMINI_API_KEY in innate-os/.env and restart."
             )
         if self._runtime.running:
+            return
+        if not self._runtime.unwound:
+            # A previous loop is stuck mid-unwind (stop() timed out): spawning
+            # over it would interleave two conversations. Same guard as reset().
+            self._chat.emit_system("⚠️ The previous brain loop is still unwinding — try activating again shortly.")
             return
         self._activated_at = time.monotonic()
         self._error_streak = 0
@@ -272,6 +283,9 @@ class BrainAgent:
 
             decision = session.absorb(message, response, latest_only_images=wrist_frames)
             del self._events[: len(events)]  # commit: consume exactly what this turn saw
+            # Committed: the peeked events are consumed, so a failure below must
+            # back off against an empty count — any newly queued event ends it.
+            events = []
             outcomes = self._act(decision, speaker, session)
             self._trace(
                 "turn_end",
@@ -376,8 +390,11 @@ class BrainAgent:
             return build_tools([], running["primitive_name"], user_spoke=user_spoke)
         active_ids = set(self._roster.active_skill_ids())
         skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
-        self._tool_map = {name: meta["id"] for name, meta in assign_tool_names(skills)}
-        return build_tools(skills, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
+        # One naming pass feeds both the declarations and the dispatch map, so
+        # the name the model calls always resolves to the skill it was declared for.
+        named = assign_tool_names(skills)
+        self._tool_map = {name: meta["id"] for name, meta in named}
+        return build_tools(named, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
     def _act(self, decision, speaker, session: GeminiSession) -> list:
@@ -393,6 +410,12 @@ class BrainAgent:
             # newer — voicing this reply now would talk over the conversation.
             self._logger.info(f"[Brain] Speech suppressed (newer user message pending): {speech[:60]!r}")
             speaker.mute()
+            # History already holds the reply verbatim, but the user never heard
+            # it — say so, or the "never repeat yourself" rule buries the answer.
+            self.add_event(
+                "(Your previous reply was not spoken — the user had already said "
+                "something newer. Answer their latest message.)"
+            )
         speaker.flush()  # the reply's last sentence has no trailing boundary
         if speaker.spoke and speech:
             # Audio went out sentence-by-sentence; the panel still gets the
@@ -447,8 +470,10 @@ class BrainAgent:
 
     def _go_to_point_in_view(self, args: dict) -> str:
         """Project the pointed-at floor pixel into a local navigate_to_position goal."""
-        nav_id = self._state.registry.resolve_skill_id(_NAV_TO_POSITION)
-        if nav_id is None:
+        # Gate on the ACTIVE set, not the registry: the tool is only declared
+        # when navigate_to_position is active, and a hallucinated call must not
+        # bypass the directive's allowlist through the full registry.
+        if _NAV_TO_POSITION not in self._roster.active_skill_ids():
             return "rejected — navigate_to_position is not available"
         if self._frame_at_capture is None:
             return "rejected — no camera frame to ground the point in"
@@ -456,6 +481,10 @@ class BrainAgent:
             v_norm, u_norm = float(args["y"]), float(args["x"])
         except (KeyError, TypeError, ValueError):
             return "rejected — give integer y and x in 0-1000 image coordinates"
+        if not (0.0 <= v_norm <= 1000.0 and 0.0 <= u_norm <= 1000.0):
+            # Out-of-range values still produce finite tan() rays that ground a
+            # plausible-looking but wrong goal — reject so the model re-points.
+            return "rejected — y and x must be within 0-1000 image coordinates"
 
         floor = grounding.pixel_to_floor(
             u_norm,
@@ -469,13 +498,13 @@ class BrainAgent:
         if floor is None:
             return "rejected — that point is at or above the horizon; point at the floor"
 
-        inputs = self._adjust_nav_goal(nav_id, grounding.approach_goal(*floor))
+        inputs = self._adjust_nav_goal(_NAV_TO_POSITION, grounding.approach_goal(*floor))
         self._logger.info(
             f"[Brain] go_to_point_in_view ({v_norm:.0f},{u_norm:.0f}) -> floor ({floor[0]:.2f}, {floor[1]:.2f})m, "
             f"goal ({inputs['x']:.2f}, {inputs['y']:.2f}, {inputs['theta_degrees']:.0f}°) "
             f"pitch={self._pitch_at_capture:.0f}°"
         )
-        self._start_skill(nav_id, inputs)
+        self._start_skill(_NAV_TO_POSITION, inputs)
         return (
             f"driving to the floor point {math.hypot(*floor):.1f}m away (stopping ~{grounding.STANDOFF_M}m short) "
             "— you will get an event when it finishes"
@@ -537,18 +566,28 @@ class BrainAgent:
         self.add_event(f"Update from running skill {skill_name}: {feedback}", image=image)
 
     # ================= telemetry =================
-    def _trace(self, event: str, **fields) -> None:
-        """Publish one JSON telemetry event on /brain/trace (no-op when unwired)."""
-        if self._trace_sink is not None:
-            self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
+    def _trace(self, event: str, *, heavy: bool = False, **fields) -> None:
+        """Publish one JSON telemetry event on /brain/trace (no-op when unwired).
+
+        ``heavy`` marks events carrying request bodies or frames — hundreds of
+        KB to serialize per turn, published only while something subscribes.
+        """
+        if self._trace_sink is None or (heavy and not self.trace_has_audience()):
+            return
+        self._trace_sink(json.dumps({"ev": event, "t": time.time(), **fields}))
+
+    def _trace_request(self, body: dict) -> None:
+        """Trace the exact request body (heavy: carries every history image)."""
+        self._trace("turn_request", heavy=True, turn=self._turn_count, body=body)
 
     def _trace_turn_start(
         self, text: str, frames: list[tuple[str, bytes]], tools: list, system: str, session: GeminiSession
     ) -> None:
-        if self._trace_sink is None:
-            return  # don't base64 the frames for nobody
+        if self._trace_sink is None or not self.trace_has_audience():
+            return  # skip the base64 work entirely, not just the publish
         self._trace(
             "turn_start",
+            heavy=True,
             turn=self._turn_count,
             input=text,
             images=len(frames),
