@@ -28,6 +28,13 @@ whatever is under it. A set chip (`+manipulation`) lays out a whole group at
 once. **clear** sends every prop back off-map, which is also what a sim reset
 leaves behind.
 
+`SimSession` also relays the world server's challenge judge
+(`onChallenge`/`startChallenge`/`abortChallenge`, see
+`mars_sim_driver/challenges.py`): the roster arrives once per connection, the
+run state rides the stream, and the session merges the halves so a renderer
+sees one view. The webapp's challenge panel is the only consumer, and it keys
+off `onChallenge` existing to stay sim-only — nothing here judges anything.
+
 The render assets (`public/models` glb, `public/physics` hulls) are not in
 git: `./innate-sim up` extracts them from the published bundle (see
 `sim/sim-assets.lock`). `public/robot` is different -- the URDF and STLs are
@@ -60,6 +67,7 @@ src/
                     jitter-sized interpolated playback of the state stream
   simStage.ts       Mounts the canvas, render loop (60fps cap), PiP thumbnails
   scene.ts          Three.js scene: apartment glb + URDF robot, cameras
+  props.ts          Prop roster -> models the scene draws + stage buttons
   physics/worldStateController.ts  observer-stream client (auto-reconnect)
   physics/rosbridgeController.ts   /scan overlay source (lazy-connected)
 public/             (fetched bundle) robot URDF+STLs, apartment glb

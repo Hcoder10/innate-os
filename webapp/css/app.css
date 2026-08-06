@@ -627,6 +627,386 @@ button {
   padding: 10px 12px;
 }
 
+/* Top-left overlay column (agent page): sim challenge panel above telemetry.
+   Children keep the .overlay glass look but stack instead of self-anchoring. */
+.overlay-stack-top-left {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  z-index: 6;
+}
+
+.overlay-stack-top-left > .overlay {
+  position: static;
+  /* The sim's 3D scene behind these cards is often bright wall/floor, where
+     the default 40% glass washes the text out -- use the darker glass the
+     sim debug stack (.overlay-sim) settled on. */
+  background: rgb(0 0 0 / 66%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ---- challenge panel (sim only, see agent/challengePanel.js) ------------- */
+.challenge-panel {
+  width: 252px;
+  padding: 10px 12px 12px;
+}
+
+.challenge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.challenge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.challenge-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.challenge-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.challenge-item:hover {
+  background: rgb(255 255 255 / 8%);
+  border-color: var(--hairline-strong);
+}
+
+.challenge-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+}
+
+.challenge-dot.passed {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.challenge-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.challenge-item-title {
+  font-size: 13px;
+}
+
+.challenge-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.challenge-play {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.challenge-item:hover .challenge-play {
+  color: var(--accent);
+}
+
+.challenge-active {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Let the brief/goals be selected so the challenge instructions can be
+     copied into the agent chat (the .overlay default is user-select: none). */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.challenge-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.challenge-timer {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.challenge-timer.final {
+  color: var(--muted);
+}
+
+.challenge-brief {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.challenge-goals {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.challenge-goals li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.challenge-goals li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+}
+
+.challenge-goals li.done {
+  color: var(--text);
+}
+
+.challenge-goals li.done::before {
+  content: "✓";
+  border-color: var(--ok);
+  background: rgb(86 194 140 / 18%);
+  color: var(--ok);
+  font-size: 9px;
+  line-height: 9px;
+  text-align: center;
+}
+
+.challenge-banner {
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.challenge-banner.passed {
+  background: rgb(86 194 140 / 14%);
+  border: 1px solid rgb(86 194 140 / 45%);
+  color: var(--ok);
+}
+
+.challenge-banner.failed {
+  background: rgb(217 106 90 / 12%);
+  border: 1px solid rgb(217 106 90 / 45%);
+  color: var(--danger);
+}
+
+.challenge-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.challenge-action {
+  flex: 1;
+  padding: 6px 0;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.challenge-action:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+/* Standing hint in the panel head — reopens the first-run intro dialog. */
+.challenge-tutorial-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 150ms ease;
+}
+
+.challenge-tutorial-link:hover {
+  color: var(--accent);
+}
+
+/* Circled "?" — marks the hint as a clickable help control. Inherits
+   currentColor so the hover amber tints icon and text together. */
+.challenge-tutorial-q {
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 8px;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+/* ---- challenge first-run intro (challengeIntro.js) ----------------------- */
+/* One-time interstitial over everything (like the app promo, z 100): what
+   challenges are, and the tutorial that builds the skill they expect. */
+
+.challenge-intro-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 62%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.challenge-intro {
+  position: relative;
+  width: 430px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 26px 20px;
+  background: var(--panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+}
+
+.challenge-intro-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.challenge-intro-close:hover {
+  color: var(--text);
+}
+
+.challenge-intro-title {
+  margin: 0 0 2px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.challenge-intro-blurb {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.challenge-intro-figure {
+  display: block;
+  position: relative;
+  margin-top: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 150ms ease;
+}
+
+.challenge-intro-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.challenge-intro-figure:hover {
+  border-color: var(--accent-dim);
+}
+
+.challenge-intro-chip {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  background: rgb(0 0 0 / 70%);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  transition: color 150ms ease;
+}
+
+.challenge-intro-figure:hover .challenge-intro-chip {
+  color: var(--accent);
+}
+
+.challenge-intro-caption {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.challenge-intro-cta {
+  margin-top: 8px;
+  padding: 11px 0;
+  border: 1px solid var(--accent-dim);
+  border-radius: 9px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--accent);
+  text-decoration: none;
+  transition: background 150ms ease;
+}
+
+.challenge-intro-cta:hover {
+  background: var(--accent-faint);
+}
+
+.challenge-intro-skip {
+  padding: 6px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 150ms ease;
+}
+
+.challenge-intro-skip:hover {
+  color: var(--text);
+}
+
 /* Sim-only debug controls — stacks just under the telemetry card (top-left). */
 .overlay-sim {
   left: 14px;
@@ -5756,8 +6136,11 @@ button {
     display: none;
   }
 
-  /* The Robot/Link/Agent telemetry card costs too much of a small feed. */
-  .overlay-top-left {
+  /* The Robot/Link/Agent telemetry card costs too much of a small feed.
+     The agent page stacks that card (and, in sim, the challenge panel) in
+     .overlay-stack-top-left instead, so it needs hiding by its own name. */
+  .overlay-top-left,
+  .overlay-stack-top-left {
     display: none;
   }
 
