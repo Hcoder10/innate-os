@@ -33,6 +33,10 @@ from std_msgs.msg import String
 
 MIC_RATE = 24_000
 MIC_DEV = "plughw:Light,0"
+# Live barge-in captures at this gain during TTS (micro_input ducks to it);
+# training data MUST be recorded in the same regime or the model fits a
+# different transfer function than the one it will see.
+TTS_MIC_PERCENT = 50
 
 
 class Collector(Node):
@@ -150,6 +154,7 @@ def main():
         existing = sorted(args.out.glob("*_meta.json"))
         start = int(existing[-1].name.split("_")[0]) + 1 if existing else 0
 
+    subprocess.run(["amixer", "-q", "-c", "Light", "sset", "Mic", f"{TTS_MIC_PERCENT}%"], check=True)
     rclpy.init()
     node = Collector(args.out)
     ok = 0
@@ -162,6 +167,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        subprocess.run(["amixer", "-q", "-c", "Light", "sset", "Mic", "100%"])
         print(f"collected {ok} pairs into {args.out}")
         node.destroy_node()
         rclpy.shutdown()
