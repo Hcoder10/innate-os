@@ -36,6 +36,18 @@ install(DIRECTORY launch
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_ros REQUIRED)
+  find_package(launch_testing_ament_cmake REQUIRED)
+
+  # Boot smoke with ROS domain ID isolation: proves the installed nodes
+  # actually launch (exec bits, imports, entry points) under the current
+  # install mode. The agent's behavior itself is covered by the headless
+  # pytest suites in test/.
+  add_launch_test(test/test_node_boot.launch.py
+    RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py"
+    TIMEOUT 240
+  )
 endif()
 
 ament_package()
