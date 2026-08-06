@@ -3,15 +3,16 @@
 # Copyright (c) 2026 Innate Inc
 """Arm SDK server — the backend behind the webapp's /armsdk page.
 
-Drives the brain_client Manipulation SDK against the live arm and exposes it
-as a tiny localhost JSON API. Launched with the stack (brain_client.launch.py),
-so the page is always available; the webapp front door proxies /armsdk/api/*
-here, which keeps the raw arm-control port on-box and same-origin.
+Drives the brain_client Manipulation SDK against the live arm, exposed the
+same way every other page-facing robot feature is: an action
+(/armsdk/command, ExecuteArmCommand) plus a slider-stream topic
+(/armsdk/stream_joints), driven from the browser over rosbridge. The page
+reads pose/joints/torque straight from the driver topics, so this node costs
+nothing while the page just looks at the arm.
 
 The Manipulation feeds cost ~600 msg/s of callback dispatch while live, so
-they only run while the page does: constructed lazy, started on the first
-request, and parked again after IDLE_PARK_S without one (the page polls every
-250 ms, so an open tab keeps them warm).
+they only run around commands: constructed lazy, started on the first goal,
+and parked again after IDLE_PARK_S without one.
 
 Not skill code — plain time.sleep and blocking calls are fine here.
 """
@@ -22,27 +23,31 @@ import sys
 import threading
 import time
 import traceback
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
+from brain_messages.action import ExecuteArmCommand
+from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float64MultiArray
 
 from brain_client.robot.exceptions import ArmFailed, ArmUnhealthy
 from brain_client.robot.manipulation import Manipulation
 
-PORT = 8090
-IDLE_PARK_S = 60.0  # park the state feeds this long after the last request
+IDLE_PARK_S = 60.0  # park the state feeds this long after the last command
 
 rclpy.init(args=sys.argv)  # honor the launch file's --ros-args
 node = rclpy.create_node("arm_sdk_server")
 manip = Manipulation(node, node.get_logger(), lazy=True)
 manip.safety.max_ee_speed = 0.20  # m/s — stretches cartesian move durations
 
-# One motion at a time; concurrent clicks get a 409 instead of queueing up.
-# joints_stream takes it too (briefly): during a blocking move the stream gets
-# a 409 and drops the step, so sliders can't fight a discrete motion.
+# One motion at a time; a concurrent goal is refused instead of queueing up.
+# The joint stream takes it too (briefly): during a blocking move a stream
+# step is dropped, so sliders can't fight a discrete motion.
 motion_lock = threading.Lock()
 
-# Written on every request, read by the parker thread. Plain float — a torn
+# Written on every command, read by the parker thread. Plain float — a torn
 # read is impossible under the GIL and a stale one just delays the park a tick.
 last_request = time.monotonic()
 
@@ -51,8 +56,8 @@ def touch():
     """Mark activity and make sure the state feeds are live (idempotent)."""
     global last_request
     last_request = time.monotonic()
-    if manip._executor is None:  # log the resume, not every poll
-        node.get_logger().info("request while parked — starting arm-state feeds")
+    if manip._executor is None:  # log the resume, not every stream step
+        node.get_logger().info("command while parked — starting arm-state feeds")
     manip.start()
 
 
@@ -112,13 +117,6 @@ def tolerances(body):
 
 
 def do_command(cmd, body):
-    if cmd == "joints_stream":
-        # Live sliders stream through the SDK's stream_joints() — the teleop
-        # pass-through with a velocity-clamped slew, smooth unlike goto calls.
-        manip.stream_joints(body["joints"])
-        return {}
-    # Discrete motions supersede an active stream inside the SDK (_goto
-    # calls stream_stop), so no extra guard is needed here.
     if cmd == "move_to":
         x, y, z = float(body["x"]), float(body["y"]), float(body["z"])
         settled = manip.move_to(
@@ -192,70 +190,71 @@ def do_command(cmd, body):
     raise ArmFailed(f"unknown command {cmd!r}")
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
+def result(success, message="", extra=None):
+    out = dict(extra or {})
+    out["state"] = state()
+    return ExecuteArmCommand.Result(success=success, message=message, state=json.dumps(out))
 
-    def _json(self, code, obj):
-        data = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
 
-    def do_GET(self):
-        if self.path == "/api/state":
-            touch()
-            self._json(200, state())
-        else:
-            self._json(404, {"error": "not found — the UI is the webapp's /armsdk page"})
+def execute_goal(goal_handle):
+    cmd = goal_handle.request.command
+    body = json.loads(goal_handle.request.params or "{}")
+    touch()
 
-    def do_POST(self):
-        if not self.path.startswith("/api/cmd/"):
-            self._json(404, {"error": "not found"})
-            return
-        cmd = self.path[len("/api/cmd/") :]
-        length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length) or b"{}")
-        touch()
+    # torque_off is the abort path: it must work WHILE a motion holds the
+    # lock (the motion then fails fast on the de-energized arm).
+    needs_lock = cmd != "torque_off"
+    if needs_lock and not motion_lock.acquire(blocking=False):
+        goal_handle.succeed()
+        return result(False, "arm busy — wait for the current motion")
+    try:
+        extra = do_command(cmd, body)
+        goal_handle.succeed()
+        return result(True, extra=extra)
+    except (ArmFailed, ArmUnhealthy) as e:
+        goal_handle.succeed()
+        return result(False, f"{type(e).__name__}: {e}")
+    except Exception as e:
+        traceback.print_exc()
+        goal_handle.succeed()
+        return ExecuteArmCommand.Result(success=False, message=f"{type(e).__name__}: {e}", state="{}")
+    finally:
+        if needs_lock:
+            motion_lock.release()
 
-        # torque_off is the abort path: it must work WHILE a motion holds the
-        # lock (the motion then fails fast on the de-energized arm).
-        needs_lock = cmd != "torque_off"
-        if needs_lock and not motion_lock.acquire(blocking=False):
-            self._json(409, {"error": "arm busy — wait for the current motion"})
-            return
+
+def on_stream(msg):
+    """Live sliders stream through the SDK's stream_joints() — the teleop
+    pass-through with a velocity-clamped slew, smooth unlike goto calls.
+    A step landing during a discrete motion is dropped, not queued."""
+    touch()
+    if motion_lock.acquire(blocking=False):
         try:
-            result = do_command(cmd, body)
-            result["state"] = state()
-            self._json(200, result)
-        except (ArmFailed, ArmUnhealthy) as e:
-            self._json(500, {"error": f"{type(e).__name__}: {e}", "state": state()})
-        except Exception as e:
-            traceback.print_exc()
-            self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            manip.stream_joints(list(msg.data))
         finally:
-            if needs_lock:
-                motion_lock.release()
+            motion_lock.release()
 
 
 def main():
-    # Localhost only: the webapp front door proxies /armsdk/api/* here, so the
-    # raw arm-control API is never exposed off-box.
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    group = ReentrantCallbackGroup()  # torque_off must land during a blocking motion
+    server = ActionServer(node, ExecuteArmCommand, "/armsdk/command", execute_goal, callback_group=group)
+    node.create_subscription(
+        Float64MultiArray,
+        "/armsdk/stream_joints",
+        on_stream,
+        QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
+        callback_group=group,
+    )
     threading.Thread(target=parker, daemon=True).start()
-    node.get_logger().info(f"Arm SDK server on http://127.0.0.1:{PORT}")
-    # rclpy's signal handlers flip rclpy.ok() on the SIGINT/SIGTERM that
-    # ros2 launch sends, so this loop is the shutdown latch either way.
+    node.get_logger().info("Arm SDK server: action /armsdk/command, stream /armsdk/stream_joints")
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        while rclpy.ok():
-            time.sleep(0.5)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        server.shutdown()
+        server.destroy()
         manip.shutdown()
         if rclpy.ok():
             rclpy.shutdown()

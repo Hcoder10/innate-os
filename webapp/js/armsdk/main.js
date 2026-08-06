@@ -2,22 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 // Arm SDK page — a jog console for the Manipulation API, with a live 3D view
-// of the robot (see viz.js). Unlike every other page this one doesn't speak
-// rosbridge: it drives the arm SDK server (brain_client's arm_sdk_server.py,
-// launched with the stack, which runs the actual Python Manipulation class
-// against the live arm) through the front door's /armsdk/api/* proxy — so
-// what you exercise here is the real SDK code path (IK topics + goto_js
-// services), not a JS reimplementation of it.
+// of the robot (see viz.js). Commands ride rosbridge like every other page:
+// an ExecuteArmCommand action into brain_client's arm_sdk_server (which runs
+// the actual Python Manipulation class against the live arm), plus a slider
+// stream topic — so what you exercise here is the real SDK code path
+// (IK topics + goto_js services), not a JS reimplementation of it. Pose,
+// joints and torque come straight off the driver topics, so a page that is
+// just watching the arm costs the robot nothing.
 
 import { createArmViz } from "./viz.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
+import { ARM_STATUS_TOPIC } from "../constants.js";
+import { ros } from "../rosClient.js";
 
-const API = "/armsdk/api";
-const POLL_MS = 250;
+const ARM_ACTION = "/armsdk/command";
+const ARM_ACTION_TYPE = "brain_messages/action/ExecuteArmCommand";
+const STREAM_TOPIC = "/armsdk/stream_joints";
+const ARM_STATE_TOPIC = "/mars/arm/state";
+const FK_POSE_TOPIC = "/fk_pose";
+const STATE_THROTTLE_MS = 100;
 
 const deg = (/** @type {number} */ r) => (r * 180) / Math.PI;
 const rad = (/** @type {number} */ d) => (d * Math.PI) / 180;
 const fmt = (/** @type {number | null | undefined} */ v, n = 3) => (v == null ? "—" : v.toFixed(n));
+
+/** (roll, pitch, yaw) from a quaternion — mirrors common/geometry.quat_to_rpy (ZYX).
+ * @param {{ x: number, y: number, z: number, w: number }} q */
+function quatToRpy(q) {
+  const roll = Math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y));
+  const sinp = 2 * (q.w * q.y - q.z * q.x);
+  const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp);
+  const yaw = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+  return [roll, pitch, yaw];
+}
 
 // Matches Manipulation.JOINT_NAMES order. Ranges are the URDF joint limits
 // (mars.urdf, the same file the IK solves against), so the sliders span what
@@ -126,7 +143,7 @@ const PAGE_HTML = `
     <span class="armsdk-sub">live Manipulation API · URDF mirror</span>
   </div>
   <p class="armsdk-banner" data-el="banner">
-    SDK server unreachable — it launches with the stack (<code>arm_sdk_server</code>); try <code>innate restart</code>
+    robot connection lost — commands and the live view pause until it returns
   </p>
   <div class="armsdk-toolbar">
     <span class="armsdk-pill" data-el="torque">torque ?</span>
@@ -254,13 +271,15 @@ export function mount(stage) {
   const input = (name) => /** @type {HTMLInputElement} */ (el(name));
 
   let busy = false;
-  /** @type {number | null} which slider is mid-drag, so polling doesn't fight the thumb */
+  /** @type {number | null} which slider is mid-drag, so live sync doesn't fight the thumb */
   let dragging = null;
   /** @type {Awaited<ReturnType<typeof createArmViz>> | null} */
   let viz = null;
   let destroyed = false;
-  /** @type {any} last /state payload — feeds drag-release orientation and the copy buttons */
-  let lastState = null;
+  /** Live arm state, mutated by the topic subscriptions and command results —
+   * feeds the pose chips, drag-release orientation and the copy buttons.
+   * @type {{ pose: any, joints: number[] | null, torque: boolean | null, grip_target: number | null }} */
+  const lastState = { pose: null, joints: null, torque: null, grip_target: null };
 
   createArmViz(el("viz"), {
     onDragMove(p) {
@@ -269,7 +288,7 @@ export function mount(stage) {
     },
     onDragEnd(p) {
       el("dragChip").hidden = true;
-      const pose = lastState?.pose;
+      const pose = lastState.pose;
       if (!pose) return;
       // Keep the current orientation — the drag only repositions the EE.
       cmd("move_to", {
@@ -344,11 +363,11 @@ export function mount(stage) {
   }
 
   // --- live joint streaming -------------------------------------------------
-  // Sliding streams the arm after the thumb via the server's joints_stream
-  // command — the driver's teleop pass-through with a velocity-clamped slew
-  // loop, the same path leader-arm teleop uses. Smooth, unlike chaining the
-  // SDK's rest-to-rest goto calls. Trailing coalesce: one request in flight,
-  // latest slider state stashed, next fired when the response lands.
+  // Sliding streams the arm after the thumb via the server's stream topic —
+  // the driver's teleop pass-through with a velocity-clamped slew loop, the
+  // same path leader-arm teleop uses. Smooth, unlike chaining the SDK's
+  // rest-to-rest goto calls. Not via cmd(): no busy gate, no per-step log
+  // spam; a step landing during a discrete motion is dropped server-side.
   /** @type {number[] | null} */
   let livePending = null;
   let liveInFlight = false;
@@ -373,26 +392,20 @@ export function mount(stage) {
       if (joints) {
         deadline = performance.now() + 5000;
       } else {
-        // The SDK's stream idles out 0.4 s after the last call, which would
-        // strand a big slider jump ~0.7 rad short of its target — keep
+        // The SDK's stream idles out 0.4 s after the last message, which
+        // would strand a big slider jump ~0.7 rad short of its target — keep
         // feeding the deadman until the arm converges (arm joints only; a
         // gripped j6 never reaches its goal by design). Capped so an
         // obstructed arm isn't pushed forever.
-        const measured = lastState?.joints;
+        const measured = lastState.joints;
         if (!lastSent || !measured || performance.now() > deadline) break;
         const err = Math.max(...lastSent.slice(0, 5).map((v, i) => Math.abs(v - (measured[i] ?? v))));
         if (err < 0.03) break;
         joints = lastSent;
-        await new Promise((r) => setTimeout(r, 120));
       }
       lastSent = joints;
-      try {
-        // Not via cmd(): no busy gate, no per-step log spam. A 409 while a
-        // command motion runs just drops this step — the pill shows why.
-        await fetch(`${API}/cmd/joints_stream`, { method: "POST", body: JSON.stringify({ joints }) });
-      } catch {
-        break; // server unreachable — the banner already says so
-      }
+      ros.publish(STREAM_TOPIC, { data: joints });
+      await new Promise((r) => setTimeout(r, 100));
     }
     liveInFlight = false;
     // Resume slider live-sync once the stream idles out and the arm settles.
@@ -418,15 +431,13 @@ export function mount(stage) {
     el("log").scrollTop = el("log").scrollHeight;
   }
 
-  /** @param {any} s */
-  function render(s) {
-    if (!s) return;
-    lastState = s;
+  function render() {
+    const s = lastState;
     if (s.pose) {
       el("pxyz").textContent = `${fmt(s.pose.x)} ${fmt(s.pose.y)} ${fmt(s.pose.z)}`;
       el("prpy").textContent = `${fmt(deg(s.pose.roll), 1)}° ${fmt(deg(s.pose.pitch), 1)}° ${fmt(deg(s.pose.yaw), 1)}°`;
-      el("pg").textContent = fmt(s.pose.gripper, 2);
     }
+    el("pg").textContent = fmt(s.joints?.[5], 2);
     el("gt").textContent = fmt(s.grip_target, 2);
     const t = el("torque");
     t.textContent = "torque " + (s.torque == null ? "?" : s.torque ? "on" : "off");
@@ -453,11 +464,15 @@ export function mount(stage) {
     body.verify = input("verify").checked;
     const t0 = performance.now();
     try {
-      const resp = await fetch(`${API}/cmd/${name}`, { method: "POST", body: JSON.stringify(body) });
-      const data = await resp.json();
+      const { promise } = ros.sendActionGoal(ARM_ACTION, ARM_ACTION_TYPE, {
+        command: name,
+        params: JSON.stringify(body),
+      });
+      const res = await promise;
+      const data = JSON.parse(res.state || "{}");
       const dt = ((performance.now() - t0) / 1000).toFixed(1);
-      if (!resp.ok) {
-        log(`${name}: ${data.error}`, "err");
+      if (!res.success) {
+        log(`${name}: ${res.message}`, "err");
       } else {
         let msg = `${name} ok (${dt}s)`;
         if (data.settled) msg += ` → (${fmt(data.settled.x)}, ${fmt(data.settled.y)}, ${fmt(data.settled.z)})`;
@@ -467,10 +482,13 @@ export function mount(stage) {
         if (data.target && data.settled) viz?.showResult(data.target, data.settled);
       }
       if (!bypass) busy = false;
-      if (data.state) render(data.state);
+      if (data.state) {
+        lastState.grip_target = data.state.grip_target ?? lastState.grip_target;
+        render();
+      }
     } catch (e) {
       if (!bypass) busy = false;
-      log(`${name}: ${e}`, "err");
+      log(`${name}: ${e instanceof Error ? e.message : e}`, "err");
     }
   }
 
@@ -507,20 +525,19 @@ export function mount(stage) {
       duration: +input("adur").value,
     }),
   );
-  el("fillBtn").addEventListener("click", async () => {
-    const s = await fetch(`${API}/state`).then((r) => r.json()).catch(() => null);
-    if (!s?.pose) return;
-    input("ax").value = s.pose.x.toFixed(3);
-    input("ay").value = s.pose.y.toFixed(3);
-    input("az").value = s.pose.z.toFixed(3);
-    input("ar").value = deg(s.pose.roll).toFixed(0);
-    input("ap").value = deg(s.pose.pitch).toFixed(0);
-    input("aw").value = deg(s.pose.yaw).toFixed(0);
+  el("fillBtn").addEventListener("click", () => {
+    const p = lastState.pose;
+    if (!p) return;
+    input("ax").value = p.x.toFixed(3);
+    input("ay").value = p.y.toFixed(3);
+    input("az").value = p.z.toFixed(3);
+    input("ar").value = deg(p.roll).toFixed(0);
+    input("ap").value = deg(p.pitch).toFixed(0);
+    input("aw").value = deg(p.yaw).toFixed(0);
   });
-  el("syncBtn").addEventListener("click", async () => {
+  el("syncBtn").addEventListener("click", () => {
     setDirty(false);
-    const s = await fetch(`${API}/state`).then((r) => r.json()).catch(() => null);
-    if (Array.isArray(s?.joints)) setSliders(s.joints);
+    if (Array.isArray(lastState.joints)) setSliders(lastState.joints);
   });
   el("open100").addEventListener("click", () => cmd("gripper_open", { percent: 100 }));
   el("open50").addEventListener("click", () => cmd("gripper_open", { percent: 50 }));
@@ -530,14 +547,14 @@ export function mount(stage) {
     cmd("recover"); // SDK recover() = reboot + settle + torque back on
   });
   el("copyJoints").addEventListener("click", () => {
-    const joints = lastState?.joints;
+    const joints = lastState.joints;
     if (!Array.isArray(joints)) return;
     const text = `[${joints.map((/** @type {number} */ v) => v.toFixed(4)).join(", ")}]`;
     void copyToButton(text, el("copyJoints"), "copied");
     log(`copied joints ${text}`, "ok");
   });
   el("copyPose").addEventListener("click", () => {
-    const p = lastState?.pose;
+    const p = lastState.pose;
     if (!p) return;
     const text =
       `x=${p.x.toFixed(3)}, y=${p.y.toFixed(3)}, z=${p.z.toFixed(3)}, ` +
@@ -567,30 +584,56 @@ export function mount(stage) {
   };
   document.addEventListener("keydown", onKey);
 
-  // Poll even while a motion is blocking — GET /state doesn't take the server's
-  // motion lock, so the 3D view tracks the arm through the whole move.
-  const poll = setInterval(async () => {
-    // A hidden tab must not poll: each request resets the server's idle timer,
-    // so a backgrounded page would hold the ~600 msg/s state feeds live forever.
-    if (document.hidden) return;
-    try {
-      const resp = await fetch(`${API}/state`);
-      if (!resp.ok) throw new Error(String(resp.status));
-      el("banner").classList.remove("show");
-      render(await resp.json());
-    } catch {
-      el("banner").classList.add("show");
-    }
-  }, POLL_MS);
+  // Driver topics, not the SDK server: they publish regardless, so watching
+  // the arm never wakes the Manipulation feeds — and they keep flowing while
+  // a motion blocks, so the 3D view tracks the arm through the whole move.
+  const unsubs = [
+    ros.subscribe(
+      ARM_STATE_TOPIC,
+      (/** @type {any} */ m) => {
+        if (!Array.isArray(m?.position)) return;
+        lastState.joints = m.position.slice(0, 6);
+        render();
+      },
+      STATE_THROTTLE_MS,
+      "sensor_msgs/msg/JointState",
+    ),
+    ros.subscribe(
+      FK_POSE_TOPIC,
+      (/** @type {any} */ m) => {
+        const p = m?.pose;
+        if (!p?.position || !p?.orientation) return;
+        const [roll, pitch, yaw] = quatToRpy(p.orientation);
+        lastState.pose = { x: p.position.x, y: p.position.y, z: p.position.z, roll, pitch, yaw };
+        render();
+      },
+      STATE_THROTTLE_MS,
+      "geometry_msgs/msg/PoseStamped",
+    ),
+    ros.subscribe(
+      ARM_STATUS_TOPIC,
+      (/** @type {any} */ m) => {
+        if (typeof m?.is_torque_enabled !== "boolean") return;
+        lastState.torque = m.is_torque_enabled;
+        render();
+      },
+      undefined,
+      "mars_msgs/msg/ArmStatus",
+    ),
+  ];
+  const showBanner = () => el("banner").classList.toggle("show", ros.state !== "connected");
+  const unsubConn = ros.onStateChange(showBanner);
+  showBanner();
 
   log("ready — check torque, then jog gently. Speed cap 0.20 m/s is active.");
 
   return {
     destroy() {
       destroyed = true;
-      clearInterval(poll);
       clearTimeout(liveResyncTimer);
       livePending = null; // stop the pump loop from sending more
+      for (const unsub of unsubs) unsub();
+      unsubConn();
       document.removeEventListener("keydown", onKey);
       viz?.destroy();
       root.remove();
