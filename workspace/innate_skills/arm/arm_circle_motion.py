@@ -2,7 +2,8 @@
 # Copyright (c) 2026 Innate Inc
 import math
 
-from innate import ArmFailed, ArmUnhealthy, Manipulation, Skill, SkillReturn, Waypoint
+from innate import Manipulation, Skill, SkillReturn, Waypoint
+from innate.exceptions import ArmFailed, ArmUnhealthy
 
 
 class ArmCircleMotion(Skill):

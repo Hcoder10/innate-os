@@ -43,15 +43,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
 
+from brain_client.robot.exceptions import ArmFailed, ArmUnhealthy
 from brain_client.state.arm import Arm
-
-
-class ArmUnhealthy(RuntimeError):
-    """Servo brownout/trip/refusal — abort, don't continue limp."""
-
-
-class ArmFailed(RuntimeError):
-    """Arm command rejected, unreachable, or did not complete."""
 
 
 @dataclass(frozen=True)

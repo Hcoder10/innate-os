@@ -12,8 +12,6 @@ import re
 import time
 
 from innate import (
-    ArmFailed,
-    ArmUnhealthy,
     Head,
     JointStates,
     MainImage,
@@ -21,7 +19,6 @@ from innate import (
     Mobility,
     Odometry,
     Skill,
-    SkillFailed,
     SkillReturn,
     Waypoint,
     WristImage,
@@ -29,6 +26,7 @@ from innate import (
     vision,
 )
 from innate import gemini as gemlib
+from innate.exceptions import ArmFailed, ArmUnhealthy, SkillFailed
 from innate.geometry import IMG_H, IMG_W, floor_to_pixel, pixel_to_floor
 
 GRIPPER_EMPTY_J6 = -0.085

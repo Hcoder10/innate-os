@@ -10,8 +10,6 @@ from google import genai
 from google.genai import types
 
 from innate import (
-    ArmFailed,
-    ArmUnhealthy,
     Head,
     Image,
     MainImage,
@@ -21,6 +19,7 @@ from innate import (
     WristImage,
     resource,
 )
+from innate.exceptions import ArmFailed, ArmUnhealthy
 
 GAME_STATE_FILE = Path.home() / "chess_game_state.json"
 CALIBRATION_FILE = Path.home() / "board_calibration.json"

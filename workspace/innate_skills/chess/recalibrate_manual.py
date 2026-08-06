@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from innate import ArmFailed, Manipulation, Skill, SkillReturn, WristImage
+from innate import Manipulation, Skill, SkillReturn, WristImage
+from innate.exceptions import ArmFailed
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CAPTURES_DIR = Path.home() / "innate-os/captures/corners"

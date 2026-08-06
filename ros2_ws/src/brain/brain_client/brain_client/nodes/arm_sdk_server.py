@@ -26,7 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
 
-from brain_client.robot.manipulation import ArmFailed, ArmUnhealthy, Manipulation
+from brain_client.robot.exceptions import ArmFailed, ArmUnhealthy
+from brain_client.robot.manipulation import Manipulation
 
 PORT = 8090
 IDLE_PARK_S = 60.0  # park the state feeds this long after the last request

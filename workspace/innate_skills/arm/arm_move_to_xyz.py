@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate import ArmFailed, ArmUnhealthy, Manipulation, Skill, SkillReturn
+from innate import Manipulation, Skill, SkillReturn
+from innate.exceptions import ArmFailed, ArmUnhealthy
 
 
 class ArmMoveToXYZ(Skill):
