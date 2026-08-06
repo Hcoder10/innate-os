@@ -4,6 +4,7 @@
 
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Any
 
 from brain_client.common.geometry import quat_to_rpy
 
@@ -31,6 +32,23 @@ class Arm:
     gripper: float | None = None
     """Gripper joint (j6) position in radians; None if joint states are missing."""
     frame_id: str = ""
+
+    @classmethod
+    def from_fk(cls, msg: Any, gripper: float | None = None) -> "Arm":
+        """From a PoseStamped-shaped message (duck-typed to keep this module
+        ROS-free)."""
+        p = msg.pose
+        return cls(
+            x=p.position.x,
+            y=p.position.y,
+            z=p.position.z,
+            qx=p.orientation.x,
+            qy=p.orientation.y,
+            qz=p.orientation.z,
+            qw=p.orientation.w,
+            gripper=gripper,
+            frame_id=msg.header.frame_id,
+        )
 
     @property
     def position(self) -> tuple[float, float, float]:

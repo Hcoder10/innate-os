@@ -312,11 +312,15 @@ void MarsArmNode::armGotoJSTrajectoryCallback(const std::shared_ptr<mars_msgs::s
                 }
             }
             waypoints.insert(waypoints.begin(), start);
-            if (!durations.empty()) {
-                durations.insert(durations.begin(), durations[0]);
-            } else {
-                durations.insert(durations.begin(), 0.5);
+            // One duration per waypoint means durations[0] already paces this
+            // prepended approach; legacy waypoints-1 callers get a copy of the
+            // first segment instead.
+            if (durations.size() + 1 < waypoints.size()) {
+                durations.insert(durations.begin(), durations.empty() ? 0.5 : durations[0]);
             }
+        } else if (durations.size() == waypoints.size()) {
+            // No current pose to prepend: the approach duration has no segment.
+            durations.erase(durations.begin());
         }
     }
 

@@ -53,8 +53,8 @@ class Waypoint:
     """One stop on a cartesian path for :meth:`Manipulation.follow`.
 
     Metres in ``base_link``, radians; ``duration`` is the travel time from
-    the previous waypoint. The driver also spends the first segment's
-    duration approaching waypoint 0 from wherever the arm is.
+    the previous waypoint — for the first waypoint, from wherever the arm
+    is when the trajectory starts.
     """
 
     x: float
@@ -133,6 +133,11 @@ class Manipulation:
     # Grasp reach box (base_link metres).
     REACH_X = (0.22, 0.40)
     REACH_Y = (-0.10, 0.10)
+
+    # /mars/arm/status samples torque state, then runs a multi-second servo
+    # sweep before publishing — a heartbeat can arrive after a local torque
+    # command yet predate it. Local writes stay authoritative for this long.
+    _TORQUE_STATUS_LAG_S = 2.0
 
     def __init__(self, node: Node, logger, lazy: bool = False):
         """``lazy`` defers the state feeds until :meth:`start`."""
@@ -227,6 +232,10 @@ class Manipulation:
         self._ik_solution = None
         self._fk_pose = None
         self._arm_state = None
+        pending = self._pending
+        if pending is not None and not pending.future.done():
+            # The goto services cannot preempt: the arm will finish the motion.
+            self.logger.warning(f"[Manipulation] {pending.name} still in flight at stop(); it will run to completion")
         self._pending = None
         # _grip_target survives: a skill can end while still holding an object.
         self.safety.reset()
@@ -293,7 +302,7 @@ class Manipulation:
     def torque_enabled(self) -> bool | None:
         """Freshest known torque state (local commands vs the /mars/arm/status
         heartbeat, which catches webapp toggles); None until either reports."""
-        if self._status_stamp > self._torque_stamp:
+        if self._status_stamp > self._torque_stamp + self._TORQUE_STATUS_LAG_S:
             return self._status_torque
         return self._torque_enabled
 
@@ -425,20 +434,20 @@ class Manipulation:
                 duration = self.safety.capped_duration(
                     math.dist(self.pose.position, (wps[0].x, wps[0].y, wps[0].z)), duration
                 )
-            # The single-move service honors duration; the trajectory service
-            # would pace the approach at a fixed 0.5 s instead.
+            # One waypoint goes through the plain goto service for its
+            # cubic-spline, jerk-limited profile; the trajectory service
+            # interpolates linearly.
             if not self._goto(waypoint_joints[0], duration, wait=block):
                 raise ArmFailed("arm move rejected or did not complete")
         else:
-            seg_durations = [wp.duration for wp in wps[1:]]
+            # One duration per waypoint: seg_durations[0] paces the driver's
+            # prepended approach from the current pose.
+            seg_durations = [wp.duration for wp in wps]
             if self.safety.max_ee_speed is not None:
                 pts = [self.pose.position] + [(wp.x, wp.y, wp.z) for wp in wps]
                 seg_durations = [
-                    self.safety.capped_duration(math.dist(pts[k + 1], pts[k + 2]), d)
-                    for k, d in enumerate(seg_durations)
+                    self.safety.capped_duration(math.dist(pts[k], pts[k + 1]), d) for k, d in enumerate(seg_durations)
                 ]
-                # a copy of seg_durations[0] also paces the driver's prepended approach
-                seg_durations[0] = self.safety.capped_duration(math.dist(pts[0], pts[1]), seg_durations[0])
             if not self._send_trajectory(waypoint_joints, seg_durations, wait=block):
                 raise ArmFailed("trajectory rejected, failed, or preempted")
         return self._settled_pose("trajectory") if block else None
@@ -469,9 +478,11 @@ class Manipulation:
 
     @property
     def moving(self) -> bool:
-        """True while a non-blocking motion is still in flight."""
+        """True while a non-blocking motion is still in flight. A motion past
+        its deadline counts as no longer moving, so a poll loop terminates
+        even if the service hangs; :meth:`wait` surfaces the failure."""
         pending = self._pending
-        return pending is not None and not pending.future.done()
+        return pending is not None and not pending.future.done() and time.monotonic() < pending.deadline
 
     def wait(self, timeout: float | None = None) -> Arm:
         """Join the in-flight non-blocking motion and return the settled pose
@@ -626,6 +637,11 @@ class Manipulation:
                     if len(joint_positions) == 0:
                         self.logger.error("[Manipulation] IK solver returned empty solution (IK failed)")
                         return None
+                    # Callers append j6 unconditionally, so anything but the
+                    # 5 arm joints would build a malformed 6-joint command.
+                    if len(joint_positions) != 5:
+                        self.logger.error(f"[Manipulation] IK returned {len(joint_positions)} joints, expected 5")
+                        return None
                     return joint_positions
 
         self.logger.error(f"[Manipulation] IK solution timeout after {timeout}s")
@@ -667,9 +683,12 @@ class Manipulation:
     def _send_trajectory(
         self, waypoint_joints: list[list[float]], seg_durations: list[float], wait: bool = True
     ) -> bool:
-        """Send a multi-waypoint GotoJSTrajectory. The driver prepends the
-        current pose as waypoint 0, paced by a copy of the first segment
-        duration."""
+        """Send a multi-waypoint GotoJSTrajectory with one duration per
+        waypoint; the driver prepends the current pose as waypoint 0, and
+        seg_durations[0] paces that approach."""
+        if self.torque_enabled is False:
+            self.logger.error("[Manipulation] Arm torque is disabled")
+            return False
         if self._goto_js_traj_client is None or not self._goto_js_traj_client.service_is_ready():
             self.logger.error("[Manipulation] GotoJSTrajectory service not ready")
             return False
@@ -686,8 +705,7 @@ class Manipulation:
         request.num_joints = num_joints
         request.segment_durations = seg_durations
 
-        # + the driver's prepended approach segment
-        total_time = sum(seg_durations) + (seg_durations[0] if seg_durations else 0.5)
+        total_time = sum(seg_durations)
         self._pending = None  # a new command supersedes any unjoined motion
         try:
             future = self._goto_js_traj_client.call_async(request)
@@ -718,18 +736,7 @@ class Manipulation:
         return self._goto(positions, duration, wait=blocking)
 
     def _arm_from_fk(self, msg: PoseStamped) -> Arm:
-        p = msg.pose
-        return Arm(
-            x=p.position.x,
-            y=p.position.y,
-            z=p.position.z,
-            qx=p.orientation.x,
-            qy=p.orientation.y,
-            qz=p.orientation.z,
-            qw=p.orientation.w,
-            gripper=self._measured_gripper(),
-            frame_id=msg.header.frame_id,
-        )
+        return Arm.from_fk(msg, gripper=self._measured_gripper())
 
     def _read_pose_after_motion(self) -> Arm | None:
         self._settle()
