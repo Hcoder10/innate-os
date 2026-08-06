@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 
 from brain_messages.action import ExecuteSkill
 from rclpy.action import ActionClient
@@ -43,31 +44,89 @@ class PrimitiveRunner:
         # callbacks from a disowned goal compare against it and stand down, so
         # they can never clear a newer run's state or feed a fresh session.
         self._generation = 0
+        # Serializes every primitive_running transition (and the generation
+        # reads/bumps they pair with) across the two threads that make them:
+        # the agent loop (start_task) and the ROS executor (manual-event
+        # mirror, deactivation/reset, action callbacks).
+        self._slot_lock = threading.Lock()
 
     # --- public API ---
     def start_task(self, skill_id: str, primitive_id: str | None, inputs: dict) -> None:
-        """Send a goal for ``skill_id`` and mark it running.
+        """Claim the skill slot and send a goal for ``skill_id``.
+
+        The claim is atomic: a manual run mirrored from the executor thread
+        between the agent's availability check and this call keeps the slot,
+        and this start reports failure instead of clobbering it. The generation
+        is captured with the claim — before the blocking server wait — so a
+        reset that disowns the goal mid-send orphans it and its late callbacks
+        stand down.
 
         The local /brain/skill_status_update echo is the skills server's job (it
         publishes for every goal it runs) — announcing it here too would double
         the "running" entry in the chat.
         """
         skill_name = self._state.registry.name_for(skill_id)
-        # Marked running before the goal is sent: the response and result
-        # callbacks fire on the ROS thread and must find the state they clear.
-        self._state.primitive_running = {
+        claim = {
             "primitive_name": skill_name,
             "primitive_id": primitive_id,
             "skill_id": skill_id,
         }
-        if not self._send_goal(skill_id, inputs):
-            self._state.primitive_running = None
+        generation = 0
+        with self._slot_lock:
+            occupant = self._state.primitive_running
+            if occupant is None:
+                # Claimed before the goal is sent: the response and result
+                # callbacks fire on the ROS thread and must find the state they clear.
+                self._state.primitive_running = claim
+                generation = self._generation
+        if occupant is not None:
+            self.report_start_failure(
+                primitive_name=skill_name,
+                primitive_id=primitive_id,
+                skill_id=skill_id,
+                reason=f"another skill ({occupant['primitive_name']}) is already running",
+            )
+            # This start paused the gaze, and the occupant (a manual run — the
+            # only writer that can win the claim race) never manages it: resume.
+            self._on_task_finished()
+            return
+        if not self._send_goal(skill_id, inputs, generation):
+            self._release(claim)
             self.report_start_failure(
                 primitive_name=skill_name,
                 primitive_id=primitive_id,
                 skill_id=skill_id,
                 reason="Skill execution server unavailable — the skill never started.",
             )
+
+    def mirror_manual_event(self, status: str, *, primitive_name, primitive_id, skill_id) -> None:
+        """Mirror a manual (webapp/CLI) run into the skill slot.
+
+        Keeps the brain honoring one-skill-at-a-time for runs it didn't start:
+        a mirrored "running" collapses the next turn's tools to stop/wait, and
+        the run's own terminal event clears it. Runs under the slot lock so a
+        concurrent brain claim can neither be clobbered by the mirror nor
+        cleared by a manual run's terminal event.
+        """
+        with self._slot_lock:
+            if status == "running":
+                if self._state.primitive_running is None:
+                    self._state.primitive_running = {
+                        "primitive_name": primitive_name,
+                        "primitive_id": primitive_id,
+                        "skill_id": skill_id,
+                        "manual": True,
+                    }
+            elif status in ("completed", "failed", "interrupted"):
+                running = self._state.primitive_running
+                if running is not None and running.get("manual"):
+                    self._state.primitive_running = None
+
+    def _release(self, claim: dict) -> None:
+        """Free the slot iff it still holds ``claim`` (identity, not equality)."""
+        with self._slot_lock:
+            if self._state.primitive_running is claim:
+                self._state.primitive_running = None
 
     def report_start_failure(self, *, primitive_name, primitive_id, reason, skill_id=None) -> None:
         """Tell the brain and the app that a task never started (no goal exists)."""
@@ -109,7 +168,9 @@ class PrimitiveRunner:
 
     def abort_running(self) -> None:
         """Stop the brain's primitive without announcing an interruption (used on reset)."""
-        if self._state.primitive_running and not self._state.primitive_running.get("manual"):
+        with self._slot_lock:
+            running = self._state.primitive_running
+        if running and not running.get("manual"):
             self._stop_robot()
         self.interrupt_for_deactivation()
 
@@ -123,28 +184,30 @@ class PrimitiveRunner:
         on the skills server, so its mirrored state is kept too — a reactivated
         brain still honors one-skill-at-a-time, and the run's own terminal
         event clears it (that handler is always on).
-        """
-        running = self._state.primitive_running
-        if running and running.get("manual"):
-            return
-        self._disown_goal()
-        self._state.primitive_running = None
 
-    def _disown_goal(self) -> None:
-        """Cancel the current goal and stand down its late callbacks.
-
-        A goal whose handle hasn't resolved yet (sent moments before a reset or
-        deactivation) is cancelled when it does — _on_goal_response sees the
-        stale generation and cancels on arrival.
+        Bumping the generation disowns the brain's goal: late callbacks compare
+        against it and stand down. A goal whose handle hasn't resolved yet
+        (sent moments before this) is cancelled when it does —
+        _on_goal_response sees the stale generation and cancels on arrival.
         """
-        self._generation += 1
-        if self._goal_handle:
-            self._goal_handle.cancel_goal_async()  # fire-and-forget
-            self._goal_handle = None
+        with self._slot_lock:
+            running = self._state.primitive_running
+            if running and running.get("manual"):
+                return
+            self._generation += 1
+            handle, self._goal_handle = self._goal_handle, None
+            self._state.primitive_running = None
+        if handle:
+            handle.cancel_goal_async()  # fire-and-forget
 
     # --- action plumbing ---
-    def _send_goal(self, task_type: str, inputs: dict) -> bool:
-        """Dispatch the goal; returns False if the action server is unavailable."""
+    def _send_goal(self, task_type: str, inputs: dict, generation: int) -> bool:
+        """Dispatch the goal; returns False if the action server is unavailable.
+
+        ``generation`` is the claim-time generation: wait_for_server blocks up
+        to a second, and a disown landing inside that window must orphan this
+        goal rather than adopt it.
+        """
         goal_msg = ExecuteSkill.Goal()
         goal_msg.skill_type = task_type
         goal_msg.inputs = json.dumps(inputs if inputs is not None else {})
@@ -152,7 +215,6 @@ class PrimitiveRunner:
         if not self.action_client.wait_for_server(timeout_sec=1.0):
             self._logger.error("Primitive execution action server not available!")
             return False
-        generation = self._generation
         future = self.action_client.send_goal_async(
             goal_msg, feedback_callback=lambda msg: self._on_feedback_msg(msg, generation)
         )
@@ -201,7 +263,16 @@ class PrimitiveRunner:
 
     def _on_goal_response(self, future, generation: int) -> None:
         goal_handle = future.result()
-        if generation != self._generation:
+        running = None
+        with self._slot_lock:
+            stale = generation != self._generation
+            if not stale:
+                if goal_handle.accepted:
+                    self._goal_handle = goal_handle
+                else:
+                    running, self._state.primitive_running = self._state.primitive_running, None
+                    self._goal_handle = None
+        if stale:
             # The brain disowned this goal while its response was in flight:
             # cancel it now that a handle finally exists, touch nothing else.
             if goal_handle.accepted:
@@ -209,8 +280,7 @@ class PrimitiveRunner:
             return
         if not goal_handle.accepted:
             self._logger.info("Primitive execution goal rejected.")
-            if self._state.primitive_running:
-                running = self._state.primitive_running
+            if running:
                 self._chat.publish_task_status(
                     primitive_name=running["primitive_name"],
                     primitive_id=running["primitive_id"],
@@ -219,11 +289,8 @@ class PrimitiveRunner:
                     reason="Goal rejected by action server",
                 )
                 self.on_event("failed", running["primitive_name"], "Goal rejected by action server")
-            self._state.primitive_running = None
-            self._goal_handle = None
             self._on_task_finished()
             return
-        self._goal_handle = goal_handle
         self._logger.info("Primitive execution goal accepted.")
         goal_handle.get_result_async().add_done_callback(lambda f: self._on_result(f, generation))
 
@@ -241,20 +308,22 @@ class PrimitiveRunner:
         self._logger.info(
             f"{status_color}Primitive execution result: {result.success}, Type: {result.success_type}\033[0m"
         )
-        if generation != self._generation:
+        running = None
+        with self._slot_lock:
+            stale = generation != self._generation
+            if not stale:
+                running, self._state.primitive_running = self._state.primitive_running, None
+                self._goal_handle = None
+        if stale:
             # A disowned goal ending: a newer run (or a fresh session) may own
             # the state and the event queue now — this result concerns neither.
             return
-        self._goal_handle = None
         self._stop_robot()
 
         skill_id = result.skill_type
         primitive_name = self._state.registry.name_for(skill_id)
-        if self._state.primitive_running and self._state.primitive_running.get("skill_id") != skill_id:
-            self._logger.warn(
-                f"Skill ID mismatch in result ({skill_id}) and running ({self._state.primitive_running.get('skill_id')})"
-            )
-        self._state.primitive_running = None
+        if running and running.get("skill_id") != skill_id:
+            self._logger.warn(f"Skill ID mismatch in result ({skill_id}) and running ({running.get('skill_id')})")
         self._on_task_finished()
 
         is_code = self._is_code_skill(skill_id)

@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Unit tests for PrimitiveRunner's release paths: deactivation, reset, and the
-late callbacks of a disowned goal. Exercised on a bare instance (no ROS node or
-action server) — these paths only touch ``_state``, ``_goal_handle``, and
-``_generation``.
+"""Unit tests for PrimitiveRunner's release paths: deactivation, reset, the
+late callbacks of a disowned goal, and the slot claim's collision handling.
+Exercised on a bare instance (no ROS node or action server) — these paths only
+touch ``_state``, ``_goal_handle``, ``_generation``, and the slot lock.
 """
 
+import threading
 from types import SimpleNamespace
 
 from brain_client.core.state import BrainState
@@ -19,8 +20,11 @@ def make_runner(running: dict | None, goal_handle=None):
     runner._state = state
     runner._goal_handle = goal_handle
     runner._generation = 0
+    runner._slot_lock = threading.Lock()
     runner._logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
     runner._stop_robot = lambda: None
+    runner._on_task_finished = lambda: None
+    runner._chat = SimpleNamespace(publish_task_status=lambda **kwargs: None)
     runner.on_event = lambda status, name, detail=None: None
     return runner, state
 
@@ -125,5 +129,62 @@ def test_stale_feedback_is_dropped():
 def test_deactivation_with_nothing_running_is_a_no_op():
     runner, state = make_runner(None)
     runner.interrupt_for_deactivation()
+    assert state.primitive_running is None
+    assert runner._goal_handle is None
+
+
+def test_brain_claim_loses_to_a_manual_run_that_took_the_slot_first():
+    # The agent's _dispatch check and the runner's claim run on the loop
+    # thread; a manual run can be mirrored from the executor thread in
+    # between. The claim must find the slot taken and report failure instead
+    # of clobbering the manual run and double-driving the robot.
+    runner, state = make_runner(None)
+    events, sent = [], []
+    runner.on_event = lambda status, name, detail=None: events.append((status, detail))
+    runner._send_goal = lambda *a: sent.append(a) or True
+
+    runner.mirror_manual_event("running", primitive_name="wave", primitive_id="m1", skill_id="local/wave")
+    runner.start_task("local/dance", "p1", {})
+
+    assert state.primitive_running == MANUAL_RUN
+    assert sent == []
+    assert events and events[0][0] == "failed"
+
+
+def test_manual_running_never_clobbers_an_existing_slot():
+    runner, state = make_runner(dict(BRAIN_RUN))
+    runner.mirror_manual_event("running", primitive_name="dance", primitive_id="m1", skill_id="local/dance")
+    assert state.primitive_running == BRAIN_RUN
+
+
+def test_manual_terminal_only_clears_a_manual_occupant():
+    # A late manual terminal event must not erase a brain-owned run that has
+    # since taken the slot.
+    runner, state = make_runner(dict(BRAIN_RUN))
+    runner.mirror_manual_event("completed", primitive_name="wave", primitive_id="m1", skill_id="local/wave")
+    assert state.primitive_running == BRAIN_RUN
+
+    runner2, state2 = make_runner(dict(MANUAL_RUN))
+    runner2.mirror_manual_event("interrupted", primitive_name="wave", primitive_id="m1", skill_id="local/wave")
+    assert state2.primitive_running is None
+
+
+def test_generation_is_captured_at_claim_time_so_a_mid_send_disown_orphans_the_goal():
+    # A reset can land while start_task is blocked in wait_for_server. The
+    # goal's callbacks must carry the claim-time generation: the disown bumps
+    # it, so the late acceptance cancels the goal instead of adopting it into
+    # the fresh session.
+    runner, state = make_runner(None)
+    cancelled = []
+
+    def send_goal(skill_id, inputs, generation):
+        runner.interrupt_for_deactivation()  # the disown lands mid-send
+        runner._on_goal_response(as_future(make_handle(cancelled)), generation)
+        return True
+
+    runner._send_goal = send_goal
+    runner.start_task("local/wave", "p1", {})
+
+    assert cancelled == [True]
     assert state.primitive_running is None
     assert runner._goal_handle is None
