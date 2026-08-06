@@ -447,11 +447,11 @@ function buildSettingsPage() {
   searchResults.hidden = true;
 
   index.append(
-    textEl("h1", "page-title", "Preferences"),
+    textEl("h1", "page-title", "Settings"),
     textEl(
       "p",
       "settings-note",
-      "Tune how the robot drives, sees, and talks. Changes save to settings.yaml.",
+      "Changes save to config/settings.yaml; restart the robot to apply.",
     ),
     search,
     indexCard,
@@ -468,7 +468,7 @@ function buildSettingsPage() {
 
   const back = buttonEl("set-back", "", returnToIndex);
   back.innerHTML =
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15,6 9,12 15,18"/></svg><span>Preferences</span>';
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15,6 9,12 15,18"/></svg><span>Settings</span>';
   detail.appendChild(back);
 
   for (const settingsPage of SETTINGS_PAGES) {
