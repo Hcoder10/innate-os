@@ -98,8 +98,6 @@ RUN . /opt/ros/humble/setup.sh && \
 # Shared test entrypoint script (used by docker-compose.test.yml and Cloud Build).
 # Placed after the build so editing it does not invalidate the colcon build cache.
 COPY --chmod=755 ci/run_integration_tests.sh /usr/local/bin/run_integration_tests.sh
-COPY scripts/play_startup_sound_when_ready.py scripts/launch_ros_in_tmux.sh /root/innate-os/scripts/
-COPY tests/test_startup_sound_readiness.py /root/innate-os/tests/test_startup_sound_readiness.py
 
 # Create entrypoint script with Zenoh configuration.
 # Written via a heredoc (not `echo '...\n...'`, which emits literal "\n" under

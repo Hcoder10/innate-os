@@ -59,27 +59,10 @@ PANE_SETUP_FILE=$(mktemp "${TMPDIR:-/tmp}/innate_pane_env.XXXXXX") || {
     echo "ERROR: Failed to create pane setup tempfile." >&2
     exit 1
 }
-STARTUP_SOUND_PID=""
-
-cleanup() {
-    if [ -n "$STARTUP_SOUND_PID" ]; then
-        kill "$STARTUP_SOUND_PID" 2>/dev/null || true
-        wait "$STARTUP_SOUND_PID" 2>/dev/null || true
-        STARTUP_SOUND_PID=""
-    fi
-    rm -f "$PANE_SETUP_FILE"
-}
-
-handle_signal() {
-    cleanup
-    exit 0
-}
-
-# Clean up the service-key-bearing tempfile on error and stop paths.  The
-# readiness helper is kept as a tracked child so a restart cannot leave an old
-# waiter behind to play during the next boot.
-trap cleanup EXIT
-trap handle_signal INT TERM
+# Clean up the service-key-bearing tempfile on the error-exit paths below. The
+# normal path can't rely on this trap (the script ends in `exec sleep infinity`,
+# which never fires EXIT) — a backgrounded delete handles that case instead.
+trap 'rm -f "$PANE_SETUP_FILE"' EXIT INT TERM
 {
     echo "${RUNTIME_ENV_EXPORTS:-true}"
     echo "source $DDS_SETUP_SCRIPT"
@@ -196,29 +179,15 @@ if [ "$SERVICE_KEY_MISSING" = true ]; then
     echo ""
 fi
 
+# Play startup sound after processes initialize (backgrounded, detached from terminal)
+(sleep 60 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
+disown
+
 # Every pane has sourced the env file by now, so drop it: the service key should
 # not linger in /tmp. Done in the background because `exec sleep infinity` below
 # never returns, so the EXIT trap can't remove it on the normal path.
 (sleep 15 && rm -f "$PANE_SETUP_FILE") &
 disown
-
-# Process existence is not readiness.  Wait for the navigation lifecycle,
-# brain/skills, sensors, webapp, launch panes, and TensorRT startup sweep to be
-# fully ready and stable before playing.  On a readiness timeout the helper
-# fails closed (no sound) while leaving the otherwise usable ROS stack running.
-EXPECTED_PANES=$(tmux list-panes -s -t "$SESSION_NAME" -F '#{pane_id}' | wc -l | tr -d '[:space:]')
-STARTUP_READINESS_ARGS=()
-if [ "$SERVICE_KEY_MISSING" = true ]; then
-    STARTUP_READINESS_ARGS+=(--allow-missing-cloud)
-fi
-python3 -u "$INNATE_OS_ROOT/scripts/play_startup_sound_when_ready.py" \
-    "$INNATE_OS_ROOT/config/sounds/turnon.mp3" \
-    --tmux-session "$SESSION_NAME" \
-    --expected-panes "$EXPECTED_PANES" \
-    "${STARTUP_READINESS_ARGS[@]}" &
-STARTUP_SOUND_PID=$!
-wait "$STARTUP_SOUND_PID"
-STARTUP_SOUND_PID=""
 
 # Keep the script alive so systemd (Type=simple) considers the service running.
 # When systemctl stop is called, SIGTERM kills this sleep, then ExecStop cleans up tmux.
