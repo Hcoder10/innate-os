@@ -52,8 +52,8 @@ def initialize_agents(logger, skills_dict: dict[str, dict] | None = None) -> tup
     # agents load before the skills server has written it). The skills server
     # is the authoritative writer; this only fills the ordering gap.
     _regenerate_physical_refs(logger, skills_dict)
-    # Same gap for the pack-local spelling (`from innate_skills.wave import
-    # Wave`): the folder shims are runtime-only, so recreate missing ones too.
+    # Same gap for `from innate_skills.wave import Wave` — the folder shims are
+    # runtime-only too.
     _ensure_dir_shims(logger)
 
     agents_directories = [str(p) for p in get_agent_directories()]
@@ -106,14 +106,9 @@ def _regenerate_physical_refs(logger, skills_dict: dict[str, dict] | None) -> No
 
 
 def _ensure_dir_shims(logger) -> None:
-    """Create *missing* recording-folder ``__init__.py`` shims before agents
-    import — a tracked agent may `from innate_skills.wave import Wave`, and the
-    shims are runtime-only (gitignored). Unlike the refs above this needs no
-    roster: metadata.json marks the folders on disk, so it also covers the
-    skills server still booting past the 60s wait, and the one update that
-    deletes the once-tracked shims from the worktree. Create-only: existing
-    shims are never rewritten or pruned here — the skills server owns updates,
-    so the two writers can't fight over content."""
+    """Create missing recording-folder shims. Scans metadata.json rather than
+    the roster, so it works before the skills server is up. Create-only: the
+    skills server owns updates and pruning, so neither can clobber the other."""
     entries = []
     for root in get_skill_directories():
         try:
@@ -121,7 +116,7 @@ def _ensure_dir_shims(logger) -> None:
         except OSError:
             continue
         for child in children:
-            # same skip set as the catalog's folder scan (__pycache__, .git)
+            # same skips as the catalog's folder scan (__pycache__, .git)
             if child.name.startswith((".", "__")) or not child.is_dir():
                 continue
             if has_physical_metadata(child.path):
