@@ -332,7 +332,7 @@ export function mount(stage) {
       dragging = i;
       if (i === 5) j6Touched = true;
       // Latch the card out of live sync while driving — otherwise the state
-      // poll would snap the thumb back under the pointer.
+      // subscription would snap the thumb back under the pointer.
       setDirty(true);
       val.textContent = (+sl.value).toFixed(2);
       queueLive();
@@ -345,12 +345,13 @@ export function mount(stage) {
     el("sliders").appendChild(row);
   });
 
-  /** True while the sliders are driving the arm; pauses live sync so the poll
-   * can't overwrite them mid-interaction. Cleared once the arm settles. */
+  /** True while the sliders are driving the arm; pauses live sync so the
+   * state subscription can't overwrite them mid-interaction. Cleared once the
+   * arm settles. */
   let slidersDirty = false;
 
   /** True once the j6 slider itself was touched this interaction. Only then
-   * is j6 streamed: streaming the measured j6 (which the poll wrote into the
+   * is j6 streamed: streaming the measured j6 (which live sync wrote into the
    * slider) would re-command a gripped claw's stalled position and drop the
    * object — the SDK's 5-joint form keeps the standing grip instead. */
   let j6Touched = false;

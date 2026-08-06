@@ -213,10 +213,10 @@ def generate_launch_description():
                 # "Publisher already registered" rosout-plumbing warning.
                 arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
             ),
-            # Backend for the webapp's /armsdk page: a localhost-only JSON API
-            # (port 8090, reached through the front door's /armsdk/api proxy)
-            # that drives the Manipulation SDK. Idles cheap — the arm-state
-            # feeds only run while the page is open.
+            # Backend for the webapp's /armsdk page: an ExecuteArmCommand
+            # action (/armsdk/command) plus a slider-stream topic, driven from
+            # the browser over rosbridge, that drives the Manipulation SDK.
+            # Idles cheap — the arm-state feeds park between commands.
             Node(
                 package="brain_client",
                 executable="arm_sdk_server.py",
