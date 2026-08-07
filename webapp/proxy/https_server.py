@@ -19,10 +19,10 @@ generated on first run (10 years) under ~/.innate-webapp-tls/ via openssl.
 Static files are served with aiohttp's FileResponse: a single stat() yields the
 mtime+size ETag, a matching If-None-Match returns a bodyless 304 before the file
 is read, and Range is honoured. Everything is no-cache — the browser revalidates
-every load, but revalidation is a cheap conditional request. The sim 3D assets
-ship mtime-normalised in a reproducible tarball; the launcher stamps a real mtime
-on extraction (see ensure_sim_assets) so the validator does not degrade to
-size-only. (No on-the-fly compression — see TODO(INN-674).)
+every load, but revalidation is a cheap conditional request. The sim 3D assets come off
+container-image layers, whose mtimes are whatever the build produced; the host-side
+geometry is stamped with one install mtime (see ensure_sim_assets) so the validator does
+not degrade to size-only. (No on-the-fly compression — see TODO(INN-674).)
 
 Run:        python3 proxy/https_server.py        # https://<robot>:443 + http://<robot>:80
 Persist:    launched on boot in the `console-webapp` tmux window
@@ -166,13 +166,17 @@ CONTENT_TYPES = {
 }
 
 # Simulation viewer (sim/viewer): the SimSession bundle plus the 3D assets it
-# fetches at their canonical absolute paths. Only served when the directories
-# exist (i.e. in the sim container / a dev checkout, never on the robot).
+# fetches at their canonical absolute paths. Served only where the directories
+# exist -- the image-mounted ones only in the sim container or a dev checkout.
+# /robot is the exception: a robot does have the tracked ROS package, so it
+# answers there too, with that robot's own description.
 SIM_VIEWER_ROOT = ROOT.parent / "sim" / "viewer"
 SIM_VIEWER_ROUTES = {
     "/sim-viewer/": SIM_VIEWER_ROOT / "dist-lib",
     "/models/": SIM_VIEWER_ROOT / "public" / "models",
-    "/robot/": SIM_VIEWER_ROOT / "public" / "robot",
+    # scene.ts declares `loader.packages = { mars_sim: "/robot" }`, so
+    # `package://mars_sim/meshes/base.STL` resolves here by itself.
+    "/robot/": ROOT.parent / "ros2_ws" / "src" / "mars_bot" / "mars_sim",
     # Collision hulls for the SimSession's "collisions" debug overlay.
     "/physics/": SIM_VIEWER_ROOT / "public" / "physics",
 }

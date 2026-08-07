@@ -42,9 +42,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - innate-os-sim-deps
-          - innate-os-sim-ros
+        # The launcher already computes every inputs-<hash> to name the images
+        # it pulls, so each hash_cmd asks it rather than keeping a copy in ci/.
+        include:
+          - package: innate-os-sim-deps
+            hash_cmd: python3 sim/launcher/config.py sim-image-hash
+          - package: innate-os-sim-ros
+            hash_cmd: python3 sim/launcher/config.py sim-image-hash
+          - package: innate-os-sim-assets
+            hash_cmd: python3 sim/launcher/config.py assets-image-hash
+          # Pinned like the others: a branch whose sim/viewer tree matches
+          # main's republishes inputs-<hash> as a new version whose sha- tags
+          # age out of retention. Expiring a BRANCH tree's version is not
+          # fatal -- the launcher then builds the bundle itself.
+          - package: innate-os-sim-viewer
+            hash_cmd: python3 sim/launcher/config.py viewer-image-hash
 
     steps:
       - name: Checkout
@@ -56,6 +68,10 @@ jobs:
 
       - name: Cleanup old GHCR versions
         shell: bash
+        env:
+          # Through env, not `${{ }}` interpolated into the script below, so
+          # the matrix value is data the shell never reparses as source.
+          HASH_CMD: ${{ matrix.hash_cmd }}
         run: |
           set -euo pipefail
 
@@ -68,7 +84,11 @@ jobs:
           # Tags unique per package: a branch build with main's content hash
           # steals the inputs-<hash> tag from the main-tagged version, so the
           # main hash is pinned explicitly (this run checks out main).
-          main_inputs_hash="$(python3 ci/compute_sim_image_inputs_hash.py)"
+          # Each package is tagged from its OWN inputs hash, so the pin has to
+          # come from the matching command or retention deletes the version
+          # everyone pulls. Plain word-splitting, no eval: every hash_cmd is a
+          # simple argv list, and eval would reparse it as shell source.
+          main_inputs_hash="$(${HASH_CMD})"
 
           # Full heads of all live branches; the policy prefix-matches the
           # sha-<short_sha> tag components against these.

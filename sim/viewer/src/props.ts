@@ -13,9 +13,17 @@
 // The second is not a degraded path to apologise for: most props ARE
 // primitives, and a prop whose mesh is missing still has to be visible or the
 // 3D view disagrees with what the robot's cameras see.
+//
+// Models come from PropModels, which parses them ahead of any drop; this file
+// only decides how long to wait for one.
 
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { PropModels } from "./propModels";
+
+/** How long a prop with a glb stays undrawn waiting for its model before we
+ * settle for the primitive. A prefetched model is ready well inside this, so
+ * the window only opens for a drop that beats its own prefetch. */
+const MODEL_GRACE_MS = 300;
 
 /** How the browser should place a prop's glb into its MuJoCo body frame. */
 export interface PropViewerDef {
@@ -69,35 +77,6 @@ function primitiveGeometry(info: PropInfo): THREE.BufferGeometry {
   return new THREE.BoxGeometry(s[0] * 2, s[1] * 2, s[2] * 2);
 }
 
-/** Rescale + re-origin a raw glb into its MuJoCo body's local frame (glb
- * exports bake arbitrary origins, orientations and unit scales). */
-function normalizeModel(scene: THREE.Object3D, def: PropViewerDef): void {
-  if (def.rotateToZUp !== false) scene.rotation.x = Math.PI / 2; // glTF Y-up -> scene Z-up
-  scene.updateMatrixWorld(true);
-  const size = new THREE.Box3().setFromObject(scene).getSize(new THREE.Vector3());
-  const upExtent = def.rotateToZUp !== false ? size.z : size.y;
-  const span = def.fitDim === "height" ? upExtent : Math.max(size.x, size.y, size.z);
-  if (def.fitSizeM && span > 0) scene.scale.multiplyScalar(def.fitSizeM / span);
-
-  // Re-measure post-scale to place the origin.
-  scene.updateMatrixWorld(true);
-  const scaled = new THREE.Box3().setFromObject(scene);
-  const center = scaled.getCenter(new THREE.Vector3());
-  if (def.origin !== "base") {
-    scene.position.sub(center);
-    return;
-  }
-  // base: centred in the ground plane, up-axis min sitting at the origin.
-  scene.position.x -= center.x;
-  if (def.rotateToZUp !== false) {
-    scene.position.y -= center.y;
-    scene.position.z -= scaled.min.z;
-  } else {
-    scene.position.z -= center.z;
-    scene.position.y -= scaled.min.y;
-  }
-}
-
 /**
  * Every prop's body in the scene, driven by ground-truth poses.
  *
@@ -108,7 +87,10 @@ export class PropLibrary {
   /** Roster from the server, by name. Empty until the first manifest lands. */
   private info = new Map<string, PropInfo>();
   private roots = new Map<string, THREE.Group>();
-  private loading = new Set<string>();
+  /** When each prop was first seen in a pose block, for MODEL_GRACE_MS. */
+  private firstSeen = new Map<string, number>();
+  private models: PropModels;
+  private prefetching = false;
   private hulls: THREE.Mesh[] = [];
   private hullsVisible = false;
 
@@ -117,7 +99,11 @@ export class PropLibrary {
     private material: THREE.MeshBasicMaterial,
     /** Called when a prop's body first enters the scene (shadow box refit). */
     private onChanged: () => void = () => {},
-  ) {}
+    /** Called with each model as it finishes parsing, to warm its textures. */
+    onModelReady: (model: THREE.Group) => void = () => {},
+  ) {
+    this.models = new PropModels(onModelReady);
+  }
 
   /** Adopt the server's roster. Props that vanish from it lose their bodies. */
   setManifest(props: PropInfo[]): void {
@@ -126,8 +112,23 @@ export class PropLibrary {
       if (!this.info.has(name)) {
         this.scene.remove(root);
         this.roots.delete(name);
+        this.firstSeen.delete(name); // re-added later, it gets a fresh grace window
       }
     }
+    if (this.prefetching) this.prefetchModels();
+  }
+
+  /**
+   * Parse every prop's glb now, so a later drop can use it on the frame it
+   * lands. Called once the robot and apartment are done, so prop models never
+   * compete with them for the load queue's bandwidth.
+   *
+   * Safe to call before the roster arrives: it latches, and setManifest runs
+   * it again once there is something to prefetch.
+   */
+  prefetchModels(): void {
+    this.prefetching = true;
+    this.models.prefetch(this.info.values());
   }
 
   get manifest(): PropInfo[] {
@@ -168,26 +169,42 @@ export class PropLibrary {
     const info = this.info.get(name);
     if (!info) return undefined; // a prop this build was never told about
 
+    // Hold a prop with a glb undrawn for up to MODEL_GRACE_MS rather than
+    // showing a primitive we are about to replace. setPoses retries every
+    // frame, so the prop appears as soon as either the model or the grace
+    // window is done -- and at once if we already know no model is coming.
+    const waiting = info.viewer.glb && !this.models.get(name) && !this.models.hasFailed(name);
+    if (waiting && !this.graceExpired(name, info)) return undefined;
+
     const root = new THREE.Group();
     this.roots.set(name, root);
     this.scene.add(root);
     if (info.viewer.hulls) void this.loadHullSoup(info, root);
 
-    if (!info.viewer.glb) {
-      root.add(this.primitiveMesh(info));
-      this.onChanged();
-      return root;
-    }
-    // Show the primitive immediately, then swap in the glb once it arrives --
-    // so a prop is never invisible, whether the mesh is slow or absent.
-    const placeholder = this.primitiveMesh(info);
-    root.add(placeholder);
-    if (!this.loading.has(name)) {
-      this.loading.add(name);
-      void this.loadGlb(info, root, placeholder);
+    const model = this.models.get(name);
+    if (model) {
+      root.add(model);
+    } else {
+      // No glb, or one still parsing past its grace window: draw the primitive
+      // physics is using, and swap the model in if it does still arrive.
+      const placeholder = this.primitiveMesh(info);
+      root.add(placeholder);
+      if (info.viewer.glb) void this.swapWhenReady(info, root, placeholder);
     }
     this.onChanged();
     return root;
+  }
+
+  /** Start this prop's model load on first sight, then report whether it has
+   * since waited out MODEL_GRACE_MS. */
+  private graceExpired(name: string, info: PropInfo): boolean {
+    const since = this.firstSeen.get(name);
+    if (since === undefined) {
+      this.firstSeen.set(name, performance.now());
+      void this.models.load(info); // dropped before its prefetch ran: parse it now
+      return false;
+    }
+    return performance.now() - since >= MODEL_GRACE_MS;
   }
 
   private primitiveMesh(info: PropInfo): THREE.Mesh {
@@ -201,25 +218,15 @@ export class PropLibrary {
     return mesh;
   }
 
-  private async loadGlb(info: PropInfo, root: THREE.Group, placeholder: THREE.Mesh): Promise<void> {
-    try {
-      const gltf = await new GLTFLoader().loadAsync(info.viewer.glb!);
-      normalizeModel(gltf.scene, info.viewer);
-      gltf.scene.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.castShadow = true;
-          obj.receiveShadow = true;
-        }
-      });
-      root.remove(placeholder);
-      placeholder.geometry.dispose();
-      root.add(gltf.scene);
-      this.onChanged();
-    } catch (err) {
-      // Expected whenever the asset bundle predates this prop: keep the
-      // primitive, which is what physics is using anyway.
-      console.warn(`[sim-viewer] prop '${info.name}' has no model (${info.viewer.glb}); drawing its primitive`, err);
-    }
+  /** Replace a prop's primitive once its model lands -- only reached when the
+   * parse outran MODEL_GRACE_MS. */
+  private async swapWhenReady(info: PropInfo, root: THREE.Group, placeholder: THREE.Mesh): Promise<void> {
+    const model = await this.models.load(info);
+    if (!model || placeholder.parent !== root) return; // failed, or the prop left the roster
+    root.remove(placeholder);
+    placeholder.geometry.dispose();
+    root.add(model);
+    this.onChanged();
   }
 
   private async loadHullSoup(info: PropInfo, root: THREE.Group): Promise<void> {

@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+#
+# Seed the build context for sim/Dockerfile.assets. CI is always a clean
+# checkout, and sim/assets, sim/viewer/public and sim/viewer/assets are all
+# gitignored, so something has to put those files on disk before docker reads
+# them.
+#
+# AUTHORED inputs only -- they exist in no repo and nothing can derive them, so
+# each is downloaded from a pinned, checksummed release asset, ONE FILE PER
+# ASSET: the apartment geometry the pipeline consumes, the props' source meshes
+# and textures, and the glTF exports the viewer loads. The DERIVED geometry
+# (decomposition, room exports, nav map) is not seeded -- sim/tools derives all
+# of it from these during the build, collision hulls included.
+#
+# TEMPORARY: these belong in version control (LFS) or a release of THIS repo.
+#
+# Usage: python3 ci/seed_asset_context.py   (from the repo root)
+import hashlib
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+SIM = ROOT / "sim"
+
+# Where sim/Dockerfile.assets expects each file -> (url, sha256). The digest is
+# the whole point: these are the only bytes in the image that nothing in git
+# describes, so an unverified download would let the payload change silently
+# under a tag that claims to be content-addressed. sim-geometry-v1 exists ONLY
+# to host them: one file per asset, nothing derived.
+_RAW_RELEASE = "https://github.com/innate-inc/innate-sim-assets/releases/download/sim-geometry-v1"
+RAW_FILES = {
+    SIM / "viewer" / "assets" / "apartment_obj" / "apartment.obj": (
+        f"{_RAW_RELEASE}/apartment.obj",
+        "79286a12485ea63253bf006c17d288101b6fcec2a01cfe28a3957e0c6b38143e",
+    ),
+    SIM / "viewer" / "public" / "models" / "appartement.glb": (
+        f"{_RAW_RELEASE}/appartement.glb",
+        "807ff2613f4b3aaf1fad39645fee19e10cd560296e1a2f59133daa46f8678c38",
+    ),
+    # The browser's prop models -- the glTF exports the viewer loads. Their
+    # MuJoCo counterparts are the authored meshes under assets/objects and
+    # assets/humans below. No *_hulls.f32: tools/build_viewer_physics.py derives
+    # those from the collision hulls decompose_objects.py makes from the .obj.
+    SIM / "viewer" / "public" / "models" / "human.glb": (
+        f"{_RAW_RELEASE}/human.glb",
+        "e089c1eb6624fa881773bd08542c16aa13afbe2bb6323216d00c3e377b668ec8",
+    ),
+    SIM / "viewer" / "public" / "models" / "labrador.glb": (
+        f"{_RAW_RELEASE}/labrador.glb",
+        "6537d99636d0175bc42dfa63c8999d4b6376f9032a7f8d5563d7bbf807a2965a",
+    ),
+    SIM / "viewer" / "public" / "models" / "soccer_ball.glb": (
+        f"{_RAW_RELEASE}/soccer_ball.glb",
+        "9ed6bab6ae9dc99e55eeeb2db0f607a3aa282138cbf5ffa83ad6d0f6ec673828",
+    ),
+    SIM / "assets" / "humans" / "casual_man.obj": (
+        f"{_RAW_RELEASE}/casual_man.obj",
+        "d45337ab71f50e2213b41544a468fbbc82a811a20ee40f7fd3ec6eefa799849d",
+    ),
+    SIM / "assets" / "humans" / "casual_man_basecolor.png": (
+        f"{_RAW_RELEASE}/casual_man_basecolor.png",
+        "c742c793985222cdc84d073abca1101b06270f502a377105c03c3827a4d834c6",
+    ),
+    SIM / "assets" / "objects" / "labrador.obj": (
+        f"{_RAW_RELEASE}/labrador.obj",
+        "5254d274ee5f0d8f85d09694cb22a77ef6dc5b8cf7c051771d746f562ecbdbd7",
+    ),
+    SIM / "assets" / "objects" / "labrador_basecolor.png": (
+        f"{_RAW_RELEASE}/labrador_basecolor.png",
+        "0d4e542e5827849ecc2bd85fbb20984bbb9d67a47494421755400668a6e70e11",
+    ),
+    SIM / "assets" / "objects" / "soccer_ball.obj": (
+        f"{_RAW_RELEASE}/soccer_ball.obj",
+        "e176b750bfc3bbe41a96cdfdf0459e60b9f8ca8c703c5dbde808fc2f6f959859",
+    ),
+    SIM / "assets" / "objects" / "soccer_ball_basecolor.png": (
+        f"{_RAW_RELEASE}/soccer_ball_basecolor.png",
+        "ea698ee6e7e3cc318a72cfd4ebe51393abf1cb6a8cf9b2cac1559abf8c6c8099",
+    ),
+}
+
+
+def _download(url: str, dest: Path, expected_sha256: str) -> None:
+    """Fetch straight to `dest`, hashing the stream as it lands -- no second
+    read of the file and no whole copy in memory."""
+    print(f"  fetching {url}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sha = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=600) as resp, open(dest, "wb") as out:  # noqa: S310
+        while chunk := resp.read(1 << 20):
+            sha.update(chunk)
+            out.write(chunk)
+    if sha.hexdigest() != expected_sha256:
+        dest.unlink(missing_ok=True)
+        sys.exit(f"checksum mismatch for {url}: got {sha.hexdigest()}, expected {expected_sha256}")
+
+
+def seed_raw() -> None:
+    """Everything nothing can derive, each file straight to its final path."""
+    print("raw inputs:")
+    for dest, (url, sha256) in RAW_FILES.items():
+        _download(url, dest, sha256)
+        print(f"  seeded {dest.relative_to(ROOT)}")
+
+
+def main() -> None:
+    seed_raw()
+    subprocess.run(["du", "-sh", "sim/assets", "sim/viewer/public", "sim/viewer/assets"], check=False)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,87 @@
+name: Publish Viewer Bundle
+
+# The SimSession bundle the operator webapp loads (sim/viewer/Dockerfile).
+#
+# Its own workflow rather than a job in publish-sim-images.yml: that one shares
+# a single `paths:` filter across every job, so a one-line change in
+# sim/viewer/src would rebuild the multi-arch asset pipeline too. This one
+# takes about a minute.
+#
+# SECURITY: this workflow pushes to ghcr. Triggers must stay push +
+# workflow_dispatch ONLY -- never add pull_request or pull_request_target. The
+# job is additionally guarded on repository and event name as defense in depth
+# against future trigger edits.
+on:
+  push:
+    paths:
+      # The tag is a content hash of sim/viewer, so the trigger has to be the
+      # WHOLE tree: anything under it missing from here moves the tag without
+      # publishing anything, and every clean checkout then builds the bundle
+      # itself. tests/test_viewer_bundle_image.py fails if this stops covering
+      # the tree (the Dockerfile included -- see its header).
+      - sim/viewer/**
+      - ci/build_viewer_bundle_image.sh
+      - .github/workflows/publish-viewer-bundle.yml
+      # Not part of the hashed tree, but it computes the hash: the membership
+      # rule and the framing are both in config.compute_viewer_inputs_hash, so
+      # an edit there renames this image and must be able to publish it.
+      - sim/launcher/config.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-viewer-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    if: github.repository == 'innate-inc/innate-os' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Deliberately NOT skipped when inputs-<hash> already exists. A repush of
+      # an unchanged tree is idempotent (same content, same digest), and it is
+      # how the new commit's sha- tag reaches the existing version -- which is
+      # what ci/sim_image_retention.jq matches against live branch heads.
+      - name: Compute tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The launcher computes this hash anyway to name the image it pulls,
+          # so ask it rather than keeping a second copy in ci/.
+          echo "hash=$(python3 sim/launcher/config.py viewer-image-hash)" >> "$GITHUB_OUTPUT"
+          echo "image_tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the viewer bundle image
+        shell: bash
+        env:
+          IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
+          VIEWER_HASH: ${{ steps.tags.outputs.hash }}
+          IMAGE_TAG: ${{ steps.tags.outputs.image_tag }}
+          # Only main moves the floating alias; the tree tag is the real
+          # address and every branch build publishes one.
+          PUSH_MAIN_TAGS: ${{ github.ref == 'refs/heads/main' }}
+        run: bash ci/build_viewer_bundle_image.sh
+
+      - name: Published image tags
+        run: |
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-viewer:inputs-${{ steps.tags.outputs.hash }} (multi-arch)"
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-viewer:${{ steps.tags.outputs.image_tag }}"

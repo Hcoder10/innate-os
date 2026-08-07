@@ -60,3 +60,20 @@ repos:
         additional_dependencies: [pytest, pyyaml]
         pass_filenames: false
         always_run: true
+
+  # The launcher is a flat module set imported by bare name, so a symbol deleted
+  # in config.py breaks its importers with nothing to notice. The image tests
+  # alongside it hold the tags CI publishes equal to the ones it pulls.
+  - repo: local
+    hooks:
+      - id: sim-launcher-and-images
+        name: sim launcher imports; image tags match what CI publishes
+        entry: >-
+          python -m pytest -q
+          tests/test_launcher_imports.py
+          tests/test_assets_image_inputs.py
+          tests/test_viewer_bundle_image.py
+        language: python
+        additional_dependencies: [pytest, pyyaml]
+        pass_filenames: false
+        always_run: true
