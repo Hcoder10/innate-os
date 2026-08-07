@@ -52,3 +52,4 @@ gripper, a cancel must not unwind mid-grip and drop the object. If you write suc
 comment it, or the next reader will "fix" it back to `self.sleep` and reintroduce the bug.
 
 See [AGENTS.md](AGENTS.md#writing-skills) for the full cancellation contract.
+@AGENTS.md
