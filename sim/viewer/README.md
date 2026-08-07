@@ -35,25 +35,41 @@ run state rides the stream, and the session merges the halves so a renderer
 sees one view. The webapp's challenge panel is the only consumer, and it keys
 off `onChallenge` existing to stay sim-only — nothing here judges anything.
 
-The render assets (`public/models` glb, `public/physics` hulls) are not in
-git: `./innate-sim up` extracts them from the published bundle (see
-`sim/sim-assets.lock`). `public/robot` is different -- the URDF and STLs are
-tracked source, and `up` refreshes the served copy from
-`ros2_ws/src/mars_bot/mars_sim` so the browser can never draw a different
-robot from the one the driver simulates.
+The render assets (`public/models` glb, `public/physics` hulls for the
+overlay) are not in git: `./innate-sim up` mounts them straight out of the
+asset image. `/robot` is different -- it is served directly from
+`ros2_ws/src/mars_bot/mars_sim`, the tracked source, so a `mars.urdf` edit
+reaches the browser with no copy step and no republish. That is also why
+`loader.packages = { mars_sim: "/robot" }` in scene.ts is literally true:
+`/robot` IS the package.
 
 ## Build
 
-Users never build this: `dist-lib/` ships prebuilt in the sim asset bundle
-(`./innate-sim up` extracts it), so running the sim needs no Node.js. The
-toolchain below is only for developing the viewer -- the launcher rebuilds
-automatically when sources are newer than the bundle.
+**Running the sim never needs Node.js, even while editing this directory.**
+The bundle is compiled by [`Dockerfile`](Dockerfile) into its own image, which
+compose mounts at `/sim-viewer/`. Docker is the only prerequisite, and the sim
+already requires it.
+
+Published as `ghcr.io/innate-inc/innate-os-sim-viewer:inputs-<hash>`, computed
+over this directory as it is on disk -- git decides membership (`ls-files
+--cached --others --exclude-standard`), so a new unadded `.ts` counts and
+node_modules does not. Separate from the asset image because this directory
+changes constantly and the geometry takes hours to rebuild.
+
+Edit anything here and the hash names an image CI cannot have published. `./innate-sim up` notices and builds the same Dockerfile
+locally instead, tagging it `innate-os-sim-viewer-local:inputs-<hash of these
+files>` — so an unchanged tree skips the rebuild, and superseded tags are
+pruned. Build output goes to `sim/launcher/.state/logs/viewer-build.log`.
+
+The npm scripts are for working on the viewer directly, not for running the sim:
 
 ```bash
 npm install
-npm run build:lib   # dist-lib/sim-session.js, served by the webapp at /sim-viewer/
-npm run typecheck
+npm run build:lib   # dist-lib/sim-session.js -- NOT what the container serves
+npm run typecheck   # NOT run by CI, and the vite lib build does not typecheck
 ```
+
+`dist-lib/` on the host is a scratch output of those scripts. Nothing mounts it.
 
 The webapp loads `/sim-viewer/sim-session.js` dynamically when `/robot_info`
 reports `simulated: true`; real robots never request it (they use WebRTC),

@@ -223,15 +223,15 @@ The API is shaped like a robot, not a physics engine:
 from mars_sim_driver.core import VirtualMars
 
 sim = VirtualMars()
-sim.step(1.0)                          # settle from spawn; step(dt) runs physics
-sim.set_cmd_vel(0.3, 0.5)              # vx m/s, wz rad/s (0.5s watchdog)
-sim.set_joint_target("joint2", -1.0)   # arm/head PD servo setpoints
-x, y, yaw = sim.pose()                 # ground truth
-rgb   = sim.render_rgb("main")         # 640x480 ("wrist" = arm camera)
-depth = sim.render_depth("main")       # meters; robot's own geoms excluded
-scan  = sim.lidar_scan(360, 12.0)      # planar lidar off the visual surfaces
-grid, ox, oy = sim.occupancy_grid()    # rasterized nav map (-1/0/100)
-sim.reset()                            # back to spawn, arm home
+sim.step(1.0)  # settle from spawn; step(dt) runs physics
+sim.set_cmd_vel(0.3, 0.5)  # vx m/s, wz rad/s (0.5s watchdog)
+sim.set_joint_target("joint2", -1.0)  # arm/head PD servo setpoints
+x, y, yaw = sim.pose()  # ground truth
+rgb = sim.render_rgb("main")  # 640x480 ("wrist" = arm camera)
+depth = sim.render_depth("main")  # meters; robot's own geoms excluded
+scan = sim.lidar_scan(360, 12.0)  # planar lidar off the visual surfaces
+grid, ox, oy = sim.occupancy_grid()  # rasterized nav map (-1/0/100)
+sim.reset()  # back to spawn, arm home
 ```
 
 Rendering is lazy — pure physics is cheap. For a native MuJoCo viewer window
@@ -440,18 +440,42 @@ ground truth (republishing until AMCL confirms with `/amcl_pose`).
 
 ### Assets
 
-The generated geometry (driver meshes in `sim/assets/`, the viewer's hulls,
-GLB, robot meshes, and the prebuilt viewer bundle) is not in git:
-`./innate-sim up` (or `./innate-sim assets`) downloads the bundle pinned by
-`sim/sim-assets.lock` from a GitHub release and extracts it in place
-(one-time, ~100 MB). To change the geometry, run the pipeline in
-`sim/tools/` (see [`sandbox/README.md`](sandbox/README.md)), then
-`uv run tools/publish_assets.py --publish` to publish + repin the lock.
-Publishing rebuilds the viewer bundle first, so Node.js is only needed when
-editing `sim/viewer` or publishing — never to run the sim. While iterating
-on `sim/viewer`, set `INNATE_SIM_VIEWER_DEV=1` so `up` rebuilds the bundle
-from source when it is stale; without it the prebuilt bundle is always used
-as-is.
+The generated geometry is not in git, and it now reaches you two different ways.
+
+`sim/assets/` (the MuJoCo store the world server reads) is *extracted to disk*:
+`./innate-sim up` — or `./innate-sim assets`, which needs no Docker at all —
+fetches a single layer of the asset image over plain HTTPS (~85 MB, one-time;
+`sim/launcher/oci.py`). The world server runs on the host and writes caches
+beside the geometry, so this one has to be a real, writable directory.
+
+The viewer's assets (per-room apartment glbs, robot meshes, collision hulls) are
+*never staged on the host*: compose mounts them straight out of the same image
+(`type: image`, which needs Compose 2.35+).
+
+The SimSession bundle the webapp loads is mounted the same way, but from a
+**separate** image, `innate-os-sim-viewer`. The two are split because their
+change rates differ by orders of magnitude: the geometry costs hours to
+regenerate and moves a few times a year, the bundle is ~1 MB and moves on every
+viewer commit. While they shared one content-addressed tag, a one-line edit in
+`sim/viewer/src` renamed the asset image too, and `up` then asked GHCR for a tag
+CI had never published. Either way `up` needs no Node.js.
+
+The bundle's tag is `inputs-<hash>` over `sim/viewer` **as it is on disk** —
+membership from `git ls-files --cached --others --exclude-standard`, so an
+edited file and a brand-new untracked one both count, while gitignored cruft
+does not. One hash serves both sides: a clean checkout computes what CI
+computed and pulls the published image, and any edit names an image CI cannot
+have published, so the launcher builds `sim/viewer/Dockerfile` itself as
+`innate-os-sim-viewer-local:inputs-<same hash>`. Same Dockerfile CI uses, so
+**no path here needs Node.js on the host** — only Docker, which running the sim
+already requires. There is no flag to set: editing the files is the signal.
+
+The asset image's tag is `inputs-<hash>` over the tracked files it is built
+from — the pipeline scripts, the Dockerfiles, and the pinned URLs of the raw
+geometry. Nothing about it is recorded anywhere: change any of those and the
+tag moves, CI builds it once, and every later publish of the same tag is
+skipped outright. To change the geometry, edit the pipeline in `sim/tools/`
+(see [`sandbox/README.md`](sandbox/README.md)) and push; CI rebuilds it.
 
 ### Credits
 

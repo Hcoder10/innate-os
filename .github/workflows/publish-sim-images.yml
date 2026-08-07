@@ -12,12 +12,39 @@ on:
       - .gcloudignore
       - ci/cloudbuild.sim-images.yaml
       - ci/build_sim_images.sh
-      - ci/compute_sim_image_inputs_hash.py
       - sim/Dockerfile
       - sim/Dockerfile.ros-prebuilt
       - sim/Dockerfile.ros-prebuilt.dockerignore
       - ros2_ws/apt-dependencies*.txt
       - ros2_ws/src/**
+      # Listed because it OWNS every inputs-<hash> -- the input lists and the
+      # hash framing both live here -- even though it is deliberately not IN
+      # any of them (see the comment on SIM_ASSET_UNITS in it). Editing it can
+      # rename an image, so it has to be able to build one.
+      - sim/launcher/config.py
+      # The layered asset image. sim/viewer/src is deliberately absent -- the
+      # bundle has its own image, so viewer edits must not rename this one.
+      #
+      # This list must COVER config.ASSETS_IMAGE_INPUT_FILES and
+      # ASSETS_IMAGE_PATHSPECS: those name the tag the launcher asks GHCR for,
+      # this decides whether that tag is ever built. A hashed but unlisted file
+      # moves the tag without triggering a publish, and `up` then 404s.
+      # tests/test_assets_image_inputs.py fails if the two drift.
+      - ci/build_assets_image.sh
+      - ci/seed_asset_context.py
+      - ci/verify_assets_image.py
+      - sim/Dockerfile.assets
+      - sim/Dockerfile.assets.dockerignore
+      - sim/ATTRIBUTION.md
+      - sim/sandbox/_driver_pkg.py
+      - sim/tools/**
+      - sim/viewer/tools/**
+      - sim/viewer/package*.json
+      - sim/pyproject.toml
+      - sim/uv.lock
+      # The SimSession bundle is NOT built here -- it has its own workflow
+      # (publish-viewer-bundle.yml) so a one-line viewer edit does not drag
+      # this ~5-minute multi-arch asset pipeline along with it.
   workflow_dispatch:
 
 permissions:
@@ -34,6 +61,8 @@ jobs:
     outputs:
       image_tag: ${{ steps.image_tags.outputs.image_tag }}
       image_inputs_hash: ${{ steps.image_tags.outputs.image_inputs_hash }}
+      assets_inputs_hash: ${{ steps.image_tags.outputs.assets_inputs_hash }}
+      assets_published: ${{ steps.image_tags.outputs.assets_published }}
       push_main_tags: ${{ steps.image_tags.outputs.push_main_tags }}
       short_sha: ${{ steps.image_tags.outputs.short_sha }}
     steps:
@@ -43,12 +72,17 @@ jobs:
       - name: Compute image tags
         id: image_tags
         shell: bash
+        env:
+          IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
         run: |
           set -euo pipefail
 
+          # The launcher computes these hashes anyway to name the images it
+          # pulls, so ask it rather than keeping second copies in ci/.
           # Shared with cleanup-sim-images.yml, which pins main's
           # inputs-<hash> versions against retention.
-          image_inputs_hash="$(python3 ci/compute_sim_image_inputs_hash.py)"
+          image_inputs_hash="$(python3 sim/launcher/config.py sim-image-hash)"
+          assets_inputs_hash="$(python3 sim/launcher/config.py assets-image-hash)"
           short_sha="${GITHUB_SHA::12}"
           # Every build is content/commit-addressed (sha-, inputs-); only
           # main-branch builds may move the floating `main` alias.
@@ -58,8 +92,19 @@ jobs:
             push_main_tags="true"
           fi
 
+          # Probe here, on a cheap runner, so the `assets` job never allocates
+          # its 64 GB runner just to discover there is nothing to build. The
+          # same probe inside ci/build_assets_image.sh stays as the race guard.
+          assets_published="false"
+          if python3 ci/verify_assets_image.py --exists \
+              "${IMAGE_PREFIX}/innate-os-sim-assets" "inputs-${assets_inputs_hash}"; then
+            assets_published="true"
+          fi
+
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
           echo "image_inputs_hash=${image_inputs_hash}" >> "$GITHUB_OUTPUT"
+          echo "assets_inputs_hash=${assets_inputs_hash}" >> "$GITHUB_OUTPUT"
+          echo "assets_published=${assets_published}" >> "$GITHUB_OUTPUT"
           echo "push_main_tags=${push_main_tags}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
 
@@ -160,3 +205,58 @@ jobs:
         run: |
           echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
           echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-ros:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
+
+  # The layered sim asset image. Independent of the colcon images above: no
+  # per-arch split (the payload is static data, so one buildx run covers both
+  # arches) and no manifest stitching pass.
+  assets:
+    needs: [tags]
+    # tools/bake_all_rooms.sh forks one CoACD process per room and each peaks
+    # around 12.7 GB resident, so five at once needs ~64 GB. Measured: 32 GB
+    # gets OOM-killed mid-bake.
+    runs-on: bigbig
+    if: |
+      github.repository == 'innate-inc/innate-os'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.tags.outputs.assets_published != 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the asset image
+        shell: bash
+        env:
+          IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
+          IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
+          IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.assets_inputs_hash }}
+          PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
+          # Deliberately no COMMIT_SHA: ci/build_assets_image.sh sets no
+          # image.revision label -- see its header.
+          #
+          # Sampling always on in CI, never locally: an OOM-killed bake ends at
+          # "Killed", and the 10s memory/CPU samples are the only record of how
+          # close it ran.
+          SIM_RESOURCE_LOG: "1"
+        run: bash ci/build_assets_image.sh
+
+      # Anonymous pullability and the layer layout the launcher depends on are
+      # both asserted by ci/verify_assets_image.py, at the end of the step
+      # above.
+
+      - name: Published image tags
+        run: |
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-assets:inputs-${{ needs.tags.outputs.assets_inputs_hash }} (multi-arch)"
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-assets:${{ needs.tags.outputs.image_tag }}"

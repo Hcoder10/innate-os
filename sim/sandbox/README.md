@@ -36,8 +36,8 @@ tools/                   asset pipeline (one-time generation -> sim/assets/)
   bake_all_rooms.sh          decompose all rooms in parallel
   export_visual_rooms.py     textured room meshes for MuJoCo's renderer
   export_nav_map.py          nav2 map_server map from the collision world
-  build_sdf_shells.py        watertight shells for the experimental SDF mode
-  publish_assets.py          bundle + publish everything (sim-assets.lock)
+  decompose_objects.py       CoACD hulls for the standalone props (dog, ball)
+  build_viewer_physics.py    repack the browser hulls from the collision store
 ```
 
 ## Setup
@@ -58,8 +58,8 @@ building. Run it with `ros2 launch mars_sim_driver sim_driver.launch.py`
 with `uv run sandbox/test_driver_core.py`.
 
 Apartment meshes come from sim/assets/ (gitignored): `./innate-sim up`
-extracts the published bundle pinned by sim/sim-assets.lock; to change the
-geometry regenerate with tools/ (see below) and republish.
+extracts the geometry layer of the published asset image; to change the
+geometry, edit tools/ (see below) and push -- CI rebuilds the image.
 
 ## Asset pipeline
 
@@ -71,14 +71,16 @@ cd sim/tools
 uv run split_apartment_obj.py        # per-room OBJs -> sim/assets/apartment_split/
 ./bake_all_rooms.sh                  # CoACD hulls -> sim/assets/apartment_split_v2/ (hours)
 uv run export_visual_rooms.py        # textured rooms -> sim/assets/apartment_visual/
-uv run --with scikit-image --with pymeshlab --with scipy build_sdf_shells.py  # optional, SDF mode
 ```
 
 **After any regeneration, run `uv run sandbox/stress_test_apartment.py`
 before trusting the result** -- hull seams can corner-catch into divergence.
-Then `uv run tools/publish_assets.py --publish` to bundle everything
-(including the viewer's flat hull copy + manifest, rebuilt from the same
-store) and repin sim/sim-assets.lock.
+Editing anything under tools/ moves the asset image's `inputs-<hash>` tag, so
+pushing is what publishes: CI regenerates the whole store from the pinned raw
+geometry (including the viewer's flat hull copy + manifest, repacked by
+tools/build_viewer_physics.py). Regenerating locally is for validating the
+result -- the published image is always built by CI, since sim/assets is
+gitignored and never reaches a runner any other way.
 
 ### Tuning notes (hard-won, don't rediscover)
 
@@ -98,14 +100,15 @@ store) and repin sim/sim-assets.lock.
   `<collision>` primitives -- one description the driver, MoveIt and the
   viewer's "collisions" overlay all read. MuJoCo-only contact settings (grasp
   parameters, frictionless drive wheels) stay in `world.tune_contacts`.
-- **SDF shells** (experimental no-decomposition alternative): MuJoCo >= 3.3.5
-  builds octree SDFs natively -- no hulls, no seams, ~2min bake. But the SDF
-  sign is brutally sensitive to mesh topology: raw meshes and binary
-  marching-cubes output (non-manifold corner junctions) both cause phantom
-  deep-penetration impulses (robot flung 100+ m/s, ncon=0 either side).
-  build_sdf_shells.py's gaussian-smoothed marching cubes +
-  topology-preserving decimation is the recipe that survives a 5-loop
-  stress tour. The innate-sim-demo repo's SDF toggle consumes these.
+- **SDF shells were tried and removed** (git history has them, last at
+  `build_sdf_shells.py`). MuJoCo >= 3.3.5 builds octree SDFs natively -- no
+  hulls, no seams, ~2min bake -- but the SDF sign is brutally sensitive to mesh
+  topology: raw meshes and binary marching-cubes output (non-manifold corner
+  junctions) both cause phantom deep-penetration impulses (robot flung
+  100+ m/s, ncon=0 either side). Gaussian-smoothed marching cubes plus
+  topology-preserving decimation survived a 5-loop stress tour, at the cost of
+  a ~292 MB pymeshlab dependency in the builder image. Worth reviving only with
+  a consumer attached.
 
 ## Sandboxes
 

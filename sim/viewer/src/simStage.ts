@@ -430,6 +430,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       await Promise.all([robotDone, apartment]);
       if (disposed) return;
       hideLoading();
+      // Only now parse the prop models, so they queue behind the robot and
+      // apartment and stay out of the progress bar -- but land well before
+      // anyone clicks a prop chip. See PropLibrary.prefetchModels.
+      scene.prefetchPropModels();
     } catch (err) {
       if (!disposed) session.stageError(err);
     }

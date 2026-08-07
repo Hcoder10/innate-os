@@ -60,7 +60,6 @@ from runtime import (
     runtime_already_running,
     start_cloud_agent,
     stop_world_server,
-    sync_robot_description,
     tail_file,
     wait_for_os_runtime_ready,
     wait_for_virtual_mars,
@@ -122,10 +121,7 @@ def cmd_up(
         ensure_workspace_dirs(config)
         if runtime_already_running(config):
             # A code update can leave a stale world server running (frozen
-            # 3D view); ensure_world_server restarts it. The browser's robot
-            # description must follow the same update, or the 3D view keeps
-            # drawing the old robot against the new physics.
-            sync_robot_description(config)
+            # 3D view); ensure_world_server restarts it.
             ensure_world_server(config)
             log("Innate sim runtime is already running. Opening dashboard...")
             show_runtime_dashboard(config, watch=watch)
@@ -146,9 +142,6 @@ def cmd_up(
                     f"`{CLI_SIM} up --offline` to start with whatever is already downloaded."
                 ) from exc
         ensure_sim_viewer_bundle(config, offline=offline)
-        # Last: ensure_sim_viewer_bundle can re-fetch the asset bundle, and the
-        # served robot description must outlive any extraction.
-        sync_robot_description(config)
         config["world_endpoint"] = ensure_world_server(config)
 
         started = True
@@ -403,10 +396,11 @@ def main() -> int:
             # MuJoCo model was compiled from the previous bundle, and leaving
             # it serving stale collision physics is worse than a restart.
             ensure_sim_assets(config)
-            sync_robot_description(config)
+            # A refresh replaces the geometry under a running world server, so
+            # reconcile it.
             if world_server_running():
                 ensure_world_server(config)
-            success("Sim assets are in place (sim/assets + sim/viewer).")
+            success("Sim assets are in place (sim/assets).")
         elif args.sim_command == "clean":
             ensure_docker_available(command_hint=f"{CLI_SIM} clean")
             cmd_clean(config, assume_yes=args.yes)

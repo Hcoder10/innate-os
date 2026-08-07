@@ -1,0 +1,55 @@
+# Sidecar for sim/Dockerfile.assets. The root .dockerignore is `**` plus a
+# narrow allowlist for the ROS images, which would exclude every asset here.
+#
+# Exclude everything, then admit exactly what the stages COPY. The asset trees
+# are gitignored and seeded into the context by ci/seed_asset_context.py, so
+# they have to be named explicitly -- there is no pattern that catches them by
+# accident.
+**
+
+# Raw geometry (seeded).
+!sim/viewer/assets/apartment_obj/apartment.obj
+!sim/viewer/public/models/appartement.glb
+# The authored prop models the viewer loads (seeded). Their hull soups are NOT
+# here: build_viewer_physics.py derives those in-image.
+!sim/viewer/public/models/human.glb
+!sim/viewer/public/models/labrador.glb
+!sim/viewer/public/models/soccer_ball.glb
+
+# The work store (seeded): the decomposition, room exports and nav map, plus
+# the authored props. Must cover config.SIM_ASSET_UNITS -- a subtree the seeder
+# writes but this omits is silently absent from /work, and the image still
+# passes the layer, disjointness and anonymous-pull checks.
+!sim/assets/apartment_split/**
+!sim/assets/apartment_split_v2/**
+!sim/assets/apartment_visual/**
+!sim/assets/map/**
+!sim/assets/humans/**
+!sim/assets/objects/**
+
+# Node for the apartment split only. sim/viewer/src, tsconfig.json and
+# vite.lib.config.ts belong to sim/viewer/Dockerfile; admitting them here would
+# put them into this image's content address too.
+!sim/viewer/package.json
+!sim/viewer/package-lock.json
+!sim/viewer/tools/**
+
+# The toolchain stage: the environment it resolves, the pipeline scripts, and
+# the driver package export_nav_map.py imports to build the world it rasterises.
+!sim/tools/**
+!sim/pyproject.toml
+!sim/uv.lock
+!sim/sandbox/_driver_pkg.py
+!ros2_ws/src/mars_bot/mars_sim_driver/**
+!ros2_ws/src/mars_bot/mars_sim/**
+
+!sim/ATTRIBUTION.md
+
+# Never ship the host-generated caches: .model_cache alone is ~168 MB of
+# recompiled MuJoCo binaries, and the capped textures regenerate on demand.
+sim/assets/.model_cache/**
+sim/assets/**/*.cap*.png
+sim/assets/**/*.log
+**/__pycache__/**
+**/.venv/**
+**/.DS_Store

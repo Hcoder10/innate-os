@@ -1,0 +1,175 @@
+# The sim asset bundle, as a layered OCI image.
+#
+# Each layer adds ONE disjoint subtree and never modifies an earlier one, so
+# sim/launcher/oci.py can fetch and extract a single layer by digest over plain
+# HTTPS, with no Docker. An overwrite (partial diff) or a delete (whiteout)
+# breaks that silently. Sizes compressed; uncompressed ~131 / ~63 MB:
+#
+#   /work    ~75 MB   apartment_split{,_v2}, apartment_visual, map, humans,
+#                     objects -- what VirtualMars loads (config.SIM_ASSET_UNITS)
+#   /viewer  ~38 MB   models, physics -- the 3D assets the webapp serves
+#
+# Two layers, in that order: sim/launcher/runtime.py reads them by position
+# (config.ASSETS_IMAGE_LAYERS) and ci/verify_assets_image.py asserts the layout
+# on every push.
+#
+# The SimSession bundle is its own image (sim/viewer/Dockerfile): ~1 MB and
+# changing on every viewer commit, it must not share a content address with
+# geometry that costs hours to rebuild.
+#
+# Stages are ordered by COST, not pipeline order, so the expensive one stays
+# cached. Every compute stage is pinned to $BUILDPLATFORM: the output is pure
+# data, so both index entries share the same natively built layers. For that to
+# hold, no stage feeding `decomp` may consume TARGETPLATFORM in ANY form -- a
+# bare `ARG TARGETPLATFORM`, or a `COPY --from=<registry reference>`, which
+# resolves per target platform however the receiving stage is pinned. Either
+# forks the chain per arch and runs CoACD twice, once under QEMU. Registry
+# images therefore enter through a `FROM --platform=$BUILDPLATFORM ... AS`
+# stage -- see `uvbin`.
+
+# ---------------------------------------------------------------- raw geometry
+# The one thing that cannot be derived. Seeded into the build context by
+# ci/seed_asset_context.py from pinned, checksummed release assets. Staged
+# here rather than COPYed into the final stage, where each COPY would become
+# its own layer.
+FROM scratch AS raw
+COPY sim/viewer/assets/apartment_obj/apartment.obj /raw/apartment.obj
+COPY sim/viewer/public/models/appartement.glb      /raw/appartement.glb
+# Each subtree is distributed on its own, so each carries its own attribution.
+COPY sim/ATTRIBUTION.md                            /raw/ATTRIBUTION.md
+
+# ---------------------------------------------------------------------- uv
+# A stage purely so the reference resolves under this Dockerfile's own
+# --platform: a `COPY --from=ghcr.io/astral-sh/uv:...` in the toolchain
+# resolves per TARGETPLATFORM instead (see header) -- an arm64 uv in an amd64
+# stage, and CoACD re-run. Pinned, not :latest: a floating tag is an
+# unpinned base.
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.9.29 AS uvbin
+
+# ------------------------------------------------------------------ toolchain
+# Everything needed to regenerate sim/assets: CoACD, MuJoCo, trimesh, uv.
+# Above `decomp` only because a stage must be defined before it is referenced
+# -- the one exception to the order-by-cost rule. Pinned by digest: as
+# `decomp`'s parent, a floating base would move the CoACD cache key whenever
+# Docker Hub rebuilds the tag.
+FROM --platform=$BUILDPLATFORM python:3.12-slim@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b AS toolchain
+
+# libgl/libglib: trimesh and mujoco link GL even for headless meshwork.
+# libosmesa6: `import mujoco` eagerly dlopens libOSMesa under MUJOCO_GL=osmesa.
+# git/build-essential: coacd wheels fall back to sdist on unusual platforms.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential git ca-certificates curl \
+      libgl1 libglib2.0-0 libosmesa6 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Via the `uvbin` stage, never the registry reference directly -- see there.
+COPY --from=uvbin /uv /uvx /usr/local/bin/
+
+WORKDIR /sim
+
+# Dependency layer: only pyproject/uv.lock, so editing a tool script does not
+# re-resolve the environment.
+COPY sim/pyproject.toml sim/uv.lock ./
+# --locked: a stale lockfile must fail here, not quietly resolve something else.
+RUN uv sync --no-install-project --locked
+
+ENV PATH="/sim/.venv/bin:${PATH}" \
+    UV_PROJECT_ENVIRONMENT=/sim/.venv \
+    MUJOCO_GL=osmesa
+
+# ENVIRONMENT ONLY, deliberately: anything copied here lands in the cache key
+# of the 17-minute CoACD run below. Source enters in the stages that run it.
+
+# --------------------------------------------------------------- decomposition
+# CoACD. ~17 minutes on a cache miss, seconds otherwise -- which is why
+# ci/build_assets_image.sh exports with --cache-to mode=max: mode=min exports
+# only the final image's layers, so this one would never be cached.
+FROM --platform=$BUILDPLATFORM toolchain AS decomp
+# Off by default so a local build stays readable; CI sets it, because an
+# OOM-killed bake leaves nothing behind to explain itself.
+ARG SIM_RESOURCE_LOG=0
+# The only copy of the pipeline scripts, so editing a tool re-bakes CoACD --
+# and the reason nothing else may land above this line.
+COPY sim/tools ./tools
+COPY --from=raw /raw/apartment.obj ./viewer/assets/apartment_obj/apartment.obj
+COPY sim/assets ./assets
+# The sampler is backgrounded and never reaped: the RUN's shell exiting takes
+# it with it, and it must not be able to fail the build it is only observing.
+RUN set -eux; \
+    if [ "$SIM_RESOURCE_LOG" = "1" ]; then ./tools/log_resources.sh 10 & fi; \
+    uv run tools/split_apartment_obj.py; \
+    ./tools/bake_all_rooms.sh; \
+    uv run tools/decompose_objects.py
+
+# -------------------------------------------------------------- room splitting
+# Light next to CoACD: GLB -> per-room OBJ+PNG and the nav map.
+FROM decomp AS derived
+ARG SIM_RESOURCE_LOG=0
+COPY --from=raw /raw/appartement.glb ./viewer/public/models/appartement.glb
+# HERE, not in a parent: export_nav_map.py instantiates VirtualMars() and
+# rasterises its lidar, so the driver package and robot URDF are inputs to
+# /work/map (hence config.ASSETS_IMAGE_PATHSPECS) and a driver edit must re-run
+# the nav map -- minutes -- not invalidate CoACD. _driver_pkg.py alone: the
+# only sandbox file the pipeline imports.
+COPY sim/sandbox/_driver_pkg.py ./sandbox/_driver_pkg.py
+COPY ros2_ws/src/mars_bot/mars_sim_driver ../ros2_ws/src/mars_bot/mars_sim_driver
+COPY ros2_ws/src/mars_bot/mars_sim ../ros2_ws/src/mars_bot/mars_sim
+# Sampled here too: the nav-map export compiles the ~168 MB world model.
+RUN set -eux; \
+    if [ "$SIM_RESOURCE_LOG" = "1" ]; then ./tools/log_resources.sh 10 & fi; \
+    uv run tools/export_visual_rooms.py; \
+    uv run tools/export_nav_map.py
+# Always repacked from the collision store so the driver and the browser
+# overlay cannot drift. The props' hull soups land beside their glTF models
+# rather than under physics/.
+RUN uv run tools/build_viewer_physics.py /out/physics /out/models
+# The compiled ~168 MB MJB and downscaled texture caches are host-local
+# derivations; shipping them would nearly double the image.
+COPY sim/ATTRIBUTION.md ./assets/ATTRIBUTION.md
+RUN rm -rf assets/.model_cache \
+ && find assets -name '*.cap*.png' -delete \
+ && find assets -name '*.log' -delete
+
+# -------------------------------------------------------------- apartment split
+# Node for split-apartment.mjs's gltf-transform devDependencies -- npm ci only,
+# so sim/viewer/src stays out of this image's identity (the SimSession bundle
+# is sim/viewer/Dockerfile). Pinned: a moving base silently changes the viewer
+# layer digest.
+FROM --platform=$BUILDPLATFORM node:22.21-slim AS split
+WORKDIR /viewer
+COPY sim/viewer/package.json sim/viewer/package-lock.json ./
+RUN npm ci
+
+# Per-room split for the webapp's progressive loader: scene.ts streams rooms
+# from /models/apartment/manifest.json. A pure split + prune, no texture
+# re-encode. The monolith is deliberately NOT shipped in /viewer -- carrying
+# both would nearly double the apartment's ~31 MB.
+COPY sim/viewer/tools ./tools
+COPY sim/viewer/public/models/appartement.glb ./appartement.glb
+RUN node tools/split-apartment.mjs ./appartement.glb /out/models/apartment
+
+# ----------------------------------------------------------------- assembly
+# Gather the complete viewer subtree in ONE place, so the final stage needs a
+# single COPY -- which is what keeps the layer count equal to the subtree count.
+FROM scratch AS assemble
+COPY --from=derived /out/physics                  /viewer/physics
+COPY --from=split   /out/models/apartment         /viewer/models/apartment
+# The props: authored glTF straight from the seeded context; their hull soups
+# come from `derived`.
+COPY sim/viewer/public/models/human.glb           /viewer/models/human.glb
+COPY sim/viewer/public/models/labrador.glb        /viewer/models/labrador.glb
+COPY sim/viewer/public/models/soccer_ball.glb     /viewer/models/soccer_ball.glb
+COPY --from=derived /out/models                   /viewer/models
+# No /viewer/robot: the webapp serves the robot description straight out of
+# ros2_ws (webapp/proxy/https_server.py).
+COPY sim/ATTRIBUTION.md                           /viewer/ATTRIBUTION.md
+
+# ------------------------------------------------------------------- the image
+# EXACTLY one COPY per subtree, in config.ASSETS_IMAGE_LAYERS order.
+# ci/verify_assets_image.py identifies each pushed layer by its top-level
+# directory, so a reordered or extra COPY fails the publish rather than
+# silently repointing `work` at the wrong blob.
+FROM scratch
+COPY --from=derived  /sim/assets  /work
+COPY --from=assemble /viewer      /viewer

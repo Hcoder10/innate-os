@@ -6,7 +6,8 @@
 //   node tools/split-apartment.mjs [srcGlb] [outDir]
 //
 // Defaults to the checkout's public/models (so viewer devs can regenerate with
-// `npm run split:apartment`); publish_assets.py passes the staging paths.
+// `npm run split:apartment`); sim/Dockerfile.assets passes explicit paths when
+// it bakes the split into the image's `viewer` layer.
 
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";

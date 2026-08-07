@@ -135,8 +135,8 @@ sim/.venv/
 sim/assets
 sim/sandbox/__pycache__/
 MUJOCO_LOG.TXT
-# sim: fetched asset bundle (see sim/sim-assets.lock + tools/publish_assets.py);
-# the launcher extracts these on `up`
+# sim: fetched asset bundle (see ci/build_assets_image.sh); the launcher
+# extracts these on `up`
 sim/viewer/public/
 sim/viewer/assets/
 sim/.sim-assets.tmp*
