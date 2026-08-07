@@ -50,6 +50,7 @@ set(action_files
   "action/ExecutePolicy.action"
   "action/ExecuteBehavior.action"
   "action/ExecuteArmCommand.action"
+  "action/SearchMemory.action"
 )
 
 if(BUILD_TESTING)

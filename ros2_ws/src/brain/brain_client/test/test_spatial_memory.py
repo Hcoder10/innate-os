@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from brain_client.brain.memory_search import MemorySearch
+from brain_client.brain.memory_search import MemorySearch, verdict_text
 from brain_client.brain.transport import CACHED_CONTENTS_PATH, GeminiHttpError, GeminiRest
 from brain_client.memory import recorder as recorder_module
 from brain_client.memory.recorder import MemoryRecorder
@@ -328,12 +328,14 @@ def make_search(data_dir, frames: int, verdict: dict | None = None) -> tuple[Mem
 
 def test_cache_is_created_once_and_reused(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "the kitchen"})
-    text, image = search.search("the kitchen")
+    verdict = search.search("the kitchen")
     search.search("the kitchen again")
     assert len(fake.creates) == 1
     assert [body.get("cachedContent") for body in fake.generates] == ["cachedContents/c1", "cachedContents/c1"]
-    assert "x=3.00m" in text and "the kitchen" in text
-    assert image == b"jpg-2"
+    assert verdict.found and verdict.cached and verdict.image == b"jpg-2"
+    assert verdict.memory is not None and verdict.memory.x == 3.0
+    assert "x=3.00m" in verdict_text(verdict) and "the kitchen" in verdict_text(verdict)
+    assert "navigate_to_position" in verdict_text(verdict)
 
 
 def test_new_memories_rebuild_the_cache_and_delete_the_old(data_dir):
@@ -347,22 +349,22 @@ def test_new_memories_rebuild_the_cache_and_delete_the_old(data_dir):
 
 def test_few_frames_answer_inline_without_caching(data_dir):
     search, fake, _ = make_search(data_dir, frames=3)
-    text, image = search.search("anything")
+    verdict = search.search("anything")
     assert fake.creates == []
     (body,) = fake.generates
     assert "systemInstruction" in body and "cachedContent" not in body
     assert sum("inlineData" in part for part in body["contents"][0]["parts"]) == 3
-    assert image == b"jpg-1"
+    assert verdict.image == b"jpg-1" and not verdict.cached
 
 
 def test_unsupported_backend_disables_caching_permanently(data_dir):
     search, fake, _ = make_search(data_dir, frames=6)
     fake.create_error = GeminiHttpError(404, "no such endpoint")
-    _, image = search.search("first")
+    verdict = search.search("first")
     search.search("second")
     assert len(fake.creates) == 1  # never attempted again
     assert all("cachedContent" not in body for body in fake.generates)
-    assert image == b"jpg-1"
+    assert verdict.image == b"jpg-1"
 
 
 def test_failed_cache_creation_retries_only_after_the_memory_changes(data_dir):
@@ -381,32 +383,45 @@ def test_a_dead_cache_falls_back_inline_and_is_forgotten(data_dir):
     search, fake, _ = make_search(data_dir, frames=6)
     search.search("first")
     fake.cached_generate_error = GeminiHttpError(403, "cache expired")
-    text, image = search.search("second")
-    assert image == b"jpg-1"
+    verdict = search.search("second")
+    assert verdict.image == b"jpg-1" and not verdict.cached
     assert "cachedContent" not in fake.generates[-1]  # answered inline
     fake.cached_generate_error = None
     search.search("third")
     assert len(fake.creates) == 2  # the dead handle was dropped, a fresh cache built
 
 
-def test_no_match_returns_text_only(data_dir):
+def test_no_match_is_a_clean_verdict_not_an_error(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": False, "frame": 0, "explanation": "no kitchen"})
-    text, image = search.search("the kitchen")
-    assert image is None and "nothing in the remembered views matches" in text
+    verdict = search.search("the kitchen")
+    assert not verdict.found and verdict.image is None and verdict.error == ""
+    assert "nothing in the remembered views matches" in verdict_text(verdict)
 
 
-def test_unreadable_answer_reports_gracefully(data_dir):
+def test_unreadable_answer_becomes_an_error_verdict(data_dir):
     search, fake, _ = make_search(data_dir, frames=3)
     fake.verdict = None  # type: ignore[assignment] — json.dumps(None) is valid JSON but not a verdict
-    text, image = search.search("anything")
-    assert image is None and "unreadable" in text
+    verdict = search.search("anything")
+    assert verdict.error == "unreadable answer" and verdict.image is None
+    assert "failed" in verdict_text(verdict)
+
+
+def test_a_transport_crash_becomes_an_error_verdict_not_an_exception(data_dir):
+    search, fake, _ = make_search(data_dir, frames=3)
+
+    def explode(path: str, body: dict) -> dict:
+        raise RuntimeError("network down")
+
+    search._rest = GeminiRest(post=explode, delete=lambda path: {})
+    verdict = search.search("anything")
+    assert not verdict.found and "network down" in verdict.error
 
 
 def test_empty_memory_answers_without_the_network(data_dir):
     search, fake, _ = make_search(data_dir, frames=0)
-    text, image = search.search("anything")
-    assert fake.generates == [] and image is None
-    assert "no memories" in text
+    verdict = search.search("anything")
+    assert fake.generates == [] and verdict.image is None and not verdict.found
+    assert "no memories" in verdict_text(verdict)
 
 
 def test_warm_builds_the_cache_in_the_background(data_dir):
@@ -457,8 +472,8 @@ def test_a_broken_ui_mirror_does_not_break_the_search(data_dir):
         raise RuntimeError("publisher gone")
 
     search.on_result = explode
-    text, image = search.search("anything")
-    assert image == b"jpg-1"  # the search itself still succeeded
+    verdict = search.search("anything")
+    assert verdict.image == b"jpg-1"  # the search itself still succeeded
 
 
 def test_cache_state_reflects_the_lifecycle(data_dir):

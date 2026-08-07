@@ -26,6 +26,7 @@ from std_srvs.srv import SetBool, Trigger
 from brain_client.agents.initializer import initialize_agents
 from brain_client.brain.agent import BrainAgent
 from brain_client.brain.memory_search import MemorySearch
+from brain_client.brain.search_server import MemorySearchServer
 from brain_client.brain.transport import pick_rest
 from brain_client.brain.utils import EventKind
 from brain_client.common.script_paths import get_innate_os_root
@@ -160,10 +161,14 @@ class BrainClientNode(Node):
         # Search verdicts for the webapp's map (latched: a page opened after the
         # search still sees the last one; clients gate on the payload's stamp).
         self.memory_search_pub = self.create_publisher(String, "/brain/memory_search", LATCHED_QOS)
+        self.memory_search_server = None
         if self.memory_search is not None:
             self.memory_search.on_result = lambda payload: self.memory_search_pub.publish(
                 String(data=json.dumps(payload))
             )
+            # Recall as a capability: skills reach the same cache-backed search
+            # through /brain/search_memory (see brain/search_server.py).
+            self.memory_search_server = MemorySearchServer(self.memory_search)
         self.gaze = GazeController(self, state)
         self.runner = PrimitiveRunner(
             self,
@@ -552,6 +557,8 @@ class BrainClientNode(Node):
     def destroy_node(self):
         self.exit_event.set()
         self.brain.shutdown()
+        if self.memory_search_server is not None:
+            self.memory_search_server.shutdown()
         if self._agent_status_heartbeat is not None and not self._agent_status_heartbeat.is_canceled():
             self._agent_status_heartbeat.cancel()
         self.reload.stop_watcher()

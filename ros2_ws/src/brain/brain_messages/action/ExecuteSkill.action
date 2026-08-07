@@ -7,6 +7,7 @@ bool success
 string message
 string skill_type
 string success_type  # One of: "success", "cancelled", "failure"
+string image_b64     # optional evidence image the skill attached to its result
 ---
 # Feedback definition
 string skill_type

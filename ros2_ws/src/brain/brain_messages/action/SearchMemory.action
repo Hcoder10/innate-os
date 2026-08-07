@@ -1,0 +1,17 @@
+# Goal definition
+string query
+---
+# Result definition
+bool found
+string message      # model-ready verdict text (coordinates, age, explanation, navigation hint)
+string explanation  # the vision model's one-line reasoning
+string error        # non-empty when the search itself failed (transport, unreadable answer)
+float64 x           # map-frame pose of the matched viewpoint (0 when not found)
+float64 y
+float64 theta
+float64 seen_stamp  # epoch seconds when the matched view was recorded (0 when none)
+string image_b64    # the matched remembered frame ("" when none)
+float64 latency_sec
+bool cached         # answered from the Gemini context cache
+---
+# Feedback definition
