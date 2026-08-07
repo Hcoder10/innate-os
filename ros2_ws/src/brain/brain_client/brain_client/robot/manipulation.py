@@ -126,7 +126,9 @@ class Manipulation:
     JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 
     # Folded with j4 lifted to clear the floor; j1/j2 sit at their limits.
-    REST = [1.5708, -1.2195, 1.5723, 0.30, 0.0, 0.0031]
+    # j4 negative pitches the gripper UP in this fold; -0.3 chosen live on
+    # hardware (2026-08) via /mars/arm/goto_js_v2 previews.
+    REST = [1.5708, -1.2195, 1.5723, -0.3, 0.0, 0.0031]
     ZERO = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     # Grasp reach box (base_link metres).
