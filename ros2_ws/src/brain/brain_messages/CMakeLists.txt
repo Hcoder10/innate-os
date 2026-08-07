@@ -49,6 +49,7 @@ set(action_files
   "action/ExecuteSkill.action"
   "action/ExecutePolicy.action"
   "action/ExecuteBehavior.action"
+  "action/ExecuteArmCommand.action"
 )
 
 if(BUILD_TESTING)

@@ -9,6 +9,7 @@ import { initTtsAudio } from "./ttsAudio.js";
 import { getConfig } from "./config.js";
 import { createAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
+import { createArmAlert } from "./armAlert.js";
 import { maybeShowAppPromo } from "./appPromo.js";
 import { installPressActivate } from "./pressActivate.js";
 
@@ -17,8 +18,10 @@ import { installPressActivate } from "./pressActivate.js";
 // In sim mode (config.simControls) only these sections make sense — the rest
 // (Datasets/Collect/Training/Profiling/Calibration) are robot-data workflows
 // with no sim backing — the sim has no real stereo camera or ChArUco board to
-// calibrate against — so they're hidden from the rail.
-const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
+// calibrate against — so they're hidden from the rail. Arm SDK stays: the sim
+// runs the same IK node and answers the goto services, so the page exercises
+// the real Manipulation SDK against the simulated arm.
+const SIM_SECTIONS = new Set(["teleop", "agent", "nav", "logging", "armsdk", "settings"]);
 
 /** @type {Section[]} */
 const SECTIONS = [
@@ -72,6 +75,12 @@ const SECTIONS = [
     // Camera motif: body with a viewfinder bump, and a lens. The body spans
     // x 4–19, y 6–19, so its centre lands on the half unit.
     icon: '<path d="M4 8a2 2 0 0 1 2-2h2l1.2-1.8a1 1 0 0 1 .8-.4h3a1 1 0 0 1 .8.4L15 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><circle cx="11.5" cy="12.5" r="3.4"/>',
+  },
+  {
+    key: "armsdk",
+    label: "Arm SDK",
+    // Articulated-arm motif: base, two links with a joint, and a claw.
+    icon: '<circle cx="6" cy="19" r="2"/><path d="M7.5 17.5L10.5 10"/><circle cx="11" cy="8.8" r="1.4"/><path d="M12.3 8L17 5.5"/><path d="M17 5.5l2.5 1M17 5.5l.5 2.7"/>',
   },
   {
     key: "settings",
@@ -176,6 +185,13 @@ export function initShell(navigate) {
   // page to take control. It's persistent (built once); setActive hides it while
   // the Agent page — which has its own Start/Stop — is open.
   const agentIndicator = createAgentIndicator(createAgentState(ros), "/agent");
+
+  // A servo latched into (overcurrent) protection shows a discrete amber card
+  // with the reboot remedy, on every page. Real robots only — the sim's arm
+  // services are no-ops and /mars/arm/status never publishes.
+  void getConfig().then((config) => {
+    if (!config?.simControls) createArmAlert(ros);
+  });
 
   // On a phone/tablet, nudge toward the native app (shown once, then remembered).
   maybeShowAppPromo("/");

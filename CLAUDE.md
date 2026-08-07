@@ -3,6 +3,25 @@
 Project instructions for Claude. See [AGENTS.md](AGENTS.md) for the system overview, the
 `innate` CLI, and the ROS package map.
 
+## Comments: minimal, why-only
+
+Write code clear enough to need no comment; a comment is a last resort, not a habit.
+
+A comment earns its place only when it states something the code *cannot* say — and then it
+is 1-3 lines, no more:
+
+- a physical/hardware fact (`# preload beyond this overcurrent-trips the servo`)
+- a crash or race being designed around (`# destroying a sub under the spinning executor → InvalidHandle`)
+- a deliberate exception to a project rule (`# committed: teardown must not be cancellable`)
+- a misleading external interface (`# /ik_delta is an ABSOLUTE pose despite the name`)
+
+Never write comments that narrate the next line, restate the function name, label obvious
+sections of a short function, justify the change to a reviewer, or repeat something already
+said once elsewhere (say the invariant in one place and reference it). Docstrings follow the
+same rule: one tight paragraph of contract — no Args/Returns lists that restate
+self-explanatory parameter names, no prose repeating the signature. If a comment is needed to
+make code understandable, first try renaming or restructuring so it isn't.
+
 ## Writing skills
 
 ### Never `time.sleep` — always `self.sleep`

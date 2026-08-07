@@ -373,6 +373,16 @@ void MarsArmNode::armRebootServosCallback(const std::shared_ptr<std_srvs::srv::T
         RCLCPP_INFO(this->get_logger(), "Reapplying configuration after reboot (arm torque off)");
         configureServosLocked(false);
 
+        // Drop the pre-reboot command target. The 200 Hz pass-through keeps
+        // writing it into the goal registers while torque is off, and
+        // torque_on syncs to measured only AFTER its per-servo enable walk —
+        // so a stale target here makes the arm lunge back toward wherever it
+        // was headed when it tripped, the moment torque returns.
+        {
+            std::lock_guard<std::mutex> cmd_lock(arm_command_mutex_);
+            has_target_ = false;
+        }
+
         // Re-enable torque only for head servo
         RCLCPP_INFO(this->get_logger(), "Enabling torque on head servo (ID 7)");
         dynamixel_->enableTorque(7);

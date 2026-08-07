@@ -416,25 +416,14 @@ class RobotStateProvider:
         return lidar
 
     def current_arm(self) -> Arm | None:
-        # last_fk_pose, not get_current_end_effector_pose(): the dict getter
-        # spins the node and warn-logs on None — both wrong at 50 Hz
+        # last_fk_pose, not the pose property: pose blocks waiting for a
+        # first fix and raises on None — both wrong at 50 Hz
         fk = self._manipulation.last_fk_pose
         if fk is None:
             return None
         js = self.last_joint_states
         gripper = js.position[5] if js is not None and len(js.position) > 5 else None
-        pose = fk.pose
-        return Arm(
-            x=pose.position.x,
-            y=pose.position.y,
-            z=pose.position.z,
-            qx=pose.orientation.x,
-            qy=pose.orientation.y,
-            qz=pose.orientation.z,
-            qw=pose.orientation.w,
-            gripper=gripper,
-            frame_id=fk.header.frame_id,
-        )
+        return Arm.from_fk(fk, gripper=gripper)
 
     # --- state injection ---
     def _injection_pairs(self, skill) -> list[tuple[RobotStateType, Callable[[], object]]]:

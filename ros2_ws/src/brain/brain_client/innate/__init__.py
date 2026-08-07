@@ -20,6 +20,9 @@ The class docstring is the agent-facing guidelines, the class name is the
 skill name (snake_cased), and everything the skill consumes is declared with
 a bare type annotation — the type identifies the feed.
 
+``CAMERAS`` and ``Manipulation.JOINT_NAMES`` enumerate the robot's cameras
+and arm joints by name.
+
 One rule covers interfaces, cameras and robot state: annotate what you read.
 ``battery: Battery``, ``odom: Odometry``, ``pose: Pose``, ``lidar: Lidar``,
 ``arm: Arm``, ``map: Map``, ``joint_states: JointStates``,
@@ -46,10 +49,13 @@ interface helpers) raises SkillCancelled the moment a Stop lands, the base
 is braked automatically, and the run reports CANCELLED. ``try/finally`` in
 execute() is your cleanup hook; ``self.on_cancel(...)`` exists only to
 forward a cancel to an external action goal.
+
+:mod:`innate.exceptions` groups every exception a skill raises or catches.
 """
 
 from typing import TYPE_CHECKING
 
+from brain_client.robot.exceptions import ArmFailed, ArmUnhealthy
 from brain_client.skills.types import (
     PhysicalSkill,
     Skill,
@@ -71,8 +77,14 @@ from brain_client.state.map import Map
 from brain_client.state.odometry import Odometry
 from brain_client.state.pose import Pose
 
+CAMERAS: dict[str, type[Image]] = {"main": MainImage, "wrist": WristImage}
+"""Camera name → the type to annotate; the main camera also serves ``DepthMap``."""
+
 __all__ = [
     "Arm",
+    "ArmFailed",
+    "ArmUnhealthy",
+    "CAMERAS",
     "PhysicalSkill",
     "Battery",
     "DepthMap",
@@ -94,6 +106,7 @@ __all__ = [
     "SkillResult",
     "SkillReturn",
     "TrainedSkill",
+    "Waypoint",
     "WristImage",
     "resource",
 ]
@@ -103,13 +116,14 @@ __all__ = [
 # Type checkers can't follow __getattr__, so they read the imports below.
 if TYPE_CHECKING:
     from brain_client.robot.head import Head
-    from brain_client.robot.manipulation import Manipulation
+    from brain_client.robot.manipulation import Manipulation, Waypoint
     from brain_client.robot.mobility import Mobility
 
 _LAZY_INTERFACES = {
     "Mobility": ("brain_client.robot.mobility", "Mobility"),
     "Manipulation": ("brain_client.robot.manipulation", "Manipulation"),
     "Head": ("brain_client.robot.head", "Head"),
+    "Waypoint": ("brain_client.robot.manipulation", "Waypoint"),
 }
 
 

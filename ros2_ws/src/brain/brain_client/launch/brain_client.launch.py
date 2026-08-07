@@ -213,6 +213,21 @@ def generate_launch_description():
                 # "Publisher already registered" rosout-plumbing warning.
                 arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
             ),
+            # Backend for the webapp's /armsdk page: an ExecuteArmCommand
+            # action (/armsdk/command) plus a slider-stream topic, driven from
+            # the browser over rosbridge, that drives the Manipulation SDK.
+            # Idles cheap — the arm-state feeds park between commands.
+            Node(
+                package="brain_client",
+                executable="arm_sdk_server.py",
+                name="arm_sdk_server",
+                output="screen",
+                respawn=True,
+                respawn_delay=2.0,
+                # Manipulation spins in-process helper nodes that can share a
+                # name; mute the benign "Publisher already registered" warning.
+                arguments=["--ros-args", "--log-level", "rcl.logging_rosout:=ERROR"],
+            ),
             # NOTE: InputManagerNode is launched separately via input_manager.launch.py
         ]
     )

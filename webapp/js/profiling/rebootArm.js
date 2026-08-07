@@ -5,15 +5,12 @@
 // into an overload/error state where the servos latch off; power-cycling them
 // is the recovery, and you want it without leaving the charts mid-eval. Same
 // /mars/arm/reboot service the teleop arm panel uses, connection-gated and
-// behind a confirm since it drops any running task and leaves the arm limp
-// (torque off) until it's re-enabled.
+// behind a confirm since it drops any running task. Torque re-enables
+// automatically once the servos have re-initialized, matching teleop.
 
 import { ros } from "../rosClient.js";
-import { ARM_REBOOT_SERVICE } from "../constants.js";
-
-// Power-cycling walks the six servos and "takes a few seconds" — give the call
-// the same generous headroom the teleop panel does.
-const REBOOT_TIMEOUT_MS = 20_000;
+import { ARM_REBOOT_CONFIRM } from "../constants.js";
+import { rebootArmAndEnableTorque } from "../armReboot.js";
 
 export function buildRebootArm() {
   const btn = document.createElement("button");
@@ -36,24 +33,12 @@ export function buildRebootArm() {
 
   btn.addEventListener("click", async () => {
     if (rebooting) return;
-    if (
-      !window.confirm(
-        "Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it."
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) return;
     rebooting = true;
     sync();
-    try {
-      const res = await ros.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      rebooting = false;
-      sync(res && res.success === false ? "Reboot failed" : "Rebooted ✓");
-    } catch (err) {
-      rebooting = false;
-      console.error("[profiling] arm reboot:", err);
-      sync("Reboot failed");
-    }
+    const res = await rebootArmAndEnableTorque(ros);
+    rebooting = false;
+    sync(res.ok && res.torqueOn ? "Rebooted, torque on \u2713" : res.message);
     setTimeout(() => sync(), 1600);
   });
 

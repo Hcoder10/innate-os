@@ -58,9 +58,8 @@ std::vector<std::vector<double>> MarsArmNode::computeCubicSplineTrajectory(const
 
 bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_positions, double trajectory_time,
                                            GainMode trajectory_gain_mode) {
-    // Block the idle gain decay for the whole call, and stamp the quiet
-    // period's start on every exit path (validation failures included —
-    // harmless, it just delays the decay one timeout).
+    // Block the idle gain decay for the whole call; the guard stamps the
+    // quiet period's start on every exit path.
     trajectory_executing_ = true;
     struct HoldGuard {
         MarsArmNode* n;
@@ -104,11 +103,9 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
         return false;
     }
 
-    // Gripper (servo 6, current-based position control): spline from the last
-    // COMMANDED goal, not the measured position. When gripping, the servo
-    // stalls short of its goal and that standing position error IS the grip
-    // force — re-seeding the goal at the measured position zeroes the error
-    // and drops the object at the start of every arm move.
+    // Gripper (j6) is current-based position control: the standing position
+    // error IS the grip force, so spline from the last COMMANDED goal — the
+    // measured stall position would zero the preload and drop the object.
     {
         std::lock_guard<std::mutex> arm_lock(arm_command_mutex_);
         if (has_target_) {
@@ -142,10 +139,8 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
     for (size_t i = 0; i < interpolated_trajectory.size(); ++i) {
         const auto& point = interpolated_trajectory[i];
 
-        // Re-assert per waypoint: the idle decay's check-then-write can pass
-        // its checks just before trajectory_executing_ went true and then
-        // stomp the mode after the switch above — without this the whole
-        // trajectory would run on soft teleop gains.
+        // Re-assert per waypoint: an idle-decay check racing the switch above
+        // can stomp the mode once, leaving the trajectory on soft gains.
         gain_mode_ = trajectory_gain_mode;
 
         // Send command via the control loop's pass-through path
@@ -166,12 +161,9 @@ bool MarsArmNode::planAndExecuteTrajectory(const std::vector<double>& target_pos
     RCLCPP_INFO(this->get_logger(), "Trajectory execution complete");
 
     // Deliberately KEEP the trajectory's gain mode for the hold: dropping to
-    // the soft teleop gains here made the arm sag under gravity between the
-    // stepped moves a skill sends (visible limp-snap-limp). The control loop
-    // decays it back to teleop after kScheduledHoldTimeoutS of quiet (the
-    // HoldGuard above stamps the quiet period) so an idle arm is not held
-    // stiff — that overheated joint 2 — and teleop also reclaims its gains
-    // immediately via armCommandCallback.
+    // teleop gains here sags the arm between a skill's stepped moves. The
+    // control loop decays it after a quiet period — holding an idle arm stiff
+    // overheated joint 2.
     return true;
 }
 
@@ -312,11 +304,15 @@ void MarsArmNode::armGotoJSTrajectoryCallback(const std::shared_ptr<mars_msgs::s
                 }
             }
             waypoints.insert(waypoints.begin(), start);
-            if (!durations.empty()) {
-                durations.insert(durations.begin(), durations[0]);
-            } else {
-                durations.insert(durations.begin(), 0.5);
+            // One duration per waypoint means durations[0] already paces this
+            // prepended approach; legacy waypoints-1 callers get a copy of the
+            // first segment instead.
+            if (durations.size() + 1 < waypoints.size()) {
+                durations.insert(durations.begin(), durations.empty() ? 0.5 : durations[0]);
             }
+        } else if (!durations.empty() && durations.size() == waypoints.size()) {
+            // No current pose to prepend: the approach duration has no segment.
+            durations.erase(durations.begin());
         }
     }
 

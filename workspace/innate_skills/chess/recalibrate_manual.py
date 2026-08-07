@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from innate import Manipulation, Skill, SkillReturn, WristImage
+from innate.exceptions import ArmFailed
 
 CALIBRATION_FILE = Path.home() / "board_calibration.json"
 CAPTURES_DIR = Path.home() / "innate-os/captures/corners"
@@ -70,10 +71,11 @@ class RecalibrateManual(Skill):
         )
         calibration = self._load_calibration()
 
-        fk_pose = self.manipulation.get_current_end_effector_pose()
-        if not fk_pose:
+        try:
+            pose = self.manipulation.pose
+        except ArmFailed:
             self.fail("Could not get current arm position")
-        pos = fk_pose["position"]
+        pos = {"x": pose.x, "y": pose.y, "z": pose.z}
         position_str = f"X={pos['x']:.4f}, Y={pos['y']:.4f}, Z={pos['z']:.4f}"
         self.feedback(f"Recording {corner} at {position_str}")
         self._save_corner_image(corner)

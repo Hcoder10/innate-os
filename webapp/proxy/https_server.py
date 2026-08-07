@@ -34,6 +34,7 @@ import json
 import logging
 import mimetypes
 import os
+import posixpath
 import shutil
 import ssl
 import subprocess
@@ -277,6 +278,42 @@ async def restart_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True}, headers={"Cache-Control": "no-cache"})
 
 
+# The Arm SDK page (/armsdk) drives the arm over rosbridge like every other
+# page; the front door only serves its 3D view the same URDF + STL meshes the
+# IK node solves against (the installed mars_sim share), read-only under
+# /armsdk/model/.
+MARS_MODEL_ROOT = ROOT.parent / "ros2_ws" / "install" / "mars_sim" / "share" / "mars_sim"
+
+
+def _model_target(tail: str) -> "Path | None":
+    """MARS_MODEL_ROOT / tail, with traversal blocked on the *requested* path.
+
+    Deliberately does not resolve() the result. The sim builds the workspace
+    with colcon --symlink-install (scripts/validate_sim_ros_install.zsh), which
+    installs every model file as a symlink into ros2_ws/src — so resolving and
+    then demanding containment 404s the whole model there. The robot installs
+    real files (plain colcon build) and never hit it.
+
+    Prefixing "/" before normpath collapses any leading "..", so the join
+    cannot escape the base and the symlinks we do follow are the build's own.
+    """
+    rel = posixpath.normpath("/" + tail).lstrip("/")
+    if not rel:
+        return None
+    try:
+        target = MARS_MODEL_ROOT / rel
+        return target if target.is_file() else None
+    except (OSError, ValueError):  # illegal path bytes (e.g. a decoded NUL)
+        return None
+
+
+async def armsdk_model(request: web.Request) -> web.StreamResponse:
+    target = _model_target(request.match_info["tail"])
+    if target is None:
+        raise web.HTTPNotFound(text="not found")
+    return _serve_static(target)
+
+
 async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:
     """Relay every frame from src to dst until either side closes."""
     async for msg in src:
@@ -339,6 +376,8 @@ def build_app() -> web.Application:
     app.router.add_get("/settings.json", settings_get)
     app.router.add_post("/settings.json", settings_apply)
     app.router.add_get("/restart", restart_handler)
+    # Before the catch-all; the bare /armsdk page route stays on the SPA shell.
+    app.router.add_get("/armsdk/model/{tail:.*}", armsdk_model)
     # Prefix routes must precede the catch-all so /models/foo.glb doesn't fall to
     # the SPA shell — first matching resource wins in add order.
     for prefix in SIM_VIEWER_ROUTES:

@@ -15,11 +15,13 @@
 #include <brain_messages/msg/recorder_status.hpp>
 #include <std_msgs/msg/int32_multi_array.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <mars_msgs/srv/set_robot_name.hpp>
 #include <mars_msgs/srv/trigger_update.hpp>
 #include <mars_msgs/srv/shutdown.hpp>
 #include <mars_msgs/srv/set_volume.hpp>
+#include <mars_msgs/srv/goto_js.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 
@@ -459,6 +461,20 @@ class AppControl : public rclcpp::Node {
         // Publisher for leader arm commands (Float64MultiArray) on /mars/arm/commands
         cmd_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/mars/arm/commands", 10);
 
+        // Arm goto client for the Mad-mode safe fold (see fold_arm_for_mad_mode).
+        arm_goto_client_ = this->create_client<mars_msgs::srv::GotoJS>("/mars/arm/goto_js_v2");
+
+        // Last COMMANDED j6 (standing grip target) so the Mad fold can carry
+        // it. Transient local: a node restart while an object is held must
+        // not reset it to zero.
+        arm_command_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "/mars/arm/command_state", rclcpp::QoS(1).transient_local(),
+            [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
+                if (msg->position.size() >= 6) {
+                    last_commanded_j6_ = msg->position[5];
+                }
+            });
+
         // Publisher for robot info
         robot_info_pub_ = this->create_publisher<std_msgs::msg::String>("/robot/info", 10);
 
@@ -470,6 +486,15 @@ class AppControl : public rclcpp::Node {
         drive_smoother_timer_ = this->create_wall_timer(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
             std::bind(&AppControl::drive_smoother_callback, this));
+
+        // Start unbraced even when settings.yaml already declares a Mad speed_scale: the
+        // arm needs the bracing pose whenever the robot can drive at Mad speeds, and how
+        // it got there is not the arm's problem. Seeding true here (booting into Mad reads
+        // as a starting state, not a transition) suppressed the fold for the whole session.
+        // Arm services being down at construction is not a reason to skip it either —
+        // fold_arm_for_mad_mode() checks readiness and retries every 2s.
+        mad_engaged_ = false;
+        mad_mode_timer_ = this->create_wall_timer(100ms, std::bind(&AppControl::watch_mad_mode, this));
 
         // Timer for publishing robot info
         robot_info_timer_ = this->create_wall_timer(1000ms, std::bind(&AppControl::publish_robot_info_callback, this));
@@ -733,15 +758,9 @@ class AppControl : public rclcpp::Node {
         return fallback;
     }
 
-    /**
-     * Ramp knob bounded at the point of use, not just in validate_parameters.
-     *
-     * settings.yaml is read by declare_parameter at startup, before the callback is
-     * registered, so a file override never passes through validation. Bounding here covers
-     * every path — file, live write, and anything that bypasses both. Clamping rather than
-     * falling back to the compiled default keeps the operator's intent: they asked for the
-     * gentlest stop available, so give them the gentlest safe one.
-     */
+    // Bounded here, not just in validate_parameters: settings.yaml is read at
+    // declare_parameter time, before the callback exists, so file overrides
+    // never pass through validation.
     double bounded_param(const char* name, double fallback, double lo, double hi) {
         const double value = smoothing_param(name, fallback);
         const double bounded = std::clamp(value, lo, hi);
@@ -752,14 +771,9 @@ class AppControl : public rclcpp::Node {
         return bounded;
     }
 
-    /**
-     * Preset the current activity wants, or 0 when none applies.
-     *
-     * Mapping is absent deliberately: mode_manager early-returns on a change_mode request for
-     * the mode it is already in, so a second map produces no transition to key on — the
-     * clients handle it. A mapping branch would also mask this one, since mapping mode
-     * persists until someone switches back.
-     */
+    // Preset the current activity wants, or 0 when none applies. Mapping is
+    // deliberately absent: mode_manager drops repeat change_mode requests, so
+    // there is no transition to key on.
     double policy_scale() const {
         if (recording_) {
             return drive::scale_for_mode(drive::RECORDING_SCALE_ID);
@@ -767,12 +781,8 @@ class AppControl : public rclcpp::Node {
         return 0.0;
     }
 
-    /**
-     * Nudge speed_scale on entering or leaving an activity with a preferred speed.
-     *
-     * Acts only on a transition, so an operator who picks another mode mid-activity keeps it,
-     * and restores only what it set — speed_scale is global and another client may have moved it.
-     */
+    // Acts only on a transition, so an operator who picks another mode
+    // mid-activity keeps it; restores only what it set.
     void apply_speed_policy() {
         const double desired = policy_scale();
         if (desired == policy_desired_) {
@@ -806,14 +816,56 @@ class AppControl : public rclcpp::Node {
                     next);
     }
 
-    /**
-     * Reject drive tunables that would misbehave, at the point they are set.
-     *
-     * Otherwise the node accepts anything and smoothing_param substitutes the default, so
-     * `param get` reports a value that is not controlling the robot. The speed caps have no
-     * such fallback: a negative max_speed inverts the joystick, a non-finite one reaches the
-     * twist.
-     */
+    // Polled: Humble has no post-set parameter hook, and the pre-set callback
+    // only validates — a rejected batch would brace the arm for a mode never
+    // entered. Reading the applied value covers every writer.
+    void watch_mad_mode() {
+        const bool mad = drive::is_mad_scale(drive_speed_scale());
+        if (!mad) {
+            mad_engaged_ = false;
+            return;
+        }
+        if (mad_engaged_ || mad_fold_in_flight_ || std::chrono::steady_clock::now() < mad_fold_retry_at_) {
+            return;
+        }
+        mad_engaged_ = fold_arm_for_mad_mode();
+    }
+
+    // At Mad's speeds a collision can break an extended arm.
+    bool fold_arm_for_mad_mode() {
+        // Hardware-verified command radians for j1-j5 (j1 at its configured
+        // limit — the demonstrated pose sat ~12 deg past it); j6 is replaced
+        // below with the standing grip target.
+        static constexpr std::array<double, 6> POSE_RAD{1.5708, -0.3912, 1.4511, -1.6276, -0.0890, 0.0};
+        // The poll is 100 ms: without this a rejecting arm gets ten 2 s gotos a second.
+        mad_fold_retry_at_ = std::chrono::steady_clock::now() + 2s;
+        if (!arm_goto_client_ || !arm_goto_client_->service_is_ready()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "Mad mode: arm goto service not ready; retrying the safe fold");
+            return false;
+        }
+        auto request = std::make_shared<mars_msgs::srv::GotoJS::Request>();
+        request->data.data.assign(POSE_RAD.begin(), POSE_RAD.end());
+        // j6 is current-based position control: raising it above the standing
+        // grip target zeroes the preload and drops a held object.
+        request->data.data[5] = std::min(0.0, last_commanded_j6_);
+        request->time = 2.0;
+        RCLCPP_INFO(this->get_logger(), "Mad mode: folding the arm to its bracing pose");
+        mad_fold_in_flight_ = true;
+        arm_goto_client_->async_send_request(
+            request, [this](rclcpp::Client<mars_msgs::srv::GotoJS>::SharedFuture future) {
+                mad_fold_in_flight_ = false;
+                const auto response = future.get();
+                if (!response || !response->success) {
+                    RCLCPP_WARN(this->get_logger(), "Mad mode: arm safe-fold goto was rejected; retrying");
+                    mad_engaged_ = false;
+                }
+            });
+        return true;
+    }
+
+    // Without this the node accepts anything and the read-side fallbacks kick
+    // in, so `param get` reports a value that is not controlling the robot.
     rcl_interfaces::msg::SetParametersResult validate_parameters(const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
@@ -835,17 +887,13 @@ class AppControl : public rclcpp::Node {
                 result.reason = name + " must be finite";
                 return result;
             }
-            // speed_scale is clamped to the published preset range at use, so accepting a
-            // value outside it would report a mode the robot is not in. dt is read once to
-            // build the timer, so a later write changes what is reported without changing
-            // the integration step. Refuse both rather than acknowledge a value that does
-            // not control the robot.
             if (name == "motion_control.speed_scale") {
                 if (value < 0.05 || value > drive::max_speed_scale()) {
                     result.successful = false;
                     result.reason = "motion_control.speed_scale must be within the published preset range";
                     return result;
                 }
+                // The Mad-mode arm fold reacts to the APPLIED value (watch_mad_mode).
                 continue;
             }
             if (name == "motion_control.dt" && std::abs(value - smoothing_dt_) > 1e-9) {
@@ -1420,7 +1468,11 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_command_state_sub_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
+    // Service clients
+    rclcpp::Client<mars_msgs::srv::GotoJS>::SharedPtr arm_goto_client_;
 
     // Publishers
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
@@ -1432,6 +1484,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::TimerBase::SharedPtr robot_info_timer_;
     rclcpp::TimerBase::SharedPtr hostname_sync_timer_;
     rclcpp::TimerBase::SharedPtr drive_smoother_timer_;
+    rclcpp::TimerBase::SharedPtr mad_mode_timer_;
 
     // Drive smoother state. Only touched from joystick_callback and drive_smoother_callback,
     // which the single-threaded executor serialises, so no locking is needed.
@@ -1448,6 +1501,13 @@ class AppControl : public rclcpp::Node {
     bool policy_owns_scale_ = false;
     // Integration step, fixed to the period the smoother timer was created with.
     double smoothing_dt_ = drive::CONTROL_DT;
+    // Braced for the current Mad session; a failed fold leaves it clear to retry.
+    bool mad_engaged_ = false;
+    bool mad_fold_in_flight_ = false;
+    std::chrono::steady_clock::time_point mad_fold_retry_at_{};
+    // Last commanded j6 from /mars/arm/command_state (radians): the standing
+    // grip target the Mad fold carries.
+    double last_commanded_j6_ = 0.0;
 
     // Services
     rclcpp::Service<mars_msgs::srv::SetRobotName>::SharedPtr set_robot_name_srv_;

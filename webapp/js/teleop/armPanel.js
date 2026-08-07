@@ -16,18 +16,16 @@ import { DynamixelLeader } from "../dynamixel.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
 import {
   LEADER_POSITIONS_TOPIC,
-  ARM_REBOOT_SERVICE,
+  ARM_REBOOT_CONFIRM,
   ARM_TORQUE_ON_SERVICE,
   ARM_TORQUE_OFF_SERVICE,
   ARM_STATUS_TOPIC,
 } from "../constants.js";
+import { rebootArmAndEnableTorque } from "../armReboot.js";
 
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
 const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
-// The reboot power-cycles the servos and "takes a few seconds" — give the
-// service call more room than the 10s default before timing out.
-const REBOOT_TIMEOUT_MS = 20_000;
 
 /**
  * @param {HTMLElement} parent
@@ -319,7 +317,7 @@ function divider() {
  * rosbridge socket (no WebSerial). Torque state is read from /mars/arm/status
  * (ArmStatus, ~0.2 Hz) so the toggle reflects reality even when changed
  * elsewhere; clicking it calls torque_on/torque_off. Reboot power-cycles the
- * servos and leaves the arm limp (torque goes red until re-enabled).
+ * servos, then re-enables torque automatically (see armReboot.js).
  * @param {import("../rosClient.js").RosClient} rosClient
  * @returns {{ el: HTMLElement, destroy: () => void }}
  */
@@ -393,16 +391,16 @@ function buildArmServices(rosClient) {
 
   rebootBtn.addEventListener("click", async () => {
     if (rebooting || toggling) return;
-    if (!window.confirm("Reboot the arm servos? Any running task stops, the head recenters to level, and the arm goes limp (torque off) until you re-enable it.")) {
+    if (!window.confirm(ARM_REBOOT_CONFIRM)) {
       return;
     }
     rebooting = true;
     msg.hidden = true;
     render();
     try {
-      const res = await rosClient.callService(ARM_REBOOT_SERVICE, {}, REBOOT_TIMEOUT_MS);
-      if (res && res.success === false) flash(res.message || "Reboot failed", true);
-      else flash("Servos rebooted", false);
+      const res = await rebootArmAndEnableTorque(rosClient);
+      if (res.torqueOn) torqueOn = true;
+      flash(res.message, !res.ok || !res.torqueOn);
     } catch (err) {
       flash(err instanceof Error ? err.message : "Reboot failed", true);
     } finally {

@@ -1,0 +1,10 @@
+# Goal definition
+string command  # move_to | move_by | gripper_open | gripper_close | rest | zero | torque_on | torque_off | recover | speed
+string params   # JSON, command-specific (see brain_client arm_sdk_server)
+---
+# Result definition
+bool success
+string message  # error text when not success
+string state    # JSON snapshot of the SDK state after the command
+---
+# Feedback definition

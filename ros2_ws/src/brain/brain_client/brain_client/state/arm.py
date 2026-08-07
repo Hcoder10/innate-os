@@ -3,6 +3,10 @@
 """Skill-facing arm state. ROS-free on purpose."""
 
 from dataclasses import dataclass
+from functools import cached_property
+from typing import Any
+
+from brain_client.common.geometry import quat_to_rpy
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,23 @@ class Arm:
     """Gripper joint (j6) position in radians; None if joint states are missing."""
     frame_id: str = ""
 
+    @classmethod
+    def from_fk(cls, msg: Any, gripper: float | None = None) -> "Arm":
+        """From a PoseStamped-shaped message (duck-typed to keep this module
+        ROS-free)."""
+        p = msg.pose
+        return cls(
+            x=p.position.x,
+            y=p.position.y,
+            z=p.position.z,
+            qx=p.orientation.x,
+            qy=p.orientation.y,
+            qz=p.orientation.z,
+            qw=p.orientation.w,
+            gripper=gripper,
+            frame_id=msg.header.frame_id,
+        )
+
     @property
     def position(self) -> tuple[float, float, float]:
         """(x, y, z) in meters, arm base frame."""
@@ -38,3 +59,23 @@ class Arm:
     def orientation(self) -> tuple[float, float, float, float]:
         """(qx, qy, qz, qw)."""
         return (self.qx, self.qy, self.qz, self.qw)
+
+    @cached_property
+    def rpy(self) -> tuple[float, float, float]:
+        """(roll, pitch, yaw) in radians, derived from the quaternion."""
+        return quat_to_rpy(self.qx, self.qy, self.qz, self.qw)
+
+    @property
+    def roll(self) -> float:
+        """Roll in radians."""
+        return self.rpy[0]
+
+    @property
+    def pitch(self) -> float:
+        """Pitch in radians."""
+        return self.rpy[1]
+
+    @property
+    def yaw(self) -> float:
+        """Yaw in radians."""
+        return self.rpy[2]

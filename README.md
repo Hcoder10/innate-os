@@ -137,7 +137,7 @@ You will find skills in two different directories:
 - **Your custom skills** — Stored in `workspace/custom_skills/`. Gitignored and yours to play with.
 - **Skill packs** — Any other folder dropped into `workspace/` loads as its own package (ids `<folder>/<name>`). A pack that lives elsewhere on disk is symlinked in (`ln -s /opt/team/skills workspace/team_skills`) and works the same, hot reload included.
 
-Helpers work like normal Python: any `.py` in your skills folder that doesn't define a `Skill` is just a module — `import` it, use relative imports inside subfolders, share across packages by bare name (`from innate_skills import arm_utils`). Device helpers are methods on the interfaces (`self.manipulation.go(...)`, `self.mobility.rotate_by(...)`); camera math and Gemini live under `innate` (`from innate import geometry, vision, gemini`).
+Helpers work like normal Python: any `.py` in your skills folder that doesn't define a `Skill` is just a module — `import` it, use relative imports inside subfolders, share across packages by bare name (`from innate_skills import arm_utils`). Device helpers are methods on the interfaces (`self.manipulation.move_to(...)`, `self.mobility.rotate_by(...)`); camera math and Gemini live under `innate` (`from innate import geometry, vision, gemini`).
 
 ### Skill definition
 

@@ -37,6 +37,7 @@ const ROUTES = [
   { path: "/training", key: "training", load: () => import("./training/main.js") },
   { path: "/profiling", key: "profiling", load: () => import("./profiling/main.js") },
   { path: "/calibration", key: "calibration", load: () => import("./calibration/main.js") },
+  { path: "/armsdk", key: "armsdk", load: () => import("./armsdk/main.js") },
   { path: "/settings", key: "settings", load: () => import("./settings/main.js") },
 ];
 
@@ -66,7 +67,7 @@ const shell = initShell(navigate);
 // Sim deployments hide robot-data workflows from the rail (shell.js's
 // SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
 // a page whose services have no sim backing.
-const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "logging", "settings"]);
+const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "logging", "armsdk", "settings"]);
 /** @type {Promise<{simControls?: boolean}>} */
 const configPromise = getConfig();
 
