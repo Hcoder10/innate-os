@@ -10,6 +10,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import OccupancyGrid
@@ -30,9 +31,22 @@ from brain_client.state.map import Map
 from brain_client.state.odometry import Odometry
 from brain_client.state.pose import Pose
 
+if TYPE_CHECKING:
+    from brain_client.robot.spatial_memory import SpatialMemory
+
 
 class RobotStateProvider:
-    def __init__(self, node, camera_node, *, manipulation, mobility, head, memory, head_current_position_topic: str):
+    def __init__(
+        self,
+        node,
+        camera_node,
+        *,
+        manipulation,
+        mobility,
+        head,
+        memory: SpatialMemory,
+        head_current_position_topic: str,
+    ):
         self._node = node
         self._logger = node.get_logger()
         self._camera = camera_node

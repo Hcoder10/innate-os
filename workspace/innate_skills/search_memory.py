@@ -17,7 +17,9 @@ class SearchMemory(Skill):
 
     def execute(self, query: str):
         recall = self.memory.begin(query)
-        verdict = self.wait_for(recall, timeout=90.0)
+        # Must outlive the transport's 120 s HTTP ceiling: the server rejects
+        # cancels, so a wait that gives up first strands the goal mid-search.
+        verdict = self.wait_for(recall, timeout=150.0)
         if verdict is None:
             self.fail("memory search timed out")
         if verdict.error:

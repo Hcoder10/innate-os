@@ -481,8 +481,13 @@ class BrainClientNode(Node):
         response.success = True
         return response
 
-    def _svc_clear_memories(self, request, response):
+    def _svc_clear_memories(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         cleared = self.memory_store.clear()
+        if self.memory_search is not None:
+            # Forgetting must reach the server-side copies too: the context
+            # cache and the uploaded frames would otherwise keep serving the
+            # forgotten views until their own expiry.
+            self.memory_search.forget()
         self.get_logger().info(f"[BrainClient] Cleared {cleared} spatial memories on user request")
         response.success = True
         response.message = f"Forgot {cleared} remembered views"

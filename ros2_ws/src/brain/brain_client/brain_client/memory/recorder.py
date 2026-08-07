@@ -60,6 +60,10 @@ _POSITION_VAR_MAX = 0.10  # m² — the webapp's "confident" localization thresh
 _YAW_VAR_MAX = 0.18  # rad² — from the cloud-era pose graph gate
 _CONFIDENT_FOR_SEC = 3.0  # covariance must hold below the thresholds this long before recording
 _FRESH_FRAME_SEC = 2.5  # the compressed feed runs ~7.5 Hz; older means it died
+# Our AMCL runs update_min_* = 0 (amcl.yaml): it publishes every scan while
+# alive. Older means AMCL died — TF keeps composing odom motion while the last
+# good covariance stays latched, and those poses are vouched for by nothing.
+_COVARIANCE_FRESH_SEC = 5.0
 _MIN_HEAD_PITCH_DEG = -25.0  # looking further down films the floor, not the room
 
 
@@ -99,6 +103,7 @@ class MemoryRecorder:
         self._nav_mode: str | None = None
         self._map_name = ""
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
+        self._covariance_at = 0.0  # monotonic arrival of the last AMCL message
         self._head_pitch = 0.0
         self._confident_since: float | None = None
         self._grid: Map | None = None  # sight-line + paint truth for admissions and refreshes
@@ -154,6 +159,7 @@ class MemoryRecorder:
     def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
         covariance = msg.pose.covariance
         self._covariance = (covariance[0], covariance[7], covariance[35])
+        self._covariance_at = time.monotonic()
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self._grid = Map(
@@ -201,7 +207,7 @@ class MemoryRecorder:
         return now - self._confident_since >= _CONFIDENT_FOR_SEC
 
     def _confident(self) -> bool:
-        if self._covariance is None:
+        if self._covariance is None or time.monotonic() - self._covariance_at > _COVARIANCE_FRESH_SEC:
             return False
         var_x, var_y, var_yaw = self._covariance
         return max(var_x, var_y) <= _POSITION_VAR_MAX and var_yaw <= _YAW_VAR_MAX
@@ -229,6 +235,9 @@ class MemoryRecorder:
             # betrays that to a client watching the name.
             "fingerprint": self._store.fingerprint[:12],
             "cache": self._cache_state() if self._cache_state is not None else "off",
+            # The robot's clock, so clients age the stamps against it — a robot
+            # without NTP can sit hours from the browser's clock.
+            "now": time.time(),
             "positions": self._store.positions(),
         }
         self._positions_pub.publish(String(data=json.dumps(payload)))

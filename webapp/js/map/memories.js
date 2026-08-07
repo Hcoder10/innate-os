@@ -16,7 +16,7 @@ export const MEMORY_COLOR = "#b48cff";
 export const SEARCH_REPLAY_FRESH_S = 20;
 
 /** @typedef {{ id: number, x: number, y: number, theta: number, stamp: number }} Memory */
-/** @typedef {{ map: string, fingerprint: string, cache: string, memories: Memory[] }} MemoryState */
+/** @typedef {{ map: string, fingerprint: string, cache: string, now: number, memories: Memory[] }} MemoryState */
 
 /**
  * Parse a /brain/memory_positions message. Null when malformed — the layer
@@ -39,6 +39,10 @@ export function parseMemories(msg) {
       // and restarts ids, and this is the only field that changes with it.
       fingerprint: typeof data.fingerprint === "string" ? data.fingerprint : "",
       cache: typeof data.cache === "string" ? data.cache : "off",
+      // The robot's clock at publish. Stamps are robot time, so ages must be
+      // computed against this (via clockSkew), never the browser's clock — a
+      // robot without NTP can sit hours off.
+      now: typeof data.now === "number" ? data.now : 0,
       memories,
     };
   } catch {
@@ -59,6 +63,15 @@ export function parseSearch(msg) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Seconds to add to the browser's clock to get the robot's, learned from a
+ * positions payload's `now`. 0 when the payload predates the field.
+ * @param {MemoryState} state
+ */
+export function clockSkew(state) {
+  return state.now ? state.now - Date.now() / 1000 : 0;
 }
 
 /**

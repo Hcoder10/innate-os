@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import pytest
 
+from brain_client.brain import memory_search as memory_search_module
 from brain_client.brain.memory_search import MemorySearch, verdict_text
 from brain_client.brain.transport import CACHED_CONTENTS_PATH, GeminiHttpError, GeminiRest
 from brain_client.memory import recorder as recorder_module
@@ -173,11 +174,35 @@ def test_a_fully_painted_wedge_is_skipped():
     assert not plan.record
 
 
-def test_a_pose_that_paints_nothing_earns_no_slot():
+def test_a_wall_closeup_earns_a_slot_where_the_wall_is_unknown():
     cells = open_room()
     cells[:, :2] = 100  # a wall along world x < 0.2
     plan = plan_admission([], 0.35, 1.5, math.pi, stamp=1000.0, grid=grid_of(cells), coverage=Coverage())
-    assert not plan.record  # unpainted, but nose against the wall: almost no floor in view
+    assert plan.record  # cramped, but nothing shows this wall yet — a closeup beats nothing
+
+
+def test_wall_closeups_do_not_pile_up():
+    cells = open_room()
+    cells[:, :2] = 100
+    seen = memory(1, 0.35, 1.5, theta=math.pi, stamp=1000.0)
+    plan = plan_admission([seen], 0.35, 1.5, math.pi, stamp=1010.0, grid=grid_of(cells), coverage=Coverage())
+    assert not plan.record  # the wall is known: a cramped view must be nearly all new
+
+
+def test_a_blind_pose_earns_no_slot():
+    cells = open_room()
+    cells[:, 10:] = 100  # solid mass from x = 1.0
+    plan = plan_admission([], 1.05, 1.5, 0.0, stamp=1000.0, grid=grid_of(cells), coverage=Coverage())
+    assert not plan.record
+
+
+def test_the_further_back_shot_outlives_the_closeups_it_subsumes():
+    cells = open_room(60)
+    cells[:, 35] = 100  # a wall at world x = 3.5
+    wide = memory(1, 1.0, 3.0, theta=0.0)
+    twin = memory(2, 1.0, 3.0, theta=0.0)  # zeroes the wide view's unique paint, like the closeup's
+    closeup = memory(3, 3.0, 3.0, theta=0.0)  # against the wall, inside the wide view
+    assert Coverage().least_unique([wide, twin, closeup], grid_of(cells)) == closeup
 
 
 def test_at_capacity_the_most_replaceable_paint_makes_room(monkeypatch):
@@ -346,6 +371,19 @@ def test_without_a_map_nothing_is_recorded(data_dir):
     assert store.snapshot().memories == ()
 
 
+def test_a_transiently_unreadable_map_file_never_wipes(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, GOOD_JPEG)
+    (data_dir / "maps" / "A.pgm").unlink()  # a rewrite window or IO hiccup, not a re-map
+    store.switch_map("A.yaml")
+    (data_dir / "maps" / "A.pgm").write_bytes(b"map-A-content")
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    path = store.image_path(memory.id)
+    assert path is not None and path.read_bytes() == GOOD_JPEG
+
+
 def test_corrupt_index_resets_cleanly(data_dir):
     memory_dir = data_dir / "spatial_memory" / "A"
     memory_dir.mkdir(parents=True)
@@ -405,8 +443,11 @@ def see_confident_world(recorder, clock):
 
 
 def observe(recorder, clock, jpeg: bytes, advance: float = 1.0):
-    """One recorder tick seeing this frame, the clock advanced past the last."""
+    """One recorder tick seeing this frame, the clock advanced past the last.
+    Re-feeds AMCL like the live one does (update_min_* = 0: it publishes every
+    scan), so covariance freshness holds across any advance."""
     clock.now += advance
+    recorder._on_amcl_pose(SimpleNamespace(pose=SimpleNamespace(covariance=_covariance(0.02, 0.02, 0.05))))
     recorder._on_image(SimpleNamespace(data=jpeg))
     recorder.tick()
 
@@ -453,6 +494,19 @@ def test_a_covariance_spike_resets_the_clock(data_dir, clock):
     assert len(store.snapshot().memories) == 1
 
 
+def test_a_silent_amcl_stops_recording(data_dir, clock):
+    # AMCL publishes every scan while alive (update_min_* = 0). When it dies
+    # mid-drive, TF keeps composing odom motion under the latched confident
+    # covariance — those unvouched poses must not become memories.
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    pose.xyt = (4.0, 2.0, 0.5)  # still "driving" — but AMCL has gone quiet
+    clock.now += 6.0
+    recorder._on_image(SimpleNamespace(data=frame(2)))
+    recorder.tick()
+    assert len(store.snapshot().memories) == 1  # only the pre-death viewpoint
+
+
 def test_only_navigation_mode_records(data_dir, clock):
     recorder, store = make_recorder(data_dir)
     see_confident_world(recorder, clock)
@@ -494,6 +548,7 @@ def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     recorder.tick()
     payload = json.loads(published[-1].data)
     assert payload["map"] == "A.yaml" and payload["cache"] == "warm"
+    assert payload["now"] == clock.now  # the robot's clock, for client-side age math
     (position,) = payload["positions"]
     assert position["id"] == 1 and position["x"] == 1.0 and position["y"] == 2.0 and position["theta"] == 0.5
     assert position["stamp"] > 0
@@ -682,6 +737,10 @@ class FakeGemini:
 
 
 def make_search(data_dir, frames: int, verdict: dict | None = None) -> tuple[MemorySearch, FakeGemini, MemoryStore]:
+    (data_dir / "maps").mkdir(parents=True, exist_ok=True)
+    map_file = data_dir / "maps" / "A.pgm"
+    if not map_file.exists():
+        map_file.write_bytes(b"map-A-content")  # the store refuses a map it cannot fingerprint
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
     for i in range(frames):
@@ -693,7 +752,9 @@ def make_search(data_dir, frames: int, verdict: dict | None = None) -> tuple[Mem
 
 def build_cache(search: MemorySearch) -> None:
     """Synchronous stand-in for warm()'s background cache rebuild."""
-    search._ensure_cache(search._store.snapshot())
+    snapshot = search._store.snapshot()
+    if search._should_warm(snapshot):
+        search._create_cache(snapshot)
 
 
 def upload_frames(search: MemorySearch) -> None:
@@ -798,6 +859,57 @@ def test_failed_cache_creation_retries_only_after_the_memory_changes(data_dir):
     store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
     build_cache(search)
     assert len(fake.creates) == 2
+
+
+def test_a_transient_cache_failure_backs_off_instead_of_latching(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    fake.create_error = GeminiHttpError(503, "overloaded")
+    build_cache(search)
+    build_cache(search)
+    assert len(fake.creates) == 1  # backed off — warm() rides a 1 Hz tick
+    assert search._failed_revision is None  # a 5xx is the backend's fault, not this content's
+    fake.create_error = None
+    search._retry_at = 0.0  # the backoff window elapses
+    build_cache(search)
+    assert len(fake.creates) == 2  # same content retries once the backend recovers
+
+
+def test_a_network_error_during_warm_backs_off_instead_of_raising(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+
+    def explode(path: str, body: dict) -> dict:
+        raise RuntimeError("connection reset")
+
+    search._rest = GeminiRest(post=explode, delete=lambda path: {}, upload=lambda path, data, mime: {})
+    build_cache(search)
+    assert search._retry_at > time.monotonic() and search._failed_revision is None
+
+
+def test_a_busy_search_returns_a_typed_verdict_instead_of_queuing(data_dir, monkeypatch):
+    search, fake, _ = make_search(data_dir, frames=3)
+    monkeypatch.setattr(memory_search_module, "_BUSY_WAIT_SEC", 0.05)
+    search._flight.acquire()  # an abandoned goal (cancels are rejected) still holds the lock
+    try:
+        verdict = search.search("anything")
+    finally:
+        search._flight.release()
+    assert not verdict.found and "still running" in verdict.error
+    assert fake.generates == []  # never reached the network
+
+
+def test_forget_drops_the_cache_and_purges_the_uploads(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    upload_frames(search)
+    build_cache(search)
+    assert search._cache is not None
+    store.clear()
+    search.forget()
+    assert search._cache is None and search._files._records == {}
+    deadline = time.time() + 2.0
+    while len(fake.deletes) < 7 and time.time() < deadline:
+        time.sleep(0.01)
+    assert "/v1beta/cachedContents/c1" in fake.deletes
+    assert sum(1 for path in fake.deletes if path.startswith("/v1beta/files/")) == 6
 
 
 def test_a_dead_cache_falls_back_and_is_forgotten(data_dir):

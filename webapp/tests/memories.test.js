@@ -11,6 +11,7 @@ import {
   ageAlpha,
   ageText,
   cacheLabel,
+  clockSkew,
   memoryImageUrl,
   parseMemories,
   parseSearch,
@@ -33,6 +34,7 @@ test("parseMemories reads a full payload", () => {
       map: "Home.yaml",
       fingerprint: "abc123def456",
       cache: "warm",
+      now: NOW + 5,
       positions: [{ id: 3, x: 1.5, y: -0.25, theta: 1.57, stamp: NOW }],
     }),
   };
@@ -40,6 +42,7 @@ test("parseMemories reads a full payload", () => {
     map: "Home.yaml",
     fingerprint: "abc123def456",
     cache: "warm",
+    now: NOW + 5,
     memories: [{ id: 3, x: 1.5, y: -0.25, theta: 1.57, stamp: NOW }],
   });
 });
@@ -52,7 +55,15 @@ test("parseMemories skips malformed entries and defaults missing fields", () => 
   assert.equal(state?.map, "");
   assert.equal(state?.fingerprint, "");
   assert.equal(state?.cache, "off");
+  assert.equal(state?.now, 0);
   assert.deepEqual(state?.memories, [{ id: 1, x: 0, y: 0, theta: 0, stamp: 0 }]);
+});
+
+test("clockSkew reads the robot-browser offset, 0 without the field", () => {
+  const state = { map: "", fingerprint: "", cache: "off", now: Date.now() / 1000 + 3600, memories: [] };
+  const skew = clockSkew(state);
+  assert.ok(Math.abs(skew - 3600) < 5, `an hour-ahead robot reads as ~+3600, got ${skew}`);
+  assert.equal(clockSkew({ ...state, now: 0 }), 0);
 });
 
 test("parseMemories rejects garbage rather than throwing", () => {

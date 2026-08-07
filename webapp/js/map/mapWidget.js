@@ -26,7 +26,7 @@ import {
   MEMORY_POSITIONS_TOPIC,
   MEMORY_SEARCH_TOPIC,
 } from "../constants.js";
-import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
+import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, clockSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
 // Overlay palette — exported so the Nav page legend shows the same colors.
 // The robot is deliberately far from the costmap ramp (blue → amber → red):
@@ -256,6 +256,7 @@ export function createMap(root, opts = {}) {
   // against the growing grid is mode_manager's /mapping_pose (map frame, from
   // TF): raw odom drifts against it and any AMCL fix predates the map.
   let mappingMode = false;
+  let memoriesBeforeMapping = false; // restore the memories layer when mapping ends
   /** @type {{ x: number, y: number, yaw: number } | null} */
   let mappingPose = null;
   /** @type {(() => void) | null} */
@@ -322,6 +323,8 @@ export function createMap(root, opts = {}) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let memSearchCardTimer;
   let memCardsViewSig = ""; // the view framing the cards were last placed against
+  let memClockSkew = 0; // robot clock − browser clock, learned from the positions payload
+  const robotNowS = () => Date.now() / 1000 + memClockSkew;
 
   // The three DOM overlays: a hover thumbnail, a pinned popup (Go here), and
   // the search-verdict card. All positioned within `root` over the canvas.
@@ -365,7 +368,7 @@ export function createMap(root, opts = {}) {
   function openMemLightbox(m) {
     if (!memState) return;
     memLightboxImg.src = memoryImageUrl(memState.map, m);
-    memLightboxCap.textContent = `seen ${ageText(m.stamp)} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
+    memLightboxCap.textContent = `seen ${ageText(m.stamp, robotNowS())} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
     memLightbox.hidden = false;
   }
 
@@ -378,6 +381,7 @@ export function createMap(root, opts = {}) {
   function onMemories(msg) {
     const next = parseMemories(msg);
     if (!next) return;
+    memClockSkew = clockSkew(next);
     // Keyed on map+fingerprint: a same-name re-map wipes the store and
     // restarts ids at 1 — without the fingerprint those reborn ids would all
     // be "known" and never pulse (and dead-map cards would linger).
@@ -391,6 +395,10 @@ export function createMap(root, opts = {}) {
       memSearch = null;
       hideMemSearchCard();
     } else {
+      // "Forget all" wipes the store without changing the fingerprint and
+      // restarts ids at 1 — an empty payload resets what counts as known, so
+      // the reborn ids pulse like the new memories they are.
+      if (next.memories.length === 0) memKnown.clear();
       for (const m of next.memories) {
         if (memKnown.has(m.id)) continue;
         memKnown.add(m.id);
@@ -410,9 +418,9 @@ export function createMap(root, opts = {}) {
   }
 
   // The first memsearch message after subscribing is the latched replay:
-  // history, shown only while fresh. Later arrivals are live news — never
-  // gated on the stamp, because the robot's wall clock can disagree with the
-  // browser's (no RTC before NTP settles) by more than the freshness window.
+  // history, shown only while fresh (aged on the robot's clock via the skew —
+  // the browser's can sit hours off before NTP settles). Later arrivals are
+  // live news, never stamp-gated.
   let memSearchSeen = false;
   /** @param {any} msg std_msgs/String — /brain/memory_search (latched) */
   function onMemorySearch(msg) {
@@ -420,7 +428,7 @@ export function createMap(root, opts = {}) {
     if (!verdict) return;
     const replay = !memSearchSeen;
     memSearchSeen = true;
-    if (replay && Date.now() / 1000 - verdict.stamp > SEARCH_REPLAY_FRESH_S) return; // stale latched replay
+    if (replay && robotNowS() - verdict.stamp > SEARCH_REPLAY_FRESH_S) return; // stale latched replay
     memSearch = verdict;
     memSearchUntil = performance.now() + (verdict.found ? MEM_SEARCH_GLOW_MS : 0);
     showMemSearchCard(verdict);
@@ -430,7 +438,12 @@ export function createMap(root, opts = {}) {
 
   // rAF ticker for the layer's animations (pulse-ins, the recalled-spot glow).
   // Runs only while something is animating; every other redraw stays event-driven.
+  // Capped at ~30 fps: each tick repaints the whole scene (grid, overlays, a
+  // gradient per memory), and the glow runs for many seconds — full-rate
+  // redraws double that cost for no visible gain.
+  const MEM_ANIM_FRAME_MS = 30;
   let memAnimFrame = 0;
+  let memAnimLast = 0;
   function memAnimActive() {
     const now = performance.now();
     for (const born of memPulses.values()) if (now - born < MEM_PULSE_MS) return true;
@@ -438,9 +451,13 @@ export function createMap(root, opts = {}) {
   }
   function kickMemAnim() {
     if (memAnimFrame) return;
-    const step = () => {
+    /** @param {number} ts */
+    const step = (ts) => {
       memAnimFrame = 0;
-      draw();
+      if (ts - memAnimLast >= MEM_ANIM_FRAME_MS) {
+        memAnimLast = ts;
+        draw();
+      }
       if (memAnimActive()) memAnimFrame = requestAnimationFrame(step);
     };
     memAnimFrame = requestAnimationFrame(step);
@@ -494,7 +511,7 @@ export function createMap(root, opts = {}) {
     img.src = memoryImageUrl(memState.map, m);
     const meta = document.createElement("div");
     meta.className = "mem-card-meta mono";
-    meta.textContent = `seen ${ageText(m.stamp)} · click for options`;
+    meta.textContent = `seen ${ageText(m.stamp, robotNowS())} · click for options`;
     memHoverCard.append(img, meta);
     memHoverCard.hidden = false;
     placeMemCard(memHoverCard, m);
@@ -515,7 +532,7 @@ export function createMap(root, opts = {}) {
     img.addEventListener("click", () => openMemLightbox(m));
     const meta = document.createElement("div");
     meta.className = "mem-card-meta mono";
-    meta.textContent = `seen ${ageText(m.stamp)} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
+    meta.textContent = `seen ${ageText(m.stamp, robotNowS())} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
     const actions = document.createElement("div");
     actions.className = "mem-card-actions";
     const goHere = document.createElement("button");
@@ -1263,14 +1280,17 @@ export function createMap(root, opts = {}) {
   /** The remembered viewpoints: one wall-clipped view cone + dot each, fading
    * with age; a white ring blooms once when a memory is first recorded. */
   function drawMemories() {
-    if (!ctx || !grid || !view || !layers.memories || !memState?.memories.length) return;
-    const nowS = Date.now() / 1000;
+    if (!ctx || !grid || !view || !memState?.memories.length) return;
+    const nowS = robotNowS();
     const nowMs = performance.now();
     const d = dpr();
     const g = /** @type {NonNullable<typeof grid>} */ (grid);
     const v = /** @type {NonNullable<typeof view>} */ (view);
     const searchHit = memSearch?.found && nowMs < memSearchUntil ? memSearch.id : null;
     for (const m of memState.memories) {
+      // Layer off: draw nothing except a memory the sidebar reel is inspecting
+      // (highlight/popup) — its card must not float over blank map.
+      if (!layers.memories && memHighlight !== m.id && memPopupFor !== m.id) continue;
       const { px, py } = worldToCanvas(m.x, m.y);
       const active = memHover?.id === m.id || memHighlight === m.id || memPopupFor === m.id || searchHit === m.id;
       const alpha = active ? 1 : ageAlpha(m.stamp, nowS);
@@ -1711,7 +1731,11 @@ export function createMap(root, opts = {}) {
         amclPose = null;
         odomAtAmcl = null;
         // Memory marks are frames of the *finished* map — meaningless against
-        // the one being built.
+        // the one being built. Forced off here, in the widget, so every host
+        // (teleop PiP included) honors it, not just the Nav page's chips.
+        memoriesBeforeMapping = layers.memories;
+        layers.memories = false;
+        syncLayerSubs();
         setMemHover(null);
         closeMemPopup();
         hideMemSearchCard();
@@ -1732,6 +1756,10 @@ export function createMap(root, opts = {}) {
         unsubMappingPose?.();
         unsubMappingPose = null;
         mappingPose = null;
+        if (memoriesBeforeMapping) {
+          layers.memories = true;
+          syncLayerSubs();
+        }
       }
       pose = composedPose();
       render();
