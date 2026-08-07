@@ -10,14 +10,14 @@
 
 import { ros } from "../rosClient.js";
 import { CLEAR_MEMORIES_SERVICE, MEMORY_POSITIONS_TOPIC, MEMORY_SEARCH_TOPIC } from "../constants.js";
-import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, clockSkew, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
+import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
 
 // Age labels ("5 min ago") drift while nothing else changes — refresh slowly.
 const AGE_REFRESH_MS = 30_000;
 
 /**
  * @param {HTMLElement} root sidebar host.
- * @param {{ highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void }} map
+ * @param {{ highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void, robotNowS: () => number }} map
  *   the scene widget — the reel drives its memory highlight/focus.
  * @returns {{ destroy: () => void }}
  */
@@ -80,8 +80,7 @@ export function createMemoriesPanel(root, map) {
   root.appendChild(section);
 
   let signature = ""; // map + ids + stamps of the rendered reel; rebuild only on change
-  let skew = 0; // robot clock − browser clock; stamps are robot time
-  const robotNowS = () => Date.now() / 1000 + skew;
+  const robotNowS = () => map.robotNowS(); // stamps are robot time; the widget owns the clock
 
   /** @param {import("../map/memories.js").MemoryState} state */
   function renderReel(state) {
@@ -123,7 +122,6 @@ export function createMemoriesPanel(root, map) {
     (msg) => {
       const state = parseMemories(msg);
       if (!state) return;
-      skew = clockSkew(state);
       count.textContent = String(state.memories.length);
       const cache = cacheLabel(state.cache);
       chip.hidden = state.memories.length === 0;

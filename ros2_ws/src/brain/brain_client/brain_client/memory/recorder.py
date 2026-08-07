@@ -21,9 +21,10 @@ with the pose at that frame's capture moment — not whatever the feed holds at
 tick time. During a quick turn the blurred sweep loses to the crisp instant at
 a pause, and that instant keeps its own heading even though the tick is 1 Hz.
 
-Also republishes the memory positions at 1 Hz on ``/brain/memory_positions``
-(the topic the mobile app's map overlay watches) and nudges the search's
-context cache to re-warm once recording quiets down.
+Also mirrors the memory positions on the latched ``/brain/memory_positions``
+(the topic the webapp and mobile map overlays watch) — published only when the
+payload changes, so an idle robot costs one replayed message, not 6 KB/s —
+and nudges the search's context cache to re-warm once recording quiets down.
 """
 
 from __future__ import annotations
@@ -100,6 +101,7 @@ class MemoryRecorder:
         self._positions_pub = positions_pub
 
         self._candidate: _Candidate | None = None
+        self._last_published: dict | None = None
         self._nav_mode: str | None = None
         self._map_name = ""
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
@@ -235,9 +237,11 @@ class MemoryRecorder:
             # betrays that to a client watching the name.
             "fingerprint": self._store.fingerprint[:12],
             "cache": self._cache_state() if self._cache_state is not None else "off",
-            # The robot's clock, so clients age the stamps against it — a robot
-            # without NTP can sit hours from the browser's clock.
-            "now": time.time(),
             "positions": self._store.positions(),
         }
+        # Gate on the whole payload, not store.revision: `cache` flips by wall
+        # clock (a warm() completing, a handle expiring) without a store change.
+        if payload == self._last_published:
+            return
+        self._last_published = payload
         self._positions_pub.publish(String(data=json.dumps(payload)))

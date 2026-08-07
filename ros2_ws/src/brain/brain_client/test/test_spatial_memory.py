@@ -418,7 +418,12 @@ def clock(monkeypatch):
     return state
 
 
-def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace | None = None):
+def make_recorder(
+    data_dir,
+    published: list | None = None,
+    pose: SimpleNamespace | None = None,
+    cache: SimpleNamespace | None = None,
+):
     logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
     node = SimpleNamespace(
         get_logger=lambda: logger,
@@ -432,6 +437,7 @@ def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace
         amcl_pose_topic="/amcl_pose",
     )
     pose = pose if pose is not None else SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    cache = cache if cache is not None else SimpleNamespace(state="warm")
     store = MemoryStore(data_dir)
     recorder = MemoryRecorder(
         node,
@@ -439,7 +445,7 @@ def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace
         store=store,
         pose_tracker=SimpleNamespace(map_pose_xyt=lambda: pose.xyt),
         warm_search=None,
-        cache_state=lambda: "warm",
+        cache_state=lambda: cache.state,
         positions_pub=SimpleNamespace(publish=(published if published is not None else []).append),
     )
     return recorder, store
@@ -552,7 +558,8 @@ def test_a_stale_frame_blocks_capture(data_dir, clock):
 
 def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     published: list = []
-    recorder, store = make_recorder(data_dir, published)
+    pose = SimpleNamespace(xyt=(1.23456789, -2.98765432, 0.87654321))
+    recorder, store = make_recorder(data_dir, published, pose=pose)
     see_confident_world(recorder, clock)
     recorder.tick()
     clock.now += 3.1
@@ -560,10 +567,31 @@ def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     recorder.tick()
     payload = json.loads(published[-1].data)
     assert payload["map"] == "A.yaml" and payload["cache"] == "warm"
-    assert payload["now"] == clock.now  # the robot's clock, for client-side age math
     (position,) = payload["positions"]
-    assert position["id"] == 1 and position["x"] == 1.0 and position["y"] == 2.0 and position["theta"] == 0.5
-    assert position["stamp"] > 0
+    assert position["id"] == 1
+    # Display precision, not the store's: full floats bloat the JSON by half.
+    assert position["x"] == 1.235 and position["y"] == -2.988 and position["theta"] == 0.8765
+    assert position["stamp"] == round(clock.now, 1)
+
+
+def test_positions_mirror_republishes_only_on_change(data_dir, clock):
+    published: list = []
+    cache = SimpleNamespace(state="warm")
+    recorder, store = make_recorder(data_dir, published, cache=cache)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    quiet = len(published)
+    for _ in range(3):  # nothing changes — the latch alone serves late joiners
+        clock.now += 1.0
+        recorder._on_amcl_pose(SimpleNamespace(pose=SimpleNamespace(covariance=_covariance(0.02, 0.02, 0.05))))
+        recorder.tick()
+    assert len(published) == quiet
+    observe(recorder, clock, GOOD_JPEG)  # a recorded viewpoint changes the payload
+    assert len(published) == quiet + 1
+    cache.state = "cold"  # flips by wall clock, without a store change — the gate must see it
+    clock.now += 1.0
+    recorder.tick()
+    assert len(published) == quiet + 2 and json.loads(published[-1].data)["cache"] == "cold"
 
 
 def settled_recorder(data_dir, clock, pose: SimpleNamespace):
