@@ -22,7 +22,7 @@ jobs:
 
       - name: Check changed files against the size limit
         env:
-          MAX_BYTES: 153600  # 150 KiB
+          MAX_BYTES: 102400  # 100 KiB
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/check_file_size.py

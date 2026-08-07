@@ -1,4 +1,4 @@
-# Files intentionally allowed past the CI file-size limit (150 KiB).
+# Files intentionally allowed past the CI file-size limit (100 KiB).
 #
 # Uses gitignore-style patterns (globs, anchoring with a leading "/",
 # directory matches with a trailing "/", "!" to un-ignore). Adding an entry

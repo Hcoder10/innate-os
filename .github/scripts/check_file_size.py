@@ -9,7 +9,7 @@ patterns. Adding an entry there is the "explicit approval" — it lands in
 the diff and gets reviewed like any other change.
 
 Environment:
-  MAX_BYTES            Size limit in bytes (default 153600 = 150 KiB).
+  MAX_BYTES            Size limit in bytes (default 102400 = 100 KiB).
   SIZE_LIMIT_IGNORE    Path to the ignore file (default .sizelimitignore).
   BASE_SHA / HEAD_SHA  Commit range to diff; only files changed in the PR
                        are checked. HEAD_SHA defaults to HEAD.
@@ -106,7 +106,7 @@ def _changed_files():
 
 
 def main():
-    max_bytes = int(os.environ.get("MAX_BYTES", 153600))
+    max_bytes = int(os.environ.get("MAX_BYTES", 102400))
     ignore_path = os.environ.get("SIZE_LIMIT_IGNORE", ".sizelimitignore")
 
     lines = []
