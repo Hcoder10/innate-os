@@ -4,6 +4,8 @@
 // Connect panel — the one quiet card shown while disconnected. Mono IP input
 // prefilled from the last successful connection, inline error on failure.
 
+import { ROSBRIDGE_PORT } from "../constants.js";
+
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
@@ -35,6 +37,7 @@ export function createConnectPanel(parent, rosClient) {
   button.className = "connect-button";
   button.type = "submit";
   button.textContent = "Connect";
+  button.title = `Open the rosbridge websocket to this robot (port ${ROSBRIDGE_PORT})`;
 
   const error = document.createElement("p");
   error.className = "connect-error";

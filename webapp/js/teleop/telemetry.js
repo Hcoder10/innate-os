@@ -19,22 +19,24 @@ export function createTelemetry(parent, rosClient, opts = {}) {
   const wrap = document.createElement("div");
   wrap.className = "telemetry";
 
-  const name = item("robot", "—");
-  const battery = showBattery ? item("batt", "—") : null;
-  const link = item("link", "—");
+  const name = item("robot", "—", ROBOT_INFO_TOPIC);
+  const battery = showBattery ? item("batt", "—", BATTERY_STATE_TOPIC) : null;
+  const link = item("link", "—", "rosbridge websocket to the robot");
   // Cloud/local agent backend connection (the brain's websocket to its agent
   // backend) — distinct from the rosbridge LINK above.
-  const agent = item("agent", "—");
+  const agent = item("agent", "—", `the brain's connection to its agent backend — ${WEBSOCKET_STATUS_TOPIC}`);
   wrap.append(name.el, ...(battery ? [battery.el] : []), link.el, agent.el);
   parent.appendChild(wrap);
 
   /**
    * @param {string} labelText
    * @param {string} initial
+   * @param {string} [title]
    */
-  function item(labelText, initial) {
+  function item(labelText, initial, title = "") {
     const el = document.createElement("div");
     el.className = "telemetry-item";
+    if (title) el.title = title;
     const label = document.createElement("span");
     label.className = "microlabel";
     label.textContent = labelText;

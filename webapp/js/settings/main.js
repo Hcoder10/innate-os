@@ -314,6 +314,7 @@ function buildVolumeSection() {
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "set-slider";
+  slider.title = `${SET_VOLUME_SERVICE} — live value from ${ROBOT_INFO_TOPIC}`;
   slider.min = "0";
   slider.max = "100";
   slider.step = "1";
@@ -476,6 +477,7 @@ function build() {
     const count = document.createElement("span");
     count.className = "set-group-count";
     count.textContent = String(group.knobs.length);
+    count.title = "Settings in this section";
     h.append(chev, labelEl, dot, count);
     h.addEventListener("click", () => g.classList.toggle("open"));
     g.appendChild(h);
@@ -507,6 +509,7 @@ function build() {
   saveBtn = document.createElement("button");
   saveBtn.className = "set-save";
   saveBtn.textContent = "Save";
+  saveBtn.title = "Write these overrides to the robot's settings file";
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", onSave);
   dirtyEl = document.createElement("span");
@@ -514,6 +517,7 @@ function build() {
   resetAllBtn = document.createElement("button");
   resetAllBtn.className = "set-reset-all";
   resetAllBtn.textContent = "Reset all to defaults";
+  resetAllBtn.title = "Clear every override in the form — click Save to commit";
   resetAllBtn.disabled = true;
   resetAllBtn.addEventListener("click", resetAll);
   restartBtn = document.createElement("button");
@@ -732,6 +736,7 @@ function buildScalarControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */
   const reset = document.createElement("button");
   reset.className = "set-reset";
   reset.textContent = "reset";
+  reset.title = `Reset to ${defaultLabel(knob)}`;
   reset.addEventListener("click", () => {
     entry.overridden = false;
     entry.value = cloneDefault(knob);
@@ -760,9 +765,11 @@ function buildListControl(/** @type {HTMLElement} */ ctl, /** @type {Entry} */ e
   const def = document.createElement("span");
   def.className = "set-default";
   def.textContent = defaultLabel(knob);
+  def.title = def.textContent;
   const reset = document.createElement("button");
   reset.className = "set-reset";
   reset.textContent = "reset";
+  reset.title = `Reset to ${defaultLabel(knob)}`;
   meta.append(def, reset);
   ctl.appendChild(meta);
 

@@ -61,22 +61,22 @@ export function createProfilingPanel(parent, session) {
   const grid = document.createElement("div");
   grid.className = "profiling-grid";
 
-  const jitterBuffer = metric("jitter buf", "ms", true);
-  const rtt = metric("rtt", "ms");
-  const jitter = metric("jitter", "ms");
-  const fps = metric("fps", "");
-  const resolution = metric("res", "");
-  const bitrate = metric("bitrate", "kb/s");
-  const loss = metric("loss", "%");
-  const dropped = metric("dropped", "");
-  const freezes = metric("freezes", "");
+  const jitterBuffer = metric("jitter buf", "ms", true, "Average de-jitter buffer delay of frames played out since the last poll");
+  const rtt = metric("rtt", "ms", false, "Round-trip time on the selected ICE candidate pair");
+  const jitter = metric("jitter", "ms", false, "Inter-arrival jitter, inbound video RTP");
+  const fps = metric("fps", "", false, "Decoded frames per second");
+  const resolution = metric("res", "", false, "Received video resolution");
+  const bitrate = metric("bitrate", "kb/s", false, "Inbound video bitrate since the last poll");
+  const loss = metric("loss", "%", false, "Packet loss since the last poll");
+  const dropped = metric("dropped", "", false, "Frames dropped (cumulative)");
+  const freezes = metric("freezes", "", false, "Freeze events (cumulative)");
   const all = [jitterBuffer, rtt, jitter, fps, resolution, bitrate, loss, dropped, freezes];
   for (const m of all) grid.append(m.el);
 
   // Connection state — driven by session changes (not the getStats poll), so it stays meaningful even
   // when no media is flowing (the very case a failed link needs to surface). Kept out of `all` so the
   // poll's clearValues() never wipes it.
-  const conn = metric("conn", "");
+  const conn = metric("conn", "", false, "ICE connection state; ·stun = relayed through the STUN fallback");
   grid.append(conn.el);
 
   wrap.append(head, grid);
@@ -91,10 +91,12 @@ export function createProfilingPanel(parent, session) {
    * @param {string} labelText
    * @param {string} unit
    * @param {boolean} [headline]
+   * @param {string} [title]
    */
-  function metric(labelText, unit, headline = false) {
+  function metric(labelText, unit, headline = false, title = "") {
     const el = document.createElement("div");
     el.className = headline ? "profiling-item headline" : "profiling-item";
+    if (title) el.title = title;
     const label = document.createElement("span");
     label.className = "microlabel";
     label.textContent = labelText;

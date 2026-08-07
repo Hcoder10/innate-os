@@ -44,6 +44,7 @@ export function showChallengeIntro() {
   close.type = "button";
   close.className = "challenge-intro-close";
   close.textContent = "✕";
+  close.title = "Dismiss";
   close.setAttribute("aria-label", "Dismiss");
   close.addEventListener("click", dismiss);
 
@@ -72,6 +73,7 @@ export function showChallengeIntro() {
   const figure = document.createElement("a");
   figure.className = "challenge-intro-figure";
   figure.href = TUTORIAL_URL;
+  figure.title = TUTORIAL_URL;
   figure.target = "_blank";
   figure.rel = "noopener noreferrer";
   const shot = document.createElement("img");

@@ -63,10 +63,17 @@ export function createSources(parent, source, ros, opts) {
   modeRow.className = "sources-modes";
   /** @type {Record<string, HTMLButtonElement>} */
   const modeBtns = {};
+  /** @type {Record<string, string>} */
+  const MODE_HINTS = {
+    launch: "Group logs by the launch file that started each process",
+    proc: "Group logs by OS process",
+    node: "Flat list of ROS nodes and loggers, merged across launch files",
+  };
   for (const [m, label, ic] of [["launch", "Launch file", "file"], ["proc", "Process", "process"], ["node", "Node / Logger", "node"]]) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "sources-mode";
+    b.title = MODE_HINTS[m];
     b.innerHTML = `${icon(ic)}<span>${label}</span>`;
     b.addEventListener("click", () => setMode(m));
     modeBtns[m] = b;
@@ -77,6 +84,7 @@ export function createSources(parent, source, ros, opts) {
   filterInput.className = "sources-filter mono";
   filterInput.type = "text";
   filterInput.placeholder = "filter sources…";
+  filterInput.title = "Filter the tree — a branch is kept if it or any child matches";
   filterInput.spellcheck = false;
   filterInput.addEventListener("input", () => { filterText = filterInput.value.trim().toLowerCase(); render(); });
 

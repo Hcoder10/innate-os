@@ -31,6 +31,7 @@ export function createTtsBar(parent, rosClient) {
   sendBtn.type = "button";
   sendBtn.className = "tts-hint mono";
   sendBtn.textContent = "↵";
+  sendBtn.title = TTS_TOPIC;
   sendBtn.setAttribute("aria-label", "Send");
 
   wrap.append(input, sendBtn);
@@ -76,7 +77,7 @@ export function createTtsBar(parent, rosClient) {
     input.disabled = !available;
     sendBtn.disabled = !available;
     input.placeholder = available ? "Make the robot speak…" : TTS_UNAVAILABLE_PLACEHOLDER;
-    input.title = available ? "" : "The speak bar needs the hosted Innate brain (INNATE_SERVICE_KEY).";
+    input.title = available ? TTS_TOPIC : "The speak bar needs the hosted Innate brain (INNATE_SERVICE_KEY).";
   }, undefined, "std_msgs/msg/String");
 
   return {

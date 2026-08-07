@@ -68,13 +68,14 @@ function makeRate() {
  * @returns {{ destroy: () => void }}
  */
 export function createNavPanels(root, store) {
-  /** @param {string} title @returns {{ row: (label: string) => HTMLElement }} */
-  function panel(title) {
+  /** @param {string} title @param {string} [hint] tooltip on the panel label @returns {{ row: (label: string, topic?: string) => HTMLElement }} */
+  function panel(title, hint = "") {
     const section = document.createElement("section");
     section.className = "nav-panel";
     const label = document.createElement("p");
     label.className = "microlabel";
     label.textContent = title;
+    if (hint) label.title = hint;
     section.appendChild(label);
     root.appendChild(section);
     return {
@@ -144,7 +145,7 @@ export function createNavPanels(root, store) {
     navLoc.title = hint;
   }
 
-  const rates = panel("Received rates");
+  const rates = panel("Received rates", "Message arrival rate per topic, averaged over a 5 s sliding window");
 
   // ---- subscriptions -------------------------------------------------------
   /** @type {Array<() => void>} */

@@ -29,6 +29,7 @@ export function createArmAlert(rosClient) {
   const title = document.createElement("span");
   title.className = "microlabel";
   title.textContent = "servo protection";
+  title.title = ARM_STATUS_TOPIC;
   const dismissBtn = document.createElement("button");
   dismissBtn.type = "button";
   dismissBtn.className = "arm-alert-dismiss";
@@ -43,6 +44,7 @@ export function createArmAlert(rosClient) {
   const rebootBtn = document.createElement("button");
   rebootBtn.type = "button";
   rebootBtn.className = "arm-button";
+  rebootBtn.title = "Reboot the arm's servos, then torque back on";
 
   card.append(head, text, rebootBtn);
   document.body.appendChild(card);

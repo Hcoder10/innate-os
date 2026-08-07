@@ -92,6 +92,7 @@ export function createRunDashboard(parent, ros, store, opts) {
   trainBtn.type = "button";
   trainBtn.className = "training-train-btn";
   trainBtn.textContent = "+ Train a skill";
+  trainBtn.title = "Configure and start a cloud training run";
   trainBtn.addEventListener("click", () => opts.onTrain());
   tools.append(search, filter, trainBtn);
   head.append(titleBox, tools);
@@ -351,6 +352,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       const ds = document.createElement("span");
       ds.className = "run-daemon";
       ds.textContent = run.daemon_state;
+      ds.title = "Raw orchestrator state — /training/job_statuses";
       label.append(ds);
     }
     left.append(id, dot, label);
@@ -365,6 +367,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       const err = document.createElement("span");
       err.className = "run-error";
       err.textContent = run.error_message;
+      err.title = run.error_message;
       mid.appendChild(err);
     } else if (info && !info.has_checkpoint && info.error_excerpt) {
       // No orchestrator message — show the exception line dug out of the
@@ -426,6 +429,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       cancel.type = "button";
       cancel.className = "run-btn run-cancel";
       cancel.textContent = "Cancel";
+      cancel.title = "Stop training and free the GPU instance";
       cancel.addEventListener("click", () => {
         if (!window.confirm(`Cancel run #${run.run_id}? This stops training and frees the GPU.`)) return;
         cancel.disabled = true;
@@ -453,6 +457,7 @@ export function createRunDashboard(parent, ros, store, opts) {
         : run.status === STATUS.DOWNLOADED
           ? "Re-download"
           : "Download";
+      dl.title = "Fetch the trained checkpoint + logs onto the robot";
       dl.addEventListener("click", () => {
         dl.disabled = true;
         ros.callService(DOWNLOAD_RESULTS_SERVICE, { skill_dir: sk.skill_dir, run_id: run.run_id }).catch((err) => {
@@ -468,6 +473,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       live.type = "button";
       live.className = "run-btn";
       live.textContent = "Live logs";
+      live.title = "Tail the orchestrator's log buffer while the run trains";
       live.addEventListener("click", () => opts.onOpenLogs(sk.skill_dir, run.run_id, true));
       els.push(live);
     }
@@ -477,6 +483,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       logs.type = "button";
       logs.className = "run-btn";
       logs.textContent = "Logs";
+      logs.title = "Browse this run's downloaded result files";
       logs.addEventListener("click", () => opts.onOpenLogs(sk.skill_dir, run.run_id));
       els.push(logs);
     }
@@ -488,6 +495,7 @@ export function createRunDashboard(parent, ros, store, opts) {
       wb.target = "_blank";
       wb.rel = "noopener";
       wb.textContent = "W&B";
+      wb.title = `Open in Weights & Biases — ${run.wandb_url}`;
       els.push(wb);
     }
     return els;

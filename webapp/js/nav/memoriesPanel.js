@@ -30,6 +30,7 @@ export function createMemoriesPanel(root, map) {
   const label = document.createElement("p");
   label.className = "microlabel";
   label.textContent = "Memories";
+  label.title = MEMORY_POSITIONS_TOPIC;
   const count = document.createElement("span");
   count.className = "mem-panel-count mono";
   count.textContent = "—";
@@ -72,6 +73,7 @@ export function createMemoriesPanel(root, map) {
 
   const lastSearch = document.createElement("p");
   lastSearch.className = "mem-panel-search mono";
+  lastSearch.title = `the most recent recall verdict — ${MEMORY_SEARCH_TOPIC}`;
   lastSearch.hidden = true;
   section.appendChild(lastSearch);
 

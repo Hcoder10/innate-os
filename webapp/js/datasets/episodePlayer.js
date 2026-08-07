@@ -78,13 +78,13 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   // demonstration — say so right next to the episode name, with the driving
   // policy and any failure-mode tags from review.
   if (episode.source === "rollout") {
-    subrow.insertBefore(chip("policy rollout", "prov-chip rollout"), nav);
+    subrow.insertBefore(chip("policy rollout", "prov-chip rollout", "Recorded during a policy rollout — not an operator demonstration"), nav);
     if (episode.policy) {
       subrow.insertBefore(chip(episode.policy, "prov-chip policy mono", `Driven by policy ${episode.policy}`), nav);
     }
-    for (const t of episode.tags || []) subrow.insertBefore(chip(t, "prov-chip tag"), nav);
+    for (const t of episode.tags || []) subrow.insertBefore(chip(t, "prov-chip tag", "Failure-mode tag set during rollout review"), nav);
   } else if (episode.source === "replay") {
-    subrow.insertBefore(chip("replay", "prov-chip"), nav);
+    subrow.insertBefore(chip("replay", "prov-chip", "Recorded by replaying a saved trajectory"), nav);
   }
   headinfo.append(titleBtn, subrow);
 
@@ -92,6 +92,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   const actions = document.createElement("div");
   actions.className = "player-actions";
   const label = document.createElement("select");
+  label.title = `Label the episode's outcome — ${SET_EPISODE_OUTCOME_SERVICE}`;
   const isEvalRun = skill.type === "eval";
   const classOf = (/** @type {string | undefined} */ outcome) =>
     outcome === "failure" ? "is-fail" : outcome === "success" || !isEvalRun ? "is-success" : "is-unlabeled";
@@ -135,6 +136,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   const del = document.createElement("button");
   del.type = "button";
   del.className = "player-delete";
+  del.title = `Delete this episode's video and data — ${DELETE_EPISODE_SERVICE}`;
   del.innerHTML =
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg><span>Delete</span>';
   del.addEventListener("click", () => {
@@ -157,6 +159,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
     add.type = "button";
     add.className = "player-add";
     add.textContent = "+ Add to training dataset";
+    add.title = "Copy this run's files into a training dataset";
     add.addEventListener("click", () => {
       const r = add.getBoundingClientRect();
       openEpisodeMenu({
@@ -243,6 +246,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
   const telLabel = document.createElement("span");
   telLabel.className = "microlabel";
   telLabel.textContent = "telemetry";
+  telLabel.title = "Recorded joint positions (qpos) for this episode";
   const legend = document.createElement("div");
   legend.className = "telemetry-legend";
   telHead.append(telLabel, legend);
@@ -440,6 +444,7 @@ export function createEpisodePlayer(parent, ros, skill, episode, opts) {
       dot.style.background = JOINT_COLORS[j % JOINT_COLORS.length];
       const lbl = document.createElement("span");
       lbl.textContent = `J${j + 1}`;
+      item.title = `Joint ${j + 1}`;
       item.append(dot, lbl);
       legendFrag.appendChild(item);
     }
