@@ -26,9 +26,6 @@ import { rebootArmAndEnableTorque } from "../armReboot.js";
 const PUBLISH_MIN_GAP_MS = 15;
 const TICK_CENTER = 2048;
 const TICK_SPAN = 2048; // ±half a revolution shown on the joint dots
-// Ticks are the leader's own encoder frame; radians are what every consumer
-// (skills, /mars/arm/commands) speaks, so that is what the copy button emits.
-const TICK_TO_RAD = (2 * Math.PI) / 4096;
 
 /**
  * @param {HTMLElement} parent

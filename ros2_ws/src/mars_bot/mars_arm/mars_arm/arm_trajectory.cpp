@@ -310,7 +310,7 @@ void MarsArmNode::armGotoJSTrajectoryCallback(const std::shared_ptr<mars_msgs::s
             if (durations.size() + 1 < waypoints.size()) {
                 durations.insert(durations.begin(), durations.empty() ? 0.5 : durations[0]);
             }
-        } else if (durations.size() == waypoints.size()) {
+        } else if (!durations.empty() && durations.size() == waypoints.size()) {
             // No current pose to prepend: the approach duration has no segment.
             durations.erase(durations.begin());
         }

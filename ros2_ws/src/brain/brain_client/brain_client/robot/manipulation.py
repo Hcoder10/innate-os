@@ -248,6 +248,12 @@ class Manipulation:
         self._ik_solution = None
         self._fk_pose = None
         self._arm_state = None
+        # Torque state goes stale while parked (a webapp toggle lands on gated
+        # callbacks); report None until either side reports fresh.
+        self._torque_enabled = None
+        self._torque_stamp = 0.0
+        self._status_torque = None
+        self._status_stamp = 0.0
         pending = self._pending
         if pending is not None and not pending.future.done():
             # The goto services cannot preempt: the arm will finish the motion.

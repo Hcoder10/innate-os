@@ -146,9 +146,17 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
   const root = [...links.values()].find((l) => !childLinks.has(l.name));
   if (root) scene.add(root);
 
+  // Helpers own their geometry+material; tracked so destroy() can dispose them.
+  /** @type {(THREE.GridHelper | THREE.AxesHelper)[]} */
+  const helpers = [grid];
+
   // End-effector triad — the SDK's reported pose frame, made visible.
   const ee = links.get("ee_link");
-  if (ee) ee.add(new THREE.AxesHelper(0.06));
+  if (ee) {
+    const triad = new THREE.AxesHelper(0.06);
+    ee.add(triad);
+    helpers.push(triad);
+  }
 
   // Base reference marker — the (0,0,0) every SDK pose is measured from: a
   // larger triad plus an amber floor ring at the base_link origin.
@@ -162,7 +170,9 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
   /** @type {THREE.BufferGeometry | null} */
   let ringGeo = null;
   if (base) {
-    base.add(new THREE.AxesHelper(0.09));
+    const triad = new THREE.AxesHelper(0.09);
+    base.add(triad);
+    helpers.push(triad);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.062, 48), matRing);
     ring.position.z = 0.002; // just above the floor grid, no z-fighting
     base.add(ring);
@@ -319,6 +329,7 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
     // A mesh failed to load — free the GPU context instead of stranding it
     // (repeated failed mounts would otherwise hit the browser's WebGL cap).
     controls.dispose();
+    geometries.forEach((g) => g.dispose()); // the meshes that DID resolve
     renderer.dispose();
     renderer.domElement.remove();
     throw err;
@@ -395,6 +406,7 @@ export async function createArmViz(container, { onDragMove, onDragEnd } = {}) {
       renderer.domElement.removeEventListener("pointercancel", onPointerCancel);
       controls.dispose();
       geometries.forEach((g) => g.dispose());
+      helpers.forEach((h) => h.dispose());
       [handle, grabZone, ghost, targetMarker, settledMarker].forEach((m) => m.geometry.dispose());
       lineGeo.dispose();
       errGeo.dispose();

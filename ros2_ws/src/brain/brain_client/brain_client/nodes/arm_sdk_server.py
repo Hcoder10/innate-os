@@ -75,7 +75,11 @@ def parker():
             try:
                 if time.monotonic() - last_request >= IDLE_PARK_S:
                     node.get_logger().info("page idle — parking arm-state feeds")
+                    # stop() resets safety (skill-lifecycle semantics); the
+                    # page's speed cap must survive the park.
+                    cap = manip.safety.max_ee_speed
                     manip.stop()
+                    manip.safety.max_ee_speed = cap
             finally:
                 motion_lock.release()
 
@@ -137,31 +141,30 @@ def do_command(cmd, body):
         }
 
     if cmd == "move_by":
-        target = None
-        msg = manip.last_fk_pose
-        if msg is not None:
-            cur = manip._arm_from_fk(msg)
-            target = (
-                cur.x + float(body.get("dx", 0.0)),
-                cur.y + float(body.get("dy", 0.0)),
-                cur.z + float(body.get("dz", 0.0)),
-            )
-        settled = manip.move_by(
-            dx=float(body.get("dx", 0.0)),
-            dy=float(body.get("dy", 0.0)),
-            dz=float(body.get("dz", 0.0)),
-            droll=float(body.get("droll", 0.0)),
-            dpitch=float(body.get("dpitch", 0.0)),
-            dyaw=float(body.get("dyaw", 0.0)),
+        # One pose sample feeds both the command and the reported target —
+        # move_by would re-read the pose and could aim somewhere the reported
+        # err_xy/err_z were never measured against.
+        cur = manip.pose
+        roll, pitch, yaw = cur.rpy
+        x = cur.x + float(body.get("dx", 0.0))
+        y = cur.y + float(body.get("dy", 0.0))
+        z = cur.z + float(body.get("dz", 0.0))
+        settled = manip.move_to(
+            x,
+            y,
+            z,
+            roll=roll + float(body.get("droll", 0.0)),
+            pitch=pitch + float(body.get("dpitch", 0.0)),
+            yaw=yaw + float(body.get("dyaw", 0.0)),
             duration=float(body.get("duration", 0.8)),
             **tolerances(body),
         )
-        out = {"settled": arm_to_dict(settled)}
-        if target is not None:
-            out["target"] = {"x": target[0], "y": target[1], "z": target[2]}
-            out["err_xy"] = math.hypot(settled.x - target[0], settled.y - target[1])
-            out["err_z"] = abs(settled.z - target[2])
-        return out
+        return {
+            "settled": arm_to_dict(settled),
+            "target": {"x": x, "y": y, "z": z},
+            "err_xy": math.hypot(settled.x - x, settled.y - y),
+            "err_z": abs(settled.z - z),
+        }
 
     if cmd == "gripper_open":
         manip.gripper_open(float(body.get("percent", 100.0)))
@@ -231,6 +234,10 @@ def on_stream(msg):
     if motion_lock.acquire(blocking=False):
         try:
             manip.stream_joints(list(msg.data))
+        except (ArmFailed, ArmUnhealthy) as e:
+            # Raised into an executor task nobody joins — log it or slider
+            # drags die silently (torque off, no measured state yet).
+            node.get_logger().warning(f"stream step refused: {e}", throttle_duration_sec=2.0)
         finally:
             motion_lock.release()
 

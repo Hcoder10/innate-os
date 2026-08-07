@@ -250,7 +250,10 @@ class PickUpPieceSimple(Skill):
             self.fail(f"Failed to move above {src_label}: {e}")
 
         self.feedback("Opening gripper...")
-        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT)
+        # block=False: a blocking open verifies the claw and on a tripped
+        # servo runs recover() — a ~2 s torque drop that would collapse the
+        # arm over the board.
+        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT, block=False)
         self._gripper_wait(1.5)
 
         self.feedback(f"Descending to pick from {src_label}...")
@@ -273,7 +276,8 @@ class PickUpPieceSimple(Skill):
         self._vertical_move(dst_x, dst_y, safe_height, pick_height, dst_pitch, dst_yaw, caution)
 
         self.feedback("Releasing piece...")
-        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT)
+        # block=False for the same reason as the pre-pick open above.
+        self.manipulation.gripper_open(self.GRIPPER_OPEN_PERCENT, block=False)
         self._gripper_wait(1.5)
 
         self.feedback("Lifting after place...")
