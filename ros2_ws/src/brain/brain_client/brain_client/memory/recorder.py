@@ -14,6 +14,11 @@ behind-a-wall frame never overwrites a straight-on view. Every stored
 frame must first pass the quality gates (memory/quality.py); a bad frame never
 clobbers a good view.
 
+Each tick records the SHARPEST keepable frame seen since the last one, paired
+with the pose at that frame's capture moment — not whatever the feed holds at
+tick time. During a quick turn the blurred sweep loses to the crisp instant at
+a pause, and that instant keeps its own heading even though the tick is 1 Hz.
+
 Also republishes the memory positions at 1 Hz on ``/brain/memory_positions``
 (the topic the mobile app's map overlay watches) and nudges the search's
 context cache to re-warm once recording quiets down.
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -32,7 +38,7 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
-from brain_client.memory.quality import frame_worth_keeping
+from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness
 from brain_client.memory.selection import plan_admission
 from brain_client.state.map import Map
 
@@ -54,6 +60,19 @@ _FRESH_FRAME_SEC = 2.5  # the compressed feed runs ~7.5 Hz; older means it died
 _MIN_HEAD_PITCH_DEG = -25.0  # looking further down films the floor, not the room
 
 
+@dataclass(frozen=True)
+class _Candidate:
+    """The sharpest keepable frame of the current tick window, with the pose
+    it was captured from."""
+
+    arrived: float  # monotonic
+    x: float
+    y: float
+    theta: float
+    sharpness: float
+    jpeg: bytes
+
+
 class MemoryRecorder:
     def __init__(
         self,
@@ -73,7 +92,7 @@ class MemoryRecorder:
         self._cache_state = cache_state
         self._positions_pub = positions_pub
 
-        self._frame: tuple[float, bytes] | None = None  # (monotonic arrival, jpeg)
+        self._candidate: _Candidate | None = None
         self._nav_mode: str | None = None
         self._map_name = ""
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
@@ -103,8 +122,24 @@ class MemoryRecorder:
 
     # --- callbacks ---
     def _on_image(self, msg: CompressedImage) -> None:
-        if msg.data:
-            self._frame = (time.monotonic(), bytes(msg.data))
+        """Keep the sharpest keepable frame of the tick window. Scoring costs a
+        JPEG decode per frame (~7.5 Hz), so it runs only while a record could
+        actually happen."""
+        if not msg.data or not self._recordable_moment():
+            return
+        pose = self._pose.map_pose_xyt()
+        if pose is None:
+            return
+        jpeg = bytes(msg.data)
+        sharpness = frame_sharpness(jpeg)
+        if sharpness is None or sharpness < MIN_SHARPNESS:
+            return
+        best = self._candidate
+        if best is None or sharpness > best.sharpness:
+            self._candidate = _Candidate(time.monotonic(), *pose, sharpness, jpeg)
+
+    def _recordable_moment(self) -> bool:
+        return self._nav_mode == "navigation" and bool(self._map_name) and self._confident()
 
     def _on_nav_mode(self, msg: String) -> None:
         self._nav_mode = msg.data
@@ -145,13 +180,12 @@ class MemoryRecorder:
             self._logger.error(f"[Memory] tick failed: {error!r}")
 
     def _maybe_record(self) -> None:
-        if not self._localized_long_enough():
+        candidate, self._candidate = self._candidate, None  # each tick starts a fresh window
+        if not self._localized_long_enough() or candidate is None:
             return
-        jpeg = self._fresh_jpeg()
-        pose = self._pose.map_pose_xyt()
-        if jpeg is None or pose is None or self._head_pitch < _MIN_HEAD_PITCH_DEG:
+        if time.monotonic() - candidate.arrived > _FRESH_FRAME_SEC or self._head_pitch < _MIN_HEAD_PITCH_DEG:
             return
-        self._record(*pose, jpeg)
+        self._record(candidate.x, candidate.y, candidate.theta, candidate.jpeg)
 
     def _localized_long_enough(self) -> bool:
         if self._nav_mode != "navigation" or not self._map_name or not self._confident():
@@ -168,15 +202,9 @@ class MemoryRecorder:
         var_x, var_y, var_yaw = self._covariance
         return max(var_x, var_y) <= _POSITION_VAR_MAX and var_yaw <= _YAW_VAR_MAX
 
-    def _fresh_jpeg(self) -> bytes | None:
-        frame = self._frame
-        if frame is None or time.monotonic() - frame[0] > _FRESH_FRAME_SEC:
-            return None
-        return frame[1]
-
     def _record(self, x: float, y: float, theta: float, jpeg: bytes) -> None:
         plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time(), self._grid)
-        if not plan.record or not frame_worth_keeping(jpeg):
+        if not plan.record:
             return
         if plan.replace is not None:
             self._store.replace(plan.replace, x, y, theta, time.time(), jpeg)

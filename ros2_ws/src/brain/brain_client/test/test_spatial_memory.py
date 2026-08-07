@@ -20,7 +20,7 @@ import pytest
 from brain_client.brain.memory_search import MemorySearch, verdict_text
 from brain_client.brain.transport import CACHED_CONTENTS_PATH, GeminiHttpError, GeminiRest
 from brain_client.memory import recorder as recorder_module
-from brain_client.memory.quality import frame_worth_keeping
+from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness, frame_worth_keeping
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.selection import MAX_MEMORIES, plan_admission
 from brain_client.memory.store import Memory, MemoryStore
@@ -462,6 +462,46 @@ def settled_recorder(data_dir, clock, pose: SimpleNamespace):
     observe(recorder, clock, frame(1), advance=0.0)
     assert len(store.snapshot().memories) == 1
     return recorder, store
+
+
+def test_the_sharpest_frame_of_the_window_wins_with_its_own_pose(data_dir, clock):
+    # A quick turn: the tick records the crispest instant of the last second,
+    # at the heading it was seen from — not whatever the feed holds at tick time.
+    rng = np.random.default_rng(11)
+    noise = rng.integers(0, 255, size=(240, 320), dtype=np.uint8)
+    sharp, soft = encoded(noise), encoded(cv2.GaussianBlur(noise, (5, 5), 0))
+    scores = (frame_sharpness(soft), frame_sharpness(sharp))
+    assert scores[0] is not None and scores[1] is not None and MIN_SHARPNESS <= scores[0] < scores[1]
+
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.0))
+    recorder, store = make_recorder(data_dir, pose=pose)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 3.1
+    recorder._on_image(SimpleNamespace(data=soft))
+    pose.xyt = (1.0, 2.0, 2.5)
+    recorder._on_image(SimpleNamespace(data=sharp))
+    pose.xyt = (1.0, 2.0, 3.0)
+    recorder._on_image(SimpleNamespace(data=DARK_JPEG))  # what the feed holds at tick time
+    recorder.tick()
+    (m,) = store.snapshot().memories
+    assert m.theta == 2.5 and stored_image(store, m.id) == sharp
+
+
+def test_a_mid_turn_blur_never_becomes_the_candidate(data_dir, clock):
+    rng = np.random.default_rng(12)
+    blurred = encoded(cv2.GaussianBlur(rng.integers(0, 255, size=(240, 320), dtype=np.uint8), (31, 31), 0))
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.0))
+    recorder, store = make_recorder(data_dir, pose=pose)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 3.1
+    recorder._on_image(SimpleNamespace(data=blurred))  # sweeping past this heading
+    pose.xyt = (1.0, 2.0, 2.0)
+    recorder._on_image(SimpleNamespace(data=frame(4)))  # the pause at the end of the turn
+    recorder.tick()
+    (m,) = store.snapshot().memories
+    assert m.theta == 2.0 and stored_image(store, m.id) == frame(4)
 
 
 def test_a_new_viewpoint_needs_a_keepable_frame(data_dir, clock):
