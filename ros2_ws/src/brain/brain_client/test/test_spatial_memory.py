@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -295,10 +297,13 @@ class FakeGemini:
         self.creates: list[dict] = []
         self.generates: list[dict] = []
         self.deletes: list[str] = []
+        self.uploads: list[bytes] = []
         self.create_error: GeminiHttpError | None = None
         self.cached_generate_error: GeminiHttpError | None = None
+        self.upload_error: GeminiHttpError | None = None
+        self.upload_gate: threading.Event | None = None  # when set, uploads block on it
         self.verdict = verdict if verdict is not None else {"found": True, "frame": 1, "explanation": "matches"}
-        self.rest = GeminiRest(post=self._post, delete=self._delete)
+        self.rest = GeminiRest(post=self._post, delete=self._delete, upload=self._upload)
 
     def _post(self, path: str, body: dict) -> dict:
         if path == CACHED_CONTENTS_PATH:
@@ -315,6 +320,14 @@ class FakeGemini:
         self.deletes.append(path)
         return {}
 
+    def _upload(self, path: str, data: bytes, mime: str) -> dict:
+        if self.upload_gate is not None:
+            self.upload_gate.wait(timeout=5)
+        if self.upload_error is not None:
+            raise self.upload_error
+        self.uploads.append(data)
+        return {"file": {"name": f"files/f{len(self.uploads)}", "uri": f"https://files/f{len(self.uploads)}"}}
+
 
 def make_search(data_dir, frames: int, verdict: dict | None = None) -> tuple[MemorySearch, FakeGemini, MemoryStore]:
     store = MemoryStore(data_dir)
@@ -326,28 +339,81 @@ def make_search(data_dir, frames: int, verdict: dict | None = None) -> tuple[Mem
     return MemorySearch(store, fake.rest, model="test-model", logger=logger), fake, store
 
 
-def test_cache_is_created_once_and_reused(data_dir):
+def build_cache(search: MemorySearch) -> None:
+    """Synchronous stand-in for warm()'s background cache rebuild."""
+    search._ensure_cache(search._store.snapshot())
+
+
+def upload_frames(search: MemorySearch) -> None:
+    """Synchronous stand-in for maintain()'s background upload round."""
+    search._files._upload(search._files._pending())
+
+
+def part_kinds(body: dict) -> list[str]:
+    return [next(iter(part)) for part in body["contents"][0]["parts"]]
+
+
+def memory_with_id(store: MemoryStore, memory_id: int):
+    (memory,) = [m for m in store.snapshot().memories if m.id == memory_id]
+    return memory
+
+
+def test_search_rides_a_fresh_cache_with_only_the_question(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "the kitchen"})
+    build_cache(search)
     verdict = search.search("the kitchen")
     search.search("the kitchen again")
     assert len(fake.creates) == 1
     assert [body.get("cachedContent") for body in fake.generates] == ["cachedContents/c1", "cachedContents/c1"]
+    assert part_kinds(fake.generates[0]) == ["text"]  # fresh cache: no frame bytes at all
     assert verdict.found and verdict.cached and verdict.image == b"jpg-2"
     assert verdict.memory is not None and verdict.memory.x == 3.0
-    assert "x=3.00m" in verdict_text(verdict) and "the kitchen" in verdict_text(verdict)
-    assert "navigate_to_position" in verdict_text(verdict)
+    assert "x=3.00m" in verdict_text(verdict) and "navigate_to_position" in verdict_text(verdict)
 
 
-def test_new_memories_rebuild_the_cache_and_delete_the_old(data_dir):
+def test_a_search_never_builds_the_cache(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    search.search("anything")
+    assert fake.creates == []  # a cold search answers from frames; rebuilds belong to warm()
+
+
+def test_a_stale_cache_serves_with_a_delta_of_new_frames(data_dir):
+    search, fake, store = make_search(data_dir, frames=6, verdict={"found": True, "frame": 7, "explanation": "new"})
+    build_cache(search)
+    store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")  # id 7
+    verdict = search.search("the new spot")
+    assert len(fake.creates) == 1  # the search path never rebuilds
+    body = fake.generates[-1]
+    assert body["cachedContent"] == "cachedContents/c1"
+    assert part_kinds(body) == ["inlineData", "text", "text"]  # the new frame, its label, the question
+    assert "Frame 7" in body["contents"][0]["parts"][1]["text"]
+    assert verdict.found and verdict.cached
+    assert verdict.memory is not None and verdict.memory.id == 7 and verdict.image == b"jpg-late"
+
+
+def test_delta_notes_supersede_and_retire_frames(data_dir):
     search, fake, store = make_search(data_dir, frames=6)
-    search.search("first")
+    build_cache(search)
+    store.replace(memory_with_id(store, 2), 3.0, 0.0, 0.0, 5000.0, b"jpg-2-new")
+    store.evict(memory_with_id(store, 3))
+    search.search("anything")
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    texts = [part["text"] for part in parts if "text" in part]
+    assert any("Frame 2 was re-captured" in text for text in texts)
+    assert any("Frame 3 no longer exists" in text for text in texts)
+    assert sum("inlineData" in part for part in parts) == 1  # only the re-captured frame's bytes travel
+
+
+def test_warm_rebuilds_a_stale_cache_and_deletes_the_old(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    build_cache(search)
     store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
-    search.search("second")
+    build_cache(search)
     assert len(fake.creates) == 2
     assert fake.deletes == ["/v1beta/cachedContents/c1"]
 
 
-def test_few_frames_answer_inline_without_caching(data_dir):
+def test_few_frames_answer_from_frames_without_caching(data_dir):
     search, fake, _ = make_search(data_dir, frames=3)
     verdict = search.search("anything")
     assert fake.creates == []
@@ -360,35 +426,36 @@ def test_few_frames_answer_inline_without_caching(data_dir):
 def test_unsupported_backend_disables_caching_permanently(data_dir):
     search, fake, _ = make_search(data_dir, frames=6)
     fake.create_error = GeminiHttpError(404, "no such endpoint")
+    build_cache(search)
+    build_cache(search)
+    assert len(fake.creates) == 1  # latched after the first answer
     verdict = search.search("first")
-    search.search("second")
-    assert len(fake.creates) == 1  # never attempted again
-    assert all("cachedContent" not in body for body in fake.generates)
+    assert "cachedContent" not in fake.generates[-1]
     assert verdict.image == b"jpg-1"
 
 
 def test_failed_cache_creation_retries_only_after_the_memory_changes(data_dir):
     search, fake, store = make_search(data_dir, frames=6)
     fake.create_error = GeminiHttpError(400, "cache too small")
-    search.search("first")
-    search.search("second")
+    build_cache(search)
+    build_cache(search)
     assert len(fake.creates) == 1
     fake.create_error = None
     store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
-    search.search("third")
+    build_cache(search)
     assert len(fake.creates) == 2
 
 
-def test_a_dead_cache_falls_back_inline_and_is_forgotten(data_dir):
+def test_a_dead_cache_falls_back_and_is_forgotten(data_dir):
     search, fake, _ = make_search(data_dir, frames=6)
-    search.search("first")
+    build_cache(search)
     fake.cached_generate_error = GeminiHttpError(403, "cache expired")
     verdict = search.search("second")
     assert verdict.image == b"jpg-1" and not verdict.cached
-    assert "cachedContent" not in fake.generates[-1]  # answered inline
+    assert "cachedContent" not in fake.generates[-1]  # answered from frames within the same search
     fake.cached_generate_error = None
-    search.search("third")
-    assert len(fake.creates) == 2  # the dead handle was dropped, a fresh cache built
+    build_cache(search)
+    assert len(fake.creates) == 2  # the dead handle was dropped; warm rebuilt
 
 
 def test_no_match_is_a_clean_verdict_not_an_error(data_dir):
@@ -412,7 +479,7 @@ def test_a_transport_crash_becomes_an_error_verdict_not_an_exception(data_dir):
     def explode(path: str, body: dict) -> dict:
         raise RuntimeError("network down")
 
-    search._rest = GeminiRest(post=explode, delete=lambda path: {})
+    search._rest = GeminiRest(post=explode, delete=lambda path: {}, upload=lambda path, data, mime: {})
     verdict = search.search("anything")
     assert not verdict.found and "network down" in verdict.error
 
@@ -445,6 +512,7 @@ def test_warm_waits_for_recording_to_settle(data_dir):
 
 def test_search_mirrors_verdicts_to_the_ui(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "kitchen"})
+    build_cache(search)
     reports: list[dict] = []
     search.on_result = reports.append
     search.search("the kitchen")
@@ -479,15 +547,132 @@ def test_a_broken_ui_mirror_does_not_break_the_search(data_dir):
 def test_cache_state_reflects_the_lifecycle(data_dir):
     search, fake, store = make_search(data_dir, frames=6)
     assert search.cache_state() == "cold"
-    search.search("first")
+    build_cache(search)
     assert search.cache_state() == "warm"
     store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
-    assert search.cache_state() == "cold"
+    assert search.cache_state() == "warm"  # stale-but-usable: the delta keeps recall instant
 
     small, _, _ = make_search(data_dir / "small", frames=0)
     assert small.cache_state() == "inline"
 
     unsupported, fake2, _ = make_search(data_dir / "unsup", frames=6)
     fake2.create_error = GeminiHttpError(404, "no endpoint")
-    unsupported.search("first")
+    build_cache(unsupported)
     assert unsupported.cache_state() == "unsupported"
+
+
+# ================= files tier =================
+
+
+def test_frames_upload_once_and_ride_as_file_references(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    assert len(fake.uploads) == 6
+    upload_frames(search)
+    assert len(fake.uploads) == 6  # nothing left to do
+    search.search("anything")
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    file_parts = [part for part in parts if "fileData" in part]
+    assert len(file_parts) == 6 and not any("inlineData" in part for part in parts)
+    assert file_parts[0]["fileData"]["fileUri"].startswith("https://files/")
+
+
+def test_the_upload_registry_survives_a_restart(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    reborn, fake2, _ = make_search(data_dir, frames=0)  # same map dir, fresh process
+    upload_frames(reborn)
+    assert fake2.uploads == []  # every frame is already server-side
+
+
+def test_an_aging_upload_is_refreshed_before_server_expiry(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    files = search._files
+    with files._lock:
+        files._records = {i: replace(r, uploaded_at=r.uploaded_at - 41 * 3600) for i, r in files._records.items()}
+    upload_frames(search)
+    assert len(fake.uploads) == 12
+
+
+def test_an_expired_reference_rides_inline_instead(data_dir):
+    search, fake, _ = make_search(data_dir, frames=3)
+    upload_frames(search)
+    files = search._files
+    with files._lock:
+        files._records = {i: replace(r, uploaded_at=r.uploaded_at - 47.5 * 3600) for i, r in files._records.items()}
+    search.search("anything")
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    assert not any("fileData" in part for part in parts)  # too old to trust server-side
+    assert sum("inlineData" in part for part in parts) == 3
+
+
+def test_a_refreshed_frame_invalidates_its_upload(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    upload_frames(search)
+    store.replace(memory_with_id(store, 2), 3.0, 0.0, 0.0, 5000.0, b"jpg-2-new")
+    upload_frames(search)
+    assert len(fake.uploads) == 7 and fake.uploads[-1] == b"jpg-2-new"
+
+
+def test_upload_latch_on_unsupported_backend(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    fake.upload_error = GeminiHttpError(404, "no upload passthrough")
+    upload_frames(search)
+    assert search._files.unsupported and fake.uploads == []
+    search._files.maintain()  # latched: no thread is even spawned
+    search.search("anything")
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    assert sum("inlineData" in part for part in parts) == 6  # exactly the pre-files behavior
+
+
+def test_a_transient_upload_failure_retries_next_round(data_dir):
+    search, fake, _ = make_search(data_dir, frames=3)
+    fake.upload_error = GeminiHttpError(500, "hiccup")
+    upload_frames(search)
+    assert not search._files.unsupported and fake.uploads == []
+    fake.upload_error = None
+    upload_frames(search)
+    assert len(fake.uploads) == 3
+
+
+def test_the_cache_builds_from_file_references(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    build_cache(search)
+    (create,) = fake.creates
+    parts = create["contents"][0]["parts"]
+    assert sum("fileData" in part for part in parts) == 6 and not any("inlineData" in part for part in parts)
+
+
+def test_a_not_yet_uploaded_frame_rides_inline_beside_references(data_dir):
+    search, fake, store = make_search(data_dir, frames=3)
+    upload_frames(search)
+    store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
+    search.search("anything")  # before any maintenance round reaches the new frame
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    assert sum("fileData" in part for part in parts) == 3
+    assert sum("inlineData" in part for part in parts) == 1
+
+
+def test_search_never_waits_for_maintenance(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    fake.upload_gate = threading.Event()
+    search._files.maintain()  # the background round is now stuck on the gate
+    try:
+        verdict = search.search("anything")  # must conclude while the upload hangs
+        assert verdict.found
+    finally:
+        fake.upload_gate.set()
+    assert search._files._busy.acquire(timeout=2)  # the round finishes once released
+    search._files._busy.release()
+
+
+def test_labels_and_verdicts_use_stable_store_ids(data_dir):
+    search, fake, store = make_search(data_dir, frames=6, verdict={"found": True, "frame": 5, "explanation": "there"})
+    store.evict(memory_with_id(store, 1))
+    verdict = search.search("anything")
+    parts = fake.generates[-1]["contents"][0]["parts"]
+    labels = [part["text"] for part in parts if "text" in part][:-1]  # the last text part is the question
+    assert labels[0].startswith("Frame 2 ")  # ids, not positions, after the eviction
+    assert verdict.found and verdict.memory is not None and verdict.memory.id == 5

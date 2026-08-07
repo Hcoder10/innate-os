@@ -29,6 +29,11 @@ DIRECT_BASE_URL = "https://generativelanguage.googleapis.com"
 STREAM_PATH = "/v1beta/models/{model}:streamGenerateContent?alt=sse"
 GENERATE_PATH = "/v1beta/models/{model}:generateContent"
 CACHED_CONTENTS_PATH = "/v1beta/cachedContents"
+FILES_UPLOAD_PATH = "/upload/v1beta/files"
+
+# The backend has no passthrough for this endpoint at all — callers latch the
+# feature off permanently rather than retry (shared by the cache and files tiers).
+UNSUPPORTED_ENDPOINT_STATUSES = (404, 405, 501)
 
 Transport = Callable[[str, dict], Iterator[dict]]
 """(model, request body) -> streamed response chunks."""
@@ -44,10 +49,11 @@ class GeminiHttpError(RuntimeError):
 
 @dataclass(frozen=True)
 class GeminiRest:
-    """Blocking JSON calls against the same backend the stream uses."""
+    """Blocking JSON + media calls against the same backend the stream uses."""
 
     post: Callable[[str, dict], dict]  # (api path, body) -> parsed response; raises GeminiHttpError on non-200
     delete: Callable[[str], dict]  # api path -> parsed response (usually empty)
+    upload: Callable[[str, bytes, str], dict]  # (api path, raw bytes, mime type) -> parsed response
 
 
 class Backend(StrEnum):
@@ -112,16 +118,20 @@ def pick_rest(proxy: ProxyClient | None) -> GeminiRest | None:
 def proxy_rest(proxy: ProxyClient) -> GeminiRest:
     """Non-streaming Gemini calls through the proxy (same service passthrough as the stream)."""
 
-    def request(method: str, path: str, body: dict | None = None) -> dict:
-        with proxy.request_stream(PROXY_SERVICE, path, method=method, json=body) as resp:
-            data = resp.read()
+    def request(method: str, path: str, body: dict | None = None, data: bytes | None = None) -> dict:
+        with proxy.request_stream(PROXY_SERVICE, path, method=method, json=body, data=data) as resp:
+            payload = resp.read()
             if resp.status_code != 200:
-                raise GeminiHttpError(resp.status_code, data[:200].decode(errors="replace"))
-            return json.loads(data) if data else {}
+                raise GeminiHttpError(resp.status_code, payload[:200].decode(errors="replace"))
+            return json.loads(payload) if payload else {}
 
+    # The proxy client cannot attach the raw-upload protocol headers; a
+    # passthrough that requires them answers non-200 and the caller latches
+    # the files tier off (frames ride inline — today's behavior).
     return GeminiRest(
         post=lambda path, body: request("POST", path, body),
         delete=lambda path: request("DELETE", path),
+        upload=lambda path, data, mime: request("POST", path, data=data),
     )
 
 
@@ -137,9 +147,20 @@ def direct_rest(api_key: str) -> GeminiRest:
             raise GeminiHttpError(resp.status_code, resp.text[:200])
         return resp.json() if resp.content else {}
 
+    def upload(path: str, data: bytes, mime: str) -> dict:
+        resp = client.post(
+            DIRECT_BASE_URL + path,
+            content=data,
+            headers={"X-Goog-Upload-Protocol": "raw", "Content-Type": mime},
+        )
+        if resp.status_code != 200:
+            raise GeminiHttpError(resp.status_code, resp.text[:200])
+        return resp.json() if resp.content else {}
+
     return GeminiRest(
         post=lambda path, body: request("POST", path, body),
         delete=lambda path: request("DELETE", path),
+        upload=upload,
     )
 
 
