@@ -29,6 +29,32 @@ body {
   --eval-dim: rgb(181 140 230 / 40%);
   --eval-faint: rgb(181 140 230 / 12%);
   --glass: rgb(0 0 0 / 40%);
+
+  /* ---- controls over a live backdrop ------------------------------------
+     Every button that floats over the camera feed or the map faces the same
+     problem: the backdrop is whatever the robot is looking at, from a dark room
+     to a blown-out white wall. A control that only *tints* that backdrop — the
+     12% accent fill this app used to reach for — borrows contrast it may not
+     have, and amber-on-white is the worst case of it.
+     So a control carries its own dark base, and the accent lives in the text
+     and the hairline where it stays legible at any backdrop brightness. Still
+     translucent (the feed moves under it), but lit from within, not behind.
+     Raised = buttons; recessed = text fields; off = disabled/inert. */
+  --ctl-glass: rgb(8 8 10 / 72%);
+  --ctl-glass-hover: rgb(8 8 10 / 84%);
+  --ctl-field: rgb(8 8 10 / 52%);
+  --ctl-sheen: inset 0 1px 0 rgb(255 255 255 / 12%);
+  /* --accent / --danger lifted until they read on that base; plain --muted
+     grey washes out over a bright feed, so neutral control text is brighter. */
+  --ctl-accent: #f7c274;
+  --ctl-accent-hover: #ffd79a;
+  --ctl-danger: #f7a595;
+  --ctl-text: rgb(231 231 234 / 78%);
+  --ctl-text-off: rgb(231 231 234 / 42%);
+  --ctl-edge-accent: rgb(232 163 61 / 45%);
+  --ctl-edge-accent-hover: rgb(232 163 61 / 72%);
+  --ctl-edge-danger: rgb(217 106 90 / 50%);
+
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
@@ -401,25 +427,26 @@ select.skill-input {
   padding: 6px 12px 6px 8px;
   border: 1px solid var(--hairline-strong);
   border-radius: 10px;
-  background: rgb(10 10 12 / 78%);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
   color: var(--text);
   text-align: left;
-  transition: border-color 150ms ease, color 150ms ease;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .map-btn:hover:not(:disabled) {
-  border-color: var(--accent-dim);
+  border-color: var(--ctl-edge-accent);
+  background: var(--ctl-glass-hover);
 }
 
 .map-btn:disabled {
-  color: var(--muted);
+  color: var(--ctl-text-off);
   cursor: progress;
 }
 
 .map-btn.is-active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-faint);
+  border-color: var(--ctl-edge-accent-hover);
+  color: var(--ctl-accent);
 }
 
 .map-btn-icon {
@@ -1047,17 +1074,22 @@ select.skill-input {
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text);
-  transition: border-color 150ms ease, color 150ms ease;
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .sim-button:hover:not(:disabled) {
-  border-color: var(--accent-dim);
-  color: var(--accent);
+  border-color: var(--ctl-edge-accent);
+  background: var(--ctl-glass-hover);
+  color: var(--ctl-accent);
 }
 
 .sim-button:disabled {
-  color: var(--muted);
+  color: var(--ctl-text-off);
+  background: var(--ctl-field);
+  box-shadow: none;
   cursor: progress;
 }
 
@@ -1103,30 +1135,32 @@ select.skill-input {
   width: 32px;
   height: 32px;
   padding: 0;
-  background: var(--glass);
+  background: var(--ctl-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
   border-radius: 9px;
-  color: var(--muted);
+  box-shadow: var(--ctl-sheen);
+  color: var(--ctl-text);
   cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .profiling-toggle:hover {
   color: var(--text);
-  border-color: var(--hairline-strong);
+  background: var(--ctl-glass-hover);
+  border-color: rgb(255 255 255 / 26%);
 }
 
 .profiling-toggle.active {
-  color: var(--accent);
-  border-color: var(--accent-dim);
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
 }
 
 /* Link failed/erroring — make the toggle unmistakably red even while closed. */
 .profiling-toggle.failed {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--ctl-danger);
+  border-color: var(--ctl-edge-danger);
 }
 
 .profiling-value.bad {
@@ -1454,47 +1488,53 @@ select.skill-input {
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text);
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
   white-space: nowrap;
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .record-btn:disabled {
-  color: var(--text);
+  color: var(--ctl-text-off);
+  background: var(--ctl-field);
   border-color: var(--hairline);
+  box-shadow: none;
   cursor: default;
 }
 
 /* Record: danger-tinted outline; muted when the arm/dataset gate is unmet. */
 .record-start:not(:disabled) {
-  border-color: rgb(217 106 90 / 50%);
-  color: var(--danger);
+  border-color: var(--ctl-edge-danger);
+  color: var(--ctl-danger);
 }
 
 .record-start:not(:disabled):hover {
-  background: rgb(217 106 90 / 14%);
+  background: var(--ctl-glass-hover);
+  border-color: rgb(217 106 90 / 78%);
 }
 
-/* Stop: reads as live — danger fill + the running timer. */
+/* Stop: reads as live — danger edge + the running timer. */
 .record-stop {
-  border-color: rgb(217 106 90 / 50%);
-  background: rgb(217 106 90 / 14%);
-  color: var(--danger);
+  border-color: rgb(217 106 90 / 78%);
+  color: var(--ctl-danger);
   font-variant-numeric: tabular-nums;
 }
 
 .record-save:not(:disabled) {
   border-color: rgb(86 194 140 / 50%);
-  color: var(--ok);
+  color: #8fdcb4;
 }
 
 .record-save:not(:disabled):hover {
-  background: rgb(86 194 140 / 14%);
+  background: var(--ctl-glass-hover);
+  border-color: rgb(86 194 140 / 78%);
 }
 
 .record-discard:not(:disabled):hover {
-  border-color: var(--accent-dim);
-  color: var(--accent);
+  border-color: var(--ctl-edge-accent);
+  background: var(--ctl-glass-hover);
+  color: var(--ctl-accent);
 }
 
 .record-hint {
@@ -1749,14 +1789,15 @@ select.skill-input {
   border-radius: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ctl-text);
+  background: var(--ctl-field);
   transition: color 100ms ease, border-color 100ms ease, background 100ms ease;
 }
 
 .wasd-chip.held {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-faint);
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
+  background: var(--ctl-glass);
 }
 
 .wasd-hint {
@@ -1776,9 +1817,7 @@ select.skill-input {
 .sm-label {
   font-size: 9px;
   letter-spacing: 0.08em;
-  /* Brighter than --muted: the rail floats over the live camera feed, where plain
-     grey washes out on light backgrounds. Matches .skills-menu-active. */
-  color: rgb(231 231 234 / 72%);
+  color: var(--ctl-text);
 }
 
 .sm-group {
@@ -1787,6 +1826,10 @@ select.skill-input {
   overflow: hidden;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
+  /* The group is the control here — one base behind the whole segmented stack,
+     so the buttons stay hairline-separated rather than each carrying its own. */
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
 }
 
 .sm-btn {
@@ -1794,9 +1837,7 @@ select.skill-input {
   border: 0;
   border-bottom: 1px solid var(--hairline-strong);
   background: transparent;
-  /* Brighter than --muted: the rail floats over the live camera feed, where plain
-     grey washes out on light backgrounds. Matches .skills-menu-active. */
-  color: rgb(231 231 234 / 72%);
+  color: var(--ctl-text);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -1809,11 +1850,12 @@ select.skill-input {
 
 .sm-btn:hover {
   color: var(--text);
+  background: rgb(255 255 255 / 6%);
 }
 
 .sm-btn.on {
-  background: var(--accent-faint);
-  color: var(--accent);
+  background: rgb(232 163 61 / 14%);
+  color: var(--ctl-accent);
 }
 
 /* ---- head tilt ------------------------------------------------------------ */
@@ -1829,7 +1871,7 @@ select.skill-input {
   font-size: 9px;
   /* Same rail as the speed picker, same problem: plain grey washes out over a
      bright camera view. Kept in step so the rail reads as one control group. */
-  color: rgb(231 231 234 / 72%);
+  color: var(--ctl-text);
 }
 
 .ht-track {
@@ -1904,18 +1946,20 @@ select.skill-input {
   height: 36px;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
-  color: var(--muted);
-  transition: color 150ms ease, border-color 150ms ease;
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .icon-toggle:hover {
   color: var(--text);
+  background: var(--ctl-glass-hover);
 }
 
 .icon-toggle.active {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-faint);
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
 }
 
 .audio-toggle:not(.active) .wave {
@@ -1930,16 +1974,17 @@ select.skill-input {
   gap: 10px;
   width: min(440px, 56vw);
   padding: 5px 16px 5px 18px;
-  background: var(--glass);
+  background: var(--ctl-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-radius: 999px;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--ctl-sheen);
   transition: border-color 200ms ease;
 }
 
 .tts-bar.sent {
-  border-color: var(--accent-dim);
+  border-color: var(--ctl-edge-accent);
 }
 
 .tts-input {
@@ -1960,18 +2005,25 @@ select.skill-input {
   color: rgb(255 255 255 / 25%);
 }
 
+/* Text affordance inside the pill, not a pill of its own — the bar already
+   carries the base, so this only needs the colour lift. */
 .tts-hint {
   font: inherit;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ctl-text);
   background: none;
   border: 0;
   padding: 4px 8px;
   cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.tts-hint:hover {
+  color: var(--ctl-accent);
 }
 
 .tts-bar.sent .tts-hint {
-  color: var(--accent);
+  color: var(--ctl-accent);
 }
 
 /* ---- leader arm panel -------------------------------------------------------- */
@@ -2070,24 +2122,28 @@ select.skill-input {
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text);
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .arm-button:hover:not(:disabled) {
-  border-color: var(--accent-dim);
-  color: var(--accent);
+  border-color: var(--ctl-edge-accent);
+  background: var(--ctl-glass-hover);
+  color: var(--ctl-accent);
 }
 
 .arm-button:disabled {
-  color: var(--muted);
+  color: var(--ctl-text-off);
+  background: var(--ctl-field);
+  box-shadow: none;
   cursor: progress;
 }
 
 .arm-engage.active {
-  border-color: var(--accent-dim);
-  background: var(--accent-faint);
-  color: var(--accent);
+  border-color: var(--ctl-edge-accent);
+  color: var(--ctl-accent);
 }
 
 /* Engage sits next to a small icon button that copies the joint ticks. */
@@ -4897,21 +4953,22 @@ select.episodes-tool {
   padding: 0 16px;
   font: inherit;
   color: var(--text);
-  background: var(--glass);
+  background: var(--ctl-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
   border-radius: 999px;
+  box-shadow: var(--ctl-sheen);
   cursor: pointer;
   transition: border-color 150ms ease, background 150ms ease;
 }
 
 .skills-menu-btn:hover {
-  background: rgb(0 0 0 / 52%);
+  background: var(--ctl-glass-hover);
 }
 
 .skills-menu.open .skills-menu-btn {
-  border-color: var(--accent-dim);
+  border-color: var(--ctl-edge-accent);
 }
 
 /* Status dot: grey when idle, green (pulsing) while a skill runs. */
@@ -4949,7 +5006,7 @@ select.episodes-tool {
   font-size: 12px;
   /* Brighter than --muted: the pill floats over the live camera feed, where
      plain grey washes out on light backgrounds. */
-  color: rgb(231 231 234 / 72%);
+  color: var(--ctl-text);
   text-align: left;
 }
 
@@ -5759,10 +5816,11 @@ select.skill-input {
   width: 30px;
   height: 30px;
   font: inherit;
-  color: var(--text);
-  background: var(--glass);
-  border: 1px solid var(--hairline);
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  border: 1px solid var(--hairline-strong);
   border-radius: 8px;
+  box-shadow: var(--ctl-sheen);
   cursor: pointer;
 }
 
@@ -5837,7 +5895,9 @@ select.skill-input {
   padding: 8px 30px 8px 10px;
   font-size: 12px;
   color: var(--text);
-  background-color: rgb(0 0 0 / 35%);
+  /* background-color, not the shorthand: the shared select rule paints the
+     chevron as a background-image this must not clobber. */
+  background-color: var(--ctl-field);
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
 }
@@ -5856,33 +5916,41 @@ select.skill-input {
   flex: 0 0 auto;
   padding: 0 16px;
   font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-faint);
-  border: 1px solid var(--accent-dim);
+  /* The panel's primary action, in the shared control material (see :root). */
+  color: var(--ctl-accent);
+  background: var(--ctl-glass);
+  border: 1px solid var(--ctl-edge-accent);
   border-radius: 9px;
+  box-shadow: var(--ctl-sheen);
   transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .agent-toggle:hover:not(:disabled) {
-  background: rgb(232 163 61 / 22%);
+  color: var(--ctl-accent-hover);
+  background: var(--ctl-glass-hover);
+  border-color: var(--ctl-edge-accent-hover);
 }
 
 .agent-toggle.stop {
-  color: #f0b6ab;
-  background: rgb(217 106 90 / 16%);
-  border-color: rgb(217 106 90 / 55%);
+  color: var(--ctl-danger);
+  border-color: var(--ctl-edge-danger);
 }
 
 .agent-toggle.stop:hover:not(:disabled) {
-  background: rgb(217 106 90 / 28%);
+  color: #ffd6cb;
+  border-color: rgb(217 106 90 / 78%);
 }
 
+/* Disabled drops the accent but keeps a base — `transparent` would put it right
+   back at the mercy of the feed, invisible over white. */
 .agent-toggle:disabled {
-  color: var(--muted);
-  background: transparent;
-  border-color: var(--hairline);
+  color: var(--ctl-text-off);
+  background: var(--ctl-field);
+  border-color: var(--hairline-strong);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -5892,26 +5960,27 @@ select.skill-input {
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  /* var(--muted) + a barely-there border reads fine on a dark backdrop but
-     disappears on a bright one — brighten both like the panel's other
-     unbacked text/chips. */
-  color: rgb(231 231 234 / 75%);
-  background: rgb(0 0 0 / 20%);
+  /* Secondary action: same material as the toggle, neutral instead of accent —
+     the colour is the only thing separating them. */
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
+  box-shadow: var(--ctl-sheen);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .agent-reset:hover:not(:disabled) {
   color: var(--text);
-  background: rgb(0 0 0 / 30%);
+  background: var(--ctl-glass-hover);
   border-color: rgb(255 255 255 / 26%);
 }
 
 .agent-reset:disabled {
-  color: rgb(231 231 234 / 35%);
-  background: transparent;
+  color: var(--ctl-text-off);
+  background: var(--ctl-field);
   border-color: var(--hairline);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -5920,7 +5989,7 @@ select.skill-input {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: rgb(0 0 0 / 25%);
+  background: var(--ctl-field);
   border: 1px solid var(--hairline);
   border-radius: 10px;
   transition: background 200ms ease, border-color 200ms ease;
@@ -5941,12 +6010,12 @@ select.skill-input {
 }
 
 .agent-activeskill.on {
-  background: var(--accent-faint);
-  border-color: var(--accent-dim);
+  background: var(--ctl-glass);
+  border-color: var(--ctl-edge-accent);
 }
 
 .agent-activeskill.on .agent-activeskill-name {
-  color: var(--accent);
+  color: var(--ctl-accent);
 }
 
 .agent-stream-label {
@@ -6014,7 +6083,7 @@ select.skill-input {
   resize: none;
   font: inherit; /* same UI font as the teleop "Make the robot speak" bar */
   color: var(--text);
-  background: rgb(0 0 0 / 35%);
+  background: var(--ctl-field);
   border: 1px solid var(--hairline-strong);
   border-radius: 11px;
 }
@@ -6037,15 +6106,18 @@ select.skill-input {
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-faint);
-  border: 1px solid var(--accent-dim);
+  color: var(--ctl-accent);
+  background: var(--ctl-glass);
+  border: 1px solid var(--ctl-edge-accent);
   border-radius: 11px;
-  transition: background 150ms ease, border-color 150ms ease;
+  box-shadow: var(--ctl-sheen);
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .agent-compose-send:hover {
-  background: rgb(232 163 61 / 22%);
+  color: var(--ctl-accent-hover);
+  background: var(--ctl-glass-hover);
+  border-color: var(--ctl-edge-accent-hover);
 }
 
 /* Bottom-left "agent active" chip — only while the brain is running. */
@@ -6057,12 +6129,12 @@ select.skill-input {
   align-items: center;
   gap: 11px;
   padding: 10px 14px;
-  background: var(--glass);
+  background: var(--ctl-glass);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--ctl-edge-accent);
   border-radius: 12px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+  box-shadow: var(--ctl-sheen);
 }
 
 .agent-active-dot {
@@ -6085,12 +6157,12 @@ select.skill-input {
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--ctl-accent);
 }
 
 .agent-active-sub {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ctl-text);
 }
 
 /* Top-center "<agent> is running" pill — shown on non-Agent pages while the
@@ -6109,11 +6181,12 @@ select.skill-input {
   align-items: center;
   gap: 10px;
   padding: 6px 7px 6px 16px;
-  background: var(--glass);
+  background: var(--ctl-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
   border-radius: 999px;
+  box-shadow: var(--ctl-sheen);
   color: var(--text);
   font-size: 13px;
   text-decoration: none;
@@ -6121,8 +6194,8 @@ select.skill-input {
 }
 
 .agent-indicator:hover {
-  border-color: var(--hairline-strong);
-  background: rgb(0 0 0 / 52%);
+  border-color: rgb(255 255 255 / 26%);
+  background: var(--ctl-glass-hover);
 }
 
 .agent-indicator-dot {
@@ -6144,9 +6217,9 @@ select.skill-input {
   padding: 4px 13px;
   font: inherit;
   font-size: 12px;
-  color: var(--danger);
-  background: transparent;
-  border: 1px solid var(--danger);
+  color: var(--ctl-danger);
+  background: var(--ctl-glass);
+  border: 1px solid var(--ctl-edge-danger);
   border-radius: 999px;
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
@@ -6807,15 +6880,16 @@ select.skill-input {
   gap: 10px;
   max-width: calc(100% - 24px);
   padding: 8px 12px;
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--ctl-edge-accent);
   border-radius: 10px;
-  background: var(--glass);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
   backdrop-filter: blur(6px);
 }
 
 .mapping-banner-text {
   font-size: 12px;
-  color: var(--accent);
+  color: var(--ctl-accent);
 }
 
 .mapping-name {
@@ -6865,22 +6939,24 @@ select.skill-input {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--hairline);
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  border: 1px solid var(--hairline-strong);
   border-radius: 999px;
+  box-shadow: var(--ctl-sheen);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .layer-chip.is-on {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-faint);
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
 }
 
 /* Momentary action chip (never .is-on) — reads as a button, not a toggle. */
 .layer-chip-action:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--hairline-strong);
+  background: var(--ctl-glass-hover);
+  border-color: rgb(255 255 255 / 26%);
 }
 
 .layer-chip-action:disabled {
