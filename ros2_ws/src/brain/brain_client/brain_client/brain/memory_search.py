@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from brain_client.brain.transport import GeminiRest
     from brain_client.memory.store import Memory, MemorySnapshot, MemoryStore
 
-_TTL_SEC = 3600
+_TTL_SEC = 12 * 3600  # ~20k-token cache: 12h of storage costs ~$0.24, cheap insurance against cold starts
 _TTL_SAFETY_SEC = 120  # treat the cache as gone this long before Gemini actually expires it
 _MIN_FRAMES_TO_CACHE = 6  # fewer frames sit under the API's minimum cache size (and upload fast anyway)
 _WARM_AFTER_QUIET_SEC = 30.0  # let a recording burst settle before re-uploading every frame
