@@ -112,11 +112,14 @@ class MemoryRecorder:
 
     # --- the 1 Hz tick ---
     def tick(self) -> None:
-        self._store.switch_map(self._map_name or None)
-        self._maybe_record()
-        self._publish_positions()
-        if self._warm_search is not None:
-            self._warm_search()
+        try:
+            self._store.switch_map(self._map_name or None)
+            self._maybe_record()
+            self._publish_positions()
+            if self._warm_search is not None:
+                self._warm_search()
+        except Exception as error:  # noqa: BLE001 — a full disk must not take the brain node down
+            self._logger.error(f"[Memory] tick failed: {error!r}")
 
     def _maybe_record(self) -> None:
         if not self._localized_long_enough():
@@ -166,6 +169,10 @@ class MemoryRecorder:
     def _publish_positions(self) -> None:
         payload = {
             "map": self._map_name,
+            # The webapp keys its per-map state on map+fingerprint: a same-name
+            # re-map wipes the store and restarts ids, and only the fingerprint
+            # betrays that to a client watching the name.
+            "fingerprint": self._store.fingerprint[:12],
             "cache": self._cache_state() if self._cache_state is not None else "off",
             "positions": self._store.positions(),
         }

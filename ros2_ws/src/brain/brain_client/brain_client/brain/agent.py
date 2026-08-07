@@ -435,14 +435,17 @@ class BrainAgent:
     def _build_tools(self, events: list[Event]) -> list[dict]:
         running = self._state.primitive_running
         user_spoke = any(event.kind == EventKind.USER for event in events)
-        if running is not None:
-            return build_tools([], running.primitive_name, user_spoke=user_spoke)
         active_ids = set(self._roster.active_skill_ids())
         skills = [meta for meta in self._state.registry.metadata if meta["id"] in active_ids]
         # One naming pass feeds both the declarations and the dispatch map, so
         # the name the model calls always resolves to the skill it was declared for.
         named = assign_tool_names(skills)
         self._tool_map = {name: meta["id"] for name, meta in named}
+        if running is not None:
+            # Recall occupies no skill slot (see _dispatch), so it stays
+            # declared while a skill runs — search-while-driving is the point.
+            queries = [(name, meta) for name, meta in named if meta["id"] == _SEARCH_MEMORY]
+            return build_tools(queries, running.primitive_name, user_spoke=user_spoke)
         return build_tools(named, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
@@ -502,8 +505,8 @@ class BrainAgent:
             return "rejected — the brain is deactivating"
         # Only names declared this turn resolve: falling back to the full
         # registry would let a hallucinated call bypass the active-skill allowlist.
-        # The map can outlive a roster change (it isn't rebuilt while a skill
-        # runs), so the resolved id is re-checked against the live active set.
+        # The map is a turn old by now and the roster can change under it, so
+        # the resolved id is re-checked against the live active set.
         skill_id = self._tool_map.get(call.name)
         if skill_id == _SEARCH_MEMORY and skill_id in self._roster.active_skill_ids():
             # Recall is a query, not an act: it occupies no skill slot, so it

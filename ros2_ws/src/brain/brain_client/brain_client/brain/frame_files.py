@@ -29,12 +29,14 @@ from brain_client.brain.transport import FILES_UPLOAD_PATH, UNSUPPORTED_ENDPOINT
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from rclpy.impl.rcutils_logger import RcutilsLogger
+
     from brain_client.brain.transport import GeminiRest
     from brain_client.memory.store import Memory, MemoryStore
 
-_FILE_LIFETIME_SEC = 48 * 3600  # Gemini deletes uploads after this
-_USABLE_FOR_SEC = 47 * 3600  # stop referencing this long after upload (margin under the deletion)
+_USABLE_FOR_SEC = 47 * 3600  # Gemini deletes uploads at 48 h; stop referencing an hour early
 _REUPLOAD_AFTER_SEC = 40 * 3600  # the background chore refreshes an upload past this age
+_RETRY_DELAY_SEC = 30.0  # after a failed round — the 1 Hz tick must not hammer a broken endpoint
 
 
 @dataclass(frozen=True)
@@ -45,18 +47,29 @@ class _FileRecord:
 
 
 class FrameFiles:
-    def __init__(self, store: MemoryStore, rest: GeminiRest, logger):
+    def __init__(self, store: MemoryStore, rest: GeminiRest, logger: RcutilsLogger):
         self._store = store
         self._rest = rest
         self._logger = logger
         self.unsupported = False  # latched: the backend has no upload passthrough
         self._lock = threading.Lock()  # registry map + sidecar IO
         self._busy = threading.Lock()  # at most one maintenance thread
+        self._retry_at = 0.0  # monotonic; a failed round backs off until then
         self._dir: Path | None = None  # which map's registry is loaded
         self._records: dict[int, _FileRecord] = {}
 
     def uri_for(self, memory: Memory) -> str | None:
         """A live server-side URI for exactly this frame, or None (ride inline)."""
+        record = self._live_record(memory)
+        return record.uri if record is not None else None
+
+    def usable_until(self, memory: Memory) -> float | None:
+        """Epoch seconds until this frame's live URI stops being referenced —
+        a context cache embedding it must not outlive this. None = inline."""
+        record = self._live_record(memory)
+        return record.uploaded_at + _USABLE_FOR_SEC if record is not None else None
+
+    def _live_record(self, memory: Memory) -> _FileRecord | None:
         with self._lock:
             self._sync_map_locked()
             record = self._records.get(memory.id)
@@ -64,77 +77,96 @@ class FrameFiles:
             return None
         if time.time() - record.uploaded_at > _USABLE_FOR_SEC:
             return None
-        return record.uri
+        return record
 
     def maintain(self) -> None:
         """Upload new/refreshed/aging frames in the background; returns immediately."""
-        if self.unsupported:
+        if self.unsupported or time.monotonic() < self._retry_at:
             return
-        pending = self._pending()
-        if not pending:
+        pending, scanned_dir = self._pending()
+        if not pending or scanned_dir is None:
             return
         if not self._busy.acquire(blocking=False):
             return  # a maintenance round is already running
 
         def run() -> None:
             try:
-                self._upload(pending)
+                self._upload(pending, scanned_dir)
             finally:
                 self._busy.release()
 
         threading.Thread(target=run, name="memory-file-upload", daemon=True).start()
 
-    def _pending(self) -> list[Memory]:
+    def _pending(self) -> tuple[list[Memory], Path | None]:
+        """Frames needing upload, and the registry dir they were scanned against."""
         snapshot = self._store.snapshot()
         now = time.time()
         with self._lock:
             self._sync_map_locked()
             if self._dir is None:
-                return []
+                return [], None
+            scanned_dir = self._dir
             records = dict(self._records)
         pending = []
         for memory in snapshot.memories:
             record = records.get(memory.id)
             if record is None or record.image_stamp != memory.stamp or now - record.uploaded_at > _REUPLOAD_AFTER_SEC:
                 pending.append(memory)
-        return pending
+        return pending, scanned_dir
 
-    def _upload(self, pending: list[Memory]) -> None:
-        """One maintenance round. A transient failure ends the round (the next
-        tick retries); an unsupported-endpoint answer latches the tier off."""
-        uploaded_into = self._dir  # a map switch mid-round orphans these uploads
-        for memory in pending:
-            path = self._store.image_path(memory.id)
-            if path is None:
-                return
-            try:
-                data = path.read_bytes()
-            except OSError:
-                continue  # evicted between the scan and now
-            try:
-                response = self._rest.upload(FILES_UPLOAD_PATH, data, "image/jpeg")
-            except GeminiHttpError as error:
-                if error.status in UNSUPPORTED_ENDPOINT_STATUSES:
-                    self.unsupported = True
+    def _upload(self, pending: list[Memory], uploaded_into: Path) -> None:
+        """One maintenance round. A transient failure ends the round (retried
+        after a backoff); an unsupported-endpoint answer latches the tier off.
+        The registry is saved once per round, not per frame.
+
+        ``uploaded_into`` is the dir the pending scan ran against — any other
+        map loaded by the time a result lands means these uploads are orphans
+        (never recorded into the new map's registry, whose ids collide).
+        """
+        try:
+            for memory in pending:
+                path = self._store.image_path(memory.id)
+                if path is None:
+                    return
+                try:
+                    data = path.read_bytes()
+                except OSError:
+                    continue  # evicted between the scan and now
+                try:
+                    response = self._rest.upload(FILES_UPLOAD_PATH, data, "image/jpeg")
+                except GeminiHttpError as error:
+                    if error.status in UNSUPPORTED_ENDPOINT_STATUSES:
+                        self.unsupported = True
+                        self._logger.warn(
+                            f"[Memory] backend has no file-upload endpoint (HTTP {error.status}); frames ride inline"
+                        )
+                    else:
+                        self._retry_at = time.monotonic() + _RETRY_DELAY_SEC
+                        self._logger.warn(
+                            f"[Memory] frame upload failed ({error}); retrying in {_RETRY_DELAY_SEC:.0f}s"
+                        )
+                    return
+                except Exception as error:  # noqa: BLE001 — network trouble ends the round, never the process
+                    self._retry_at = time.monotonic() + _RETRY_DELAY_SEC
+                    self._logger.warn(f"[Memory] frame upload failed ({error!r}); retrying in {_RETRY_DELAY_SEC:.0f}s")
+                    return
+                uri = str((response.get("file") or {}).get("uri") or "")
+                if not uri:
+                    self._retry_at = time.monotonic() + _RETRY_DELAY_SEC
                     self._logger.warn(
-                        f"[Memory] backend has no file-upload endpoint (HTTP {error.status}); frames ride inline"
+                        f"[Memory] frame upload returned no file uri; retrying in {_RETRY_DELAY_SEC:.0f}s"
                     )
-                else:
-                    self._logger.warn(f"[Memory] frame upload failed ({error}); retrying next tick")
-                return
-            except Exception as error:  # noqa: BLE001 — network trouble ends the round, never the process
-                self._logger.warn(f"[Memory] frame upload failed ({error!r}); retrying next tick")
-                return
-            uri = str((response.get("file") or {}).get("uri") or "")
-            if not uri:
-                self._logger.warn("[Memory] frame upload returned no file uri; retrying next tick")
-                return
+                    return
+                with self._lock:
+                    self._sync_map_locked()
+                    if self._dir != uploaded_into:
+                        return  # the map switched mid-round; these frames are gone
+                    self._records[memory.id] = _FileRecord(uri=uri, uploaded_at=time.time(), image_stamp=memory.stamp)
+        finally:
             with self._lock:
                 self._sync_map_locked()
-                if self._dir != uploaded_into:
-                    return  # the map switched mid-round; these frames are gone
-                self._records[memory.id] = _FileRecord(uri=uri, uploaded_at=time.time(), image_stamp=memory.stamp)
-                self._save_locked()
+                if self._dir == uploaded_into and self._dir is not None:
+                    self._save_locked()
 
     # --- registry persistence (under self._lock) ---
     def _sync_map_locked(self) -> None:

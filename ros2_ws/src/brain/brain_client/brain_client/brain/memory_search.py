@@ -49,6 +49,8 @@ from brain_client.brain.transport import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rclpy.impl.rcutils_logger import RcutilsLogger
+
     from brain_client.brain.transport import GeminiRest
     from brain_client.memory.store import Memory, MemorySnapshot, MemoryStore
 
@@ -56,6 +58,7 @@ _TTL_SEC = 12 * 3600  # ~20k-token cache: 12h of storage costs ~$0.24, cheap ins
 _TTL_SAFETY_SEC = 120  # treat the cache as gone this long before Gemini actually expires it
 _MIN_FRAMES_TO_CACHE = 6  # fewer frames sit under the API's minimum cache size (and upload fast anyway)
 _WARM_AFTER_QUIET_SEC = 30.0  # let a recording burst settle before rebuilding the cache
+_MAX_STALE_FRAMES = 10  # a delta this big rides every search — rebuild even mid-burst
 
 _SYSTEM = (
     "You are the spatial memory of a small home robot. You hold snapshots the robot remembered "
@@ -114,7 +117,7 @@ class SearchVerdict:
 
 
 class MemorySearch:
-    def __init__(self, store: MemoryStore, rest: GeminiRest, *, model: str, logger):
+    def __init__(self, store: MemoryStore, rest: GeminiRest, *, model: str, logger: RcutilsLogger):
         self._store = store
         self._rest = rest
         self._model = model
@@ -196,13 +199,15 @@ class MemorySearch:
             }
             try:
                 response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-                return self._conclude(query, response, snapshot.memories, started, cached=True)
+                return self._conclude(query, response, snapshot, started, cached=True)
             except GeminiHttpError as error:
                 if error.status >= 500:
                     raise
-                # The cache died server-side (expired early, deleted, rejected):
-                # forget it and answer from frames; the next warm rebuilds it.
-                self._cache = None
+                # The cache died server-side (expired early, deleted — including
+                # by warm() swapping in a successor and deleting this handle
+                # mid-flight): forget the handle that failed, never a newer one.
+                if self._cache is cache:
+                    self._cache = None
                 self._logger.warn(f"[Memory] cached search failed ({error}); retrying without it")
         parts, _included = self._frame_parts(snapshot.memories)
         body = {
@@ -211,7 +216,7 @@ class MemorySearch:
             "generationConfig": _GENERATION_CONFIG,
         }
         response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-        return self._conclude(query, response, snapshot.memories, started, cached=False)
+        return self._conclude(query, response, snapshot, started, cached=False)
 
     def warm(self) -> None:
         """All background maintenance, driven by the recorder's 1 Hz tick:
@@ -222,8 +227,11 @@ class MemorySearch:
         snapshot = self._store.snapshot()
         if not self._should_warm(snapshot):
             return
-        if time.monotonic() - self._store.last_change_monotonic < _WARM_AFTER_QUIET_SEC:
-            return
+        if (
+            time.monotonic() - self._store.last_change_monotonic < _WARM_AFTER_QUIET_SEC
+            and self._staleness(snapshot) < _MAX_STALE_FRAMES
+        ):
+            return  # let the burst settle — unless the delta already rides every search too heavy
         if not self._warming.acquire(blocking=False):
             return  # a rebuild is already on the wire
 
@@ -255,6 +263,15 @@ class MemorySearch:
             return None
         return cache if time.monotonic() < cache.expires_monotonic else None
 
+    def _staleness(self, snapshot: MemorySnapshot) -> int:
+        """How many frames the next search's delta must carry (0 = fresh, or no
+        cache to be stale against)."""
+        cache = self._usable_cache(snapshot)
+        if cache is None:
+            return 0
+        cached = {memory.id: memory.stamp for memory in cache.memories}
+        return sum(1 for memory in snapshot.memories if cached.get(memory.id) != memory.stamp)
+
     def _should_warm(self, snapshot: MemorySnapshot) -> bool:
         if self._cache_unsupported or len(snapshot.memories) < _MIN_FRAMES_TO_CACHE:
             return False
@@ -272,6 +289,19 @@ class MemorySearch:
         return self._create_cache(snapshot)
 
     def _create_cache(self, snapshot: MemorySnapshot) -> _CacheHandle | None:
+        started = time.monotonic()
+        # A cache built from fileData must not outlive the uploads it embeds
+        # (Gemini deletes them at 48 h): cap its life at the earliest
+        # referenced file's usable deadline, so warm() rebuilds in time — and
+        # when that deadline is already at hand, don't build at all (the handle
+        # would arrive expired and every warm would pay for another).
+        expires = started + _TTL_SEC - _TTL_SAFETY_SEC
+        for memory in snapshot.memories:
+            until = self._files.usable_until(memory)
+            if until is not None:
+                expires = min(expires, started + (until - time.time()) - _TTL_SAFETY_SEC)
+        if expires <= started:
+            return None
         parts, included = self._frame_parts(snapshot.memories)
         if len(included) < _MIN_FRAMES_TO_CACHE:
             return None
@@ -282,7 +312,6 @@ class MemorySearch:
             "ttl": f"{_TTL_SEC}s",
             "displayName": f"mars-spatial-memory-{snapshot.map_name or 'unknown'}",
         }
-        started = time.monotonic()
         try:
             name = str(self._rest.post(CACHED_CONTENTS_PATH, body).get("name") or "")
         except GeminiHttpError as error:
@@ -305,7 +334,7 @@ class MemorySearch:
                 revision=snapshot.revision,
                 map_name=snapshot.map_name,
                 memories=included,
-                expires_monotonic=started + _TTL_SEC - _TTL_SAFETY_SEC,
+                expires_monotonic=expires,
             ),
         )
         if old is not None:
@@ -316,7 +345,7 @@ class MemorySearch:
 
     # --- request assembly / response handling ---
     def _conclude(
-        self, query: str, response: dict, memories: tuple[Memory, ...], started: float, *, cached: bool
+        self, query: str, response: dict, snapshot: MemorySnapshot, started: float, *, cached: bool
     ) -> SearchVerdict:
         latency = round(time.monotonic() - started, 2)
         parsed = _parse_verdict(response)
@@ -325,9 +354,22 @@ class MemorySearch:
                 query=query, found=False, error="unreadable answer", latency_sec=latency, cached=cached
             )
         found, frame_id, explanation = parsed
+        # The coordinates only mean anything on the map the frames came from —
+        # a map switched mid-flight voids the verdict rather than steering the
+        # robot toward another map's frame.
+        live = self._store.snapshot()
+        if live.map_name != snapshot.map_name:
+            return SearchVerdict(
+                query=query,
+                found=False,
+                error="the active map changed during the search",
+                latency_sec=latency,
+                cached=cached,
+            )
         # Frames are labeled by stable store id, so the answer resolves against
-        # the CURRENT snapshot — a cached-but-since-evicted id cleanly misses.
-        memory = next((m for m in memories if m.id == frame_id), None)
+        # the LIVE snapshot — an id evicted mid-search cleanly misses, a
+        # refreshed one serves its newest pose.
+        memory = next((m for m in live.memories if m.id == frame_id), None)
         if not found or memory is None:
             return SearchVerdict(query=query, found=False, explanation=explanation, latency_sec=latency, cached=cached)
         return SearchVerdict(

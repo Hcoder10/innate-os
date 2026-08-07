@@ -26,7 +26,7 @@ import {
   MEMORY_POSITIONS_TOPIC,
   MEMORY_SEARCH_TOPIC,
 } from "../constants.js";
-import { MEMORY_COLOR, ageAlpha, ageText, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
+import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
 // Overlay palette — exported so the Nav page legend shows the same colors.
 // The robot is deliberately far from the costmap ramp (blue → amber → red):
@@ -75,8 +75,6 @@ const MEM_WEDGE_HALF_RAD = (28 * Math.PI) / 180;
 const MEM_WEDGE_RANGE_M = 1.15;
 const MEM_HIT_PX = 16; // hover/click hit radius around a memory dot (css px)
 const MEM_PULSE_MS = 1200; // ring animation when a new memory is recorded
-// A latched search verdict older than this is history, not news — show nothing.
-const MEM_SEARCH_FRESH_S = 20;
 const MEM_SEARCH_GLOW_MS = 18_000; // how long the recalled spot keeps breathing
 const MEM_SEARCH_CARD_MS = 14_000; // the verdict card auto-dismisses
 
@@ -271,7 +269,7 @@ export function createMap(root, opts = {}) {
   let localGrid = null;
   /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
   const trail = [];
-  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf" | "memories" | "memsearch", () => void>>} live layer subscriptions */
+  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf" | "memsearch", () => void>>} live layer subscriptions */
   const layerUnsubs = {};
 
   // ---- spatial-memory layer state -----------------------------------------
@@ -293,6 +291,7 @@ export function createMap(root, opts = {}) {
   let memSearchUntil = 0; // performance.now() deadline for the recalled-spot glow
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let memSearchCardTimer;
+  let memCardsViewSig = ""; // the view framing the cards were last placed against
 
   // The three DOM overlays: a hover thumbnail, a pinned popup (Go here), and
   // the search-verdict card. All positioned within `root` over the canvas.
@@ -313,15 +312,23 @@ export function createMap(root, opts = {}) {
   function onMemories(msg) {
     const next = parseMemories(msg);
     if (!next) return;
-    if (memKnown === null || (memState && memState.map !== next.map)) {
+    // Keyed on map+fingerprint: a same-name re-map wipes the store and
+    // restarts ids at 1 — without the fingerprint those reborn ids would all
+    // be "known" and never pulse (and dead-map cards would linger).
+    const swapped = memState && (memState.map !== next.map || memState.fingerprint !== next.fingerprint);
+    if (memKnown === null || swapped) {
       memKnown = new Set(next.memories.map((m) => m.id));
       memPulses.clear();
       closeMemPopup();
+      // A recall verdict belongs to the map it was answered on — a switch
+      // must not leave its glow pointing into the new map's frame.
+      memSearch = null;
+      hideMemSearchCard();
     } else {
       for (const m of next.memories) {
         if (memKnown.has(m.id)) continue;
         memKnown.add(m.id);
-        memPulses.set(m.id, performance.now());
+        if (layers.memories) memPulses.set(m.id, performance.now());
       }
     }
     memState = next;
@@ -331,11 +338,18 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
+  // The first memsearch message after subscribing is the latched replay:
+  // history, shown only while fresh. Later arrivals are live news — never
+  // gated on the stamp, because the robot's wall clock can disagree with the
+  // browser's (no RTC before NTP settles) by more than the freshness window.
+  let memSearchSeen = false;
   /** @param {any} msg std_msgs/String — /brain/memory_search (latched) */
   function onMemorySearch(msg) {
     const verdict = parseSearch(msg);
     if (!verdict) return;
-    if (Date.now() / 1000 - verdict.stamp > MEM_SEARCH_FRESH_S) return; // stale latched replay
+    const replay = !memSearchSeen;
+    memSearchSeen = true;
+    if (replay && Date.now() / 1000 - verdict.stamp > SEARCH_REPLAY_FRESH_S) return; // stale latched replay
     memSearch = verdict;
     memSearchUntil = performance.now() + (verdict.found ? MEM_SEARCH_GLOW_MS : 0);
     showMemSearchCard(verdict);
@@ -484,7 +498,7 @@ export function createMap(root, opts = {}) {
     closeBtn.className = "mem-search-close";
     closeBtn.textContent = "×";
     closeBtn.setAttribute("aria-label", "dismiss");
-    closeBtn.addEventListener("click", hideMemSearchCard);
+    closeBtn.addEventListener("click", dismissMemSearch);
     head.appendChild(closeBtn);
     memSearchCard.appendChild(head);
     const body = document.createElement("div");
@@ -519,6 +533,15 @@ export function createMap(root, opts = {}) {
     clearTimeout(memSearchCardTimer);
     memSearchCard.classList.remove("is-in");
     memSearchCard.hidden = true;
+  }
+
+  /** User dismissal (× or Escape) ends the whole recall moment — card, glow,
+   * and thread. The auto-dismiss timer keeps hideMemSearchCard: there the
+   * glow deliberately outlives the card by a few seconds. */
+  function dismissMemSearch() {
+    memSearchUntil = 0;
+    hideMemSearchCard();
+    draw();
   }
 
   /** @param {any} msg sensor_msgs/LaserScan */
@@ -611,16 +634,14 @@ export function createMap(root, opts = {}) {
       delete layerUnsubs.local;
       localGrid = null;
     }
-    if (layers.memories && !layerUnsubs.memories) {
-      layerUnsubs.memories = ros.subscribe(MEMORY_POSITIONS_TOPIC, onMemories, 0, "std_msgs/msg/String");
+    if (layers.memories && !layerUnsubs.memsearch) {
       layerUnsubs.memsearch = ros.subscribe(MEMORY_SEARCH_TOPIC, onMemorySearch, 0, "std_msgs/msg/String");
-    } else if (!layers.memories && layerUnsubs.memories) {
-      layerUnsubs.memories();
-      layerUnsubs.memsearch?.();
-      delete layerUnsubs.memories;
+    } else if (!layers.memories && layerUnsubs.memsearch) {
+      layerUnsubs.memsearch();
       delete layerUnsubs.memsearch;
-      memState = null;
-      memKnown = null;
+      // memState/memKnown stay: the positions feed is always on (it also
+      // drives the sidebar reel's highlight/focus) — only the marks hide.
+      memSearchSeen = false;
       memPulses.clear();
       memSearch = null;
       setMemHover(null);
@@ -998,12 +1019,18 @@ export function createMap(root, opts = {}) {
     }
 
     // Cards are world-anchored DOM: keep them glued to their memory through
-    // every pan/zoom/follow reframe.
-    if (!memHoverCard.hidden && memHover) placeMemCard(memHoverCard, memHover);
-    if (!memPopup.hidden && memPopupFor !== null) {
-      const m = memState?.memories.find((mem) => mem.id === memPopupFor);
-      if (m) placeMemCard(memPopup, m);
-      else closeMemPopup();
+    // every pan/zoom/follow reframe — but only re-place when the framing
+    // actually changed. placeMemCard reads offsetWidth/clientHeight (a forced
+    // layout), and the recall glow drives draw() at 60 fps for many seconds.
+    const cardsViewSig = view ? `${view.ox}|${view.oy}|${view.scale}` : "";
+    if (cardsViewSig !== memCardsViewSig) {
+      memCardsViewSig = cardsViewSig;
+      if (!memHoverCard.hidden && memHover) placeMemCard(memHoverCard, memHover);
+      if (!memPopup.hidden && memPopupFor !== null) {
+        const m = memState?.memories.find((mem) => mem.id === memPopupFor);
+        if (m) placeMemCard(memPopup, m);
+        else closeMemPopup();
+      }
     }
   }
 
@@ -1296,10 +1323,13 @@ export function createMap(root, opts = {}) {
       const clicked = !panDrag.moved;
       panDrag = null;
       render(); // restore the cursor, surface Recenter
-      // A plain click (no pan) opens the memory under the cursor — or lets an
-      // open popup go when the click landed on empty map.
+      // A plain click (no pan) opens the memory under the pointer — or lets an
+      // open popup go when the click landed on empty map. Hit-test here, not
+      // via memHover: touch has no hover phase before the tap.
       if (clicked) {
-        if (memHover) openMemPopup(memHover);
+        const { px, py } = eventToCanvas(e);
+        const hit = hitMemory(px, py);
+        if (hit) openMemPopup(hit);
         else closeMemPopup();
       }
       return;
@@ -1397,7 +1427,7 @@ export function createMap(root, opts = {}) {
   function onKeyDown(e) {
     if (e.key !== "Escape") return;
     closeMemPopup();
-    hideMemSearchCard();
+    dismissMemSearch();
   }
   document.addEventListener("keydown", onKeyDown);
 
@@ -1414,6 +1444,9 @@ export function createMap(root, opts = {}) {
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
   const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");
+  // Always on (a tiny 1 Hz JSON), not layer-gated: highlightMemory/focusMemory
+  // must keep working from the sidebar reel while the layer chip is off.
+  const unsubMemories = ros.subscribe(MEMORY_POSITIONS_TOPIC, onMemories, 0, "std_msgs/msg/String");
 
   return {
     /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */
@@ -1499,6 +1532,7 @@ export function createMap(root, opts = {}) {
     },
     /** Gallery click: centre the view on a memory and open its popup. @param {number} id */
     focusMemory(id) {
+      if (mappingMode) return; // the coordinates belong to the finished map, and Go-here mid-mapping is wrong
       const m = memState?.memories.find((mem) => mem.id === id);
       if (!m) return;
       panCenter = { x: m.x, y: m.y };
@@ -1526,6 +1560,7 @@ export function createMap(root, opts = {}) {
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
+      unsubMemories();
       unsubMappingPose?.();
       for (const unsub of Object.values(layerUnsubs)) unsub();
       canvas.remove();

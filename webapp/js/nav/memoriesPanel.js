@@ -10,7 +10,7 @@
 
 import { ros } from "../rosClient.js";
 import { MEMORY_POSITIONS_TOPIC, MEMORY_SEARCH_TOPIC } from "../constants.js";
-import { ageText, cacheLabel, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
+import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
 
 // Age labels ("5 min ago") drift while nothing else changes — refresh slowly.
 const AGE_REFRESH_MS = 30_000;
@@ -117,11 +117,18 @@ export function createMemoriesPanel(root, map) {
     "std_msgs/msg/String",
   );
 
+  // Same replay policy as the map layer: the first message after subscribing
+  // is the latched history — shown only while fresh, so a page opened hours
+  // later doesn't advertise an old recall as news.
+  let searchSeen = false;
   const unsubSearch = ros.subscribe(
     MEMORY_SEARCH_TOPIC,
     (msg) => {
       const verdict = parseSearch(msg);
       if (!verdict) return;
+      const replay = !searchSeen;
+      searchSeen = true;
+      if (replay && Date.now() / 1000 - verdict.stamp > SEARCH_REPLAY_FRESH_S) return;
       lastSearch.hidden = false;
       const outcome = verdict.found ? "found" : verdict.error ? "failed" : "no match";
       lastSearch.textContent = `last recall · “${verdict.query}” → ${outcome}`;

@@ -21,14 +21,23 @@ search concludes server-side and its verdict is dropped.
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from brain_messages.action import SearchMemory
 from rclpy.action import ActionClient
 
+from brain_client.skills.types import cancellable_sleep
+
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from rclpy.impl.rcutils_logger import RcutilsLogger
+    from rclpy.node import Node
+    from rclpy.task import Future
+
+_SERVER_WAIT_SEC = 2.0  # how long begin() waits for /brain/search_memory to exist
 
 
 @dataclass(frozen=True)
@@ -52,7 +61,7 @@ class RecallVerdict:
 
 
 class SpatialMemory:
-    def __init__(self, node, logger):
+    def __init__(self, node: Node, logger: RcutilsLogger):
         self._logger = logger
         self._client = ActionClient(node, SearchMemory, "/brain/search_memory")
 
@@ -63,17 +72,23 @@ class SpatialMemory:
         def conclude(verdict: RecallVerdict) -> None:
             holder[0] = verdict
 
-        if not self._client.wait_for_server(timeout_sec=2.0):
-            conclude(_error_verdict("memory search unavailable — is the brain node running?"))
-            return lambda: holder[0]
+        # rclpy's wait_for_server is a time.sleep poll — sliced here so a Stop
+        # pressed while the server is absent unwinds instead of blocking out
+        # the whole timeout (cancellable_sleep raises SkillCancelled).
+        deadline = time.monotonic() + _SERVER_WAIT_SEC
+        while not self._client.wait_for_server(timeout_sec=0.0):
+            if time.monotonic() >= deadline:
+                conclude(_error_verdict("memory search unavailable — is the brain node running?"))
+                return lambda: holder[0]
+            cancellable_sleep(0.1)
 
-        def on_result(future) -> None:
+        def on_result(future: Future) -> None:
             try:
                 conclude(_from_result(future.result().result))
             except Exception as error:  # noqa: BLE001 — a lost result must still unblock the waiter
                 conclude(_error_verdict(f"memory search result lost: {error}"))
 
-        def on_goal(future) -> None:
+        def on_goal(future: Future) -> None:
             try:
                 handle = future.result()
             except Exception as error:  # noqa: BLE001 — same: the waiter needs an answer, not a hang
@@ -94,7 +109,7 @@ def _error_verdict(error: str) -> RecallVerdict:
     return RecallVerdict(found=False, message=f"Memory search failed: {error}", error=error)
 
 
-def _from_result(result) -> RecallVerdict:
+def _from_result(result: SearchMemory.Result) -> RecallVerdict:
     return RecallVerdict(
         found=result.found,
         message=result.message,

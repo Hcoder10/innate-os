@@ -104,6 +104,27 @@ def test_remapping_under_the_same_name_wipes_stale_memories(data_dir):
     assert list((data_dir / "spatial_memory" / "A").glob("*.jpg")) == []
 
 
+def test_a_same_name_remap_is_caught_without_a_map_switch(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")  # the every-tick call: a no-op while the file is unchanged
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "A.pgm").write_bytes(b"remapped-content")
+    store.switch_map("A.yaml")
+    assert store.snapshot().memories == ()
+
+
+def test_a_touched_but_identical_map_keeps_memories(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "A.pgm").write_bytes(b"map-A-content")
+    store.switch_map("A.yaml")
+    assert len(store.snapshot().memories) == 1
+
+
 def test_maps_have_isolated_memories(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
@@ -346,7 +367,9 @@ def build_cache(search: MemorySearch) -> None:
 
 def upload_frames(search: MemorySearch) -> None:
     """Synchronous stand-in for maintain()'s background upload round."""
-    search._files._upload(search._files._pending())
+    pending, scanned_dir = search._files._pending()
+    if scanned_dir is not None:
+        search._files._upload(pending, scanned_dir)
 
 
 def part_kinds(body: dict) -> list[str]:
@@ -510,6 +533,21 @@ def test_warm_waits_for_recording_to_settle(data_dir):
     assert fake.creates == []
 
 
+def test_warm_rebuilds_mid_burst_once_the_delta_grows_too_big(data_dir):
+    # The quiet window must not let the stale-cache delta grow without bound
+    # during a long recording tour — past the threshold, rebuild anyway.
+    search, fake, store = make_search(data_dir, frames=6)
+    build_cache(search)
+    for i in range(10):
+        store.add(40.0 + i, 0.0, 0.0, 3000.0 + i, b"jpg-burst")
+    assert time.monotonic() - store.last_change_monotonic < 1.0  # mid-burst
+    search.warm()
+    deadline = time.time() + 2.0
+    while len(fake.creates) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert len(fake.creates) == 2
+
+
 def test_search_mirrors_verdicts_to_the_ui(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "kitchen"})
     build_cache(search)
@@ -636,6 +674,35 @@ def test_a_transient_upload_failure_retries_next_round(data_dir):
     assert len(fake.uploads) == 3
 
 
+def test_a_failed_round_backs_off_before_retrying(data_dir):
+    # The 1 Hz tick must not re-POST a full frame every second against a
+    # broken endpoint — a failed round arms a cooldown that maintain() honors.
+    search, fake, _ = make_search(data_dir, frames=3)
+    fake.upload_error = GeminiHttpError(500, "hiccup")
+    upload_frames(search)  # fails, arms the cooldown
+    fake.upload_error = None
+    search._files.maintain()  # inside the cooldown: returns before spawning
+    assert fake.uploads == []
+    search._files._retry_at = 0.0  # cooldown over
+    upload_frames(search)
+    assert len(fake.uploads) == 3
+
+
+def test_a_cache_built_from_references_expires_with_its_files(data_dir):
+    # A cache embedding fileData must not outlive the uploads it references —
+    # its expiry is capped by the oldest file, not the 12 h cache TTL.
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    files = search._files
+    with files._lock:
+        files._records = {i: replace(r, uploaded_at=r.uploaded_at - 46 * 3600) for i, r in files._records.items()}
+    build_cache(search)
+    cache = search._cache
+    assert cache is not None
+    remaining = cache.expires_monotonic - time.monotonic()
+    assert 0 < remaining < 3600  # ~1 h of file life left, minus the safety margin
+
+
 def test_the_cache_builds_from_file_references(data_dir):
     search, fake, _ = make_search(data_dir, frames=6)
     upload_frames(search)
@@ -676,3 +743,29 @@ def test_labels_and_verdicts_use_stable_store_ids(data_dir):
     labels = [part["text"] for part in parts if "text" in part][:-1]  # the last text part is the question
     assert labels[0].startswith("Frame 2 ")  # ids, not positions, after the eviction
     assert verdict.found and verdict.memory is not None and verdict.memory.id == 5
+
+
+def mutate_after_generate(search: MemorySearch, fake: FakeGemini, mutate) -> None:
+    """Rewire the search's transport so the store mutates while the answer is in flight."""
+    inner = fake.rest.post
+
+    def post_then_mutate(path: str, body: dict) -> dict:
+        response = inner(path, body)
+        mutate()
+        return response
+
+    search._rest = GeminiRest(post=post_then_mutate, delete=fake.rest.delete, upload=fake.rest.upload)
+
+
+def test_a_map_switch_mid_search_voids_the_verdict(data_dir):
+    search, fake, store = make_search(data_dir, frames=2)
+    mutate_after_generate(search, fake, lambda: store.switch_map("B.yaml"))
+    verdict = search.search("the kitchen")
+    assert not verdict.found and "map changed" in verdict.error
+
+
+def test_an_eviction_mid_search_misses_cleanly(data_dir):
+    search, fake, store = make_search(data_dir, frames=2)  # the fake's verdict picks frame 1
+    mutate_after_generate(search, fake, lambda: store.evict(memory_with_id(store, 1)))
+    verdict = search.search("the kitchen")
+    assert not verdict.found and not verdict.error

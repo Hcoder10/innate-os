@@ -57,19 +57,25 @@ class MemoryStore:
         self._memories: list[Memory] = []
         self._next_id = 1
         self._fingerprint = ""
+        self._stat_sig: tuple[int, int] | None = None
         self._revision = 0
         self.last_change_monotonic = 0.0
 
     def switch_map(self, map_name: str | None) -> None:
         """Point the store at a map's memories, loading them from disk.
 
-        Idempotent per name — the fingerprint check (file I/O) runs only when
-        the name actually changes, so calling this every tick is free.
+        Called every tick: same name + unchanged file stat is a cheap no-op,
+        and hashing runs only when the name or the map file changes — so
+        re-mapping over the active map's own name is caught within a tick.
         """
-        if map_name == self._map_name:
+        stat_sig = _map_stat(self._maps_dir, map_name) if map_name else None
+        if map_name == self._map_name and stat_sig == self._stat_sig:
             return
         fingerprint = _map_fingerprint(self._maps_dir, map_name) if map_name else ""
         with self._lock:
+            self._stat_sig = stat_sig
+            if map_name == self._map_name and fingerprint == self._fingerprint:
+                return  # the file was touched, not re-made
             self._map_name = map_name
             self._dir = self._root / Path(map_name).stem if map_name else None
             self._memories = []
@@ -83,6 +89,12 @@ class MemoryStore:
     def snapshot(self) -> MemorySnapshot:
         with self._lock:
             return MemorySnapshot(self._map_name, self._revision, tuple(self._memories))
+
+    @property
+    def fingerprint(self) -> str:
+        """Identity of the loaded map's content — changes exactly when the memories wipe."""
+        with self._lock:
+            return self._fingerprint
 
     def positions(self) -> list[dict]:
         """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory."""
@@ -133,14 +145,18 @@ class MemoryStore:
         assert self._dir is not None
         try:
             index = json.loads((self._dir / "index.json").read_text())
-            stale = index.get("version") != _INDEX_VERSION or index.get("fingerprint") != self._fingerprint
-        except (OSError, json.JSONDecodeError, TypeError):
-            index, stale = {}, True
-        if stale:
-            self._wipe_locked()
-            return
-        self._memories = [Memory(**entry) for entry in index.get("memories", [])]
-        self._next_id = int(index.get("next_id", 1))
+            fresh = (
+                isinstance(index, dict)
+                and index.get("version") == _INDEX_VERSION
+                and index.get("fingerprint") == self._fingerprint
+            )
+            if fresh:
+                self._memories = [Memory(**entry) for entry in index.get("memories", [])]
+                self._next_id = int(index.get("next_id", 1))
+                return
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass  # a wrong-shaped index is as stale as a wrong fingerprint
+        self._wipe_locked()
 
     def _wipe_locked(self) -> None:
         """The map was re-made (or the index is unreadable): the coordinates lie."""
@@ -175,11 +191,22 @@ class MemoryStore:
         self.last_change_monotonic = time.monotonic()
 
 
+def _map_source(maps_dir: Path, map_name: str) -> Path:
+    pgm = maps_dir / (Path(map_name).stem + ".pgm")
+    return pgm if pgm.exists() else maps_dir / map_name
+
+
+def _map_stat(maps_dir: Path, map_name: str) -> tuple[int, int] | None:
+    try:
+        stat = _map_source(maps_dir, map_name).stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
 def _map_fingerprint(maps_dir: Path, map_name: str) -> str:
     """Identity of the map's content, not its name — a re-mapped room must not match."""
-    pgm = maps_dir / (Path(map_name).stem + ".pgm")
-    source = pgm if pgm.exists() else maps_dir / map_name
     try:
-        return hashlib.sha256(source.read_bytes()).hexdigest()
+        return hashlib.sha256(_map_source(maps_dir, map_name).read_bytes()).hexdigest()
     except OSError:
         return ""
