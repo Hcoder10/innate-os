@@ -24,6 +24,8 @@ class BrainConfig:
     arm_camera_image_topic: str
     odom_topic: str
     current_nav_mode_topic: str
+    current_map_topic: str
+    amcl_pose_topic: str
     scan_topic: str
 
     # --- Feature flags ---
@@ -82,6 +84,8 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "arm_camera_image_topic": "/mars/arm/image_raw/compressed",
     "odom_topic": "/odom",
     "current_nav_mode_topic": "/nav/current_mode",
+    "current_map_topic": "/nav/current_map",
+    "amcl_pose_topic": "/amcl_pose",
     "scan_topic": "/scan",
     # --- Feature flags ---
     "send_arm_camera_image": True,

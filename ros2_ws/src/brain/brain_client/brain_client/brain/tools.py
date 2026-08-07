@@ -11,6 +11,7 @@ from brain_client.skills.registry import SkillMeta
 STOP_SKILL = "stop_current_skill"
 WAIT = "wait"
 GO_TO_POINT_IN_VIEW = "go_to_point_in_view"
+SEARCH_MEMORY = "search_memory"
 
 # An explicit no-op keeps idle turns clean: without it, models tend to emit
 # placeholder text ("[]", "Empty response") rather than returning nothing.
@@ -41,6 +42,24 @@ _GO_TO_POINT_IN_VIEW_DECLARATION = {
     },
 }
 
+# Recall over the robot's persistent spatial memory (brain/memory_search.py).
+# Declared only while the memory holds at least one frame for the current map.
+_SEARCH_MEMORY_DECLARATION = {
+    "name": SEARCH_MEMORY,
+    "description": (
+        "Search the robot's long-term memory of places it has seen on this map. Describe the place "
+        "or thing ('the kitchen', 'a banana', 'the door out of this room', 'where you saw my "
+        "airpods'); a vision model reviews every remembered view and an event brings back the best "
+        "match — its image, map coordinates, and when it was seen. Use it to find anything not in "
+        "the current camera view, then drive there with navigate_to_position (local_frame=false)."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {"query": {"type": "STRING", "description": "what to look for, with any helpful context"}},
+        "required": ["query"],
+    },
+}
+
 # Skill input "type" strings (python annotation names from skill introspection)
 # -> Gemini schema types. Anything else is passed as a string with the expected
 # type noted in the description.
@@ -66,7 +85,7 @@ def assign_tool_names(skills: list[SkillMeta]) -> list[tuple[str, SkillMeta]]:
     shadow a built-in tool); colliding names get a numeric suffix so a call
     never silently dispatches to the wrong skill.
     """
-    taken = {STOP_SKILL, WAIT, GO_TO_POINT_IN_VIEW}
+    taken = {STOP_SKILL, WAIT, GO_TO_POINT_IN_VIEW, SEARCH_MEMORY}
     named: list[tuple[str, SkillMeta]] = []
     for meta in skills:
         base = name = tool_name(meta["name"])
@@ -85,6 +104,7 @@ def build_tools(
     running_skill_name: str | None,
     *,
     can_go_to_point_in_view: bool = False,
+    can_search_memory: bool = False,
     user_spoke: bool = False,
 ) -> list[dict]:
     """One function declaration per available skill, in a native tools block.
@@ -115,6 +135,8 @@ def build_tools(
     declarations = [_declaration(name, meta) for name, meta in named_skills]
     if can_go_to_point_in_view:
         declarations.append(_GO_TO_POINT_IN_VIEW_DECLARATION)
+    if can_search_memory:
+        declarations.append(_SEARCH_MEMORY_DECLARATION)
     declarations.append(_WAIT_DECLARATION)
     return [{"functionDeclarations": declarations}]
 
