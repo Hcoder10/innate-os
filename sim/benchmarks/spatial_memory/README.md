@@ -93,6 +93,18 @@ Give the robot a memory of the apartment first — tour it by teleop, or set
 `INNATE_OS_ROOT` to a captured `dataset/home_tour/data` — then the memory
 challenges measure recall-driven navigation instead of blind exploration.
 
+## Webapp panel (sim only)
+
+`innate-sim up` also starts a host-side benchmark service ([service.py](service.py),
+port 8801, `innate-sim logs benchmark`), and the sim webapp grows a
+**Benchmark** section: capture datasets, browse what the admission policy
+kept (thumbnails with per-frame prop visibility), launch retrieval runs with
+a live log, and compare results — all from `https://localhost`. The rail
+entry, the route, and the `/benchmark` proxy path exist only when the webapp
+runs beside a sim (`WEBAPP_SIM_CONTROLS`); a robot's webapp has none of it.
+Live Gemini runs need `GEMINI_API_KEY` in the repo `.env` (the launcher
+injects it into the service).
+
 ## Scaling / speed notes
 
 - `VirtualMars` is unpaced: the full capture tour is ~3 s wall; N instances
