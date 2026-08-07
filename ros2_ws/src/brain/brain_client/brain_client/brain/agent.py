@@ -32,7 +32,14 @@ from brain_client.brain import grounding
 from brain_client.brain.context import Decision, GeminiContext, ToolCall
 from brain_client.brain.loop import LoopThread
 from brain_client.brain.prompt import build_system_prompt
-from brain_client.brain.tools import GO_TO_POINT_IN_VIEW, STOP_SKILL, WAIT, assign_tool_names, build_tools
+from brain_client.brain.tools import (
+    GO_TO_POINT_IN_VIEW,
+    SEARCH_MEMORY,
+    STOP_SKILL,
+    WAIT,
+    assign_tool_names,
+    build_tools,
+)
 from brain_client.brain.transport import pick_transport
 from brain_client.brain.utils import (
     Event,
@@ -53,6 +60,7 @@ if TYPE_CHECKING:
 
     from rclpy.node import Node
 
+    from brain_client.brain.memory_search import MemorySearch
     from brain_client.core.config import BrainConfig
     from brain_client.core.state import BrainState, RunningSkill
     from brain_client.perception.camera import CameraCapture
@@ -89,6 +97,7 @@ class BrainAgent:
         gaze: GazeController,
         proxy: ProxyClient | None = None,
         scan_health: ScanHealthMonitor | None = None,
+        memory: MemorySearch | None = None,
         trace: Callable[[str], None] | None = None,
     ):
         self._logger = node.get_logger()
@@ -100,6 +109,7 @@ class BrainAgent:
         self._roster = roster
         self._chat = chat
         self._gaze = gaze
+        self._memory = memory
         self._trace_sink = trace  # publishes one JSON string per event on /brain/trace
         self._lidar = ScanHealthReporter(
             scan_health, pose_tracker, chat, self._logger, enabled=not config.simulator_mode
@@ -438,7 +448,12 @@ class BrainAgent:
         # the name the model calls always resolves to the skill it was declared for.
         named = assign_tool_names(skills)
         self._tool_map = {name: meta["id"] for name, meta in named}
-        return build_tools(named, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
+        return build_tools(
+            named,
+            None,
+            can_go_to_point_in_view=_NAV_TO_POSITION in active_ids,
+            can_search_memory=self._memory is not None and self._memory.frame_count > 0,
+        )
 
     # ================= act =================
     def _act(self, decision: Decision, speaker: SpeechStreamer, context: GeminiContext) -> list[tuple[ToolCall, str]]:
@@ -495,6 +510,8 @@ class BrainAgent:
             # (a goal that slips through anyway is cancelled by the runner's
             # generation bump, but this keeps the robot from twitching first).
             return "rejected — the brain is deactivating"
+        if call.name == SEARCH_MEMORY:
+            return self._search_memory(call.args)
         if self._state.primitive_running is not None:
             return "rejected — another skill is already running; stop it first"
         if call.name == GO_TO_POINT_IN_VIEW:
@@ -559,6 +576,20 @@ class BrainAgent:
             f"driving to the floor point {math.hypot(*floor):.1f}m away (stopping ~{grounding.STANDOFF_M}m short) "
             "— you will get an event when it finishes"
         )
+
+    def _search_memory(self, args: dict) -> str:
+        """Fire a spatial-memory search; the loop must not block, so the result is an event."""
+        if self._memory is None or self._memory.frame_count == 0:
+            return "rejected — no places remembered on this map yet"
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return "rejected — give a query describing what to find"
+        self._memory.begin_search(query, self._on_memory_result)
+        return "searching memory — the result arrives as an event"
+
+    def _on_memory_result(self, text: str, image: bytes | None) -> None:
+        """Search thread: the result (and the matched frame) becomes the next turn's event."""
+        self.add_event(text, image=image, kind=EventKind.MEMORY)
 
     def _start_skill(self, skill_id: str, inputs: dict) -> None:
         self._gaze.pause()

@@ -72,23 +72,26 @@ class PoseTracker:
     # --- pose queries ---
     def current_pose_xyt(self) -> Pose | None:
         """Current robot pose as (x, y, theta); None if unavailable."""
-        try:
-            if self.is_mapfree and self.last_odom is not None:
-                pos = self.last_odom.pose.pose.position
-                ori = self.last_odom.pose.pose.orientation
-            else:
-                # No timeout: this runs on the agent's loop thread (twice per
-                # turn), and tf2's timeout is a sleep-poll — waiting 0.5s here
-                # whenever the map frame is missing stalls turns and telemetry.
-                # The listener keeps the buffer warm; if the transform isn't
-                # there yet, None now beats a pose half a second late.
-                transform = self.tf_buffer.lookup_transform(
-                    target_frame="map",
-                    source_frame="base_link",
-                    time=Time(),
-                )
-                pos = transform.transform.translation
-                ori = transform.transform.rotation
+        if self.is_mapfree and self.last_odom is not None:
+            pos = self.last_odom.pose.pose.position
+            ori = self.last_odom.pose.pose.orientation
             return (pos.x, pos.y, quaternion_to_yaw(ori))
+        return self.map_pose_xyt()
+
+    def map_pose_xyt(self) -> Pose | None:
+        """The map->base_link pose from TF, regardless of nav mode; None if unavailable."""
+        try:
+            # No timeout: this runs on the agent's loop thread (twice per
+            # turn), and tf2's timeout is a sleep-poll — waiting 0.5s here
+            # whenever the map frame is missing stalls turns and telemetry.
+            # The listener keeps the buffer warm; if the transform isn't
+            # there yet, None now beats a pose half a second late.
+            transform = self.tf_buffer.lookup_transform(
+                target_frame="map",
+                source_frame="base_link",
+                time=Time(),
+            )
         except Exception:
             return None
+        pos = transform.transform.translation
+        return (pos.x, pos.y, quaternion_to_yaw(transform.transform.rotation))

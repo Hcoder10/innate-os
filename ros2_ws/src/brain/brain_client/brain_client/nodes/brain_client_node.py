@@ -25,10 +25,15 @@ from std_srvs.srv import SetBool, Trigger
 
 from brain_client.agents.initializer import initialize_agents
 from brain_client.brain.agent import BrainAgent
+from brain_client.brain.memory_search import MemorySearch
+from brain_client.brain.transport import pick_rest
 from brain_client.brain.utils import EventKind
+from brain_client.common.script_paths import get_innate_os_root
 from brain_client.core.config import BrainConfig
 from brain_client.core.lifecycle import BrainLifecycle
 from brain_client.core.state import BrainState
+from brain_client.memory.recorder import MemoryRecorder
+from brain_client.memory.store import MemoryStore
 from brain_client.perception.camera import CameraCapture
 from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
@@ -134,6 +139,23 @@ class BrainClientNode(Node):
         self.camera = CameraCapture(self, cfg)
         self.pose_tracker = PoseTracker(self, odom_topic=cfg.odom_topic, nav_mode_topic=cfg.current_nav_mode_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
+        # Spatial memory: the recorder builds it whenever the robot drives well-
+        # localized (brain active or not); search recalls over it for the agent.
+        self.memory_store = MemoryStore(get_innate_os_root() / "data")
+        rest = pick_rest(self._proxy)
+        self.memory_search = (
+            MemorySearch(self.memory_store, rest, model=cfg.gemini_model, logger=self.get_logger())
+            if rest is not None
+            else None
+        )
+        self.memory_recorder = MemoryRecorder(
+            self,
+            cfg,
+            store=self.memory_store,
+            pose_tracker=self.pose_tracker,
+            warm_search=self.memory_search.warm if self.memory_search is not None else None,
+            positions_pub=self.create_publisher(String, "/brain/memory_positions", 10),
+        )
         self.gaze = GazeController(self, state)
         self.runner = PrimitiveRunner(
             self,
@@ -155,6 +177,7 @@ class BrainClientNode(Node):
             gaze=self.gaze,
             proxy=self._proxy,
             scan_health=self.scan_health,
+            memory=self.memory_search,
             trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
         # Heavy traces (request bodies, frames — hundreds of KB per turn) are
