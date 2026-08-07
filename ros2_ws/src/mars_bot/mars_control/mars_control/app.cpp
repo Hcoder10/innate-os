@@ -487,9 +487,13 @@ class AppControl : public rclcpp::Node {
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(smoothing_dt_)),
             std::bind(&AppControl::drive_smoother_callback, this));
 
-        // Seed the edge detector from the value that was actually declared: booting into
-        // Mad is a starting state, not a transition, and the arm services are not up yet.
-        mad_engaged_ = drive::is_mad_scale(drive_speed_scale());
+        // Start unbraced even when settings.yaml already declares a Mad speed_scale: the
+        // arm needs the bracing pose whenever the robot can drive at Mad speeds, and how
+        // it got there is not the arm's problem. Seeding true here (booting into Mad reads
+        // as a starting state, not a transition) suppressed the fold for the whole session.
+        // Arm services being down at construction is not a reason to skip it either —
+        // fold_arm_for_mad_mode() checks readiness and retries every 2s.
+        mad_engaged_ = false;
         mad_mode_timer_ = this->create_wall_timer(100ms, std::bind(&AppControl::watch_mad_mode, this));
 
         // Timer for publishing robot info
