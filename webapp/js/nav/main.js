@@ -53,7 +53,7 @@ const PIN_ICON =
 /** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string, on: boolean, topic: string }>} */
 const LAYERS = [
   { key: "scan", label: "LIDAR", on: true, topic: SCAN_TOPIC },
-  { key: "costmap", label: "Global costmap", on: true, topic: GLOBAL_COSTMAP_TOPIC },
+  { key: "costmap", label: "Global costmap", on: false, topic: GLOBAL_COSTMAP_TOPIC },
   { key: "local", label: "Local costmap", on: false, topic: LOCAL_COSTMAP_TOPIC },
   { key: "trail", label: "Path traveled", on: true, topic: ODOM_TOPIC },
   { key: "memories", label: "Memories", on: true, topic: MEMORY_POSITIONS_TOPIC },
