@@ -5,6 +5,9 @@ name: File size check
 # a pull request that exceeds the limit fails the check. To intentionally
 # allow a large file, add it to .sizelimitignore (gitignore-style patterns)
 # in the same PR — that edit is reviewed like any other change.
+#
+# Powered by innate-inc/git-file-size-limit, a standalone open-source
+# action: https://github.com/innate-inc/git-file-size-limit
 
 on:
   pull_request:
@@ -21,8 +24,6 @@ jobs:
           fetch-depth: 0
 
       - name: Check changed files against the size limit
-        env:
-          MAX_BYTES: 102400  # 100 KiB
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 .github/scripts/check_file_size.py
+        uses: innate-inc/git-file-size-limit@main
+        with:
+          max_size: 100KB
