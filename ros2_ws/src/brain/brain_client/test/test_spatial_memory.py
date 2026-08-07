@@ -97,7 +97,7 @@ def test_the_same_view_refreshes_once_aged():
 
 def test_a_recent_picture_is_not_rewritten():
     old = memory(1, 0.0, 0.0, stamp=1000.0)
-    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1030.0)
+    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1005.0)
     assert not plan.record
 
 
@@ -162,14 +162,14 @@ def test_the_wedge_stops_at_walls():
 def test_a_quarter_turn_at_a_painted_spot_is_novel():
     # The old 100-degree rule skipped this; paint says ~70% of the wedge is new.
     old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
-    plan = plan_admission([old], 1.5, 1.5, math.pi / 2, stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage())
+    plan = plan_admission([old], 1.5, 1.5, math.pi / 2, stamp=1005.0, grid=grid_of(open_room()), coverage=Coverage())
     assert plan.record and plan.replace is None
 
 
 def test_a_fully_painted_wedge_is_skipped():
     old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
     plan = plan_admission(
-        [old], 1.5, 1.5, math.radians(5), stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage()
+        [old], 1.5, 1.5, math.radians(5), stamp=1005.0, grid=grid_of(open_room()), coverage=Coverage()
     )
     assert not plan.record
 
@@ -185,8 +185,20 @@ def test_wall_closeups_do_not_pile_up():
     cells = open_room()
     cells[:, :2] = 100
     seen = memory(1, 0.35, 1.5, theta=math.pi, stamp=1000.0)
-    plan = plan_admission([seen], 0.35, 1.5, math.pi, stamp=1010.0, grid=grid_of(cells), coverage=Coverage())
+    plan = plan_admission([seen], 0.35, 1.5, math.pi, stamp=1005.0, grid=grid_of(cells), coverage=Coverage())
     assert not plan.record  # the wall is known: a cramped view must be nearly all new
+
+
+def test_stale_paint_no_longer_vouches_for_the_scene():
+    # Side-stepped off the view axis: the same-view refresh can't fire, and
+    # fresh paint reads the wedge as covered — but once the paint ages out,
+    # the area records anew without touching the old shot's slot.
+    old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
+    grid = grid_of(open_room())
+    fresh = plan_admission([old], 1.5, 1.9, 0.0, stamp=1005.0, grid=grid, coverage=Coverage())
+    assert not fresh.record
+    stale = plan_admission([old], 1.5, 1.9, 0.0, stamp=1400.0, grid=grid, coverage=Coverage())
+    assert stale.record and stale.replace is None
 
 
 def test_a_blind_pose_earns_no_slot():
@@ -1094,6 +1106,9 @@ def test_a_refreshed_frame_invalidates_its_upload(data_dir):
     store.replace(memory_with_id(store, 2), 3.0, 0.0, 0.0, 5000.0, b"jpg-2-new")
     upload_frames(search)
     assert len(fake.uploads) == 7 and fake.uploads[-1] == b"jpg-2-new"
+    # The superseded upload is deleted, not left to Gemini's 48 h expiry — at
+    # the 10 s refresh cadence a dwelled-on viewpoint would pile files up fast.
+    assert any(path.endswith("/files/f2") for path in fake.deletes)
 
 
 def test_upload_latch_on_unsupported_backend(data_dir):

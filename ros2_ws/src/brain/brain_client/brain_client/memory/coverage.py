@@ -33,6 +33,10 @@ OCCUPIED_THRESHOLD = 50  # nav grid: -1 unknown, 0 free, 100 occupied
 _CAMERA_FOV_RAD = math.radians(128.0)
 _PAINT_RANGE_M = 4.0  # beyond this the picture stops carrying useful floor detail
 _RAY_COUNT = 96
+# Paint this old no longer vouches for the scene: a stale area reads as
+# unpainted, so a revisit records anew — from whatever angle the robot happens
+# to look — while the old straight-on shot keeps its slot until eviction.
+PAINT_FRESH_SEC = 300.0
 
 
 @dataclass(frozen=True)
@@ -51,8 +55,10 @@ class Coverage:
         self._grid: Map | None = None
         self._masks: dict[tuple[int, float], np.ndarray] = {}
 
-    def assess(self, memories: Sequence[Memory], grid: Map, x: float, y: float, theta: float) -> CoverageView | None:
-        """This pose's wedge against the union of kept paint; None when the
+    def assess(
+        self, memories: Sequence[Memory], grid: Map, x: float, y: float, theta: float, now: float
+    ) -> CoverageView | None:
+        """This pose's wedge against the union of FRESH paint; None when the
         grid is unreadable. A pose that sees nothing reads as fully painted —
         a blind spot earns no slot."""
         wedge = wedge_mask(grid, x, y, theta)
@@ -61,7 +67,9 @@ class Coverage:
         visible = int(wedge.sum())
         if visible == 0:
             return CoverageView(painted_fraction=1.0, visible_m2=0.0)
-        painted = self._union(memories, grid)
+        self._prune({(m.id, m.stamp) for m in memories})
+        fresh = [m for m in memories if now - m.stamp <= PAINT_FRESH_SEC]
+        painted = self._union(fresh, grid)
         if painted is None:
             return None
         fraction = float((wedge & painted).sum()) / visible
@@ -90,10 +98,11 @@ class Coverage:
                 cheapest, cheapest_cost = memory, cost
         return cheapest
 
-    def _union(self, memories: Sequence[Memory], grid: Map) -> np.ndarray | None:
-        live = {(m.id, m.stamp) for m in memories}
+    def _prune(self, live: set[tuple[int, float]]) -> None:
         for stale in [key for key in self._masks if key not in live]:
             del self._masks[stale]
+
+    def _union(self, memories: Sequence[Memory], grid: Map) -> np.ndarray | None:
         union = np.zeros((grid.height, grid.width), dtype=bool)
         for memory in memories:
             mask = self._mask(memory, grid)

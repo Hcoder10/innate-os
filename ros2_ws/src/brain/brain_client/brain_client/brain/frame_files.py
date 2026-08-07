@@ -179,7 +179,13 @@ class FrameFiles:
                     self._sync_map_locked()
                     if self._dir != uploaded_into:
                         return  # the map switched mid-round; these frames are gone
+                    superseded = self._records.get(memory.id)
                     self._records[memory.id] = _FileRecord(uri=uri, uploaded_at=time.time(), image_stamp=memory.stamp)
+                # A refreshed frame's old upload would otherwise linger until
+                # Gemini's 48 h expiry — at the refresh cadence that piles up.
+                if superseded is not None and superseded.uri != uri:
+                    with contextlib.suppress(Exception):  # best effort; expiry is the backstop
+                        self._rest.delete("/v1beta/files/" + superseded.uri.rsplit("/", 1)[-1])
         finally:
             with self._lock:
                 self._sync_map_locked()
