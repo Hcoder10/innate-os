@@ -51,10 +51,15 @@ execute() is your cleanup hook; ``self.on_cancel(...)`` exists only to
 forward a cancel to an external action goal.
 
 :mod:`innate.exceptions` groups every exception a skill raises or catches.
+
+Agents are authored from the same namespace: ``from innate import Agent``,
+with ``SkillRef``/``InputRef`` typing what ``get_skills()``/``get_inputs()``
+may list.
 """
 
 from typing import TYPE_CHECKING
 
+from brain_client.agents.types import Agent, InputRef, SkillRef
 from brain_client.robot.exceptions import ArmFailed, ArmUnhealthy
 from brain_client.skills.types import (
     PhysicalSkill,
@@ -81,6 +86,7 @@ CAMERAS: dict[str, type[Image]] = {"main": MainImage, "wrist": WristImage}
 """Camera name → the type to annotate; the main camera also serves ``DepthMap``."""
 
 __all__ = [
+    "Agent",
     "Arm",
     "ArmFailed",
     "ArmUnhealthy",
@@ -91,6 +97,7 @@ __all__ = [
     "Head",
     "HeadState",
     "Image",
+    "InputRef",
     "JointStates",
     "Lidar",
     "MainImage",
@@ -103,6 +110,7 @@ __all__ = [
     "SkillCancelled",
     "SkillFailed",
     "SkillOutput",
+    "SkillRef",
     "SkillResult",
     "SkillReturn",
     "TrainedSkill",

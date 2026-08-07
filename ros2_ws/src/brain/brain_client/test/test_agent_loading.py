@@ -128,6 +128,27 @@ def test_ordinary_python_works(workspace):
     assert set(agents) == {"alpha", "folderagent", "pairone", "pairtwo"}
 
 
+def test_legacy_and_facade_import_paths_load(workspace):
+    # Robots in the field have custom agents authored against the pre-#542
+    # `brain_client.agent_types` path; new ones author against `innate`.
+    # Both must resolve to the same Agent class or field agents break on update.
+    write(
+        workspace,
+        "custom_agents/legacy.py",
+        agent_src("Legacy").replace("brain_client.agents.types", "brain_client.agent_types"),
+    )
+    write(
+        workspace,
+        "custom_agents/facade.py",
+        agent_src("Facade").replace("from brain_client.agents.types import Agent", "from innate import Agent"),
+    )
+
+    agents, _default, broken = initialize_agents(LOGGER)
+
+    assert broken == {}
+    assert {"legacy", "facade"} <= set(agents)
+
+
 # ------------------------------------------------------- broken stays visible
 
 
