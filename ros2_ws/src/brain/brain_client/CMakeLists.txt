@@ -41,16 +41,12 @@ if(BUILD_TESTING)
   find_package(ament_cmake_ros REQUIRED)
   find_package(launch_testing_ament_cmake REQUIRED)
 
-  # Register integration tests with ROS domain ID isolation
-  function(add_ros_isolated_launch_test path)
-    set(RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py")
-    add_launch_test("${path}" RUNNER "${RUNNER}" ${ARGN})
-  endfunction()
-
-  add_ros_isolated_launch_test(test/test_pose_image.launch.py
-    TIMEOUT 180
-  )
-  add_ros_isolated_launch_test(test/test_fake_cloud_loop.launch.py
+  # Boot smoke with ROS domain ID isolation: proves the installed nodes
+  # actually launch (exec bits, imports, entry points) under the current
+  # install mode. The agent's behavior itself is covered by the headless
+  # pytest suites in test/.
+  add_launch_test(test/test_node_boot.launch.py
+    RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py"
     TIMEOUT 240
   )
 endif()
