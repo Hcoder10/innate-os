@@ -18,7 +18,14 @@ UPDATE_CMD="${INNATE_OS_ROOT}/scripts/update/innate-update"
 WEBAPP_URI_SCRIPT="${INNATE_OS_ROOT}/scripts/webapp_uri.zsh"
 ANIMATE="${INNATE_WELCOME_ANIMATE:-1}"
 ANIMATION_DELAY="${INNATE_WELCOME_DELAY:-0.04}"
+# post_update.sh rewrites ~/.zshrc from config/zsh/.zshrc on every update, and the
+# env var only reaches a shell that is already past this script, so the persistent
+# opt-out has to be a file outside both.
+SSH_CD_OPT_OUT="${XDG_CONFIG_HOME:-$HOME/.config}/innate/no-ssh-cd"
 START_IN_REPO="${INNATE_SSH_CD:-1}"
+if [[ -e "$SSH_CD_OPT_OUT" ]]; then
+    START_IN_REPO=0
+fi
 
 if [[ ! -x "$UPDATE_CMD" ]] && command -v innate-update >/dev/null 2>&1; then
     UPDATE_CMD="$(command -v innate-update)"

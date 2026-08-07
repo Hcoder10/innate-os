@@ -354,11 +354,17 @@ relative to the repo.
 Both behaviors only apply to interactive SSH logins, and only once per session, so
 `ssh robot '<command>'`, `scp`/`sftp`, and nested shells are untouched. The `cd` is
 also skipped whenever the shell did not start in `$HOME` — `ssh robot -t 'cd /var/log && zsh'`
-keeps its directory. To opt out entirely:
+keeps its directory. To opt out permanently:
 
 ```bash
-export INNATE_SSH_CD=0
+mkdir -p ~/.config/innate && touch ~/.config/innate/no-ssh-cd
 ```
+
+The marker file is used rather than an entry in `~/.zshrc` because `post_update.sh`
+rewrites `~/.zshrc` from `config/zsh/.zshrc` on every update, which would discard it.
+`INNATE_SSH_CD=0` also works, but only where it is set before the shell starts (a
+wrapper or `AcceptEnv`) — exporting it at an existing prompt is too late to affect
+that session and does not carry to the next login.
 
 ---
 
