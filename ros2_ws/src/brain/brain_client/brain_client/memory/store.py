@@ -90,6 +90,12 @@ class MemoryStore:
         with self._lock:
             return MemorySnapshot(self._map_name, self._revision, tuple(self._memories))
 
+    @property
+    def fingerprint(self) -> str:
+        """Identity of the loaded map's content — changes exactly when the memories wipe."""
+        with self._lock:
+            return self._fingerprint
+
     def positions(self) -> list[dict]:
         """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory."""
         with self._lock:
@@ -139,14 +145,18 @@ class MemoryStore:
         assert self._dir is not None
         try:
             index = json.loads((self._dir / "index.json").read_text())
-            stale = index.get("version") != _INDEX_VERSION or index.get("fingerprint") != self._fingerprint
-        except (OSError, json.JSONDecodeError, TypeError):
-            index, stale = {}, True
-        if stale:
-            self._wipe_locked()
-            return
-        self._memories = [Memory(**entry) for entry in index.get("memories", [])]
-        self._next_id = int(index.get("next_id", 1))
+            fresh = (
+                isinstance(index, dict)
+                and index.get("version") == _INDEX_VERSION
+                and index.get("fingerprint") == self._fingerprint
+            )
+            if fresh:
+                self._memories = [Memory(**entry) for entry in index.get("memories", [])]
+                self._next_id = int(index.get("next_id", 1))
+                return
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass  # a wrong-shaped index is as stale as a wrong fingerprint
+        self._wipe_locked()
 
     def _wipe_locked(self) -> None:
         """The map was re-made (or the index is unreadable): the coordinates lie."""

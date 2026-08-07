@@ -29,6 +29,8 @@ from brain_client.brain.transport import FILES_UPLOAD_PATH, UNSUPPORTED_ENDPOINT
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from rclpy.impl.rcutils_logger import RcutilsLogger
+
     from brain_client.brain.transport import GeminiRest
     from brain_client.memory.store import Memory, MemoryStore
 
@@ -45,7 +47,7 @@ class _FileRecord:
 
 
 class FrameFiles:
-    def __init__(self, store: MemoryStore, rest: GeminiRest, logger):
+    def __init__(self, store: MemoryStore, rest: GeminiRest, logger: RcutilsLogger):
         self._store = store
         self._rest = rest
         self._logger = logger
@@ -81,40 +83,46 @@ class FrameFiles:
         """Upload new/refreshed/aging frames in the background; returns immediately."""
         if self.unsupported or time.monotonic() < self._retry_at:
             return
-        pending = self._pending()
-        if not pending:
+        pending, scanned_dir = self._pending()
+        if not pending or scanned_dir is None:
             return
         if not self._busy.acquire(blocking=False):
             return  # a maintenance round is already running
 
         def run() -> None:
             try:
-                self._upload(pending)
+                self._upload(pending, scanned_dir)
             finally:
                 self._busy.release()
 
         threading.Thread(target=run, name="memory-file-upload", daemon=True).start()
 
-    def _pending(self) -> list[Memory]:
+    def _pending(self) -> tuple[list[Memory], Path | None]:
+        """Frames needing upload, and the registry dir they were scanned against."""
         snapshot = self._store.snapshot()
         now = time.time()
         with self._lock:
             self._sync_map_locked()
             if self._dir is None:
-                return []
+                return [], None
+            scanned_dir = self._dir
             records = dict(self._records)
         pending = []
         for memory in snapshot.memories:
             record = records.get(memory.id)
             if record is None or record.image_stamp != memory.stamp or now - record.uploaded_at > _REUPLOAD_AFTER_SEC:
                 pending.append(memory)
-        return pending
+        return pending, scanned_dir
 
-    def _upload(self, pending: list[Memory]) -> None:
+    def _upload(self, pending: list[Memory], uploaded_into: Path) -> None:
         """One maintenance round. A transient failure ends the round (retried
         after a backoff); an unsupported-endpoint answer latches the tier off.
-        The registry is saved once per round, not per frame."""
-        uploaded_into = self._dir  # a map switch mid-round orphans these uploads
+        The registry is saved once per round, not per frame.
+
+        ``uploaded_into`` is the dir the pending scan ran against — any other
+        map loaded by the time a result lands means these uploads are orphans
+        (never recorded into the new map's registry, whose ids collide).
+        """
         try:
             for memory in pending:
                 path = self._store.image_path(memory.id)

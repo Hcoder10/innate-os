@@ -367,7 +367,9 @@ def build_cache(search: MemorySearch) -> None:
 
 def upload_frames(search: MemorySearch) -> None:
     """Synchronous stand-in for maintain()'s background upload round."""
-    search._files._upload(search._files._pending())
+    pending, scanned_dir = search._files._pending()
+    if scanned_dir is not None:
+        search._files._upload(pending, scanned_dir)
 
 
 def part_kinds(body: dict) -> list[str]:

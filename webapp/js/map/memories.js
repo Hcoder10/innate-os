@@ -9,8 +9,14 @@
  * mark (robot pink, goal green, route blue, scan salmon, costmap amber/red). */
 export const MEMORY_COLOR = "#b48cff";
 
+/** A latched search verdict older than this is history, not news. Only the
+ * first (replay) message after subscribing is stamp-gated — the robot's wall
+ * clock can disagree with the browser's (no RTC before NTP settles), so live
+ * arrivals always show. */
+export const SEARCH_REPLAY_FRESH_S = 20;
+
 /** @typedef {{ id: number, x: number, y: number, theta: number, stamp: number }} Memory */
-/** @typedef {{ map: string, cache: string, memories: Memory[] }} MemoryState */
+/** @typedef {{ map: string, fingerprint: string, cache: string, memories: Memory[] }} MemoryState */
 
 /**
  * Parse a /brain/memory_positions message. Null when malformed — the layer
@@ -29,6 +35,9 @@ export function parseMemories(msg) {
     }
     return {
       map: typeof data.map === "string" ? data.map : "",
+      // Identity of the map's content: a same-name re-map wipes the memories
+      // and restarts ids, and this is the only field that changes with it.
+      fingerprint: typeof data.fingerprint === "string" ? data.fingerprint : "",
       cache: typeof data.cache === "string" ? data.cache : "off",
       memories,
     };

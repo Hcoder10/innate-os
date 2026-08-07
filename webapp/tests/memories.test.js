@@ -31,12 +31,14 @@ test("parseMemories reads a full payload", () => {
   const msg = {
     data: JSON.stringify({
       map: "Home.yaml",
+      fingerprint: "abc123def456",
       cache: "warm",
       positions: [{ id: 3, x: 1.5, y: -0.25, theta: 1.57, stamp: NOW }],
     }),
   };
   assert.deepEqual(parseMemories(msg), {
     map: "Home.yaml",
+    fingerprint: "abc123def456",
     cache: "warm",
     memories: [{ id: 3, x: 1.5, y: -0.25, theta: 1.57, stamp: NOW }],
   });
@@ -48,6 +50,7 @@ test("parseMemories skips malformed entries and defaults missing fields", () => 
   };
   const state = parseMemories(msg);
   assert.equal(state?.map, "");
+  assert.equal(state?.fingerprint, "");
   assert.equal(state?.cache, "off");
   assert.deepEqual(state?.memories, [{ id: 1, x: 0, y: 0, theta: 0, stamp: 0 }]);
 });

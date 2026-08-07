@@ -29,6 +29,8 @@ from rclpy.executors import MultiThreadedExecutor
 from brain_client.brain.memory_search import verdict_text
 
 if TYPE_CHECKING:
+    from rclpy.action.server import ServerGoalHandle
+
     from brain_client.brain.memory_search import MemorySearch, SearchVerdict
 
 
@@ -52,7 +54,7 @@ class MemorySearchServer:
         self._thread = threading.Thread(target=self._executor.spin, name="memory-search-server", daemon=True)
         self._thread.start()
 
-    def _execute(self, goal_handle) -> SearchMemory.Result:
+    def _execute(self, goal_handle: ServerGoalHandle) -> SearchMemory.Result:
         verdict = self._search.search(str(goal_handle.request.query))  # never raises: errors are verdicts
         goal_handle.succeed()
         return _to_result(verdict)

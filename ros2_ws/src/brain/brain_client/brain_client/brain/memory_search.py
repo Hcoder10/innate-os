@@ -49,6 +49,8 @@ from brain_client.brain.transport import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rclpy.impl.rcutils_logger import RcutilsLogger
+
     from brain_client.brain.transport import GeminiRest
     from brain_client.memory.store import Memory, MemorySnapshot, MemoryStore
 
@@ -115,7 +117,7 @@ class SearchVerdict:
 
 
 class MemorySearch:
-    def __init__(self, store: MemoryStore, rest: GeminiRest, *, model: str, logger):
+    def __init__(self, store: MemoryStore, rest: GeminiRest, *, model: str, logger: RcutilsLogger):
         self._store = store
         self._rest = rest
         self._model = model
@@ -201,9 +203,11 @@ class MemorySearch:
             except GeminiHttpError as error:
                 if error.status >= 500:
                     raise
-                # The cache died server-side (expired early, deleted, rejected):
-                # forget it and answer from frames; the next warm rebuilds it.
-                self._cache = None
+                # The cache died server-side (expired early, deleted — including
+                # by warm() swapping in a successor and deleting this handle
+                # mid-flight): forget the handle that failed, never a newer one.
+                if self._cache is cache:
+                    self._cache = None
                 self._logger.warn(f"[Memory] cached search failed ({error}); retrying without it")
         parts, _included = self._frame_parts(snapshot.memories)
         body = {
@@ -285,6 +289,19 @@ class MemorySearch:
         return self._create_cache(snapshot)
 
     def _create_cache(self, snapshot: MemorySnapshot) -> _CacheHandle | None:
+        started = time.monotonic()
+        # A cache built from fileData must not outlive the uploads it embeds
+        # (Gemini deletes them at 48 h): cap its life at the earliest
+        # referenced file's usable deadline, so warm() rebuilds in time — and
+        # when that deadline is already at hand, don't build at all (the handle
+        # would arrive expired and every warm would pay for another).
+        expires = started + _TTL_SEC - _TTL_SAFETY_SEC
+        for memory in snapshot.memories:
+            until = self._files.usable_until(memory)
+            if until is not None:
+                expires = min(expires, started + (until - time.time()) - _TTL_SAFETY_SEC)
+        if expires <= started:
+            return None
         parts, included = self._frame_parts(snapshot.memories)
         if len(included) < _MIN_FRAMES_TO_CACHE:
             return None
@@ -295,7 +312,6 @@ class MemorySearch:
             "ttl": f"{_TTL_SEC}s",
             "displayName": f"mars-spatial-memory-{snapshot.map_name or 'unknown'}",
         }
-        started = time.monotonic()
         try:
             name = str(self._rest.post(CACHED_CONTENTS_PATH, body).get("name") or "")
         except GeminiHttpError as error:
@@ -311,14 +327,6 @@ class MemorySearch:
         if not name:
             self._failed_revision = snapshot.revision
             return None
-        expires = started + _TTL_SEC - _TTL_SAFETY_SEC
-        # A cache built from fileData must not outlive the uploads it embeds
-        # (Gemini deletes them at 48 h): cap its life at the earliest
-        # referenced file's usable deadline, so warm() rebuilds in time.
-        for memory in included:
-            until = self._files.usable_until(memory)
-            if until is not None:
-                expires = min(expires, started + (until - time.time()) - _TTL_SAFETY_SEC)
         old, self._cache = (
             self._cache,
             _CacheHandle(
