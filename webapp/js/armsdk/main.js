@@ -146,14 +146,14 @@ const PAGE_HTML = `
     robot connection lost — commands and the live view pause until it returns
   </p>
   <div class="armsdk-toolbar">
-    <span class="armsdk-pill" data-el="torque">torque ?</span>
-    <span class="armsdk-pill" data-el="moving">idle</span>
-    <button class="armsdk-go" data-cmd="torque_on">Torque on</button>
-    <button class="armsdk-warn" data-cmd="torque_off">Torque off</button>
-    <button data-cmd="rest">Rest</button>
-    <button class="armsdk-warn" data-el="rebootBtn">⟳ Reboot arm</button>
+    <span class="armsdk-pill" data-el="torque" title="servo torque state — /mars/arm/status">torque ?</span>
+    <span class="armsdk-pill" data-el="moving" title="whether an arm command is in flight">idle</span>
+    <button class="armsdk-go" data-cmd="torque_on" title="Stiffen the servos so the arm holds and accepts moves">Torque on</button>
+    <button class="armsdk-warn" data-cmd="torque_off" title="Go limp — also the abort path; fires mid-motion">Torque off</button>
+    <button data-cmd="rest" title="Move to the SDK rest pose">Rest</button>
+    <button class="armsdk-warn" data-el="rebootBtn" title="recover() — reboot the servos, settle, torque back on">⟳ Reboot arm</button>
     <span class="spacer"></span>
-    <label>speed cap <input type="number" data-el="speedcap" value="0.20" step="0.05" min="0.05"> m/s</label>
+    <label title="max_ee_speed — end-effector speed cap applied to every move">speed cap <input type="number" data-el="speedcap" value="0.20" step="0.05" min="0.05"> m/s</label>
     <label title="After each cartesian move the SDK FK-checks the settled pose against the target (5 cm xy / 10 cm z). A miss triggers recover() — servo reboot + torque on — then one retry before raising ArmUnhealthy. Off = moves are unverified; you just see the error here.">
       <input type="checkbox" data-el="verify"> verified moves</label>
   </div>
@@ -166,10 +166,10 @@ const PAGE_HTML = `
       <span class="armsdk-viz-hint">grab the amber handle to move the arm · drag to orbit · scroll to zoom</span>
       <div class="armsdk-viz-loading" data-el="vizLoading">loading model…</div>
       <div class="armsdk-pose">
-        <span><b>xyz</b><span class="num" data-el="pxyz">—</span></span>
-        <span><b>rpy</b><span class="num" data-el="prpy">—</span></span>
-        <span><b>grip</b><span class="num" data-el="pg">—</span> / <span class="num" data-el="gt">—</span> tgt</span>
-        <span hidden data-el="dragChip"><b>target</b><span class="num" data-el="dragXyz">—</span></span>
+        <span title="end-effector position in base_link (m) — /fk_pose"><b>xyz</b><span class="num" data-el="pxyz">—</span></span>
+        <span title="end-effector roll/pitch/yaw (degrees)"><b>rpy</b><span class="num" data-el="prpy">—</span></span>
+        <span title="measured gripper joint / commanded grip target"><b>grip</b><span class="num" data-el="pg">—</span> / <span class="num" data-el="gt">—</span> tgt</span>
+        <span hidden data-el="dragChip" title="where the 3D drag handle will send the arm on release"><b>target</b><span class="num" data-el="dragXyz">—</span></span>
         <button class="armsdk-copy" data-el="copyPose" title="Copy pose (x y z rpy)">${ICON_COPY}</button>
       </div>
     </div>
@@ -183,7 +183,7 @@ const PAGE_HTML = `
               <option value="0.01">1 cm</option><option value="0.02" selected>2 cm</option><option value="0.05">5 cm</option>
             </select></label>
           <label>rot <select data-el="rstep"><option value="5">5°</option><option value="15" selected>15°</option></select></label>
-          <label>dur <input type="number" data-el="jogdur" value="0.8" step="0.2" min="0.2"> s</label>
+          <label title="duration passed to move_by">dur <input type="number" data-el="jogdur" value="0.8" step="0.2" min="0.2"> s</label>
         </div>
         <div class="armsdk-jog">
           <button data-jog="dx,1" data-key="w" title="Keyboard: W — nudge +x (forward)">+x fwd <kbd>W</kbd></button>
@@ -213,21 +213,21 @@ const PAGE_HTML = `
           <label>r° <input type="number" data-el="ar" value="0" step="5"></label>
           <label>p° <input type="number" data-el="ap" value="0" step="5"></label>
           <label>y° <input type="number" data-el="aw" value="0" step="5"></label>
-          <label>dur <input type="number" data-el="adur" value="1.5" step="0.5" min="0.5"> s</label>
+          <label title="duration passed to move_to">dur <input type="number" data-el="adur" value="1.5" step="0.5" min="0.5"> s</label>
         </div>
         <div class="armsdk-row">
-          <button class="armsdk-go" data-el="goBtn">Go</button>
-          <button data-el="fillBtn">← from current</button>
+          <button class="armsdk-go" data-el="goBtn" title="move_to — absolute cartesian move to these fields">Go</button>
+          <button data-el="fillBtn" title="Fill the fields from the live pose">← from current</button>
         </div>
       </div>
 
       <div class="armsdk-card">
         <h2>Gripper</h2>
         <div class="armsdk-row">
-          <button class="armsdk-go" data-el="open100">Open</button>
-          <button data-el="open50">Open 50%</button>
-          <button class="armsdk-warn" data-el="closeBtn">Close</button>
-          <label>strength <input type="number" data-el="grip" value="0.2" step="0.1" min="0" max="0.6"> rad</label>
+          <button class="armsdk-go" data-el="open100" title="gripper_open percent=100">Open</button>
+          <button data-el="open50" title="gripper_open percent=50">Open 50%</button>
+          <button class="armsdk-warn" data-el="closeBtn" title="gripper_close at the strength beside">Close</button>
+          <label title="grip preload in rad — higher grips harder">strength <input type="number" data-el="grip" value="0.2" step="0.1" min="0" max="0.6"> rad</label>
         </div>
       </div>
     </div>
@@ -237,11 +237,11 @@ const PAGE_HTML = `
     <div class="armsdk-card">
       <h2>Joints · stream_joints (rad)
         <button class="armsdk-copy" data-el="copyJoints" title="Copy measured joint positions">${ICON_COPY}</button>
-        <span class="armsdk-dirty" data-el="jdirty" hidden>driving live — sync paused</span></h2>
+        <span class="armsdk-dirty" data-el="jdirty" hidden title="sliders are streaming joints; live sync resumes once the arm settles">driving live — sync paused</span></h2>
       <div data-el="sliders"></div>
       <div class="armsdk-row">
-        <button data-el="syncBtn">Sync from measured</button>
-        <button data-cmd="zero">Zero pose</button>
+        <button data-el="syncBtn" title="Snap the sliders back to the measured arm state">Sync from measured</button>
+        <button data-cmd="zero" title="Drive every joint to 0 rad">Zero pose</button>
       </div>
       <div class="armsdk-hint">sliders drive the arm live as you drag; they resume tracking the arm once it settles</div>
     </div>

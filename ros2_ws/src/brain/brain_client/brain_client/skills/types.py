@@ -82,19 +82,25 @@ def cancellable_sleep(seconds: float) -> None:
 
 class SkillOutput:
     """The result of a skill run: the message, the status (a SkillResult, not
-    a string), and an optional structured payload for chaining callers.
+    a string), an optional structured payload for chaining callers, and an
+    optional evidence image (JPEG bytes) that travels with the result — the
+    agent sees it in the completion event, so a skill can show what it found,
+    not just say it (``return SkillOutput("found it", image=jpeg)``).
 
     ``str(output)`` and f-strings give the message; ``output.ok`` is the
     success check. Unpacking as the legacy ``(message, status)`` tuple still
     works but is deprecated.
     """
 
-    __slots__ = ("message", "data", "status")
+    __slots__ = ("message", "data", "status", "image")
 
-    def __init__(self, message: str, data: Any = None, status: "SkillResult" = SkillResult.SUCCESS):
+    def __init__(
+        self, message: str, data: Any = None, status: "SkillResult" = SkillResult.SUCCESS, image: bytes | None = None
+    ):
         self.message = str(message)
         self.data = data
         self.status = status
+        self.image = image
 
     @property
     def ok(self) -> bool:
@@ -180,6 +186,7 @@ class InterfaceType(Enum):
     MANIPULATION = "manipulation"
     MOBILITY = "mobility"
     HEAD = "head"
+    MEMORY = "memory"
 
 
 class SkillStorage:
@@ -501,6 +508,7 @@ def _feed_specs() -> "tuple[_FeedSpec, ...]":
     from brain_client.robot.head import Head
     from brain_client.robot.manipulation import Manipulation
     from brain_client.robot.mobility import Mobility
+    from brain_client.robot.spatial_memory import SpatialMemory
     from brain_client.state.arm import Arm
     from brain_client.state.battery import Battery
     from brain_client.state.head import HeadState
@@ -517,6 +525,7 @@ def _feed_specs() -> "tuple[_FeedSpec, ...]":
         _FeedSpec(Manipulation, Interface, InterfaceType.MANIPULATION, "Manipulation", ("manipulation",)),
         _FeedSpec(Mobility, Interface, InterfaceType.MOBILITY, "Mobility", ("mobility",)),
         _FeedSpec(Head, Interface, InterfaceType.HEAD, "Head", ("head",)),
+        _FeedSpec(SpatialMemory, Interface, InterfaceType.MEMORY, "SpatialMemory", ("memory",)),
         # cameras start per run (and sim renders on demand) — longer grace
         _FeedSpec(MainImage, Camera, main, "MainImage", ("image", "main_image"), "main camera", grace_s=3.0),
         _FeedSpec(WristImage, Camera, wrist, "WristImage", ("wrist_image",), "wrist camera", grace_s=3.0),

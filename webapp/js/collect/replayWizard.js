@@ -42,15 +42,20 @@ export function createReplayWizard(host, ros, opts) {
   cancelBtn.type = "button";
   cancelBtn.className = "record-wizard-cancel";
   cancelBtn.textContent = "Cancel";
+  cancelBtn.title = "Abandon this draft skill";
   head.append(nameEl, cancelBtn);
 
   // ---- controls (phase-dependent) -----------------------------------------
   const controls = document.createElement("div");
   controls.className = "record-controls";
   const recordBtn = button("record-start", "● Record");
+  recordBtn.title = RECORDER_NEW_EPISODE_SERVICE;
   const stopBtn = button("record-stop", "■ Stop");
+  stopBtn.title = `${RECORDER_STOP_EPISODE_SERVICE} · ${RECORDER_SAVE_EPISODE_SERVICE}`;
   const reRecordBtn = button("record-discard", "Re-record");
+  reRecordBtn.title = "Discard this take and record another — the latest take wins";
   const saveBtn = button("record-save", "✓ Save skill");
+  saveBtn.title = SAVE_AS_REPLAY_SKILL_SERVICE;
   controls.append(recordBtn, stopBtn, reRecordBtn, saveBtn);
 
   const hint = document.createElement("p");

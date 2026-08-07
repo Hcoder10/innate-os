@@ -74,10 +74,12 @@ export function openEpisodeMenu(opts) {
   const head = document.createElement("p");
   head.className = "ctx-head microlabel";
   head.textContent = "add to training dataset";
+  head.title = "Copies the episode's files into the chosen dataset; the eval run stays here";
   menu.appendChild(head);
   if (opts.targets.length) {
     for (const target of opts.targets) {
-      item(target.name, () => copyTo(opts, target), "ctx-target");
+      const b = item(target.name, () => copyTo(opts, target), "ctx-target");
+      if (target.directory) b.title = target.directory;
     }
   } else {
     const none = document.createElement("p");

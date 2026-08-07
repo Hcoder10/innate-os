@@ -46,13 +46,16 @@ export function createLogStream(parent, source, opts) {
   crumb.className = "logs-crumb";
   const scopeLabel = document.createElement("span");
   scopeLabel.className = "log-scope mono";
+  scopeLabel.title = "Log lines are filtered to this source";
   const errBadge = document.createElement("span");
   errBadge.className = "logs-errbadge";
+  errBadge.title = "Errors in the selected source, ignoring the level filter";
   errBadge.hidden = true;
   crumb.append(scopeLabel, errBadge);
 
   const sevSel = document.createElement("select");
   sevSel.className = "log-select";
+  sevSel.title = "Minimum severity to show";
   for (const [v, label] of [["all", "All levels"], ["info", "Info+"], ["warn", "Warn+"], ["error", "Errors"]]) {
     const o = document.createElement("option");
     o.value = v; o.textContent = label; sevSel.appendChild(o);
@@ -63,6 +66,7 @@ export function createLogStream(parent, source, opts) {
   search.className = "log-search mono";
   search.type = "text";
   search.placeholder = "filter…";
+  search.title = "Filter by node, process, launch file, or message text";
   search.spellcheck = false;
   search.addEventListener("input", () => { filter.text = search.value.trim().toLowerCase(); rerender(); });
 
@@ -71,21 +75,25 @@ export function createLogStream(parent, source, opts) {
 
   const count = document.createElement("span");
   count.className = "log-count microlabel";
+  count.title = "Lines shown / lines buffered";
 
   const rawBtn = document.createElement("button");
   rawBtn.className = "log-btn";
   rawBtn.type = "button";
+  rawBtn.title = "Show the raw line as the process printed it, instead of the parsed message";
   rawBtn.addEventListener("click", () => { raw = !raw; syncRaw(); rerender(); });
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "log-btn";
   pauseBtn.type = "button";
+  pauseBtn.title = "Pause autoscroll — new lines keep buffering";
   pauseBtn.addEventListener("click", () => { paused = !paused; if (!paused) scrollToEnd(); syncPause(); });
 
   const clearBtn = document.createElement("button");
   clearBtn.className = "log-btn";
   clearBtn.type = "button";
   clearBtn.textContent = "Clear";
+  clearBtn.title = "Clear the buffer in this browser — the robot's log is untouched";
   clearBtn.addEventListener("click", () => { buffer = []; list.replaceChildren(); updateCount(); });
 
   const copyBtn = document.createElement("button");

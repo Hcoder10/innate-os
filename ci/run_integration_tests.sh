@@ -25,12 +25,14 @@ trap cleanup EXIT
 run_ros_integration_tests() {
   # Launch-based tests: these actually start nodes (e.g. brain_client_node.py),
   # so a node whose installed executable is missing or non-runnable fails here.
+  # --no-tests=error: a regex matching nothing must fail, not silently pass —
+  # that's how CI kept green while the suites it named had been deleted.
   ros2 run rmw_zenoh_cpp rmw_zenohd &
   ROUTER_PID=$!
   sleep 2
   colcon test --packages-select brain_client \
     --return-code-on-test-failure \
-    --ctest-args -R "test_pose_image|test_fake_cloud_loop" \
+    --ctest-args -R "test_node_boot" --no-tests=error \
     --event-handlers console_direct+
   colcon test-result --verbose
   kill "${ROUTER_PID}" >/dev/null 2>&1 || true
@@ -81,8 +83,12 @@ if [ -n "${missing}" ]; then
 fi
 
 echo "=== unit tests (fast, no ROS) ==="
+# The whole brain_client suite by directory, so new test files are picked up
+# without editing this script. test_node_boot.launch.py is a launch_testing
+# harness (run via colcon test below), not a pytest suite — skip it here.
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q \
-  src/brain/brain_client/test/test_fake_cloud_selftest.py \
+  src/brain/brain_client/test \
+  --ignore=src/brain/brain_client/test/test_node_boot.launch.py \
   src/brain/manipulation/test/test_config_validation.py
 
 echo "=== unit tests: webapp front door (aiohttp, no ROS) ==="

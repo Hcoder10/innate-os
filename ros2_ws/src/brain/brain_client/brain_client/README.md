@@ -6,13 +6,14 @@ code, start from what it *does*:
 | Folder | What lives here |
 |---|---|
 | `nodes/` | The runnable ROS entry points (the only files with `main()`). Thin composition roots — they build collaborators, wire them, and spin. No behaviour. |
-| `core/` | The brain's own behaviour: the perception loop (`orchestrator`), the activate/deactivate state machine (`lifecycle`), reacting to the agent's next task (`vision_output`), typed `config`, and the shared `state`. |
-| `perception/` | Turning sensors into what the agent sees: `camera`, `pose`/`pose_tracking`, `image_codec`, `gaze`. |
-| `navigation/` | Map state and the navigation `payload` sent to the cloud agent. |
-| `skills/` | The skill system: `registry`, `runner` (action lifecycle), `registration`, `loader`, `hot_reload`, and the public `types` SDK base classes. |
+| `brain/` | The local agent loop: `agent` (look → think → act as one cancellable coroutine), `loop` (the dedicated-thread asyncio runtime it runs on), `context` (bounded Gemini conversation), `tools` + `transport` (declarations and the wire), pure `grounding` (pointed pixel → floor target), `memory_search` (recall over the spatial memory, context-cached) + `search_server` (the `/brain/search_memory` action skills call), and the system `prompt`. |
+| `core/` | The activate/deactivate/reset state machine and directive switching (`lifecycle`), typed `config`, and the shared `state`. |
+| `perception/` | Turning sensors into what the agent sees: `camera`, `pose`/`pose_tracking`, `scan_health`, `gaze`. |
+| `memory/` | Persistent per-map spatial memory: `store` (JSON index + JPEGs on disk), pure `selection` (which viewpoints earn a slot), `recorder` (the always-on ROS adapter that captures them). |
+| `skills/` | The skill system: `registry`, `roster` (available + directive-active sets), `runner` (action lifecycle), `loader`, `hot_reload`, and the public `types` SDK base classes. |
 | `agents/` | Directives/behaviours: `loader`, `initializer`, and the public `types` SDK base class. |
 | `inputs/` | Input-device subsystem and its public `types` SDK base class. |
-| `transport/` | Talking to the cloud + user: the in-process WebSocket transport (`ws_manager` + `ws_transport` + pure `ws_config`), `websocket` (the bridge with the threadsafe asyncio→executor hand-off), `messages` (typed contracts), `chat`, `tts`. |
+| `transport/` | Talking to the user: `chat` (history + chat-out + task status) and `tts`. |
 | `robot/` | Low-level robot facades: `mobility`, `manipulation`, `head`. |
 | `common/` | Cross-cutting leaf utilities: `logging`, `geometry`, `ros_services`, `script_paths`. |
 
@@ -21,22 +22,24 @@ code, start from what it *does*:
 **1. Dependency direction is one-way.**
 
 ```
-nodes  ->  core  ->  {perception, navigation, skills, agents, inputs, transport, robot}  ->  common
+nodes  ->  {brain, core}  ->  {perception, memory, skills, agents, inputs, transport, robot}  ->  common
 ```
 
 A module never imports "upward" (e.g. `perception` never imports `core`).
+`core/lifecycle` drives the agent loop without importing `brain/` — the node
+injects it, so the two stay siblings rather than one depending on the other.
 
 **2. Pure logic is separated from ROS glue by file name, not by folder.**
 
 Within a concept folder, intention-revealing names tell you which is which:
 `pose.py` is pure math; `pose_tracking.py` is the tf2/odom adapter. The *pure*
-files — `perception/pose`, `perception/image_codec`, `navigation/payload`,
-`skills/registry`, `transport/messages`, `core/config` — import **no `rclpy`** and are
-unit-tested without a ROS runtime. `common/import_rules_test.py` enforces this so
-the boundary can't rot.
+files — `perception/pose`, `brain/grounding`, `brain/prompt`, `brain/context`,
+`skills/registry`, `core/config` — import **no `rclpy`** and are unit-tested
+without a ROS runtime.
 
 ## Tests
 
-Unit tests are co-located as `<name>_test.py` next to the module they cover (run the
-pure ones with plain `pytest`, no ROS needed). Integration/launch tests live in the
-package's top-level `test/` directory (wired into the ament build).
+Tests live in the package's top-level `test/` directory (wired into the ament
+build). The pure ones — `test_local_brain.py`, `test_pose_math.py`,
+`test_runner_deactivation.py` — need no ROS runtime beyond `brain_messages`, so
+plain `pytest` runs them.

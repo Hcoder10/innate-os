@@ -13,6 +13,7 @@ export function createAgentIndicator(agentState, agentHref) {
   pill.className = "agent-indicator";
   pill.href = agentHref;
   pill.hidden = true;
+  pill.title = "The autonomous brain is running — open the Agent page to take control";
 
   const dot = document.createElement("span");
   dot.className = "agent-indicator-dot";
@@ -22,6 +23,7 @@ export function createAgentIndicator(agentState, agentHref) {
   stop.type = "button";
   stop.className = "agent-indicator-stop";
   stop.textContent = "Stop";
+  stop.title = "Deactivate the brain — /brain/set_brain_active";
   pill.append(dot, label, stop);
   document.body.appendChild(pill);
 

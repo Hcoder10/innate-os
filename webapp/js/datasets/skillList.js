@@ -35,6 +35,7 @@ export function createSkillList(parent, ros, opts) {
   const title = document.createElement("p");
   title.className = "microlabel";
   title.textContent = "datasets";
+  title.title = "Datasets with a recording directory";
   const tally = document.createElement("span");
   tally.className = "skillpanel-count";
   head.append(title, tally);
@@ -82,6 +83,9 @@ export function createSkillList(parent, ros, opts) {
   function sectionHead(label, icon, isEval) {
     const p = document.createElement("p");
     p.className = "skillpanel-group microlabel" + (isEval ? " eval" : "");
+    p.title = isEval
+      ? "Judged policy rollouts — never used for training"
+      : "Operator demonstrations — what the robot trains on";
     p.innerHTML = icon;
     p.appendChild(document.createTextNode(label));
     return p;

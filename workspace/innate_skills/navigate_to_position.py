@@ -154,6 +154,14 @@ class NavigateToPosition(Skill):
         yield controller
         controller.destroy()
 
+    def guidelines(self):
+        return (
+            "Move the robot to a position given x, y (meters) and theta_degrees (yaw IN DEGREES). "
+            "Prefer local_frame=true: coordinates are then relative to where the robot stands now — "
+            "robot at (0,0) facing theta=0, x forward, y left (e.g. turn around: x=0, y=0, theta_degrees=180). "
+            "Use local_frame=false only to reach absolute coordinates in the frame your pose is reported in."
+        )
+
     def execute(
         self, x: float, y: float, theta_degrees: float = 0.0, local_frame: bool = False, **legacy
     ) -> SkillReturn:

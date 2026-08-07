@@ -14,7 +14,16 @@
 // (it originated in the old teleop chat pane, since removed).
 
 import { copyText } from "../clipboard.js";
-import { CHAT_IN_TOPIC, CHAT_OUT_TOPIC, GET_CHAT_HISTORY_SERVICE, SKILL_STATUS_UPDATE_TOPIC } from "../constants.js";
+import {
+  AGENT_STATUS_TOPIC,
+  CHAT_IN_TOPIC,
+  CHAT_OUT_TOPIC,
+  GET_AVAILABLE_DIRECTIVES_SERVICE,
+  GET_CHAT_HISTORY_SERVICE,
+  RESET_BRAIN_SERVICE,
+  SET_BRAIN_ACTIVE_SERVICE,
+  SKILL_STATUS_UPDATE_TOPIC,
+} from "../constants.js";
 
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
@@ -36,6 +45,7 @@ export function createAgentPanel(root, rosClient, agentState) {
   titleEl.textContent = "Agent";
   const stateDot = document.createElement("span");
   stateDot.className = "agent-state-dot";
+  stateDot.title = `green while the brain is active — ${AGENT_STATUS_TOPIC}`;
   // Phones dock the panel as a bottom sheet (CSS); this expands it upward.
   const expandBtn = document.createElement("button");
   expandBtn.type = "button";
@@ -56,15 +66,17 @@ export function createAgentPanel(root, rosClient, agentState) {
   const directiveSelect = document.createElement("select");
   directiveSelect.className = "agent-directive mono";
   directiveSelect.setAttribute("aria-label", "Directive");
+  directiveSelect.title = `Pick the directive to run — ${GET_AVAILABLE_DIRECTIVES_SERVICE}`;
 
   const toggleBtn = document.createElement("button");
   toggleBtn.type = "button";
   toggleBtn.className = "agent-toggle";
+  toggleBtn.title = SET_BRAIN_ACTIVE_SERVICE;
 
   const resetBtn = document.createElement("button");
   resetBtn.type = "button";
   resetBtn.className = "agent-reset";
-  resetBtn.title = "Reset the agent's brain / working memory";
+  resetBtn.title = `Reset the agent's brain / working memory — ${RESET_BRAIN_SERVICE}`;
   resetBtn.textContent = "Reset";
 
   controls.append(directiveSelect, toggleBtn, resetBtn);
@@ -78,12 +90,14 @@ export function createAgentPanel(root, rosClient, agentState) {
   const activeSkillName = document.createElement("span");
   activeSkillName.className = "agent-activeskill-name mono";
   activeSkillName.textContent = "—";
+  activeSkill.title = `the skill the brain is executing right now — ${SKILL_STATUS_UPDATE_TOPIC}`;
   activeSkill.append(activeSkillLabel, activeSkillName);
 
   // ---- live stream (thoughts + chat + skill runs) -------------------------
   const streamLabel = document.createElement("p");
   streamLabel.className = "microlabel agent-stream-label";
   streamLabel.textContent = "AI thoughts";
+  streamLabel.title = `the brain's thoughts, chat, and skill runs — ${CHAT_OUT_TOPIC}`;
 
   const stream = document.createElement("div");
   stream.className = "agent-stream";
@@ -99,6 +113,7 @@ export function createAgentPanel(root, rosClient, agentState) {
   send.type = "submit";
   send.className = "agent-compose-send";
   send.textContent = "Send";
+  send.title = CHAT_IN_TOPIC;
   form.append(input, send);
 
   panel.append(head, controls, activeSkill, streamLabel, stream, form);
@@ -263,6 +278,7 @@ export function createAgentPanel(root, rosClient, agentState) {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "chat-thoughts-toggle";
+      toggle.title = "The model's internal reasoning for this turn — click to expand";
       const label = document.createElement("span");
       label.className = "chat-thoughts-label";
       label.textContent = "Thoughts";
@@ -346,6 +362,7 @@ export function createAgentPanel(root, rosClient, agentState) {
       nameEl.textContent = name.replace(/_/g, " ");
       const statusEl = document.createElement("span");
       statusEl.className = "chat-skill-status mono";
+      statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
       head.append(tag, nameEl, statusEl);
       wrap.append(head);
       stream.appendChild(wrap);
@@ -361,6 +378,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     if (cls === "failed" && reason && !run.hasDetail) {
       run.hasDetail = true;
       run.wrap.classList.add("has-detail", "open");
+      run.head.title = "Click to show/hide the failure reason";
       const chevron = document.createElement("span");
       chevron.className = "chat-skill-chevron mono";
       chevron.textContent = "▴";

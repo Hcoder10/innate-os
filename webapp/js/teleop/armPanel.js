@@ -48,6 +48,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   const header = document.createElement("button");
   header.type = "button";
   header.className = "arm-header";
+  header.title = "Show/hide the leader-arm controls";
   header.innerHTML =
     '<span class="microlabel">arm</span>' +
     '<svg class="arm-caret" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
@@ -90,6 +91,7 @@ export function createArmPanel(parent, rosClient, opts = {}) {
       switchBtn.className = "arm-button";
       switchBtn.type = "button";
       switchBtn.textContent = "Switch to HTTPS";
+      switchBtn.title = "Reload over HTTPS — WebSerial needs a secure origin";
       switchBtn.addEventListener("click", () => {
         const url = new URL(location.href);
         url.protocol = "https:";
@@ -115,9 +117,11 @@ export function createArmPanel(parent, rosClient, opts = {}) {
 
   const status = document.createElement("p");
   status.className = "arm-status mono";
+  status.title = "Leader-arm read rate over USB";
 
   const joints = document.createElement("div");
   joints.className = "arm-joints";
+  joints.title = "Live leader-arm joint positions (Dynamixel ticks, ±half turn)";
   /** @type {HTMLElement[]} */
   const dots = [];
   for (let i = 0; i < 6; i++) {
@@ -134,10 +138,12 @@ export function createArmPanel(parent, rosClient, opts = {}) {
   connectBtn.className = "arm-button";
   connectBtn.type = "button";
   connectBtn.textContent = "Connect arm";
+  connectBtn.title = "Pick the leader arm's USB serial port (WebSerial)";
 
   const engageBtn = document.createElement("button");
   engageBtn.className = "arm-button arm-engage";
   engageBtn.type = "button";
+  engageBtn.title = `the follower mirrors the leader live — ${LEADER_POSITIONS_TOPIC}`;
 
   // Copy the live joint ticks — handy for pasting a pose into a skill.
   const copyBtn = document.createElement("button");
@@ -335,10 +341,12 @@ function buildArmServices(rosClient) {
   const rebootBtn = document.createElement("button");
   rebootBtn.className = "arm-button";
   rebootBtn.type = "button";
+  rebootBtn.title = "Reboot the follower arm's servos, then torque back on";
 
   const torqueBtn = document.createElement("button");
   torqueBtn.className = "arm-button arm-torque";
   torqueBtn.type = "button";
+  torqueBtn.title = `${ARM_TORQUE_ON_SERVICE} / ${ARM_TORQUE_OFF_SERVICE} — state from ${ARM_STATUS_TOPIC}`;
   torqueBtn.innerHTML =
     '<span class="arm-torque-cap">Torque</span><span class="arm-torque-state"></span>';
   const torqueState = /** @type {HTMLElement} */ (torqueBtn.querySelector(".arm-torque-state"));

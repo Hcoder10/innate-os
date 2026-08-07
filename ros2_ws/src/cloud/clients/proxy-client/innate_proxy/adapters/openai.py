@@ -71,6 +71,7 @@ class SyncRealtimeConnection:
 
         self._ws: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task | None = None
         self._thread: threading.Thread | None = None
         self._connected = threading.Event()
         self._stopped = threading.Event()
@@ -79,11 +80,19 @@ class SyncRealtimeConnection:
 
     def start(self) -> None:
         """Start the background event-loop thread and connect."""
-        self._loop = asyncio.new_event_loop()
+        self._loop = loop = asyncio.new_event_loop()
 
         def _run() -> None:
-            asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self._run_ws())
+            # Bound locally: stop() nulls self._loop, possibly while this
+            # thread is still unwinding.
+            asyncio.set_event_loop(loop)
+            self._task = loop.create_task(self._run_ws())
+            try:
+                loop.run_until_complete(self._task)
+            except asyncio.CancelledError:
+                pass  # normal stop() path
+            finally:
+                loop.close()
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
@@ -91,13 +100,18 @@ class SyncRealtimeConnection:
     def stop(self) -> None:
         """Close the websocket and stop the background loop."""
         self._stopped.set()
-        if self._ws and self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._ws.close(), self._loop)
-        if self._loop and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        # Cancel the task and let _run_ws unwind (closing the socket on the
+        # way out); stopping the loop out from under run_until_complete would
+        # raise "Event loop stopped before Future completed" in the thread.
+        if self._task and self._loop and not self._loop.is_closed():
+            try:
+                self._loop.call_soon_threadsafe(self._task.cancel)
+            except RuntimeError:
+                pass  # loop closed between the check and the call — already done
         if self._thread:
             self._thread.join(timeout=2.0)
         self._loop = None
+        self._task = None
         self._thread = None
 
     def send_json(self, data: dict) -> None:
@@ -129,6 +143,11 @@ class SyncRealtimeConnection:
                 self._on_error(exc)
         finally:
             self._connected.clear()
+            if self._ws is not None:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
             if self._on_close and not self._stopped.is_set():
                 self._on_close()
 

@@ -306,7 +306,7 @@ class DetectOpponentMove(Skill):
             ]
             candidates += [m for m in legal_moves if m not in candidates]
             result2 = self._ask_gemini(
-                "stage2", "gemini-3-flash-preview", 512, self._confirm_prompt(board_context, candidates[:8]), wrist_b64
+                "stage2", "gemini-3.6-flash", 512, self._confirm_prompt(board_context, candidates[:8]), wrist_b64
             )
             if result2:
                 move2 = result2.get("move_uci", "")

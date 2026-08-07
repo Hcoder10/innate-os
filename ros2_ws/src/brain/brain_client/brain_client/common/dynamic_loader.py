@@ -17,8 +17,11 @@ import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Generic, TypeVar
 
 from brain_client.common.script_paths import get_innate_os_root
+
+T = TypeVar("T")
 
 
 def class_name_to_snake_case(class_name: str, *, strip_suffixes: tuple[str, ...] = ()) -> str:
@@ -71,14 +74,14 @@ def evict_modules_under(directories: list[str]) -> list[str]:
     return evicted
 
 
-class DynamicLoader:
+class DynamicLoader(Generic[T]):
     """Discovers and loads classes of a given base type from script directories.
 
     Subclasses set :attr:`base_class` (and optionally :attr:`name_suffixes`) and
     implement :meth:`_validate_class` and :meth:`_get_name`.
     """
 
-    base_class: type
+    base_class: type[T]
     name_suffixes: tuple[str, ...] = ()
 
     def __init__(self, logger):
@@ -90,13 +93,13 @@ class DynamicLoader:
         """Python files in ``directory`` that may define classes. Override for custom globs."""
         return [f for f in directory.glob("*.py") if f.name != "__init__.py" and not f.name.startswith("_")]
 
-    def _validate_class(self, cls: type) -> bool:
+    def _validate_class(self, cls: type[T]) -> bool:
         raise NotImplementedError
 
-    def _get_name(self, cls: type) -> str:
+    def _get_name(self, cls: type[T]) -> str:
         raise NotImplementedError
 
-    def _make_entry(self, cls: type, file_path: Path):
+    def _make_entry(self, cls: type[T], file_path: Path) -> Any:
         """Value stored in the discovery dict for a class. Defaults to ``(class, source_file)``."""
         return (cls, file_path)
 

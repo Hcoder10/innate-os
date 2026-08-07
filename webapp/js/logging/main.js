@@ -35,6 +35,7 @@ function buildView(root) {
   sourcesToggle.type = "button";
   sourcesToggle.className = "sources-toggle";
   sourcesToggle.textContent = "Sources";
+  sourcesToggle.title = "Show the log sources tree";
   head.appendChild(sourcesToggle);
 
   const grid = document.createElement("div");

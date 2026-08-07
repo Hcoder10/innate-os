@@ -117,6 +117,7 @@ function createChart(parent, spec) {
 
   const plot = document.createElement("div");
   plot.className = "telemetry-plot nav-plot";
+  plot.title = "rolling 30 s window";
   const canvas = document.createElement("canvas");
   canvas.className = "nav-plot-canvas";
   plot.appendChild(canvas);

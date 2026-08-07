@@ -148,6 +148,9 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
           mapZoom[mapMode] = m;
           saveMapZoom();
         },
+        // Memories pulse in live while you drive — the tour builds the
+        // robot's spatial memory, and this is where you watch it happen.
+        layers: { memories: true },
       });
     } else if (!mapOn && mapWidget) {
       mapWidget.destroy();
@@ -217,7 +220,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function buildMapTile() {
-    const tile = liveTile(MAP_ID, "Map", "Make the map the main view");
+    const tile = liveTile(MAP_ID, "Map", "Make the map the main view · scroll to zoom");
     tile.classList.add("cam-tile-map");
     if (mapHost) tile.prepend(mapHost); // reparent the persistent host into the thumbnail
     return tile;

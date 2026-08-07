@@ -72,6 +72,7 @@ export function createSpeedModes(parent, rosClient) {
   const title = document.createElement("span");
   title.className = "sm-label";
   title.textContent = "SPEED";
+  title.title = `robot-wide drive speed scale (${SPEED_SCALE_PARAM}) — shared with the mobile app`;
   wrap.appendChild(title);
 
   const group = document.createElement("div");
@@ -107,6 +108,7 @@ export function createSpeedModes(parent, rosClient) {
     button.type = "button";
     button.className = "sm-btn";
     button.textContent = mode.label;
+    button.title = `${SET_PARAMETERS_SERVICE} · ${SPEED_SCALE_PARAM}=${mode.scale}`;
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", "false");
     button.addEventListener("click", async () => {

@@ -27,8 +27,10 @@ export function createSkillsMenu(parent, rosClient) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "skills-menu-btn";
+  btn.title = `run a skill — roster from ${AVAILABLE_SKILLS_TOPIC}`;
   const btnDot = document.createElement("span");
   btnDot.className = "skills-menu-dot";
+  btnDot.title = "green while a skill is running";
   const btnLabel = document.createElement("span");
   btnLabel.className = "skills-menu-label";
   btnLabel.textContent = "Skills";
@@ -364,6 +366,7 @@ export function createSkillsMenu(parent, rosClient) {
     const head = document.createElement("button");
     head.type = "button";
     head.className = "skills-pop-group";
+    head.title = "Collapse/expand this skill folder";
     const name = document.createElement("span");
     name.className = "skills-pop-group-name";
     name.textContent = prettify(group);
@@ -391,6 +394,7 @@ export function createSkillsMenu(parent, rosClient) {
     stop.type = "button";
     stop.className = "skill-confirm stop";
     stop.textContent = externCanceling ? "Stopping" : "Stop";
+    stop.title = `this run was started elsewhere (agent or another client) — ${CANCEL_SKILL_SERVICE}`;
     stop.disabled = externCanceling || rosClient.state !== "connected";
     stop.addEventListener("click", stopExternRun);
     status.append(txt, stop);
@@ -448,7 +452,7 @@ export function createSkillsMenu(parent, rosClient) {
     name.className = "skills-pop-name";
     name.textContent = formatName(skill);
     const guidelines = skill.guidelines || skill.guidelines_when_running;
-    if (guidelines) head.title = guidelines;
+    head.title = guidelines || `run ${skill.id} — ${EXECUTE_SKILL_ACTION}`;
 
     const tail = document.createElement("span");
     tail.className = "skills-pop-tail mono";
@@ -526,6 +530,7 @@ export function createSkillsMenu(parent, rosClient) {
     } else {
       action.className = "skill-confirm";
       action.textContent = "Run";
+      action.title = EXECUTE_SKILL_ACTION;
       const otherRunning = run && !run.done && run.skillId !== skill.id;
       action.disabled = !!otherRunning || rosClient.state !== "connected";
       action.addEventListener("click", () => startRun(skill));
@@ -549,6 +554,7 @@ export function createSkillsMenu(parent, rosClient) {
     labelRow.className = "skill-param-label";
     const pn = document.createElement("span");
     pn.textContent = paramName + (isRequired(spec) ? " *" : "");
+    if (isRequired(spec)) pn.title = "Required";
     const pt = document.createElement("span");
     pt.className = "skill-param-type mono";
     pt.textContent = typeof spec === "string" ? spec : spec?.type ?? "any";
@@ -735,13 +741,14 @@ function skillTypeMeta(skill) {
 function buildTypeLegend() {
   const legend = document.createElement("div");
   legend.className = "skills-pop-legend";
-  for (const { cls, label } of [
-    { cls: "learned", label: "Learned" },
-    { cls: "replay", label: "Replay" },
-    { cls: "digital", label: "Digital" },
+  for (const { cls, label, hint } of [
+    { cls: "learned", label: "Learned", hint: "Trained from demonstrations (ACT policy)" },
+    { cls: "replay", label: "Replay", hint: "Recorded motion played back" },
+    { cls: "digital", label: "Digital", hint: "Python skill" },
   ]) {
     const item = document.createElement("span");
     item.className = "skills-pop-legend-item";
+    item.title = hint;
     const dot = document.createElement("span");
     dot.className = `skills-pop-type-dot ${cls}`;
     const text = document.createElement("span");

@@ -16,6 +16,7 @@ export function buildRebootArm() {
   const btn = document.createElement("button");
   btn.className = "prof-btn prof-btn-reboot";
   btn.type = "button";
+  btn.title = "Reboot the arm's servos, then torque back on";
 
   let rebooting = false;
 
