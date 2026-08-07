@@ -101,9 +101,19 @@ class MemoryStore:
             return self._fingerprint
 
     def positions(self) -> list[dict]:
-        """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory."""
+        """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory,
+        rounded to display precision — full floats bloat the JSON by half."""
         with self._lock:
-            return [{"id": m.id, "x": m.x, "y": m.y, "theta": m.theta, "stamp": m.stamp} for m in self._memories]
+            return [
+                {
+                    "id": m.id,
+                    "x": round(m.x, 3),
+                    "y": round(m.y, 3),
+                    "theta": round(m.theta, 4),
+                    "stamp": round(m.stamp, 1),
+                }
+                for m in self._memories
+            ]
 
     def image_path(self, memory_id: int) -> Path | None:
         with self._lock:

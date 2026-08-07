@@ -26,7 +26,7 @@ import {
   MEMORY_POSITIONS_TOPIC,
   MEMORY_SEARCH_TOPIC,
 } from "../constants.js";
-import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, clockSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
+import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
 // Overlay palette — exported so the Nav page legend shows the same colors.
 // The robot is deliberately far from the costmap ramp (blue → amber → red):
@@ -149,7 +149,7 @@ function rasterizeGrid(msg, canvas, ctx, paint) {
  *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
  *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live lidar scan,
  *   global/local costmaps, odometry trail — each adds its subscription only while enabled.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void, highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void }}
+ * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void, highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void, robotNowS: () => number }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -323,7 +323,10 @@ export function createMap(root, opts = {}) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let memSearchCardTimer;
   let memCardsViewSig = ""; // the view framing the cards were last placed against
-  let memClockSkew = 0; // robot clock − browser clock, learned from the positions payload
+  // Robot clock − browser clock, learned from odom stamps: odom only flows
+  // live, so the skew is always fresh — the latched memory topics can't teach
+  // it (their replay arrives arbitrarily long after publish).
+  let memClockSkew = 0;
   const robotNowS = () => Date.now() / 1000 + memClockSkew;
 
   // The three DOM overlays: a hover thumbnail, a pinned popup (Go here), and
@@ -381,7 +384,6 @@ export function createMap(root, opts = {}) {
   function onMemories(msg) {
     const next = parseMemories(msg);
     if (!next) return;
-    memClockSkew = clockSkew(next);
     // Keyed on map+fingerprint: a same-name re-map wipes the store and
     // restarts ids at 1 — without the fingerprint those reborn ids would all
     // be "known" and never pulse (and dead-map cards would linger).
@@ -837,6 +839,8 @@ export function createMap(root, opts = {}) {
 
   /** @param {any} msg nav_msgs/Odometry */
   function onOdom(msg) {
+    const skew = headerSkew(msg);
+    if (skew !== null) memClockSkew = skew;
     const p = poseOf(msg);
     if (!p) return;
     odomPose = p;
@@ -1788,6 +1792,9 @@ export function createMap(root, opts = {}) {
       pose = composedPose();
       draw();
     },
+    /** The robot's clock in epoch seconds (see memClockSkew) — memory stamps
+     * are robot time, so hosts age them against this, never the browser's. */
+    robotNowS,
     /** Gallery hover: hold one memory bright without opening anything. @param {number | null} id */
     highlightMemory(id) {
       if (memHighlight === id) return;

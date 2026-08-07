@@ -128,8 +128,9 @@ export const MAPPING_POSE_TOPIC = "/mapping_pose";
 
 // ---- Spatial memory ---------------------------------------------------------
 // The robot's per-map visual memory (brain_client/memory): places it remembered
-// while driving well-localized. Positions mirror at 1 Hz (std_msgs/String JSON
-// {map, cache: warm|cold|inline|unsupported|off, positions:[{id,x,y,theta,stamp}]});
+// while driving well-localized. Positions mirror latched, published on change
+// (std_msgs/String JSON {map, fingerprint,
+// cache: warm|cold|inline|unsupported|off, positions:[{id,x,y,theta,stamp}]});
 // the JPEG behind each entry is served same-origin by the front door at
 // /memory/image?map=…&id=… (webapp/proxy/media_routes.py).
 export const MEMORY_POSITIONS_TOPIC = "/brain/memory_positions";

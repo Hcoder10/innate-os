@@ -97,7 +97,7 @@ def test_the_same_view_refreshes_once_aged():
 
 def test_a_recent_picture_is_not_rewritten():
     old = memory(1, 0.0, 0.0, stamp=1000.0)
-    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1030.0)
+    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1005.0)
     assert not plan.record
 
 
@@ -162,14 +162,14 @@ def test_the_wedge_stops_at_walls():
 def test_a_quarter_turn_at_a_painted_spot_is_novel():
     # The old 100-degree rule skipped this; paint says ~70% of the wedge is new.
     old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
-    plan = plan_admission([old], 1.5, 1.5, math.pi / 2, stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage())
+    plan = plan_admission([old], 1.5, 1.5, math.pi / 2, stamp=1005.0, grid=grid_of(open_room()), coverage=Coverage())
     assert plan.record and plan.replace is None
 
 
 def test_a_fully_painted_wedge_is_skipped():
     old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
     plan = plan_admission(
-        [old], 1.5, 1.5, math.radians(5), stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage()
+        [old], 1.5, 1.5, math.radians(5), stamp=1005.0, grid=grid_of(open_room()), coverage=Coverage()
     )
     assert not plan.record
 
@@ -185,8 +185,20 @@ def test_wall_closeups_do_not_pile_up():
     cells = open_room()
     cells[:, :2] = 100
     seen = memory(1, 0.35, 1.5, theta=math.pi, stamp=1000.0)
-    plan = plan_admission([seen], 0.35, 1.5, math.pi, stamp=1010.0, grid=grid_of(cells), coverage=Coverage())
+    plan = plan_admission([seen], 0.35, 1.5, math.pi, stamp=1005.0, grid=grid_of(cells), coverage=Coverage())
     assert not plan.record  # the wall is known: a cramped view must be nearly all new
+
+
+def test_stale_paint_no_longer_vouches_for_the_scene():
+    # Side-stepped off the view axis: the same-view refresh can't fire, and
+    # fresh paint reads the wedge as covered — but once the paint ages out,
+    # the area records anew without touching the old shot's slot.
+    old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
+    grid = grid_of(open_room())
+    fresh = plan_admission([old], 1.5, 1.9, 0.0, stamp=1005.0, grid=grid, coverage=Coverage())
+    assert not fresh.record
+    stale = plan_admission([old], 1.5, 1.9, 0.0, stamp=1400.0, grid=grid, coverage=Coverage())
+    assert stale.record and stale.replace is None
 
 
 def test_a_blind_pose_earns_no_slot():
@@ -406,7 +418,12 @@ def clock(monkeypatch):
     return state
 
 
-def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace | None = None):
+def make_recorder(
+    data_dir,
+    published: list | None = None,
+    pose: SimpleNamespace | None = None,
+    cache: SimpleNamespace | None = None,
+):
     logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
     node = SimpleNamespace(
         get_logger=lambda: logger,
@@ -420,6 +437,7 @@ def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace
         amcl_pose_topic="/amcl_pose",
     )
     pose = pose if pose is not None else SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    cache = cache if cache is not None else SimpleNamespace(state="warm")
     store = MemoryStore(data_dir)
     recorder = MemoryRecorder(
         node,
@@ -427,7 +445,7 @@ def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace
         store=store,
         pose_tracker=SimpleNamespace(map_pose_xyt=lambda: pose.xyt),
         warm_search=None,
-        cache_state=lambda: "warm",
+        cache_state=lambda: cache.state,
         positions_pub=SimpleNamespace(publish=(published if published is not None else []).append),
     )
     return recorder, store
@@ -540,7 +558,8 @@ def test_a_stale_frame_blocks_capture(data_dir, clock):
 
 def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     published: list = []
-    recorder, store = make_recorder(data_dir, published)
+    pose = SimpleNamespace(xyt=(1.23456789, -2.98765432, 0.87654321))
+    recorder, store = make_recorder(data_dir, published, pose=pose)
     see_confident_world(recorder, clock)
     recorder.tick()
     clock.now += 3.1
@@ -548,10 +567,31 @@ def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     recorder.tick()
     payload = json.loads(published[-1].data)
     assert payload["map"] == "A.yaml" and payload["cache"] == "warm"
-    assert payload["now"] == clock.now  # the robot's clock, for client-side age math
     (position,) = payload["positions"]
-    assert position["id"] == 1 and position["x"] == 1.0 and position["y"] == 2.0 and position["theta"] == 0.5
-    assert position["stamp"] > 0
+    assert position["id"] == 1
+    # Display precision, not the store's: full floats bloat the JSON by half.
+    assert position["x"] == 1.235 and position["y"] == -2.988 and position["theta"] == 0.8765
+    assert position["stamp"] == round(clock.now, 1)
+
+
+def test_positions_mirror_republishes_only_on_change(data_dir, clock):
+    published: list = []
+    cache = SimpleNamespace(state="warm")
+    recorder, store = make_recorder(data_dir, published, cache=cache)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    quiet = len(published)
+    for _ in range(3):  # nothing changes — the latch alone serves late joiners
+        clock.now += 1.0
+        recorder._on_amcl_pose(SimpleNamespace(pose=SimpleNamespace(covariance=_covariance(0.02, 0.02, 0.05))))
+        recorder.tick()
+    assert len(published) == quiet
+    observe(recorder, clock, GOOD_JPEG)  # a recorded viewpoint changes the payload
+    assert len(published) == quiet + 1
+    cache.state = "cold"  # flips by wall clock, without a store change — the gate must see it
+    clock.now += 1.0
+    recorder.tick()
+    assert len(published) == quiet + 2 and json.loads(published[-1].data)["cache"] == "cold"
 
 
 def settled_recorder(data_dir, clock, pose: SimpleNamespace):
@@ -1094,6 +1134,9 @@ def test_a_refreshed_frame_invalidates_its_upload(data_dir):
     store.replace(memory_with_id(store, 2), 3.0, 0.0, 0.0, 5000.0, b"jpg-2-new")
     upload_frames(search)
     assert len(fake.uploads) == 7 and fake.uploads[-1] == b"jpg-2-new"
+    # The superseded upload is deleted, not left to Gemini's 48 h expiry — at
+    # the 10 s refresh cadence a dwelled-on viewpoint would pile files up fast.
+    assert any(path.endswith("/files/f2") for path in fake.deletes)
 
 
 def test_upload_latch_on_unsupported_backend(data_dir):
