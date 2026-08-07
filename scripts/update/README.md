@@ -347,7 +347,18 @@ Add update notifications to your shell prompt:
 echo 'source ~/innate-os/scripts/ssh_welcome.zsh' >> ~/.zshrc
 ```
 
-This shows a notification on login if updates are available.
+This shows a notification on login if updates are available, and drops interactive
+SSH sessions straight into `~/innate-os` so `innate`, updates, and skills are all
+relative to the repo.
+
+Both behaviors only apply to interactive SSH logins, and only once per session, so
+`ssh robot '<command>'`, `scp`/`sftp`, and nested shells are untouched. The `cd` is
+also skipped whenever the shell did not start in `$HOME` — `ssh robot -t 'cd /var/log && zsh'`
+keeps its directory. To opt out entirely:
+
+```bash
+export INNATE_SSH_CD=0
+```
 
 ---
 

@@ -18,6 +18,7 @@ UPDATE_CMD="${INNATE_OS_ROOT}/scripts/update/innate-update"
 WEBAPP_URI_SCRIPT="${INNATE_OS_ROOT}/scripts/webapp_uri.zsh"
 ANIMATE="${INNATE_WELCOME_ANIMATE:-1}"
 ANIMATION_DELAY="${INNATE_WELCOME_DELAY:-0.04}"
+START_IN_REPO="${INNATE_SSH_CD:-1}"
 
 if [[ ! -x "$UPDATE_CMD" ]] && command -v innate-update >/dev/null 2>&1; then
     UPDATE_CMD="$(command -v innate-update)"
@@ -106,3 +107,10 @@ case "$STATUS_MODE" in
 esac
 
 echo ""
+
+# Only when the shell is still in $HOME (where a login lands), so an explicit
+# `ssh robot -t 'cd elsewhere && zsh'` keeps its directory instead of being
+# yanked into the repo.
+if [[ "$START_IN_REPO" == "1" ]] && [[ "$PWD" == "$HOME" ]] && [[ -d "$INNATE_OS_ROOT" ]]; then
+    cd "$INNATE_OS_ROOT"
+fi
