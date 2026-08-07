@@ -5,28 +5,57 @@ truth for resolving cloud/LLM skill references (ids or display names)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TypedDict
+
+
+class _SkillMetaRequired(TypedDict):
+    id: str
+    name: str
+
+
+class SkillMeta(_SkillMetaRequired, total=False):
+    """One skill's metadata, as parsed from the skills server's roster message.
+
+    Deliberately a dict, not a dataclass: it arrives as JSON (the
+    ``AvailableSkills`` message), is republished as JSON to the webapp, and is
+    handed to workspace agents — a class would need converting at every one of
+    those boundaries.
+    """
+
+    type: str
+    group: str
+    guidelines: str
+    guidelines_when_running: str
+    inputs: dict[str, dict]
+    in_training: bool
+    episode_count: int
+    directory: str
+    wheeled: bool
 
 
 @dataclass
 class SkillRegistry:
     """Immutable-ish view of the currently available skills.
 
-    ``primitives`` maps skill id to its metadata dict; ``metadata`` is the
-    ordered list used for registration.
+    ``primitives`` maps skill id to its metadata; ``metadata`` is the ordered
+    list used for registration.
     """
 
-    primitives: dict[str, dict] = field(default_factory=dict)
-    metadata: list[dict] = field(default_factory=list)
+    primitives: dict[str, SkillMeta] = field(default_factory=dict)
+    metadata: list[SkillMeta] = field(default_factory=list)
     name_to_id: dict[str, str] = field(default_factory=dict)
     id_to_name: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def from_metadata(cls, metadata_list: list[dict], on_duplicate=None) -> SkillRegistry:
+    def from_metadata(
+        cls, metadata_list: list[SkillMeta], on_duplicate: Callable[[str, str, str], None] | None = None
+    ) -> SkillRegistry:
         """Build from metadata dicts (each with at least id + name);
         ``on_duplicate(name, existing_id, new_id)`` fires on name clashes
         (later wins)."""
-        primitives: dict[str, dict] = {}
+        primitives: dict[str, SkillMeta] = {}
         name_to_id: dict[str, str] = {}
         id_to_name: dict[str, str] = {}
 

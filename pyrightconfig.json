@@ -1,6 +1,13 @@
 {
   "pythonVersion": "3.10",
   "pythonPlatform": "Linux",
+  // Pin the strictness explicitly. pyright defaults to "standard" but
+  // basedpyright (what the editor extension runs) defaults to "recommended",
+  // which adds reportUnknown*/reportUnannotatedClassAttribute/reportUnusedCallResult
+  // and buries the real diagnostics: 359 findings on brain/agent.py under
+  // "recommended" vs 10 under "standard". Unpinned, every contributor's editor
+  // disagreed with this file's own "clean under standard mode" premise below.
+  "typeCheckingMode": "standard",
   // Scoped to the tree that is actually clean under standard mode: the skills
   // API and the skills written against it. Unscoped, pyright checks all 291
   // files in the repo and reports ~230 real diagnostics from code that was

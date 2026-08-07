@@ -25,6 +25,7 @@ from brain_client.common.script_paths import (
     get_innate_agents_dir,
     get_workspace_dir,
 )
+from brain_client.skills.registry import SkillMeta
 from brain_client.skills.workspace_import import (
     format_load_error,
     import_packages,
@@ -67,7 +68,7 @@ def discover_agent_classes(logger) -> tuple[list[tuple[type[Agent], Path]], dict
 def build_agent_instances(
     classes: list[tuple[type[Agent], Path]],
     logger,
-    available_skills: dict[str, dict] | None = None,
+    available_skills: dict[str, SkillMeta] | None = None,
 ) -> tuple[dict[str, Agent], dict[str, str]]:
     """Instantiate discovered agent classes; returns ``(agents by id, broken)``.
 

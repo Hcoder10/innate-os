@@ -74,11 +74,11 @@ class SkillsActionServer(Node):
         self._camera_node = CameraProvider()
 
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
-        self.cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
+        self.cmd_vel_topic = str(self.get_parameter("cmd_vel_topic").value)
         self.declare_parameter("head_position_topic", "/mars/head/set_position")
-        self.head_position_topic = self.get_parameter("head_position_topic").value
+        self.head_position_topic = str(self.get_parameter("head_position_topic").value)
         self.declare_parameter("head_current_position_topic", "/mars/head/current_position")
-        self.head_current_position_topic = self.get_parameter("head_current_position_topic").value
+        self.head_current_position_topic = str(self.get_parameter("head_current_position_topic").value)
 
         self.manipulation = Manipulation(self, self.get_logger(), lazy=True)
         self.mobility = Mobility(self, self.get_logger(), self.cmd_vel_topic)
@@ -377,7 +377,7 @@ class SkillsActionServer(Node):
             self.get_logger().error(f"Error shutting down {type(skill).__name__} run instance: {e}")
 
     def _execute_code_skill(self, goal_handle, skill_type, inputs, entry):
-        def _publish_feedback(update_message: str, image_b64: str = None):
+        def _publish_feedback(update_message: str, image_b64: str | None = None):
             feedback_msg = ExecuteSkill.Feedback()
             feedback_msg.feedback = update_message
             feedback_msg.image_b64 = image_b64 or ""
@@ -524,7 +524,7 @@ class SkillsActionServer(Node):
                 return SkillOutput("Timeout waiting for behavior goal acceptance", status=SkillResult.FAILURE)
 
             behavior_goal_handle = send_goal_future.result()
-            if not behavior_goal_handle.accepted:
+            if behavior_goal_handle is None or not behavior_goal_handle.accepted:
                 self.get_logger().error("Behavior goal rejected by behavior_server")
                 return SkillOutput("Behavior goal rejected by behavior_server", status=SkillResult.FAILURE)
 
