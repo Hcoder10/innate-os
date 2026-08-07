@@ -1,0 +1,22 @@
+# Sidecar for sim/viewer/Dockerfile. The root .dockerignore is `**` plus a
+# narrow allowlist for the ROS images, which would exclude everything here.
+#
+# Exclude everything, then admit exactly what the build COPYs. Unlike the asset
+# image's sidecar there is nothing seeded to admit: every input sits in the
+# sim/viewer tree, whose content hash is the image's tag
+# (config.compute_viewer_inputs_hash).
+#
+# Keep this set a SUBSET of the sim/viewer tree: admitting something outside it
+# puts content into the image that the tree hash does not describe -- two
+# payloads under one content address. tests/test_viewer_bundle_image.py
+# enforces the other direction.
+**
+
+!sim/viewer/package.json
+!sim/viewer/package-lock.json
+!sim/viewer/tsconfig.json
+!sim/viewer/vite.lib.config.ts
+!sim/viewer/src/**
+
+**/__pycache__/**
+**/.DS_Store

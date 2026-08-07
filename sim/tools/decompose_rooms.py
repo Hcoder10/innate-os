@@ -45,6 +45,12 @@ THRESHOLD_M = 0.05  # real-metric concavity threshold, in meters
 # surface -- see the tuning notes in sandbox/README.md for the measurements.
 PREPROCESS_RESOLUTION = 200
 
+# CoACD's MCTS search is randomised, and this is the seed for it. Passed
+# EXPLICITLY even though 0 is coacd 1.0.11's own default: the hulls this
+# produces are baked into a content-addressed image, so an upstream change to
+# that default would silently make the same inputs yield different geometry.
+COACD_SEED = 0
+
 
 def strip_floor(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     verts, faces = mesh.vertices, mesh.faces
@@ -72,6 +78,7 @@ def decompose_room(room_obj: Path, out_dir: Path) -> int:
         threshold=THRESHOLD_M,
         real_metric=True,
         preprocess_resolution=PREPROCESS_RESOLUTION,
+        seed=COACD_SEED,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)

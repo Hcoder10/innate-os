@@ -17,7 +17,9 @@ import { PropLibrary, type PropInfo } from "./props";
 
 const APARTMENT_URL = "/models/appartement.glb";
 const APARTMENT_MANIFEST_URL = "/models/apartment/manifest.json";
-const ROBOT_URDF_URL = "/robot/mars.urdf";
+// /robot is the mars_sim ROS package itself (served straight from ros2_ws, see
+// webapp/proxy/https_server.py), so the URDF sits at its real path inside it.
+const ROBOT_URDF_URL = "/robot/urdf/mars.urdf";
 
 /** Per-room split written by tools/split-apartment.mjs. bbox is in the glb's
  * Y-up frame (the whole apartment is rotated Y-up -> Z-up on load). */
@@ -169,7 +171,12 @@ export class SimScene {
 
     // Props share the apartment's hull wireframe material, so one "collisions"
     // toggle covers both. A prop entering the world refits the shadow box.
-    this.props = new PropLibrary(this.scene, this.hullMaterial, () => this.updateShadowVolume());
+    this.props = new PropLibrary(
+      this.scene,
+      this.hullMaterial,
+      () => this.updateShadowVolume(),
+      (model) => this.warmTextures(model),
+    );
 
     this.camera = new THREE.PerspectiveCamera(55, w / h, 0.05, 200);
     this.camera.up.set(0, 0, 1);
@@ -346,7 +353,7 @@ export class SimScene {
     const material = this.hullMaterial;
 
     // Fast path: one binary triangle soup (float32 xyz), one fetch, no
-    // parsing -- publish_assets writes it next to the per-hull OBJs.
+    // parsing -- build_viewer_physics.py writes it next to the per-hull OBJs.
     const bin = await fetch(`${baseUrl}hulls.f32`);
     if (bin.ok) {
       const positions = new Float32Array(await bin.arrayBuffer());
@@ -751,6 +758,26 @@ export class SimScene {
    * what to call it, and how to draw it. Sent once per observer connection. */
   setPropManifest(props: PropInfo[]): void {
     this.props.setManifest(props);
+  }
+
+  /** Parse the prop models ahead of any drop. Call once the robot and
+   * apartment have finished, so the props queue behind them. */
+  prefetchPropModels(): void {
+    this.props.prefetchModels();
+  }
+
+  /** Upload a freshly parsed model's textures now. Decoding is what prefetch
+   * moved off the drop; without this the upload itself (67 MB for the human)
+   * still hitches the frame the prop first renders on. */
+  private warmTextures(model: THREE.Object3D): void {
+    model.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture) this.renderer.initTexture(value);
+        }
+      }
+    });
   }
 
   /** Mirror every prop in the world from ground truth, keyed by name

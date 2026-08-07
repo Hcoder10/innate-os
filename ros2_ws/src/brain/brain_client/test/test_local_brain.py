@@ -611,9 +611,9 @@ def test_a_call_outside_the_active_skill_set_is_rejected(agent_factory):
 
 
 def test_a_stale_tool_name_is_rechecked_against_the_live_active_set(agent_factory):
-    # The dispatch map is not rebuilt while a skill runs, so it can outlive a
-    # roster change: a name resolved through it must still clear the live
-    # active set before dispatch.
+    # The dispatch map is built at the top of the turn, so it can outlive a
+    # roster change that lands while the model is thinking: a name resolved
+    # through it must still clear the live active set before dispatch.
     from brain_client.skills.registry import SkillRegistry
 
     agent, state = agent_factory()
@@ -625,13 +625,10 @@ def test_a_stale_tool_name_is_rechecked_against_the_live_active_set(agent_factor
     run_turn(agent)  # populates the dispatch map with wave
     assert len(started) == 1
 
-    # Next turn: a skill is running (map kept stale), wave gets deactivated,
-    # and the skill ends while the model is thinking.
-    state.primitive_running = RunningSkill(primitive_name="other", skill_id="local/other")
-    agent._roster.active_skill_ids = lambda: []
-
+    # Next turn: wave is deactivated while the model is thinking — after the
+    # dispatch map was built from the roster that still held it.
     def transport(model, body):
-        state.primitive_running = None
+        agent._roster.active_skill_ids = lambda: []
         return [model_response(call_part("wave", {}))]
 
     agent._context._transport = transport
@@ -1141,6 +1138,17 @@ def test_search_memory_runs_even_while_another_skill_occupies_the_slot(agent_fac
     agent._tool_map = {"search_memory": "innate-os/search_memory"}
     outcome = agent._execute(ToolCall("search_memory", {"query": "keys"}))
     assert outcome == "searching memory — the result arrives as an event"
+
+
+def test_search_memory_stays_declared_while_a_skill_runs(agent_factory):
+    # Dispatch alone is not enough: the model can only search while driving if
+    # the tool is still OFFERED while the slot is occupied.
+    agent, state = agent_factory(memory=SimpleNamespace(frame_count=3))
+    arm_search_skill(agent)
+    state.primitive_running = RunningSkill(primitive_name="navigate", skill_id="innate-os/navigate_to_position")
+    declarations = agent._build_tools([])[0]["functionDeclarations"]
+    assert [d["name"] for d in declarations] == [STOP_SKILL, "search_memory", "wait"]
+    assert agent._tool_map["search_memory"] == "innate-os/search_memory"
 
 
 def test_search_memory_rejects_an_empty_memory_and_a_missing_query(agent_factory):

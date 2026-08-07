@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
-import platform
 import re
 import shlex
 import shutil
@@ -14,13 +14,14 @@ import signal
 import socket
 import subprocess
 import sys
-import tarfile
 import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+import oci
 from config import (
+    ASSETS_IMAGE_LAYERS,
     CLI_SIM,
     CLOUD_AGENT_DIR_NAME,
     CLOUD_AGENT_LOG_PATH,
@@ -31,16 +32,20 @@ from config import (
     LOCAL_BRAIN_COMPOSE_PROFILE,
     LOCAL_IMAGE_MODE,
     LOCAL_MODES,
-    LOCAL_OS_IMAGE_REPO,
     NONE_MODE,
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
     OS_SESSION_LOG_PATH,
     OS_SESSION_READY_POLL_SECONDS,
+    REPO_ROOT,
     ROS_INSTALL_STATE_PATH,
+    SIM_ASSET_UNITS,
+    SIM_ASSET_UNITS_AUTHORED,
+    SIM_ASSET_UNITS_DERIVED,
     TMUX_SESSION_NAME,
     VIEWER_BUILD_LOG_PATH,
+    VIEWER_TREE_PATH,
     WORKSPACE_ROOT,
     WORLD_SERVER_LOG_PATH,
     WORLD_SERVER_MODEL_DIGEST_PATH,
@@ -52,7 +57,11 @@ from config import (
     ensure_state_dir,
     log,
     require_path,
+    resolve_assets_image,
     resolve_local_os_image,
+    resolve_local_viewer_image,
+    resolve_viewer_image,
+    viewer_tree_dirty,
     warn,
 )
 from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
@@ -160,6 +169,11 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
 
     `require_compose=False` is for commands that only touch an already-running
     container via plain `docker` (e.g. `sh` -> `docker exec`).
+
+    Requiring compose also requires versions new enough for the viewer's
+    `type: image` mount: docker-compose.dev.yml carries those mounts
+    unconditionally, so an old Compose fails at parse time on every verb, not
+    just `up`.
     """
     if shutil.which("docker") is None:
         if sys.platform == "darwin":
@@ -256,6 +270,51 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
             f"Then rerun `{command_hint}`. Guide: {COMPOSE_INSTALL_URL}"
         )
 
+    # `type: image` needs BOTH a new Compose and a new daemon -- the engine
+    # materialises the mount, so a new plugin in front of an old dockerd fails
+    # at `up`. Both versions were probed above for liveness; reuse them.
+    _require_min_version(
+        "Docker Engine",
+        result.stdout,
+        (28, 0),
+        "Update Docker (Desktop: update the app; Linux: reinstall docker-ce from Docker's\nrepo)",
+        command_hint,
+        DOCKER_INSTALL_URL,
+    )
+    # Older Compose rejects the whole file with a schema error naming a field,
+    # not a version.
+    _require_min_version(
+        "Docker Compose",
+        compose.stdout,
+        (2, 35),
+        "Update the Compose plugin (Docker Desktop: update the app; Linux: reinstall\n"
+        "docker-compose-v2 / docker-compose-plugin from Docker's repo)",
+        command_hint,
+        COMPOSE_INSTALL_URL,
+    )
+
+
+def _require_min_version(
+    label: str,
+    version_output: str | None,
+    minimum: tuple[int, int],
+    remedy: str,
+    command_hint: str,
+    guide_url: str,
+) -> None:
+    """Fail with an actionable message if `version_output` reports older than
+    `minimum`. Silent when the version cannot be parsed: an unrecognised build
+    string is not evidence of an old one, and a false refusal to start is worse
+    than the raw error this pre-empts."""
+    found = re.search(r"v?(\d+)\.(\d+)", version_output or "")
+    if not found or (int(found.group(1)), int(found.group(2))) >= minimum:
+        return
+    raise StackError(
+        f"{label} {found.group(0)} is too old: the sim mounts its viewer assets straight from "
+        f"an image (`type: image`), which needs {label} {minimum[0]}.{minimum[1]} or newer.\n"
+        f"{remedy}, then rerun `{command_hint}`.\nGuide: {guide_url}"
+    )
+
 
 def docker_compose_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
@@ -290,12 +349,8 @@ def _docker_platform() -> str | None:
     never run (classic-store docker happily pulls cross-arch and only fails
     at container start with 'exec format error' -- seen on a Raspberry Pi
     pulling the amd64-only prebuilt)."""
-    machine = platform.machine().lower()
-    if machine in ("x86_64", "amd64"):
-        return "linux/amd64"
-    if machine in ("aarch64", "arm64"):
-        return "linux/arm64"
-    return None
+    arch = oci.host_arch()
+    return f"linux/{arch}" if arch else None
 
 
 IMAGE_PROBE_RETRY_TIMEOUT_S = 60.0
@@ -360,16 +415,24 @@ def ensure_os_image_available(
     )
 
 
-def prune_stale_local_os_images(current_image: str, *, cwd: Path, env: dict[str, str]) -> None:
-    """Untag superseded local fallback images (LOCAL_OS_IMAGE_REPO:inputs-*).
+def prune_stale_local_images(current_image: str, *, cwd: Path, env: dict[str, str], label: str) -> None:
+    """Untag superseded local builds sharing `current_image`'s repo.
 
-    Each image-inputs change mints a new tag; without cleanup the old ones
-    accumulate in `docker images` forever. Best-effort: an image still used by
-    a container simply fails to untag and is left alone.
+    Both local builds -- the OS fallback and the viewer bundle -- are tagged
+    `<repo>:inputs-<hash>`, so each input change mints a new tag and strands
+    the old one in `docker images` forever.
+
+    The repo comes off `current_image` rather than a second argument: sweeping
+    a different repo than the one being kept is the only way this can be wrong.
+    rpartition takes the LAST colon, so a registry:port survives.
+
+    Best-effort: an image still used by a container simply fails to untag and
+    is left alone.
     """
+    repo = current_image.rpartition(":")[0]
     try:
         listing = subprocess.run(
-            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", LOCAL_OS_IMAGE_REPO],
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", repo],
             cwd=cwd,
             env=env,
             text=True,
@@ -382,17 +445,13 @@ def prune_stale_local_os_images(current_image: str, *, cwd: Path, env: dict[str,
         return
     if listing.returncode != 0:
         return
-    stale = [
-        ref
-        for ref in listing.stdout.split()
-        if ref != current_image and ref.startswith(f"{LOCAL_OS_IMAGE_REPO}:inputs-")
-    ]
+    stale = [ref for ref in listing.stdout.split() if ref != current_image and ref.startswith(f"{repo}:inputs-")]
     pruned = 0
     for ref in stale:
         if command_succeeds(["docker", "rmi", ref], cwd=cwd, env=env):
             pruned += 1
     if pruned:
-        log(f"Pruned {pruned} superseded local Innate OS image tag(s).")
+        log(f"Pruned {pruned} superseded local {label} image tag(s).")
 
 
 # Directories the container's ROS nodes create lazily on the workspace
@@ -450,7 +509,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     if container_was_running:
         log("Innate OS dev container already running.")
     else:
-        up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
+        up_cmd = docker_compose_cmd("up", "-d")
         if offline:
             # Reuse an image that is already local; never pull or build, which
             # would reach for the prebuilt tag and base images over the network.
@@ -465,6 +524,16 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
                     "Offline, but no Innate OS image is available locally (neither the local build "
                     f"{shorten_docker_image_ref(local_image)} nor a pinned prebuilt).\n"
                     f"Run `{CLI_SIM} up` online once first."
+                )
+            # The viewer mount is an IMAGE, not a bind: compose resolves it
+            # even with --pull never, so offline needs it in the local store.
+            assets_image = assets_image_ref(config)
+            if not docker_image_present(assets_image, cwd=os_repo, env=probe_env):
+                raise StackError(
+                    "Offline, but the sim asset image is not in the local Docker store:\n"
+                    f"  {shorten_docker_image_ref(assets_image)}\n"
+                    "The webapp's 3D view mounts the viewer straight from it, so compose cannot "
+                    f"start without it.\nRun `{CLI_SIM} up` online once first."
                 )
             up_cmd.append("--no-build")
         elif os_image:
@@ -514,6 +583,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
         if os_image:
             compose_values["INNATE_OS_IMAGE"] = os_image
+        # The viewer's public assets (models, physics) mount straight off this
+        # image. The bundle has its own, below.
+        compose_values["INNATE_SIM_ASSETS_IMAGE"] = assets_image_ref(config)
+        # Published or locally built; ensure_sim_viewer_bundle has made sure
+        # whichever it is exists.
+        compose_values["INNATE_SIM_VIEWER_BUNDLE_IMAGE"] = viewer_image_ref(config)
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         # Bake the brain wiring into the CONTAINER env, not just the tmux
         # launch args: an in-container `innate restart` relaunches the session
@@ -538,7 +613,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
                 "Docker is still preparing the Innate OS container. First boot or an image rebuild can take a minute."
             ),
         )
-        prune_stale_local_os_images(resolve_local_os_image(os_repo), cwd=os_repo, env=compose_env)
+        prune_stale_local_images(resolve_local_os_image(os_repo), cwd=os_repo, env=compose_env, label="Innate OS")
     compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
     if os_image:
         compose_values["INNATE_OS_IMAGE"] = os_image
@@ -620,7 +695,7 @@ def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
     compose_env = os_compose_env()
     with contextlib.suppress(OSError):  # read-only fs: keep tearing down
         ensure_state_dir()
-    down_args = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "down"]
+    down_args = docker_compose_cmd("down")
     if remove_volumes:
         down_args += ["-v", "--remove-orphans"]
     try:
@@ -780,7 +855,7 @@ def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
     if not os.environ.get("SIM_CLOUD_AGENT_PORT", "").strip() and _os_container_holds_host_8765():
         base_env["SIM_CLOUD_AGENT_PORT"] = "8767"
         log("Host port 8765 is held by the running OS container (Foxglove); publishing cloud-agent on 8767.")
-    up_cmd = ["docker", "compose", "-f", "sim/docker-compose.dev.yml", "up", "-d"]
+    up_cmd = docker_compose_cmd("up", "-d")
 
     if mode == LOCAL_IMAGE_MODE:
         image = str(config["cloud_image"]).strip()
@@ -850,7 +925,28 @@ def tail_file(path: Path, limit: int = 40) -> str:
     return "\n".join(lines[-limit:])
 
 
+@functools.lru_cache(maxsize=1)
+def viewer_bundle_built_locally() -> bool:
+    """Build the bundle image here instead of pulling the published one.
+
+    True when the working tree under sim/viewer differs from HEAD: the bundle's
+    tag hashes that tree as it is on disk, so an edited tree names an image CI
+    cannot have published, and the registry probe can be skipped.
+
+    Cached: asked repeatedly within one command, and cannot change in-process.
+    """
+    try:
+        return viewer_tree_dirty(REPO_ROOT)
+    except (OSError, subprocess.CalledProcessError, StackError):
+        # No git, or not a checkout (a release tarball). The published bundle
+        # is then the only thing that could work anyway.
+        return False
+
+
 def docker_compose_cmd(*parts: str) -> list[str]:
+    # One compose file for every invocation: dist-lib is always an image mount,
+    # only WHICH image varies (see viewer_image_ref), so there is no overlay to
+    # apply on `up` and forget on every later subcommand.
     return ["docker", "compose", "-f", "sim/docker-compose.dev.yml", *parts]
 
 
@@ -1254,237 +1350,309 @@ def health_score(level: str) -> float:
     return 20.0
 
 
-# Directories wholly owned by the published asset bundle: each is replaced
-# atomically on refresh. work/* land under sim/assets/, viewer/* under
-# sim/viewer/. Must stay in sync with sim/tools/publish_assets.py's layout.
-SIM_ASSET_UNITS = [
-    "work/apartment_split",
-    "work/apartment_split_v2",
-    "work/apartment_visual",
-    "work/sdf_shells",
-    "work/map",
-    # (The bundle's viewer/public/physics/apartment_sdf is demo-only and not
-    # extracted; the hulls feed the webapp's "collisions" overlay.)
-    "viewer/public/physics/apartment_collisions_v2",
-    "viewer/public/models",
-    # (viewer/public/robot is NOT a bundle unit: the robot description is
-    # tracked source, refreshed from the checkout by sync_robot_description.)
-    "viewer/assets/apartment_obj",
-    # Built SimSession bundle: ships prebuilt so `up` needs no Node.js
-    # (absent from pre-dist-lib bundles; the extractor skips missing units).
-    "viewer/dist-lib",
-]
+# The subtrees the host installs out of the asset image's `work` layer are
+# config.SIM_ASSET_UNITS, shared with ci/seed_asset_context.py. Each is
+# replaced atomically on refresh, and all land under sim/assets/ for the world
+# server, which runs on the HOST and writes into them (.model_cache, capped
+# textures) -- so they cannot be mounted read-only off the image instead.
+# The viewer's dirs are absent because compose does exactly that with them
+# (sim/docker-compose.dev.yml).
+
+
+def assets_image_ref(config: dict[str, object]) -> str:
+    """The asset image compose mounts the viewer subtree from.
+
+    COMPUTED, not looked up: the tag is content-addressed over the tracked
+    inputs, so it names exactly the image this checkout implies -- the same way
+    resolve_auto_os_image names the ROS image.
+
+    INNATE_SIM_ASSETS_IMAGE overrides, for testing an image built elsewhere. It
+    moves BOTH the compose mount and ensure_sim_assets' fetch -- manifest, token
+    and blob all name the same repository, or the digest read out of one image
+    is requested from another and 404s. So an override has to name something
+    the registry can serve; an image that exists only in the local Docker store
+    fails at the manifest probe.
+    """
+    override = os.environ.get("INNATE_SIM_ASSETS_IMAGE", "").strip()
+    return override or resolve_assets_image(config["os_repo"])  # type: ignore[arg-type]
 
 
 def ensure_sim_assets(config: dict[str, object]) -> None:
-    """Download + extract the sim asset bundle pinned by sim/sim-assets.lock.
+    """Install the sim geometry out of the asset image this checkout implies.
 
-    The generated geometry (collision hulls, room meshes, nav map, GLB/STLs)
-    lives in a GitHub release, not in git. Extracting in place -- work/ into
-    sim/assets/, viewer/ into sim/viewer/ -- keeps every existing consumer
-    (compose mounts, webapp routes, tools) pointed at unchanged paths.
-    Idempotent via the .assets-tag marker; tools/publish_assets.py bumps the
-    lock and the next `up` refreshes.
+    The generated geometry (collision hulls, room meshes, nav map) is not in
+    git; it ships as one layer of ghcr.io/innate-inc/innate-os-sim-assets.
+    Only that layer is fetched -- ~85 MB compressed rather than the whole
+    image -- over plain HTTPS, so this needs no Docker installed.
+
+    WHICH layer is positional: a manifest names none of them, so the geometry
+    is layers[ASSETS_IMAGE_LAYERS.index("work")], and ci/verify_assets_image.py
+    asserts that order against every pushed image.
+
+    Extracted in place under sim/assets/, idempotent via the .assets-tag marker.
     """
     sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    lock = json.loads((sim_repo / "sim-assets.lock").read_text())
     marker = sim_repo / "assets" / ".assets-tag"
-    if marker.exists() and marker.read_text().strip() == lock["tag"]:
+    image = assets_image_ref(config)
+
+    # The marker holds "<digest> <image ref>". Keyed on the geometry layer's
+    # digest, not the tag: the tag moves whenever any tracked input changes,
+    # so re-extracting 168 MB for a viewer-source edit would be waste.
+    #
+    # Checked against what is on disk too, since the digest only records what
+    # this host MEANT to install: a hand-deleted subtree reinstalls instead of
+    # being asserted complete forever.
+    #
+    # DERIVED only. The authored units are the ones a pinned layer may
+    # legitimately predate (see the warn below), so demanding them here would
+    # leave `installed` false forever and re-fetch the layer on every `up`.
+    # Recovering a hand-deleted authored unit means deleting .assets-tag.
+    parts = marker.read_text().split() if marker.exists() else []
+    installed = all((sim_repo / "assets" / unit).is_dir() for unit in SIM_ASSET_UNITS_DERIVED)
+
+    # Ref match => digest match, so the warm path stays off the network: the
+    # ref is content-addressed and ci/build_assets_image.sh never rebuilds an
+    # existing tag. NOT valid for an INNATE_SIM_ASSETS_IMAGE override, which
+    # may name a mutable tag -- those probe the manifest every time.
+    if not os.environ.get("INNATE_SIM_ASSETS_IMAGE", "").strip() and parts[1:] == [image] and installed:
         return
 
-    log(f"Downloading sim assets {lock['tag']} (~100 MB, one-time)...")
-    tarball = sim_repo / ".sim-assets.tmp.tar.gz"
     try:
-        with urlopen(Request(lock["url"]), timeout=600) as resp, open(tarball, "wb") as out:
-            total_mb = int(resp.headers.get("Content-Length") or 0) >> 20
-            done = 0
-            next_report = time.monotonic() + 5.0
-            while chunk := resp.read(1 << 20):
-                out.write(chunk)
-                done += len(chunk)
-                if time.monotonic() >= next_report:  # slow networks: progress, not silence
-                    log(f"Downloading sim assets... {done >> 20} MB" + (f" of {total_mb} MB" if total_mb else ""))
-                    next_report = time.monotonic() + 5.0
-    except (URLError, OSError) as exc:
-        tarball.unlink(missing_ok=True)
-        raise StackError(f"Failed to download sim assets from {lock['url']}: {exc}") from exc
+        manifest = oci.manifest_for_image(image)
+    except oci.OciError as exc:
+        # Two different mistakes: the checkout implies a tag nobody built, or
+        # the override names something the registry will not serve. Saying
+        # "set INNATE_SIM_ASSETS_IMAGE" to someone who just did is no help.
+        if os.environ.get("INNATE_SIM_ASSETS_IMAGE", "").strip():
+            raise StackError(
+                f"The registry did not serve INNATE_SIM_ASSETS_IMAGE ({shorten_docker_image_ref(image)}): {exc}\n"
+                f"The geometry is fetched over the registry API, so an override has to name a pushed "
+                f"image -- one that exists only in the local Docker store cannot be read here."
+            ) from exc
+        raise StackError(
+            f"No published sim asset image for this checkout ({shorten_docker_image_ref(image)}): {exc}\n"
+            f"Editing anything the image is built from renames it. Push the branch so CI publishes "
+            f"it, or set INNATE_SIM_ASSETS_IMAGE to one that exists."
+        ) from exc
+    digest = manifest["layers"][ASSETS_IMAGE_LAYERS.index("work")]["digest"]
 
-    sha = hashlib.sha256()
-    with open(tarball, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            sha.update(chunk)
-    digest = sha.hexdigest()
-    if digest != lock["sha256"]:
-        tarball.unlink()
-        raise StackError(f"sim asset bundle checksum mismatch (got {digest}, lock says {lock['sha256']})")
+    if parts[:1] == [digest] and installed:
+        # Same geometry under a new ref (or an old digest-only marker):
+        # remember the ref so the next run skips the probe above.
+        marker.write_text(f"{digest} {image}\n")
+        return
 
+    log(f"Downloading sim assets {digest[7:19]} (~85 MB, one-time)...")
+    blob = sim_repo / ".sim-assets.tmp.tar.gz"
     staging = sim_repo / ".sim-assets.tmp"
     shutil.rmtree(staging, ignore_errors=True)
     try:
-        with tarfile.open(tarball) as tar:
-            for member in tar.getmembers():
-                if member.name.startswith(("/", "..")) or ".." in Path(member.name).parts:
-                    raise StackError(f"unsafe path in asset bundle: {member.name}")
-                # The publisher only emits regular files; links could escape
-                # the staging dir during extractall, so reject them outright.
-                if not (member.isfile() or member.isdir()):
-                    raise StackError(f"unsupported member type in asset bundle: {member.name}")
-            tar.extractall(staging)
-        # The published tarball normalises every member to mtime 0 so its content
-        # hash -- and thus the asset tag -- is reproducible (tools/publish_assets.py),
-        # leaving ~all 1300+ files at mtime 0 on disk, which collapses the webapp's
-        # mtime+size ETag to size-only. Stamp one install time so the next bundle
-        # (extracted the same way) flips 0 -> non-zero and the ETag busts.
+        # The repository the manifest came from, never a hardcoded one: the
+        # digest was read out of THAT image and exists nowhere else.
+        repo, _ = oci.split_ref(image)
+        with open(blob, "wb") as out:
+            oci.fetch_layer(repo, digest, out, oci.anon_token(repo), label="sim assets")
+        oci.safe_extract(blob, staging)
+        work = staging / "work"
+        # Fatal before anything is installed, rather than writing a marker that
+        # claims success: a store without apartment_split_v2 has no collision
+        # hulls at all, and would silently short-circuit every later `up`.
+        missing = [unit for unit in SIM_ASSET_UNITS_DERIVED if not (work / unit).is_dir()]
+        if missing:
+            raise StackError(
+                f"The pinned geometry layer {digest[7:19]} is missing {missing}.\n"
+                "Refusing to install a partial store -- the world server cannot run without it."
+            )
+        # Authored props are additive: a checkout can legitimately expect ones
+        # the pinned layer predates, and a world without them still runs.
+        absent = [unit for unit in SIM_ASSET_UNITS_AUTHORED if not (work / unit).is_dir()]
+        if absent:
+            warn(f"The pinned geometry predates {absent}; the world will load without them.")
+
+        # Stamp one install time so every file reads as arriving now (buildx
+        # does not normalise layer mtimes without SOURCE_DATE_EPOCH). NOTE this
+        # is what invalidates the driver's compiled world below: its cache key
+        # is those very mtimes (mars_sim_driver.core._model_cache_path).
         installed_at = time.time()
         try:
             for extracted in staging.rglob("*"):
                 os.utime(extracted, (installed_at, installed_at))
         except OSError as exc:
             raise StackError(f"Failed to stamp sim asset mtimes under {staging}: {exc}") from exc
+
         for unit in SIM_ASSET_UNITS:
-            src = staging / unit
+            src = work / unit
             if not src.is_dir():
                 continue
-            top, rel = unit.split("/", 1)
-            dest = (sim_repo / "assets" / rel) if top == "work" else (sim_repo / "viewer" / rel)
+            dest = sim_repo / "assets" / unit
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.rmtree(dest, ignore_errors=True)
             shutil.move(str(src), str(dest))
+        # Every compiled world is now unreachable (see the re-stamp above) and
+        # nothing else ever prunes them, at ~168 MB each. .model_cache sits
+        # OUTSIDE the units, so the per-unit replacement leaves it behind.
+        shutil.rmtree(sim_repo / "assets" / ".model_cache", ignore_errors=True)
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(lock["tag"] + "\n")
-        log(f"Sim assets {lock['tag']} installed.")
+        marker.write_text(f"{digest} {image}\n")
+        log(f"Sim assets {digest[7:19]} installed.")
     finally:
-        tarball.unlink(missing_ok=True)
+        blob.unlink(missing_ok=True)
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def sync_robot_description(config: dict[str, object]) -> None:
-    """Refresh the viewer's /robot/ tree from the tracked mars_sim package.
+def viewer_image_ref(config: dict[str, object]) -> str:
+    """The image compose mounts dist-lib from.
 
-    The 3D view has to draw the same robot the driver simulates -- same links,
-    and since the "collisions" overlay renders the URDF's own <collision>
-    primitives, the same collision geometry. So the description is copied out
-    of the checkout on every run rather than shipped frozen inside the asset
-    bundle, where a mars.urdf edit would never reach the browser at all.
+    Published `inputs-<content hash of sim/viewer>` normally, or the local build
+    when the working tree has diverged from HEAD.
+    INNATE_SIM_VIEWER_BUNDLE_IMAGE overrides both, for a hand-built one.
 
-    Copies only what changed. The URDF is small and is the file that
-    actually changes, so it is compared by content; the ~7MB meshes use the
-    size+mtime shortcut (copy2 preserves both, so an exact match is a
-    previous copy of that very file).
+    ensure_sim_viewer_bundle records its choice in the config, because one case
+    cannot be decided without the network: a clean tree whose publish has not
+    landed falls back to the local build too.
     """
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    package = os_repo / "ros2_ws" / "src" / "mars_bot" / "mars_sim"
-    if not package.is_dir():
-        return  # image-mode checkout without the ROS sources; keep whatever is served
-
-    served = sim_repo / "viewer" / "public" / "robot"
-    sources = [(package / "urdf" / "mars.urdf", served / "mars.urdf")]
-    sources += [(mesh, served / "meshes" / mesh.name) for mesh in sorted(package.glob("meshes/*"))]
-    for src, dst in sources:
-        if dst.exists():
-            if src.suffix == ".urdf":
-                if dst.read_bytes() == src.read_bytes():
-                    continue
-            elif dst.stat().st_size == src.stat().st_size and dst.stat().st_mtime == src.stat().st_mtime:
-                continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+    override = os.environ.get("INNATE_SIM_VIEWER_BUNDLE_IMAGE", "").strip()
+    if override:
+        return override
+    chosen = config.get("viewer_bundle_image")
+    if chosen:
+        return str(chosen)
+    repo_root: Path = config["os_repo"]  # type: ignore[assignment]
+    if viewer_bundle_built_locally():
+        return resolve_local_viewer_image(repo_root)
+    return resolve_viewer_image(repo_root)
 
 
 def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:
-    """Make sure the webapp's 3D-view bundle (viewer/dist-lib) is usable.
+    """Make sure the image holding the webapp's 3D-view bundle exists.
 
-    The webapp loads /sim-viewer/sim-session.js for the 3D sim view. The
-    asset bundle ships it prebuilt (publish_assets.py), so running the sim
-    never needs Node.js. A missing/empty bundle means a broken asset state
-    (e.g. an interrupted first run), and the fix is re-fetching the pinned
-    assets -- never a local npm build. Viewer developers opt in to
-    build-from-source with INNATE_SIM_VIEWER_DEV=1. Never runs on robots.
+    Published image when one describes this checkout, otherwise built right
+    here from sim/viewer/Dockerfile. Two ways to end up building:
+
+      * the tree is dirty, so no published image CAN describe it
+      * the tree is clean but CI has not published it yet (or retention expired
+        a branch tag) -- worth a warning, not worth blocking on
+
+    Either way the bundle arrives as a mounted image, so the host needs Docker
+    and never Node.js. Never runs on robots.
     """
-    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
-    viewer = sim_repo / "viewer"
-    bundle = viewer / "dist-lib" / "sim-session.js"
-
-    if os.environ.get("INNATE_SIM_VIEWER_DEV", "").strip() == "1":
-        _build_viewer_bundle_from_source(viewer, bundle, offline=offline)
+    if os.environ.get("INNATE_SIM_VIEWER_BUNDLE_IMAGE", "").strip():
+        # An explicit override names the image; building a different one and
+        # mounting neither would be the one useless outcome.
         return
-
-    if bundle.is_file() and bundle.stat().st_size > 0:
+    if not viewer_bundle_built_locally() and _published_bundle_usable(config, offline=offline):
         return
+    _build_viewer_image_locally(config, offline=offline)
 
+
+def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> None:
+    """Build sim/viewer/Dockerfile into LOCAL_VIEWER_IMAGE_REPO:inputs-<hash>.
+
+    Skipped when that tag is already in the store: the tag hashes the build's
+    inputs off the working tree, so its presence means the bundle for exactly
+    these bytes exists.
+
+    Offline is fine on a repeat run and fatal on the first: npm ci inside the
+    image needs the network, and there is no published bundle to fall back to.
+
+    Records the ref in the config so viewer_image_ref reports what was actually
+    built -- recomputing there would be wrong on the clean-tree fallback path,
+    where a registry probe chose the local build.
+    """
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    image = resolve_local_viewer_image(os_repo)
+    config["viewer_bundle_image"] = image
+    env = os_compose_env()
+    if docker_image_present(image, cwd=os_repo, env=env):
+        return
+    # The two ways to get here have different remedies: stash your own edit, or
+    # wait for CI to finish publishing.
+    why = "sim/viewer differs from HEAD" if viewer_bundle_built_locally() else "nothing is published for it"
     if offline:
-        warn("The prebuilt sim viewer bundle is missing and this run is offline -- no 3D webapp view.")
-        return
-    warn("The prebuilt sim viewer bundle is missing or empty -- re-fetching the sim assets...")
-    (sim_repo / "assets" / ".assets-tag").unlink(missing_ok=True)
-    ensure_sim_assets(config)
-    if not (bundle.is_file() and bundle.stat().st_size > 0):
-        # Only reachable with a pre-dist-lib asset bundle pinned.
-        warn(
-            "The pinned asset bundle does not include a prebuilt viewer (no 3D webapp view). "
-            "Viewer developers can build one from source with INNATE_SIM_VIEWER_DEV=1 (needs Node.js)."
-        )
-
-
-def _build_viewer_bundle_from_source(viewer: Path, bundle: Path, *, offline: bool) -> None:
-    """INNATE_SIM_VIEWER_DEV=1: rebuild dist-lib when viewer sources are newer
-    than it, and (re)generate the per-room apartment split -- the edit-run loop
-    for sim/viewer developers."""
-    npm = shutil.which("npm")
-    if npm is None:
         raise StackError(
-            "INNATE_SIM_VIEWER_DEV=1 needs npm on PATH (install Node.js), "
-            "or unset it to use the prebuilt viewer bundle."
+            f"Offline, and the sim viewer bundle has to be built ({why}, so no published image "
+            "describes this checkout).\n"
+            f"  {image}\n"
+            "The build installs npm dependencies, which needs a connection. Re-run online, or "
+            "check out a commit whose bundle you have already built."
         )
-    if not (viewer / "node_modules").is_dir():
-        if offline:
-            warn("Offline and sim/viewer/node_modules is missing -- skipping the viewer bundle build.")
-            return
-        log("Installing sim viewer npm dependencies (one-time)...")
-        run_logged(
-            [npm, "ci"],
-            cwd=viewer,
-            log_path=VIEWER_BUILD_LOG_PATH,
-            failure_message="npm ci failed for sim/viewer.",
-        )
-    sources = [viewer / "package.json", viewer / "vite.lib.config.ts", viewer / "tsconfig.json"]
-    sources += sorted((viewer / "src").rglob("*.ts"))
-    newest_src = max((p.stat().st_mtime for p in sources if p.exists()), default=0.0)
-    if not bundle.exists() or bundle.stat().st_mtime < newest_src:
-        log("Building the sim viewer bundle (dist-lib)...")
-        run_logged_with_heartbeat(
-            [npm, "run", "build:lib"],
-            cwd=viewer,
-            log_path=VIEWER_BUILD_LOG_PATH,
-            failure_message="Sim viewer bundle build failed (npm run build:lib).",
-            progress_message="Still building the sim viewer bundle.",
-        )
-    _ensure_apartment_split(viewer, npm)
+    log(f"Building the sim viewer bundle image ({why})...")
+    run_logged_with_heartbeat(
+        [
+            "docker",
+            "buildx",
+            "build",
+            "--file",
+            f"{VIEWER_TREE_PATH}/Dockerfile",
+            # Host arch only, and loaded into the store rather than pushed:
+            # this one serves exactly this machine.
+            "--provenance=false",
+            "--sbom=false",
+            "--tag",
+            image,
+            "--load",
+            ".",
+        ],
+        cwd=os_repo,
+        env=env,
+        log_path=VIEWER_BUILD_LOG_PATH,
+        failure_message=(
+            "Building the sim viewer bundle image failed.\n"
+            "Stash your sim/viewer changes to fall back to the published bundle."
+        ),
+        progress_message="Still building the sim viewer bundle image.",
+    )
+    # Every edit to sim/viewer mints a new tag, so these pile up faster than
+    # any other local image in the project.
+    prune_stale_local_images(image, cwd=os_repo, env=env, label="sim viewer bundle")
 
 
-def _ensure_apartment_split(viewer: Path, npm: str) -> None:
-    """Generate the per-room apartment split + manifest the webapp streams
-    (scene.ts loadApartmentLayout). `up` re-extracts public/models from the asset
-    bundle, wiping the split, so regenerate whenever the manifest is missing or
-    older than the glb. Non-fatal: without it the 3D view just falls back to the
-    single-file apartment."""
-    glb = viewer / "public" / "models" / "appartement.glb"
-    manifest = viewer / "public" / "models" / "apartment" / "manifest.json"
-    if not glb.is_file():
-        return
-    if manifest.is_file() and manifest.stat().st_mtime >= glb.stat().st_mtime:
-        return
-    log("Splitting the apartment into per-room assets...")
+def _published_bundle_usable(config: dict[str, object], *, offline: bool) -> bool:
+    """Can compose mount the published bundle for this checkout?
+
+    False means "build it here instead" -- the caller's fallback. The warning
+    matters: a permanently broken publish pipeline would otherwise be
+    invisible, since every user would just quietly build their own.
+
+    Probed here and NOT in viewer_bundle_built_locally, which is asked on paths
+    that must not touch the network. Records the chosen ref in the config, as
+    _build_viewer_image_locally does.
+    """
+    image = resolve_viewer_image(config["os_repo"])  # type: ignore[arg-type]
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    if docker_image_present(image, cwd=os_repo, env=os_compose_env()):
+        config["viewer_bundle_image"] = image
+        return True
+    if offline:
+        # Fatal, not a fallback: the local build needs the network too (npm ci).
+        raise StackError(
+            "Offline, and the sim viewer bundle image is not in the local Docker store:\n"
+            f"  {image}\n"
+            f"Run `{CLI_SIM} up` online once first."
+        )
+    if _viewer_image_published(image):
+        config["viewer_bundle_image"] = image
+        return True
+    warn(
+        f"No published sim viewer bundle for this commit ({image}).\n"
+        "  CI may still be publishing it (publish-viewer-bundle.yml, about a minute). "
+        "Building it locally with the same Dockerfile in the meantime."
+    )
+    return False
+
+
+def _viewer_image_published(image: str) -> bool:
+    """Does the registry serve `image` to an anonymous client?
+
+    The registry API rather than `docker manifest inspect`, because the
+    anonymous HTTPS path is the one users actually pull on -- so this also
+    catches GHCR making a brand-new package private, where every fetch 401s.
+    """
     try:
-        run_logged(
-            [npm, "run", "split:apartment"],
-            cwd=viewer,
-            log_path=VIEWER_BUILD_LOG_PATH,
-            failure_message="apartment split failed.",
-        )
-    except StackError:
-        warn("Apartment split failed -- the 3D view uses the single-file apartment. See the viewer build log.")
+        oci.manifest_for_image(image)
+    except oci.OciError:
+        return False
+    return True
 
 
 def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
