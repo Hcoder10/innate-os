@@ -1255,3 +1255,26 @@ def test_an_eviction_mid_search_misses_cleanly(data_dir):
     mutate_after_generate(search, fake, lambda: store.evict(memory_with_id(store, 1)))
     verdict = search.search("the kitchen")
     assert not verdict.found and not verdict.error
+
+
+def remap_in_place(data_dir, store: MemoryStore) -> None:
+    """Overwrite the active map under its own name and record a frame that
+    reuses id 1 — the collision a name-only guard would hand to the agent."""
+    (data_dir / "maps" / "A.pgm").write_bytes(b"remapped-content")
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 2000.0, b"new-map-frame")
+
+
+def test_a_same_name_remap_mid_search_voids_the_verdict(data_dir):
+    search, fake, store = make_search(data_dir, frames=2)  # the fake's verdict picks frame 1
+    mutate_after_generate(search, fake, lambda: remap_in_place(data_dir, store))
+    verdict = search.search("the kitchen")
+    assert not verdict.found and "map changed" in verdict.error
+
+
+def test_a_same_name_remap_disqualifies_the_cache(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    build_cache(search)
+    remap_in_place(data_dir, store)
+    search.search("the kitchen")
+    assert "cachedContent" not in fake.generates[-1]  # old-map frames must not vouch for reused ids
