@@ -5,11 +5,14 @@
 A memory earns its place by showing floor the kept frames don't: with a grid,
 novelty is visibility paint (memory/coverage.py) — record while the wedge in
 front of the camera is under the coverage threshold, and overlap is welcome
-(rather too many pictures than too few), but a pose that paints almost
-nothing earns no slot. Without a grid, pose redundancy stands in: two
-viewpoints are interchangeable only when both close AND similarly oriented.
-Capacity is bounded; at the cap, the memory whose paint is most replaceable
-makes room.
+(rather too many pictures than too few). The demand scales with the view: a
+roomy wedge tolerates overlap, while a cramped one (nose to a wall) must be
+nearly all new — important things hang on walls, so a close-up of an unknown
+wall earns a slot, but sliding along a known one does not. Without a grid,
+pose redundancy stands in: two viewpoints are interchangeable only when both
+close AND similarly oriented. Capacity is bounded; at the cap, the memory
+whose paint is most replaceable makes room, and the further-back shot outlives
+the close-ups it subsumes.
 
 A kept viewpoint's picture refreshes only from a frame that shows the same
 information, and at most once a minute. Heading is what decides that: two
@@ -43,8 +46,9 @@ _REDUNDANT_ANGLE_RAD = math.radians(100.0)  # most of the camera's 128 deg FOV s
 _SAME_VIEW_DISTANCE_M = 0.3  # lateral drift bound off the view axis, and the gridless fallback radius
 _SAME_VIEW_ANGLE_RAD = math.radians(20.0)
 _REFRESH_AGE_SEC = 60.0
-_COVERAGE_THRESHOLD = 0.8  # record until this much of the wedge is painted — overlap is welcome
-_MIN_VIEW_M2 = 1.0  # a nose-against-the-wall pose paints almost nothing; it earns no slot
+_COVERAGE_THRESHOLD = 0.8  # a roomy view records until this much of its wedge is painted — overlap is welcome
+_WIDE_VIEW_M2 = 1.0  # below this the view is a close-up
+_CLOSEUP_THRESHOLD = 0.2  # a close-up must be nearly all new — wall detail matters, wall spam does not
 
 
 @dataclass(frozen=True)
@@ -93,12 +97,13 @@ def _worth_a_slot(
     coverage: Coverage | None,
     nearest: Memory | None,
 ) -> bool:
-    """Novelty: with a grid, whether enough unpainted floor sits in front of
-    the camera (and enough floor at all); without one, pose redundancy."""
+    """Novelty: with a grid, whether enough of the wedge ahead is unpainted —
+    the smaller the view, the newer it must be; without one, pose redundancy."""
     if coverage is not None and grid is not None:
         view = coverage.assess(memories, grid, x, y, theta)
         if view is not None:
-            return view.visible_m2 >= _MIN_VIEW_M2 and view.painted_fraction < _COVERAGE_THRESHOLD
+            threshold = _COVERAGE_THRESHOLD if view.visible_m2 >= _WIDE_VIEW_M2 else _CLOSEUP_THRESHOLD
+            return view.painted_fraction < threshold
     return nearest is None or redundancy(nearest, x, y, theta) >= 1.0
 
 

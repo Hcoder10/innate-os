@@ -69,7 +69,9 @@ class Coverage:
 
     def least_unique(self, memories: Sequence[Memory], grid: Map) -> Memory | None:
         """The memory whose paint is most replaceable — evicting it loses the
-        least coverage; None when any mask is unavailable."""
+        least coverage; None when any mask is unavailable. Ties break toward
+        the smaller view, so the further-back shot that shows the same floor
+        outlives the close-ups it subsumes."""
         masks: list[tuple[Memory, np.ndarray]] = []
         for memory in memories:
             mask = self._mask(memory, grid)
@@ -77,15 +79,15 @@ class Coverage:
                 return None
             masks.append((memory, mask))
         cheapest: Memory | None = None
-        cheapest_unique = 0
+        cheapest_cost = (0, 0)
         for memory, mask in masks:
             others = np.zeros_like(mask)
             for other, other_mask in masks:
                 if other.id != memory.id:
                     others |= other_mask
-            unique = int((mask & ~others).sum())
-            if cheapest is None or unique < cheapest_unique:
-                cheapest, cheapest_unique = memory, unique
+            cost = (int((mask & ~others).sum()), int(mask.sum()))
+            if cheapest is None or cost < cheapest_cost:
+                cheapest, cheapest_cost = memory, cost
         return cheapest
 
     def _union(self, memories: Sequence[Memory], grid: Map) -> np.ndarray | None:
