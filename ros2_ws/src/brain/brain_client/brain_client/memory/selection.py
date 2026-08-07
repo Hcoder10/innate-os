@@ -7,7 +7,7 @@ novelty is visibility paint (memory/coverage.py) — record while the wedge in
 front of the camera is under the coverage threshold, and overlap is welcome
 (rather too many pictures than too few). The demand scales with the view: a
 roomy wedge tolerates overlap, while a cramped one (nose to a wall) must be
-nearly all new — important things hang on walls, so a close-up of an unknown
+mostly new — important things hang on walls, so a close-up of an unknown
 wall earns a slot, but sliding along a known one does not. Without a grid,
 pose redundancy stands in: two viewpoints are interchangeable only when both
 close AND similarly oriented. Capacity is bounded; at the cap, the memory
@@ -52,7 +52,7 @@ _REFRESH_AGE_SEC = (
 )
 _COVERAGE_THRESHOLD = 0.8  # a roomy view records until this much of its wedge is painted — overlap is welcome
 _WIDE_VIEW_M2 = 1.0  # below this the view is a close-up
-_CLOSEUP_THRESHOLD = 0.2  # a close-up must be nearly all new — wall detail matters, wall spam does not
+_CLOSEUP_THRESHOLD = 0.28  # a close-up must be mostly new — 0.2 starved small rooms, where every view is cramped
 
 
 @dataclass(frozen=True)
