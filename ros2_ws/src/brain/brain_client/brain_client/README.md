@@ -6,9 +6,10 @@ code, start from what it *does*:
 | Folder | What lives here |
 |---|---|
 | `nodes/` | The runnable ROS entry points (the only files with `main()`). Thin composition roots — they build collaborators, wire them, and spin. No behaviour. |
-| `brain/` | The local agent loop: `agent` (look → think → act as one cancellable coroutine), `loop` (the dedicated-thread asyncio runtime it runs on), `context` (bounded Gemini conversation), `tools` + `transport` (declarations and the wire), pure `grounding` (pointed pixel → floor target), and the system `prompt`. |
+| `brain/` | The local agent loop: `agent` (look → think → act as one cancellable coroutine), `loop` (the dedicated-thread asyncio runtime it runs on), `context` (bounded Gemini conversation), `tools` + `transport` (declarations and the wire), pure `grounding` (pointed pixel → floor target), `memory_search` (recall over the spatial memory, context-cached), and the system `prompt`. |
 | `core/` | The activate/deactivate/reset state machine and directive switching (`lifecycle`), typed `config`, and the shared `state`. |
 | `perception/` | Turning sensors into what the agent sees: `camera`, `pose`/`pose_tracking`, `scan_health`, `gaze`. |
+| `memory/` | Persistent per-map spatial memory: `store` (JSON index + JPEGs on disk), pure `selection` (which viewpoints earn a slot), `recorder` (the always-on ROS adapter that captures them). |
 | `skills/` | The skill system: `registry`, `roster` (available + directive-active sets), `runner` (action lifecycle), `loader`, `hot_reload`, and the public `types` SDK base classes. |
 | `agents/` | Directives/behaviours: `loader`, `initializer`, and the public `types` SDK base class. |
 | `inputs/` | Input-device subsystem and its public `types` SDK base class. |
@@ -21,7 +22,7 @@ code, start from what it *does*:
 **1. Dependency direction is one-way.**
 
 ```
-nodes  ->  {brain, core}  ->  {perception, skills, agents, inputs, transport, robot}  ->  common
+nodes  ->  {brain, core}  ->  {perception, memory, skills, agents, inputs, transport, robot}  ->  common
 ```
 
 A module never imports "upward" (e.g. `perception` never imports `core`).

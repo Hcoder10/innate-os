@@ -462,7 +462,7 @@ def agent_factory(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a swappable transport
     created = []
 
-    def make(trace=None) -> tuple[BrainAgent, BrainState]:
+    def make(trace=None, memory=None) -> tuple[BrainAgent, BrainState]:
         logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
         node = SimpleNamespace(get_logger=lambda: logger)
         config = SimpleNamespace(
@@ -503,6 +503,7 @@ def agent_factory(monkeypatch):
             roster=SimpleNamespace(active_skill_ids=lambda: []),
             chat=chat,
             gaze=SimpleNamespace(pause=lambda: None),
+            memory=memory,
             trace=trace,
         )
         created.append(agent)
@@ -1074,6 +1075,53 @@ def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
     snapshot = traces[7]
     # History: the user turn, the model turn, and the wait call's functionResponse.
     assert snapshot["active"] is False and snapshot["backend"] == "gemini-direct" and snapshot["history"] == 3
+
+
+# ---------- spatial memory tool ----------
+
+from brain_client.brain.context import ToolCall  # noqa: E402
+
+
+def declared_tool_names(agent) -> list[str]:
+    return [d["name"] for d in agent._build_tools([])[0]["functionDeclarations"]]
+
+
+def test_search_memory_is_declared_only_while_frames_exist(agent_factory):
+    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=0))
+    assert "search_memory" not in declared_tool_names(agent)
+    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=3))
+    assert "search_memory" in declared_tool_names(agent)
+    agent, _ = agent_factory()  # no memory subsystem (no Gemini access at all)
+    assert "search_memory" not in declared_tool_names(agent)
+
+
+def test_search_memory_result_returns_as_an_event_with_the_matched_frame(agent_factory):
+    searches = []
+    memory = SimpleNamespace(
+        frame_count=3,
+        begin_search=lambda query, on_done: (searches.append(query), on_done("Memory search: found it", JPEG)),
+    )
+    agent, _ = agent_factory(memory=memory)
+    agent._context._transport = lambda model, body: [model_response(call_part("search_memory", {"query": "banana"}))]
+    run_turn(agent)
+
+    assert searches == ["banana"]
+    # The call was answered immediately (started, not blocked on)...
+    outcome = agent._context._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
+    assert outcome == "searching memory — the result arrives as an event"
+    # ...and the result waits in the queue as a MEMORY event carrying the frame.
+    (event,) = agent._events
+    assert event.kind == EventKind.MEMORY and event.image == JPEG and "found it" in event.text
+
+
+def test_search_memory_rejects_an_empty_memory_and_a_missing_query(agent_factory):
+    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=0))
+    assert (
+        agent._execute(ToolCall("search_memory", {"query": "keys"}))
+        == "rejected — no places remembered on this map yet"
+    )
+    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=2))
+    assert agent._execute(ToolCall("search_memory", {})) == "rejected — give a query describing what to find"
 
 
 # ---------- prompt ----------
