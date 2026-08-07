@@ -8,9 +8,21 @@ reset that most skills perform as their first statement.
 """
 
 import logging
+import threading
+import time
 from types import SimpleNamespace
 
-from brain_client.skills.types import Skill, SkillResult
+import pytest
+
+from brain_client.skills.types import (
+    Interface,
+    InterfaceType,
+    Skill,
+    SkillCancelled,
+    SkillResult,
+    cancellable_sleep,
+    swap_run_cancel,
+)
 
 
 class LegacyPatternSkill(Skill):
@@ -95,3 +107,66 @@ def test_latch_works_without_super_init():
     skill._begin_run(_goal_handle(False))
     Skill.cancel(skill)
     assert skill._cancelled is True
+
+
+class SleepySkill(Skill):
+    """The new authoring shape: no cancel code, just self.sleep in loops."""
+
+    def execute(self):
+        while True:
+            self.sleep(0.05)
+
+    @property
+    def name(self):
+        return "sleepy"
+
+
+def test_sleep_raises_immediately_once_cancelled():
+    skill = SleepySkill(logging.getLogger("test"))
+    skill.cancel()
+    start = time.monotonic()
+    with pytest.raises(SkillCancelled):
+        skill.sleep(10.0)
+    assert time.monotonic() - start < 1.0
+
+
+def test_sleep_wakes_mid_wait_on_cancel():
+    skill = SleepySkill(logging.getLogger("test"))
+    threading.Timer(0.1, skill.cancel).start()
+    start = time.monotonic()
+    with pytest.raises(SkillCancelled):
+        skill.execute()
+    assert time.monotonic() - start < 5.0
+
+
+def test_cancel_halts_injected_interfaces():
+    class Braked(Skill):
+        mobility = Interface(InterfaceType.MOBILITY)
+
+        def execute(self):
+            pass
+
+    class FakeMobility:
+        def __init__(self):
+            self.halted = False
+
+        def halt(self):
+            self.halted = True
+
+    skill = Braked(logging.getLogger("test"))
+    base = FakeMobility()
+    skill.inject_interface(InterfaceType.MOBILITY, base)
+    skill.cancel()
+    assert base.halted
+
+
+def test_cancellable_sleep_follows_the_bound_run_latch():
+    latch = threading.Event()
+    previous = swap_run_cancel(latch)
+    try:
+        cancellable_sleep(0)  # not cancelled: returns
+        latch.set()
+        with pytest.raises(SkillCancelled):
+            cancellable_sleep(10.0)
+    finally:
+        swap_run_cancel(previous)
