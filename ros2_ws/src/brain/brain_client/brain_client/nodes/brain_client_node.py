@@ -242,6 +242,7 @@ class BrainClientNode(Node):
         self.create_service(ResetBrain, "/brain/reset_brain", self._svc_reset_brain)
         self.create_service(SetBool, "/brain/set_brain_active", self._svc_set_brain_active)
         self.create_service(Trigger, "/brain/reload", self._svc_reload)
+        self.create_service(Trigger, "/brain/clear_memories", self._svc_clear_memories)
         self.create_service(ReloadSkillsAgents, "/brain/reload_skills_agents", self._svc_reload_skills_agents)
         self.create_service(GetAvailableDirectives, "/brain/get_available_directives", self._svc_get_directives)
 
@@ -478,6 +479,13 @@ class BrainClientNode(Node):
                 self.lifecycle.deactivate_brain()
                 response.message = "Brain deactivated."
         response.success = True
+        return response
+
+    def _svc_clear_memories(self, request, response):
+        cleared = self.memory_store.clear()
+        self.get_logger().info(f"[BrainClient] Cleared {cleared} spatial memories on user request")
+        response.success = True
+        response.message = f"Forgot {cleared} remembered views"
         return response
 
     def _svc_reload(self, request, response):

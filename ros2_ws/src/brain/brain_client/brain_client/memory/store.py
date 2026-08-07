@@ -132,6 +132,17 @@ class MemoryStore:
             self._memories = [memory if m.id == old.id else m for m in self._memories]
             self._commit_locked()
 
+    def clear(self) -> int:
+        """Forget every memory on the current map — images, index, and upload
+        registry — returning how many were forgotten."""
+        with self._lock:
+            if self._dir is None or not self._memories:
+                return 0
+            cleared = len(self._memories)
+            self._wipe_locked()
+            self._commit_locked()
+            return cleared
+
     def evict(self, memory: Memory) -> None:
         with self._lock:
             if self._dir is None or all(m.id != memory.id for m in self._memories):

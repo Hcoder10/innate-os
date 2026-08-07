@@ -9,7 +9,7 @@
 // the reel costs no rosbridge bandwidth.
 
 import { ros } from "../rosClient.js";
-import { MEMORY_POSITIONS_TOPIC, MEMORY_SEARCH_TOPIC } from "../constants.js";
+import { CLEAR_MEMORIES_SERVICE, MEMORY_POSITIONS_TOPIC, MEMORY_SEARCH_TOPIC } from "../constants.js";
 import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
 
 // Age labels ("5 min ago") drift while nothing else changes — refresh slowly.
@@ -37,7 +37,26 @@ export function createMemoriesPanel(root, map) {
   chip.className = "mem-panel-chip mono";
   chip.hidden = true;
   chip.title = "Whether the remembered views are pre-cached with the vision model (searches answer in ~a second)";
-  head.append(label, count, chip);
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "mem-panel-clear mono";
+  clearBtn.hidden = true;
+  clearBtn.textContent = "forget all";
+  clearBtn.title = "Forget every remembered view on this map";
+  clearBtn.addEventListener("click", () => {
+    const n = count.textContent;
+    if (!window.confirm(`Forget all ${n} remembered views on this map? The robot rebuilds them as it drives around.`)) {
+      return;
+    }
+    clearBtn.disabled = true;
+    ros
+      .callService(CLEAR_MEMORIES_SERVICE)
+      .catch(() => {}) // the reel simply not emptying is the failure signal
+      .finally(() => {
+        clearBtn.disabled = false;
+      });
+  });
+  head.append(label, count, chip, clearBtn);
   section.appendChild(head);
 
   const empty = document.createElement("p");
@@ -105,6 +124,7 @@ export function createMemoriesPanel(root, map) {
       chip.hidden = state.memories.length === 0;
       chip.textContent = cache.text;
       chip.dataset.kind = cache.kind;
+      clearBtn.hidden = state.memories.length === 0;
       empty.hidden = state.memories.length > 0;
       reel.hidden = state.memories.length === 0;
       const sig = `${state.map}|${state.memories.map((m) => `${m.id}:${m.stamp}`).join(",")}`;

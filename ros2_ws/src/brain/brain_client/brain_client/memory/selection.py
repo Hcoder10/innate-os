@@ -7,6 +7,16 @@ viewpoints are redundant only when they are both close AND similarly oriented �
 either gap alone (same spot facing away, same heading across the room) makes a
 genuinely different view. Capacity is bounded; at the cap, the older half of
 the most redundant pair makes room.
+
+A kept viewpoint's picture refreshes only from a frame that shows the same
+information, and at most once a minute. Heading is what decides that: two
+frames aimed the same way, displaced along that very axis, with nothing but
+free space between their capture points show the same scene — one merely a
+step closer. So refresh needs a near-identical heading, a displacement riding
+the view axis (a lateral step slides different information into frame), and a
+clear line of sight on the occupancy grid (without a grid, a tight distance
+stands in). An oblique, mid-turn, side-stepped, or behind-a-wall take never
+overwrites a straight-on view.
 """
 
 from __future__ import annotations
@@ -16,11 +26,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from brain_client.memory.store import Memory
+from brain_client.state.map import Map
 
 MAX_MEMORIES = 50
 _REDUNDANT_DISTANCE_M = 1.0
 _REDUNDANT_ANGLE_RAD = math.radians(100.0)  # most of the camera's 128 deg FOV still overlaps within this
-_REFRESH_AGE_SEC = 30 * 60.0  # a revisited viewpoint older than this gets a fresh image
+_SAME_VIEW_DISTANCE_M = 0.3  # lateral drift bound off the view axis, and the gridless fallback radius
+_SAME_VIEW_ANGLE_RAD = math.radians(20.0)
+_REFRESH_AGE_SEC = 60.0
+_OCCUPIED_THRESHOLD = 50  # nav grid: -1 unknown, 0 free, 100 occupied
 
 
 @dataclass(frozen=True)
@@ -28,22 +42,61 @@ class Admission:
     """What to do with a candidate viewpoint; replace/evict name existing memories."""
 
     record: bool
-    replace: Memory | None = None  # same viewpoint, stale image: overwrite in place
+    replace: Memory | None = None  # same view, aged picture: overwrite in place
     evict: Memory | None = None  # at capacity: remove this one to make room
 
 
 _SKIP = Admission(record=False)
 
 
-def plan_admission(memories: Sequence[Memory], x: float, y: float, theta: float, stamp: float) -> Admission:
+def plan_admission(
+    memories: Sequence[Memory], x: float, y: float, theta: float, stamp: float, grid: Map | None = None
+) -> Admission:
     nearest = min(memories, key=lambda m: redundancy(m, x, y, theta), default=None)
     if nearest is not None and redundancy(nearest, x, y, theta) < 1.0:
-        if stamp - nearest.stamp < _REFRESH_AGE_SEC:
-            return _SKIP
-        return Admission(record=True, replace=nearest)
+        if stamp - nearest.stamp >= _REFRESH_AGE_SEC and _same_view(nearest, x, y, theta, grid):
+            return Admission(record=True, replace=nearest)
+        return _SKIP
     if len(memories) < MAX_MEMORIES:
         return Admission(record=True)
     return Admission(record=True, evict=_most_redundant(memories))
+
+
+def _same_view(memory: Memory, x: float, y: float, theta: float, grid: Map | None) -> bool:
+    """The same picture — only such a frame may overwrite the stored one.
+    Heading decides; the displacement may only ride the view axis (ahead or
+    behind — a lateral step frames different information), and the sight line
+    must be clear. Distance is capped implicitly: the caller consults this
+    inside the redundancy disc, so a same-heading frame beyond
+    _REDUNDANT_DISTANCE_M is a new viewpoint, never a refresh."""
+    if _angle_diff(memory.theta, theta) >= _SAME_VIEW_ANGLE_RAD:
+        return False
+    dx, dy = x - memory.x, y - memory.y
+    if abs(dy * math.cos(memory.theta) - dx * math.sin(memory.theta)) > _SAME_VIEW_DISTANCE_M:
+        return False
+    if grid is None:
+        return math.hypot(dx, dy) <= _SAME_VIEW_DISTANCE_M
+    return _clear_line(grid, memory.x, memory.y, x, y)
+
+
+def _clear_line(grid: Map, ax: float, ay: float, bx: float, by: float) -> bool:
+    """Nothing but known-free cells on the segment — the two endpoints see the
+    same scene. Unknown or out-of-map counts as blocked: what the map cannot
+    vouch for must not justify an overwrite."""
+    cells = grid.grid
+    if cells is None:
+        return False
+    steps = max(1, math.ceil(math.hypot(bx - ax, by - ay) / (grid.resolution / 2)))
+    for i in range(steps + 1):
+        t = i / steps
+        col = int((ax + (bx - ax) * t - grid.origin_x) / grid.resolution)
+        row = int((ay + (by - ay) * t - grid.origin_y) / grid.resolution)
+        if not (0 <= row < grid.height and 0 <= col < grid.width):
+            return False
+        value = int(cells[row, col])
+        if value < 0 or value >= _OCCUPIED_THRESHOLD:
+            return False
+    return True
 
 
 def redundancy(memory: Memory, x: float, y: float, theta: float) -> float:

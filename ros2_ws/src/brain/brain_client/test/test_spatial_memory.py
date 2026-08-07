@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Spatial memory: admission policy, the on-disk store, the recorder's gates,
-and the Gemini search with its context-cache lifecycle."""
+"""Spatial memory: admission policy, visit tracking, frame quality, the
+on-disk store, the recorder's gates, and the Gemini search with its
+context-cache lifecycle."""
 
 from __future__ import annotations
 
@@ -12,20 +13,54 @@ import time
 from dataclasses import replace
 from types import SimpleNamespace
 
+import cv2
+import numpy as np
 import pytest
 
 from brain_client.brain.memory_search import MemorySearch, verdict_text
 from brain_client.brain.transport import CACHED_CONTENTS_PATH, GeminiHttpError, GeminiRest
 from brain_client.memory import recorder as recorder_module
+from brain_client.memory.quality import frame_worth_keeping
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.selection import MAX_MEMORIES, plan_admission
 from brain_client.memory.store import Memory, MemoryStore
+from brain_client.state.map import Map
 
-JPEG = b"\xff\xd8\xff\xe0fakejpegbytes"
+
+def encoded(image: np.ndarray) -> bytes:
+    ok, buffer = cv2.imencode(".jpg", image)
+    assert ok
+    return buffer.tobytes()
+
+
+def frame(seed: int) -> bytes:
+    """A distinct, deterministic frame that passes the quality gates."""
+    rng = np.random.default_rng(seed)
+    return encoded(rng.integers(0, 255, size=(240, 320), dtype=np.uint8))
+
+
+GOOD_JPEG = frame(0)
+DARK_JPEG = encoded(np.full((240, 320), 5, dtype=np.uint8))
 
 
 def memory(id_: int, x: float, y: float = 0.0, theta: float = 0.0, stamp: float = 1000.0) -> Memory:
     return Memory(id=id_, x=x, y=y, theta=theta, stamp=stamp)
+
+
+def grid_of(cells: np.ndarray, resolution: float = 0.1) -> Map:
+    """A Map over a raw cell array; world (0,0) at the grid corner."""
+    return Map(
+        resolution=resolution,
+        width=cells.shape[1],
+        height=cells.shape[0],
+        origin_x=0.0,
+        origin_y=0.0,
+        raw_source=SimpleNamespace(data=cells.flatten().tolist()),
+    )
+
+
+def open_room(size: int = 30) -> np.ndarray:
+    return np.zeros((size, size), dtype=np.int8)
 
 
 # ================= admission policy =================
@@ -51,10 +86,62 @@ def test_distance_alone_makes_a_new_view():
     assert plan.record and plan.replace is None
 
 
-def test_stale_viewpoint_is_refreshed_in_place():
+def test_the_same_view_refreshes_once_aged():
     old = memory(1, 0.0, 0.0, stamp=1000.0)
-    plan = plan_admission([old], 0.1, 0.0, 0.05, stamp=1000.0 + 31 * 60)
+    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1070.0)
     assert plan.record and plan.replace == old and plan.evict is None
+
+
+def test_a_recent_picture_is_not_rewritten():
+    old = memory(1, 0.0, 0.0, stamp=1000.0)
+    plan = plan_admission([old], 0.1, 0.05, math.radians(8), stamp=1030.0)
+    assert not plan.record
+
+
+def test_an_oblique_frame_never_replaces_a_straight_on_view():
+    # The mid-turn case: still redundant with the memory (heading < 100 deg),
+    # but no longer the same picture — skip, never overwrite.
+    old = memory(1, 0.5, 0.5, stamp=1000.0)
+    plan = plan_admission([old], 0.5, 0.5, math.radians(40), stamp=2000.0, grid=grid_of(open_room()))
+    assert not plan.record
+
+
+def test_a_same_heading_frame_with_clear_sight_refreshes_from_a_step_back():
+    # Same aim, displaced along it, free space between the capture points: the
+    # same information, one frame merely a bit further away — it may update.
+    old = memory(1, 0.5, 0.5, stamp=1000.0)
+    plan = plan_admission([old], 1.3, 0.5, math.radians(5), stamp=2000.0, grid=grid_of(open_room()))
+    assert plan.record and plan.replace == old
+
+
+def test_a_side_step_off_the_view_axis_never_refreshes():
+    # Same aim, but displaced ACROSS it: the frame slides new information into
+    # view even though both cameras point the same way.
+    old = memory(1, 0.5, 0.5, theta=0.0, stamp=1000.0)
+    plan = plan_admission([old], 0.5, 1.3, math.radians(5), stamp=2000.0, grid=grid_of(open_room()))
+    assert not plan.record
+
+
+def test_a_wall_between_the_capture_points_blocks_the_refresh():
+    cells = open_room()
+    cells[:, 9] = 100  # a wall at world x = 0.9-1.0
+    old = memory(1, 0.5, 0.5, stamp=1000.0)
+    plan = plan_admission([old], 1.3, 0.5, math.radians(5), stamp=2000.0, grid=grid_of(cells))
+    assert not plan.record
+
+
+def test_unknown_cells_between_the_capture_points_block_the_refresh():
+    cells = open_room()
+    cells[:, 9] = -1  # the map cannot vouch for what is here
+    old = memory(1, 0.5, 0.5, stamp=1000.0)
+    plan = plan_admission([old], 1.3, 0.5, math.radians(5), stamp=2000.0, grid=grid_of(cells))
+    assert not plan.record
+
+
+def test_without_a_grid_only_a_tight_pose_match_refreshes():
+    old = memory(1, 0.0, 0.0, stamp=1000.0)
+    assert not plan_admission([old], 0.6, 0.0, 0.0, stamp=2000.0).record
+    assert plan_admission([old], 0.2, 0.0, 0.0, stamp=2000.0).replace == old
 
 
 def test_at_capacity_evicts_the_older_of_the_closest_pair():
@@ -63,6 +150,31 @@ def test_at_capacity_evicts_the_older_of_the_closest_pair():
     newer_twin = memory(91, x=200.4, stamp=200.0)
     plan = plan_admission([*spread, older_twin, newer_twin], -5.0, 0.0, 0.0, stamp=1000.0)
     assert plan.record and plan.evict == older_twin
+
+
+# ================= frame quality =================
+
+
+def test_a_textured_bright_frame_is_kept():
+    assert frame_worth_keeping(GOOD_JPEG)
+
+
+def test_a_dark_frame_is_rejected():
+    assert not frame_worth_keeping(DARK_JPEG)
+
+
+def test_a_featureless_frame_is_rejected():
+    assert not frame_worth_keeping(encoded(np.full((240, 320), 128, dtype=np.uint8)))
+
+
+def test_a_blurred_frame_is_rejected():
+    rng = np.random.default_rng(3)
+    noise = rng.integers(0, 255, size=(240, 320), dtype=np.uint8)
+    assert not frame_worth_keeping(encoded(cv2.GaussianBlur(noise, (31, 31), 0)))
+
+
+def test_undecodable_bytes_are_rejected():
+    assert not frame_worth_keeping(b"\xff\xd8not-a-jpeg")
 
 
 # ================= store =================
@@ -159,6 +271,28 @@ def test_replace_keeps_the_slot_and_updates_everything_else(data_dir):
     assert path is not None and path.read_bytes() == b"jpg-new"
 
 
+def test_clear_forgets_the_map_for_good(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.add(4.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    assert store.clear() == 2
+    assert store.snapshot().memories == ()
+    assert list((data_dir / "spatial_memory" / "A").glob("*.jpg")) == []
+
+    reloaded = MemoryStore(data_dir)
+    reloaded.switch_map("A.yaml")
+    assert reloaded.snapshot().memories == ()  # the wipe was committed, not just in-memory
+    fresh = reloaded.add(1.0, 2.0, 0.5, 2000.0, b"jpg-new")
+    assert fresh is not None and fresh.id == 1  # ids restart with the fresh memory
+
+
+def test_clear_without_a_map_is_a_noop(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map(None)
+    assert store.clear() == 0
+
+
 def test_without_a_map_nothing_is_recorded(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map(None)
@@ -184,10 +318,11 @@ def test_corrupt_index_resets_cleanly(data_dir):
 def clock(monkeypatch):
     state = SimpleNamespace(now=1000.0)
     monkeypatch.setattr(recorder_module.time, "monotonic", lambda: state.now)
+    monkeypatch.setattr(recorder_module.time, "time", lambda: state.now)  # stamps drive the refresh age gate
     return state
 
 
-def make_recorder(data_dir, published: list | None = None):
+def make_recorder(data_dir, published: list | None = None, pose: SimpleNamespace | None = None):
     logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
     node = SimpleNamespace(
         get_logger=lambda: logger,
@@ -200,12 +335,13 @@ def make_recorder(data_dir, published: list | None = None):
         current_map_topic="/nav/current_map",
         amcl_pose_topic="/amcl_pose",
     )
+    pose = pose if pose is not None else SimpleNamespace(xyt=(1.0, 2.0, 0.5))
     store = MemoryStore(data_dir)
     recorder = MemoryRecorder(
         node,
         config,
         store=store,
-        pose_tracker=SimpleNamespace(map_pose_xyt=lambda: (1.0, 2.0, 0.5)),
+        pose_tracker=SimpleNamespace(map_pose_xyt=lambda: pose.xyt),
         warm_search=None,
         cache_state=lambda: "warm",
         positions_pub=SimpleNamespace(publish=(published if published is not None else []).append),
@@ -218,8 +354,21 @@ def see_confident_world(recorder, clock):
     recorder._on_current_map(SimpleNamespace(data="A.yaml"))
     recorder._on_nav_mode(SimpleNamespace(data="navigation"))
     recorder._on_amcl_pose(SimpleNamespace(pose=SimpleNamespace(covariance=_covariance(0.02, 0.02, 0.05))))
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+
+
+def observe(recorder, clock, jpeg: bytes, advance: float = 1.0):
+    """One recorder tick seeing this frame, the clock advanced past the last."""
+    clock.now += advance
+    recorder._on_image(SimpleNamespace(data=jpeg))
+    recorder.tick()
+
+
+def stored_image(store: MemoryStore, memory_id: int) -> bytes:
+    path = store.image_path(memory_id)
+    assert path is not None
+    return path.read_bytes()
 
 
 def _covariance(var_x: float, var_y: float, var_yaw: float) -> list[float]:
@@ -234,7 +383,7 @@ def test_confidence_must_hold_before_recording(data_dir, clock):
     recorder.tick()  # starts the confidence clock
     assert store.snapshot().memories == ()
     clock.now += 3.1
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder.tick()
     assert len(store.snapshot().memories) == 1
 
@@ -249,11 +398,11 @@ def test_a_covariance_spike_resets_the_clock(data_dir, clock):
     recorder._on_amcl_pose(SimpleNamespace(pose=SimpleNamespace(covariance=_covariance(0.02, 0.02, 0.05))))
     recorder.tick()  # confident again: the clock restarts here, 2s in
     clock.now += 2.9
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder.tick()
     assert store.snapshot().memories == ()
     clock.now += 0.3
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder.tick()
     assert len(store.snapshot().memories) == 1
 
@@ -265,7 +414,7 @@ def test_only_navigation_mode_records(data_dir, clock):
     for _ in range(5):
         recorder.tick()
         clock.now += 2.0
-        recorder._on_image(SimpleNamespace(data=b"live-frame"))
+        recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     assert store.snapshot().memories == ()
 
 
@@ -275,7 +424,7 @@ def test_looking_at_the_floor_blocks_capture(data_dir, clock):
     recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -45.0})))
     recorder.tick()
     clock.now += 3.1
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder.tick()
     assert store.snapshot().memories == ()
 
@@ -295,13 +444,98 @@ def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     see_confident_world(recorder, clock)
     recorder.tick()
     clock.now += 3.1
-    recorder._on_image(SimpleNamespace(data=b"live-frame"))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
     recorder.tick()
     payload = json.loads(published[-1].data)
     assert payload["map"] == "A.yaml" and payload["cache"] == "warm"
     (position,) = payload["positions"]
     assert position["id"] == 1 and position["x"] == 1.0 and position["y"] == 2.0 and position["theta"] == 0.5
     assert position["stamp"] > 0
+
+
+def settled_recorder(data_dir, clock, pose: SimpleNamespace):
+    """A recorder past the confidence hold, its first viewpoint just recorded with frame(1)."""
+    recorder, store = make_recorder(data_dir, pose=pose)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 3.1
+    observe(recorder, clock, frame(1), advance=0.0)
+    assert len(store.snapshot().memories) == 1
+    return recorder, store
+
+
+def test_a_new_viewpoint_needs_a_keepable_frame(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 3.1
+    observe(recorder, clock, DARK_JPEG, advance=0.0)
+    assert store.snapshot().memories == ()
+    observe(recorder, clock, frame(1))
+    assert len(store.snapshot().memories) == 1
+
+
+def test_dwelling_rewrites_nothing_within_the_refresh_window(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    observe(recorder, clock, frame(2))
+    observe(recorder, clock, frame(3))
+    assert stored_image(store, 1) == frame(1)
+
+
+def test_an_aged_same_view_refreshes_with_the_current_frame(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    observe(recorder, clock, frame(2), advance=61.0)  # staring at the same spot a minute later
+    assert stored_image(store, 1) == frame(2)
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_turned_away_frame_never_overwrites(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    pose.xyt = (1.0, 2.0, 0.5 + math.radians(40))  # mid-turn: redundant, but a different picture
+    observe(recorder, clock, frame(2), advance=61.0)
+    assert stored_image(store, 1) == frame(1)
+    assert len(store.snapshot().memories) == 1
+
+
+def grid_msg(cells: np.ndarray, resolution: float = 0.1):
+    identity = SimpleNamespace(w=1.0, x=0.0, y=0.0, z=0.0)
+    origin = SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0), orientation=identity)
+    info = SimpleNamespace(resolution=resolution, width=cells.shape[1], height=cells.shape[0], origin=origin)
+    return SimpleNamespace(info=info, data=cells.flatten().tolist())
+
+
+def test_the_grid_widens_the_refresh_to_clear_sight_lines(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.0))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    recorder._on_map(grid_msg(open_room(40)))
+    pose.xyt = (1.8, 2.0, 0.0)  # a step along the aim, nothing in between
+    observe(recorder, clock, frame(2), advance=61.0)
+    assert stored_image(store, 1) == frame(2)
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_wall_on_the_sight_line_blocks_the_refresh(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.0))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    cells = open_room(40)
+    cells[:, 14] = 100  # a wall at world x = 1.4-1.5
+    recorder._on_map(grid_msg(cells))
+    pose.xyt = (1.8, 2.0, 0.0)
+    observe(recorder, clock, frame(2), advance=61.0)
+    assert stored_image(store, 1) == frame(1)
+    assert len(store.snapshot().memories) == 1
+
+
+def test_bad_frames_never_overwrite_a_view(data_dir, clock):
+    pose = SimpleNamespace(xyt=(1.0, 2.0, 0.5))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    observe(recorder, clock, DARK_JPEG, advance=61.0)  # refresh is due, but the lights are off
+    assert stored_image(store, 1) == frame(1)
+    observe(recorder, clock, frame(2))  # the first keepable frame lands it
+    assert stored_image(store, 1) == frame(2)
 
 
 # ================= memory search =================
