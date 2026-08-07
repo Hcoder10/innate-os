@@ -66,10 +66,12 @@ const GRID_WALL_RGB = [223, 225, 234];
 // /localize scan-matches for up to ~30 s before answering.
 const LOCALIZE_TIMEOUT_MS = 40_000;
 
-// Wheel-zoom bounds (metres of real-world width shown).
+// Wheel-zoom bounds (metres of real-world width shown). The factor scales
+// with the actual scroll delta: a trackpad's stream of small deltas zooms
+// smoothly and fine-grained, a mouse's ~100 px notch steps ~10%.
 const MIN_ZOOM_M = 1;
 const MAX_ZOOM_M = 60;
-const ZOOM_STEP = 1.15; // per wheel notch
+const ZOOM_PER_WHEEL_PX = 0.001; // exp() rate per wheel-delta pixel
 
 // Odometry breadcrumb trail: drop a point every few cm, keep the last N.
 const TRAIL_MIN_STEP_M = 0.03;
@@ -1041,9 +1043,10 @@ export function createMap(root, opts = {}) {
       });
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
-      // A soft underglow beneath the crisp line — the route reads as lit.
-      ctx.strokeStyle = withAlpha(MAP_COLORS.route, 0.22);
-      ctx.lineWidth = 6 * dpr();
+      // Robot-width corridor under the crisp line: the translucent band covers
+      // the floor the robot will actually sweep, at every zoom.
+      ctx.strokeStyle = withAlpha(MAP_COLORS.route, 0.2);
+      ctx.lineWidth = Math.max(3 * dpr(), (ROBOT_SPRITE_W_M / grid.resolution) * scale);
       ctx.stroke(path);
       ctx.strokeStyle = MAP_COLORS.route;
       ctx.lineWidth = 2 * dpr();
@@ -1537,7 +1540,9 @@ export function createMap(root, opts = {}) {
   function onWheel(e) {
     if (!zoomMeters) return; // fit-whole mode (standalone page) doesn't zoom
     e.preventDefault();
-    const next = zoomMeters * (e.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+    // deltaMode: line/page deltas (Firefox mouse wheels) normalized to pixels.
+    const deltaPx = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
+    const next = zoomMeters * Math.exp(deltaPx * ZOOM_PER_WHEEL_PX);
     zoomMeters = Math.min(MAX_ZOOM_M, Math.max(MIN_ZOOM_M, next));
     draw();
     opts.onZoomChange?.(zoomMeters);

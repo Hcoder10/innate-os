@@ -126,6 +126,8 @@
       const ranges = [];
       for (let i = 0; i < 360; i++) ranges.push(2.2 + Math.sin(i * 0.15) * 0.5);
       publish("/scan", { ranges, angle_min: -Math.PI, angle_increment: Math.PI / 180, range_min: 0.1, range_max: 8 });
+      // Keep the route alive past the widget's stale-plan expiry.
+      setInterval(() => publish("/navigation/plan", { poses: pts }), 2000);
       throw new Error("preview: static scene, no motion loop");
     }
 
