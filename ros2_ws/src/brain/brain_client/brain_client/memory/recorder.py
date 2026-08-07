@@ -7,8 +7,10 @@ memories too, so the recorder owns its own lightweight subscriptions instead
 of borrowing the brain's activation-gated sensors. One rule governs capture —
 record only what a well-localized robot saw: AMCL's covariance must hold below
 the webapp's "confident" thresholds for a few seconds straight, then the
-admission policy (memory/selection.py) decides novelty, refresh, and eviction —
-a kept viewpoint's picture refreshes only from a frame aimed the same way with
+admission policy (memory/selection.py) decides novelty, refresh, and eviction.
+Novelty is visibility paint: each memory paints the floor its camera saw, and
+a new picture is taken while the wedge ahead is mostly unpainted. A kept
+viewpoint's picture refreshes only from a frame aimed the same way with
 a clear sight line between the capture points, so an oblique, mid-turn, or
 behind-a-wall frame never overwrites a straight-on view. Every stored
 frame must first pass the quality gates (memory/quality.py); a bad frame never
@@ -38,6 +40,7 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from brain_client.common.geometry import quaternion_to_yaw
+from brain_client.memory.coverage import Coverage
 from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness
 from brain_client.memory.selection import plan_admission
 from brain_client.state.map import Map
@@ -98,7 +101,8 @@ class MemoryRecorder:
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
         self._head_pitch = 0.0
         self._confident_since: float | None = None
-        self._grid: Map | None = None  # sight-line truth for same-view refreshes
+        self._grid: Map | None = None  # sight-line + paint truth for admissions and refreshes
+        self._coverage = Coverage()
 
         image_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT, history=QoSHistoryPolicy.KEEP_LAST, depth=1
@@ -203,7 +207,7 @@ class MemoryRecorder:
         return max(var_x, var_y) <= _POSITION_VAR_MAX and var_yaw <= _YAW_VAR_MAX
 
     def _record(self, x: float, y: float, theta: float, jpeg: bytes) -> None:
-        plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time(), self._grid)
+        plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time(), self._grid, self._coverage)
         if not plan.record:
             return
         if plan.replace is not None:

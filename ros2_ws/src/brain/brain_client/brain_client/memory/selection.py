@@ -2,11 +2,14 @@
 # Copyright (c) 2026 Innate Inc
 """Which viewpoints earn a slot in the spatial memory. Pure: no ROS, no I/O.
 
-A memory earns its place by showing something no kept frame shows. Two
-viewpoints are redundant only when they are both close AND similarly oriented —
-either gap alone (same spot facing away, same heading across the room) makes a
-genuinely different view. Capacity is bounded; at the cap, the older half of
-the most redundant pair makes room.
+A memory earns its place by showing floor the kept frames don't: with a grid,
+novelty is visibility paint (memory/coverage.py) — record while the wedge in
+front of the camera is under the coverage threshold, and overlap is welcome
+(rather too many pictures than too few), but a pose that paints almost
+nothing earns no slot. Without a grid, pose redundancy stands in: two
+viewpoints are interchangeable only when both close AND similarly oriented.
+Capacity is bounded; at the cap, the memory whose paint is most replaceable
+makes room.
 
 A kept viewpoint's picture refreshes only from a frame that shows the same
 information, and at most once a minute. Heading is what decides that: two
@@ -16,7 +19,8 @@ step closer. So refresh needs a near-identical heading, a displacement riding
 the view axis (a lateral step slides different information into frame), and a
 clear line of sight on the occupancy grid (without a grid, a tight distance
 stands in). An oblique, mid-turn, side-stepped, or behind-a-wall take never
-overwrites a straight-on view.
+overwrites a straight-on view — it becomes a new viewpoint instead, once
+enough of its wedge is unpainted.
 """
 
 from __future__ import annotations
@@ -24,9 +28,14 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
+from brain_client.memory.coverage import OCCUPIED_THRESHOLD
 from brain_client.memory.store import Memory
 from brain_client.state.map import Map
+
+if TYPE_CHECKING:
+    from brain_client.memory.coverage import Coverage
 
 MAX_MEMORIES = 50
 _REDUNDANT_DISTANCE_M = 1.0
@@ -34,7 +43,8 @@ _REDUNDANT_ANGLE_RAD = math.radians(100.0)  # most of the camera's 128 deg FOV s
 _SAME_VIEW_DISTANCE_M = 0.3  # lateral drift bound off the view axis, and the gridless fallback radius
 _SAME_VIEW_ANGLE_RAD = math.radians(20.0)
 _REFRESH_AGE_SEC = 60.0
-_OCCUPIED_THRESHOLD = 50  # nav grid: -1 unknown, 0 free, 100 occupied
+_COVERAGE_THRESHOLD = 0.8  # record until this much of the wedge is painted — overlap is welcome
+_MIN_VIEW_M2 = 1.0  # a nose-against-the-wall pose paints almost nothing; it earns no slot
 
 
 @dataclass(frozen=True)
@@ -50,16 +60,46 @@ _SKIP = Admission(record=False)
 
 
 def plan_admission(
-    memories: Sequence[Memory], x: float, y: float, theta: float, stamp: float, grid: Map | None = None
+    memories: Sequence[Memory],
+    x: float,
+    y: float,
+    theta: float,
+    stamp: float,
+    grid: Map | None = None,
+    coverage: Coverage | None = None,
 ) -> Admission:
     nearest = min(memories, key=lambda m: redundancy(m, x, y, theta), default=None)
-    if nearest is not None and redundancy(nearest, x, y, theta) < 1.0:
-        if stamp - nearest.stamp >= _REFRESH_AGE_SEC and _same_view(nearest, x, y, theta, grid):
-            return Admission(record=True, replace=nearest)
+    if (
+        nearest is not None
+        and redundancy(nearest, x, y, theta) < 1.0
+        and stamp - nearest.stamp >= _REFRESH_AGE_SEC
+        and _same_view(nearest, x, y, theta, grid)
+    ):
+        return Admission(record=True, replace=nearest)
+    if not _worth_a_slot(memories, x, y, theta, grid, coverage, nearest):
         return _SKIP
     if len(memories) < MAX_MEMORIES:
         return Admission(record=True)
-    return Admission(record=True, evict=_most_redundant(memories))
+    evict = coverage.least_unique(memories, grid) if coverage is not None and grid is not None else None
+    return Admission(record=True, evict=evict if evict is not None else _most_redundant(memories))
+
+
+def _worth_a_slot(
+    memories: Sequence[Memory],
+    x: float,
+    y: float,
+    theta: float,
+    grid: Map | None,
+    coverage: Coverage | None,
+    nearest: Memory | None,
+) -> bool:
+    """Novelty: with a grid, whether enough unpainted floor sits in front of
+    the camera (and enough floor at all); without one, pose redundancy."""
+    if coverage is not None and grid is not None:
+        view = coverage.assess(memories, grid, x, y, theta)
+        if view is not None:
+            return view.visible_m2 >= _MIN_VIEW_M2 and view.painted_fraction < _COVERAGE_THRESHOLD
+    return nearest is None or redundancy(nearest, x, y, theta) >= 1.0
 
 
 def _same_view(memory: Memory, x: float, y: float, theta: float, grid: Map | None) -> bool:
@@ -94,7 +134,7 @@ def _clear_line(grid: Map, ax: float, ay: float, bx: float, by: float) -> bool:
         if not (0 <= row < grid.height and 0 <= col < grid.width):
             return False
         value = int(cells[row, col])
-        if value < 0 or value >= _OCCUPIED_THRESHOLD:
+        if value < 0 or value >= OCCUPIED_THRESHOLD:
             return False
     return True
 

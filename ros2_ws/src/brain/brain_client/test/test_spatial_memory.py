@@ -20,6 +20,8 @@ import pytest
 from brain_client.brain.memory_search import MemorySearch, verdict_text
 from brain_client.brain.transport import CACHED_CONTENTS_PATH, GeminiHttpError, GeminiRest
 from brain_client.memory import recorder as recorder_module
+from brain_client.memory import selection as selection_module
+from brain_client.memory.coverage import Coverage, wedge_mask
 from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness, frame_worth_keeping
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.selection import MAX_MEMORIES, plan_admission
@@ -142,6 +144,50 @@ def test_without_a_grid_only_a_tight_pose_match_refreshes():
     old = memory(1, 0.0, 0.0, stamp=1000.0)
     assert not plan_admission([old], 0.6, 0.0, 0.0, stamp=2000.0).record
     assert plan_admission([old], 0.2, 0.0, 0.0, stamp=2000.0).replace == old
+
+
+# ================= visibility paint =================
+
+
+def test_the_wedge_stops_at_walls():
+    cells = open_room()
+    cells[:, 20] = 100  # a wall at world x = 2.0-2.1
+    mask = wedge_mask(grid_of(cells), 1.5, 1.5, 0.0)
+    assert mask is not None
+    assert mask[15, 16]  # free floor ahead, before the wall
+    assert not mask[:, 21:].any()  # nothing painted beyond it
+
+
+def test_a_quarter_turn_at_a_painted_spot_is_novel():
+    # The old 100-degree rule skipped this; paint says ~70% of the wedge is new.
+    old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
+    plan = plan_admission([old], 1.5, 1.5, math.pi / 2, stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage())
+    assert plan.record and plan.replace is None
+
+
+def test_a_fully_painted_wedge_is_skipped():
+    old = memory(1, 1.5, 1.5, theta=0.0, stamp=1000.0)
+    plan = plan_admission(
+        [old], 1.5, 1.5, math.radians(5), stamp=1010.0, grid=grid_of(open_room()), coverage=Coverage()
+    )
+    assert not plan.record
+
+
+def test_a_pose_that_paints_nothing_earns_no_slot():
+    cells = open_room()
+    cells[:, :2] = 100  # a wall along world x < 0.2
+    plan = plan_admission([], 0.35, 1.5, math.pi, stamp=1000.0, grid=grid_of(cells), coverage=Coverage())
+    assert not plan.record  # unpainted, but nose against the wall: almost no floor in view
+
+
+def test_at_capacity_the_most_replaceable_paint_makes_room(monkeypatch):
+    monkeypatch.setattr(selection_module, "MAX_MEMORIES", 3)
+    twins = [memory(1, 1.0, 3.0, theta=0.0), memory(2, 1.0, 3.0, theta=0.0)]
+    distinct = memory(3, 4.0, 3.0, theta=0.0)
+    plan = plan_admission(
+        [*twins, distinct], 2.0, 3.0, math.pi, stamp=2000.0, grid=grid_of(open_room(60)), coverage=Coverage()
+    )
+    assert plan.record and plan.evict is not None and plan.evict.id in (1, 2)  # never the lone wide view
 
 
 def test_at_capacity_evicts_the_older_of_the_closest_pair():
@@ -565,8 +611,19 @@ def test_a_wall_on_the_sight_line_blocks_the_refresh(data_dir, clock):
     recorder._on_map(grid_msg(cells))
     pose.xyt = (1.8, 2.0, 0.0)
     observe(recorder, clock, frame(2), advance=61.0)
-    assert stored_image(store, 1) == frame(1)
-    assert len(store.snapshot().memories) == 1
+    assert stored_image(store, 1) == frame(1)  # the old view survives behind the wall...
+    (kept, minted) = store.snapshot().memories
+    assert stored_image(store, minted.id) == frame(2)  # ...and the unseen floor ahead earns its own slot
+
+
+def test_a_quarter_turn_with_a_grid_mints_a_second_viewpoint(data_dir, clock):
+    pose = SimpleNamespace(xyt=(2.0, 2.0, 0.0))
+    recorder, store = settled_recorder(data_dir, clock, pose)
+    recorder._on_map(grid_msg(open_room(40)))
+    pose.xyt = (2.0, 2.0, math.pi / 2)  # the old 100-degree rule would skip this turn
+    observe(recorder, clock, frame(2))
+    memories = store.snapshot().memories
+    assert len(memories) == 2 and memories[1].theta == math.pi / 2
 
 
 def test_bad_frames_never_overwrite_a_view(data_dir, clock):
