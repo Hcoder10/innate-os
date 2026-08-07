@@ -47,13 +47,31 @@ export const MAP_COLORS = {
 // in costmap.yaml), so the dot covers what the robot covers at every zoom.
 const ROBOT_RADIUS_M = 0.18;
 
+// The mobile app's destination pin (CrosshairIcon) as a canvas path — the
+// goal marker here is the same mark "Go To" plants on the phone. Tip at
+// (12,22) of the 24×24 box; the hole is punched in the page background color.
+const PIN_PATH = new Path2D("M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z");
+const PIN_TIP_X = 12;
+const PIN_TIP_Y = 22;
+const PIN_HOLE_Y = 9;
+const PIN_HOLE_R = 2.5;
+const PIN_SCALE_CSS = 1.2; // 24-unit glyph → ~29 css px tall, screen-sized at any zoom
+
+// Occupancy colormap — dark like the rest of the app (and the mobile app's
+// map): explored floor is a dark slab, walls are bright, unknown stays
+// transparent so the dotted backdrop reads as "nowhere".
+const GRID_FREE_RGB = [21, 21, 26];
+const GRID_WALL_RGB = [223, 225, 234];
+
 // /localize scan-matches for up to ~30 s before answering.
 const LOCALIZE_TIMEOUT_MS = 40_000;
 
-// Wheel-zoom bounds (metres of real-world width shown).
+// Wheel-zoom bounds (metres of real-world width shown). The factor scales
+// with the actual scroll delta: a trackpad's stream of small deltas zooms
+// smoothly and fine-grained, a mouse's ~100 px notch steps ~10%.
 const MIN_ZOOM_M = 1;
 const MAX_ZOOM_M = 60;
-const ZOOM_STEP = 1.15; // per wheel notch
+const ZOOM_PER_WHEEL_PX = 0.001; // exp() rate per wheel-delta pixel
 
 // Odometry breadcrumb trail: drop a point every few cm, keep the last N.
 const TRAIL_MIN_STEP_M = 0.03;
@@ -70,9 +88,17 @@ const TRAIL_JUMP_M = 1;
 // ---- spatial-memory layer tuning -------------------------------------------
 // A stylized view cone per remembered frame: wide enough to read as "the robot
 // looked this way", far narrower than the camera's real 128° FOV (which would
-// wash the map in overlapping wedges).
+// wash the map in overlapping wedges). The cone is cut by line-of-sight
+// against the grid — a remembered view never shines through a wall.
 const MEM_WEDGE_HALF_RAD = (28 * Math.PI) / 180;
 const MEM_WEDGE_RANGE_M = 1.15;
+// A cell at or above this occupancy blocks sight (Nav2's occupied threshold).
+const OCC_THRESH = 65;
+// Robot marker: the mobile app's robot drawing, rendered at the true hardware
+// width (RobotSprite.tsx's ROBOT_WIDTH_M) with the drawing's +X as forward.
+// Below a legibility floor the marker falls back to dot + wedge.
+const ROBOT_SPRITE_URL = "/public/robot-drawing.svg";
+const ROBOT_SPRITE_W_M = 0.297;
 const MEM_HIT_PX = 16; // hover/click hit radius around a memory dot (css px)
 const MEM_PULSE_MS = 1200; // ring animation when a new memory is recorded
 const MEM_SEARCH_GLOW_MS = 18_000; // how long the recalled spot keeps breathing
@@ -210,6 +236,9 @@ export function createMap(root, opts = {}) {
 
   /** @type {{ width: number, height: number, resolution: number, originX: number, originY: number } | null} */
   let grid = null;
+  /** @type {number[] | null} raw occupancy cells (row-major from the origin) for line-of-sight tests */
+  let gridCells = null;
+  let gridRev = 0; // bumped per /map message — invalidates cached sight shapes
   /** @type {{ x: number, y: number, yaw: number } | null} displayed robot pose (map frame) */
   let pose = null;
   // Robot marker in the MAP frame: anchor at the last /amcl_pose fix and add
@@ -332,6 +361,11 @@ export function createMap(root, opts = {}) {
       }
     }
     memState = next;
+    // Sight-fan cache: entries self-invalidate on grid/pose mismatch; this
+    // just drops fans whose memory no longer exists.
+    for (const id of [...memPolyCache.keys()]) {
+      if (!next.memories.some((m) => m.id === id)) memPolyCache.delete(id);
+    }
     if (memHover && !next.memories.some((m) => m.id === memHover?.id)) setMemHover(null);
     if (memPopupFor !== null && !next.memories.some((m) => m.id === memPopupFor)) closeMemPopup();
     kickMemAnim();
@@ -719,15 +753,17 @@ export function createMap(root, opts = {}) {
   /** @param {any} msg nav_msgs/OccupancyGrid */
   function onMap(msg) {
     const g = rasterizeGrid(msg, off, offCtx, (v, px, di) => {
-      // Unknown = translucent gray; occupancy shades white (free) → black (wall).
-      const shade = v < 0 ? 105 : 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
-      px[di] = shade;
-      px[di + 1] = shade;
-      px[di + 2] = shade;
-      px[di + 3] = v < 0 ? 200 : 255;
+      if (v < 0) return; // unknown stays transparent — the backdrop shows through
+      const t = Math.max(0, Math.min(100, v)) / 100;
+      px[di] = GRID_FREE_RGB[0] + Math.round((GRID_WALL_RGB[0] - GRID_FREE_RGB[0]) * t);
+      px[di + 1] = GRID_FREE_RGB[1] + Math.round((GRID_WALL_RGB[1] - GRID_FREE_RGB[1]) * t);
+      px[di + 2] = GRID_FREE_RGB[2] + Math.round((GRID_WALL_RGB[2] - GRID_FREE_RGB[2]) * t);
+      px[di + 3] = 255;
     });
     if (!g) return;
     grid = g;
+    gridCells = msg.data;
+    gridRev++;
     draw();
   }
 
@@ -840,16 +876,76 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
+  // Faint dot lattice behind (and around) the grid — gives the void a surface
+  // so the dark map reads as a slab floating on it. Cached per dpr as a
+  // repeating pattern tile: one fillRect per frame, not thousands of arcs.
+  /** @type {CanvasPattern | null} */
+  let dotPattern = null;
+  let dotPatternDpr = 0;
+  function backdropPattern() {
+    const d = dpr();
+    if (dotPattern && dotPatternDpr === d) return dotPattern;
+    const tile = document.createElement("canvas");
+    const step = Math.max(8, Math.round(22 * d));
+    tile.width = step;
+    tile.height = step;
+    const tctx = tile.getContext("2d");
+    if (!tctx || !ctx) return null;
+    tctx.fillStyle = "rgb(255 255 255 / 5%)";
+    tctx.beginPath();
+    tctx.arc(step / 2, step / 2, Math.max(1, 0.8 * d), 0, Math.PI * 2);
+    tctx.fill();
+    dotPattern = ctx.createPattern(tile, "repeat");
+    dotPatternDpr = d;
+    return dotPattern;
+  }
+
+  // The mobile app's robot drawing (RobotSprite.tsx renders the same file):
+  // browser-cached, so every widget instance shares one fetch.
+  const robotImg = new Image();
+  robotImg.addEventListener("load", () => draw());
+  robotImg.src = ROBOT_SPRITE_URL;
+
+  /** The mobile app's destination pin, tip anchored at (px, py).
+   * @param {number} px @param {number} py @param {string} color @param {number} [alpha] */
+  function drawPin(px, py, color, alpha = 1) {
+    if (!ctx) return;
+    const s = PIN_SCALE_CSS * dpr();
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(px - PIN_TIP_X * s, py - PIN_TIP_Y * s);
+    ctx.scale(s, s);
+    ctx.strokeStyle = "rgb(10 10 12 / 55%)"; // seats the pin on bright walls
+    ctx.lineWidth = 1.5 / s;
+    ctx.stroke(PIN_PATH);
+    ctx.fillStyle = color;
+    ctx.fill(PIN_PATH);
+    ctx.fillStyle = "#0a0a0c";
+    ctx.beginPath();
+    ctx.arc(PIN_TIP_X, PIN_HOLE_Y, PIN_HOLE_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function draw() {
     if (!ctx) return;
     ctx.fillStyle = "#0a0a0c";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const pat = backdropPattern();
+    if (pat) {
+      ctx.fillStyle = pat;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     if (!grid) {
+      const d = dpr();
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      drawPin(cx, cy + 4 * d, "rgb(138 138 147 / 55%)");
       ctx.fillStyle = "#8a8a93";
-      ctx.font = `${14 * dpr()}px ui-monospace, monospace`;
+      ctx.font = `${13 * d}px ui-monospace, monospace`;
       ctx.textAlign = "center";
-      ctx.fillText("waiting for /map…", canvas.width / 2, canvas.height / 2);
+      ctx.fillText("waiting for /map…", cx, cy + 26 * d);
       return;
     }
 
@@ -864,6 +960,12 @@ export function createMap(root, opts = {}) {
       // Fit-the-whole-grid scale (no zoom set, or before the first pose).
       const pad = 16 * dpr();
       scale = Math.min((canvas.width - 2 * pad) / grid.width, (canvas.height - 2 * pad) / grid.height);
+    }
+    if (scale <= 0) {
+      // Degenerate container (mid-layout, collapsed PiP host): nothing fits,
+      // and a negative scale poisons every radius downstream (IndexSizeError).
+      view = null;
+      return;
     }
     if (center) {
       const col = (center.x - grid.originX) / grid.resolution;
@@ -922,6 +1024,7 @@ export function createMap(root, opts = {}) {
       ctx.strokeStyle = MAP_COLORS.trail;
       ctx.lineWidth = 1.5 * dpr();
       ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.beginPath();
       trail.forEach((p, i) => {
         const { px, py } = worldToCanvas(p.x, p.y);
@@ -932,16 +1035,22 @@ export function createMap(root, opts = {}) {
     }
 
     if (plan && plan.length >= 2) {
-      ctx.strokeStyle = MAP_COLORS.route;
-      ctx.lineWidth = 2 * dpr();
-      ctx.lineJoin = "round";
-      ctx.beginPath();
+      const path = new Path2D();
       plan.forEach((p, i) => {
         const { px, py } = worldToCanvas(p.x, p.y);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (i === 0) path.moveTo(px, py);
+        else path.lineTo(px, py);
       });
-      ctx.stroke();
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      // Robot-width corridor under the crisp line: the translucent band covers
+      // the floor the robot will actually sweep, at every zoom.
+      ctx.strokeStyle = withAlpha(MAP_COLORS.route, 0.2);
+      ctx.lineWidth = Math.max(3 * dpr(), (ROBOT_SPRITE_W_M / grid.resolution) * scale);
+      ctx.stroke(path);
+      ctx.strokeStyle = MAP_COLORS.route;
+      ctx.lineWidth = 2 * dpr();
+      ctx.stroke(path);
     }
 
     // Laser scan, projected from the composed robot pose + the static laser
@@ -1003,19 +1112,52 @@ export function createMap(root, opts = {}) {
 
     if (pose) {
       const { px, py } = worldToCanvas(pose.x, pose.y);
-      // World-sized, not screen-sized: the dot covers the same floor area at
-      // every zoom (scale is px per map cell). Floored so it never vanishes.
+      // World-sized, not screen-sized: the marker covers the same floor area
+      // at every zoom (scale is px per map cell). Floored so it never vanishes.
       const rad = Math.max(3 * dpr(), (ROBOT_RADIUS_M / grid.resolution) * scale);
-      ctx.fillStyle = MAP_COLORS.robot;
+      const d = dpr();
+      const glow = ctx.createRadialGradient(px, py, rad * 0.4, px, py, rad * 3);
+      glow.addColorStop(0, withAlpha(MAP_COLORS.robot, 0.28));
+      glow.addColorStop(1, withAlpha(MAP_COLORS.robot, 0));
+      ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(px, py, rad, 0, Math.PI * 2);
+      ctx.arc(px, py, rad * 3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = MAP_COLORS.robot;
-      ctx.lineWidth = 2 * dpr();
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + Math.cos(pose.yaw) * rad * 2.4, py - Math.sin(pose.yaw) * rad * 2.4);
-      ctx.stroke();
+      const spriteW = (ROBOT_SPRITE_W_M / grid.resolution) * scale;
+      const spriteReady = robotImg.complete && robotImg.naturalWidth > 0;
+      if (spriteReady && spriteW >= 16 * d) {
+        const spriteH = spriteW * (robotImg.naturalHeight / robotImg.naturalWidth);
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(-pose.yaw); // world CCW is canvas CW; the drawing's front is +x
+        ctx.imageSmoothingEnabled = true;
+        // Rim light: the drawing's greys were made for the app's white map —
+        // a silhouette-hugging halo keeps them readable on the dark floor.
+        ctx.shadowColor = "rgb(255 255 255 / 80%)";
+        ctx.shadowBlur = 5 * d;
+        ctx.drawImage(robotImg, -spriteW / 2, -spriteH / 2, spriteW, spriteH);
+        ctx.restore();
+      } else {
+        // Too small for the chassis to read — heading wedge + dot + ring.
+        const tipX = px + Math.cos(pose.yaw) * rad * 2.3;
+        const tipY = py - Math.sin(pose.yaw) * rad * 2.3;
+        const w = Math.max(2 * d, rad * 0.55);
+        ctx.fillStyle = MAP_COLORS.robot;
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(px + Math.cos(pose.yaw + Math.PI / 2) * w, py - Math.sin(pose.yaw + Math.PI / 2) * w);
+        ctx.lineTo(px + Math.cos(pose.yaw - Math.PI / 2) * w, py - Math.sin(pose.yaw - Math.PI / 2) * w);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgb(255 255 255 / 92%)";
+        ctx.lineWidth = Math.max(1, 1.2 * d);
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     // Cards are world-anchored DOM: keep them glued to their memory through
@@ -1034,8 +1176,51 @@ export function createMap(root, opts = {}) {
     }
   }
 
-  /** The remembered viewpoints: one soft view cone + dot each, fading with
-   * age; a white ring blooms once when a memory is first recorded. */
+  /** Occupancy at a world point; unknown/outside counts as free — only walls
+   * cut sight. @param {number} x @param {number} y */
+  function occAt(x, y) {
+    const g = grid;
+    if (!g || !gridCells) return 0;
+    const col = Math.floor((x - g.originX) / g.resolution);
+    const row = Math.floor((y - g.originY) / g.resolution);
+    if (col < 0 || col >= g.width || row < 0 || row >= g.height) return 0;
+    const v = gridCells[row * g.width + col];
+    return v > 0 ? v : 0;
+  }
+
+  /** How far sight reaches from (x0,y0) along `angle` before a wall, capped
+   * at maxR (metres). @param {number} x0 @param {number} y0 @param {number} angle @param {number} maxR */
+  function sightRange(x0, y0, angle, maxR) {
+    const step = (grid?.resolution ?? 0.05) * 0.5;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    for (let r = step; r <= maxR; r += step) {
+      if (occAt(x0 + r * c, y0 + r * s) >= OCC_THRESH) return Math.max(0, r - step);
+    }
+    return maxR;
+  }
+
+  /** @type {Map<number, { rev: number, x: number, y: number, theta: number, poly: Array<{ x: number, y: number }> }>} */
+  const memPolyCache = new Map();
+  /** The wedge clipped by walls, as a world-space sight fan (cached per grid
+   * revision). @param {import("./memories.js").Memory} m */
+  function memPoly(m) {
+    const hit = memPolyCache.get(m.id);
+    if (hit && hit.rev === gridRev && hit.x === m.x && hit.y === m.y && hit.theta === m.theta) return hit.poly;
+    /** @type {Array<{ x: number, y: number }>} */
+    const poly = [];
+    const K = 28;
+    for (let i = 0; i <= K; i++) {
+      const a = m.theta + MEM_WEDGE_HALF_RAD * ((2 * i) / K - 1);
+      const r = sightRange(m.x, m.y, a, MEM_WEDGE_RANGE_M);
+      poly.push({ x: m.x + r * Math.cos(a), y: m.y + r * Math.sin(a) });
+    }
+    memPolyCache.set(m.id, { rev: gridRev, x: m.x, y: m.y, theta: m.theta, poly });
+    return poly;
+  }
+
+  /** The remembered viewpoints: one wall-clipped view cone + dot each, fading
+   * with age; a white ring blooms once when a memory is first recorded. */
   function drawMemories() {
     if (!ctx || !grid || !view || !layers.memories || !memState?.memories.length) return;
     const nowS = Date.now() / 1000;
@@ -1043,20 +1228,23 @@ export function createMap(root, opts = {}) {
     const d = dpr();
     const g = /** @type {NonNullable<typeof grid>} */ (grid);
     const v = /** @type {NonNullable<typeof view>} */ (view);
-    const range = (MEM_WEDGE_RANGE_M / g.resolution) * v.scale;
     const searchHit = memSearch?.found && nowMs < memSearchUntil ? memSearch.id : null;
     for (const m of memState.memories) {
       const { px, py } = worldToCanvas(m.x, m.y);
       const active = memHover?.id === m.id || memHighlight === m.id || memPopupFor === m.id || searchHit === m.id;
       const alpha = active ? 1 : ageAlpha(m.stamp, nowS);
-      // The view cone (canvas y is down, so world angles negate).
+      // The view cone: the original soft gradient, clipped by line of sight.
+      const range = (MEM_WEDGE_RANGE_M / g.resolution) * v.scale;
       const grad = ctx.createRadialGradient(px, py, 0, px, py, range);
       grad.addColorStop(0, withAlpha(MEMORY_COLOR, (active ? 0.5 : 0.3) * alpha));
       grad.addColorStop(1, withAlpha(MEMORY_COLOR, 0));
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.arc(px, py, range, -m.theta - MEM_WEDGE_HALF_RAD, -m.theta + MEM_WEDGE_HALF_RAD);
+      for (const p of memPoly(m)) {
+        const c = worldToCanvas(p.x, p.y);
+        ctx.lineTo(c.px, c.py);
+      }
       ctx.closePath();
       ctx.fill();
       // The dot.
@@ -1352,7 +1540,9 @@ export function createMap(root, opts = {}) {
   function onWheel(e) {
     if (!zoomMeters) return; // fit-whole mode (standalone page) doesn't zoom
     e.preventDefault();
-    const next = zoomMeters * (e.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+    // deltaMode: line/page deltas (Firefox mouse wheels) normalized to pixels.
+    const deltaPx = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
+    const next = zoomMeters * Math.exp(deltaPx * ZOOM_PER_WHEEL_PX);
     zoomMeters = Math.min(MAX_ZOOM_M, Math.max(MIN_ZOOM_M, next));
     draw();
     opts.onZoomChange?.(zoomMeters);

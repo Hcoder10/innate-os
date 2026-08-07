@@ -24,6 +24,7 @@ import {
   LOCAL_COSTMAP_TOPIC,
   MEMORY_POSITIONS_TOPIC,
   MEMORY_SEARCH_TOPIC,
+  NAV_CURRENT_MAP_TOPIC,
   ODOM_TOPIC,
   PLAN_TOPICS,
   SCAN_TOPIC,
@@ -43,10 +44,16 @@ import { dismissAllConfirms } from "./confirm.js";
 const ZOOM_KEY = "innate.navZoom";
 const DEFAULT_ZOOM_M = 14;
 
+// The mobile app's navigation glyph (DistanceIcon, a pin over its landing
+// spot) — the page title and the current-map pill wear the same mark the
+// phone uses for its map.
+const PIN_ICON =
+  '<svg viewBox="0 0 24 25" fill="currentColor" aria-hidden="true"><path d="M12 22C10.3103 22 8.92958 21.7577 7.85775 21.273C6.78592 20.7885 6.25 20.1623 6.25 19.3943C6.25 19.0904 6.35292 18.8052 6.55875 18.5385C6.76442 18.2718 7.057 18.0314 7.4365 17.8173C7.61217 17.7019 7.80383 17.6625 8.0115 17.699C8.21917 17.7355 8.38075 17.8416 8.49625 18.0173C8.61158 18.1929 8.64683 18.383 8.602 18.5875C8.55717 18.792 8.44692 18.9519 8.27125 19.0673C8.16225 19.1058 8.05808 19.1538 7.95875 19.2115C7.85925 19.2692 7.79992 19.3268 7.78075 19.3845C7.94608 19.6833 8.43808 19.9439 9.25675 20.1663C10.0752 20.3888 10.9897 20.5 12 20.5C13.0103 20.5 13.9247 20.3888 14.7432 20.1663C15.5619 19.9439 16.0539 19.6833 16.2193 19.3845C16.2001 19.3268 16.1408 19.2692 16.0413 19.2115C15.9419 19.1538 15.8378 19.1058 15.7288 19.0673C15.5531 18.9519 15.4428 18.792 15.398 18.5875C15.3532 18.383 15.3884 18.1929 15.5038 18.0173C15.6193 17.8416 15.7808 17.7355 15.9885 17.699C16.1962 17.6625 16.3878 17.7019 16.5635 17.8173C16.943 18.0314 17.2356 18.2718 17.4413 18.5385C17.6471 18.8052 17.75 19.0904 17.75 19.3943C17.75 20.1623 17.2141 20.7885 16.1423 21.273C15.0704 21.7577 13.6897 22 12 22ZM12.025 17.125C13.6813 15.8698 14.9246 14.6266 15.7548 13.3953C16.5849 12.1638 17 10.941 17 9.727C17 8.00133 16.4599 6.69875 15.3798 5.81925C14.2996 4.93975 13.173 4.5 12 4.5C10.8333 4.5 9.70833 4.93975 8.625 5.81925C7.54167 6.69875 7 8.00133 7 9.727C7 10.8628 7.40992 12.0398 8.22975 13.2578C9.04958 14.4758 10.3147 15.7648 12.025 17.125ZM12 18.5635C11.8192 18.5635 11.6384 18.5317 11.4577 18.4682C11.2769 18.4047 11.1096 18.3127 10.9558 18.1923C9.12375 16.7154 7.7565 15.2744 6.854 13.8693C5.95133 12.4641 5.5 11.0833 5.5 9.727C5.5 8.61417 5.6965 7.63917 6.0895 6.802C6.4825 5.96483 6.98983 5.26383 7.6115 4.699C8.23333 4.13433 8.9305 3.71 9.703 3.426C10.4753 3.142 11.241 3 12 3C12.759 3 13.5247 3.142 14.297 3.426C15.0695 3.71 15.7667 4.13433 16.3885 4.699C17.0102 5.26383 17.5175 5.96483 17.9105 6.802C18.3035 7.63917 18.5 8.61417 18.5 9.727C18.5 11.0833 18.0487 12.4641 17.146 13.8693C16.2435 15.2744 14.8763 16.7154 13.0443 18.1923C12.8904 18.3127 12.7231 18.4047 12.5423 18.4682C12.3616 18.5317 12.1808 18.5635 12 18.5635ZM12 11.3943C12.4987 11.3943 12.9246 11.2193 13.2777 10.8693C13.6311 10.5193 13.8077 10.0917 13.8077 9.5865C13.8077 9.08783 13.6311 8.66192 13.2777 8.30875C12.9246 7.95542 12.4987 7.77875 12 7.77875C11.5077 7.77875 11.0833 7.95542 10.727 8.30875C10.3705 8.66192 10.1923 9.08783 10.1923 9.5865C10.1923 10.0917 10.3705 10.5193 10.727 10.8693C11.0833 11.2193 11.5077 11.3943 12 11.3943Z"/></svg>';
+
 /** @type {Array<{ key: import("../map/mapWidget.js").LayerName, label: string, on: boolean, topic: string }>} */
 const LAYERS = [
   { key: "scan", label: "LIDAR", on: true, topic: SCAN_TOPIC },
-  { key: "costmap", label: "Global costmap", on: true, topic: GLOBAL_COSTMAP_TOPIC },
+  { key: "costmap", label: "Global costmap", on: false, topic: GLOBAL_COSTMAP_TOPIC },
   { key: "local", label: "Local costmap", on: false, topic: LOCAL_COSTMAP_TOPIC },
   { key: "trail", label: "Path traveled", on: true, topic: ODOM_TOPIC },
   { key: "memories", label: "Memories", on: true, topic: MEMORY_POSITIONS_TOPIC },
@@ -66,8 +73,8 @@ function buildView(root) {
   const head = document.createElement("div");
   head.className = "page-head";
   const heading = document.createElement("h1");
-  heading.className = "page-title";
-  heading.textContent = "Nav";
+  heading.className = "page-title page-title-iconed";
+  heading.innerHTML = `${PIN_ICON}Nav`;
   const chips = document.createElement("div");
   chips.className = "layer-chips";
   head.append(heading, chips);
@@ -99,6 +106,16 @@ function buildView(root) {
   mapfreeNote.textContent = "map-free mode — no map is loaded; the scene may show the last map, which is not in use";
   mapfreeNote.hidden = true;
   scene.appendChild(mapfreeNote);
+
+  // Current-map pill (bottom-left) — the map-name pill the mobile app pins to
+  // its expanded map, same glyph.
+  const mapPill = document.createElement("div");
+  mapPill.className = "map-name-pill mono";
+  mapPill.title = NAV_CURRENT_MAP_TOPIC;
+  mapPill.innerHTML = PIN_ICON;
+  const mapPillName = document.createElement("span");
+  mapPill.appendChild(mapPillName);
+  scene.appendChild(mapPill);
 
   // ---- store + scene ---------------------------------------------------------
   const store = createNavStore();
@@ -163,6 +180,7 @@ function buildView(root) {
   function onMappingChange(mapping) {
     map.setMappingMode(mapping);
     legend.setHidden(mapping); // the drive kit's overlays own the scene corners
+    mapPill.hidden = mapping;
     const gen = ++kitGen;
     clearTrailBtn.disabled = mapping;
     if (mapping) {
@@ -196,6 +214,9 @@ function buildView(root) {
     veil.hidden = !s.busy;
     if (s.busy) veilText.textContent = `${s.busy}…`;
     mapfreeNote.hidden = s.mode !== "mapfree";
+    const noMap = !s.currentMap || s.mode === "mapfree";
+    mapPill.classList.toggle("is-empty", noMap);
+    mapPillName.textContent = noMap ? "no map" : s.currentMap;
     const mapping = s.mode === "mapping";
     if (mapping !== wasMapping) {
       wasMapping = mapping;
