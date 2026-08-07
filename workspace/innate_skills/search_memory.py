@@ -7,8 +7,10 @@ class SearchMemory(Skill):
     """Search the robot's long-term memory of places it has seen on this map. Describe the place
     or thing ('the kitchen', 'a banana', 'the door out of this room', 'where you saw my airpods');
     a vision model reviews every remembered view and returns the best match — its image, map
-    coordinates, and when it was seen. Use it to find anything not in the current camera view,
-    then drive there with navigate_to_position (local_frame=false)."""
+    coordinates, and when it was seen. When asked to find or go to something not in the current
+    camera view, search first and drive to the match with navigate_to_position
+    (local_frame=false) — don't wander. If the search finds nothing, say so and only then
+    explore."""
 
     memory: SpatialMemory
 

@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING
 from brain_client.brain import grounding
 from brain_client.brain.context import Decision, GeminiContext, ToolCall
 from brain_client.brain.loop import LoopThread
-from brain_client.brain.memory_search import verdict_text
 from brain_client.brain.prompt import build_system_prompt
 from brain_client.brain.tools import GO_TO_POINT_IN_VIEW, STOP_SKILL, WAIT, assign_tool_names, build_tools
 from brain_client.brain.transport import pick_transport
@@ -54,7 +53,6 @@ if TYPE_CHECKING:
 
     from rclpy.node import Node
 
-    from brain_client.brain.memory_search import MemorySearch, SearchVerdict
     from brain_client.core.config import BrainConfig
     from brain_client.core.state import BrainState, RunningSkill
     from brain_client.perception.camera import CameraCapture
@@ -68,7 +66,6 @@ if TYPE_CHECKING:
     from innate_proxy import ProxyClient
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
-_SEARCH_MEMORY = "innate-os/search_memory"
 _FRESH_FRAME_SEC = 3.0  # an older camera frame means the feed is broken; don't think blind
 _MAX_EVENTS_QUEUED = 30  # the oldest beyond this are dropped as stale stimuli
 _MAX_EVENT_IMAGES = 4  # newest event images sent per turn; older ones arrive as text only
@@ -92,7 +89,6 @@ class BrainAgent:
         gaze: GazeController,
         proxy: ProxyClient | None = None,
         scan_health: ScanHealthMonitor | None = None,
-        memory: MemorySearch | None = None,
         trace: Callable[[str], None] | None = None,
     ):
         self._logger = node.get_logger()
@@ -104,7 +100,6 @@ class BrainAgent:
         self._roster = roster
         self._chat = chat
         self._gaze = gaze
-        self._memory = memory
         self._trace_sink = trace  # publishes one JSON string per event on /brain/trace
         self._lidar = ScanHealthReporter(
             scan_health, pose_tracker, chat, self._logger, enabled=not config.simulator_mode
@@ -442,10 +437,7 @@ class BrainAgent:
         named = assign_tool_names(skills)
         self._tool_map = {name: meta["id"] for name, meta in named}
         if running is not None:
-            # Recall occupies no skill slot (see _dispatch), so it stays
-            # declared while a skill runs — search-while-driving is the point.
-            queries = [(name, meta) for name, meta in named if meta["id"] == _SEARCH_MEMORY]
-            return build_tools(queries, running.primitive_name, user_spoke=user_spoke)
+            return build_tools([], running.primitive_name, user_spoke=user_spoke)
         return build_tools(named, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
@@ -508,10 +500,6 @@ class BrainAgent:
         # The map is a turn old by now and the roster can change under it, so
         # the resolved id is re-checked against the live active set.
         skill_id = self._tool_map.get(call.name)
-        if skill_id == _SEARCH_MEMORY and skill_id in self._roster.active_skill_ids():
-            # Recall is a query, not an act: it occupies no skill slot, so it
-            # resolves before the one-skill-at-a-time gate.
-            return self._search_memory(call.args)
         if self._state.primitive_running is not None:
             return "rejected — another skill is already running; stop it first"
         if call.name == GO_TO_POINT_IN_VIEW:
@@ -571,27 +559,6 @@ class BrainAgent:
             f"driving to the floor point {math.hypot(*floor):.1f}m away (stopping ~{grounding.STANDOFF_M}m short) "
             "— you will get an event when it finishes"
         )
-
-    def _search_memory(self, args: dict) -> str:
-        """Fire a spatial-memory search; the loop must not block, so the verdict is an event.
-
-        The brain hosts MemorySearch itself, so its own calls skip the
-        /brain/search_memory action the skill rides — same search, same cache,
-        one less hop.
-        """
-        if self._memory is None:
-            return "rejected — memory search is unavailable (no Gemini access)"
-        query = str(args.get("query") or "").strip()
-        if not query:
-            return "rejected — give a query describing what to find"
-        if self._memory.frame_count == 0:
-            return "rejected — no places remembered on this map yet"
-        self._memory.begin_search(query, self._on_memory_verdict)
-        return "searching memory — the result arrives as an event"
-
-    def _on_memory_verdict(self, verdict: SearchVerdict) -> None:
-        """Search thread: the verdict (and its matched frame) becomes the next turn's event."""
-        self.add_event(verdict_text(verdict), image=verdict.image, kind=EventKind.MEMORY)
 
     def _start_skill(self, skill_id: str, inputs: dict) -> None:
         self._gaze.pause()

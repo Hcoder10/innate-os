@@ -84,7 +84,10 @@ class SpatialMemory:
 
         def on_result(future: Future) -> None:
             try:
-                conclude(_from_result(future.result().result))
+                response = future.result()
+                if response is None:
+                    raise RuntimeError("empty result")
+                conclude(_from_result(response.result))
             except Exception as error:  # noqa: BLE001 — a lost result must still unblock the waiter
                 conclude(_error_verdict(f"memory search result lost: {error}"))
 

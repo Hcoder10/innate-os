@@ -462,7 +462,7 @@ def agent_factory(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # gives the agent a swappable transport
     created = []
 
-    def make(trace=None, memory=None) -> tuple[BrainAgent, BrainState]:
+    def make(trace=None) -> tuple[BrainAgent, BrainState]:
         logger = SimpleNamespace(info=lambda *a: None, warn=lambda *a: None, error=lambda *a: None)
         node = SimpleNamespace(get_logger=lambda: logger)
         config = SimpleNamespace(
@@ -503,7 +503,6 @@ def agent_factory(monkeypatch):
             roster=SimpleNamespace(active_skill_ids=lambda: []),
             chat=chat,
             gaze=SimpleNamespace(pause=lambda: None),
-            memory=memory,
             trace=trace,
         )
         created.append(agent)
@@ -1074,95 +1073,7 @@ def test_trace_reports_the_turn_lifecycle(agent_factory, monkeypatch):
     assert snapshot["active"] is False and snapshot["backend"] == "gemini-direct" and snapshot["history"] == 3
 
 
-# ---------- spatial memory (the search_memory skill's non-occupying dispatch) ----------
-
-from brain_client.brain.context import ToolCall  # noqa: E402
-from brain_client.brain.memory_search import SearchVerdict  # noqa: E402
-from brain_client.memory.store import Memory  # noqa: E402
-from brain_client.skills.registry import SkillRegistry  # noqa: E402
-
-SEARCH_SKILL = {
-    "id": "innate-os/search_memory",
-    "name": "search_memory",
-    "type": "code",
-    "guidelines": "Search the robot's memory of this map.",
-    "inputs": {"query": {"type": "str", "required": True}},
-}
-
-FOUND_VERDICT = SearchVerdict(
-    query="banana",
-    found=True,
-    explanation="a banana on the counter",
-    memory=Memory(id=2, x=1.5, y=0.5, theta=0.0, stamp=1000.0),
-    image=JPEG,
-    latency_sec=1.2,
-    cached=True,
-)
-
-
-def arm_search_skill(agent) -> None:
-    """Put the search skill in the registry + active roster, like a directive would."""
-    agent._state.registry = SkillRegistry.from_metadata([SEARCH_SKILL])
-    agent._roster = SimpleNamespace(active_skill_ids=lambda: ["innate-os/search_memory"])
-
-
-def test_search_memory_skill_dispatches_without_occupying_the_slot(agent_factory):
-    searches = []
-    memory = SimpleNamespace(
-        frame_count=3,
-        begin_search=lambda query, on_done: (searches.append(query), on_done(FOUND_VERDICT)),
-    )
-    agent, state = agent_factory(memory=memory)
-    arm_search_skill(agent)
-    agent._context._transport = lambda model, body: [model_response(call_part("search_memory", {"query": "banana"}))]
-    run_turn(agent)
-
-    assert searches == ["banana"]
-    assert state.primitive_running is None  # a query, not an act: the slot stays free
-    # The call was answered immediately (started, not blocked on)...
-    outcome = agent._context._history[-1]["parts"][0]["functionResponse"]["response"]["outcome"]
-    assert outcome == "searching memory — the result arrives as an event"
-    # ...and the verdict waits in the queue as a MEMORY event carrying the frame.
-    (event,) = agent._events
-    assert event.kind == EventKind.MEMORY and event.image == JPEG
-    assert "banana on the counter" in event.text and "x=1.50m" in event.text
-
-
-def test_search_memory_runs_even_while_another_skill_occupies_the_slot(agent_factory):
-    # Recall is a query: unlike every actuator skill, it must not be blocked by
-    # one-skill-at-a-time (search while driving is a deliberate property).
-    memory = SimpleNamespace(frame_count=3, begin_search=lambda query, on_done: on_done(FOUND_VERDICT))
-    agent, state = agent_factory(memory=memory)
-    arm_search_skill(agent)
-    state.primitive_running = RunningSkill(primitive_name="navigate", skill_id="innate-os/navigate_to_position")
-    agent._tool_map = {"search_memory": "innate-os/search_memory"}
-    outcome = agent._execute(ToolCall("search_memory", {"query": "keys"}))
-    assert outcome == "searching memory — the result arrives as an event"
-
-
-def test_search_memory_stays_declared_while_a_skill_runs(agent_factory):
-    # Dispatch alone is not enough: the model can only search while driving if
-    # the tool is still OFFERED while the slot is occupied.
-    agent, state = agent_factory(memory=SimpleNamespace(frame_count=3))
-    arm_search_skill(agent)
-    state.primitive_running = RunningSkill(primitive_name="navigate", skill_id="innate-os/navigate_to_position")
-    declarations = agent._build_tools([])[0]["functionDeclarations"]
-    assert [d["name"] for d in declarations] == [STOP_SKILL, "search_memory", "wait"]
-    assert agent._tool_map["search_memory"] == "innate-os/search_memory"
-
-
-def test_search_memory_rejects_an_empty_memory_and_a_missing_query(agent_factory):
-    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=0))
-    arm_search_skill(agent)
-    agent._tool_map = {"search_memory": "innate-os/search_memory"}
-    assert (
-        agent._execute(ToolCall("search_memory", {"query": "keys"}))
-        == "rejected — no places remembered on this map yet"
-    )
-    agent, _ = agent_factory(memory=SimpleNamespace(frame_count=2))
-    arm_search_skill(agent)
-    agent._tool_map = {"search_memory": "innate-os/search_memory"}
-    assert agent._execute(ToolCall("search_memory", {})) == "rejected — give a query describing what to find"
+# ---------- skill events ----------
 
 
 def test_skill_completion_event_carries_the_result_image(agent_factory):

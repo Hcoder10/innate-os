@@ -20,9 +20,8 @@ without an endpoint latches that tier off, bottoming out at today's
 all-inline behavior.
 
 Every search concludes in a :class:`SearchVerdict` — one structured outcome
-for every consumer: the agent's fire-and-forget event path (the loop must
-never block on the network), the ``/brain/search_memory`` action server that
-skills call, and the webapp mirror. :func:`verdict_text` renders the one
+for every consumer: the ``/brain/search_memory`` action server that skills
+call, and the webapp mirror. :func:`verdict_text` renders the one
 model-facing sentence for all of them.
 """
 
@@ -134,10 +133,6 @@ class MemorySearch:
         # as a JSON-able dict (query, found, pose, explanation, latency, cached).
         self.on_result: Callable[[dict], None] | None = None
 
-    @property
-    def frame_count(self) -> int:
-        return len(self._store.snapshot().memories)
-
     def cache_state(self) -> str:
         """How the next search will run: warm | cold | inline | unsupported.
 
@@ -151,22 +146,11 @@ class MemorySearch:
             return "inline"  # under the cache floor — always answered from frames, still quick
         return "warm" if self._usable_cache(snapshot) is not None else "cold"
 
-    def begin_search(self, query: str, on_done: Callable[[SearchVerdict], None]) -> None:
-        """Run a search on a daemon thread; the verdict hits ``on_done`` when it lands."""
-
-        def run() -> None:
-            try:
-                on_done(self.search(query))
-            except Exception as error:  # noqa: BLE001 — a broken consumer must not kill the thread silently
-                self._logger.error(f"[Memory] search callback failed: {error!r}")
-
-        threading.Thread(target=run, name="memory-search", daemon=True).start()
-
     def search(self, query: str) -> SearchVerdict:
         """Blocking: ask Gemini which remembered frame serves the query.
 
         Never raises — failures come back as an ``error`` verdict every
-        consumer (agent event, action result, webapp card) can render.
+        consumer (action result, webapp card) can render.
         """
         with self._flight:
             started = time.monotonic()

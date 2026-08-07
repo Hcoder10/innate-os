@@ -141,7 +141,8 @@ class BrainClientNode(Node):
         self.pose_tracker = PoseTracker(self, odom_topic=cfg.odom_topic, nav_mode_topic=cfg.current_nav_mode_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
         # Spatial memory: the recorder builds it whenever the robot drives well-
-        # localized (brain active or not); search recalls over it for the agent.
+        # localized (brain active or not); skills recall over it through the
+        # /brain/search_memory action — the agent itself knows nothing of it.
         self.memory_store = MemoryStore(get_innate_os_root() / "data")
         rest = pick_rest(self._proxy)
         self.memory_search = (
@@ -190,7 +191,6 @@ class BrainClientNode(Node):
             gaze=self.gaze,
             proxy=self._proxy,
             scan_health=self.scan_health,
-            memory=self.memory_search,
             trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
         # Heavy traces (request bodies, frames — hundreds of KB per turn) are
