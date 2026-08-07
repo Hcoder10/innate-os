@@ -2,10 +2,11 @@
 # Copyright (c) 2026 Innate Inc
 """Reload coordination: full reload, selective reload, and the hot-reload queue.
 
-Drives PEAS (the skill action server) to reload skill code, reloads agents
-locally, and re-registers with the cloud agent. The file watcher runs on a
-background thread and only *queues* work; the actual reload runs on the ROS
-executor thread via :meth:`process_queue` (a node timer callback).
+Drives PEAS (the skill action server) to reload skill code and reloads agents
+locally. The file watcher runs on a background thread and only *queues* work;
+the actual reload runs on the ROS executor thread via :meth:`process_queue`
+(a node timer callback). The brain picks up the rebuilt registry on its next
+turn — there is nothing to re-register.
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ from brain_client.agents.initializer import initialize_agents
 from brain_client.common.ros_services import call_service_sync
 from brain_client.common.script_paths import get_agent_directories
 from brain_client.skills.hot_reload_watcher import HotReloadWatcher
-from brain_client.skills.registration import AVAILABLE_SKILLS_QOS, registry_from_skills_msg
 from brain_client.skills.registry import SkillRegistry
+from brain_client.skills.roster import AVAILABLE_SKILLS_QOS, registry_from_skills_msg
 
 # Collapse /brain/reload bursts: a full reload reloads all on-disk state, so one
 # that just ran already covers requests arriving within this window.
@@ -32,14 +33,11 @@ _RELOAD_COALESCE_SEC = 2.0
 
 
 class ReloadCoordinator:
-    def __init__(
-        self, node, state, lifecycle, catalog, service_call_node, reload_primitives_client, reload_skills_client
-    ):
+    def __init__(self, node, state, lifecycle, service_call_node, reload_primitives_client, reload_skills_client):
         self._node = node
         self._logger = node.get_logger()
         self._state = state
         self._lifecycle = lifecycle
-        self._catalog = catalog
         self._service_call_node = service_call_node
         self._reload_primitives_client = reload_primitives_client
         self._reload_skills_client = reload_skills_client
@@ -122,12 +120,10 @@ class ReloadCoordinator:
                     reloaded_skills = list(result.reloaded_skills)
 
             if agent_names:
-                # Always re-register after an agent swap: an empty roster (every
-                # agent now broken) still replaced the previous one.
+                # The roster swap is wholesale: an empty roster (every agent
+                # now broken) still replaced the previous one. The brain reads
+                # the rebuilt state on its next turn — nothing to re-register.
                 reloaded_agents = self._reload_agents()
-
-            if reloaded_skills or agent_names:
-                self._catalog.register()
 
             self._logger.info(
                 f"[BrainClient] Selective reload complete: {len(reloaded_skills)} skills, {len(reloaded_agents)} agents"
@@ -174,17 +170,12 @@ class ReloadCoordinator:
             self._state.active_skill_ids = (
                 list(self._state.current_directive.skill_ids()) if self._state.current_directive else []
             )
-            self._catalog.register()
             self._logger.info(
                 f"[BrainClient] Reloaded {len(self._state.registry.primitives)} primitives, "
                 f"{len(self._state.directives)} directives"
             )
         except Exception as e:
             self._logger.error(f"[BrainClient] Reload failed: {e}")
-            try:
-                self._lifecycle.reactivate_brain()
-            except Exception:
-                pass
         finally:
             # Record even on failure so a persistent error can't drive a reload storm.
             self._last_full_reload = time.monotonic()
@@ -225,7 +216,7 @@ class ReloadCoordinator:
         import model has no per-file reload (same as the skill catalog).
 
         The current directive survives by id: its new instance is rebound and
-        the active skill set intersected, so a mid-session edit doesn't widen
+        the active skill set intersected, so a mid-activation edit doesn't widen
         the skills the user had narrowed. If it no longer loads (now broken),
         fall back to the default idle agent rather than keep running a stale
         instance whose file no longer says what it does.

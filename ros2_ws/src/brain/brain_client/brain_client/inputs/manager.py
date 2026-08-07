@@ -116,16 +116,21 @@ class InputDeviceManager:
         return self._mic_enabled or name != MIC_DEVICE_NAME
 
     def handle_active_inputs(self, raw: str) -> None:
-        """Open/close devices to match an active-inputs message: {"inputs": [...]}."""
+        """Open/close devices to match an active-inputs message: {"inputs": [...]}.
+
+        Only the parse needs guarding: _apply catches per-device, so one bad
+        device can never stop the others from being applied.
+        """
         self._logger.debug(f"📥 Received active_inputs message: {raw}")
         try:
             required_inputs = json.loads(raw).get("inputs", [])
-            self._logger.debug(f"🎯 Processing inputs: {required_inputs}")
-            self._requested_inputs = set(required_inputs)
-            for name, device in self.input_devices.items():
-                self._apply(name, device, name in self._requested_inputs and self._is_allowed(name))
-        except Exception as e:
-            self._logger.error(f"Error handling active inputs: {e}")
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            self._logger.error(f"Ignoring active_inputs: invalid payload {raw[:100]!r}")
+            return
+        self._logger.debug(f"🎯 Processing inputs: {required_inputs}")
+        self._requested_inputs = set(required_inputs)
+        for name, device in self.input_devices.items():
+            self._apply(name, device, name in self._requested_inputs and self._is_allowed(name))
 
     def set_all_active(self, active: bool) -> tuple[bool, str]:
         """Activate or deactivate every device (manual control). Returns (ok, msg)."""
@@ -154,13 +159,13 @@ class InputDeviceManager:
 
     def handle_tts_status(self, raw: str) -> None:
         """Notify ducking-capable devices when the robot starts/stops speaking."""
-        try:
-            is_playing = raw.lower() in ("true", "1", "playing")
-            for device in self.input_devices.values():
-                if hasattr(device, "set_tts_playing"):
-                    device.set_tts_playing(is_playing)
-        except Exception as e:
-            self._logger.error(f"Error handling TTS status: {e}")
+        is_playing = raw.lower() in ("true", "1", "playing")
+        for name, device in self.input_devices.items():
+            try:
+                device.set_tts_playing(is_playing)
+            except Exception as e:
+                # Per-device: one broken hook must not silence ducking for the rest.
+                self._logger.error(f"Error setting TTS state on input device '{name}': {e}")
 
     def shutdown(self) -> None:
         """Close active devices and shut them all down."""

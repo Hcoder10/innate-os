@@ -8,13 +8,19 @@ This module provides functionality to dynamically discover and load input device
 from specified directories. Similar to primitive_loader.py and directive_loader.py.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from brain_client.common.dynamic_loader import DynamicLoader
 from brain_client.inputs.types import InputDevice, input_name_for_class
 
+if TYPE_CHECKING:
+    from innate_proxy import ProxyClient
 
-class InputLoader(DynamicLoader):
+
+class InputLoader(DynamicLoader[InputDevice]):
     """
     Dynamically loads input device classes from specified directories.
 
@@ -25,7 +31,7 @@ class InputLoader(DynamicLoader):
     base_class = InputDevice
     name_suffixes = ("Input",)
 
-    def __init__(self, logger, proxy=None):
+    def __init__(self, logger, proxy: ProxyClient | None = None):
         """
         Initialize the input loader.
 
@@ -51,12 +57,12 @@ class InputLoader(DynamicLoader):
     def _entry_module(self, entry: type[InputDevice]) -> str:
         return entry.__module__
 
-    def _validate_class(self, input_class: type[InputDevice]) -> bool:
+    def _validate_class(self, cls: type[InputDevice]) -> bool:
         """
         Validates that an input device class is properly implemented.
 
         Args:
-            input_class: The input device class to validate
+            cls: The input device class to validate
 
         Returns:
             True if valid, False otherwise
@@ -65,25 +71,25 @@ class InputLoader(DynamicLoader):
             # Check that required abstract methods are implemented
             required_methods = ["name", "on_open", "on_close"]
             for method_name in required_methods:
-                if not hasattr(input_class, method_name):
-                    self.logger.error(f"Input device {input_class.__name__} missing required method: {method_name}")
+                if not hasattr(cls, method_name):
+                    self.logger.error(f"Input device {cls.__name__} missing required method: {method_name}")
                     return False
 
             # Check that name is a property
-            if not isinstance(getattr(input_class, "name", None), property):
-                self.logger.error(f"Input device {input_class.__name__} 'name' must be a property")
+            if not isinstance(getattr(cls, "name", None), property):
+                self.logger.error(f"Input device {cls.__name__} 'name' must be a property")
                 return False
 
             return True
 
         except Exception as e:
-            self.logger.error(f"Error validating input device {input_class.__name__}: {e}")
+            self.logger.error(f"Error validating input device {cls.__name__}: {e}")
             return False
 
-    def _get_name(self, input_class: type[InputDevice]) -> str:
+    def _get_name(self, cls: type[InputDevice]) -> str:
         """The device's registered name — shared with Agent.input_names(), so
         a typed class reference in get_inputs() resolves identically."""
-        return input_name_for_class(input_class)
+        return input_name_for_class(cls)
 
     def create_input_instances(self, input_classes: dict[str, type[InputDevice]], logger) -> dict[str, InputDevice]:
         """

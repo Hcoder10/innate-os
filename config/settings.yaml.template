@@ -195,26 +195,25 @@
 #     max_range: 12.0               # max lidar range used for matching (m)
 #     auto_localize_timeout: 30.0   # seconds to keep trying auto-localization on startup
 
-# ── Brain runtime (vision agent) ──────────────────────────────────────
-# (Cloud endpoint URLs are connectivity and live in .env.) The model lines at the end
-# are also read by input_manager_node (see "Voice & speech" below) — change both blocks
-# so the two speech paths stay consistent. The TTS voice is global; set it under /** above.
+# ── Brain runtime (local agent loop) ──────────────────────────────────
+# (Gemini credentials are connectivity and live in .env.) The TTS voice is global;
+# set it under /** above.
 # brain_client_node:
 #   ros__parameters:
 #     vertical_fov: 80.0            # camera vertical field of view (degrees)
-#     pose_image_interval: 0.5      # seconds between pose-image sends
+#     x_cam: 0.0197                 # camera forward offset from base_link (m)
+#     height_cam: 0.19663           # camera height above the floor (m)
 #     scan_stale_after_sec: 10.0    # seconds without a lidar scan before flagging stale
-#     send_depth: false             # also send depth images to the agent
-#     send_arm_camera_image: true   # also send the arm camera image
-#     log_everything: true          # verbose vision-agent output logging
-#     openai_realtime_model: "gpt-4o-realtime-preview"
-#     openai_transcribe_model: "gpt-4o-mini-transcribe"
+#     send_arm_camera_image: true   # also send the arm wrist camera image to the model
+#     log_everything: true          # log every turn's full input
+#     gemini_model: "gemini-3.6-flash"
+#     idle_turn_interval: 3.0       # seconds between looks when no skill is running
+#     supervision_turn_interval: 5.0  # seconds between looks while a skill runs
 
 # ── Voice & speech (realtime voice loop) ──────────────────────────────
-# input_manager_node runs the realtime voice / transcription loop and reads the SAME
-# model settings as brain_client_node above, so set those in BOTH blocks to keep the
-# chat-TTS and realtime-voice paths in sync. The TTS voice is shared globally — set it
-# once under /** above (it reaches both nodes; .env CARTESIA_VOICE_ID is the default).
+# input_manager_node runs the realtime voice / transcription loop; its model settings
+# live here. The TTS voice is shared globally — set it once under /** above (it
+# reaches both nodes; .env CARTESIA_VOICE_ID is the default).
 # input_manager_node:
 #   ros__parameters:
 #     openai_realtime_model: "gpt-4o-realtime-preview"

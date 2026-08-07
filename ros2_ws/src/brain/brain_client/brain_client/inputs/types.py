@@ -10,22 +10,11 @@ with no ROS dependencies - they process data and send results via callbacks.
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from enum import Enum
 from typing import Any
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
 from brain_client.common.logging import UniversalLogger
 from innate_proxy import ProxyClient
-
-
-class InputDeviceType(Enum):
-    """Types of input devices"""
-
-    AUDIO = "audio"  # Microphone, voice
-    VISION = "vision"  # Camera, visual sensors
-    SENSOR = "sensor"  # IMU, proximity, temperature, etc.
-    HAPTIC = "haptic"  # Touch sensors, pressure sensors
-    CUSTOM = "custom"  # Custom sensor types
 
 
 class InputDevice(ABC):
@@ -54,7 +43,6 @@ class InputDevice(ABC):
         self._data_callback: Callable | None = None
         self._node = None  # ROS node (optional, for devices that need ROS subscriptions)
         self._active = False  # Start inactive
-        self._config: dict[str, Any] = {}
 
     @property
     @abstractmethod
@@ -193,14 +181,21 @@ class InputDevice(ABC):
         """
         return self._proxy
 
-    def set_proxy(self, proxy: ProxyClient):
+    def set_proxy(self, proxy: ProxyClient | None):
         """
         Set the proxy client (called by InputLoader).
 
         Args:
-            proxy: ProxyClient instance
+            proxy: ProxyClient instance, or None when the proxy is not configured
         """
         self._proxy = proxy
+
+    def set_tts_playing(self, is_playing: bool) -> None:  # noqa: B027 — optional hook, no-op by default
+        """TTS ducking hook: the robot started/stopped speaking. Default: ignore.
+
+        Devices that listen to audio (e.g. the microphone) override this to
+        avoid hearing the robot's own speech.
+        """
 
     @property
     def node(self):
@@ -232,39 +227,6 @@ class InputDevice(ABC):
             logger: Logger instance (ROS logger or any logger)
         """
         self.logger = UniversalLogger(enabled=True, wrapped_logger=logger)
-
-    def set_config(self, config: dict[str, Any]):
-        """
-        Set configuration parameters for this input device.
-
-        Override this if your device needs runtime configuration.
-
-        Args:
-            config: Configuration dictionary
-        """
-        self._config = config
-
-    def get_config(self) -> dict[str, Any]:
-        """
-        Get configuration/metadata for this input device.
-
-        Override this to provide device-specific information.
-
-        Returns:
-            Dictionary with device configuration and metadata
-        """
-        return {"active": self._active}
-
-    def get_description(self) -> str:
-        """
-        Get a human-readable description of this input device.
-
-        Override this to provide a helpful description.
-
-        Returns:
-            Description string
-        """
-        return self.name
 
 
 def input_name_for_class(cls: type[InputDevice]) -> str:
