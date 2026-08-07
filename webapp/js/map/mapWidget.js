@@ -359,10 +359,10 @@ export function createMap(root, opts = {}) {
       }
     }
     memState = next;
-    // Sight-raster cache: entries self-invalidate on grid/pose mismatch; this
-    // just drops rasters whose memory no longer exists.
-    for (const id of [...memRasterCache.keys()]) {
-      if (!next.memories.some((m) => m.id === id)) memRasterCache.delete(id);
+    // Sight-fan cache: entries self-invalidate on grid/pose mismatch; this
+    // just drops fans whose memory no longer exists.
+    for (const id of [...memPolyCache.keys()]) {
+      if (!next.memories.some((m) => m.id === id)) memPolyCache.delete(id);
     }
     if (memHover && !next.memories.some((m) => m.id === memHover?.id)) setMemHover(null);
     if (memPopupFor !== null && !next.memories.some((m) => m.id === memPopupFor)) closeMemPopup();
@@ -1197,52 +1197,23 @@ export function createMap(root, opts = {}) {
     return maxR;
   }
 
-  /** @type {Map<number, { rev: number, x: number, y: number, theta: number, col0: number, row0: number, w: number, h: number, canvas: HTMLCanvasElement }>} */
-  const memRasterCache = new Map();
-  /** The wedge as visible map cells, 1 px per cell like the grid itself —
-   * alpha falls off with distance (cached per grid revision).
-   * @param {import("./memories.js").Memory} m */
-  function memRaster(m) {
-    const g = grid;
-    if (!g || !gridCells) return null;
-    const hit = memRasterCache.get(m.id);
-    if (hit && hit.rev === gridRev && hit.x === m.x && hit.y === m.y && hit.theta === m.theta) return hit;
-    const res = g.resolution;
-    const col0 = Math.max(0, Math.floor((m.x - MEM_WEDGE_RANGE_M - g.originX) / res));
-    const row0 = Math.max(0, Math.floor((m.y - MEM_WEDGE_RANGE_M - g.originY) / res));
-    const col1 = Math.min(g.width - 1, Math.ceil((m.x + MEM_WEDGE_RANGE_M - g.originX) / res));
-    const row1 = Math.min(g.height - 1, Math.ceil((m.y + MEM_WEDGE_RANGE_M - g.originY) / res));
-    const w = col1 - col0 + 1;
-    const h = row1 - row0 + 1;
-    if (w <= 0 || h <= 0) return null;
-    const cellCanvas = document.createElement("canvas");
-    cellCanvas.width = w;
-    cellCanvas.height = h;
-    const cctx = cellCanvas.getContext("2d");
-    if (!cctx) return null;
-    const img = cctx.createImageData(w, h);
-    for (let row = row0; row <= row1; row++) {
-      for (let col = col0; col <= col1; col++) {
-        const dx = g.originX + (col + 0.5) * res - m.x;
-        const dy = g.originY + (row + 0.5) * res - m.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > MEM_WEDGE_RANGE_M) continue;
-        const heading = Math.atan2(dy, dx);
-        const off = Math.atan2(Math.sin(heading - m.theta), Math.cos(heading - m.theta));
-        if (Math.abs(off) > MEM_WEDGE_HALF_RAD) continue;
-        if (dist > res && sightRange(m.x, m.y, heading, dist) < dist - res * 0.75) continue;
-        const t = dist / MEM_WEDGE_RANGE_M;
-        const di = ((h - 1 - (row - row0)) * w + (col - col0)) * 4; // flip like the grid
-        img.data[di] = 180;
-        img.data[di + 1] = 140;
-        img.data[di + 2] = 255;
-        img.data[di + 3] = Math.round(255 * (0.14 + 0.42 * (1 - t * t)));
-      }
+  /** @type {Map<number, { rev: number, x: number, y: number, theta: number, poly: Array<{ x: number, y: number }> }>} */
+  const memPolyCache = new Map();
+  /** The wedge clipped by walls, as a world-space sight fan (cached per grid
+   * revision). @param {import("./memories.js").Memory} m */
+  function memPoly(m) {
+    const hit = memPolyCache.get(m.id);
+    if (hit && hit.rev === gridRev && hit.x === m.x && hit.y === m.y && hit.theta === m.theta) return hit.poly;
+    /** @type {Array<{ x: number, y: number }>} */
+    const poly = [];
+    const K = 28;
+    for (let i = 0; i <= K; i++) {
+      const a = m.theta + MEM_WEDGE_HALF_RAD * ((2 * i) / K - 1);
+      const r = sightRange(m.x, m.y, a, MEM_WEDGE_RANGE_M);
+      poly.push({ x: m.x + r * Math.cos(a), y: m.y + r * Math.sin(a) });
     }
-    cctx.putImageData(img, 0, 0);
-    const entry = { rev: gridRev, x: m.x, y: m.y, theta: m.theta, col0, row0, w, h, canvas: cellCanvas };
-    memRasterCache.set(m.id, entry);
-    return entry;
+    memPolyCache.set(m.id, { rev: gridRev, x: m.x, y: m.y, theta: m.theta, poly });
+    return poly;
   }
 
   /** The remembered viewpoints: one wall-clipped view cone + dot each, fading
@@ -1259,15 +1230,20 @@ export function createMap(root, opts = {}) {
       const { px, py } = worldToCanvas(m.x, m.y);
       const active = memHover?.id === m.id || memHighlight === m.id || memPopupFor === m.id || searchHit === m.id;
       const alpha = active ? 1 : ageAlpha(m.stamp, nowS);
-      const r = memRaster(m);
-      if (r) {
-        const tl = worldToCanvas(g.originX + r.col0 * g.resolution, g.originY + (r.row0 + r.h) * g.resolution);
-        const prevAlpha = ctx.globalAlpha;
-        ctx.globalAlpha = active ? 1 : 0.55 + 0.45 * alpha;
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(r.canvas, tl.px, tl.py, r.w * v.scale, r.h * v.scale);
-        ctx.globalAlpha = prevAlpha;
+      // The view cone: the original soft gradient, clipped by line of sight.
+      const range = (MEM_WEDGE_RANGE_M / g.resolution) * v.scale;
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, range);
+      grad.addColorStop(0, withAlpha(MEMORY_COLOR, (active ? 0.5 : 0.3) * alpha));
+      grad.addColorStop(1, withAlpha(MEMORY_COLOR, 0));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      for (const p of memPoly(m)) {
+        const c = worldToCanvas(p.x, p.y);
+        ctx.lineTo(c.px, c.py);
       }
+      ctx.closePath();
+      ctx.fill();
       // The dot.
       ctx.fillStyle = withAlpha(MEMORY_COLOR, active ? 1 : 0.45 + 0.55 * alpha);
       ctx.beginPath();
