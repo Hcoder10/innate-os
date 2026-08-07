@@ -12,7 +12,7 @@
 // *unsaved* edit (differs from what's saved) shows blue. Save is enabled only
 // while there are unsaved changes.
 
-import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE } from "../constants.js";
+import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE, SHUTDOWN_SERVICE } from "../constants.js";
 import { ros } from "../rosClient.js";
 import { CATALOG } from "./catalog.js";
 
@@ -59,6 +59,7 @@ const sections = [];
 /** @type {HTMLButtonElement} */ let saveBtn;
 /** @type {HTMLButtonElement} */ let resetAllBtn;
 /** @type {HTMLButtonElement} */ let restartBtn;
+/** @type {HTMLButtonElement} */ let shutdownBtn;
 /** @type {HTMLElement} */ let dirtyEl;
 /** @type {HTMLElement} */ let statusEl;
 
@@ -120,6 +121,7 @@ const STYLE = `
   background: none; color: var(--text, #e7e7ea); font: inherit; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
 .set-restart:not(:disabled):hover { border-color: var(--primary, #7569FD); color: var(--primary, #7569FD); }
 .set-restart:disabled { opacity: .4; cursor: default; }
+.set-shutdown:not(:disabled):hover { border-color: #e95656; color: #e95656; }
 .set-dirty { font-size: 13px; color: var(--primary, #7569FD); }
 .set-status { font-size: 13px; }
 .set-status.ok { color: #3ecf8e; }
@@ -521,12 +523,18 @@ function build() {
   restartBtn.textContent = "Restart robot";
   restartBtn.title = "Restart the robot to apply saved settings (same as `innate restart`)";
   restartBtn.addEventListener("click", onRestart);
+  shutdownBtn = document.createElement("button");
+  shutdownBtn.className = "set-restart set-shutdown";
+  shutdownBtn.textContent = "Shut down";
+  shutdownBtn.title = "Power off the Jetson (press the power button to turn it back on)";
+  shutdownBtn.addEventListener("click", onShutdown);
   statusEl = document.createElement("span");
   bar.appendChild(saveBtn);
   bar.appendChild(dirtyEl);
   bar.appendChild(statusEl);
   bar.appendChild(resetAllBtn);
   bar.appendChild(restartBtn);
+  bar.appendChild(shutdownBtn);
   page.appendChild(bar);
 
   stage.appendChild(page);
@@ -997,6 +1005,35 @@ async function onRestart() {
     setStatus("Couldn't reach the robot to restart: " + (err instanceof Error ? err.message : String(err)), "err");
     restartBtn.disabled = false;
   }
+}
+
+async function onShutdown() {
+  if (!window.confirm("Shut down the robot now? The Jetson will power off — press its power button to turn it back on.")) {
+    return;
+  }
+  shutdownBtn.disabled = true;
+  setStatus("Shutting down the robot…");
+  const wasConnected = ros.state === "connected";
+  try {
+    const res = await ros.callService(SHUTDOWN_SERVICE, { delay_seconds: 0 });
+    if (!res.success) {
+      setStatus("Shutdown failed: " + (res.message || "unknown error"), "err");
+      shutdownBtn.disabled = false;
+      return;
+    }
+  } catch (err) {
+    // The power-off can kill rosbridge before the response frame escapes, so a
+    // link that was up at call time and dropped during it IS a success signal.
+    if (!wasConnected || ros.state === "connected") {
+      setStatus("Couldn't reach the robot to shut down: " + (err instanceof Error ? err.message : String(err)), "err");
+      shutdownBtn.disabled = false;
+      return;
+    }
+  }
+  // The box is going down, so both power buttons stay disabled until the
+  // operator powers it back on and reloads.
+  restartBtn.disabled = true;
+  setStatus("Shutting down — the robot will power off in a few seconds.", "ok");
 }
 
 /** @param {HTMLElement} stageEl */
