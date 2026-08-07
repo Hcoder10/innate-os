@@ -25,7 +25,7 @@ def make_runner(running: RunningSkill | None, goal_handle=None):
     runner._stop_robot = lambda: None
     runner._on_task_finished = lambda: None
     runner._chat = SimpleNamespace(publish_task_status=lambda **kwargs: None)
-    runner.on_event = lambda status, name, detail=None: None
+    runner.on_event = lambda status, name, detail=None, image=None: None
     return runner, state
 
 

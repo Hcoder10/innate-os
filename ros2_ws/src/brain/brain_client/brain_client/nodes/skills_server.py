@@ -9,6 +9,7 @@ skills.robot_state. This node wires those together and owns the action server.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -30,6 +31,7 @@ from brain_client.perception.camera_provider import CameraProvider
 from brain_client.robot.head import Head
 from brain_client.robot.manipulation import Manipulation
 from brain_client.robot.mobility import Mobility
+from brain_client.robot.spatial_memory import SpatialMemory
 from brain_client.skills.catalog import SkillRepository
 from brain_client.skills.cli_bridge import SkillCliBridge, SkillCliGoalHandle
 from brain_client.skills.invoker import SkillInvoker
@@ -83,6 +85,7 @@ class SkillsActionServer(Node):
         self.manipulation = Manipulation(self, self.get_logger(), lazy=True)
         self.mobility = Mobility(self, self.get_logger(), self.cmd_vel_topic)
         self.head = Head(self, self.get_logger(), self.head_position_topic)
+        self.spatial_memory = SpatialMemory(self, self.get_logger())
 
         self.robot_state = RobotStateProvider(
             self,
@@ -90,6 +93,7 @@ class SkillsActionServer(Node):
             manipulation=self.manipulation,
             mobility=self.mobility,
             head=self.head,
+            memory=self.spatial_memory,
             head_current_position_topic=self.head_current_position_topic,
         )
 
@@ -408,7 +412,11 @@ class SkillsActionServer(Node):
             finalize, success = _FINALIZE[output.status]
             getattr(goal_handle, finalize)()
             return ExecuteSkill.Result(
-                success=success, message=output.message, skill_type=skill_type, success_type=output.status.value
+                success=success,
+                message=output.message,
+                skill_type=skill_type,
+                success_type=output.status.value,
+                image_b64=base64.b64encode(output.image).decode() if output.image else "",
             )
         except Exception as e:
             self.get_logger().error(f"Error executing skill: {str(e)}")

@@ -34,7 +34,7 @@ class PrimitiveRunner:
         self._on_task_finished = on_task_finished
 
         # Bound late by the node (mutual cycle: the brain needs the runner too).
-        self.on_event = lambda status, skill_name, detail=None: None
+        self.on_event = lambda status, skill_name, detail=None, image=None: None
         self.on_feedback = lambda skill_name, feedback, image=None: None
 
         self.action_client = ActionClient(node, ExecuteSkill, "execute_skill")
@@ -353,7 +353,8 @@ class PrimitiveRunner:
         # client's job.
         status, detail = self._classify_result(result, is_code)
         if status is not None:
-            self.on_event(status, primitive_name, detail)
+            image = base64.b64decode(result.image_b64) if result.image_b64 else None
+            self.on_event(status, primitive_name, detail, image=image)
         self._emit_skill_output(result, is_code)
 
     def _is_code_skill(self, skill_id: str) -> bool:

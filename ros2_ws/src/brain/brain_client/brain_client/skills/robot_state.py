@@ -32,13 +32,14 @@ from brain_client.state.pose import Pose
 
 
 class RobotStateProvider:
-    def __init__(self, node, camera_node, *, manipulation, mobility, head, head_current_position_topic: str):
+    def __init__(self, node, camera_node, *, manipulation, mobility, head, memory, head_current_position_topic: str):
         self._node = node
         self._logger = node.get_logger()
         self._camera = camera_node
         self._manipulation = manipulation
         self._mobility = mobility
         self._head = head
+        self._memory = memory
         self._head_current_position_topic = head_current_position_topic
 
         self.last_odom = None
@@ -107,6 +108,8 @@ class RobotStateProvider:
                 skill.inject_interface(interface_type, self._mobility)
             elif interface_type == InterfaceType.HEAD:
                 skill.inject_interface(interface_type, self._head)
+            elif interface_type == InterfaceType.MEMORY:
+                skill.inject_interface(interface_type, self._memory)
 
     # --- subscriptions ---
     def start_subscriptions(self) -> None:

@@ -4,6 +4,7 @@ from innate_skills.close_gripper import CloseGripper
 from innate_skills.navigate_to_position import NavigateToPosition
 from innate_skills.open_gripper import OpenGripper
 from innate_skills.pick_any_object import PickAnyObject
+from innate_skills.search_memory import SearchMemory
 from innate_skills.wave import Wave
 from inputs.micro_input import MicroInput
 
@@ -26,7 +27,7 @@ class DemoAgent(Agent):
     def get_skills(self) -> list[SkillRef]:
         """Navigation code skills plus the recorded wave — Wave is the typed
         ref generated inside the recording folder (see skills/physical_refs.py)."""
-        return [NavigateToPosition, Wave, PickAnyObject, OpenGripper, CloseGripper]
+        return [NavigateToPosition, Wave, PickAnyObject, OpenGripper, CloseGripper, SearchMemory]
 
     def get_inputs(self) -> list[InputRef]:
         """Enable microphone input to hear user"""

@@ -27,7 +27,8 @@ One rule covers interfaces, cameras and robot state: annotate what you read.
 ``battery: Battery``, ``odom: Odometry``, ``pose: Pose``, ``lidar: Lidar``,
 ``arm: Arm``, ``map: Map``, ``joint_states: JointStates``,
 ``head_position: HeadState``, ``image: MainImage`` / ``WristImage`` /
-``DepthMap``, ``mobility: Mobility``, ``head: Head``. A plain annotation is
+``DepthMap``, ``mobility: Mobility``, ``head: Head``,
+``memory: SpatialMemory`` (recall over the robot's spatial memory). A plain annotation is
 guaranteed inside execute() — the server waits for the first value and fails
 the run up front if none arrives — so no None guards are needed; ``| None``
 (``head: Head | None``) makes it best effort instead, injected when available
@@ -36,7 +37,9 @@ it before you ship.
 
 execute() returns the run's result: the message str, or
 ``SkillOutput(message, data)`` to attach a structured payload for chaining
-callers, or None. Call ``self.fail(message)`` to end the run as a failure.
+callers (``image=jpeg_bytes`` attaches an evidence image the agent sees in
+the completion event), or None. Call ``self.fail(message)`` to end the run
+as a failure.
 Callers of other skills get that SkillOutput back — ``out = self.turn(...)``
 then ``out.message`` / ``out.data`` / ``out.ok``, with ``out.status`` a
 SkillResult enum, never a bare string. (Legacy ``(message, SkillResult)``
@@ -106,6 +109,7 @@ __all__ = [
     "Mobility",
     "Odometry",
     "Pose",
+    "RecallVerdict",
     "Skill",
     "SkillCancelled",
     "SkillFailed",
@@ -113,6 +117,7 @@ __all__ = [
     "SkillRef",
     "SkillResult",
     "SkillReturn",
+    "SpatialMemory",
     "TrainedSkill",
     "Waypoint",
     "WristImage",
@@ -126,12 +131,15 @@ if TYPE_CHECKING:
     from brain_client.robot.head import Head
     from brain_client.robot.manipulation import Manipulation, Waypoint
     from brain_client.robot.mobility import Mobility
+    from brain_client.robot.spatial_memory import RecallVerdict, SpatialMemory
 
 _LAZY_INTERFACES = {
     "Mobility": ("brain_client.robot.mobility", "Mobility"),
     "Manipulation": ("brain_client.robot.manipulation", "Manipulation"),
     "Head": ("brain_client.robot.head", "Head"),
     "Waypoint": ("brain_client.robot.manipulation", "Waypoint"),
+    "SpatialMemory": ("brain_client.robot.spatial_memory", "SpatialMemory"),
+    "RecallVerdict": ("brain_client.robot.spatial_memory", "RecallVerdict"),
 }
 
 
