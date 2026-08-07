@@ -97,8 +97,9 @@
       data: JSON.stringify({
         map: "apartment", fingerprint: "f1", cache: "warm",
         positions: [
-          { id: 1, x: -3.2, y: 2.4, theta: 0.7, stamp: Date.now() / 1000 - 300 },
-          { id: 2, x: 3.6, y: -2.2, theta: 2.6, stamp: Date.now() / 1000 - 5000 },
+          { id: 1, x: 1.5, y: -0.7, theta: 1.5708, stamp: Date.now() / 1000 - 300 },  // faces the interior wall 0.7 m away
+          { id: 2, x: -1.6, y: 1.55, theta: 3.1416, stamp: Date.now() / 1000 - 5000 }, // faces the sofa island 0.4 m away
+          { id: 3, x: 3.4, y: -3.0, theta: 0.6, stamp: Date.now() / 1000 - 60 },       // open room, full cone
         ],
       }),
     });
@@ -109,6 +110,25 @@
       header: { frame_id: "map" },
       pose: { position: { x: goal.x, y: goal.y }, orientation: quat(goal.yaw) },
     });
+
+    // ?static freezes the robot near the memories — stable framing for
+    // styling screenshots.
+    if (new URLSearchParams(location.search).has("static")) {
+      const sp = { x: -0.9, y: -1.6, yaw: 1.2 };
+      publish("/odom", odom(sp.x, sp.y, sp.yaw));
+      publish("/amcl_pose", odom(sp.x, sp.y, sp.yaw));
+      const pts = [];
+      for (let i = 0; i <= 24; i++) {
+        const u = i / 24;
+        pts.push({ pose: { position: { x: sp.x + (goal.x - sp.x) * u, y: sp.y + (goal.y - sp.y) * u + Math.sin(u * Math.PI) * 1.1 }, orientation: quat(goal.yaw) } });
+      }
+      publish("/navigation/plan", { poses: pts });
+      const ranges = [];
+      for (let i = 0; i < 360; i++) ranges.push(2.2 + Math.sin(i * 0.15) * 0.5);
+      publish("/scan", { ranges, angle_min: -Math.PI, angle_increment: Math.PI / 180, range_min: 0.1, range_max: 8 });
+      throw new Error("preview: static scene, no motion loop");
+    }
+
     let t = 0;
     setInterval(() => {
       t += 0.05;

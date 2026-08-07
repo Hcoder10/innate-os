@@ -7094,6 +7094,10 @@ select.skill-input {
   padding-top: 6px;
   font-size: 11px;
   color: var(--muted);
+  /* Never wider than the thumbnail: a long meta line otherwise stretches the
+     card past the image and leaves a dead bar beside it — wrap instead. */
+  width: 0;
+  min-width: 100%;
 }
 
 .mem-card-actions {
