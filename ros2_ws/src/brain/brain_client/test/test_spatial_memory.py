@@ -104,6 +104,27 @@ def test_remapping_under_the_same_name_wipes_stale_memories(data_dir):
     assert list((data_dir / "spatial_memory" / "A").glob("*.jpg")) == []
 
 
+def test_a_same_name_remap_is_caught_without_a_map_switch(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")  # the every-tick call: a no-op while the file is unchanged
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "A.pgm").write_bytes(b"remapped-content")
+    store.switch_map("A.yaml")
+    assert store.snapshot().memories == ()
+
+
+def test_a_touched_but_identical_map_keeps_memories(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "A.pgm").write_bytes(b"map-A-content")
+    store.switch_map("A.yaml")
+    assert len(store.snapshot().memories) == 1
+
+
 def test_maps_have_isolated_memories(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
@@ -720,3 +741,29 @@ def test_labels_and_verdicts_use_stable_store_ids(data_dir):
     labels = [part["text"] for part in parts if "text" in part][:-1]  # the last text part is the question
     assert labels[0].startswith("Frame 2 ")  # ids, not positions, after the eviction
     assert verdict.found and verdict.memory is not None and verdict.memory.id == 5
+
+
+def mutate_after_generate(search: MemorySearch, fake: FakeGemini, mutate) -> None:
+    """Rewire the search's transport so the store mutates while the answer is in flight."""
+    inner = fake.rest.post
+
+    def post_then_mutate(path: str, body: dict) -> dict:
+        response = inner(path, body)
+        mutate()
+        return response
+
+    search._rest = GeminiRest(post=post_then_mutate, delete=fake.rest.delete, upload=fake.rest.upload)
+
+
+def test_a_map_switch_mid_search_voids_the_verdict(data_dir):
+    search, fake, store = make_search(data_dir, frames=2)
+    mutate_after_generate(search, fake, lambda: store.switch_map("B.yaml"))
+    verdict = search.search("the kitchen")
+    assert not verdict.found and "map changed" in verdict.error
+
+
+def test_an_eviction_mid_search_misses_cleanly(data_dir):
+    search, fake, store = make_search(data_dir, frames=2)  # the fake's verdict picks frame 1
+    mutate_after_generate(search, fake, lambda: store.evict(memory_with_id(store, 1)))
+    verdict = search.search("the kitchen")
+    assert not verdict.found and not verdict.error

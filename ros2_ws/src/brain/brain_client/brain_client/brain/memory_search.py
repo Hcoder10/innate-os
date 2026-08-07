@@ -197,7 +197,7 @@ class MemorySearch:
             }
             try:
                 response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-                return self._conclude(query, response, snapshot.memories, started, cached=True)
+                return self._conclude(query, response, snapshot, started, cached=True)
             except GeminiHttpError as error:
                 if error.status >= 500:
                     raise
@@ -212,7 +212,7 @@ class MemorySearch:
             "generationConfig": _GENERATION_CONFIG,
         }
         response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-        return self._conclude(query, response, snapshot.memories, started, cached=False)
+        return self._conclude(query, response, snapshot, started, cached=False)
 
     def warm(self) -> None:
         """All background maintenance, driven by the recorder's 1 Hz tick:
@@ -337,7 +337,7 @@ class MemorySearch:
 
     # --- request assembly / response handling ---
     def _conclude(
-        self, query: str, response: dict, memories: tuple[Memory, ...], started: float, *, cached: bool
+        self, query: str, response: dict, snapshot: MemorySnapshot, started: float, *, cached: bool
     ) -> SearchVerdict:
         latency = round(time.monotonic() - started, 2)
         parsed = _parse_verdict(response)
@@ -346,9 +346,22 @@ class MemorySearch:
                 query=query, found=False, error="unreadable answer", latency_sec=latency, cached=cached
             )
         found, frame_id, explanation = parsed
+        # The coordinates only mean anything on the map the frames came from —
+        # a map switched mid-flight voids the verdict rather than steering the
+        # robot toward another map's frame.
+        live = self._store.snapshot()
+        if live.map_name != snapshot.map_name:
+            return SearchVerdict(
+                query=query,
+                found=False,
+                error="the active map changed during the search",
+                latency_sec=latency,
+                cached=cached,
+            )
         # Frames are labeled by stable store id, so the answer resolves against
-        # the CURRENT snapshot — a cached-but-since-evicted id cleanly misses.
-        memory = next((m for m in memories if m.id == frame_id), None)
+        # the LIVE snapshot — an id evicted mid-search cleanly misses, a
+        # refreshed one serves its newest pose.
+        memory = next((m for m in live.memories if m.id == frame_id), None)
         if not found or memory is None:
             return SearchVerdict(query=query, found=False, explanation=explanation, latency_sec=latency, cached=cached)
         return SearchVerdict(
